@@ -961,8 +961,9 @@ check by searching, and why the rule wants a named function.
 **That is correct today and it is not a bug list.** Single-tenant Sunrise has one
 class of admin, so provenance is all `createdBy` is for. It is listed because
 those are the models a fork adding a customer tier must revisit — the
-classification is in the playbook's
-[model inventory](../architecture/multi-tenancy.md#model-inventory), and a
+classification is `GLOBAL_CONFIG_MODELS` in
+[`lib/tenancy/classification.ts`](../../lib/tenancy/classification.ts) (the
+playbook's hand-written inventory it replaced is gone), and a
 `createdBy` FK is what makes them _reachable_ by the ownership axis, not what
 makes them scoped.
 
@@ -1008,7 +1009,7 @@ through `enterApiKeyOrg`) — so a fork's policy cannot widen it. See
 - [`lib/auth/authorization.ts`](../../lib/auth/authorization.ts) — the contract, with the reasoning for each shape decision
 - [`lib/app/authorization.ts`](../../lib/app/authorization.ts) — the fork's scaffold, with two worked policies
 - [`integration.md`](./integration.md) — `withAuth` / `withAdminAuth` usage
-- [`../architecture/multi-tenancy.md`](../architecture/multi-tenancy.md) — the model inventory and the control-plane split
+- [`../architecture/multi-tenancy.md`](../architecture/multi-tenancy.md) — enabling the capability, and the control-plane split
 - [`../architecture/multi-tenancy-design.md`](../architecture/multi-tenancy-design.md) — the org axis; design principles and the Q6 ruling
 - [`../architecture/fork-init-seams.md`](../architecture/fork-init-seams.md) — the init-gate contract every `lib/app/*` seam shares
 - [`CUSTOMIZATION.md`](../../CUSTOMIZATION.md) §4 — the fork-facing seam list

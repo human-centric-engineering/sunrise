@@ -1485,7 +1485,11 @@ your version, and add a follow-up rather than rewriting Sunrise's.
   `orgIsolationPolicySql('<table>')` from `lib/tenancy/isolation.ts` to a new
   migration. The policy is dormant at `TENANCY_MODE=single`; the switch, the
   role split and the `MIGRATE_DATABASE_URL` variable it introduces are in
-  [`.context/tenancy/isolation.md`](./.context/tenancy/isolation.md).
+  [`.context/tenancy/isolation.md`](./.context/tenancy/isolation.md), and the
+  operator's walkthrough — plus the other tests that name a fork's model
+  until it is classified, exported and slug-scoped, and the two checks a
+  release merge still does by hand — is the
+  [multi-tenancy playbook](./.context/architecture/multi-tenancy.md).
 
 The full reconciliation recipe — including `prisma migrate resolve --applied` /
 `--rolled-back` for baselining or recovering a migration, the pgvector

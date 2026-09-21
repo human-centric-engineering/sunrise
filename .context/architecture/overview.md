@@ -368,15 +368,17 @@ For authentication security (sessions, passwords, OAuth), see [Auth Security](..
 
 ## Tenancy
 
-Sunrise is **single-tenant by default** and ships no tenancy machinery. Forks
-that need to host multiple isolated customers in one deployment follow the
-Postgres-RLS retrofit in [Multi-Tenancy Playbook](./multi-tenancy.md). The only
-trace in the baseline is an inert `TENANCY_MODE` seam (default `single`).
+Sunrise is **single-tenant by default**: every install has one org (the
+install org) and every user is a member of it, and at `TENANCY_MODE=single`
+no policy is enforced and no query is scoped. Multi-tenancy is an opt-in
+platform capability — org identity, tenant context and Postgres-RLS row
+isolation ship in the template, dormant — and turning it on is the
+[Multi-Tenancy Playbook](./multi-tenancy.md).
 
 ## Related Documentation
 
 - [CI Pipeline](./ci.md) - GitHub Actions pipeline, public/private-fork adaptation, the `CI_TEST_SCOPE` knob
-- [Multi-Tenancy Playbook](./multi-tenancy.md) - RLS-based multi-tenant retrofit (opt-in, for forks)
+- [Multi-Tenancy Playbook](./multi-tenancy.md) - Enabling the opt-in RLS-based capability; what a fork adds for its own models
 - [Dependencies](./dependencies.md) - Dependency injection and package management
 - [Patterns](./patterns.md) - Code organization and error handling patterns
 - [Auth Integration](../auth/integration.md) - better-auth integration details

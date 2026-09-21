@@ -505,8 +505,8 @@ merge-impact section promises forks.
   for, and what reads it
 - [Multi-tenancy design record](../architecture/multi-tenancy-design.md) —
   the decisions and principles this page applies
-- [Multi-tenancy playbook](../architecture/multi-tenancy.md) — the RLS
-  retrofit the later features perform
+- [Multi-tenancy playbook](../architecture/multi-tenancy.md) — enabling
+  the capability, and what a fork adds for its own models
 - [Authorization](../auth/authorization.md) — the policy that reads the org
   role
 - [Data erasure](../privacy/data-erasure.md) · [Subject access](../privacy/data-export.md)

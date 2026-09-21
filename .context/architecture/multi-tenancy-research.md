@@ -18,18 +18,18 @@
 
 ## How to read this
 
-| If you are…                                                                      | Start at                                                                                                                                                                               |
-| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Deciding whether to build MT into a fork                                         | [§2 The two questions](#2-the-two-questions) → [§9 Deployment topologies](#9-deployment-topologies)                                                                                    |
-| Already committed and want the work breakdown                                    | [§5 Gap register](#5-gap-register) → [§10 Sequencing](#10-sequencing-shape)                                                                                                            |
-| A fork author worried about upstream merges                                      | [§7 Ownership matrix](#7-ownership-platform-tier-vs-fork-tier) → [§8 Downstream forks](#8-downstream-fork-considerations)                                                              |
-| A Sunrise maintainer triaging #366 / #367                                        | [§6 The decision gate](#6-the-decision-gate) → [§7](#7-ownership-platform-tier-vs-fork-tier)                                                                                           |
-| A Sunrise maintainer asking what to ship for forks without building MT           | [§8 Provisions upstream should ship](#provisions-upstream-should-ship) → [§14.5](#145-what-to-commit-to-for-forks-regardless-of-question-b)                                            |
-| A fork that has already shipped MT and is merging a Sunrise release              | [§8 The standing obligation](#the-standing-obligation-after-mt-ships-in-a-fork) → the playbook's [sync checklist](./multi-tenancy.md#keeping-the-retrofit-alive-across-upstream-syncs) |
-| Answering a tenant asking for their own data storage, region, or encryption keys | [§5B Data handling, residency and storage](#5b-data-handling-residency-and-storage-flexibility)                                                                                        |
-| Answering a tenant asking to bring their own AI provider, models, or API keys    | [§5C Provider credentials and per-tenant AI config](#5c-provider-credentials-and-per-tenant-ai-configuration)                                                                          |
-| About to start building any of it                                                | [§5A Topology and the prerequisite](#5a-topology-and-the-prerequisite-nobody-costed) — **read this first**, it decides whether the rest is the right work                              |
-| Wanting the answer rather than the analysis                                      | [§14 The recommendation](#14-the-recommendation)                                                                                                                                       |
+| If you are…                                                                      | Start at                                                                                                                                                                                 |
+| -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deciding whether to build MT into a fork                                         | [§2 The two questions](#2-the-two-questions) → [§9 Deployment topologies](#9-deployment-topologies)                                                                                      |
+| Already committed and want the work breakdown                                    | [§5 Gap register](#5-gap-register) → [§10 Sequencing](#10-sequencing-shape)                                                                                                              |
+| A fork author worried about upstream merges                                      | [§7 Ownership matrix](#7-ownership-platform-tier-vs-fork-tier) → [§8 Downstream forks](#8-downstream-fork-considerations)                                                                |
+| A Sunrise maintainer triaging #366 / #367                                        | [§6 The decision gate](#6-the-decision-gate) → [§7](#7-ownership-platform-tier-vs-fork-tier)                                                                                             |
+| A Sunrise maintainer asking what to ship for forks without building MT           | [§8 Provisions upstream should ship](#provisions-upstream-should-ship) → [§14.5](#145-what-to-commit-to-for-forks-regardless-of-question-b)                                              |
+| A fork that has already shipped MT and is merging a Sunrise release              | [§8 The standing obligation](#the-standing-obligation-after-mt-ships-in-a-fork) → the playbook's [sync checklist](./multi-tenancy.md#what-the-tests-catch-and-what-a-merge-still-checks) |
+| Answering a tenant asking for their own data storage, region, or encryption keys | [§5B Data handling, residency and storage](#5b-data-handling-residency-and-storage-flexibility)                                                                                          |
+| Answering a tenant asking to bring their own AI provider, models, or API keys    | [§5C Provider credentials and per-tenant AI config](#5c-provider-credentials-and-per-tenant-ai-configuration)                                                                            |
+| About to start building any of it                                                | [§5A Topology and the prerequisite](#5a-topology-and-the-prerequisite-nobody-costed) — **read this first**, it decides whether the rest is the right work                                |
+| Wanting the answer rather than the analysis                                      | [§14 The recommendation](#14-the-recommendation)                                                                                                                                         |
 
 ### Companion documents
 
@@ -1582,7 +1582,7 @@ lands outside the boundary — silently, because a clean merge looks like a clea
 merge.
 
 The fork-side answer is the per-sync checklist now carried in the playbook
-([Keeping the retrofit alive across upstream syncs](./multi-tenancy.md#keeping-the-retrofit-alive-across-upstream-syncs)):
+([Keeping the retrofit alive across upstream syncs](./multi-tenancy.md#what-the-tests-catch-and-what-a-merge-still-checks)):
 diff for new models, new `$queryRaw*` sites, new process-global state and new
 jobs, then run the two-tenant harness. The upstream-side answer is
 [§12](#12-documentation-drift)'s two enforcement tests — a raw-SQL allowlist and
@@ -2017,8 +2017,8 @@ rest and is the one to do first.
 things the playbook did not previously state: where tenancy code lives in their
 tier, which core edits are sanctioned, and what they must re-check on every
 upstream sync. Those are now the playbook's
-[fork-tier map](./multi-tenancy.md#where-a-forks-tenancy-code-lives) and
-[sync checklist](./multi-tenancy.md#keeping-the-retrofit-alive-across-upstream-syncs).
+[fork-tier map](./multi-tenancy.md#what-a-fork-adds-for-its-own-models) and
+[sync checklist](./multi-tenancy.md#what-the-tests-catch-and-what-a-merge-still-checks).
 Keeping two short sections current is cheaper than answering the same question
 once per fork — and cheaper still than the alternative, which is a fork
 discovering the answer from a leak.

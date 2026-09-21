@@ -7,12 +7,14 @@
 > (features, tasks, ordering, ownership) lives in the HCE Hub under the
 > **Multi-tenancy** phase and is deliberately not restated here.
 >
-> Companions: [`multi-tenancy.md`](./multi-tenancy.md) (the RLS playbook — the
-> proven policy pattern and its gotchas) and
+> Companions: [`multi-tenancy.md`](./multi-tenancy.md) (the playbook — since
+> §107 t-710 the operator's and fork's enablement guide: how to turn the
+> capability on, what a fork adds for its own models, what the tests catch,
+> the gotchas that survive) and
 > [`multi-tenancy-research.md`](./multi-tenancy-research.md) (the gap analysis
 > this capability answers). Where this document and either companion disagree,
 > this document is the decision; the research is the survey it was made from,
-> and the playbook is the recipe it builds with.
+> and the playbook is how what was built is used.
 
 ## Who this is for
 
@@ -415,17 +417,31 @@ to remember.
 
 ## What a fork gets, and what it owns
 
-Enabling the capability (`TENANCY_MODE=multi` + `db:tenancy:enable` + the
-restricted app role) gives a fork org identity, membership, invitations,
-context propagation, RLS row isolation, tenant-aware background work,
-org-scoped storage/export/providers, quota and budget primitives, and the
-org-admin console — maintained and regression-tested upstream.
+Enabling the capability (`TENANCY_MODE=multi` + the restricted app role +
+`db:tenancy:enable` — the walkthrough is the
+[playbook](./multi-tenancy.md#enabling-it-end-to-end)) gives a fork, today:
+org identity, membership and invitations (§106), context propagation on
+every request (§106), RLS row isolation with per-org namespaces (§107) and
+org-level export and erasure — maintained and regression-tested upstream,
+the two-org harness on every PR. Still to ship, and listed as such in the
+playbook's
+[what you do not yet get](./multi-tenancy.md#what-you-get-at-multi-and-what-you-do-not-yet):
+tenant-aware background work and cache postures (§108), org-scoped
+storage/export/provider policy (§109), quota and budget primitives (§110),
+and the org-admin console (§111). Until §108 lands, a job at `multi` enters
+no org and fails loud rather than running.
 
 A fork owns:
 
-- **Its own models** — add `orgId` to each tenant-owned app model; the
-  classification test will name every model until it is classified; injection,
-  policies and the harness then cover them automatically (principle 4).
+- **Its own models** — add `orgId` to each tenant-owned app model, in the
+  shape [`identity.md`](../tenancy/identity.md#what-a-fork-may-add--and-what-it-may-not)
+  gives; the classification test will name every model until it is
+  classified, the policy-coverage test until its migration carries the
+  policy, the org-sources test until it has an export disposition;
+  injection, the setter, the probes, the enable script and the harness then
+  cover it automatically (principle 4). The playbook's
+  [what a fork adds](./multi-tenancy.md#what-a-fork-adds-for-its-own-models)
+  is the table of those tests.
 - **The product layer** — plans, billing, pricing, self-serve signup, org
   branding, and any team/workspace layer beneath the org.
 - **Tenant arrival beyond the session** — a subdomain or path scheme via
@@ -443,9 +459,13 @@ A fork owns:
   across them.
 - Single-tenant forks feel no behaviour change at any point; the install org is
   invisible to their operators.
-- The per-sync tenancy checklist in the playbook shrinks to what the tests
-  cannot catch (new process-global state, new background jobs); the rest is
-  enforced in CI.
+- The per-sync tenancy checklist in the playbook has shrunk to what the
+  tests cannot catch — new process-global state, new background jobs
+  ([what the tests catch, and what a merge still checks](./multi-tenancy.md#what-the-tests-catch-and-what-a-merge-still-checks));
+  the rest is enforced in CI, in the fork as well as upstream, because the
+  guards are unit tests over the schema and the migrations rather than a
+  job only upstream runs. §108's posture declarations are what retire the
+  two remaining greps.
 
 ## Explicitly out of scope (v1)
 

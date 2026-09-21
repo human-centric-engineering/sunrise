@@ -1,267 +1,369 @@
 # Multi-Tenancy Playbook
 
-> **Update 2026-08-27 — partially superseded.** Sunrise has since decided to
-> ship multi-tenancy as an **opt-in platform capability**; the binding design is
-> [`multi-tenancy-design.md`](./multi-tenancy-design.md), and where the two
-> disagree the design document wins. This playbook remains the proven data-plane
-> recipe (the RLS pattern, the gotchas, the model inventory) and will be
-> rewritten as the enablement guide when row isolation lands.
+> **Rewritten 2026-09-21 (§107 t-710) — from a retrofit recipe to an
+> enablement guide.** Until row isolation shipped, this document told a fork
+> how to _build_ RLS isolation itself: a hand-maintained model inventory, the
+> proven policy, a six-step retrofit. That recipe is now what Sunrise ships and
+> CI enforces, so the reader has changed. This page tells an **operator or fork
+> how to enable the capability**, what a fork adds for its own models, what the
+> tests catch versus what a release merge still has to check by hand, and the
+> gotchas that survive. The decisions and architecture are the design record,
+> [`multi-tenancy-design.md`](./multi-tenancy-design.md); where the two
+> disagree, that document wins.
 >
-> **TL;DR — MT-possible, not MT-baked.** Sunrise ships **single-tenant by
-> default** and contains **zero** tenancy machinery: no `Org` table, no `orgId`
-> columns, no row-level security, no dormant fields. The one concession to
-> multi-tenancy is an inert seam (`TENANCY_MODE`, default `single`) and this
-> document. If you are running a normal single-tenant install, you can ignore
-> all of it — nothing here is active.
->
-> This is the **map** for a fork that needs multi-tenancy, not the destination.
-> The RLS pattern below has been validated against real Postgres (see
-> [The proof](#the-proof-runnable)); the empty-string footgun it caught is why
-> the policy uses `NULLIF`.
->
-> **Until the capability lands, whoever runs this recipe is a fork** (see the
-> update above). So each step
-> below also says where the artefact lives in your tier and whether it touches a
-> Sunrise-owned file — see
-> [Where a fork's tenancy code lives](#where-a-forks-tenancy-code-lives) and
-> [Keeping the retrofit alive across upstream syncs](#keeping-the-retrofit-alive-across-upstream-syncs).
-> The retrofit is not a one-off: upstream keeps shipping single-tenant code into
-> your isolation boundary, and nothing in a merge tells you when it lands
-> outside.
+> **TL;DR — single-tenant by default, and that costs nothing.** Every install
+> runs with one org (the install org) and every user a member of it. At
+> `TENANCY_MODE=single` — the default — no policy is enforced, no
+> `set_config` is ever issued, and the app connects as whatever role it always
+> did. Nothing on this page applies to you unless you set `multi`.
 
 ## Who this is for
 
-A fork author who wants several customers (tenants/orgs) to share one Sunrise
-deployment and one database, with hard data isolation between them. If instead
-you want one deployment **per** customer, you do not need any of this — deploy
-the template as-is, once per customer.
+- **An operator turning on multi-tenancy** for one deployment — read
+  [Enabling it, end to end](#enabling-it-end-to-end).
+- **A fork with its own models** that must be an org's — read
+  [What a fork adds](#what-a-fork-adds-for-its-own-models).
+- **A fork merging a Sunrise release** with tenancy enabled — read
+  [What the tests catch, and what a merge still checks](#what-the-tests-catch-and-what-a-merge-still-checks).
+- **A fork splitting the admin console** between the vendor and a customer —
+  read [The control plane](#the-control-plane-which-admin-surfaces-are-whose).
 
-## What the template gives you to start from
+Not for: someone building the isolation mechanism (the design record and the
+three `tenancy/` pages), or assessing whether multi-tenancy is the right
+topology at all ([`multi-tenancy-research.md`](./multi-tenancy-research.md)
+— cells, one deployment per customer, remain the answer to residency asks).
 
-Two things, and nothing else:
+## What you get at `multi`, and what you do not yet
 
-1. **A single client chokepoint.** Every one of the ~575 `prisma` importers
-   gets the client from one module — [`lib/db/client.ts`](../../lib/db/client.ts).
-   It builds **one** `PrismaClient` over a `pg` connection `Pool`. A fork wraps
-   that single file and every call site inherits the change. No surgery across
-   the codebase. (The `@/`-import discipline is what bought this — see the
-   import rule in `CLAUDE.md`.)
+What is enforced, maintained and regression-tested upstream once the switch
+is on:
 
-2. **The seam.** `TENANCY_MODE` (in [`lib/env.ts`](../../lib/env.ts),
-   default `single`) and the chokepoint applied in `lib/db/client.ts`. At
-   `single` no query is scoped. Since §107 t-706 the client no longer throws
-   at `multi`: `lib/db/tenancy-extension.ts` scopes every operation to the
-   org the request entered and refuses one that entered none — see
-   [`tenancy/context.md`](../tenancy/context.md#the-data-layer--libdbtenancy-extensionts).
-   (The retrofit steps below that say "delete the guard" describe the
-   pre-§107 shape; this playbook is rewritten as the enablement guide with
-   §107 t-710.)
+- **Org identity and membership** — `Org` / `OrgMembership`, invitations
+  into an org, an active org per session, the lifecycle API
+  ([`tenancy/identity.md`](../tenancy/identity.md)).
+- **Tenant context on every request** — the guards enter the org the session,
+  API key, embed token, MCP key or resolver header names, and the data layer
+  reads it below the handler
+  ([`tenancy/context.md`](../tenancy/context.md)).
+- **Row isolation in Postgres** — one `org_isolation` policy per tenant-owned
+  table (42 today, child rows included), `USING` + `WITH CHECK`, enforced
+  against the restricted app role; ORM queries and raw SQL obey it
+  identically, and a forgotten path fails loud rather than reading wide
+  ([`tenancy/isolation.md`](../tenancy/isolation.md)).
+- **Per-org namespaces** — two orgs can each have an agent called `support`,
+  a knowledge base called `policies`, the same uploaded file; routing keys an
+  unauthenticated route resolves (`AiWorkflow.slug`, trigger channels,
+  dedup keys) stay global by decision.
+- **Org-level privacy** — `exportOrgData` / `eraseOrg` and the org manifest
+  ([`privacy/`](../privacy/)).
 
-## Where a fork's tenancy code lives
+What does **not** yet work at `multi`, honestly, because the features that
+own it have not shipped (the Multi-tenancy phase on the Hub; the design
+record's [target architecture](./multi-tenancy-design.md#target-architecture)
+says which piece each feature lands):
 
-Sunrise has three fork levels and two reserved namespace tiers
-([`CUSTOMIZATION.md`](../../CUSTOMIZATION.md#the-appplatform-model)):
+- **Background work enters no org.** The maintenance tick's eight platform
+  jobs (`lib/orchestration/maintenance/platform-jobs.ts`), the scheduler,
+  retention and any job registered through `lib/app/jobs.ts` run with no
+  tenant context. At `multi` a job's first operation on a tenant-owned table
+  throws `No tenant context` — the tick contains and logs the failure and
+  moves on, so nothing crashes and nothing reads wide, but **nothing runs
+  either**. Tenant-aware jobs and caches are §108, which must ship in the same
+  release as row isolation for exactly this reason.
+- **The system agents are the install org's rows.** `cleanup-agent`,
+  `mcp-system`, `quiz-master`, the evaluation judges, the model auditor and
+  the case generator are seeded once, as the install org. Another org finds
+  none of them: the cleanup upload reports the agent unseeded, an unscoped
+  MCP call logs `mcp-system agent not found`, the quiz and judge routes 404.
+  Whether they are seeded per org, made global, or gated is an open decision
+  on §107's journal.
+- **Process-global state is global.** Settings caches, circuit breakers, the
+  in-flight counter, provider instance caches — RLS cannot see a Node heap
+  (§108 declares a posture per cache).
+- **Cross-org user erasure.** `eraseUser` / `exportUserData` enter no scope
+  of their own; at `multi` they act inside whichever org the caller entered,
+  so a user with memberships in several orgs is erased from — and exported
+  from — one of them.
+- **One admin console.** The authorization policy already distinguishes a
+  platform admin from an org OWNER/ADMIN, but the console is not split; the
+  [control-plane map](#the-control-plane-which-admin-surfaces-are-whose)
+  below is what §111 splits along.
+- **Storage, provider policy, quotas** — §109 / §110.
 
-```text
-Sunrise (platform)      ← contains no tenancy machinery, ever
-  └── framework fork    → lib/framework/, .context/framework/, prisma/schema/framework-*.prisma, framework_ prefix
-        └── leaf fork   → lib/app/,       .context/app/,       prisma/schema/app.prisma
-```
+## Enabling it, end to end
 
-Both tiers ship **empty** upstream — that emptiness is what makes the files you
-add there merge cleanly forever. Put the retrofit in the tier that owns the
-tenant concept. If you are a **framework** fork selling multi-tenancy to your own
-leaf forks, tenancy is `lib/framework/` (which does not exist upstream — you
-create it); `lib/app/` belongs to your leaves and must stay free for them. If you
-are a leaf fork, `lib/app/` is yours.
+Three things have to be true at once, and the order they become true in
+matters: the app connects as a role that is subject to the policies; the
+policies are enforced; the app knows to set the org on every operation.
 
-| Retrofit artefact                      | Fork-owned home                                                             | Touches a Sunrise-owned file?                                                                                                  |
-| -------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `Org` / `OrgMembership` models         | `prisma/schema/app.prisma` (leaf) or `framework-tenancy.prisma` (framework) | No                                                                                                                             |
-| `orgId` columns on **core** models     | `prisma/schema/*.prisma` — core files                                       | **Yes — unavoidable**                                                                                                          |
-| RLS policy migration                   | a new `prisma/migrations/<ts>_app_rls_*/` folder                            | No — but it interleaves by timestamp ([`CUSTOMIZATION.md` §9](../../CUSTOMIZATION.md#9-staying-in-sync-with-upstream-sunrise)) |
-| `withOrg` wrapper                      | `lib/db/client.ts`                                                          | **Yes — sanctioned.** This is the documented seam                                                                              |
-| Tenant context (`AsyncLocalStorage`)   | `lib/{framework,app}/tenancy/context.ts`                                    | Yes, at the entry points that enter it (`guards.ts`, the tick)                                                                 |
-| Tenancy env vars                       | `lib/app/env.ts` (`appEnvSchema`)                                           | No — existing registry seam                                                                                                    |
-| Registry wiring at boot                | `lib/app/bootstrap.ts` (`initApp()`)                                        | No — existing registry seam                                                                                                    |
-| Org-aware periodic work                | `lib/app/jobs.ts` (`registerAppJob`)                                        | No — existing registry seam                                                                                                    |
-| Art. 15 export of your org-owned rows  | `lib/app/data-export.ts` (`collectAppSubjectData`)                          | No — existing registry seam                                                                                                    |
-| CI assertion that policies still exist | `lib/app/db-drift.ts` (`registerAppDriftProbe`)                             | No — existing registry seam                                                                                                    |
-| Org-scoped rate-limit rules and keys   | `lib/app/rate-limit.ts`                                                     | No — `registerRateLimitKeyResolver` opened the **key** space on 2026-09-01                                                     |
-| Tenant-admin nav and route gating      | `lib/app/admin-nav.ts`, `lib/app/protected-routes.ts`                       | No — but the admin console split itself is platform-tier                                                                       |
+### 1. The role split — required, not optional
 
-**Exactly two sanctioned core edits**: the `withOrg` wrapper in
-`lib/db/client.ts`, and `orgId` on the core schema files. Everything else that
-reaches into `lib/auth/`, `lib/security/`, `lib/orchestration/`, `lib/storage/`
-or `proxy.ts` becomes a conflict on every upstream sync.
-[Research §8](./multi-tenancy-research.md#the-merge-conflict-surface-concretely)
-lists the eighteen files concerned, which of the `lib/app/*` seams above absorb
-work you would otherwise do in core, and
-[which provisions upstream should ship](./multi-tenancy-research.md#provisions-upstream-should-ship)
-so the rest stop being conflicts. Check that list before you copy a core file —
-a local copy of `lib/auth/guards.ts` in particular turns a one-line future change
-into permanent divergence.
+A table's owner is never subject to its policies unless `FORCE` is on, and a
+role with `BYPASSRLS` is never subject to them at all. On Neon the deploy
+role (`neondb_owner`) **has `BYPASSRLS`**; locally the owner is usually
+`postgres`, a superuser. An app connecting as either sees every row whatever
+the policies say. So at `multi` there are two DSNs:
 
-## Why RLS, not app-layer `where: { orgId }`
+| Variable               | Role                                    | Used by                                                       |
+| ---------------------- | --------------------------------------- | ------------------------------------------------------------- |
+| `DATABASE_URL`         | the app role — `LOGIN NOBYPASSRLS`      | the running app, `db:drift-check`, `smoke:tenancy-isolation`  |
+| `MIGRATE_DATABASE_URL` | the owner (`postgres`, `neondb_owner`…) | `db:migrate:*`, `db:seed`, `db:tenancy:enable\|disable\|role` |
 
-The obvious approach — add `orgId` to every owned model and append
-`where: { orgId }` to every query — has a hole the size of the orchestration
-feature set. **Six modules issue raw SQL** that no Prisma `where` clause can
-touch:
-
-| File                                              | What it does               | Why `where:{orgId}` can't reach it                   |
-| ------------------------------------------------- | -------------------------- | ---------------------------------------------------- |
-| `lib/orchestration/knowledge/search.ts`           | pgvector similarity search | hand-written `$queryRawUnsafe` with vector operators |
-| `lib/orchestration/knowledge/document-manager.ts` | chunk management           | raw `$executeRawUnsafe`                              |
-| `lib/orchestration/knowledge/seeder.ts`           | embedding backfill         | raw SQL                                              |
-| `lib/orchestration/chat/message-embedder.ts`      | message embeddings         | raw `$queryRaw` / `$executeRawUnsafe`                |
-| `lib/orchestration/llm/cost-reports.ts`           | cost aggregation           | raw `$queryRawUnsafe`                                |
-| `lib/db/utils.ts`                                 | health check (`SELECT 1`)  | no tenant data — exempt                              |
-
-App-layer scoping would force you to hand-edit every one of those raw queries
-and trust that no future raw query forgets the filter. **Postgres Row-Level
-Security enforces isolation in the database, below the query API** — it covers
-ORM queries and raw SQL identically, and a forgotten filter fails closed
-instead of leaking. That is why the recipe below is RLS-based. The
-[proof](#the-proof-runnable) demonstrates a raw `SELECT` obeying the policy
-without any app-layer filter.
-
-## Model inventory
-
-The schema has **61 models**. Before adding `orgId` anywhere, classify them —
-**a `createdBy` FK does NOT make a model tenant-owned.** Three categories:
-
-### Tenant-owned — needs isolation
-
-Data that belongs to a specific user/tenant. These get `orgId` + an RLS policy.
-The direct owners (FK `userId` / `createdBy` / `uploadedBy`):
-
-`Account`, `Session`, `AiAgent`, `AiAgentVersion`, `AiAgentEmbedToken`,
-`AiAgentInviteToken`, `AiConversation`, `AiWorkflow`, `AiWorkflowVersion`,
-`AiWorkflowExecution`, `AiWorkflowSchedule`, `AiWorkflowTrigger`,
-`AiKnowledgeDocument`, `AiDataset`, `AiEvaluationSession`, `AiEvaluationRun`,
-`AiExperiment`, `AiApiKey`, `AiUserMemory`, `AiWebhookSubscription`,
-`AiEventHook`, `McpApiKey`.
-
-`AiKnowledgeBase` belongs here too, and is the awkward one: it has **no owner
-column at all** — it is a container whose documents are owned — so nothing marks
-it as tenant data until you decide it is. Leave it global and every tenant shares
-one set of knowledge bases.
-
-Plus **child rows** that hang off the above by FK and have no owner column of
-their own (`AiMessage`, `AiMessageEmbedding`, `AiKnowledgeChunk`,
-`AiConversationShare`, `AiCostLog`, `AiOutboundMessage`, the workflow execution
-children, eval case/log rows, …). You have two choices for these, both valid:
-
-- **Denormalize `orgId` onto each child** and give it its own policy — simplest
-  policy, one extra column per table, must be kept consistent on write.
-- **Join-based policy** referencing the parent's `orgId` — no extra column, but
-  the policy is a subquery and costs a join per check.
-
-The denormalized approach is usually worth it for hot paths (messages, chunks).
-
-### Admin-authored global config — shared, do NOT scope by default
-
-These carry `createdBy`, but it is **provenance** (which admin authored the
-config), not a tenant boundary. They are platform configuration shared across
-all tenants:
-
-`AiProviderConfig`, `AiProviderModel`, `AiCapability`, `AiAgentProfile`,
-`AiAgentCapability`, `FeatureFlag`, `KnowledgeTag`, `McpExposedTool`,
-`McpExposedResource`, `AiOrchestrationSettings` (singleton), `McpServerConfig`
-(singleton).
-
-**Note the MCP split**, because neither "scope everything MCP" nor "scope
-whatever has a `createdBy`" is the right sweep:
-`McpExposedTool` is 1:1 with a global `AiCapability` and `McpExposedResource`
-is a global URI registry — both are the vendor publishing a surface.
-`McpApiKey` is genuinely tenant-owned: a key belongs to its holder.
-
-**`McpExposedPrompt` is the trap.** It carries `createdBy`, and this page's own
-rule in bold above says that is not what makes a model tenant-owned — it is
-provenance, and the FK is nullable `SetNull`. Everything about how the model is
-_used_ is global: `lib/orchestration/mcp/prompt-registry.ts:54` loads every row
-with `isEnabled: true` — no owner key — into a **process-global 5-minute
-cache** served to every MCP client, `name` is `@unique` across the whole
-install, and `MAX_ENABLED_PROMPTS` is a global cap. Scoping it means an `orgId`
-on the registry query, `@@unique([orgId, name])`, and a per-org cache key and
-cap. Until then it is global config that happens to record an author.
-
-Leaving these global is the right default. A fork **may** decide some should be
-tenant-scoped (e.g. per-org provider API keys) — that is a deliberate product
-decision, not a mechanical `orgId` sweep. Treat each as opt-in.
-
-Two of them are not columns you can add an `orgId` to at all:
-`AiOrchestrationSettings` and `McpServerConfig` are singletons
-(`slug @unique @default("global")`) whose every reader — and every process
-cache — is written on "there is exactly one row". And `AiProviderConfig` keys
-its credential off `apiKeyEnvVar`, the _name_ of a process environment
-variable, which has no per-tenant form. Before scoping either, read
-[`multi-tenancy-research.md` §5C](./multi-tenancy-research.md#5c-provider-credentials-and-per-tenant-ai-configuration)
-— it compares six credential models and names the platform-tier seams
-(credential resolver, cache/breaker re-keying) that keep them reachable.
-
-### System / cross-tenant — no tenant owner
-
-`User` (gets tenancy via the additive `Org` + `OrgMembership` join, not an
-`orgId` column), `ContactSubmission` (public form), `DataErasureReceipt` and
-`McpAuditLog` and `AiAdminAuditLog` (audit — the `userId` is the actor, retained
-deliberately), `SeedHistory`, `Verification`, `AuthBootstrap` (the
-first-admin-bootstrap singleton).
-
-### Before you classify: global unique keys
-
-A `@unique` on a would-be tenant-owned table is a tenancy decision hiding as a
-constraint. It stays **global** after you add `orgId`, so two orgs cannot both
-have a knowledge base called `policies` — and the collision surfaces as a write
-error in whichever tenant arrives second, not as a design review. Every such key
-on a table you scope must become `@@unique([orgId, …])` in the same migration.
-
-**Derive this list; do not trust a written one.** The first version of this
-paragraph enumerated two instances and missed four — the same failure this
-whole section warns about:
+`MIGRATE_DATABASE_URL` falls back to `DATABASE_URL` when unset or blank —
+the single-tenant shape. Create the app role **after** migrating (the script
+refuses on a database with no `_prisma_migrations` table; the default
+privileges it sets would otherwise grant the ledger):
 
 ```bash
-grep -n '@unique' prisma/schema/*.prisma   # then cross-reference the tenant-owned list above
+npm run db:migrate:deploy                                   # as the owner; carries the dormant policies
+TENANCY_APP_ROLE_PASSWORD=… npm run db:tenancy:role -- --create
 ```
 
-At the time of writing that yields, on the tenant-owned models above:
-`AiWorkflow.slug`, `AiKnowledgeDocument.slug`, `AiKnowledgeBase.slug`,
-`AiWorkflowExecution.dedupKey` and `AiOutboundMessage.dedupKey`. Add
-`McpExposedPrompt.name` **if** you scope that model — it is classified as global
-config above, and its global `name` namespace is one of the reasons why. Hash
-and token uniques (`AiApiKey.keyHash`, `McpApiKey.keyHash`,
-`AiAgentEmbedToken.token`, …) are not collision-prone and need nothing.
-Routing keys that are global **on purpose** — an agent slug an unauthenticated
-embed resolves before any org context exists — are the exception, and design
-decision 4 covers them.
+The password comes only from the environment, never an argument; the role
+name is `TENANCY_APP_ROLE` (default `sunrise_app`). The script grants
+`USAGE` on the schema, DML on its tables and sequences, and default
+privileges for tables future migrations create — never anything on
+`_prisma_migrations` — and refuses to touch a superuser, a `BYPASSRLS` role,
+a table owner or the role running it. `--drop` reverses it. Details:
+[`isolation.md` → The role split](../tenancy/isolation.md#the-role-split).
 
-> **This inventory is hand-maintained and nothing checks it.** It was short by
-> five non-child models when the control-plane section below was derived from
-> it, and the playbook's own sync checklist tells you to classify new models
-> against it. Making that a build failure rather than a habit is scheduled with
-> row isolation, where `orgId` becomes the thing to derive the classification
-> from. Until then, treat the list as the current state and re-derive it from
-> `prisma/schema/*.prisma` before a retrofit — not as a boundary.
+### 2. Enforce the policies
+
+```bash
+MIGRATE_DATABASE_URL=<owner dsn> npm run db:tenancy:enable
+```
+
+The policies shipped dormant with the schema
+(`20260920120000_org_isolation_policies`); this backfills every `NULL`
+`orgId` to the install org (except a platform admin API key and detached
+cost logs, whose `NULL` is the point), then `ENABLE` + `FORCE ROW LEVEL
+SECURITY` on every tenant-owned table, derived from the generated client —
+a fork's model is covered without registration. It refuses to enable a table
+with no policy (RLS on with no policy is default-deny: an outage), reads the
+flags back, and exits non-zero unless every table is in the requested state.
+Idempotent; a second run prints "no change". `npm run db:tenancy:disable`
+reverses both flags. The script is mode-agnostic — enabling at `single` is
+safe but pointless, and the app would see no rows.
+
+### 3. Flip the mode
+
+Set, for the running app:
+
+```bash
+TENANCY_MODE=multi
+DATABASE_URL=<app role dsn>
+MIGRATE_DATABASE_URL=<owner dsn>
+```
+
+From here every operation on a tenant-owned model runs as
+`$transaction([set_config('app.current_org', <org>, true), op])`, and an
+operation that has no org throws before any SQL.
+
+### 4. Prove it
+
+```bash
+TENANCY_MODE=multi npm run db:drift-check       # as the app role: 9 + 84 tenancy probes green
+```
+
+The T-series asserts every policy exists and RLS is enabled **and forced** on
+every tenant-owned table; at `multi` RLS being off is the failure that reads
+as healthy. Then, **against a throwaway database only** — it seeds and
+deletes two orgs by prefix and refuses to run at `single`:
+
+```bash
+TENANCY_MODE=multi npm run smoke:tenancy-isolation
+```
+
+That is the two-org harness CI runs on every upstream PR as `smoke-multi`
+([`ci.md`](./ci.md#smoke-multi--the-only-control-that-runs-a-policy-107-t-709)),
+as the restricted role: two orgs with equivalent rows, and as A every read
+path — the raw-SQL ones included — answers none of B's. It is the one control
+that actually runs a policy; widening one to `USING (true)` fails 5 of its
+checks and dropping one fails its first create.
+
+### Orderings and re-runs
+
+- **Migrate → role → enable.** The role script needs the ledger; the enable
+  script needs the policies the migrations carry.
+- **After `npm run db:reset`**, run `db:tenancy:role -- --create` again: the
+  reset recreates the schema and the grants go with it (the role survives).
+  The reset's re-seed runs as the owner through `MIGRATE_DATABASE_URL`.
+- **Seeding at `multi`** runs as the owner (`db:seed` reads
+  `MIGRATE_DATABASE_URL`) and lands every built-in row as the install org's.
+- **Turning it off**: `db:tenancy:disable`, then `TENANCY_MODE=single`. The
+  stamped `orgId` columns stay; nothing is lost.
+- **Never `ALTER ROLE … SUPERUSER` / `BYPASSRLS`** on the app role, not even
+  to say `NO`: mentioning either needs a superuser, and the role script never
+  does.
+
+## What a fork adds for its own models
+
+A model of yours that is an org's joins the boundary by carrying the column,
+in the exact shape every core model uses (a back-relation line on `Org` goes
+with it):
+
+```prisma
+orgId String?
+org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+@@index([orgId])
+@@map("app_your_table")   // every core table is snake_case; raw SQL and the policy name the mapped table
+```
+
+`Cascade` for data that is the org's; `SetNull` for a retained record
+(`AiCostLog` is the one core case). That is the whole registration step —
+injection, the setter, the drift probes, the enable script and the harness
+all derive the tenant-owned set from the generated client. In particular,
+**do not register `rlsEnabled` / `policyExists` probes for it** in
+`lib/app/db-drift.ts`: `db:drift-check` already derives both for every
+tenant-owned table; those two factories are for RLS you hand-roll on a table
+outside that set. What remains is what the tests will name until you do it:
+
+| The test that names your model                        | What it wants                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/unit/lib/tenancy/model-classification.test.ts` | Every model is tenant-owned (has `orgId`), on `SYSTEM_MODELS`, or on `GLOBAL_CONFIG_MODELS` (`lib/tenancy/classification.ts`). An unclassified model fails the build. **Never delete from an allowlist to go green** — move deliberately, column change in the same PR.                                                                                                                                                                   |
+| `tests/unit/lib/tenancy/policy-coverage.test.ts`      | Every tenant-owned table has exactly one `org_isolation` policy. Append `orgIsolationPolicySql('<table>')` from `lib/tenancy/isolation.ts` to a **new** migration of yours; never edit one that shipped.                                                                                                                                                                                                                                  |
+| `tests/unit/lib/privacy/org-sources.test.ts`          | Every `orgId` model has a disposition in `lib/privacy/org-sources.ts` — what an org receives from it in `exportOrgData`, or why it is excluded. Never delete a row to pass. **This is a core file, and the one edit a fork cannot avoid today**: the org manifest has no fork seam yet (the subject manifest's `registerAppSubjectSources()` is the shape §109 gives it).                                                                 |
+| `tests/unit/lib/tenancy/org-scoped-slugs.test.ts`     | A tenant-owned model's human-meaningful slug is `@@unique([orgId, slug])`, not a global `@unique`. A routing key that must stay global is an explicit exception in the test, with its reason.                                                                                                                                                                                                                                             |
+| `tests/unit/db-raw-sql-allowlist.test.ts`             | Every `$queryRaw*` / `$executeRaw*` site under `lib/**` and `app/**` is listed (`scripts/**` and migrations are deliberately outside it — they run as the operator's own role, where RLS is not the control). A raw `INSERT` on a tenant-owned table must stamp `orgId` itself — read it off the parent row in the same statement, `(SELECT "orgId" FROM <parent> WHERE id = $1)`, the way the message embedder and the chunk writers do. |
+
+Two more things the tests cannot ask for:
+
+- **A global-config model you decide to scope** (per-org provider keys, say)
+  is a product decision: add the column and remove it from
+  `GLOBAL_CONFIG_MODELS` in the same change. The two singletons
+  (`AiOrchestrationSettings`, `McpServerConfig`) cannot take an `orgId` at
+  all.
+- **An unauthenticated route that names a row** (a signed token, a webhook
+  slug) has no org until it reads the row. Read that one row under
+  `runAsCredentialLookup`, pass its `orgId` and org status through
+  `resolveCredentialOrg`, and run everything else inside `runAsOrg` — the
+  shape the inbound route and the HMAC approval routes use
+  ([`context.md`](../tenancy/context.md#who-enters-it--the-read-rule)). A
+  route that skips this throws at `multi`, which is the design.
+
+Where the code lives is unchanged from the fork tiers: your models in your
+schema file (`prisma/schema/app.prisma`, or a `framework-*.prisma` file for a
+framework fork), your migrations in your own folders, your jobs through
+`lib/app/jobs.ts`, your subject-export dispositions through
+`lib/app/data-export.ts`, a subdomain or path scheme through
+`lib/app/tenant-resolver.ts`
+([`CUSTOMIZATION.md`](../../CUSTOMIZATION.md#the-appplatform-model)). The
+org-export manifest above is the one core file a tenant-owned model of yours
+touches until §109 opens it.
+
+## What the tests catch, and what a merge still checks
+
+A Sunrise release can land code outside your isolation boundary, and the
+merge itself never says so. Most of that is now a build failure, upstream
+and in your fork:
+
+| Change in a release                                                  | Caught by                                                                                                     |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| A new model nobody classified                                        | `model-classification.test.ts`                                                                                |
+| A tenant-owned table without a policy; `migrate dev` dropping one    | `policy-coverage.test.ts`; the T-series in `db:drift-check`                                                   |
+| A new raw-SQL site                                                   | `db-raw-sql-allowlist.test.ts` (it must be admitted; whether it stamps or scopes correctly is the reviewer's) |
+| A global slug on a tenant-owned model                                | `org-scoped-slugs.test.ts`                                                                                    |
+| A model missing from the org export                                  | `org-sources.test.ts`                                                                                         |
+| A create shape the injection misses; a transaction the setter misses | `tests/unit/lib/db/tenancy-extension.test.ts` (real client, recording driver)                                 |
+| Anything the above miss that a real policy would refuse              | `smoke-multi` on every upstream PR — the harness as the restricted role                                       |
+
+What is **not** enforced, and is the per-sync check that remains until §108
+ships its posture declarations:
+
+```bash
+# 1. New process-global state — RLS cannot see a Node heap; is the cache keyed by org, or global by decision?
+git diff <last-sync>..HEAD -- 'lib/**' | grep -nE '^\+.*(new (Map|Set)\(|globalThis)'
+
+# 2. New background jobs — they enter no org unless something gives them one
+git diff <last-sync>..HEAD -- lib/orchestration/maintenance/ lib/orchestration/scheduling/
+```
+
+Then run the harness at `multi` against a throwaway database. An unmodified
+fork gets `smoke-multi` for free — the job's `env` carries the role name,
+the password and both DSNs, none of them secrets. A fork that sets
+`CI_TEST_SCOPE=changed` should confirm the job still runs on its PRs
+([`ci.md`](./ci.md)).
+
+## Gotchas that survive
+
+Each of these was measured, not reasoned; the register in the design record
+has the numbers.
+
+- **`NULLIF` on the GUC is load-bearing.** A custom GUC a `SET LOCAL` once
+  touched reverts to the **empty string** on a pooled connection, not to
+  unset. The policy compares against
+  `NULLIF(current_setting('app.current_org', true), '')`, so a query that
+  forgot the setter sees **nothing** — never a cast error, never everything.
+  The spike below is what caught it.
+- **Per transaction, never per session.** A session-level `SET` persists on
+  the pooled connection and the next borrower inherits the previous tenant.
+  The chokepoint issues `set_config(…, true)` inside a transaction on every
+  operation; **do not hand-roll a `SET app.current_org` in raw SQL**. A
+  transaction pooler (PgBouncer, Neon's pooler) is compatible with this —
+  the setter and the operation share one transaction, so one server
+  connection.
+- **`FORCE` and the owner.** Under `FORCE ROW LEVEL SECURITY` the table
+  owner is subject to the policies too. A data migration that touches
+  tenant-owned rows as a `NOBYPASSRLS` owner would otherwise update zero
+  rows and report success — so it opens with
+  `SELECT set_config('app.bypass_rls', 'on', true)`; Prisma runs each
+  migration in one transaction, so the first statement covers the rest.
+- **The bypass is total.** `runAsSystem(reason)` sets `app.bypass_rls` and
+  sees every org's rows; it is logged at `info` per entry so the audit can
+  count them. `runAsCredentialLookup` is the same bypass for one credential
+  read, logged at `debug`. Nothing else should run inside either.
+- **Nested creates are stamped; raw inserts are not.** The injection walks
+  every write and stamps create-shaped nodes at any depth. A raw `INSERT`
+  stamps itself from the parent row (above). An update payload is never
+  stamped — that would move a row between orgs wherever RLS is not
+  enforcing.
+- **`NULL` `orgId` rows belong to no org.** After enable the only ones left
+  are platform admin API keys and detached cost logs; both are visible to
+  `runAsSystem` and to no org. A row created under `runAsSystem` without an
+  explicit `orgId` is another — it is outside every org and every namespace
+  (Postgres treats `NULL`s as distinct in a unique index).
+- **Enabling at `single` hides everything.** The chokepoint issues no
+  setter there, so the app sees zero rows. Enable only with `multi`.
+- **Neon's deploy role bypasses RLS.** `neondb_owner` inherits `BYPASSRLS`
+  from `neon_superuser`; it is the owner DSN, never the app's. Neon also
+  refuses `DROP OWNED BY`, which is why `--drop` revokes grants first.
+- **Registered app jobs arrive with no tenant** — today, at `multi`, they
+  fail loud (above). When §108 lands the seam gains a `scope` declaration;
+  until then a job of yours that must run at `multi` iterates `forEachOrg`
+  itself and never reaches for `runAsSystem` as the path of least
+  resistance. Two things `forEachOrg` does that a job must want: it
+  **skips suspended orgs** silently (nothing should act for an org that has
+  been switched off — so a sweep that must reach them is a `runAsSystem`
+  job, audited), and it runs the orgs **sequentially**, one scope at a time
+  (per-org caps are meaningless if every org runs at once; map over the ids
+  yourself if you need concurrency).
+- **Per-tenant quotas: register a key resolver, don't fork the middleware.**
+  `registerRateLimitKeyResolver('org', …)` in `lib/app/rate-limit.ts`
+  buckets by anything derivable from the request; derive the identifier from
+  an authenticated principal, never from a value the caller controls
+  ([rate limiting → custom keys](../security/rate-limiting.md)).
 
 ## The control plane: which admin surfaces are whose
 
-Everything above is the **data** plane — which rows exist for whom. This section
-is the **control** plane: which _admin surfaces_ a customer runs and which stay
-the vendor's. A fork adding a customer tier has to split `app/admin/*`, and
-every fork that does it reverse-engineers the same answer.
+Everything above is the **data** plane — which rows exist for whom. This
+section is the **control** plane: which _admin surfaces_ a customer runs and
+which stay the vendor's. It stays on this page because its reader is the
+same fork that enables the capability and then has to decide what a customer
+sees; §111 is the platform work that splits the console along it, and until
+then this is the map.
 
 **The rule, so the table below does not have to be maintained to stay true:**
 
-> A surface belongs to whichever plane its **backing models** sit in, per the
-> inventory above. Tenant-owned models ⇒ the customer's surface. Admin-authored
-> global config and system models ⇒ platform-ops. Where a page reads both, it
-> needs splitting, not assigning.
+> A surface belongs to whichever plane its **backing models** sit in, per
+> `lib/tenancy/classification.ts`. Tenant-owned models ⇒ the customer's
+> surface. `GLOBAL_CONFIG_MODELS` and `SYSTEM_MODELS` ⇒ platform-ops. Where a
+> page reads both, it needs splitting, not assigning.
 
-The mapping is _almost_ 1:1 with the inventory, and the "almost" is the part
-worth reading. The table is a **worked application of the rule against 68 admin
-pages, not an enumeration to keep in sync** — where they disagree, the rule and
-the model inventory win.
+The mapping is _almost_ 1:1 with the classification, and the "almost" is the
+part worth reading. The table is a **worked application of the rule against
+68 admin pages, not an enumeration to keep in sync** — where they disagree,
+the rule and the classification win.
 
 ### Platform-ops — the vendor's
 
@@ -275,14 +377,15 @@ the model inventory win.
 | `orchestration/settings`, `orchestration/mcp/settings`       | The two singletons                                                 |
 | `orchestration/mcp/tools`, `mcp/resources`                   | `McpExposedTool`, `McpExposedResource`                             |
 | `users`, `users/[id]`, `users/invite`                        | `User` — tenancy arrives via the `Org` join, not an `orgId` column |
+| `/api/v1/admin/orgs` (API only; no page yet)                 | `Org` — the vendor's acts: create, suspend, export, delete         |
 | `logs`, `orchestration/audit-log`, `orchestration/mcp/audit` | Audit models — the actor is retained deliberately                  |
 | `orchestration/learn`                                        | Static content, no data                                            |
 
 Credentials are the hard stop, not a preference: `AiProviderConfig` keys its
-credential off `apiKeyEnvVar` — the _name_ of a process environment variable —
-which has no per-tenant form. Design decision Q3 keeps every model in this
-group global in v1, with one consequence worth restating: **one embedding model
-per install**, because vector dimension is a schema property.
+credential off `apiKeyEnvVar` — the _name_ of a process environment variable
+— which has no per-tenant form. Design decision Q3 keeps every model in this
+group global in v1, with one consequence worth restating: **one embedding
+model per install**, because vector dimension is a schema property.
 
 ### The customer's
 
@@ -307,156 +410,64 @@ customer console that leaks an aggregate.
 - **`orchestration` (dashboard) and `overview`** — headline counts over both
   planes. Split the query, not the page.
 - **`orchestration/costs`** — the _settings_ are the global singleton
-  (platform-ops); the _spend_ is `AiCostLog`, per-tenant. Design decision Q10
-  gives that model a durable `userId` and an `orgId` precisely so this page can
-  be split.
-- **`orchestration/analytics`** — topics, unanswered questions, engagement and
-  content gaps are all derived from `AiConversation`. Tenant data presented as a
-  global roll-up: the _page_ is a customer's, the vendor's version of it is a
-  different query.
-- **`orchestration/executions`** — the one that looks cleanly splittable and is
-  not. `app/admin/orchestration/executions/page.tsx` fans three reads —
-  `getExecutions()` (`AiWorkflowExecution`, the customer's), `getInitialSnapshot()`
-  (live-engine lease state, process-global) and `getOrchestrationSettings()` (the
-  global singleton, for the stuck-step threshold) — and renders the live-engine
-  dashboard **above** the table on the same page. `executions/live` is a deeper
-  view of the same platform-ops data, not a separable surface. Assign the list to
-  a customer console and the engine state and settings singleton ship with it.
-- **`orchestration/mcp/prompts`** — looks like a customer's, and is not one
-  yet. `McpExposedPrompt` is served from a process-global cache to every MCP
-  client, with a global `name` namespace and a global enabled-cap, so shipping
-  this page in a customer console publishes one tenant's prompt to all of them,
-  lets each edit and delete the others', and lets one exhaust the cap for
-  everyone. Assign it to the customer only after scoping the model.
-- **`orchestration/mcp` (landing) and `mcp/sessions`** — sit above both halves
-  of the MCP split above.
+  (platform-ops); the _spend_ is `AiCostLog`, per-tenant (`orgId`, `SetNull`
+  on org erasure so the vendor's billing record survives the tenant).
+- **`orchestration/analytics`** — topics, unanswered questions, engagement
+  and content gaps are all derived from `AiConversation`. Tenant data
+  presented as a global roll-up: the _page_ is a customer's, the vendor's
+  version of it is a different query.
+- **`orchestration/executions`** — the one that looks cleanly splittable and
+  is not. `app/admin/orchestration/executions/page.tsx` fans three reads —
+  `getExecutions()` (`AiWorkflowExecution`, the customer's),
+  `getInitialSnapshot()` (live-engine lease state, process-global) and
+  `getOrchestrationSettings()` (the global singleton, for the stuck-step
+  threshold) — and renders the live-engine dashboard **above** the table on
+  the same page. `executions/live` is a deeper view of the same platform-ops
+  data, not a separable surface.
+- **`orchestration/mcp/prompts`** — looks like a customer's, and is not one.
+  `McpExposedPrompt` is on `GLOBAL_CONFIG_MODELS`: its `createdBy` is
+  provenance, `prompt-registry.ts` serves every enabled row from a
+  process-global cache to every MCP client, `name` is unique across the
+  install, and the enabled cap is global. Shipping this page in a customer
+  console publishes one tenant's prompt to all of them. Assign it to the
+  customer only after scoping the model (column, `@@unique([orgId, name])`,
+  per-org cache key and cap).
+- **`orchestration/mcp` (landing) and `mcp/sessions`** — sit above both
+  halves of the MCP split.
 
 ### Why the URL tree is not the answer
 
-The obvious implementation — gate `app/admin/*` by prefix — does not work, and
-`orchestration/mcp/*` is the proof: `keys` is a customer's, `tools`,
-`resources` and `settings` are the vendor's, and `prompts` is neither until the
-model behind it is scoped — three answers inside one nav section.
-Route the decision through the authorization policy
+The obvious implementation — gate `app/admin/*` by prefix — does not work,
+and `orchestration/mcp/*` is the proof: `keys` is a customer's, `tools`,
+`resources` and `settings` are the vendor's, and `prompts` is neither until
+the model behind it is scoped — three answers inside one nav section. Route
+the decision through the authorization policy
 ([`.context/auth/authorization.md`](../auth/authorization.md)) with a `tier`
 input, and let each surface answer for itself.
 
 ### The within-tenant axis
 
-This section splits surfaces between the **vendor and the customer**. Splitting
-rows _within_ one customer — one leader sees only the questionnaires they
-created — is the orthogonal ownership axis (#367), and it is enforced in the
-application by `subjectScope` / `canRead`, not by RLS. The distinction matters
-because the enforcement differs in kind: a query that forgets its org `where`
-returns **zero** rows under RLS, while a query that forgets its owner filter
-returns **everyone's**. See
+This section splits surfaces between the **vendor and the customer**.
+Splitting rows _within_ one customer — one leader sees only the
+questionnaires they created — is the orthogonal ownership axis (#367),
+enforced in the application by `subjectScope` / `canRead`, not by RLS; its
+data-layer form is §115. The distinction matters because the enforcement
+differs in kind: a query that forgets its org context **throws** at `multi`
+before any SQL (and if anything ever reached Postgres without the setter,
+the policies would answer zero rows), while a query that forgets its owner
+filter returns **everyone's in the org**. See
 [the leak, stated plainly](../auth/authorization.md#the-leak-stated-plainly).
 
-## The retrofit recipe
-
-1. **Add tenancy tables** — `Org` and `OrgMembership` (join `User` ↔ `Org` with
-   a role). Put the active org id in the session (better-auth supports custom
-   session fields). This is purely additive — existing single-tenant rows are
-   unaffected. **Fork placement:** your own schema file, never a core one.
-   **Two obligations `CLAUDE.md` imposes on any new model with a `userId` FK**
-   apply here: declare an explicit `onDelete` (`Cascade` for `OrgMembership`,
-   which is personal data; `SetNull` for anything you retain as audit) — the
-   default is `Restrict`, which silently breaks GDPR erasure — and give the model
-   an export disposition. Core models go in `SUBJECT_DATA_SOURCES`; **your** models
-   go in `collectAppSubjectData` (`lib/app/data-export.ts`), which
-   `exportUserData()` already folds into the export bundle.
-2. **Add `orgId`** to each tenant-owned model from the inventory, backfill
-   existing rows to a default org, then make it `NOT NULL`. Decide
-   denormalize-vs-join for child rows. This is the step that edits **core**
-   schema files, so keep the diff mechanical — one `orgId` field plus one
-   `@@index` per model and nothing else — and the sync conflict stays a
-   two-minute "keep both" instead of a re-read of upstream's model changes.
-   Composite uniques (`@@unique([orgId, slug])`) ride the same migration.
-3. **Create a non-superuser application role.** The app connects as a role with
-   **no** `BYPASSRLS`. Migrations and seeds connect as a separate privileged
-   role (see the bypass note in [Gotchas](#gotchas)). This split is the whole
-   point — a role that bypasses RLS defeats it. The split is by **execution
-   context**, not by two Prisma datasources: the running app gets the restricted
-   role in `DATABASE_URL`, while `db:migrate:*` and `db:seed` run with
-   `DATABASE_URL` pointing at the privileged role. Declare the second DSN as a
-   fork env var through `appEnvSchema` (`lib/app/env.ts`) so it is validated and
-   documented rather than passed ad hoc in a deploy script.
-4. **Enable RLS + policies** on each owned table (pattern below). RLS via a raw
-   migration; Prisma does not model policies, so this lives in a hand-written
-   migration alongside your existing pgvector index migrations. Because Prisma
-   cannot model them, policies are **Prisma-unmodelled objects** in the same
-   class as those pgvector indexes — `prisma migrate dev` emits `DROP` for
-   objects it cannot represent. Register a drift probe per policy in the same
-   change ([below](#keeping-the-retrofit-alive-across-upstream-syncs)); without
-   one, a routine `migrate dev` leaves a green test suite over an unprotected
-   database.
-5. **Wrap the client** so every tenant-scoped request runs inside a
-   `$transaction` that first sets `app.current_org` with `SET LOCAL` (pattern
-   below). Replace the `TENANCY_MODE=multi` guard in `lib/db/client.ts` with
-   this wrapper — the one core edit upstream sanctions. `withOrg` needs an
-   `orgId` from somewhere, and **there is no ambient tenant context in the
-   codebase**: see
-   [research §5A.1](./multi-tenancy-research.md#5a1-the-prerequisite-there-is-no-tenant-context-to-pass)
-   before assuming route handlers can just pass one down and background jobs
-   will sort themselves out.
-6. **Delete the seam guard** and flip `TENANCY_MODE=multi`.
-
-## The proven RLS pattern
-
-### Policy (per owned table)
-
-```sql
-ALTER TABLE "AiConversation" ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY org_isolation ON "AiConversation"
-  USING ("orgId" = NULLIF(current_setting('app.current_org', true), '')::uuid);
-```
-
-- `current_setting('app.current_org', true)` — the `true` is `missing_ok`: it
-  returns `NULL` instead of erroring when the GUC was never set.
-- `NULLIF(..., '')` — **load-bearing, do not drop it.** Once any `SET LOCAL`
-  touches this custom GUC on a pooled connection, it reverts to an **empty
-  string** after the transaction, not to unset. Without `NULLIF`, the next
-  unscoped query on that recycled connection crashes casting `''::uuid`
-  (`invalid input syntax for type uuid: ""`) instead of cleanly returning zero
-  rows. The spike below caught exactly this.
-
-### Setting the tenant context — per transaction, never per session
-
-```typescript
-// The wrapper a fork adds in lib/db/client.ts. Every tenant-scoped call runs
-// through this; the SET LOCAL is scoped to the transaction and cannot outlive it.
-export async function withOrg<T>(
-  orgId: string,
-  fn: (tx: Prisma.TransactionClient) => Promise<T>
-): Promise<T> {
-  return prisma.$transaction(async (tx) => {
-    // parameterized — never string-interpolate the org id
-    await tx.$executeRaw`SELECT set_config('app.current_org', ${orgId}, true)`;
-    return fn(tx);
-  });
-}
-```
-
-`set_config(..., true)` is the function form of `SET LOCAL` (the trailing
-`true` = local to the transaction). Use it with a tagged template so the org id
-is bound, not interpolated.
-
-> **Why per-transaction and not per-session?** The `pg` pool recycles physical
-> connections between requests. A session-level `SET` persists on the connection
-> after it is returned to the pool, so the **next** request to borrow that
-> connection inherits the previous tenant's context — a cross-tenant data leak.
-> `SET LOCAL` / `set_config(...,true)` is bound to the transaction and released
-> at `COMMIT`/`ROLLBACK`, so nothing leaks onto the recycled connection.
-
-### The proof (runnable)
+## The proof (runnable)
 
 [`scripts/spikes/rls-isolation-spike.mjs`](../../scripts/spikes/rls-isolation-spike.mjs)
-is a standalone, throwaway script (no migration, not wired into the app) that
-demonstrates all of the above against real Postgres. Run it:
+is the original, standalone spike — bare `pg`, one table, no migration, not
+wired into the app — that established the two rules the shipped policy is
+built on: per-transaction scoping, and `NULLIF` on the GUC. It is kept
+runnable because it is the shortest demonstration of the leak that exists:
 
 ```bash
-# against a throwaway container
+# against a throwaway container (NEVER the dev or production database)
 docker run -d --name sunrise-rls-spike -e POSTGRES_PASSWORD=postgres -p 5433:5432 pgvector/pgvector:pg15
 node scripts/spikes/rls-isolation-spike.mjs
 
@@ -485,173 +496,44 @@ Verified output:
 
 The FIX block's `req#1` uses a raw `SELECT` — the same shape as the
 `$queryRawUnsafe` pgvector search in `knowledge/search.ts` — and it obeys the
-policy with no app-layer filter. That is the case app-layer scoping can't cover.
+policy with no app-layer filter. That is the case app-layer scoping cannot
+cover, and why the capability is RLS-based.
 
-## Gotchas
-
-- **Per-transaction, not per-session** — the headline leak above. This is the
-  single thing most RLS-on-pooled-Prisma attempts get wrong.
-- **`NULLIF` on the GUC** — the empty-string-revert crash above. The naive
-  `current_setting('app.current_org', true)::uuid` policy works in a first
-  request and then crashes the second on a recycled connection.
-- **Bypass role for migrations/seed/admin.** A superuser, or any role with
-  `BYPASSRLS`, ignores policies entirely (the spike's "BYPASS PATH" proves it).
-  Run migrations and seeds as that role; run the **app** as a role without it.
-  Table owners also bypass their own RLS unless you `ALTER TABLE … FORCE ROW
-LEVEL SECURITY`, so do not let the app role own the tenant tables.
-- **PgBouncer in transaction mode.** Transaction-pooling poolers hand a
-  different server connection per transaction, which is _compatible_ with the
-  per-transaction `SET LOCAL` pattern (the SET and the queries share one
-  transaction = one server connection). But a session-level `SET` would be even
-  more broken behind PgBouncer than behind the `pg` pool. Stay per-transaction.
-- **Connection-level GUC defaults don't help.** You cannot set `app.current_org`
-  at connect time and rely on it — the pool's connections are shared. The org
-  must be established inside the request's transaction every time.
-- **Fork gotcha: registered app jobs arrive with no tenant.** `lib/app/jobs.ts`
-  runs your job on the existing maintenance tick, and that tick has no org — so
-  `withOrg` has nothing to read and a bare query sees zero rows (or, on a
-  privileged role, everything). Iterate orgs explicitly inside the job and open
-  one `withOrg` transaction per org. The path of least resistance is to run jobs
-  on the bypass role; that silently undoes the isolation guarantee for the half
-  of the system that runs unattended, and nothing detects it.
-- **Per-tenant quotas: register a key resolver, don't fork the middleware.**
-  `registerRateLimitKeyResolver('org', ...)` in `lib/app/rate-limit.ts` buckets
-  requests by anything you can derive from the request, so an org-scoped _key_
-  needs no edit to `lib/security/`. Derive the identifier from an authenticated
-  principal, or from a value the resolver verifies — a caller who controls the
-  identifier mints a fresh bucket per request and walks past the cap.
-  Compositing with `getClientIP()` is not a substitute: it bounds who _shares_
-  a bucket, not how many one caller can _mint_. See
-  [rate limiting → custom keys](../security/rate-limiting.md).
-- **Fork gotcha: a registry seam is only as open as its narrowest type.**
-  The case above was this shape until 2026-09-01: `lib/app/rate-limit.ts` let
-  you register org-scoped _rules_ while `RateLimitKey` stayed a closed union, so
-  the seam looked open and the thing per-tenant quotas actually need was
-  unreachable. That instance is fixed; the shape is not rare. Audit the other
-  seams you plan to lean on for it before you commit to them
-  ([research §8](./multi-tenancy-research.md#the-ratelimitkey-case-study)).
-
-## Keeping the retrofit alive across upstream syncs
-
-Your isolation boundary is correct against the release you built it on. Upstream
-ships single-tenant and runs no policy tests, so any release can add a model, a
-raw SQL site, a process-global cache or a background job that lands **outside**
-the boundary — and nothing in the merge signals it. Treat the following as part
-of merging a Sunrise release, alongside the migration reconciliation in
-[`CUSTOMIZATION.md` §9](../../CUSTOMIZATION.md#9-staying-in-sync-with-upstream-sunrise).
-
-**Per-sync checklist.** Four diffs and one test run:
-
-```bash
-# 1. New models — classify each against the inventory above before shipping
-git diff <last-sync>..HEAD -- prisma/schema/ | grep -E '^\+model '
-
-# 2. New raw SQL — each is a query only RLS can cover, no `where` clause reaches it
-git diff <last-sync>..HEAD -- 'lib/**' | grep -nE '^\+.*\$(queryRaw|executeRaw)'
-
-# 3. New process-global state — plane 3; RLS cannot see a Node heap at all
-git diff <last-sync>..HEAD -- 'lib/**' | grep -nE '^\+.*(new (Map|Set)\(|globalThis)'
-
-# 4. New background jobs — they run with no tenant context unless you give them one
-git diff <last-sync>..HEAD -- lib/orchestration/maintenance/ lib/orchestration/scheduling/
-```
-
-Then run your two-tenant leakage harness. If you have not written one, write it
-before the second sync — it is the only check that fails when one of the four
-above is missed, and it is the cheapest thing on the list.
-
-**Automate the part that can be automated.** Policies belong in the drift-probe
-registry that already exists for the pgvector indexes: `lib/app/db-drift.ts` is
-fork-owned scaffold, `registerAppDriftProbe()` accepts any
-`Probe` (`() => Promise<{ ok, note? }>`), and `npm run db:drift-check` runs in CI
-and in `/pre-pr`. [`lib/db/drift-probes.ts`](../../lib/db/drift-probes.ts) ships
-`rlsEnabled(table)` and `policyExists(table, policy)` factories, so each
-protected table is two one-liners — register **both**: a policy can exist while
-RLS is disabled, and RLS can be enabled with the policy dropped.
-
-```typescript
-// lib/app/db-drift.ts — fork-owned scaffold, merges cleanly forever
-registerAppDriftProbe({
-  name: 'RLS enabled+forced on AiConversation',
-  kind: 'RLS posture',
-  table: 'AiConversation',
-  probe: rlsEnabled('AiConversation'), // asserts ENABLE and FORCE; see its JSDoc to waive FORCE
-});
-registerAppDriftProbe({
-  name: 'RLS org_isolation on AiConversation',
-  kind: 'RLS policy',
-  table: 'AiConversation',
-  probe: policyExists('AiConversation', 'org_isolation'),
-});
-```
-
-Better still, derive the list instead of hand-maintaining it: a test that parses
-`prisma/schema/**` for models carrying `orgId` and asserts RLS is enabled with a
-policy on each. That is the enforcement shape `CLAUDE.md` already mandates for
-the privacy export manifest, it fails loudly, and it survives the author leaving
-— which a checklist does not. See
-[research §12](./multi-tenancy-research.md#12-documentation-drift).
-
-## The `TENANCY_MODE` seam
-
-[`lib/db/client.ts`](../../lib/db/client.ts) contains:
-
-```typescript
-if (env.TENANCY_MODE === 'multi') {
-  throw new Error('TENANCY_MODE=multi is not implemented by the Sunrise template. …');
-}
-```
-
-This is the documented extension point. A fork replaces the guard with the
-`withOrg` wrapper (or equivalent) and exposes the tenant-scoped client, then
-flips `TENANCY_MODE=multi`. Until that work is done the guard makes the failure
-obvious instead of silent. See [`lib/env.ts`](../../lib/env.ts) for the env
-declaration.
+**How the shipped shape differs from the spike**, so the output above is not
+read as the current policy: the real `org_isolation` policy has a **bypass
+arm** (`current_setting('app.bypass_rls', true) = 'on'`) and a `WITH CHECK`
+clause, compares `orgId` as text (ids are cuids, not uuids), and is
+enforced with `FORCE`. The second spike — `rls-chokepoint-spike.ts`, run
+with the real generated client against a migrated database — is what
+settled the chokepoint's shape (transactions, raw SQL, nested creates, the
+pooler, `FORCE` versus the migrate role, the derived roster); its findings
+are the [Spike register](./multi-tenancy-design.md#spike-register), and the
+two-org harness `scripts/smoke/tenancy-isolation.ts` is what has replaced
+both as the standing proof.
 
 ## Related
 
-- [`multi-tenancy-research.md`](./multi-tenancy-research.md) — **the gap
-  analysis around this playbook.** This document covers row isolation (the data
-  plane) and covers it in build-ready detail. The research document maps the
-  other four isolation planes — namespace, process, temporal, external — plus
-  the control plane (#366/#367) and the commercial plane, and assigns each gap
-  to platform-tier or fork-tier. Read it before scoping a retrofit; read this
-  one when you are building it.
-- [`.context/auth/authorization.md`](../auth/authorization.md) — **the control
-  plane's decision seam.** The section above says which admin surfaces split;
-  that document is the policy they route through, the owner-scoped list recipe
-  for the within-tenant axis, and an honest list of the read paths still
-  deciding from the platform role inline.
+- [`.context/tenancy/isolation.md`](../tenancy/isolation.md) — the policy,
+  the switch, the role split, the drift probes; the reference this page
+  summarises.
+- [`.context/tenancy/context.md`](../tenancy/context.md) — who enters the
+  org, the read rule, `runAsSystem` / `runAsCredentialLookup` / `forEachOrg`,
+  the data layer.
+- [`.context/tenancy/identity.md`](../tenancy/identity.md) — `Org` /
+  `OrgMembership`, the install-org invariant, credentials, what a fork may
+  add to the org model.
+- [`multi-tenancy-design.md`](./multi-tenancy-design.md) — the decisions,
+  principles, target architecture and the spike register; what a fork gets
+  and owns; merge impact.
+- [`multi-tenancy-research.md`](./multi-tenancy-research.md) — the gap
+  analysis: five isolation planes, the topology choice, residency and
+  provider-credential asks, the fork contract.
+- [`.context/auth/authorization.md`](../auth/authorization.md) — the policy
+  the control-plane split routes through; the within-tenant ownership axis.
+- [`.context/architecture/ci.md`](./ci.md#smoke-multi--the-only-control-that-runs-a-policy-107-t-709)
+  — the `smoke-multi` job step by step, and what a fork must supply.
 - [`.context/privacy/data-erasure.md`](../privacy/data-erasure.md) — the
-  cascade/`SetNull` `onDelete` graph built for GDPR erasure **is** the
-  org-delete dependency graph a fork needs for tearing down a tenant.
-- [`multi-tenancy-research.md` §14](./multi-tenancy-research.md#14-the-recommendation)
-  — **the position, rather than the analysis.** Start here if you want the
-  short answer before the survey.
-- [`multi-tenancy-research.md` §5A](./multi-tenancy-research.md#5a-topology-and-the-prerequisite-nobody-costed)
-  — **read before starting this retrofit.** Two things this playbook assumes.
-  First, a tenant context to scope by: there is no `AsyncLocalStorage` anywhere,
-  so `withOrg(orgId, …)` has nowhere to get its `orgId` outside a route handler,
-  and background jobs cannot get one at all. Second, that pooled-with-RLS is the
-  right topology — a real three-way choice, not a default. **Schema-per-tenant
-  reuses this playbook's per-transaction `set_config` discipline unchanged while
-  removing plane 2, the `orgId` migration and the policy-coverage burden**; and
-  a cell is what Sunrise already ships.
-- [`multi-tenancy-research.md` §5B](./multi-tenancy-research.md#5b-data-handling-residency-and-storage-flexibility)
-  — **read this before promising a tenant their own storage arrangement.** RLS
-  covers rows in _this_ database; it says nothing about buckets, regions,
-  customer-managed keys, a second database, or where inference happens. The
-  section grades those as a six-rung ladder with an honest verdict on each, and
-  points out that most such requests are really portability requests.
-- [`.context/orchestration/retention.md`](../orchestration/retention.md) —
-  retention/pruning is per-data-class today; a fork would scope it per-org.
+  cascade graph `eraseOrg` relies on.
 - [`CUSTOMIZATION.md` §9](../../CUSTOMIZATION.md#9-staying-in-sync-with-upstream-sunrise)
-  — how a fork merges a Sunrise release generally; the
-  [sync checklist](#keeping-the-retrofit-alive-across-upstream-syncs) above is
-  the tenancy-specific addition to it.
-- [`multi-tenancy-research.md` §8](./multi-tenancy-research.md#8-downstream-fork-considerations)
-  — **the fork contract.** The eighteen-file merge surface, the `lib/app/*` seams
-  that absorb MT work today, the provisions upstream should ship to shrink that
-  surface, and the seam-design principles to follow if you build one locally
-  first.
-- [`architecture/overview.md`](./overview.md) — the single-tenant baseline.
+  — merging a Sunrise release generally; the two greps above are the
+  tenancy-specific addition.

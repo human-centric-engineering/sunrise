@@ -20,7 +20,7 @@ A frequent positioning conversation starts with "wait, is this like X?" — wher
 
 - A full-stack Next.js 16 application with agent orchestration baked in — the entire app is the artefact, not just the engine.
 - Self-hosted. You own the codebase and operate the deployment.
-- Single-tenant per deployment by default. One organisation, one Sunrise; multi-tenancy is achieved by running separate instances. (A documented retrofit path exists for forks that need in-deployment multi-tenancy — `TENANCY_MODE` env var, an inert seam at `lib/db/client.ts`, and a Postgres-RLS playbook at `.context/architecture/multi-tenancy.md`. Since §107 the data layer scopes every query to the org the request entered at `multi` and refuses one that entered none, so a half-finished bring-up fails loud rather than running unscoped queries.)
+- Single-tenant per deployment by default. One organisation, one Sunrise; multi-tenancy is achieved by running separate instances. (In-deployment multi-tenancy is an opt-in capability — `TENANCY_MODE=multi`, a restricted database role and `db:tenancy:enable`; the enablement guide is `.context/architecture/multi-tenancy.md`. Since §107 the data layer scopes every query to the org the request entered at `multi` and refuses one that entered none, so a half-finished bring-up fails loud rather than running unscoped queries.)
 - Provider-agnostic. Eight LLM provider families with circuit breakers and fallback chains; switching is a config change, not a code change.
 - Citation-grounded. Inline numbered citations flow through API, chat, and embed widget; an opt-in guard blocks ungrounded responses.
 - Budget-capped inside the execution loop — agents that exceed their monthly budget literally cannot spend more.
@@ -36,7 +36,7 @@ A frequent positioning conversation starts with "wait, is this like X?" — wher
 - A Python framework, notebook tool, or research toolkit. The codebase is TypeScript / Next.js end-to-end.
 - A library you embed in someone else's application — Sunrise _is_ the application.
 - Vendor-locked to OpenAI, AWS, Azure, or any cloud.
-- A multi-tenant SaaS out of the box. The schema and in-memory state assume one organisation per deployment. (The playbook in `.context/architecture/multi-tenancy.md` describes the retrofit path — it's a deliberate fork-time decision, not a runtime flag.)
+- A multi-tenant SaaS out of the box. The schema and in-memory state assume one organisation per deployment. (Row isolation can be switched on — `.context/architecture/multi-tenancy.md` — but tenant-aware background work, quotas and the org-admin console are still to ship, so it is not yet a SaaS out of the box.)
 - A chatbot toolkit or no-code platform. The centre of gravity is a code-first, type-safe platform that engineers extend.
 
 These boundaries are deliberate — see `architectural-decisions.md` for the rationale behind each one.

@@ -35,10 +35,13 @@
  *
  * Available probe factories from `@/lib/db/drift-probes`: `indexExists`,
  * `constraintExists` (optional definition-substring assertion), `columnExists`,
- * `generatedColumnExists`, and — for a multi-tenancy retrofit — `rlsEnabled`
- * (asserts ENABLE and, by default, FORCE) plus `policyExists`. Register BOTH
- * of those per RLS-protected table: a policy can exist while RLS is disabled,
- * and vice versa. For a `GENERATED ALWAYS` column use `generatedColumnExists` —
+ * `generatedColumnExists`, plus `rlsEnabled` (asserts ENABLE and, by default,
+ * FORCE) and `policyExists`. You do NOT need the last two for a model that
+ * carries `orgId`: `db:drift-check` already derives both probes for every
+ * tenant-owned table (`tenancyDriftProbes`, §107), yours included. They are
+ * for RLS you hand-roll on a table OUTSIDE that set — and then register BOTH
+ * per table: a policy can exist while RLS is disabled, and vice versa. For a
+ * `GENERATED ALWAYS` column use `generatedColumnExists` —
  * `columnExists` passes on a plain column of the same name, which is never
  * populated, so the check goes green while the feature is silently broken.
  *
