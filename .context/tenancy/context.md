@@ -425,8 +425,9 @@ the event-hook cache a minute of every org dispatching one org's webhooks.
 - [`tests/unit/lib/tenancy/resolver.test.ts`](../../tests/unit/lib/tenancy/resolver.test.ts)
   — the registry, including a throwing resolver answering `null`.
 - [`tests/unit/lib/tenancy/process-state.test.ts`](../../tests/unit/lib/tenancy/process-state.test.ts)
-  — the posture manifest against the `lib/` tree, both directions, with five
-  self-tests proving the scanner can report before a clean result is trusted.
+  — the posture manifest against the `lib/` tree, both directions, preceded by
+  a block of self-tests proving the scanner can report before a clean result
+  is trusted (each one is a shape that fooled an earlier version of it).
 - [`tests/unit/lib/orchestration/hooks/registry.tenancy.test.ts`](../../tests/unit/lib/orchestration/hooks/registry.tenancy.test.ts)
   — two orgs through the real context: each dispatches its own hook, signed
   with its own secret, verified against the real signing scheme.

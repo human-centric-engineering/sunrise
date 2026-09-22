@@ -705,7 +705,20 @@ let keyRateLimitCacheAt = 0;
  * Same shape as `model-registry-db-hydrate.ts`.
  */
 let keyRateLimitRefresh: Promise<void> | null = null;
+/**
+ * The earliest a failed refresh may be retried.
+ *
+ * The freshness stamp is only written on success, so without this a failing
+ * query is re-attempted by EVERY request — the latch dedupes concurrent
+ * refreshes, not serial ones — and each attempt is an audited bypass with its
+ * own `info` line. A pool exhausted for a minute under load would emit one
+ * per request, which is the drowning the latch exists to prevent, arriving by
+ * the other door. Thirty seconds rather than the full TTL: a transient blip
+ * should not cost five minutes of every org's overrides.
+ */
+let keyRateLimitRetryAt = 0;
 const KEY_RATE_CACHE_TTL = 5 * 60 * 1000;
+const KEY_RATE_FAILURE_BACKOFF_MS = 30 * 1000;
 
 async function loadKeyRateLimits(): Promise<void> {
   const { prisma } = await import('@/lib/db/client');
@@ -737,6 +750,7 @@ export function __resetKeyRateLimitCacheForTests(): void {
   keyRateLimitCache = new Map<string, number | null>();
   keyRateLimitCacheAt = 0;
   keyRateLimitRefresh = null;
+  keyRateLimitRetryAt = 0;
 }
 
 /**
@@ -747,11 +761,13 @@ export function __resetKeyRateLimitCacheForTests(): void {
  * Before this it had nowhere to go at all: an unhandled rejection.
  */
 function refreshKeyRateLimits(): void {
-  if (keyRateLimitRefresh) return;
+  if (keyRateLimitRefresh || Date.now() < keyRateLimitRetryAt) return;
   keyRateLimitRefresh = loadKeyRateLimits()
     .catch((err: unknown) => {
+      keyRateLimitRetryAt = Date.now() + KEY_RATE_FAILURE_BACKOFF_MS;
       logger.warn('MCP per-key rate-limit overrides could not be refreshed', {
         error: err instanceof Error ? err.message : String(err),
+        retryInMs: KEY_RATE_FAILURE_BACKOFF_MS,
       });
     })
     .finally(() => {

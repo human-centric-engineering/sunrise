@@ -20,8 +20,9 @@
  * }
  * ```
  *
- * Tenancy posture: shared-by-decision — section tiers over the shared store
- * (lib/tenancy/process-state.ts).
+ * Tenancy posture: shared-by-decision for the section and per-flow limiters,
+ * each keyed by the caller rather than the org and each holding its own LRU;
+ * row-keyed for the two dynamic limiters (lib/tenancy/process-state.ts).
  */
 
 import { LRUCache } from 'lru-cache';

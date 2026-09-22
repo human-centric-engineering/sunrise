@@ -61,6 +61,31 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
+/**
+ * The org part of the key when the call stack names no org.
+ *
+ * Only reachable at `single`, where there IS one org and the partition is
+ * therefore honest. Under `runAsSystem` — which also has no org — the entry
+ * is not cached at all (see {@link isSystemScope}), because the bypass would
+ * merge every org's rows into one body and this key would then serve it to
+ * the next caller.
+ */
+const NO_ORG_KEY = '-';
+
+/**
+ * Is this call stack the audited system scope — entered, but naming no org?
+ *
+ * Distinct from "nothing entered a context", which at `single` resolves to
+ * the one org there is. `lib/orchestration/hooks/registry.ts` refuses this
+ * scope outright for the same reason; here the read is allowed and only its
+ * caching is refused, because `buildContext` sits on the chat turn's critical
+ * path and has no caller under a system scope to break.
+ */
+function isSystemScope(): boolean {
+  const context = getTenantContext();
+  return context !== null && context.orgId === null;
+}
+
 function cacheKey(type: string, id: string, userId?: string): string {
   // The org comes FIRST, and it is not optional (§108 t-712, review round 1).
   // `type` and `id` both arrive from the request, and the entries they key
@@ -76,7 +101,7 @@ function cacheKey(type: string, id: string, userId?: string): string {
   // space is unchanged in shape. An unentered context (`null`) keys as `-`
   // rather than throwing: `buildContext` is on the chat turn's critical path,
   // and at `multi` the read inside it fails on its own terms anyway.
-  const orgId = getTenantContext()?.orgId ?? '-';
+  const orgId = getTenantContext()?.orgId ?? NO_ORG_KEY;
   // Empty `userId` collapses to a single shared partition per org
   // (`org:type:id:`), which is byte-for-byte the pre-widening key space.
   return `${orgId}:${type}:${id}:${userId ?? ''}`;
@@ -187,7 +212,7 @@ export async function buildContext(
   request: ContextRequest = {}
 ): Promise<string> {
   const key = cacheKey(type, id, request.userId);
-  const hit = cache.get(key);
+  const hit = isSystemScope() ? undefined : cache.get(key);
   if (hit && hit.expiresAt > Date.now()) {
     return hit.value;
   }
@@ -297,7 +322,7 @@ export async function buildContext(
 
   const framed = formatLockedContext(type, id, body);
 
-  if (cacheable) {
+  if (cacheable && !isSystemScope()) {
     // Evict oldest entry if cache is at capacity
     if (cache.size >= CONTEXT_CACHE_MAX_SIZE) {
       const oldest = cache.keys().next().value;

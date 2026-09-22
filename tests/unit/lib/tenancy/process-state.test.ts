@@ -29,10 +29,10 @@
  * ---------------------------------------------------------------------------
  * WHAT THE SCANNER MATCHES, AND WHAT IT DELIBERATELY DOES NOT
  * ---------------------------------------------------------------------------
- * Calibrated against this tree (105 holders in 66 files at the time of
- * writing; the manifest declares 108, the extra three being shapes below
- * that it cannot see), then narrowed until it had no false positives. It
- * matches, at
+ * Calibrated against this tree, then narrowed until it had no false
+ * positives. Deliberately no holder COUNT is quoted here: one in a comment is
+ * a measurement that rots on the next commit, and the test itself is the
+ * measurement. It matches, at
  * column 0 only — Prettier indents everything nested, so column 0 IS module
  * scope:
  *
@@ -45,19 +45,24 @@
  *
  *   • `const X = new Set([...])` / `new Map([[...]])` — an inline array literal
  *     argument makes it a lookup table, written once at module load from
- *     literals and never again. 32 of them in `lib/`, none of them state.
+ *     literals and never again. The most common shape in `lib/`, and none of
+ *     them state.
  *   • `new TextEncoder()` / `new TextDecoder()` — stateless codecs.
  *
  * And it cannot see, which is why the review-checklist entry in
  * `.context/tenancy/context.md` exists as well as this test:
  *
- *   • a holder built by a factory call — `const c = createCache()`;
+ *   • a holder built by a factory the list above does not name — `const c =
+ *     createCache()`;
  *   • a holder nested inside an object or array literal — `RATE_LIMIT_TIERS`;
  *   • a holder assigned through `??=` from a globalThis bag — `contributors`
  *     in `context-builder.ts`.
  *
- * All three ARE in the manifest, by hand. A row may name a holder the scanner
- * would not have demanded; the completeness check is one-way.
+ * The instances of the last two that exist today are in the manifest by hand,
+ * and a row may always name a holder the scanner would not have demanded —
+ * the completeness check is one-way. But a manifest cannot be more complete
+ * than the widest thing that can hold state, and the first bullet is why this
+ * file is not the whole control.
  *
  * @see lib/tenancy/process-state.ts
  * @see .context/architecture/multi-tenancy.md
@@ -80,6 +85,25 @@ const LOOKUP_CONTAINERS = new Set(['Map', 'Set', 'WeakMap', 'WeakSet']);
 
 /** Constructors that hold nothing between calls. */
 const STATELESS_CONSTRUCTORS = new Set(['TextEncoder', 'TextDecoder']);
+
+/**
+ * Factories whose return value holds state, by name.
+ *
+ * `const limiter = createRateLimiter(...)` is a holder — the limiter closes
+ * over its own `LRUCache` of caller tokens — but nothing in the syntax says
+ * so, and matching every `const x = someCall()` would flag most of `lib/`.
+ * So this is a hand-kept list, and it is the one part of the scan that a new
+ * factory can slip past: adding one is the case the review-checklist entry in
+ * `.context/tenancy/context.md` exists for. Keep it in step with what the
+ * tree actually has — 24 limiters, 11 init gates and the auth instance at the
+ * time of writing.
+ */
+const STATEFUL_FACTORIES = new Set([
+  'createRateLimiter',
+  'createDynamicLimiter',
+  'createAppInitGate',
+  'betterAuth',
+]);
 
 /**
  * A module-level `const` / `let` / `var`, at column 0. The trailing character
@@ -139,6 +163,12 @@ export function findStateHolders(source: string): Holder[] {
     }
 
     if (/^globalThis\b/.test(initialiser)) {
+      holders.push({ name, line: i + 1 });
+      continue;
+    }
+
+    const factory = /^([A-Za-z_$][\w$]*)\s*\(/.exec(initialiser);
+    if (factory && STATEFUL_FACTORIES.has(factory[1])) {
       holders.push({ name, line: i + 1 });
       continue;
     }
@@ -250,6 +280,15 @@ describe('the scanner itself', () => {
       "const DEFAULTS = { mode: 'log_only' };",
     ].join('\n');
     expect(findStateHolders(source).map((h) => h.name)).toEqual(['appRules', 'registry']);
+  });
+
+  it('matches a named stateful factory, and not an unnamed call', () => {
+    const source = [
+      'const authLimiter = createRateLimiter({ interval: 1, maxRequests: 2 });',
+      "const appInit = createAppInitGate({ label: 'x' });",
+      'const schema = z.object({});',
+    ].join('\n');
+    expect(findStateHolders(source).map((h) => h.name)).toEqual(['authLimiter', 'appInit']);
   });
 
   it('finds the assignment past an arrow inside a type annotation', () => {

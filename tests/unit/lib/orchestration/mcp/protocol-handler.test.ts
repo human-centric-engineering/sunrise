@@ -261,6 +261,26 @@ describe('handleMcpRequest', () => {
         )
       );
     });
+
+    it('backs off after a failure instead of retrying on every request', async () => {
+      __resetKeyRateLimitCacheForTests();
+      vi.mocked(prisma.mcpApiKey.findMany).mockRejectedValue(new Error('pool exhausted'));
+
+      // The freshness stamp is only written on success, so without a backoff
+      // every one of these starts its own audited bypass and logs a warn.
+      for (let i = 0; i < 4; i++) {
+        await handleMcpRequest(makeRequest({ method: 'ping' }), {
+          auth,
+          session,
+          serverState,
+          rateLimiter,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      expect(prisma.mcpApiKey.findMany).toHaveBeenCalledTimes(1);
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('rate limiting', () => {

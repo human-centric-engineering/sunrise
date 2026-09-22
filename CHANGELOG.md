@@ -437,22 +437,26 @@ release process.
 ### Fixed
 
 - **Three process-global caches stopped mixing orgs** (multi-tenancy §108
-  t-712). Both are behaviour changes at `TENANCY_MODE=multi` only; at
-  `single` there is one org and neither changes anything. The event-hook
+  t-712). All three are behaviour changes at `TENANCY_MODE=multi` only; at
+  `single` there is one org and none of them changes anything. The event-hook
   cache (`lib/orchestration/hooks/registry.ts`) was one process-wide
   `Map<eventType, CachedHook[]>` holding tenant-owned `AiEventHook` rows, so
   whichever org refreshed it had **its** hooks dispatched for every org for
   the next 60 seconds — org B's event POSTed its payload to org A's URL,
   signed with org A's secret, while B's own hooks never fired. It is now
   keyed by org; `invalidateHookCache()` still clears every partition, and at
-  `multi` an `emitHookEvent` from a call stack that entered no org logs and
-  dispatches nothing rather than reading wide (at `single` the context is
-  the install org, so nothing changes). And the MCP per-key rate-limit override
+  `multi` an `emitHookEvent` from a call stack that entered no org — or one
+  running as the audited system scope, where the RLS bypass would otherwise
+  fan a single event out to every org's webhook — logs and dispatches nothing
+  rather than reading wide (at `single` the context is the install org, so
+  nothing changes). And the MCP per-key rate-limit override
   cache (`lib/orchestration/mcp/protocol-handler.ts`) is keyed by API key id,
   which is unique across orgs — but it was *filled* inside whichever org's
   request triggered the refresh, and `McpApiKey` is tenant-owned, so every
   other org's `rateLimitOverride` was silently dropped for five minutes. The
-  read now runs under the audited system scope. And the chat prompt-context
+  read now runs under the audited system scope, behind an in-flight latch and
+  a failure backoff so a burst — or a failing database — cannot turn that
+  audit line into noise. And the chat prompt-context
   cache (`lib/orchestration/chat/context-builder.ts`) keyed on
   `(type, id, userId)`, all three of which a request supplies — the built-in
   `pattern` type keys by a pattern *number* over tenant-owned
@@ -460,8 +464,9 @@ release process.
   caller's own `type`/`id` — so a user who belongs to two orgs could open
   `pattern:3` in one and, inside the 60-second TTL, be served that org's
   knowledge content in the other org's system prompt. The key now carries the
-  org first. `invalidateContext` builds the same key, so call it inside the
-  org whose entry you mean to drop. An install at `single` is
+  org first, and an entry built under the system scope is not cached at all.
+  `invalidateContext` builds the same key, so call it inside the org whose
+  entry you mean to drop. An install at `single` is
   unaffected by either, and multi-tenancy remains the opt-in capability the
   playbook's
   [what you do not yet get](./.context/architecture/multi-tenancy.md#what-you-get-at-multi-and-what-you-do-not-yet)

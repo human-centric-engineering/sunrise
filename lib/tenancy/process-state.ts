@@ -31,11 +31,13 @@
  * Every row whose posture carries a DECISION — anything but `no-tenant-data`
  * — also has a one-line `Tenancy posture:` in its module docblock, so the
  * reader who opens the file rather than this one sees it. The
- * `no-tenant-data` rows deliberately do not: the thirty-seven files that hold
- * only that, each saying "this holds no tenant data, see the manifest", is
- * noise that dilutes the twenty-nine that say something, and every line here
- * is a merge a fork pays for. The manifest is complete; the inline line is
- * the decision.
+ * `no-tenant-data` rows deliberately do not: a line in each of those saying
+ * "this holds no tenant data, see the manifest" is noise that dilutes the
+ * ones that say something, and every line here is a merge a fork pays for.
+ * (No count is quoted, here or in the test: a number in a comment is a
+ * measurement that rots on the next commit, and this file is the
+ * measurement.) The manifest is complete for what the scanner can see plus
+ * what has been added to it by hand; the inline line is the decision.
  *
  * ## What is NOT process-global state
  *
@@ -205,7 +207,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/mcp/protocol-handler.ts',
-    holders: ['keyRateLimitCache', 'keyRateLimitCacheAt', 'keyRateLimitRefresh'],
+    holders: [
+      'keyRateLimitCache',
+      'keyRateLimitCacheAt',
+      'keyRateLimitRefresh',
+      'keyRateLimitRetryAt',
+    ],
     posture: 'row-keyed',
     keyedBy: 'MCP API key id',
     why: "Key ids are unique across orgs so one map is correct, but filling it is not automatic — the refresh runs under runAsSystem because it inherited the refreshing org before §108 t-712 and silently dropped every other org's override for five minutes.",
@@ -254,14 +261,46 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     holders: ['_store'],
     posture: 'shared-by-decision',
     keyedBy: 'the caller token the limiter was given — session user id, or client IP',
-    why: "The counters behind every limiter, shared because a section cap protects this deployment's endpoint and the key is who is calling rather than which org they are in; an IP is shared by everyone behind it, orgs included.",
+    why: "The counters behind the two ASYNC store-backed limiters only — every sync limiter holds its own LRU — shared because a cap protects this deployment's endpoint and the key is who is calling rather than which org they are in.",
   },
   {
     file: 'lib/security/rate-limit.ts',
-    holders: ['tierRegistry', 'RATE_LIMIT_TIERS'],
+    holders: [
+      'tierRegistry',
+      'RATE_LIMIT_TIERS',
+      'authLimiter',
+      'apiLimiter',
+      'passwordResetLimiter',
+      'contactLimiter',
+      'verificationEmailLimiter',
+      'adminLimiter',
+      'orchestrationAdminLimiter',
+      'mcpLimiter',
+      'acceptInviteLimiter',
+      'uploadLimiter',
+      'inviteLimiter',
+      'cspReportLimiter',
+      'audioLimiter',
+      'imageLimiter',
+      'chatLimiter',
+      'consumerChatLimiter',
+      'embedChatLimiter',
+      'synthesisLimiter',
+      'pairwiseVerdictLimiter',
+      'exportLimiter',
+      'cleanupRefineLimiter',
+      'inboundLimiter',
+    ],
     posture: 'shared-by-decision',
-    keyedBy: 'tier name, over the shared store above',
-    why: "The built-in and fork-registered section tiers; the limiter instances are shared so that resetting a tier and resolving it observe one bucket, and the per-caller keying is the store's.",
+    keyedBy: 'the caller token each limiter is checked with — a session user id, or a client IP',
+    why: "Each section and per-flow limiter closes over its OWN LRU of caller tokens — not the pluggable store, which only the two async limiters use — and the cap protects this deployment's endpoint rather than any org, so the key is who is calling and not which org they are acting in; an IP is shared by everyone behind it, orgs included.",
+  },
+  {
+    file: 'lib/security/rate-limit.ts',
+    holders: ['agentChatLimiter', 'apiKeyChatLimiter'],
+    posture: 'row-keyed',
+    keyedBy: 'agent id + user id, and the API key hash',
+    why: "The two dynamic limiters take their cap from a tenant-owned row (an agent's or a key's `rateLimitRpm`), so unlike the section tiers they are per-row — and both keys are built from ids unique across orgs, so no two orgs share a bucket.",
   },
 
   // ───────────────────────────────────────────────────────────────────────
@@ -356,7 +395,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   // ───────────────────────────────────────────────────────────────────────
   {
     file: 'lib/account-sections/registry.ts',
-    holders: ['sections'],
+    holders: ['sections', 'appInit'],
     posture: 'no-tenant-data',
     why: 'Account-page sections a fork registers from code.',
   },
@@ -373,6 +412,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'The configured analytics provider, its one-shot init promise and a warn-once latch.',
   },
   {
+    file: 'lib/auth/config.ts',
+    holders: ['auth'],
+    posture: 'no-tenant-data',
+    why: 'The better-auth instance: a configured handler whose sessions and accounts live in the database rather than in it, and the org a session acts in is resolved per request by the guards.',
+  },
+  {
     file: 'lib/auth/authorization.ts',
     holders: ['warnedOwnerlessKinds', 'appPolicy', 'registrationFailed'],
     posture: 'no-tenant-data',
@@ -380,7 +425,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/auth/user-created-hooks.ts',
-    holders: ['hooks'],
+    holders: ['hooks', 'appInit'],
     posture: 'no-tenant-data',
     why: 'User-created callbacks a fork registers from code.',
   },
@@ -428,25 +473,26 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
       'appRegistered',
       'appInitError',
       'warnedDivergentPairs',
+      'appInit',
     ],
     posture: 'no-tenant-data',
     why: "Built-in and fork-registered capability classes plus the one-shot init latches; a capability's tenant-owned data is read per call, inside the caller's scope.",
   },
   {
     file: 'lib/orchestration/chat/context-builder.ts',
-    holders: ['globalForContributors', 'contributors'],
+    holders: ['globalForContributors', 'contributors', 'appInit'],
     posture: 'no-tenant-data',
     why: 'Context contributors a fork registers from code, on globalThis because instrumentation.ts and the request path are separate module graphs; what a contributor returns is cached in the row-keyed entry above.',
   },
   {
     file: 'lib/orchestration/chat/guard-events.ts',
-    holders: ['contributors'],
+    holders: ['contributors', 'appInit'],
     posture: 'no-tenant-data',
     why: 'Guard-event contributors a fork registers from code.',
   },
   {
     file: 'lib/orchestration/chat/guard-floor.ts',
-    holders: ['contributors'],
+    holders: ['contributors', 'appInit'],
     posture: 'no-tenant-data',
     why: 'Guard-floor contributors a fork registers from code.',
   },
@@ -458,7 +504,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/evaluations/graders/registry.ts',
-    holders: ['registry'],
+    holders: ['registry', 'appInit'],
     posture: 'no-tenant-data',
     why: 'Grader implementations by name, all registered from code.',
   },
@@ -494,7 +540,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/knowledge/resolveAgentDocumentAccess.ts',
-    holders: ['accessContributors'],
+    holders: ['accessContributors', 'appInit'],
     posture: 'no-tenant-data',
     why: 'Access contributors a fork registers from code; what they return is cached in the row-keyed entry above.',
   },
@@ -512,7 +558,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/maintenance/app-jobs.ts',
-    holders: ['jobs'],
+    holders: ['jobs', 'appInit'],
     posture: 'no-tenant-data',
     why: "A fork's registered maintenance jobs; each one declares the scope it RUNS in (§108 t-711), which is the tenancy decision — this map only holds the registrations.",
   },
@@ -524,7 +570,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/mcp/resource-registry.ts',
-    holders: ['appHandlers', 'appUriSchemes'],
+    holders: ['appHandlers', 'appUriSchemes', 'appInit'],
     posture: 'no-tenant-data',
     why: 'Resource handlers and their URI schemes, registered from code by a fork.',
   },
@@ -566,7 +612,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/privacy/subject-source-registry.ts',
-    holders: ['sources', 'excluded', 'owners', 'appInitFailed'],
+    holders: ['sources', 'excluded', 'owners', 'appInitFailed', 'appInit'],
     posture: 'no-tenant-data',
     why: "A fork's subject-export dispositions, which say which MODELS a data subject's export reads; the rows themselves are read per request inside the caller's scope.",
   },
