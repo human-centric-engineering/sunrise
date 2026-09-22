@@ -35,7 +35,7 @@ import {
   type OrgRetentionSlice,
 } from '@/lib/validations/tenancy';
 import { OrgLifecycleError, updateOrg } from '@/lib/tenancy/lifecycle';
-import { loadRetentionWindows } from '@/lib/orchestration/retention';
+import { loadRetentionWindows } from '@/lib/orchestration/retention-windows';
 import { eraseOrg } from '@/lib/privacy/erase-org';
 import { getRouteLogger } from '@/lib/api/context';
 

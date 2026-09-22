@@ -30,9 +30,12 @@ release process.
   fork's. `auditLogRetentionDays` is deliberately not settable: it prunes a
   system table with no org. Both objects are strict, and an org's slice is
   refused when the cost-log window it sets undercuts the execution window it
-  would inherit. Platform admin only until the org console (§111). New module
-  `lib/tenancy/org-settings.ts`; new `loadEffectiveRetentionWindows()` and
-  `RETENTION_WINDOW_KEYS` on `lib/orchestration/retention.ts`. See
+  would inherit. Platform admin only until the org console (§111). Two new
+  modules — `lib/tenancy/org-settings.ts` (the slice: its schema, the
+  per-key read and the write-merge) and
+  `lib/orchestration/retention-windows.ts` (`loadRetentionWindows`, the new
+  `loadEffectiveRetentionWindows()` and `RETENTION_WINDOW_KEYS`, moved out of
+  `lib/orchestration/retention.ts`, which re-exports them). See
   `.context/orchestration/retention.md`.
 - **A fork's recurring job declares whose rows it acts on** (multi-tenancy
   §108 t-711). `AppJob` (`lib/orchestration/maintenance/app-jobs.ts`, the

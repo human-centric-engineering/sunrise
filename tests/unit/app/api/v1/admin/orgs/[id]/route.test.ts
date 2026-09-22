@@ -36,7 +36,7 @@ vi.mock('@/lib/privacy/erase-org', () => ({ eraseOrg: mockEraseOrg }));
 
 // The global row the org's slice is checked against for coherence.
 const mockLoadRetentionWindows = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/orchestration/retention', () => ({
+vi.mock('@/lib/orchestration/retention-windows', () => ({
   loadRetentionWindows: mockLoadRetentionWindows,
 }));
 
