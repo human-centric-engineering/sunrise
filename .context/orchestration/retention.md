@@ -1,7 +1,8 @@
 # Data Retention & Pruning
 
 How Sunrise automatically deletes aged operational data. Pruning is enforced by
-two sweeps in `lib/orchestration/retention.ts`, each a task of the unified
+two sweeps in `lib/orchestration/retention.ts` (the windows they prune on are
+resolved in `lib/orchestration/retention-windows.ts`), each a task of the unified
 maintenance tick (`POST /api/v1/admin/orchestration/maintenance/tick`, called
 ~every 60s by an external cron) and each throttled to **at most once an hour**
 per process, since every window here is measured in days — see
@@ -156,19 +157,28 @@ Each prune is a small, uniform addition to `lib/orchestration/retention.ts`:
    means "resolve it yourself" (via `resolveRetentionDays`, for direct callers),
    an explicit `null` means "skip". Then `deleteMany` by `createdAt < cutoff`,
    plus a terminal-status filter for any table with in-flight rows.
-3. Add the column to `RetentionWindows` and `loadRetentionWindows()`, call the
-   prune from `enforceRetentionPolicies()` **passing the loaded window**, and add
-   its count to `RetentionResult`. The sweep reads the settings row exactly once
-   (#442); a prune that resolves its own window inside the sweep puts a
-   round-trip back per tick. **If the table is a system model** (no `orgId` —
-   `SYSTEM_MODELS` in `lib/tenancy/classification.ts`), call it from
+3. Add the column to `RetentionWindows` and `loadRetentionWindows()` in
+   `lib/orchestration/retention-windows.ts`, call the prune from
+   `enforceRetentionPolicies()` **passing the loaded window**, and add its count
+   to `RetentionResult`. The sweep reads the settings row exactly once (#442); a
+   prune that resolves its own window inside the sweep puts a round-trip back
+   per tick. **If the table is a system model** (no `orgId` — `SYSTEM_MODELS` in
+   `lib/tenancy/classification.ts`), call it from
    `enforceSystemRetentionPolicies()` instead and add the count to
    `SystemRetentionResult`: the tenant sweep runs once per org, and a system
    table pruned there is pruned N times.
-4. Surface the setting: Zod schema (`lib/validations/orchestration.ts`), the
+4. **A tenant window is also an org-settable one.** Add the key to
+   `ORG_RETENTION_KEYS` and `orgRetentionSchema` in
+   `lib/validations/tenancy.ts`, with the same bound the global schema gives
+   it. A test fails until you do — the two key lists are held level, because a
+   window only the platform can set is one no org can override and nothing else
+   would say so. A **system** window has no org slice and does not belong in
+   either list.
+5. Surface the setting: Zod schema (`lib/validations/orchestration.ts`), the
    settings PATCH route, the settings form (with `<FieldHelp>`), and the backup
    exporter/importer/schema for config round-trip.
-5. Add a case to `tests/unit/lib/orchestration/retention.test.ts`.
+6. Add a case to `tests/unit/lib/orchestration/retention.test.ts`, and one to
+   `retention-windows.test.ts` if the resolution itself changed.
 
 The maintenance tick needs no change — it already invokes both sweeps and logs
 every count in its background-task summary.
