@@ -152,24 +152,33 @@ an execution reporting real spend with an empty cost breakdown underneath — an
 way to tell a retention artefact from a bug in cost capture. Dashboard aggregates
 are unaffected; it's the per-execution drill-down that empties.
 
-`null` is not symmetrical in this rule, and reading it as "unset, therefore
-uncoupled" was a real defect on both sides of it until §108 t-713: cost logs
-kept for ever satisfy the rule against anything, while **executions** kept for
-ever violate it against every finite cost-log window. The only coherent way to
-keep executions for ever is to keep cost logs for ever too.
+**`null` is not symmetrical in this rule.** Cost logs kept for ever satisfy it
+against anything; **executions** kept for ever violate it against every finite
+cost-log window, because they outlive all of them. So the only coherent way to
+keep executions for ever is to keep cost logs for ever too. Reading both nulls
+as "unset, therefore uncoupled" is a real defect, and it is still present on the
+global side — see the table below.
 
 Unlike the evaluation coupling below, this one is **enforced in code**, in four
-places: the settings form blocks the save client-side, the Zod schema rejects a
-whole-form save, the settings PATCH route re-checks the patch against the
-persisted row (so moving either side alone is caught), and the org PATCH route
-checks an org's slice against the **effective** pair — the half it sets plus the
-half it inherits.
+places, and they do not all enforce the same rule yet:
 
-Two states still get past all four: an install configured before the checks
-existed and never re-saved, and an org whose stored slice is made incoherent
-later by a change to the global row it inherits the other half from. So
-`enforceRetentionPolicies()` also logs a warning once per sweep, per org, naming
-the org whose pair is wrong.
+| Where                                                          | Catches a short cost-log window | Catches `executionRetentionDays: null` |
+| -------------------------------------------------------------- | ------------------------------- | -------------------------------------- |
+| The settings form, client-side                                 | yes                             | no                                     |
+| `updateOrchestrationSettingsSchema`'s refine (whole-form save) | yes                             | no                                     |
+| The settings PATCH route, against the persisted row            | yes                             | no                                     |
+| The org PATCH route, against the **effective** pair (§108)     | yes                             | yes                                    |
+
+The three `no`s are one inherited hole, filed against the global surface rather
+than widened from a per-org task.
+
+Three states get past whichever of those apply: an install configured before
+the checks existed and never re-saved; an org whose stored slice is made
+incoherent later by a change to the global row it inherits the other half from;
+and a global `executionRetentionDays: null` set through any of the first three.
+So `enforceRetentionPolicies()` also logs a warning once per sweep, per org,
+naming the org whose pair is wrong — and that warning **does** know the
+asymmetry.
 
 ## Keep `evaluationRetentionDays ≤ executionRetentionDays`
 
