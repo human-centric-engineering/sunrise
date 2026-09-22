@@ -40,7 +40,7 @@ vi.mock('@/lib/orchestration/capabilities/registry', () => ({
 }));
 
 import { prisma } from '@/lib/db/client';
-import { runAsOrg } from '@/lib/tenancy/context';
+import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 import { logger } from '@/lib/logging';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import { registerBuiltInCapabilities } from '@/lib/orchestration/capabilities/registry';
@@ -563,6 +563,27 @@ describe('callMcpTool', () => {
       .mocked(capabilityDispatcher.dispatch)
       .mock.calls.map((c) => (c[2] as { agentId: string }).agentId);
     expect(agentIds).toEqual(['agent-org-a', 'agent-org-b', 'agent-org-a']);
+  });
+
+  it('refuses the system scope, whose slug lookup matches every org (§108 t-712)', async () => {
+    vi.mocked(prisma.mcpExposedTool.findMany).mockResolvedValue([makeExposedTool()] as never);
+    vi.mocked(capabilityFunctionDefinitionSchema.safeParse).mockReturnValue(
+      makeSuccessfulParse() as never
+    );
+    // Under `runAsSystem` the bypass makes this `findFirst` return whichever
+    // org's mcp-system agent the planner reaches first. Caching that under a
+    // shared key would hand every later system-scoped call an arbitrary org's
+    // agent — so the lookup refuses before it runs.
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({ id: 'agent-some-org' } as never);
+
+    await expect(
+      runAsSystem('test: a caller that forgot to enter an org', () =>
+        callMcpTool('search_knowledge', {}, { userId: 'user-1' })
+      )
+    ).rejects.toThrow(/system scope/);
+
+    expect(prisma.aiAgent.findFirst).not.toHaveBeenCalled();
+    expect(capabilityDispatcher.dispatch).not.toHaveBeenCalled();
   });
 
   it('clearMcpToolCache resets the cached agent ID', async () => {

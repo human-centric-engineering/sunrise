@@ -7,8 +7,9 @@
  *
  * Platform-agnostic: no Next.js imports.
  *
- * Tenancy posture: org-keyed for `mcpSystemAgentIdByOrg` (slugs are
- * per-org); global-config for the tool cache (lib/tenancy/process-state.ts).
+ * Tenancy posture: org-keyed for `mcpSystemAgentIdByOrg` (slugs are per-org,
+ * so the system scope is refused rather than keyed); global-config for the
+ * tool cache (lib/tenancy/process-state.ts).
  */
 
 import { prisma } from '@/lib/db/client';
@@ -133,10 +134,25 @@ async function getDisabledCapabilitySlugs(agentId: string): Promise<Set<string>>
  */
 async function getMcpSystemAgentId(): Promise<string | null> {
   // The org the lookup runs in — the read below is scoped to it at `multi`,
-  // so the cache has to be too. A system scope has no org and caches under
-  // its own key.
-  const cacheKey = requireTenantContext().orgId ?? 'system';
-  const cached = mcpSystemAgentIdByOrg.get(cacheKey);
+  // so the cache has to be too.
+  //
+  // The system scope is REFUSED rather than given a `'system'` partition
+  // (§108 t-712). The read filters on a SLUG, which §107 t-708 made unique
+  // per org and therefore shared across them: under `runAsSystem` the bypass
+  // makes this `findFirst` return whichever org's `mcp-system` agent the
+  // planner reaches first, and caching that under one key would hand every
+  // later system-scoped call an arbitrary org's agent — its disabled
+  // capabilities invisible under that scope, its cost rows misattributed,
+  // which is the exact harm the per-org keying was added to prevent. The
+  // event-hook cache refuses the identical shape for the identical reason.
+  const { orgId } = requireTenantContext();
+  if (orgId === null) {
+    throw new Error(
+      'MCP tool call has no org: this call stack runs as the system scope, where the mcp-system ' +
+        'agent lookup matches every org. Call it inside runAsOrg — see lib/tenancy/process-state.ts.'
+    );
+  }
+  const cached = mcpSystemAgentIdByOrg.get(orgId);
   if (cached) return cached;
 
   const agent = await prisma.aiAgent.findFirst({
@@ -145,7 +161,7 @@ async function getMcpSystemAgentId(): Promise<string | null> {
   });
 
   if (agent) {
-    mcpSystemAgentIdByOrg.set(cacheKey, agent.id);
+    mcpSystemAgentIdByOrg.set(orgId, agent.id);
   }
   return agent?.id ?? null;
 }

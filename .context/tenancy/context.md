@@ -383,6 +383,16 @@ is one question, and the answer goes in
 - **Yes, and it is not right** — that is a defect, not a posture. Fix it, or
   file the task and name it in the row.
 
+**And ask it of the fill query, not just the key.** A cache can be keyed
+correctly and still be filled wrongly. The test is what the query that
+populates it _filters on_: an id unique across orgs (a cuid `findUnique`)
+answers the same under `runAsSystem` as under an org scope, so a
+system-scoped fill is harmless. Anything two orgs share — an event type, a
+per-org-unique **slug**, a number — answers from an arbitrary org, or from
+all of them, once `app.bypass_rls` is on. Three caches in `lib/` had that
+shape and all three now refuse the system scope rather than caching under a
+sentinel (§108 t-712).
+
 `tests/unit/lib/tenancy/process-state.test.ts` fails on a holder with no row
 and on a row whose holder has gone, so for the shapes it can see the step
 cannot be skipped. **It cannot see a holder built by a factory it does not

@@ -436,8 +436,8 @@ release process.
 
 ### Fixed
 
-- **Three process-global caches stopped mixing orgs** (multi-tenancy §108
-  t-712). All three are behaviour changes at `TENANCY_MODE=multi` only; at
+- **Four process-global caches stopped mixing orgs** (multi-tenancy §108
+  t-712). All four are behaviour changes at `TENANCY_MODE=multi` only; at
   `single` there is one org and none of them changes anything. The event-hook
   cache (`lib/orchestration/hooks/registry.ts`) was one process-wide
   `Map<eventType, CachedHook[]>` holding tenant-owned `AiEventHook` rows, so
@@ -467,8 +467,13 @@ release process.
   org first, and a call under the audited system scope is refused outright
   rather than served a body merged from every org's rows.
   `invalidateContext` builds the same key, so call it inside the org whose
-  entry you mean to drop. An install at `single` is unaffected by any of the
-  three, and multi-tenancy remains the opt-in capability the
+  entry you mean to drop. And the MCP system-agent cache
+  (`lib/orchestration/mcp/tool-registry.ts`) resolved `mcp-system` by **slug**,
+  which §107 t-708 made unique *per org* and therefore shared *across* them:
+  under the bypass that lookup answers from an arbitrary org, so it now
+  refuses the system scope rather than caching the answer under a sentinel.
+  An install at `single` is unaffected by any of the
+  four, and multi-tenancy remains the opt-in capability the
   playbook's
   [what you do not yet get](./.context/architecture/multi-tenancy.md#what-you-get-at-multi-and-what-you-do-not-yet)
   describes; the new

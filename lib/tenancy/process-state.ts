@@ -87,15 +87,20 @@ export type TenancyPosture =
    */
   | 'row-keyed'
   /**
-   * Tenant data partitioned by org id. One holder
-   * (`mcpSystemAgentIdByOrg`) uses `'system'` as the partition for the
-   * audited system scope, which has no org. That sentinel is safe only
-   * because an org id is a cuid and `createOrg` has no caller-supplied-id
-   * path — a fork that ever lets an org id be chosen has to prefix these keys
-   * rather than rely on the shapes not colliding. And it is only safe where
-   * the system-scoped read fetches ONE row: the hook cache refuses the system
-   * scope outright, because there the bypass would put every org's rows under
-   * that one key.
+   * Tenant data partitioned by org id. **No holder here keys the audited
+   * system scope**: all three refuse it instead.
+   *
+   * The rule the §108 t-712 audit produced, which is what to apply to a new
+   * one — **look at what the cache's FILL QUERY filters on, not at what the
+   * cache is keyed by**:
+   *
+   *   • filters on an id unique across orgs (a cuid `findUnique`) — the
+   *     bypass returns the same row an org scope would, so a system-scoped
+   *     fill is harmless and `keyRateLimitCache` does exactly that on purpose;
+   *   • filters on anything two orgs share — an `eventType`, a per-org-unique
+   *     SLUG, a pattern number — and under `app.bypass_rls` the query answers
+   *     from an arbitrary org, or from all of them at once. Cache that and a
+   *     later caller is served another org's rows. Refuse the scope.
    */
   | 'org-keyed'
   /**
@@ -170,8 +175,8 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     file: 'lib/orchestration/mcp/tool-registry.ts',
     holders: ['mcpSystemAgentIdByOrg'],
     posture: 'org-keyed',
-    keyedBy: "org id, or 'system' for the audited system scope",
-    why: "Agent slugs are unique per org (§107 t-708), so each org holds its own `mcp-system` agent and a single process-wide id would hand org B org A's agent — its disabled capabilities invisible under B's scope, its cost rows misattributed.",
+    keyedBy: 'org id — the system scope is refused, not keyed',
+    why: "Agent slugs are unique per org (§107 t-708), so each org holds its own `mcp-system` agent and a single process-wide id would hand org B org A's agent — its disabled capabilities invisible under B's scope, its cost rows misattributed. The lookup filters on the SLUG, which is exactly what two orgs share, so the system scope is refused rather than given a partition (§108 t-712 audit).",
   },
 
   // ───────────────────────────────────────────────────────────────────────
