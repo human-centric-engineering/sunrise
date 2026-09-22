@@ -395,7 +395,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     file: 'lib/errors/handler.ts',
     holders: ['processedErrors'],
     posture: 'no-tenant-data',
-    why: 'A bounded set of error signatures already handled, which exists to stop an error handler looping on itself.',
+    why: "A bounded set of error fingerprints already handled, so the handler cannot loop on itself; browser-only (initialised from a client component, `typeof window` guarded), so the process it is global to is one visitor's tab.",
   },
   {
     file: 'lib/logging/index.ts',
