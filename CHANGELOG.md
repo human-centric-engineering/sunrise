@@ -464,11 +464,11 @@ release process.
   caller's own `type`/`id` — so a user who belongs to two orgs could open
   `pattern:3` in one and, inside the 60-second TTL, be served that org's
   knowledge content in the other org's system prompt. The key now carries the
-  org first, and an entry built under the system scope is not cached at all.
+  org first, and a call under the audited system scope is refused outright
+  rather than served a body merged from every org's rows.
   `invalidateContext` builds the same key, so call it inside the org whose
-  entry you mean to drop, and a call under the system scope is refused rather
-  than served a body merged from every org. An install at `single` is
-  unaffected by any of the three, and multi-tenancy remains the opt-in capability the
+  entry you mean to drop. An install at `single` is unaffected by any of the
+  three, and multi-tenancy remains the opt-in capability the
   playbook's
   [what you do not yet get](./.context/architecture/multi-tenancy.md#what-you-get-at-multi-and-what-you-do-not-yet)
   describes; the new
