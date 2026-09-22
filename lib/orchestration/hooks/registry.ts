@@ -36,6 +36,7 @@ import {
   signHookPayload,
 } from '@/lib/orchestration/hooks/signing';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
+import { requireTenantContext } from '@/lib/tenancy/context';
 
 /** Cache TTL — reload hooks from DB every 60 seconds */
 const CACHE_TTL_MS = 60_000;
@@ -57,17 +58,44 @@ interface CachedHook {
   secret: string | null;
 }
 
-let hookCache: Map<string, CachedHook[]> | null = null;
-let cacheLoadedAt = 0;
+interface OrgHookCache {
+  byType: Map<string, CachedHook[]>;
+  loadedAt: number;
+}
 
 /**
- * Load enabled hooks from the database, grouped by event type.
- * Results are cached for CACHE_TTL_MS.
+ * The hook cache, **per org** (§108 t-712).
+ *
+ * `AiEventHook` is tenant-owned and `eventType` is a label two orgs both use,
+ * so one process-wide map keyed by event type served whichever org refreshed
+ * it last to every org for the next minute: org B's `conversation.started`
+ * would POST its payload to org A's URL, signed with org A's secret, while B's
+ * own hooks never fired. Keyed by org the entries cannot cross, and the
+ * delivery row each dispatch writes lands against a hook the emitting org can
+ * see.
+ *
+ * `'system'` is the key for the audited system scope, matching
+ * `mcpSystemAgentIdByOrg` — a scope with no org still gets its own partition
+ * rather than borrowing an org's.
+ */
+const hookCacheByOrg = new Map<string, OrgHookCache>();
+
+/**
+ * Load the calling org's enabled hooks from the database, grouped by event
+ * type. Results are cached per org for CACHE_TTL_MS.
+ *
+ * At `multi` a call stack with no tenant context throws here rather than
+ * reading wide — `emitHookEvent` is fire-and-forget and logs it. That is the
+ * right answer: an event emitted outside any org cannot know whose hooks to
+ * fire. At `single` the context resolves to the install org, so there is one
+ * partition and the behaviour is unchanged.
  */
 async function loadHooks(): Promise<Map<string, CachedHook[]>> {
+  const cacheKey = requireTenantContext().orgId ?? 'system';
   const now = Date.now();
-  if (hookCache && now - cacheLoadedAt < CACHE_TTL_MS) {
-    return hookCache;
+  const cached = hookCacheByOrg.get(cacheKey);
+  if (cached && now - cached.loadedAt < CACHE_TTL_MS) {
+    return cached.byType;
   }
 
   const hooks = await prisma.aiEventHook.findMany({
@@ -113,15 +141,20 @@ async function loadHooks(): Promise<Map<string, CachedHook[]>> {
     byType.set(hook.eventType, list);
   }
 
-  hookCache = byType;
-  cacheLoadedAt = now;
+  hookCacheByOrg.set(cacheKey, { byType, loadedAt: now });
   return byType;
 }
 
-/** Invalidate the hook cache (e.g., after CRUD operations). */
+/**
+ * Invalidate the hook cache (e.g., after CRUD operations).
+ *
+ * Clears **every** org's partition, not just the caller's. An admin route
+ * editing a hook runs inside one org, but the cost of dropping the others is a
+ * single re-read each and the cost of getting the partitioning wrong is a hook
+ * that keeps firing after it was disabled.
+ */
 export function invalidateHookCache(): void {
-  hookCache = null;
-  cacheLoadedAt = 0;
+  hookCacheByOrg.clear();
 }
 
 /**

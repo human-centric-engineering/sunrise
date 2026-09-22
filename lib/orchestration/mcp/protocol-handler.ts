@@ -675,23 +675,52 @@ function extractResourceUri(request: JsonRpcRequest): string | undefined {
   return undefined;
 }
 
-/** Placeholder — override rate limit from McpApiKey.rateLimitOverride */
+/**
+ * Per-key rate-limit overrides from `McpApiKey.rateLimitOverride`, keyed by
+ * key id — unique across orgs, so one process-wide map is correct.
+ *
+ * Filling it is the part that is not (§108 t-712). The refresh is kicked off
+ * from `getKeyRateLimit` on the request path, so it inherited whichever org
+ * that request was running as, and `McpApiKey` is tenant-owned: at `multi` the
+ * map then held one org's overrides and every other org's key fell back to the
+ * default limit for the next five minutes — silently, and differently
+ * depending on who happened to refresh it. The read is genuinely global, so it
+ * takes the audited system scope, exactly as the maintenance tick's idle-gate
+ * horizon does.
+ */
 let keyRateLimitCache = new Map<string, number | null>();
 let keyRateLimitCacheAt = 0;
 const KEY_RATE_CACHE_TTL = 5 * 60 * 1000;
 
 async function loadKeyRateLimits(): Promise<void> {
   const { prisma } = await import('@/lib/db/client');
-  const keys = await prisma.mcpApiKey.findMany({
-    where: { isActive: true, rateLimitOverride: { not: null } },
-    select: { id: true, rateLimitOverride: true },
-  });
+  const { runAsSystem } = await import('@/lib/tenancy/context');
+  const keys = await runAsSystem(
+    'mcp: per-key rate-limit overrides, which are keyed by a key id and read for every org',
+    () =>
+      prisma.mcpApiKey.findMany({
+        where: { isActive: true, rateLimitOverride: { not: null } },
+        select: { id: true, rateLimitOverride: true },
+      })
+  );
   const map = new Map<string, number | null>();
   for (const k of keys) {
     map.set(k.id, k.rateLimitOverride);
   }
   keyRateLimitCache = map;
   keyRateLimitCacheAt = Date.now();
+}
+
+/**
+ * Test-only: forget the overrides so the next lookup refreshes.
+ *
+ * The cache is module state with a five-minute TTL, so without this a test
+ * asserting on the refresh depends on being the first in its file to reach
+ * this code path.
+ */
+export function __resetKeyRateLimitCacheForTests(): void {
+  keyRateLimitCache = new Map<string, number | null>();
+  keyRateLimitCacheAt = 0;
 }
 
 function getKeyRateLimit(apiKeyId: string): number | null {

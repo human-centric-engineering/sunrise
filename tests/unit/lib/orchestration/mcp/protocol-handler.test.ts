@@ -45,7 +45,11 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
-import { handleMcpRequest, McpProtocolError } from '@/lib/orchestration/mcp/protocol-handler';
+import {
+  handleMcpRequest,
+  McpProtocolError,
+  __resetKeyRateLimitCacheForTests,
+} from '@/lib/orchestration/mcp/protocol-handler';
 import { listMcpTools, callMcpTool } from '@/lib/orchestration/mcp/tool-registry';
 import {
   listMcpResources,
@@ -68,6 +72,8 @@ import {
 } from '@/types/mcp';
 import type { McpRateLimiter } from '@/lib/orchestration/mcp/rate-limiter';
 import type { McpServerState } from '@/lib/orchestration/mcp/types';
+import { prisma } from '@/lib/db/client';
+import { getTenantContext, runAsOrg, type TenantContext } from '@/lib/tenancy/context';
 
 function makeAuth(overrides: Partial<McpAuthContext> = {}): McpAuthContext {
   return {
@@ -174,6 +180,34 @@ describe('handleMcpRequest', () => {
       const req = makeRequest({ id: undefined, method: 'notifications/unknown' });
       const result = await handleMcpRequest(req, { auth, session, serverState, rateLimiter });
       expect(result).toBeNull();
+    });
+  });
+
+  describe('the per-key rate-limit override cache (§108 t-712)', () => {
+    it("reads every org's keys under the audited system scope, not the caller's org", async () => {
+      __resetKeyRateLimitCacheForTests();
+      const scopes: (TenantContext | null)[] = [];
+      vi.mocked(prisma.mcpApiKey.findMany).mockImplementation(() => {
+        scopes.push(getTenantContext());
+        return Promise.resolve([]) as never;
+      });
+
+      // The cache is keyed by API key id, which is unique across orgs, so one
+      // process-wide map is right — but it used to be FILLED inside whichever
+      // org's request happened to trigger the refresh, and `McpApiKey` is
+      // tenant-owned. Every other org's key then fell back to the global limit
+      // until the next refresh.
+      await runAsOrg('cmorg00000000000000000orga', async () => {
+        await handleMcpRequest(makeRequest({ method: 'ping' }), {
+          auth,
+          session,
+          serverState,
+          rateLimiter,
+        });
+      });
+
+      await vi.waitFor(() => expect(scopes).toHaveLength(1));
+      expect(scopes[0]).toEqual({ orgId: null, source: 'system' });
     });
   });
 
