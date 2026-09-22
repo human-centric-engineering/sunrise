@@ -39,7 +39,7 @@ import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { prisma } from '@/lib/db/client';
 import { getPatternDetail } from '@/lib/orchestration/knowledge/search';
 import { initAppContextContributors } from '@/lib/app/context-contributors';
-import { getTenantContext } from '@/lib/tenancy/context';
+import { requireTenantContext } from '@/lib/tenancy/context';
 
 const CONTEXT_CACHE_TTL_MS = 60 * 1000;
 const CONTEXT_CACHE_MAX_SIZE = 500;
@@ -62,28 +62,29 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 
 /**
- * The org part of the key when the call stack names no org.
+ * The org this context belongs to — and a refusal when there is not one.
  *
- * Only reachable at `single`, where there IS one org and the partition is
- * therefore honest. Under `runAsSystem` — which also has no org — the entry
- * is not cached at all (see {@link isSystemScope}), because the bypass would
- * merge every org's rows into one body and this key would then serve it to
- * the next caller.
- */
-const NO_ORG_KEY = '-';
-
-/**
- * Is this call stack the audited system scope — entered, but naming no org?
+ * `requireTenantContext`, not `getTenantContext`, so that at `single` an
+ * unentered call and an entered one key under the SAME org rather than under
+ * two partitions of the one org, each eating the shared 500-entry cap.
  *
- * Distinct from "nothing entered a context", which at `single` resolves to
- * the one org there is. `lib/orchestration/hooks/registry.ts` refuses this
- * scope outright for the same reason; here the read is allowed and only its
- * caching is refused, because `buildContext` sits on the chat turn's critical
- * path and has no caller under a system scope to break.
+ * The system scope is refused outright, exactly as
+ * `lib/orchestration/hooks/registry.ts` refuses it: under `runAsSystem` the
+ * data layer sets `app.bypass_rls`, so `getPatternDetail` would return every
+ * org's knowledge chunks merged into one body and frame them into somebody's
+ * system prompt. Declining to CACHE that body would not stop it being built
+ * and returned. No caller runs under a system scope today; a future one
+ * should fail here rather than quietly produce a cross-org prompt.
  */
-function isSystemScope(): boolean {
-  const context = getTenantContext();
-  return context !== null && context.orgId === null;
+function requireContextOrg(): string {
+  const { orgId } = requireTenantContext();
+  if (orgId === null) {
+    throw new Error(
+      'buildContext has no org: this call stack runs as the system scope, which reads every ' +
+        "org's rows. Build the context inside runAsOrg — see lib/tenancy/process-state.ts."
+    );
+  }
+  return orgId;
 }
 
 function cacheKey(type: string, id: string, userId?: string): string {
@@ -98,10 +99,8 @@ function cacheKey(type: string, id: string, userId?: string): string {
   // these: a number and a caller-supplied string are not unique across orgs.
   //
   // At `single` there is one org, so this is one constant prefix and the key
-  // space is unchanged in shape. An unentered context (`null`) keys as `-`
-  // rather than throwing: `buildContext` is on the chat turn's critical path,
-  // and at `multi` the read inside it fails on its own terms anyway.
-  const orgId = getTenantContext()?.orgId ?? NO_ORG_KEY;
+  // space is unchanged in shape.
+  const orgId = requireContextOrg();
   // Empty `userId` collapses to a single shared partition per org
   // (`org:type:id:`), which is byte-for-byte the pre-widening key space.
   return `${orgId}:${type}:${id}:${userId ?? ''}`;
@@ -212,7 +211,7 @@ export async function buildContext(
   request: ContextRequest = {}
 ): Promise<string> {
   const key = cacheKey(type, id, request.userId);
-  const hit = isSystemScope() ? undefined : cache.get(key);
+  const hit = cache.get(key);
   if (hit && hit.expiresAt > Date.now()) {
     return hit.value;
   }
@@ -322,7 +321,7 @@ export async function buildContext(
 
   const framed = formatLockedContext(type, id, body);
 
-  if (cacheable && !isSystemScope()) {
+  if (cacheable) {
     // Evict oldest entry if cache is at capacity
     if (cache.size >= CONTEXT_CACHE_MAX_SIZE) {
       const oldest = cache.keys().next().value;

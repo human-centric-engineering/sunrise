@@ -72,7 +72,11 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 
-import { PROCESS_STATE, type ProcessStateDeclaration } from '@/lib/tenancy/process-state';
+import {
+  PROCESS_STATE,
+  TENANT_TOUCHING_POSTURES,
+  type ProcessStateDeclaration,
+} from '@/lib/tenancy/process-state';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const LIB_DIR = path.join(REPO_ROOT, 'lib');
@@ -95,13 +99,15 @@ const STATELESS_CONSTRUCTORS = new Set(['TextEncoder', 'TextDecoder']);
  * So this is a hand-kept list, and it is the one part of the scan that a new
  * factory can slip past: adding one is the case the review-checklist entry in
  * `.context/tenancy/context.md` exists for. Keep it in step with what the
- * tree actually has — 24 limiters, 11 init gates and the auth instance at the
- * time of writing.
+ * tree actually has. (No count here either — the manifest header explains
+ * why, and the one that used to sit on this line had already rotted.)
  */
 const STATEFUL_FACTORIES = new Set([
   'createRateLimiter',
   'createDynamicLimiter',
   'createAppInitGate',
+  'createJobClock',
+  'defineRequestState',
   'betterAuth',
 ]);
 
@@ -167,7 +173,9 @@ export function findStateHolders(source: string): Holder[] {
       continue;
     }
 
-    const factory = /^([A-Za-z_$][\w$]*)\s*\(/.exec(initialiser);
+    // The generic arm matters: `createAppInitGate<Policy | null>({…})` is the
+    // same holder as `createAppInitGate({…})`, and leaving it out hid one.
+    const factory = /^([A-Za-z_$][\w$]*)\s*(?:<[\s\S]*?>)?\s*\(/.exec(initialiser);
     if (factory && STATEFUL_FACTORIES.has(factory[1])) {
       holders.push({ name, line: i + 1 });
       continue;
@@ -285,7 +293,7 @@ describe('the scanner itself', () => {
   it('matches a named stateful factory, and not an unnamed call', () => {
     const source = [
       'const authLimiter = createRateLimiter({ interval: 1, maxRequests: 2 });',
-      "const appInit = createAppInitGate({ label: 'x' });",
+      "const appInit = createAppInitGate<Policy | null>({ label: 'x' });",
       'const schema = z.object({});',
     ].join('\n');
     expect(findStateHolders(source).map((h) => h.name)).toEqual(['authLimiter', 'appInit']);
@@ -376,7 +384,10 @@ describe('every row says something a reader can act on', () => {
     for (const row of PROCESS_STATE) {
       expect(row.why.length, `${row.file} why`).toBeGreaterThan(20);
       expect(row.holders.length, `${row.file} holders`).toBeGreaterThan(0);
-      if (row.posture === 'row-keyed' || row.posture === 'org-keyed') {
+      if (TENANT_TOUCHING_POSTURES.includes(row.posture)) {
+        // Every posture that can hold tenant-derived values has to say what
+        // the entries are keyed by — including `shared-by-decision`, where
+        // the key is the whole argument for sharing them.
         expect(row.keyedBy, `${row.file} keyedBy`).toBeTruthy();
       }
     }

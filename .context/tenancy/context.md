@@ -384,8 +384,13 @@ is one question, and the answer goes in
   file the task and name it in the row.
 
 `tests/unit/lib/tenancy/process-state.test.ts` fails on a holder with no row
-and on a row whose holder has gone, so the step cannot be skipped — but the
-test only checks that an answer exists. **Which answer is right is this
+and on a row whose holder has gone, so for the shapes it can see the step
+cannot be skipped. **It cannot see a holder built by a factory it does not
+know by name** — `const limiter = createRateLimiter(...)` is state, and
+nothing in that syntax says so — which is why the list of stateful factories
+in the test is hand-kept and why this step is written as a question rather
+than as "run the tests". And even where it does fire, the test only checks
+that an answer exists. **Which answer is right is this
 question, and it is the reviewer's.** A cache keyed by a slug, a name or any
 other label two orgs can both use is the shape to look for; it is what took
 the event-hook cache a minute of every org dispatching one org's webhooks.

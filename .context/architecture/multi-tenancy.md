@@ -286,35 +286,50 @@ A Sunrise release can land code outside your isolation boundary, and the
 merge itself never says so. Most of that is now a build failure, upstream
 and in your fork:
 
-| Change in a release                                                  | Caught by                                                                                                                   |
-| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| A new model nobody classified                                        | `model-classification.test.ts`                                                                                              |
-| A tenant-owned table without a policy; `migrate dev` dropping one    | `policy-coverage.test.ts`; the T-series in `db:drift-check`                                                                 |
-| A new raw-SQL site                                                   | `db-raw-sql-allowlist.test.ts` (it must be admitted; whether it stamps or scopes correctly is the reviewer's)               |
-| A global slug on a tenant-owned model                                | `org-scoped-slugs.test.ts`                                                                                                  |
-| A model missing from the org export                                  | `org-sources.test.ts`                                                                                                       |
-| A create shape the injection misses; a transaction the setter misses | `tests/unit/lib/db/tenancy-extension.test.ts` (real client, recording driver)                                               |
-| A platform job with no declared tenant scope                         | the type-check (`PlatformJob.scope` is required) and `platform-jobs.test.ts`, which pins every task's scope                 |
-| A per-org job that would have run inside the caller's org            | `run-tick.test.ts` / `platform-jobs.test.ts` — the tick started inside a foreign org sweeps every org                       |
-| A job's writes landing with no org                                   | `smoke-multi` scenario [10] — a per-org job through the registry; every row it creates carries its org                      |
-| A new process-global cache nobody gave a tenancy posture             | `process-state.test.ts` — it scans `lib/**` and names the undeclared holder, and names a declared row whose holder has gone |
-| Anything the above miss that a real policy would refuse              | `smoke-multi` on every upstream PR — the harness as the restricted role                                                     |
+| Change in a release                                                  | Caught by                                                                                                                                                                                                             |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A new model nobody classified                                        | `model-classification.test.ts`                                                                                                                                                                                        |
+| A tenant-owned table without a policy; `migrate dev` dropping one    | `policy-coverage.test.ts`; the T-series in `db:drift-check`                                                                                                                                                           |
+| A new raw-SQL site                                                   | `db-raw-sql-allowlist.test.ts` (it must be admitted; whether it stamps or scopes correctly is the reviewer's)                                                                                                         |
+| A global slug on a tenant-owned model                                | `org-scoped-slugs.test.ts`                                                                                                                                                                                            |
+| A model missing from the org export                                  | `org-sources.test.ts`                                                                                                                                                                                                 |
+| A create shape the injection misses; a transaction the setter misses | `tests/unit/lib/db/tenancy-extension.test.ts` (real client, recording driver)                                                                                                                                         |
+| A platform job with no declared tenant scope                         | the type-check (`PlatformJob.scope` is required) and `platform-jobs.test.ts`, which pins every task's scope                                                                                                           |
+| A per-org job that would have run inside the caller's org            | `run-tick.test.ts` / `platform-jobs.test.ts` — the tick started inside a foreign org sweeps every org                                                                                                                 |
+| A job's writes landing with no org                                   | `smoke-multi` scenario [10] — a per-org job through the registry; every row it creates carries its org                                                                                                                |
+| A new process-global cache nobody gave a tenancy posture             | `process-state.test.ts` — it scans `lib/**` and names the undeclared holder, and names a declared row whose holder has gone. Blind to a holder built by a factory it does not know by name; see the review step below |
+| Anything the above miss that a real policy would refuse              | `smoke-multi` on every upstream PR — the harness as the restricted role                                                                                                                                               |
 
-**Nothing in this section is a grep any more.** Both of the ones it used to
-carry are retired, and the second is why the first had to go: a job cannot be
-added to the platform table without a `scope` (§108 t-711), and new
-process-global state is now a build failure rather than a search somebody is
-asked to run (§108 t-712). The state grep also could not have worked — it
-looked for `new Map(`, and every cache in this tree is written
-`new Map<string, X>()`, so it matched none of them and reported clean.
+**Neither of the greps this section used to carry survives.** The jobs one is
+fully retired: a job cannot be added to the platform table without a `scope`,
+and a fork's `registerAppJob` defaults to `per-org` (§108 t-711). The
+process-global-state one is retired because it never worked — it looked for
+`new Map(`, and every cache in this tree is written `new Map<string, X>()`,
+so it matched none of them and reported clean at every sync.
 
-What replaces it: [`lib/tenancy/process-state.ts`](../../lib/tenancy/process-state.ts)
-declares every module-level holder in `lib/` with its posture, and
+What replaces it, and exactly how far it goes:
+[`lib/tenancy/process-state.ts`](../../lib/tenancy/process-state.ts) declares
+every module-level holder in `lib/` with its posture, and
 `tests/unit/lib/tenancy/process-state.test.ts` fails on an undeclared holder
-**and** on a row whose holder is gone. A fork's own state under `lib/app/**`
-or `lib/framework/**` is not scanned — it is yours — but the question is the
-same one, and a manifest of your own is the cheap way to answer it: **if two
-orgs used this install, could one org's entry be served to the other?**
+**and** on a row whose holder is gone.
+
+**That is a build failure for the shapes the scanner can see, and a review
+step for the rest** — which is why this is one line of reading rather than
+nothing. A holder built by a factory the scanner does not know by name is
+invisible to it; three review rounds on the PR that introduced the manifest
+each turned up more of them, and the last one found four still missing. So
+when a release touches `lib/`, the question to carry is not "did a grep
+fire" but:
+
+> **Did anything new start holding state between requests — a cache, a
+> registry, a counter, a limiter — and if two orgs used this install, could
+> one org's entry be served to the other?**
+
+The answer goes in the manifest as a row. `.context/tenancy/context.md`
+[has the five answers it maps to](../tenancy/context.md#adding-process-global-state-the-one-review-step-the-context-cannot-cover).
+A fork's own state under `lib/app/**` or `lib/framework/**` is not scanned —
+it is yours — but the question is identical, and a manifest of your own is
+the cheap way to answer it.
 
 Then run the harness at `multi` against a throwaway database. An unmodified
 fork gets `smoke-multi` for free — the job's `env` carries the role name,

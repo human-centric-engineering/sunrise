@@ -372,6 +372,13 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   // async-local — module-global holder, per-call-stack contents
   // ───────────────────────────────────────────────────────────────────────
   {
+    file: 'lib/auth/pending-signup.ts',
+    holders: ['pendingSignupState'],
+    posture: 'async-local',
+    keyedBy: "better-auth's own per-request state",
+    why: 'Carries the membership — and so the org id — a signup will write, between three better-auth hooks on one request; the handle is module-level, the payload is per request, which is the same shape as `invitedSignupContext` beside it.',
+  },
+  {
     file: 'lib/auth/signup-mode.ts',
     holders: ['invitedSignupContext'],
     posture: 'async-local',
@@ -419,7 +426,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/auth/authorization.ts',
-    holders: ['warnedOwnerlessKinds', 'appPolicy', 'registrationFailed'],
+    holders: ['warnedOwnerlessKinds', 'appPolicy', 'registrationFailed', 'appInit'],
     posture: 'no-tenant-data',
     why: "A fork's registered policy, whether registering it failed, and the kinds already warned about once — the policy's per-request inputs are arguments, not state.",
   },
@@ -431,7 +438,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/db/client.ts',
-    holders: ['globalForPrisma', 'adapter', 'pool'],
+    holders: ['globalForPrisma', 'adapter', 'pool', 'baseClient', 'prisma'],
     posture: 'no-tenant-data',
     why: 'The Prisma client, its pg pool and adapter, held on globalThis so every module graph and every hot reload share one — the per-org part is the GUC the extension sets inside each transaction, which is call-stack state, not this.',
   },
@@ -558,9 +565,15 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/maintenance/app-jobs.ts',
-    holders: ['jobs', 'appInit'],
+    holders: ['jobs', 'appInit', 'clock'],
     posture: 'no-tenant-data',
-    why: "A fork's registered maintenance jobs; each one declares the scope it RUNS in (§108 t-711), which is the tenancy decision — this map only holds the registrations.",
+    why: "A fork's registered maintenance jobs and the clock gating them; each job declares the scope it RUNS in (§108 t-711), which is the tenancy decision — these hold the registrations and each job NAME's last-run time, never a row.",
+  },
+  {
+    file: 'lib/orchestration/maintenance/platform-jobs.ts',
+    holders: ['clock'],
+    posture: 'no-tenant-data',
+    why: "The job clock: per job NAME, the last run and whether one is still in flight. It gates the sweep, and the sweep is what enters each org — so one clock covering every org is the tick's cadence, not a shared tenant value (§108 t-711).",
   },
   {
     file: 'lib/orchestration/maintenance/run-tick.ts',

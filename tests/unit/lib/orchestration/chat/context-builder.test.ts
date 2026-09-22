@@ -33,7 +33,7 @@ const {
   __resetContextContributorsForTests,
 } = await import('@/lib/orchestration/chat/context-builder');
 
-const { runAsOrg } = await import('@/lib/tenancy/context');
+const { runAsOrg, runAsSystem } = await import('@/lib/tenancy/context');
 
 const getPatternDetailMock = getPatternDetail as ReturnType<typeof vi.fn>;
 const loggerWarn = logger.warn as ReturnType<typeof vi.fn>;
@@ -515,6 +515,17 @@ describe('the cache partitions by org (§108 t-712)', () => {
     await runAsOrg(ORG_A, () => buildContext('pattern', '3', { userId: 'user-1' }));
 
     expect(getPatternDetailMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses the system scope, which would merge every org into one prompt', async () => {
+    getPatternDetailMock.mockResolvedValue(patternFixture());
+
+    await expect(
+      runAsSystem('test: a caller that forgot to enter an org', () => buildContext('pattern', '3'))
+    ).rejects.toThrow(/system scope/);
+
+    // Declining to CACHE the body would not stop it being built and returned.
+    expect(getPatternDetailMock).not.toHaveBeenCalled();
   });
 
   it('invalidates the calling org, from the same key', async () => {
