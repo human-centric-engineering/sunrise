@@ -134,9 +134,11 @@ export async function loadOrgRetention(
  * one. Every other key in `settings` is carried across untouched, which is
  * the half that matters to a fork keeping its own org config there.
  *
- * `null` removes the slice. When nothing is left the column is set back to
- * SQL `NULL` rather than `{}`, so "this org has never set anything" has one
- * representation instead of two.
+ * `null` — and an empty `{}`, which names no window and therefore says the
+ * same thing — removes the slice. When nothing is left the column is set back
+ * to SQL `NULL` rather than `{}`, so "this org has never set anything" has one
+ * representation instead of two. `undefined` leaves the slice alone: that is a
+ * patch naming some other slice of the column, not this one.
  *
  * A `settings` column holding something that is not an object — a string, an
  * array — cannot hold slices at all, so it is replaced rather than preserved.
@@ -144,11 +146,18 @@ export async function loadOrgRetention(
  */
 export function applyRetentionPatch(
   current: unknown,
-  slice: OrgRetentionSlice | null
+  slice: OrgRetentionSlice | null | undefined
 ): Prisma.InputJsonValue | typeof Prisma.DbNull {
   const base: Record<string, unknown> = isJsonObject(current) ? { ...current } : {};
 
-  if (slice === null) {
+  if (slice === undefined) {
+    // A patch that names other slices and not this one. Nothing to do here;
+    // the column is written back as it stands, so the caller's log line is
+    // true about what it changed.
+  } else if (slice === null || Object.keys(slice).length === 0) {
+    // `{}` names no window, so it says exactly what `null` says. Storing it
+    // would leave the column non-NULL for ever and give "this org has set
+    // nothing" a second spelling.
     delete base[ORG_RETENTION_KEY];
   } else {
     base[ORG_RETENTION_KEY] = slice;
