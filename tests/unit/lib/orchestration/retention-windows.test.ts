@@ -36,6 +36,7 @@ vi.mock('@/lib/db/client', () => ({
 import {
   loadEffectiveRetentionWindows,
   loadRetentionWindows,
+  readRetentionWindows,
   RETENTION_WINDOW_KEYS,
 } from '@/lib/orchestration/retention-windows';
 import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
@@ -55,6 +56,26 @@ beforeEach(() => {
   mockEnv.TENANCY_MODE = 'multi';
   mockSettingsFindUnique.mockResolvedValue(GLOBAL);
   mockOrgFindUnique.mockResolvedValue({ settings: null });
+});
+
+describe('readRetentionWindows', () => {
+  it('throws, so a write guard cannot read "could not look" as "nothing to check"', async () => {
+    mockSettingsFindUnique.mockRejectedValue(new Error('db unavailable'));
+
+    await expect(readRetentionWindows()).rejects.toThrow('db unavailable');
+  });
+
+  it('answers all-null for an install with no settings row yet', async () => {
+    mockSettingsFindUnique.mockResolvedValue(null);
+
+    await expect(readRetentionWindows()).resolves.toEqual({
+      webhookRetentionDays: null,
+      webhookDlqRetentionDays: null,
+      costLogRetentionDays: null,
+      executionRetentionDays: null,
+      evaluationRetentionDays: null,
+    });
+  });
 });
 
 describe('loadRetentionWindows', () => {
@@ -122,10 +143,14 @@ describe('loadEffectiveRetentionWindows', () => {
     expect(mockOrgFindUnique).not.toHaveBeenCalled();
   });
 
-  it('ignores a slice at TENANCY_MODE=single, where nothing confines a prune', async () => {
+  it('ignores a slice at TENANCY_MODE=single, without even reading it', async () => {
     // No prune carries an orgId, and at `single` there are no policies — so
     // with two orgs on a single-mode install (which the org API allows), this
     // org's 7 days would reach the other org's rows.
+    //
+    // Not reading is the second half: a read that can only be discarded is an
+    // hourly query per org whose one possible effect is to fail and skip
+    // prunes that were never in question.
     mockEnv.TENANCY_MODE = 'single';
     mockOrgFindUnique.mockResolvedValue({
       settings: { retention: { executionRetentionDays: 7 } },
@@ -135,10 +160,19 @@ describe('loadEffectiveRetentionWindows', () => {
 
     expect(effective.windows).toEqual(GLOBAL);
     expect(effective.overrides).toEqual([]);
-    expect(mockLogger.info).toHaveBeenCalledWith(
-      'Org retention windows ignored at TENANCY_MODE=single',
-      { orgId: ORG_A, windows: ['executionRetentionDays'] }
-    );
+    expect(mockOrgFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('cannot have a single-mode install’s prunes skipped by an org read', async () => {
+    // The failure the hoist removes: at `single` this read is never made, so
+    // it cannot fail, so the prunes cannot be skipped by it.
+    mockEnv.TENANCY_MODE = 'single';
+    mockOrgFindUnique.mockRejectedValue(new Error('db unavailable'));
+
+    const effective = await runAsOrg(ORG_A, () => loadEffectiveRetentionWindows());
+
+    expect(effective.windows).toEqual(GLOBAL);
+    expect(mockLogger.error).not.toHaveBeenCalled();
   });
 
   it('prunes nothing, rather than falling back to the global row, when the org read fails', async () => {

@@ -342,9 +342,12 @@ Suspension writes only the status: members are not signed out, the guard
 refuses their next request into the org, and the switch is their way to
 another org. Reinstating is `{ "status": "ACTIVE" }`.
 
-`settings.retention` sets this org's own retention windows (§108 t-713). Both
-objects are **strict** — an unknown key is a 400 rather than a value written
-and silently ignored. The five keys are `webhookRetentionDays`,
+`settings.retention` sets this org's own retention windows (§108 t-713).
+`settings` and `retention` are both **strict**, so an unknown key inside either
+is a 400 rather than a value written and silently ignored. The **top level** is
+not: like every other body in this API it strips what it does not know, so a
+misspelled `settngs` renames the org and drops the retention write without
+saying so. The five keys are `webhookRetentionDays`,
 `webhookDlqRetentionDays`, `costLogRetentionDays`, `executionRetentionDays` and
 `evaluationRetentionDays`; a key omitted inherits the global window, and `null`
 carries whatever `null` means for that column globally — keep forever for four

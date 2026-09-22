@@ -79,7 +79,13 @@ export const ORG_RETENTION_KEYS = [
 /**
  * The retention windows an org may set for itself (§108 t-713), and the
  * bounds each one is held to — the same bounds the global settings schema
- * applies to its own column, because these values overlay those.
+ * applies to its own column, because these values overlay those — with one
+ * exception, which is the one sentence here a reader could otherwise
+ * disprove. `webhookDlqRetentionDays` has **no** field in the global settings
+ * schema and no form control: the column exists and the prune reads it, but
+ * nothing writes it. So that bound is not mirroring a global one, and this
+ * slice is currently the only way to set that window at all. Filed against the
+ * global surface rather than widened here.
  *
  * **Five keys, not the six on `AiOrchestrationSettings`.** The sixth,
  * `auditLogRetentionDays`, prunes `AiAdminAuditLog` — a system model with no

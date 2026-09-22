@@ -201,7 +201,8 @@ Each prune is a small, uniform addition to `lib/orchestration/retention.ts`:
 4. **A tenant window is also an org-settable one.** Add the key to
    `ORG_RETENTION_KEYS` and `orgRetentionSchema` in
    `lib/validations/tenancy.ts`, with the same bound the global schema gives
-   it. A test fails until you do — the two key lists are held level, because a
+   it — or, where the global schema gives it none, a bound of your own, as
+   `webhookDlqRetentionDays` has. A test fails until you do — the two key lists are held level, because a
    window only the platform can set is one no org can override and nothing else
    would say so. A **system** window has no org slice and does not belong in
    either list.

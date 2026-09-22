@@ -35,7 +35,8 @@ import {
   type OrgRetentionSlice,
 } from '@/lib/validations/tenancy';
 import { OrgLifecycleError, updateOrg } from '@/lib/tenancy/lifecycle';
-import { loadRetentionWindows } from '@/lib/orchestration/retention-windows';
+import { readRetentionWindows } from '@/lib/orchestration/retention-windows';
+import { isMultiTenant } from '@/lib/tenancy/context';
 import { eraseOrg } from '@/lib/privacy/erase-org';
 import { getRouteLogger } from '@/lib/api/context';
 
@@ -100,6 +101,16 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
   const org = await updateOrg(id, body);
 
+  if (body.settings?.retention != null && !isMultiTenant()) {
+    // Stored and returned, but the sweep will not apply it until the install
+    // is at `multi` — said here, once, where the operator is, rather than
+    // hourly from a background job nobody is watching.
+    log.info('Org retention windows stored but not applied at TENANCY_MODE=single', {
+      orgId: id,
+      windows: Object.keys(body.settings.retention),
+    });
+  }
+
   log.info('Org updated by admin', {
     orgId: id,
     changes: Object.keys(body),
@@ -146,6 +157,15 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
  * row. A guard that refuses an unrelated change is a guard people route
  * around.
  *
+ * **It runs before `updateOrg`, so it answers ahead of the 404 and ahead of
+ * the install-org rules.** A PATCH naming a nonexistent org with an incoherent
+ * pair gets this 400 rather than `ORG_NOT_FOUND`. That is the ordering the
+ * whole API already has — `validateRequestBody` refuses a malformed body for a
+ * nonexistent org too — and this is body validation that happens to need one
+ * row to complete. Reordering would mean either an existence query this route
+ * does not otherwise make, or teaching the lifecycle module about
+ * orchestration settings, which is a coupling it is written to avoid.
+ *
  * @returns the offending pair, or `null` when the body names neither window,
  *   clears the slice, or leaves a coherent combination.
  */
@@ -157,7 +177,11 @@ async function incoherentRetentionPair(
     return null;
   }
 
-  const globalWindows = await loadRetentionWindows();
+  // The throwing read, not the sweep's swallowing one: a settings row this
+  // request could not read must not read as "nothing to check", which would
+  // let through the very pair the guard refuses. The failure surfaces as the
+  // 500 the write itself was about to become.
+  const globalWindows = await readRetentionWindows();
   const costLogRetentionDays =
     slice.costLogRetentionDays !== undefined
       ? slice.costLogRetentionDays

@@ -37,7 +37,7 @@ vi.mock('@/lib/privacy/erase-org', () => ({ eraseOrg: mockEraseOrg }));
 // The global row the org's slice is checked against for coherence.
 const mockLoadRetentionWindows = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/orchestration/retention-windows', () => ({
-  loadRetentionWindows: mockLoadRetentionWindows,
+  readRetentionWindows: mockLoadRetentionWindows,
 }));
 
 const mockLog = vi.hoisted(() => ({
@@ -318,6 +318,41 @@ describe('PATCH /api/v1/admin/orgs/[id] — the retention slice (§108 t-713)', 
 
     expect(res.status).toBe(400);
     expect(mockUpdateOrg).not.toHaveBeenCalled();
+  });
+
+  it('fails the request when the global windows cannot be read, rather than skipping the check', async () => {
+    // "I could not look" must not answer as "there is nothing to check" — that
+    // would let through the exact pair this guard refuses. The write was about
+    // to hit the same database anyway.
+    mockLoadRetentionWindows.mockRejectedValue(new Error('db unavailable'));
+
+    const res = await patch({ settings: { retention: { costLogRetentionDays: 30 } } });
+
+    expect(res.status).toBe(500);
+    expect(mockUpdateOrg).not.toHaveBeenCalled();
+  });
+
+  it('says so when a slice is stored on a single-tenant install', async () => {
+    mockEnv.TENANCY_MODE = 'single';
+
+    const res = await patch({ settings: { retention: { executionRetentionDays: 365 } } });
+
+    expect(res.status).toBe(200);
+    expect(mockLog.info).toHaveBeenCalledWith(
+      'Org retention windows stored but not applied at TENANCY_MODE=single',
+      { orgId: OTHER, windows: ['executionRetentionDays'] }
+    );
+  });
+
+  it('stays quiet about the mode when the install is multi', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+
+    await patch({ settings: { retention: { executionRetentionDays: 365 } } });
+
+    expect(mockLog.info).not.toHaveBeenCalledWith(
+      'Org retention windows stored but not applied at TENANCY_MODE=single',
+      expect.anything()
+    );
   });
 
   it('does not read the global windows for a patch that sets none', async () => {

@@ -62,37 +62,58 @@ export const RETENTION_WINDOW_KEYS = Object.keys(
 ) as readonly (keyof RetentionWindows)[];
 
 /**
- * Read the tenant sweep's retention windows in **one** query.
+ * Read the tenant sweep's retention windows in **one** query, **throwing** if
+ * the row cannot be read.
  *
- * `resolveRetentionDays` reads the same singleton row once per prune, which cost
- * a sweep seven or eight round-trips to fetch a handful of columns (#442). This is a
- * hoist, not a cache: every prune already takes an explicit window as its first
- * parameter, the sweep just never passed one.
+ * The caller that needs this rather than {@link loadRetentionWindows} is a
+ * *write guard*: the org PATCH checks an org's slice against the windows it
+ * would inherit, and swallowing the read there turns "I could not look" into
+ * "there is nothing to check", which lets through exactly the configuration
+ * the guard exists to refuse (`.context/architecture/checks.md`). Failing the
+ * request costs the caller nothing real — the write it was about to make would
+ * have hit the same database a moment later.
  *
- * Read failures degrade to "no windows configured", matching
- * `resolveRetentionDays`' swallow-on-error contract — a transient settings-read
- * failure skips the prunes rather than throwing out of the sweep.
+ * The sweep's swallow is the opposite trade and still right: there, not
+ * knowing means not deleting.
+ */
+export async function readRetentionWindows(): Promise<RetentionWindows> {
+  const row = await prisma.aiOrchestrationSettings.findUnique({
+    where: { slug: 'global' },
+    select: {
+      webhookRetentionDays: true,
+      webhookDlqRetentionDays: true,
+      costLogRetentionDays: true,
+      executionRetentionDays: true,
+      evaluationRetentionDays: true,
+    },
+  });
+  if (!row) return NO_RETENTION_WINDOWS;
+  return {
+    webhookRetentionDays: row.webhookRetentionDays ?? null,
+    webhookDlqRetentionDays: row.webhookDlqRetentionDays ?? null,
+    costLogRetentionDays: row.costLogRetentionDays ?? null,
+    executionRetentionDays: row.executionRetentionDays ?? null,
+    evaluationRetentionDays: row.evaluationRetentionDays ?? null,
+  };
+}
+
+/**
+ * The sweep's read: {@link readRetentionWindows}, degrading to "no windows
+ * configured" on a read failure.
+ *
+ * That matches `resolveRetentionDays`' swallow-on-error contract — a transient
+ * settings-read failure skips the prunes rather than throwing out of the sweep
+ * — and it is the safe direction here, because a window nobody could read
+ * deletes nothing.
+ *
+ * `resolveRetentionDays` reads the same singleton row once per prune, which
+ * cost a sweep seven or eight round-trips to fetch a handful of columns
+ * (#442). This is a hoist, not a cache: every prune already takes an explicit
+ * window as its first parameter, the sweep just never passed one.
  */
 export async function loadRetentionWindows(): Promise<RetentionWindows> {
   try {
-    const row = await prisma.aiOrchestrationSettings.findUnique({
-      where: { slug: 'global' },
-      select: {
-        webhookRetentionDays: true,
-        webhookDlqRetentionDays: true,
-        costLogRetentionDays: true,
-        executionRetentionDays: true,
-        evaluationRetentionDays: true,
-      },
-    });
-    if (!row) return NO_RETENTION_WINDOWS;
-    return {
-      webhookRetentionDays: row.webhookRetentionDays ?? null,
-      webhookDlqRetentionDays: row.webhookDlqRetentionDays ?? null,
-      costLogRetentionDays: row.costLogRetentionDays ?? null,
-      executionRetentionDays: row.executionRetentionDays ?? null,
-      evaluationRetentionDays: row.evaluationRetentionDays ?? null,
-    };
+    return await readRetentionWindows();
   } catch {
     return NO_RETENTION_WINDOWS;
   }
@@ -129,7 +150,7 @@ export async function loadRetentionWindows(): Promise<RetentionWindows> {
  * With one global window those N runs were identical and the exposure did not
  * exist. A slice set at `single` is still stored and still returned by the org
  * API, so switching the install to `multi` turns it on; until then the global
- * row governs and a line says so.
+ * row governs, and the PATCH that stored it said so at the time.
  */
 export async function loadEffectiveRetentionWindows(): Promise<{
   windows: RetentionWindows;
@@ -142,6 +163,13 @@ export async function loadEffectiveRetentionWindows(): Promise<{
   const orgId = getTenantContext()?.orgId ?? null;
   if (orgId === null) return { windows: globalWindows, orgId: null, overrides: [] };
 
+  // Before the read, not after it: at `single` the answer is the global row
+  // whatever the org stored, so reading would be an hourly query per org whose
+  // only possible effect is to fail and skip prunes that were never in
+  // question. The PATCH that stores a slice at `single` is where an operator
+  // is told it will not apply yet.
+  if (!isMultiTenant()) return { windows: globalWindows, orgId, overrides: [] };
+
   let slice: OrgRetentionSlice | null;
   try {
     slice = await loadOrgRetention(orgId);
@@ -153,17 +181,6 @@ export async function loadEffectiveRetentionWindows(): Promise<{
     return { windows: NO_RETENTION_WINDOWS, orgId, overrides: [] };
   }
   if (!slice) return { windows: globalWindows, orgId, overrides: [] };
-
-  if (!isMultiTenant()) {
-    // Stored, readable, and deliberately not applied — see the note above.
-    // Said out loud, because an override that silently does nothing is the
-    // shape an operator debugs for an hour.
-    logger.info('Org retention windows ignored at TENANCY_MODE=single', {
-      orgId,
-      windows: Object.keys(slice),
-    });
-    return { windows: globalWindows, orgId, overrides: [] };
-  }
 
   const windows = { ...globalWindows };
   const overrides: (keyof RetentionWindows)[] = [];
