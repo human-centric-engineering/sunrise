@@ -82,6 +82,19 @@ run (`loadEffectiveRetentionWindows()`), and logs which windows the org
 overrode. `GET /api/v1/orgs/[id]` publishes the validated slice to any member;
 `GET /api/v1/admin/orgs/[id]` returns the whole `settings` column.
 
+**The prunes rely on the policies, and per-org windows raise the stakes of
+running without them.** No prune carries an `orgId` in its `where` clause —
+the extension is the chokepoint (§107), so confinement at `multi` is the
+`org_isolation` policies' job. In the window the playbook warns about — an app
+live at `multi` before `db:tenancy:enable` has run, or after a `db:reset` left
+the policies dormant — every org already sees every org's rows. What changes
+here is what the tick does in that window: with one global window its N runs
+deleted the same set N times, and with per-org windows the shortest window any
+org set is applied to everyone's rows. Enable the policies before the app
+serves `multi`, which the
+[playbook](../architecture/multi-tenancy.md) already requires for isolation of
+any kind.
+
 **A stored window that cannot be read is treated as absent**, and only that
 window: the org inherits the global value for it, keeps the rest of its slice,
 and the sweep logs which keys it dropped. Discarding the whole slice over one
