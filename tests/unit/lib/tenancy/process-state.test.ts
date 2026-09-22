@@ -29,8 +29,10 @@
  * ---------------------------------------------------------------------------
  * WHAT THE SCANNER MATCHES, AND WHAT IT DELIBERATELY DOES NOT
  * ---------------------------------------------------------------------------
- * Calibrated against this tree (106 holders in 66 files at the time of
- * writing), then narrowed until it had no false positives. It matches, at
+ * Calibrated against this tree (105 holders in 66 files at the time of
+ * writing; the manifest declares 108, the extra three being shapes below
+ * that it cannot see), then narrowed until it had no false positives. It
+ * matches, at
  * column 0 only — Prettier indents everything nested, so column 0 IS module
  * scope:
  *
@@ -43,7 +45,7 @@
  *
  *   • `const X = new Set([...])` / `new Map([[...]])` — an inline array literal
  *     argument makes it a lookup table, written once at module load from
- *     literals and never again. 20 of them in `lib/`, none of them state.
+ *     literals and never again. 32 of them in `lib/`, none of them state.
  *   • `new TextEncoder()` / `new TextDecoder()` — stateless codecs.
  *
  * And it cannot see, which is why the review-checklist entry in

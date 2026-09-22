@@ -31,10 +31,11 @@
  * Every row whose posture carries a DECISION — anything but `no-tenant-data`
  * — also has a one-line `Tenancy posture:` in its module docblock, so the
  * reader who opens the file rather than this one sees it. The
- * `no-tenant-data` rows deliberately do not: forty files each saying "this
- * holds no tenant data, see the manifest" is noise that dilutes the
- * twenty-nine that say something, and every line here is a merge a fork pays
- * for. The manifest is complete; the inline line is the decision.
+ * `no-tenant-data` rows deliberately do not: the thirty-seven files that hold
+ * only that, each saying "this holds no tenant data, see the manifest", is
+ * noise that dilutes the twenty-nine that say something, and every line here
+ * is a merge a fork pays for. The manifest is complete; the inline line is
+ * the decision.
  *
  * ## What is NOT process-global state
  *
@@ -76,7 +77,13 @@ export type TenancyPosture =
    * names it: a cap is a noisy-neighbour question, not an isolation one.
    */
   | 'row-keyed'
-  /** Tenant data partitioned by org id. */
+  /**
+   * Tenant data partitioned by org id. Two holders use `'system'` as the
+   * partition for the audited system scope, which has no org. That sentinel
+   * is safe only because an org id is a cuid and `createOrg` has no
+   * caller-supplied-id path — a fork that ever lets an org id be chosen has
+   * to prefix these keys rather than rely on the shapes not colliding.
+   */
   | 'org-keyed'
   /**
    * A tenant-affecting aggregate deliberately shared across every org, because
