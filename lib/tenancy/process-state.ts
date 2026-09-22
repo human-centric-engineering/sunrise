@@ -12,10 +12,17 @@
  * asked to run at every upstream sync, and a grep is not run. (That grep also
  * could not have worked: it looked for `new Map(`, and every cache in this
  * tree is written `new Map<string, X>()`.) This file is the roster;
- * `tests/unit/lib/tenancy/process-state.test.ts` is the scanner that proves it
- * complete, in both directions — a holder with no row fails, and a row whose
- * holder is gone fails, because a stale row is a lie that reads like a
- * decision.
+ * `tests/unit/lib/tenancy/process-state.test.ts` is the scanner that holds it
+ * level with the tree, in both directions — a holder with no row fails, and a
+ * row whose holder is gone fails, because a stale row is a lie that reads like
+ * a decision.
+ *
+ * **It holds it level with what it can SEE.** A holder built by a factory the
+ * scanner does not know by name has no syntax saying it holds state, and
+ * three review rounds on the PR that introduced this file each turned up more
+ * of them. So the roster is a build failure for the shapes the scanner knows
+ * and a review step for the rest — the step is in
+ * `.context/tenancy/context.md`, and it is one question, below.
  *
  * ## Adding process-global state
  *
