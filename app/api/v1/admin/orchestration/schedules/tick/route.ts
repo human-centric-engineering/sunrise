@@ -22,7 +22,7 @@
 import { withAdminAuth } from '@/lib/auth/guards';
 import { errorResponse, successResponse } from '@/lib/api/responses';
 import { processDueSchedules } from '@/lib/orchestration/scheduling';
-import { everyOrgFailed, runScopedJob } from '@/lib/orchestration/maintenance/job-scope';
+import { noOrgSucceeded, runScopedJob } from '@/lib/orchestration/maintenance/job-scope';
 
 export const POST = withAdminAuth(async (_request) => {
   const { result } = await runScopedJob({
@@ -32,13 +32,14 @@ export const POST = withAdminAuth(async (_request) => {
     foundWork: (r) => r.processed > 0,
   });
 
-  // A sweep that failed for every org is a failed sweep, whatever the org
-  // count. The runner contains each org's throw so the others still run — with
-  // one org that throw reaches the guard and this route answers 500, and
-  // without this check it would answer 200 the day a second org appeared,
-  // silencing a cron monitor at the moment the failure got worse.
-  if (everyOrgFailed(result)) {
-    return errorResponse('The schedules sweep failed for every org', {
+  // A sweep that succeeded for no org is a failed sweep, whatever the org
+  // count — every org threw, or there was no org to run for. The runner
+  // contains each org's throw so the others still run: with one org that throw
+  // reaches the guard and this route answers 500, and without this check it
+  // would answer 200 the day a second org appeared, silencing a cron monitor
+  // at the moment the failure got worse.
+  if (noOrgSucceeded(result)) {
+    return errorResponse('The schedules sweep succeeded for no org', {
       code: 'SCHEDULER_TICK_FAILED',
       status: 500,
       details: { ...result },

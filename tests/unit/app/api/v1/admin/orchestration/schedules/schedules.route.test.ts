@@ -488,6 +488,20 @@ describe('Schedule CRUD API', () => {
       expect(json.error.details.orgErrors).toHaveLength(2);
     });
 
+    it('answers 500 when there is no active org to sweep for', async () => {
+      // No ACTIVE org is a broken install, not a quiet one — a cron monitor
+      // must not read it as a healthy idle sweep.
+      const { prisma } = await import('@/lib/db/client');
+      vi.mocked(prisma.org.findMany).mockResolvedValueOnce([] as never);
+
+      const res = await tickScheduler(makePostRequest({}));
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(500);
+      expect(json.error.code).toBe('SCHEDULER_TICK_FAILED');
+      expect(processDueSchedules).not.toHaveBeenCalled();
+    });
+
     it('still answers 200 when only some orgs failed', async () => {
       const { prisma } = await import('@/lib/db/client');
       const { getTenantContext } = await import('@/lib/tenancy/context');

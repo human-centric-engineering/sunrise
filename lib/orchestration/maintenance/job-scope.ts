@@ -30,18 +30,30 @@
  *     org. The reason is what the audit log line carries, so make it a
  *     sentence an operator can act on.
  *
+ * **Anything else is treated as per-org**, loudly — see {@link isSystemScope}
+ * for why the test is a guard rather than `scope !== 'per-org'`.
+ *
  * **At `single` a per-org job is behaviour-neutral**: the one org is the
- * install org, the run happens once, and the result is returned exactly as
- * the job produced it — the tick's summary line does not change shape. The
- * fold below (numbers summed, arrays concatenated, an `orgs` count) applies
- * only when more than one org was visited or an org failed, which is to say
- * only at `multi`.
+ * install org, the run happens once, and the result — or the throw — is
+ * returned exactly as the job produced it, so the tick's summary line does
+ * not change shape. The fold below (numbers summed, arrays concatenated, an
+ * `orgs` count) applies only when the run visited some number of orgs other
+ * than one, which on a single-tenant install never happens.
  *
  * A per-org failure is contained per org: the remaining orgs still run, the
  * failure is logged with the org, and the outcome counts as "found work" so the
  * idle gate is never armed on an unknown state. With exactly one org the
- * failure propagates unchanged, so the registries' existing error handling —
- * and their existing tests — see what they always saw.
+ * failure propagates instead, so the registries' existing error handling —
+ * and their existing tests — see what they always saw. A caller that reports a
+ * status rather than a log line needs {@link noOrgSucceeded} to tell "some
+ * orgs failed" from "the sweep is down", because the first case cannot reach
+ * it as a throw.
+ *
+ * **The caller may supply the org list** ({@link RunScopedJobOptions.orgIds}).
+ * The maintenance tick reads the active orgs once and hands the same list to
+ * every per-org job, so a tick costs one org-list query rather than one per
+ * due job; without it each run reads the list itself through
+ * {@link forEachOrg}.
  */
 
 import { logger } from '@/lib/logging';
@@ -93,7 +105,13 @@ export interface OrgJobError {
 }
 
 /**
- * Did the job fail for **every** org it ran for?
+ * Did the job succeed for **no** org at all?
+ *
+ * True in two cases, and they are the same fact to whatever is watching: every
+ * org it ran for failed, or it ran for no org (`orgs: 0` — the state the
+ * runner refuses to let pass silently; see {@link runScopedJob}). A
+ * mis-seeded database with no `ACTIVE` org would otherwise look exactly like a
+ * quiet, healthy install.
  *
  * The runner contains a per-org failure so the remaining orgs still run, which
  * is right for the tick — one org's broken sweep must not stop the others. But
@@ -103,8 +121,9 @@ export interface OrgJobError {
  * second org was created, silencing a monitor exactly when the failure got
  * bigger. Only meaningful on a folded summary.
  */
-export function everyOrgFailed(result: unknown): result is PerOrgSummary {
-  if (!isRecord(result) || typeof result.orgs !== 'number' || result.orgs === 0) return false;
+export function noOrgSucceeded(result: unknown): result is PerOrgSummary {
+  if (!isRecord(result) || typeof result.orgs !== 'number') return false;
+  if (result.orgs === 0) return true;
   return Array.isArray(result.orgErrors) && result.orgErrors.length === result.orgs;
 }
 

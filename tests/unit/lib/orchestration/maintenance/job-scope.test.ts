@@ -25,7 +25,11 @@ vi.mock('@/lib/logging', () => ({
 
 import { logger } from '@/lib/logging';
 import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
-import { foldOrgResults, runScopedJob } from '@/lib/orchestration/maintenance/job-scope';
+import {
+  foldOrgResults,
+  noOrgSucceeded,
+  runScopedJob,
+} from '@/lib/orchestration/maintenance/job-scope';
 
 const ORG_A = 'org_a';
 const ORG_B = 'org_b';
@@ -380,5 +384,36 @@ describe('foldOrgResults', () => {
         { orgId: ORG_B, ok: true, result: undefined },
       ])
     ).toEqual({ orgs: 2 });
+  });
+});
+
+describe('noOrgSucceeded', () => {
+  it('is true when every org that ran failed', () => {
+    expect(
+      noOrgSucceeded({
+        orgs: 2,
+        orgErrors: [
+          { orgId: ORG_A, error: 'x' },
+          { orgId: ORG_B, error: 'y' },
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it('is true when the sweep ran for no org at all', () => {
+    // A mis-seeded database with no ACTIVE org would otherwise be
+    // indistinguishable from a quiet, healthy install to whatever is watching.
+    expect(noOrgSucceeded({ orgs: 0 })).toBe(true);
+  });
+
+  it('is false when at least one org succeeded', () => {
+    expect(noOrgSucceeded({ orgs: 2, orgErrors: [{ orgId: ORG_A, error: 'x' }] })).toBe(false);
+    expect(noOrgSucceeded({ orgs: 2 })).toBe(false);
+  });
+
+  it('is false for a single org’s own result, which is not a fold', () => {
+    // With one org a failure propagates as a throw instead, so this predicate
+    // never sees it.
+    expect(noOrgSucceeded({ processed: 0, succeeded: 0, failed: 0, errors: [] })).toBe(false);
   });
 });

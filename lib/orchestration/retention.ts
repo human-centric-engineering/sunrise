@@ -467,7 +467,7 @@ const NO_RETENTION_WINDOWS: RetentionWindows = {
  * Read all six retention windows in **one** query.
  *
  * `resolveRetentionDays` reads the same singleton row once per prune, which cost
- * a sweep seven or eight round-trips to fetch six columns (#442). This is a
+ * a sweep seven or eight round-trips to fetch a handful of columns (#442). This is a
  * hoist, not a cache: every prune already takes an explicit window as its first
  * parameter, the sweep just never passed one.
  *

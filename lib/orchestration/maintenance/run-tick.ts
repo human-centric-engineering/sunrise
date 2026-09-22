@@ -197,14 +197,15 @@ export async function runMaintenanceTick(
   // every later tick reports "previous tick still running" and maintenance
   // stops for good. The sweep is now N sequential per-org passes, so its
   // duration scales with the org count and the window is wider than it was.
-  const watchdogId = setTimeout(() => {
+  const releaseGuardOnOverrun = (): void => {
     if (currentTickToken !== myTickToken || !tickRunning) return;
     logger.warn('Maintenance tick: background chain exceeded max duration; releasing guard', {
       maxDurationMs: BACKGROUND_TASK_MAX_MS,
       tickStartMs: startMs,
     });
     tickRunning = false;
-  }, BACKGROUND_TASK_MAX_MS);
+  };
+  let watchdogId = setTimeout(releaseGuardOnOverrun, BACKGROUND_TASK_MAX_MS);
 
   // One org-list read for the whole tick, handed to every per-org job below.
   // Without it each due job reads the same list again — the per-tick query
@@ -212,11 +213,27 @@ export async function runMaintenanceTick(
   let orgIds: readonly string[] | undefined;
   try {
     orgIds = await listActiveOrgIds();
-  } catch {
-    // Leave it undefined: each job falls back to reading the list itself, and
-    // a job that also cannot read it fails in its own containment.
+  } catch (err) {
+    // Logged, not swallowed. Each job falls back to reading the list itself,
+    // so the tick still works — but if the database is unhealthy the logs
+    // would otherwise show a dozen per-job failures and nothing naming the
+    // cause they share.
+    logger.warn('Maintenance tick: could not read the active orgs; each job will read its own', {
+      error: err instanceof Error ? err.message : String(err),
+    });
     orgIds = undefined;
   }
+
+  /**
+   * Restart the watchdog's clock. The awaited sweep and the background chain
+   * each get the full budget: armed before the sweep so a sweep that never
+   * settles cannot wedge the guard, re-armed after it so N per-org passes do
+   * not spend the chain's allowance and release the guard mid-tick.
+   */
+  const rearmWatchdog = (): void => {
+    clearTimeout(watchdogId);
+    watchdogId = setTimeout(releaseGuardOnOverrun, BACKGROUND_TASK_MAX_MS);
+  };
 
   let schedules: ScheduleResult;
   let scheduleFoundWork = false;
@@ -235,6 +252,8 @@ export async function runMaintenanceTick(
   } catch (err) {
     schedules = { error: err instanceof Error ? err.message : String(err) };
   }
+
+  rearmWatchdog();
 
   void Promise.allSettled([
     // Sunrise's own tasks, each gated by its own minimum interval (#442) and

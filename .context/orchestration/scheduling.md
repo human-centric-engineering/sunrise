@@ -171,9 +171,11 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 `forEachOrg` is sequential, so at `multi` a per-org task costs roughly its
 single-org cost × the number of active orgs, and the awaited schedules sweep
 does the same before the route returns its 202. The background chain's
-watchdog is a fixed five minutes (`BACKGROUND_TASK_MAX_MS` in `run-tick.ts`):
-if the chain runs past it the watchdog releases the overlap guard, and the
-next tick starts its sweeps alongside the still-running ones. Every task is
+watchdog is a fixed five minutes (`BACKGROUND_TASK_MAX_MS` in `run-tick.ts`),
+applied twice — once to the awaited schedules sweep and again, re-armed, to
+the background chain, so the two phases do not share one allowance. If either
+runs past it the watchdog releases the overlap guard, and the next tick starts
+its sweeps alongside the still-running ones. Every task is
 idempotent and the schedule claim is an optimistic lock, so that overlap is
 safe rather than corrupting — but it is wasted work, and at a few hundred
 active orgs it becomes the normal case rather than an incident. The design

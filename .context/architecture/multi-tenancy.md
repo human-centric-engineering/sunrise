@@ -355,6 +355,16 @@ has the numbers.
   zero rows and fails every write. Enable only with `multi`, and check with
   `TENANCY_MODE=multi npm run db:drift-check` rather than by looking at the
   app.
+- **Flip `TENANCY_MODE=multi` only after the policies are enabled — the order
+  matters more since §108.** Confining a per-org job is RLS's doing, not the
+  job's: the tick now runs each sweep once per org, so at `multi` with the
+  policies still dormant every sweep sees every org's rows and does the same
+  unscoped work N times. `backfillMissingEmbeddings` would spend N× the
+  embedding calls, and the retention sweep would report the same deletions N
+  times. (Before §108 those jobs threw once and did nothing — loud, and
+  free.) Nothing asserts the pairing at runtime; `TENANCY_MODE=multi npm run
+db:drift-check` is what tells you, and the order in
+  [enabling it end to end](#enabling-it-end-to-end) is enable, then flip.
 - **Neon's deploy role bypasses RLS.** `neondb_owner` inherits `BYPASSRLS`
   from `neon_superuser`; it is the owner DSN, never the app's. Neon also
   refuses `DROP OWNED BY`, which is why `--drop` revokes grants first.
