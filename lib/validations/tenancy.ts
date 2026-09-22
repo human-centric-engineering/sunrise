@@ -88,8 +88,17 @@ export const ORG_RETENTION_KEYS = [
  * MCP audit log is the same shape and lives on `McpServerConfig`.
  *
  * Per key: **absent** inherits the global window, and an explicit **`null`**
- * keeps that class forever for this org — the meaning `null` already carries
- * on the global row.
+ * carries whatever `null` already means for that column on the global row.
+ *
+ * For four of the five that is **keep this class forever**. It is not for
+ * `webhookDlqRetentionDays`: `pruneWebhookDeliveries` reads a null DLQ window
+ * as "use `webhookRetentionDays`" — the fallback that preserved pre-DLQ
+ * behaviour for installs that never set the newer column — so an org that
+ * nulls it gets its dead-lettered rows pruned on its *webhook* window, not
+ * kept. Saying "null keeps it forever" of all five was wrong in the first
+ * draft of this file, and there is no way today to express "prune deliveries
+ * but never the DLQ" at either level. Changing that would change the global
+ * column's meaning, which is not this task's to do.
  *
  * `.strict()` on both objects: an unknown key here is a typo that would
  * otherwise be written and silently ignored for ever. A fork storing its own

@@ -1189,6 +1189,35 @@ describe('the effective retention windows of one org', () => {
     });
   });
 
+  it('gives an org its own DLQ window', async () => {
+    orgSettings({ [ORG_A]: { retention: { webhookDlqRetentionDays: 60 } } });
+
+    await sweepAs(ORG_A);
+
+    const calls = vi
+      .mocked(prisma.aiWebhookDelivery.deleteMany)
+      .mock.calls.map((call) => call[0] as { where: { createdAt: { lt: Date }; status: unknown } });
+    expect(calls.map((call) => call.where.createdAt.lt)).toEqual([cutoff(30), cutoff(60)]);
+  });
+
+  it('prunes an org’s DLQ on its webhook window when the DLQ window is null — NOT forever', async () => {
+    // The exception to "null keeps that class forever". `pruneWebhookDeliveries`
+    // reads a null DLQ window as "use webhookRetentionDays" — the fallback that
+    // preserved pre-DLQ behaviour — so nulling it shortens the DLQ to the
+    // webhook window rather than keeping it. The docs say so because this test
+    // says so.
+    orgSettings({
+      [ORG_A]: { retention: { webhookRetentionDays: 7, webhookDlqRetentionDays: null } },
+    });
+
+    await sweepAs(ORG_A);
+
+    const calls = vi
+      .mocked(prisma.aiWebhookDelivery.deleteMany)
+      .mock.calls.map((call) => call[0] as { where: { createdAt: { lt: Date } } });
+    expect(calls.map((call) => call.where.createdAt.lt)).toEqual([cutoff(7), cutoff(7)]);
+  });
+
   it('names the org whose effective pair is incoherent, not the global row', async () => {
     // Coherent globally (365 ≥ 90). The org shortens only the cost-log side,
     // and inherits the execution window it now undercuts.

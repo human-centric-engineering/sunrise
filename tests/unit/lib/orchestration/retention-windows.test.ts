@@ -122,6 +122,25 @@ describe('loadEffectiveRetentionWindows', () => {
     expect(mockOrgFindUnique).not.toHaveBeenCalled();
   });
 
+  it('ignores a slice at TENANCY_MODE=single, where nothing confines a prune', async () => {
+    // No prune carries an orgId, and at `single` there are no policies — so
+    // with two orgs on a single-mode install (which the org API allows), this
+    // org's 7 days would reach the other org's rows.
+    mockEnv.TENANCY_MODE = 'single';
+    mockOrgFindUnique.mockResolvedValue({
+      settings: { retention: { executionRetentionDays: 7 } },
+    });
+
+    const effective = await runAsOrg(ORG_A, () => loadEffectiveRetentionWindows());
+
+    expect(effective.windows).toEqual(GLOBAL);
+    expect(effective.overrides).toEqual([]);
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      'Org retention windows ignored at TENANCY_MODE=single',
+      { orgId: ORG_A, windows: ['executionRetentionDays'] }
+    );
+  });
+
   it('prunes nothing, rather than falling back to the global row, when the org read fails', async () => {
     mockOrgFindUnique.mockRejectedValue(new Error('db unavailable'));
 

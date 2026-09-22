@@ -304,10 +304,15 @@ export async function updateOrg(
     ...(patch.status !== undefined && { status: patch.status }),
   };
 
-  const retentionPatch = patch.settings?.retention;
+  // Keyed on `settings`, not on `settings.retention`: a patch naming another
+  // slice of the column must still take the transaction, or it would report a
+  // change it did not make. `orgSettingsPatchSchema` admits only `retention`
+  // today, so this is the branch being right ahead of the second slice rather
+  // than a reachable bug.
+  const settingsPatch = patch.settings;
 
   const updated =
-    retentionPatch === undefined
+    settingsPatch === undefined
       ? await db.org.update({ where: { id: orgId }, data, select: orgSelect })
       : await db.$transaction(async (tx) => {
           // Re-read inside the transaction: `current` was read before the
@@ -319,7 +324,10 @@ export async function updateOrg(
           if (!row) throw new OrgLifecycleError('ORG_NOT_FOUND', 'Organisation not found');
           return tx.org.update({
             where: { id: orgId },
-            data: { ...data, settings: applyRetentionPatch(row.settings, retentionPatch) },
+            data: {
+              ...data,
+              settings: applyRetentionPatch(row.settings, settingsPatch.retention),
+            },
             select: orgSelect,
           });
         }, SERIALIZABLE);
@@ -328,7 +336,12 @@ export async function updateOrg(
     orgId,
     changes: Object.keys(patch),
     ...(patch.status !== undefined && patch.status !== current.status && { status: patch.status }),
-    ...(retentionPatch !== undefined && { retention: retentionPatch === null ? 'cleared' : 'set' }),
+    ...(settingsPatch?.retention !== undefined && {
+      retention:
+        settingsPatch.retention === null || Object.keys(settingsPatch.retention).length === 0
+          ? 'cleared'
+          : 'set',
+    }),
   });
   return updated;
 }

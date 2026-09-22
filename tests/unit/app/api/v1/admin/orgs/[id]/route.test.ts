@@ -286,6 +286,40 @@ describe('PATCH /api/v1/admin/orgs/[id] — the retention slice (§108 t-713)', 
     expect(mockUpdateOrg).toHaveBeenCalled();
   });
 
+  it('lets an unrelated window through on an install whose global row is already incoherent', async () => {
+    // The state warnOnIncoherentRetention's docblock says exists in the wild:
+    // configured before the global check. Filling both halves from that row
+    // for ANY slice meant an admin setting this org's evaluation window got a
+    // 400 quoting two numbers they had not touched, with no way through.
+    mockLoadRetentionWindows.mockResolvedValue({
+      webhookRetentionDays: 30,
+      webhookDlqRetentionDays: null,
+      costLogRetentionDays: 30,
+      executionRetentionDays: 90,
+      evaluationRetentionDays: 90,
+    });
+
+    const res = await patch({ settings: { retention: { evaluationRetentionDays: 30 } } });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateOrg).toHaveBeenCalled();
+  });
+
+  it('still refuses when the body names one half of the pair itself', async () => {
+    mockLoadRetentionWindows.mockResolvedValue({
+      webhookRetentionDays: 30,
+      webhookDlqRetentionDays: null,
+      costLogRetentionDays: 30,
+      executionRetentionDays: 90,
+      evaluationRetentionDays: 90,
+    });
+
+    const res = await patch({ settings: { retention: { executionRetentionDays: 365 } } });
+
+    expect(res.status).toBe(400);
+    expect(mockUpdateOrg).not.toHaveBeenCalled();
+  });
+
   it('does not read the global windows for a patch that sets none', async () => {
     await patch({ name: 'Renamed' });
     expect(mockLoadRetentionWindows).not.toHaveBeenCalled();

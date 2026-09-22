@@ -24,8 +24,13 @@ release process.
   sweep reads (`webhookRetentionDays`, `webhookDlqRetentionDays`,
   `costLogRetentionDays`, `executionRetentionDays`, `evaluationRetentionDays`),
   each optional and nullable, stored on `Org.settings`. A key omitted inherits
-  the global `AiOrchestrationSettings` window; `null` keeps that class forever
-  for that org; `{ "retention": null }` removes the slice. The write replaces
+  the global `AiOrchestrationSettings` window; `null` carries whatever `null`
+  means for that column globally (keep forever, except
+  `webhookDlqRetentionDays`, whose existing fallback is "use
+  `webhookRetentionDays`"); `{ "retention": null }` or `{}` removes the slice.
+  A slice is stored and returned in both tenancy modes but **applied at
+  `multi` only** — no prune carries an `orgId`, so at `single`, where there are
+  no policies, one org's window would reach every org's rows. The write replaces
   the `retention` key and preserves every other key in `settings`, which is a
   fork's. `auditLogRetentionDays` is deliberately not settable: it prunes a
   system table with no org. Both objects are strict, and an org's slice is

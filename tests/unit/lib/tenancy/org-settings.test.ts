@@ -185,6 +185,26 @@ describe('applyRetentionPatch', () => {
     });
   });
 
+  it('treats an empty slice as no slice, so "never set" keeps one spelling', () => {
+    // `{}` names no window, so it says what `null` says. Storing it would
+    // leave the column non-NULL for ever.
+    expect(applyRetentionPatch({ retention: { webhookRetentionDays: 7 } }, {})).toBe(Prisma.DbNull);
+    expect(applyRetentionPatch({ branding: { logo: 'x' } }, {})).toEqual({
+      branding: { logo: 'x' },
+    });
+  });
+
+  it('leaves the slice alone when the patch names another slice entirely', () => {
+    // Not reachable through the route today — the schema admits only
+    // `retention` — but the column is shared and the next slice is a fork's.
+    expect(
+      applyRetentionPatch(
+        { branding: { logo: 'x' }, retention: { webhookRetentionDays: 7 } },
+        undefined
+      )
+    ).toEqual({ branding: { logo: 'x' }, retention: { webhookRetentionDays: 7 } });
+  });
+
   it('replaces a column that is not an object at all', () => {
     // Nothing the platform writes produces this; a hand-edit can.
     expect(applyRetentionPatch('nonsense', { webhookRetentionDays: 7 })).toEqual({

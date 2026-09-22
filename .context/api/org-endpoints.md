@@ -347,7 +347,10 @@ objects are **strict** — an unknown key is a 400 rather than a value written
 and silently ignored. The five keys are `webhookRetentionDays`,
 `webhookDlqRetentionDays`, `costLogRetentionDays`, `executionRetentionDays` and
 `evaluationRetentionDays`; a key omitted inherits the global window, and `null`
-keeps that class forever for this org. The write **replaces** the `retention`
+carries whatever `null` means for that column globally — keep forever for four
+of them, and "use the webhook window" for `webhookDlqRetentionDays`, whose
+fallback predates this. A slice is stored and returned in both tenancy modes
+but **applied at `multi` only**. The write **replaces** the `retention`
 slice and preserves every other key in `settings`;
 `{ "settings": { "retention": null } }` removes the slice.
 [Data Retention](../orchestration/retention.md#per-org-windows) has the

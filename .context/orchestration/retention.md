@@ -53,22 +53,40 @@ global row is what an org that sets nothing gets:
 { "retention": { "executionRetentionDays": 365, "webhookRetentionDays": null } }
 ```
 
-| In the slice                     | Effect                                   |
-| -------------------------------- | ---------------------------------------- |
-| key **absent**                   | inherit the global window                |
-| key set to a **number**          | that window, for this org                |
-| key set to **`null`**            | keep that class **forever** for this org |
-| slice absent, or `settings` null | the org is on every global window        |
+| In the slice                  | Effect                                                 |
+| ----------------------------- | ------------------------------------------------------ |
+| key **absent**                | inherit the global window                              |
+| key set to a **number**       | that window, for this org                              |
+| key set to **`null`**         | what `null` means for that column globally — see below |
+| slice absent, `{}`, or `null` | the org is on every global window                      |
+
+`null` means **keep that class forever** for four of the five keys. The
+exception is `webhookDlqRetentionDays`, where a null window means "use
+`webhookRetentionDays`" — the fallback in the first table, which preserves
+pre-DLQ behaviour for installs that never set the column. So nulling the DLQ
+window prunes dead-lettered rows on the org's _webhook_ window rather than
+keeping them, and neither level can currently express "prune deliveries but
+never the DLQ".
 
 Precedence is **per key**, so an org that lengthens its execution window still
 follows the platform on everything else — including the DLQ window, which is
-not shortened by overriding `webhookRetentionDays` beside it.
+not shortened by overriding `webhookRetentionDays` beside it _unless_ the DLQ
+window is null at both levels, in which case the fallback above applies and the
+webhook window governs both.
 
 **Five keys, not six.** `auditLogRetentionDays` prunes `AiAdminAuditLog`, a
 system model with no `orgId` that the system sweep owns: rows nobody owns
 cannot be kept per owner. `McpServerConfig.auditRetentionDays` is the same
 shape. `AiAgent.retentionDays` was already per agent and therefore per org, and
 is untouched by any of this.
+
+**A slice applies at `TENANCY_MODE=multi` only.** No prune carries an `orgId`,
+so confinement is the `org_isolation` policies' job, and at `single` there are
+no policies at all. `forEachOrg` iterates every ACTIVE org in both modes and
+the org API creates orgs in both, so a `single` install can hold more than one
+— and one org's seven-day window would then delete every org's rows. A slice
+set at `single` is stored and returned by the org API, and the sweep logs that
+it is ignoring it; switching the install to `multi` turns it on.
 
 **Writing it**: `PATCH /api/v1/admin/orgs/[id]` with
 `{ "settings": { "retention": { … } } }` — platform admin only until the org
