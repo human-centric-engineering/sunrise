@@ -137,13 +137,25 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
  * can make a stored slice incoherent without anyone touching the org. The
  * sweep's per-org warning is what catches that.
  *
- * @returns the offending pair, or `null` when the body sets no windows, clears
- *   them, or leaves a coherent combination.
+ * **Only a body that names one of the two is checked.** Filling both halves
+ * from the global row for any slice at all would mean that on an install whose
+ * global row predates the global check — the state
+ * `warnOnIncoherentRetention`'s own docblock says exists in the wild — an
+ * admin setting an org's *evaluation* window got a 400 quoting two numbers
+ * they had not touched, and no way to set it until someone repaired the global
+ * row. A guard that refuses an unrelated change is a guard people route
+ * around.
+ *
+ * @returns the offending pair, or `null` when the body names neither window,
+ *   clears the slice, or leaves a coherent combination.
  */
 async function incoherentRetentionPair(
   slice: OrgRetentionSlice | null | undefined
 ): Promise<{ costLogRetentionDays: number; executionRetentionDays: number } | null> {
   if (slice === undefined || slice === null) return null;
+  if (slice.costLogRetentionDays === undefined && slice.executionRetentionDays === undefined) {
+    return null;
+  }
 
   const globalWindows = await loadRetentionWindows();
   const costLogRetentionDays =

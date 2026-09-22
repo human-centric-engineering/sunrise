@@ -19,7 +19,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { getTenantContext } from '@/lib/tenancy/context';
+import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 import { loadOrgRetention } from '@/lib/tenancy/org-settings';
 import type { OrgRetentionSlice } from '@/lib/validations/tenancy';
 
@@ -118,6 +118,18 @@ export async function loadRetentionWindows(): Promise<RetentionWindows> {
  * prune an org's rows on a window that org had explicitly rejected, and
  * deletion is the direction that cannot be undone. `loadRetentionWindows`
  * degrades the same way for the same reason, one level up.
+ *
+ * **A slice applies at `multi` only, and the reason is confinement rather
+ * than tidiness.** No prune carries an `orgId` — at `multi` the
+ * `org_isolation` policies confine each one to the org whose scope it runs in
+ * (§107), and at `single` nothing does: the extension issues no `set_config`
+ * there at all. `forEachOrg` iterates every ACTIVE org whatever the mode and
+ * the org API creates orgs in both, so a `single` install CAN hold more than
+ * one — and one org's seven-day window would then delete every org's rows.
+ * With one global window those N runs were identical and the exposure did not
+ * exist. A slice set at `single` is still stored and still returned by the org
+ * API, so switching the install to `multi` turns it on; until then the global
+ * row governs and a line says so.
  */
 export async function loadEffectiveRetentionWindows(): Promise<{
   windows: RetentionWindows;
@@ -141,6 +153,17 @@ export async function loadEffectiveRetentionWindows(): Promise<{
     return { windows: NO_RETENTION_WINDOWS, orgId, overrides: [] };
   }
   if (!slice) return { windows: globalWindows, orgId, overrides: [] };
+
+  if (!isMultiTenant()) {
+    // Stored, readable, and deliberately not applied — see the note above.
+    // Said out loud, because an override that silently does nothing is the
+    // shape an operator debugs for an hour.
+    logger.info('Org retention windows ignored at TENANCY_MODE=single', {
+      orgId,
+      windows: Object.keys(slice),
+    });
+    return { windows: globalWindows, orgId, overrides: [] };
+  }
 
   const windows = { ...globalWindows };
   const overrides: (keyof RetentionWindows)[] = [];
