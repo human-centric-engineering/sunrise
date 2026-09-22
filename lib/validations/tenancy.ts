@@ -54,6 +54,28 @@ export const createOrgSchema = z.object({
 
 export type CreateOrgInput = z.infer<typeof createOrgSchema>;
 
+/** One window: a positive whole number of days, or `null` for "keep forever". */
+const retentionDays = (label: string, max: number) =>
+  z
+    .number()
+    .int()
+    .positive(`${label} must be a positive number of days`)
+    .max(max, `${label} must be at most ${max} days`)
+    .nullable();
+
+/**
+ * The windows an org may name in its slice. `RETENTION_WINDOW_KEYS` in
+ * `lib/orchestration/retention.ts` is the same set from the sweep's side, and
+ * a test holds the two level.
+ */
+export const ORG_RETENTION_KEYS = [
+  'webhookRetentionDays',
+  'webhookDlqRetentionDays',
+  'costLogRetentionDays',
+  'executionRetentionDays',
+  'evaluationRetentionDays',
+] as const;
+
 /**
  * The retention windows an org may set for itself (§108 t-713), and the
  * bounds each one is held to — the same bounds the global settings schema
@@ -74,22 +96,6 @@ export type CreateOrgInput = z.infer<typeof createOrgSchema>;
  * slice of `Org.settings` owns its own route for it — this one is the
  * platform's `retention` slice and nothing else.
  */
-const retentionDays = (label: string, max: number) =>
-  z
-    .number()
-    .int()
-    .positive(`${label} must be a positive number of days`)
-    .max(max, `${label} must be at most ${max} days`)
-    .nullable();
-
-export const ORG_RETENTION_KEYS = [
-  'webhookRetentionDays',
-  'webhookDlqRetentionDays',
-  'costLogRetentionDays',
-  'executionRetentionDays',
-  'evaluationRetentionDays',
-] as const;
-
 export const orgRetentionSchema = z
   .object({
     webhookRetentionDays: retentionDays('Webhook retention', 365).optional(),
@@ -126,7 +132,10 @@ export const orgSettingsPatchSchema = z
   .object({
     retention: orgRetentionSchema.nullable().optional(),
   })
-  .strict();
+  .strict()
+  .refine((settings) => Object.keys(settings).length > 0, {
+    message: 'Settings must name at least one slice',
+  });
 
 export type OrgSettingsPatch = z.infer<typeof orgSettingsPatchSchema>;
 

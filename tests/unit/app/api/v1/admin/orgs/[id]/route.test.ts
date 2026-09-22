@@ -243,6 +243,7 @@ describe('PATCH /api/v1/admin/orgs/[id] — the retention slice (§108 t-713)', 
     ['a zero window', { settings: { retention: { executionRetentionDays: 0 } } }],
     ['a window past its bound', { settings: { retention: { webhookRetentionDays: 400 } } }],
     ['settings that are not an object', { settings: 'retention' }],
+    ['settings that name no slice at all', { settings: {} }],
   ])('rejects %s with a 400, before writing', async (_label, body) => {
     const res = await patch(body);
     const json = JSON.parse(await res.text());
