@@ -98,6 +98,19 @@ Three things about the shape are decisions, not defaults:
   fork's product tiers sit beneath the org). The database refuses a fourth
   value, and `tests/unit/lib/tenancy/roles.test.ts` asserts the enum and
   `ORG_ROLES` agree.
+- **`settings` is one JSON column with exactly one platform-owned key**, and
+  the rest of it is a fork's. That key is `retention` (§108 t-713): the
+  retention windows this org keeps instead of the platform's, described in
+  [Data Retention](../orchestration/retention.md#per-org-windows) and written
+  through `PATCH /api/v1/admin/orgs/[id]`. `lib/tenancy/org-settings.ts` is the
+  whole of what the platform reads and writes there, and it **replaces its own
+  slice rather than the object**, so a fork's keys survive a platform write.
+  Two rules follow from the column being shared. A fork adding its own slice
+  owns the route that writes it — the platform's PATCH is strict and refuses a
+  key it does not know, deliberately, so a typo is a 400 rather than a value
+  written and never read. And nothing publishes the raw column to an org
+  member: `GET /api/v1/orgs/[id]` returns the validated `retention` slice
+  alone, because the platform cannot vouch for what a fork put beside it.
 
 Multi-membership is allowed: a user may belong to several orgs. Which one a
 session is _acting in_ is `Session.activeOrgId` — see

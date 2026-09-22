@@ -39,6 +39,56 @@ Every global window is **nullable: `null` = keep forever** (skip that prune).
 The two retention columns added for executions and evaluations live on
 `AiOrchestrationSettings` and are editable in the admin Settings → Retention card.
 
+The five windows the tenant sweep uses are **defaults an org can override** —
+see below. The two on the system sweep cannot be: those rows have no org.
+
+## Per-org windows
+
+An org may keep its history on its own schedule (§108 t-713). The five windows
+the tenant sweep reads are stored per org in `Org.settings.retention`, and the
+global row is what an org that sets nothing gets:
+
+```json
+{ "retention": { "executionRetentionDays": 365, "webhookRetentionDays": null } }
+```
+
+| In the slice                     | Effect                                   |
+| -------------------------------- | ---------------------------------------- |
+| key **absent**                   | inherit the global window                |
+| key set to a **number**          | that window, for this org                |
+| key set to **`null`**            | keep that class **forever** for this org |
+| slice absent, or `settings` null | the org is on every global window        |
+
+Precedence is **per key**, so an org that lengthens its execution window still
+follows the platform on everything else — including the DLQ window, which is
+not shortened by overriding `webhookRetentionDays` beside it.
+
+**Five keys, not six.** `auditLogRetentionDays` prunes `AiAdminAuditLog`, a
+system model with no `orgId` that the system sweep owns: rows nobody owns
+cannot be kept per owner. `McpServerConfig.auditRetentionDays` is the same
+shape. `AiAgent.retentionDays` was already per agent and therefore per org, and
+is untouched by any of this.
+
+**Writing it**: `PATCH /api/v1/admin/orgs/[id]` with
+`{ "settings": { "retention": { … } } }` — platform admin only until the org
+console (§111) gives an org admin a surface of their own. The PATCH **replaces**
+the slice (a body states the org's whole set of windows) and preserves every
+other key in `settings`, which is where a fork keeps its own org config.
+`{ "retention": null }` removes the slice.
+
+**Reading it**: the sweep resolves the effective windows inside the org's own
+run (`loadEffectiveRetentionWindows()`), and logs which windows the org
+overrode. `GET /api/v1/orgs/[id]` publishes the validated slice to any member;
+`GET /api/v1/admin/orgs/[id]` returns the whole `settings` column.
+
+**A stored window that cannot be read is treated as absent**, and only that
+window: the org inherits the global value for it, keeps the rest of its slice,
+and the sweep logs which keys it dropped. Discarding the whole slice over one
+bad key would silently shorten every window the org had lengthened, which is
+the one direction that deletes data. A settings **read failure** is different
+again — the sweep skips its prunes for that org entirely rather than falling
+back to windows the org may have rejected.
+
 ## Terminal-only pruning (executions & evaluations)
 
 Execution and evaluation prunes **never delete in-flight work**, regardless of age:
@@ -65,12 +115,18 @@ an execution reporting real spend with an empty cost breakdown underneath — an
 way to tell a retention artefact from a bug in cost capture. Dashboard aggregates
 are unaffected; it's the per-execution drill-down that empties.
 
-Unlike the evaluation coupling below, this one is **enforced in code**, in three
+Unlike the evaluation coupling below, this one is **enforced in code**, in four
 places: the settings form blocks the save client-side, the Zod schema rejects a
-whole-form save, and the PATCH route re-checks the patch against the persisted row
-(so moving either side alone is caught). Installs already configured this way
-predate the check and never re-save settings, so `enforceRetentionPolicies()` also
-logs a warning once per sweep when it sees the pair.
+whole-form save, the settings PATCH route re-checks the patch against the
+persisted row (so moving either side alone is caught), and the org PATCH route
+checks an org's slice against the **effective** pair — the half it sets plus the
+half it inherits.
+
+Two states still get past all four: an install configured before the checks
+existed and never re-saved, and an org whose stored slice is made incoherent
+later by a change to the global row it inherits the other half from. So
+`enforceRetentionPolicies()` also logs a warning once per sweep, per org, naming
+the org whose pair is wrong.
 
 ## Keep `evaluationRetentionDays ≤ executionRetentionDays`
 
