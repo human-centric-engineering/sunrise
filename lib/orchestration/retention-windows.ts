@@ -21,14 +21,16 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { getTenantContext } from '@/lib/tenancy/context';
 import { loadOrgRetention } from '@/lib/tenancy/org-settings';
+import type { OrgRetentionSlice } from '@/lib/validations/tenancy';
 
 /**
  * The global retention windows the TENANT sweep needs, in days. `null` = that
  * class is never pruned.
  *
  * `auditLogRetentionDays` is deliberately absent: the admin audit log moved to
- * {@link enforceSystemRetentionPolicies} (§108), so selecting it here would
- * read a column this sweep never uses.
+ * `enforceSystemRetentionPolicies` (§108 t-711), so selecting it here would
+ * read a column this sweep never uses — and it is why an org's slice names
+ * five windows rather than six.
  */
 export interface RetentionWindows {
   webhookRetentionDays: number | null;
@@ -60,7 +62,7 @@ export const RETENTION_WINDOW_KEYS = Object.keys(
 ) as readonly (keyof RetentionWindows)[];
 
 /**
- * Read all six retention windows in **one** query.
+ * Read the tenant sweep's retention windows in **one** query.
  *
  * `resolveRetentionDays` reads the same singleton row once per prune, which cost
  * a sweep seven or eight round-trips to fetch a handful of columns (#442). This is a
@@ -128,7 +130,7 @@ export async function loadEffectiveRetentionWindows(): Promise<{
   const orgId = getTenantContext()?.orgId ?? null;
   if (orgId === null) return { windows: globalWindows, orgId: null, overrides: [] };
 
-  let slice;
+  let slice: OrgRetentionSlice | null;
   try {
     slice = await loadOrgRetention(orgId);
   } catch (error) {
