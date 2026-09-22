@@ -20,6 +20,9 @@
  * The resolver is server-only by virtue of the `@/lib/db/client`
  * import — it must never be transitively reachable from a client
  * component.
+ *
+ * Tenancy posture: global-config — the AiOrchestrationSettings singleton
+ * (lib/tenancy/process-state.ts).
  */
 
 import { prisma } from '@/lib/db/client';

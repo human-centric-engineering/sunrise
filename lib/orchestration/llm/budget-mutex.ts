@@ -10,6 +10,9 @@
  * Accepted tolerance: concurrent requests from *different* agents proceed
  * in parallel (no global lock). Over-run is bounded to one LLM turn per
  * concurrent request for the same agent — typically < $0.01.
+ *
+ * Tenancy posture: row-keyed — `locks` by agent id
+ * (lib/tenancy/process-state.ts).
  */
 
 const locks = new Map<string, Promise<void>>();

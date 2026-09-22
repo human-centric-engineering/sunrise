@@ -25,6 +25,9 @@
  * Callers must NOT depend on this for correctness — a genuinely
  * missing model still surfaces as `UNKNOWN_MODEL_OVERRIDE` at
  * validation time, which is the clearer error than a runtime crash.
+ *
+ * Tenancy posture: global-config — AiProviderModel has no org
+ * (lib/tenancy/process-state.ts).
  */
 
 import { prisma } from '@/lib/db/client';

@@ -7,6 +7,9 @@
  * - `'redis'` — Redis sorted sets (requires `REDIS_URL`)
  *
  * All rate limiter instances share the same store via `getStore()`.
+ *
+ * Tenancy posture: shared-by-decision — counters keyed by the caller, not by
+ * the org (lib/tenancy/process-state.ts).
  */
 
 import type { RateLimitStore } from '@/lib/security/rate-limit-stores/types';

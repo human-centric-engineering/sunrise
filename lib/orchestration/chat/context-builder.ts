@@ -29,6 +29,9 @@
  * loader failure self-heals on the next turn. Errors from the fork's one-time
  * init are likewise caught (contributors are simply disabled), never failing
  * a turn.
+ *
+ * Tenancy posture: row-keyed — `cache` by entity id, with a shared 500-entry
+ * cap (lib/tenancy/process-state.ts).
  */
 
 import { logger } from '@/lib/logging';

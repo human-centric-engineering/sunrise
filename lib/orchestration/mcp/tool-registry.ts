@@ -6,6 +6,9 @@
  * capability pipeline.
  *
  * Platform-agnostic: no Next.js imports.
+ *
+ * Tenancy posture: org-keyed for `mcpSystemAgentIdByOrg` (slugs are
+ * per-org); global-config for the tool cache (lib/tenancy/process-state.ts).
  */
 
 import { prisma } from '@/lib/db/client';

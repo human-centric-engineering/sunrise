@@ -37,6 +37,9 @@
  * Not a fork seam: forks resolve a tenant through `lib/app/tenant-resolver.ts`
  * (the proxy) and read the context through these exports; they do not enter
  * it themselves.
+ *
+ * Tenancy posture: async-local — the store the rest of the manifest is
+ * defined against (lib/tenancy/process-state.ts).
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { env } from '@/lib/env';

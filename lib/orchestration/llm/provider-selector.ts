@@ -15,6 +15,9 @@
  *
  * Platform-agnostic consumers should not import this file directly —
  * it depends on `@/lib/db/client` and is server-only.
+ *
+ * Tenancy posture: global-config — AiProviderModel has no org
+ * (lib/tenancy/process-state.ts).
  */
 
 import { prisma } from '@/lib/db/client';

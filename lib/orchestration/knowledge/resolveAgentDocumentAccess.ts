@@ -21,6 +21,9 @@
  * mutations that change grants (tag/grant CRUD, agent edits) MUST call
  * `invalidateAgentAccess(agentId)` to evict the stale entry — otherwise UI
  * changes won't apply until the TTL expires.
+ *
+ * Tenancy posture: row-keyed — `cache` by agent id
+ * (lib/tenancy/process-state.ts).
  */
 
 import { prisma } from '@/lib/db/client';

@@ -73,6 +73,9 @@
  * @see .context/tenancy/context.md — the data-layer section
  * @see .context/architecture/multi-tenancy-design.md — Spike register items 1, 2, 8, 9
  * @see scripts/spikes/rls-chokepoint-spike.ts — the measured prototype
+ *
+ * Tenancy posture: async-local — `txScope` is per call stack
+ * (lib/tenancy/process-state.ts).
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';

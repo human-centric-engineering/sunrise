@@ -15,6 +15,9 @@
  * balancer), each instance maintains its own breaker state independently.
  * For coordinated circuit breaking across instances, this would need to
  * be backed by a shared store such as Redis.
+ *
+ * Tenancy posture: shared-by-decision — per provider slug, which IS the
+ * credential identity until §109 (lib/tenancy/process-state.ts).
  */
 
 import { logger } from '@/lib/logging';

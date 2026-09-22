@@ -11,6 +11,9 @@
  * NOTE: Per-instance in-memory state (matching the circuit-breaker
  * pattern). In a multi-instance deployment, each container tracks
  * independently. For coordinated rate limiting, back with Redis.
+ *
+ * Tenancy posture: shared-by-decision — per outbound host, which every org
+ * shares (Q4; §110 trigger) (lib/tenancy/process-state.ts).
  */
 
 import { createRateLimiter, type RateLimiter } from '@/lib/security/rate-limit';

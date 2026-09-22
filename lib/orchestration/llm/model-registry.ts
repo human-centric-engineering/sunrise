@@ -19,6 +19,9 @@
  * `getAvailableModels(providerName?)` to query the merged view.
  *
  * Platform-agnostic: no Next.js imports, no Node-only APIs.
+ *
+ * Tenancy posture: global-config — AiProviderModel has no org
+ * (lib/tenancy/process-state.ts).
  */
 
 import { z } from 'zod';

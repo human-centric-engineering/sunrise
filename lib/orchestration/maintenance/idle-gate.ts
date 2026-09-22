@@ -47,6 +47,9 @@
  * `.context/orchestration/scheduling.md`.
  *
  * @see lib/orchestration/maintenance/run-tick.ts — the only caller of `armIdleGate`
+ *
+ * Tenancy posture: shared-by-decision — one horizon, because the tick sweeps
+ * every org in one pass (lib/tenancy/process-state.ts).
  */
 
 import { logger } from '@/lib/logging';

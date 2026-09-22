@@ -16,6 +16,9 @@
  * goes to `lib/logging`, not here.
  *
  * Platform-agnostic: no Next.js imports.
+ *
+ * Tenancy posture: row-keyed — `sentTimestamps` by MCP session id
+ * (lib/tenancy/process-state.ts).
  */
 
 import { logger } from '@/lib/logging';

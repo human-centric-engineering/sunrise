@@ -9,6 +9,9 @@
  * to make here without the tests to match.
  *
  * Platform-agnostic: no Next.js imports.
+ *
+ * Tenancy posture: global-config — the McpServerConfig singleton
+ * (lib/tenancy/process-state.ts).
  */
 
 import { prisma } from '@/lib/db/client';

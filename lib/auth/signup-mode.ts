@@ -36,6 +36,9 @@
  * exemption into a trivial bypass of the gate. The store is process-internal and
  * only ever set by trusted server-side code that has already validated an
  * invitation token, so it cannot be forged by a caller.
+ *
+ * Tenancy posture: async-local — per call stack, never shared
+ * (lib/tenancy/process-state.ts).
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { env } from '@/lib/env';

@@ -14,6 +14,9 @@
  *
  * Dispatch is fire-and-forget — failures are logged and persisted to the
  * delivery table but never propagate to the caller.
+ *
+ * Tenancy posture: org-keyed — `hookCacheByOrg`, because `eventType` is a
+ * label two orgs share (lib/tenancy/process-state.ts).
  */
 
 import type { Prisma } from '@prisma/client';

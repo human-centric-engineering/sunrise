@@ -4,6 +4,9 @@
  * Extracted from the settings API route so both the API route and server
  * components (e.g. costs page) can produce the same `OrchestrationSettings`
  * shape without a self-referential HTTP call.
+ *
+ * Tenancy posture: global-config — the AiOrchestrationSettings singleton
+ * (lib/tenancy/process-state.ts).
  */
 
 import { Prisma } from '@prisma/client';

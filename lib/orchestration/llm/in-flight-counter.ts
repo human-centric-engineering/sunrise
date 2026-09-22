@@ -19,6 +19,9 @@
  * throw can never leak a count. Callers that need streaming semantics
  * should use `trackStream()` instead, which guarantees decrement once
  * the iterator settles (completes, throws, or is abandoned).
+ *
+ * Tenancy posture: shared-by-decision — per provider slug, the same §109
+ * trigger as the breaker (lib/tenancy/process-state.ts).
  */
 
 const counts = new Map<string, number>();

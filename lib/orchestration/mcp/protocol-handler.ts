@@ -6,6 +6,9 @@
  * prompts) with scope checking, rate limiting, and audit logging.
  *
  * Platform-agnostic: no Next.js imports.
+ *
+ * Tenancy posture: row-keyed — `keyRateLimitCache` by MCP API key id,
+ * refreshed under the system scope (lib/tenancy/process-state.ts).
  */
 
 import { logger } from '@/lib/logging';

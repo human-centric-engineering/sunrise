@@ -17,6 +17,9 @@
  *
  * Platform-agnostic: no Next.js imports. The cache is a plain `Map`
  * in module state — no `React cache()`, no request-scoped lifecycles.
+ *
+ * Tenancy posture: global-config — AiProviderConfig has no org (§109 changes
+ * that) (lib/tenancy/process-state.ts).
  */
 
 import type { AiProviderConfig } from '@/types/prisma';

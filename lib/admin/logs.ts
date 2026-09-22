@@ -7,6 +7,9 @@
  * Note: This is an in-memory buffer that resets on server restart.
  * For production use, consider integrating with a log aggregation
  * service (DataDog, CloudWatch, etc.).
+ *
+ * Tenancy posture: mixes-orgs — the buffer is process-wide and the Logs page
+ * is per-org (t-714) (lib/tenancy/process-state.ts).
  */
 
 import type { LogEntry } from '@/types/admin';

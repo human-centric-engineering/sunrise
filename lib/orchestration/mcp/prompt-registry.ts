@@ -20,6 +20,9 @@
  * removed in a future cleanup.
  *
  * Platform-agnostic: no Next.js imports.
+ *
+ * Tenancy posture: global-config — McpExposedPrompt has no org
+ * (lib/tenancy/process-state.ts).
  */
 
 import { prisma } from '@/lib/db/client';

@@ -19,6 +19,9 @@
  *   return new Response('Too Many Requests', { status: 429 });
  * }
  * ```
+ *
+ * Tenancy posture: shared-by-decision — section tiers over the shared store
+ * (lib/tenancy/process-state.ts).
  */
 
 import { LRUCache } from 'lru-cache';

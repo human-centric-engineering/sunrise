@@ -18,6 +18,9 @@
  * `AiAgentCapability` rows should call `clearCache()` afterwards.
  *
  * Platform-agnostic: no Next.js imports.
+ *
+ * Tenancy posture: row-keyed — agent bindings by agent id; the rest is
+ * global config (lib/tenancy/process-state.ts).
  */
 
 import { prisma } from '@/lib/db/client';

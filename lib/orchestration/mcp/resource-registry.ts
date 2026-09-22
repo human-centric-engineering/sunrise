@@ -10,6 +10,9 @@
  * `lib/app/mcp-resources.ts` (#563).
  *
  * Platform-agnostic: no Next.js imports.
+ *
+ * Tenancy posture: global-config for the resource cache; the handler maps
+ * are code registrations (lib/tenancy/process-state.ts).
  */
 
 import { prisma } from '@/lib/db/client';

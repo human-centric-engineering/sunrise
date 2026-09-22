@@ -26,6 +26,16 @@
  * and what would make it not fine. If it is "yes, and it is not fine", that is
  * a defect and the `why` names the task that fixes it.
  *
+ * ## The line in the file
+ *
+ * Every row whose posture carries a DECISION — anything but `no-tenant-data`
+ * — also has a one-line `Tenancy posture:` in its module docblock, so the
+ * reader who opens the file rather than this one sees it. The
+ * `no-tenant-data` rows deliberately do not: forty files each saying "this
+ * holds no tenant data, see the manifest" is noise that dilutes the
+ * twenty-nine that say something, and every line here is a merge a fork pays
+ * for. The manifest is complete; the inline line is the decision.
+ *
  * ## What is NOT process-global state
  *
  * A `const` lookup table — `new Set(['a', 'b'])` — is not state: it is written

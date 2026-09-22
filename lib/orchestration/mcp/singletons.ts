@@ -6,6 +6,9 @@
  * the full re-export barrel into a cycle.
  *
  * Platform-agnostic: no Next.js imports.
+ *
+ * Tenancy posture: row-keyed — sessions and limiters by ids unique across
+ * orgs (lib/tenancy/process-state.ts).
  */
 
 import { McpSessionManager } from '@/lib/orchestration/mcp/session-manager';
