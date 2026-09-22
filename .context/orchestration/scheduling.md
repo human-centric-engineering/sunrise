@@ -140,7 +140,7 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 
 ### Unified Maintenance Tick (admin-auth required, **preferred**)
 
-`POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call. **Returns `202 Accepted`** as soon as `processDueSchedules()` has claimed and fired any due schedules; the remaining eight tasks run as a fire-and-forget background chain inside the same overlap guard and log per-task results when they settle. Each background task also has a minimum interval, so most ticks run only a subset — see the table below.
+`POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call. **Returns `202 Accepted`** as soon as `processDueSchedules()` has claimed and fired any due schedules; the remaining nine tasks run as a fire-and-forget background chain inside the same overlap guard and log per-task results when they settle. Each background task also has a minimum interval, so most ticks run only a subset — see the table below.
 
 1. `processDueSchedules()` — workflow cron schedules **(awaited synchronously)**
 2. `processPendingRetries()` — webhook subscription delivery retry queue _(background)_
@@ -148,22 +148,26 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 4. `processOrphanedExecutions()` — re-drive `running` executions whose lease has expired (lease-aware crash recovery) _(background)_
 5. `reapZombieExecutions()` — mark stale `running` executions as `failed`, 30 min threshold (absolute backstop) _(background)_
 6. `backfillMissingEmbeddings()` — re-embed messages that failed initial embedding _(background)_
-7. `enforceRetentionPolicies()` — delete conversations past per-agent retention window, prune old webhook deliveries and cost log rows _(background)_
+7. `enforceRetentionPolicies()` — delete conversations past per-agent retention window, prune old webhook deliveries, cost log rows, execution and evaluation history _(background)_
 8. `processPendingExecutions()` — recover orphaned `pending` workflow executions _(background)_
 9. `processPendingEvaluationRuns()` — drive one time-slice of the queued dataset-evaluation runs _(background)_
+10. `enforceSystemRetentionPolicies()` — prune the admin and MCP audit logs (system tables, no org) _(background)_
 
-**Per-task minimum intervals (#442).** The background tasks do **not** all run on every tick. Each declares the shortest gap at which running it can still find work, in `lib/orchestration/maintenance/platform-jobs.ts`:
+**Per-task minimum intervals (#442) and tenant scope (§108).** The background tasks do **not** all run on every tick. Each declares the shortest gap at which running it can still find work, and whose rows it acts on, in `lib/orchestration/maintenance/platform-jobs.ts`:
 
-| Task                       | Interval   | Why                                                                 |
-| -------------------------- | ---------- | ------------------------------------------------------------------- |
-| `webhookRetries`           | every tick | backoff starts at 10s — a throttle would miss the first retry       |
-| `hookRetries`              | every tick | same 10s / 60s / 300s backoff                                       |
-| `orphanSweep`              | 2 min      | the lease is 3 min, so a faster sweep provably finds nothing        |
-| `zombieReaper`             | 5 min      | its own stale threshold is 30 min                                   |
-| `embeddingBackfill`        | 15 min     | best-effort re-embed of a failed write; the anti-join is unindexed  |
-| `retention`                | 1 hour     | windows are measured in days                                        |
-| `pendingExecutionRecovery` | 2 min      | its own stale-pending threshold is 2 min                            |
-| `evaluationRuns`           | every tick | the worker drives one time-slice per tick, so cadence is throughput |
+| Task                       | Interval   | Scope   | Why                                                                 |
+| -------------------------- | ---------- | ------- | ------------------------------------------------------------------- |
+| `webhookRetries`           | every tick | per-org | backoff starts at 10s — a throttle would miss the first retry       |
+| `hookRetries`              | every tick | per-org | same 10s / 60s / 300s backoff                                       |
+| `orphanSweep`              | 2 min      | per-org | the lease is 3 min, so a faster sweep provably finds nothing        |
+| `zombieReaper`             | 5 min      | per-org | its own stale threshold is 30 min                                   |
+| `embeddingBackfill`        | 15 min     | per-org | best-effort re-embed of a failed write; the anti-join is unindexed  |
+| `retention`                | 1 hour     | per-org | windows are measured in days                                        |
+| `pendingExecutionRecovery` | 2 min      | per-org | its own stale-pending threshold is 2 min                            |
+| `evaluationRuns`           | every tick | per-org | the worker drives one time-slice per tick, so cadence is throughput |
+| `auditLogRetention`        | 1 hour     | system  | the two audit tables have no org column — once, not once per org    |
+
+**Scope.** A `per-org` task runs once per active org through `forEachOrg`, each run inside that org's tenant context (`source: 'job'`): its creates are stamped with the org and, at `TENANCY_MODE=multi`, the `org_isolation` policies confine its reads and writes to that org — so a `take: 50` in the task body is a per-org cap. A `{ system: reason }` task runs once under `runAsSystem`, the audited bypass, and the reason is logged on every entry. Every task that touches a tenant-owned table is per-org, including the ones that look like global queue drains: the reaper writes lease events, recovery and the scheduler start the engine, the evaluation worker writes cases, and under the system scope nothing is stamped, so each would have written a `NULL`-org row. The schedules sweep runs per org the same way (a due schedule's execution, and everything the engine writes for it, carries the schedule's org — the `void drainEngine` continuation keeps the scope it was started in), and the idle gate's horizon read (`getNextScheduleRunAt`, the earliest next run across every org) is the one system-scoped read in the tick. At `single` the one org is the install org, every per-org task runs exactly once, and the completion line keeps the shape it always had; at `multi` a per-org task's entry in that line is the fold across orgs — numeric fields summed, arrays concatenated, plus `orgs` (how many ran) and `orgErrors` (which failed, each contained so the next org still runs). A tick fired from an admin's browser session does not run inside that admin's org: every task enters its own scope. The runner is `lib/orchestration/maintenance/job-scope.ts`; see [`tenancy/context.md`](../tenancy/context.md).
 
 A task held back by its interval reports the string `'skipped'` under its own key in the completion log line — reported rather than omitted, so "did the sweep run?" is answerable from the logs. Intervals are **start-to-start** and held **in process memory**: persisting them would cost a DB round-trip per task per tick, which is the cost the throttle exists to remove. Consequences, both benign because every throttled task is idempotent: each instance in a multi-instance deployment keeps its own clock (so a task runs roughly once per instance per interval), and a restart re-arms everything immediately.
 
@@ -187,6 +191,7 @@ Forks add their own recurring work through `registerAppJob`, which shares the th
       "retention",
       "pendingExecutionRecovery",
       "evaluationRuns",
+      "auditLogRetention",
     ],
     "durationMs": 47,
   },
@@ -194,6 +199,8 @@ Forks add their own recurring work through `registerAppJob`, which shares the th
 ```
 
 A tick the idle gate skipped returns **200** with `{ skipped: true, reason: 'idle' | 'previous tick still running' }` instead — see below.
+
+At `TENANCY_MODE=multi` with more than one active org, `schedules` is the fold across orgs rather than one sweep's counters — `{ "orgs": 2, "processed": 4, "succeeded": 3, "failed": 1, "errors": [...] }`, plus `orgErrors: [{ orgId, error }]` for any org whose sweep threw. A `single` install (one org) sees the shape above unchanged.
 
 The schedules result is concretely reported. Per-task background results are NOT in the response — they are written to the application logger as `Maintenance tick background tasks completed` once the chain settles. This decouples HTTP duration from retention-sweep / embedding-backfill runtime so external cron callers can use a short HTTP timeout (e.g. 30s) without ever cutting off mid-task. Engine work inside `processDueSchedules` was already detached via `void drainEngine`, so the synchronous portion only includes DB-claim work.
 
@@ -337,15 +344,21 @@ export function initAppJobs(): void {
     name: 'app:prune-draft-invoices',
     intervalMs: 6 * 60 * 60 * 1000,
     run: async () => ({ pruned: await pruneDrafts() }),
+    // Optional. Omitted = 'per-org': the job runs once per active org, inside
+    // that org's tenant context. `{ system: 'why' }` runs it once under the
+    // audited bypass — for a table with no `orgId` only.
+    scope: 'per-org',
   });
 }
 ```
 
-| Export                | Purpose                                                         |
-| --------------------- | --------------------------------------------------------------- |
-| `registerAppJob(job)` | Register. Idempotent by `name` — re-registering replaces.       |
-| `getAppJobs()`        | Registered jobs in first-registration order (admin surface).    |
-| `runDueAppJobs(now?)` | Called by the tick. Returns a per-job summary for its log line. |
+| Export                  | Purpose                                                         |
+| ----------------------- | --------------------------------------------------------------- |
+| `registerAppJob(job)`   | Register. Idempotent by `name` — re-registering replaces.       |
+| `getAppJobs()`          | Registered jobs in first-registration order (admin surface).    |
+| `runDueAppJobs(now?)`   | Called by the tick. Returns a per-job summary for its log line. |
+| `JobScope` (type)       | `'per-org' \| { system: string }` — the `scope` field's values. |
+| `DEFAULT_APP_JOB_SCOPE` | `'per-org'`: what a registration with no `scope` gets.          |
 
 Semantics — the first three are shared with the platform's own tasks, which use
 the same `job-clock.ts` mechanism (#442):
@@ -362,6 +375,17 @@ the same `job-clock.ts` mechanism (#442):
   logged, rather than defaulted to something that would run every tick.
 - **Failures are contained.** Jobs run in parallel; a rejection is logged, folded
   into the summary as `{ error }`, and does not affect the tick or other jobs.
+- **Every job runs inside a tenant scope (§108).** `scope` defaults to
+  `'per-org'`: `runDueAppJobs` runs the job once per active org through
+  `forEachOrg`, each run inside that org's context, so its Prisma calls see and
+  stamp that org's rows only. At `TENANCY_MODE=single` that is the install org
+  and the job behaves exactly as it did before the field existed. At `multi`
+  the summary entry becomes the fold across orgs (`{ orgs, ...counters,
+orgErrors? }`; a failing org is contained and the next one still runs).
+  `{ system: 'reason' }` runs the job once under the audited bypass with the
+  reason logged — for work on a table with **no** `orgId` only, because nothing
+  is stamped in that scope and a tenant-owned create there lands with no org.
+  See [`tenancy/context.md`](../tenancy/context.md).
 - **`initAppJobs()` runs once, lazily, latched before it runs** — a throwing init
   degrades to "no app jobs" instead of retrying every tick, and jobs registered
   **before** the throw are rolled back. Without that, a job registered before the
@@ -376,12 +400,12 @@ See [`CUSTOMIZATION.md` §4](../../CUSTOMIZATION.md#4-configuration--environment
 
 ## Retention Pruning
 
-`enforceRetentionPolicies()` in `lib/orchestration/retention.ts` handles five types of cleanup:
+`enforceRetentionPolicies()` in `lib/orchestration/retention.ts` is the tenant sweep — it runs per org (the `retention` task above) and handles these types of cleanup; the two system audit tables are pruned once, by `enforceSystemRetentionPolicies()` (the `auditLogRetention` task):
 
 1. **Conversation retention** — per-agent `retentionDays` field. Conversations whose `updatedAt` exceeds the window are cascade-deleted (messages, embeddings, cost logs).
 2. **Webhook subscription delivery pruning** — `pruneWebhookDeliveries()` reads `webhookRetentionDays` from the global `AiOrchestrationSettings` singleton. Skips if null.
 3. **Event-hook delivery pruning** — `pruneHookDeliveries()` shares the same `webhookRetentionDays` setting — event-hook deliveries are the same class of dispatch-audit data as subscription deliveries. Skips if null.
 4. **Cost log pruning** — `pruneCostLogs()` reads `costLogRetentionDays` from the same settings row. Skips if null.
-5. **Admin audit log pruning** — `pruneAuditLogs()` reads `auditLogRetentionDays` from the same settings row. Skips if null (the default — the audit trail is immutable unless operators opt in).
+5. **Admin audit log pruning** (system sweep) — `pruneAuditLogs()` reads `auditLogRetentionDays` from the same settings row. Skips if null (the default — the audit trail is immutable unless operators opt in). `AiAdminAuditLog` has no org, so this runs once under the system scope, not once per org.
 
-All four prune functions accept an optional `maxAgeDays` parameter to override the settings lookup. Configure retention via the admin settings API (`PATCH /api/v1/admin/orchestration/settings`).
+All the prune functions accept an optional `maxAgeDays` parameter to override the settings lookup. Configure retention via the admin settings API (`PATCH /api/v1/admin/orchestration/settings`).

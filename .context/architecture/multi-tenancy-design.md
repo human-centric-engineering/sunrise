@@ -130,8 +130,13 @@ sync conflict is a "keep both", not a re-read.
 > `MIGRATE_DATABASE_URL` and `db:tenancy:role`, and the derived T-series
 > drift probes ([`tenancy/isolation.md`](../tenancy/isolation.md)) with
 > t-707. Of this section's request path, everything down to and including
-> Postgres exists; the tick's `forEachOrg` wiring (§108) does not yet —
-> `forEachOrg` itself ships, uncalled. At `TENANCY_MODE=single` the same components run with the
+> Postgres exists, and so does the background tick's leg: every platform job
+> and the schedules sweep run through `forEachOrg`, one org-scoped context per
+> iteration, with the existing batch caps becoming per-org caps inside the
+> scope; the audit-table prune and the idle-gate horizon are the two
+> `runAsSystem(reason)` uses, and the fork job seam's `scope` defaults to
+> per-org (`lib/orchestration/maintenance/job-scope.ts`, §108 t-711). At
+> `TENANCY_MODE=single` the same components run with the
 > install org as the only answer, as the diagram says. One measurement from
 > t-706 that binds §115 and any fork layer: the exported client is typed
 > `Omit<PrismaClient, '$on'>` and asserted from the `$extends` result,
@@ -421,15 +426,17 @@ Enabling the capability (`TENANCY_MODE=multi` + the restricted app role +
 `db:tenancy:enable` — the walkthrough is the
 [playbook](./multi-tenancy.md#enabling-it-end-to-end)) gives a fork, today:
 org identity, membership and invitations (§106), context propagation on
-every request (§106), RLS row isolation with per-org namespaces (§107) and
-org-level export and erasure — maintained and regression-tested upstream,
-the two-org harness on every PR. Still to ship, and listed as such in the
+every request (§106), RLS row isolation with per-org namespaces (§107),
+org-level export and erasure, and background work that runs per org (§108
+t-711) — maintained and regression-tested upstream, the two-org harness on
+every PR. Still to ship, and listed as such in the
 playbook's
 [what you do not yet get](./multi-tenancy.md#what-you-get-at-multi-and-what-you-do-not-yet):
-tenant-aware background work and cache postures (§108), org-scoped
-storage/export/provider policy (§109), quota and budget primitives (§110),
-and the org-admin console (§111). Until §108 lands, a job at `multi` enters
-no org and fails loud rather than running.
+cache postures (§108 t-712; the tenant-aware background work of §108 t-711
+has landed — every job runs per org or under an audited system scope),
+platform-owned system agents (§116), org-scoped storage/export/provider
+policy (§109), quota and budget primitives (§110), and the org-admin console
+(§111).
 
 A fork owns:
 
@@ -460,12 +467,14 @@ A fork owns:
 - Single-tenant forks feel no behaviour change at any point; the install org is
   invisible to their operators.
 - The per-sync tenancy checklist in the playbook has shrunk to what the
-  tests cannot catch — new process-global state, new background jobs
+  tests cannot catch — new process-global state
   ([what the tests catch, and what a merge still checks](./multi-tenancy.md#what-the-tests-catch-and-what-a-merge-still-checks));
   the rest is enforced in CI, in the fork as well as upstream, because the
   guards are unit tests over the schema and the migrations rather than a
-  job only upstream runs. §108's posture declarations are what retire the
-  two remaining greps.
+  job only upstream runs. §108 t-711 retired the background-jobs grep (a
+  platform job cannot exist without a declared scope; a fork job defaults to
+  per-org); t-712's posture declarations retire the last one, on
+  process-global state.
 
 ## Explicitly out of scope (v1)
 

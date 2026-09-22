@@ -18,6 +18,17 @@ release process.
 
 ### Added
 
+- **A fork's recurring job declares whose rows it acts on** (multi-tenancy
+  §108 t-711). `AppJob` (`lib/orchestration/maintenance/app-jobs.ts`, the
+  `registerAppJob` seam) gains an optional `scope?: JobScope` —
+  `'per-org' | { system: string }`, the type re-exported from the same
+  module, with `DEFAULT_APP_JOB_SCOPE = 'per-org'`. A per-org job runs once
+  per active org inside that org's tenant context (its Prisma calls see and
+  stamp that org's rows only; at `multi` the row-level policies enforce it);
+  a system job runs once under the audited bypass with the stated reason
+  logged. Additive: a registration with no `scope` is per-org, which on a
+  single-tenant install is the install org — today's behaviour, now
+  explicit. `lib/app/jobs.ts` is unchanged.
 - **A CI job drives the platform as two orgs and proves neither can see the
   other** (multi-tenancy §107 t-709). `smoke-multi` in `ci.yml` runs the
   operator's sequence on a fresh pgvector container — migrate and seed as
@@ -314,6 +325,23 @@ release process.
 
 ### Changed
 
+- **The maintenance tick runs every platform job and the schedules sweep per
+  org** (multi-tenancy §108 t-711). Every entry in `PLATFORM_JOBS` declares a
+  `scope` (required); all eight existing tasks and `processDueSchedules` are
+  `per-org`, run through `forEachOrg`; the idle-gate horizon read runs under
+  `runAsSystem`. At `TENANCY_MODE=multi` the tick therefore does work again
+  (before, every task threw `No tenant context` and nothing ran) and a tick
+  fired from an admin's session no longer runs inside that admin's org. The
+  published `backgroundTasks` list on `POST /api/v1/admin/orchestration/maintenance/tick`
+  gains a ninth, appended name, **`auditLogRetention`**: the admin and MCP
+  audit-log prunes move out of `enforceRetentionPolicies()` (now
+  tenant-owned tables only, per org) into `enforceSystemRetentionPolicies()`
+  (system scope, once), so `RetentionResult` loses `auditLogsDeleted` /
+  `mcpAuditLogsDeleted` and `SystemRetentionResult` carries them. At `multi`
+  with more than one org, a per-org task's entry in the completion log line —
+  and the route's `schedules` field — is the fold across orgs
+  (`{ orgs, …summed counters, orgErrors? }`); a single-tenant install sees
+  no change in shape.
 - **Two orgs can each have an agent called `support`** (multi-tenancy §107
   t-708). `AiAgent`, `AiKnowledgeBase` and `AiKnowledgeDocument` — published
   model interfaces — move from `slug @unique` to `@@unique([orgId, slug])`

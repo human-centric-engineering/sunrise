@@ -1,7 +1,7 @@
 /**
  * Sunrise's own recurring maintenance tasks, with a minimum interval each.
  *
- * Before #442 all eight ran on **every** tick. At the documented 60s cadence
+ * Before #442 all eight (now nine) ran on **every** tick. At the documented 60s cadence
  * that meant the retention sweep (whose windows are measured in days) ran 1,440
  * times a day and the embedding backfill full-scanned the message table just as
  * often. On a scale-to-zero Postgres (Neon, Aurora Serverless v2) the compute

@@ -56,34 +56,35 @@ is on:
   dedup keys) stay global by decision.
 - **Org-level privacy** — `exportOrgData` / `eraseOrg` and the org manifest
   ([`privacy/`](../privacy/)).
+- **Background work per org** — every platform job in the maintenance tick,
+  the schedules sweep and any job a fork registers through `lib/app/jobs.ts`
+  declares a scope and runs once per active org inside that org's context
+  (or once under the audited system scope, for the two audit tables that
+  have no org); a tick fired from an admin's session sweeps every org, not
+  the admin's ([`tenancy/context.md` → Background work](../tenancy/context.md#who-enters-it--the-read-rule),
+  [`scheduling.md`](../orchestration/scheduling.md#unified-maintenance-tick-admin-auth-required-preferred)).
+- **The data subject is per org.** `eraseUser` / `exportUserData` act inside
+  the org the request entered: a person with memberships in several orgs is
+  erased from, and exported from, the org that asked — the tenant is the
+  controller of its members' data (project decision, 2026-09-21). A
+  platform-wide export for one person across every org is a future
+  platform-admin provision, not a gap.
 
 What does **not** yet work at `multi`, honestly, because the features that
 own it have not shipped (the Multi-tenancy phase on the Hub; the design
 record's [target architecture](./multi-tenancy-design.md#target-architecture)
 says which piece each feature lands):
 
-- **Background work enters no org.** The maintenance tick's eight platform
-  jobs (`lib/orchestration/maintenance/platform-jobs.ts`), the scheduler,
-  retention and any job registered through `lib/app/jobs.ts` run with no
-  tenant context. At `multi` a job's first operation on a tenant-owned table
-  throws `No tenant context` — the tick contains and logs the failure and
-  moves on, so nothing crashes and nothing reads wide, but **nothing runs
-  either**. Tenant-aware jobs and caches are §108, which must ship in the same
-  release as row isolation for exactly this reason.
 - **The system agents are the install org's rows.** `cleanup-agent`,
   `mcp-system`, `quiz-master`, the evaluation judges, the model auditor and
   the case generator are seeded once, as the install org. Another org finds
   none of them: the cleanup upload reports the agent unseeded, an unscoped
   MCP call logs `mcp-system agent not found`, the quiz and judge routes 404.
-  Whether they are seeded per org, made global, or gated is an open decision
-  on §107's journal.
+  They become platform-owned, tenant-consumed rows in §116 (decided
+  2026-09-21: one copy, usable by every org, editable by none).
 - **Process-global state is global.** Settings caches, circuit breakers, the
   in-flight counter, provider instance caches — RLS cannot see a Node heap
-  (§108 declares a posture per cache).
-- **Cross-org user erasure.** `eraseUser` / `exportUserData` enter no scope
-  of their own; at `multi` they act inside whichever org the caller entered,
-  so a user with memberships in several orgs is erased from — and exported
-  from — one of them.
+  (§108 t-712 declares a posture per cache).
 - **One admin console.** The authorization policy already distinguishes a
   platform admin from an org OWNER/ADMIN, but the console is not split; the
   [control-plane map](#the-control-plane-which-admin-surfaces-are-whose)
@@ -286,18 +287,22 @@ and in your fork:
 | A global slug on a tenant-owned model                                | `org-scoped-slugs.test.ts`                                                                                    |
 | A model missing from the org export                                  | `org-sources.test.ts`                                                                                         |
 | A create shape the injection misses; a transaction the setter misses | `tests/unit/lib/db/tenancy-extension.test.ts` (real client, recording driver)                                 |
+| A platform job with no declared tenant scope                         | the type-check (`PlatformJob.scope` is required) and `platform-jobs.test.ts`, which pins every task's scope   |
+| A per-org job that would have run inside the caller's org            | `run-tick.test.ts` / `platform-jobs.test.ts` — the tick started inside a foreign org sweeps every org         |
+| A job's writes landing with no org                                   | `smoke-multi` scenario [9] — a per-org job through the registry; every row it creates carries its org         |
 | Anything the above miss that a real policy would refuse              | `smoke-multi` on every upstream PR — the harness as the restricted role                                       |
 
 What is **not** enforced, and is the per-sync check that remains until §108
-ships its posture declarations:
+t-712 ships its posture declarations:
 
 ```bash
-# 1. New process-global state — RLS cannot see a Node heap; is the cache keyed by org, or global by decision?
+# New process-global state — RLS cannot see a Node heap; is the cache keyed by org, or global by decision?
 git diff <last-sync>..HEAD -- 'lib/**' | grep -nE '^\+.*(new (Map|Set)\(|globalThis)'
-
-# 2. New background jobs — they enter no org unless something gives them one
-git diff <last-sync>..HEAD -- lib/orchestration/maintenance/ lib/orchestration/scheduling/
 ```
+
+(The second grep this section used to carry — new background jobs — is
+retired: a job cannot be added to the platform table without a `scope`, and a
+fork's `registerAppJob` defaults to `per-org`.)
 
 Then run the harness at `multi` against a throwaway database. An unmodified
 fork gets `smoke-multi` for free — the job's `env` carries the role name,
@@ -353,16 +358,17 @@ has the numbers.
 - **Neon's deploy role bypasses RLS.** `neondb_owner` inherits `BYPASSRLS`
   from `neon_superuser`; it is the owner DSN, never the app's. Neon also
   refuses `DROP OWNED BY`, which is why `--drop` revokes grants first.
-- **Registered app jobs arrive with no tenant** — today, at `multi`, they
-  fail loud (above). When §108 lands the seam gains a `scope` declaration;
-  until then a job of yours that must run at `multi` iterates `forEachOrg`
-  itself and never reaches for `runAsSystem` as the path of least
-  resistance. Two things `forEachOrg` does that a job must want: it
-  **skips suspended orgs** silently (nothing should act for an org that has
-  been switched off — so a sweep that must reach them is a `runAsSystem`
-  job, audited), and it runs the orgs **sequentially**, one scope at a time
-  (per-org caps are meaningless if every org runs at once; map over the ids
-  yourself if you need concurrency).
+- **A registered app job runs per org unless it says otherwise.** `scope`
+  defaults to `'per-org'`: the job runs once per **active** org, inside that
+  org's context — a suspended org is skipped (nothing should act for an org
+  that has been switched off), the orgs run **sequentially**, one scope at a
+  time (per-org caps are meaningless if every org runs at once), and at
+  `multi` its summary entry is the fold across orgs. Declare
+  `{ system: 'why' }` only for a table with **no** `orgId`: under that scope
+  nothing is stamped, so a tenant-owned create lands with no org and outside
+  every policy. `runAsSystem` is never the path of least resistance for a
+  job that "needs to see everything" — that job is per-org, and the policies
+  do the seeing ([scheduling.md → App jobs](../orchestration/scheduling.md#app-jobs--the-fork-seam-on-the-tick)).
 - **Per-tenant quotas: register a key resolver, don't fork the middleware.**
   `registerRateLimitKeyResolver('org', …)` in `lib/app/rate-limit.ts`
   buckets by anything derivable from the request; derive the identifier from

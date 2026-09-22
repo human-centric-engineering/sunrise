@@ -19,11 +19,14 @@
  * of those resolvers reads its credential row before an org is known, and
  * does so under {@link runAsCredentialLookup} (t-709). An agent invite token
  * enters nothing: it is a gate the session passes through, checked against
- * the org the guard entered. Background jobs enter it through
- * {@link forEachOrg} / {@link runAsSystem} once §108 wires the tick. Until
- * then those paths run outside any context — which at `single` still
- * answers the install org (see {@link requireTenantContext}) and at `multi`
- * refuses, so a path that was forgotten fails loud rather than reads wide.
+ * the org the guard entered. Background jobs enter it per job (§108 t-711):
+ * every task in the maintenance tick declares a scope and
+ * `lib/orchestration/maintenance/job-scope.ts` runs it through
+ * {@link forEachOrg} (per org, the default) or {@link runAsSystem} (once,
+ * audited, for system tables only). A path nobody taught to enter an org
+ * still runs outside any context — which at `single` answers the install
+ * org (see {@link requireTenantContext}) and at `multi` refuses, so it
+ * fails loud rather than reads wide.
  *
  * **At `single` the install org is the only answer.** A single-tenant install
  * runs exactly the same components (design record, request-path diagram);
@@ -205,8 +208,8 @@ export function runAsCredentialLookup<T>(credential: string, fn: () => Promise<T
  * Sequential on purpose: per-org batch caps (§108) are meaningless if every
  * org runs at once, and a job that must iterate orgs concurrently can map
  * over the ids itself. Suspended orgs are skipped — nothing should act for an
- * org that has been switched off. Nothing in core calls this yet; §108 wires
- * the maintenance tick through it.
+ * org that has been switched off. The maintenance tick's per-org jobs run
+ * through it (`lib/orchestration/maintenance/job-scope.ts`, §108 t-711).
  */
 export async function forEachOrg(fn: (orgId: string) => Promise<void>): Promise<void> {
   const orgs = await prisma.org.findMany({

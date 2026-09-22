@@ -1,13 +1,24 @@
 # Data Retention & Pruning
 
-How Sunrise automatically deletes aged operational data. All pruning is enforced
-by `enforceRetentionPolicies()` in `lib/orchestration/retention.ts`, run as one
-task of the unified maintenance tick (`POST /api/v1/admin/orchestration/maintenance/tick`,
-called ~every 60s by an external cron). The sweep itself is throttled to **at
-most once an hour** per process, since every window here is measured in days —
-see [per-task minimum intervals](./scheduling.md#unified-maintenance-tick-admin-auth-required-preferred).
-This is the **scheduled-purge** half of
-the platform's data lifecycle; on-demand subject erasure is separate — see
+How Sunrise automatically deletes aged operational data. Pruning is enforced by
+two sweeps in `lib/orchestration/retention.ts`, each a task of the unified
+maintenance tick (`POST /api/v1/admin/orchestration/maintenance/tick`, called
+~every 60s by an external cron) and each throttled to **at most once an hour**
+per process, since every window here is measured in days — see
+[per-task minimum intervals](./scheduling.md#unified-maintenance-tick-admin-auth-required-preferred):
+
+- **`enforceRetentionPolicies()`** — the tenant sweep (task `retention`). Every
+  table it prunes is tenant-owned, so it runs **once per org, inside that org's
+  tenant context** (§108): at `TENANCY_MODE=multi` each prune is confined to
+  the org's rows by the `org_isolation` policies; at `single` the one org is the
+  install org and the sweep behaves as it always did.
+- **`enforceSystemRetentionPolicies()`** — the system sweep (task
+  `auditLogRetention`). The admin audit log and the MCP audit log have no org
+  column, so they are pruned **once, under the audited system scope**, rather
+  than N times.
+
+This is the **scheduled-purge** half of the platform's data lifecycle; on-demand
+subject erasure is separate — see
 [Account Deletion & Right to Erasure](../privacy/data-erasure.md).
 
 ## What gets pruned
@@ -19,10 +30,10 @@ the platform's data lifecycle; on-demand subject erasure is separate — see
 | Webhook DLQ (`exhausted`)                                                                    | `webhookDlqRetentionDays`            | global settings | Falls back to `webhookRetentionDays` when null. |
 | Event-hook deliveries                                                                        | `webhookRetentionDays`               | global settings | Same class as webhook deliveries.               |
 | Cost logs                                                                                    | `costLogRetentionDays`               | global settings | Must be ≥ `executionRetentionDays` — see below. |
-| Admin audit logs                                                                             | `auditLogRetentionDays`              | global settings | Max 3650 days (10y) for compliance regimes.     |
 | **Workflow executions** (+ steps, dispatches, lease events, per-step cost, inbound payloads) | `executionRetentionDays`             | global settings | **Terminal only** — see below.                  |
 | **Evaluation history** (`AiEvaluationSession` / `Run` + their logs/cases)                    | `evaluationRetentionDays`            | global settings | **Terminal only** — see below.                  |
-| MCP audit logs                                                                               | `McpServerConfig.auditRetentionDays` | MCP config      | **Always on** (default 90) — see below.         |
+| Admin audit logs _(system sweep)_                                                            | `auditLogRetentionDays`              | global settings | Max 3650 days (10y) for compliance regimes.     |
+| MCP audit logs _(system sweep)_                                                              | `McpServerConfig.auditRetentionDays` | MCP config      | **Always on** (default 90) — see below.         |
 
 Every global window is **nullable: `null` = keep forever** (skip that prune).
 The two retention columns added for executions and evaluations live on
@@ -93,14 +104,18 @@ Each prune is a small, uniform addition to `lib/orchestration/retention.ts`:
    prune from `enforceRetentionPolicies()` **passing the loaded window**, and add
    its count to `RetentionResult`. The sweep reads the settings row exactly once
    (#442); a prune that resolves its own window inside the sweep puts a
-   round-trip back per tick.
+   round-trip back per tick. **If the table is a system model** (no `orgId` —
+   `SYSTEM_MODELS` in `lib/tenancy/classification.ts`), call it from
+   `enforceSystemRetentionPolicies()` instead and add the count to
+   `SystemRetentionResult`: the tenant sweep runs once per org, and a system
+   table pruned there is pruned N times.
 4. Surface the setting: Zod schema (`lib/validations/orchestration.ts`), the
    settings PATCH route, the settings form (with `<FieldHelp>`), and the backup
    exporter/importer/schema for config round-trip.
 5. Add a case to `tests/unit/lib/orchestration/retention.test.ts`.
 
-The maintenance tick needs no change — it already invokes `enforceRetentionPolicies()`
-and logs every count in its background-task summary.
+The maintenance tick needs no change — it already invokes both sweeps and logs
+every count in its background-task summary.
 
 ## Related Documentation
 

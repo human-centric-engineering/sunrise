@@ -5,8 +5,8 @@
  *
  * Designed to be called every ~60s by an external cron job. Returns
  * 202 once `processDueSchedules()` has claimed and fired any due
- * schedules; the remaining eight tasks run as a background chain
- * inside the same overlap guard. A tick that the idle gate has
+ * schedules; the remaining nine tasks run as a background chain
+ * inside the same overlap guard, each inside its own tenant scope (§108). A tick that the idle gate has
  * already accounted for returns 200 `{ skipped: true, reason: 'idle' }`
  * without touching the database; `?force=1` overrides that. See
  * `lib/orchestration/maintenance/run-tick.ts` for the task list and

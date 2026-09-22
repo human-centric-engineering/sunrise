@@ -3,10 +3,9 @@
 Which org a request — or a job, or a script — is acting for, how that is
 decided, and what reads it. The second piece of the multi-tenancy programme
 ([design record](../architecture/multi-tenancy-design.md), Hub §106); the
-identity it rests on is [`identity.md`](./identity.md). Row isolation (§107),
-the job posture (§108) builds on the primitive
-this page describes and are named here only where it has to promise them
-something.
+identity it rests on is [`identity.md`](./identity.md). Row isolation (§107)
+and the job scopes (§108) build on the primitive this page describes and are
+named here only where it has to promise them something.
 
 **At `TENANCY_MODE=single` the install org is the only answer**, and every
 component on this page runs anyway — that is the point. A single-tenant
@@ -22,7 +21,7 @@ proves it by sweep rather than by sentence.
 | -------------------------------------------- | ------------------------------------------------------------------------------------- |
 | The org this call stack acts for             | `getTenantContext()` (nullable) / `requireTenantContext()` — `lib/tenancy/context.ts` |
 | Run something as an org / as the platform    | `runAsOrg(orgId, fn)` / `runAsSystem(reason, fn)` — same module                       |
-| Iterate every active org, one scope each     | `forEachOrg(fn)` — same module (uncalled in core until §108)                          |
+| Iterate every active org, one scope each     | `forEachOrg(fn)` — same module; the maintenance tick's per-org jobs run through it    |
 | Is this install multi-tenant?                | `isMultiTenant()` — same module (`env.TENANCY_MODE`)                                  |
 | How the guards decide the org for a request  | `enterSessionOrg` / `enterApiKeyOrg` — `lib/tenancy/entry.ts`                         |
 | The org facts the policy is told             | `viewer.orgId` / `viewer.orgRole` on `AuthorizationPrincipal`; `scope.org`            |
@@ -118,8 +117,8 @@ interface TenantContext {
   runs inside one.
 - **`forEachOrg(fn)`** — one `runAsOrg` scope per `ACTIVE` org, sequential on
   purpose (per-org batch caps are meaningless if every org runs at once).
-  Nothing in core calls it in production yet; §108 wires the maintenance
-  tick through it.
+  The maintenance tick's per-org jobs run through it (§108 t-711) — see
+  "Background work" below.
 
 ## Who enters it — the read rule
 
@@ -207,12 +206,38 @@ either (a platform `admin` key has none) — runs under
 `runAsCredentialLookup(<credential>)`. The resolver hands the org back; it
 never enters it. Pinned in each resolver's unit test by recording
 `getTenantContext()` inside the prisma mock at `multi` with no context.
-**Not yet entered** (each named with its owner): the maintenance tick and
-other background work until §108. Until then those paths run outside any
-context — the install org at `single`, a refusal at `multi` the moment they
-touch a tenant-owned row, never a wide read. The smoke scripts under
-`scripts/smoke/` run their `main` inside `runAsOrg(INSTALL_ORG_ID)` for the
-same reason.
+**Background work enters it per job** (§108 t-711). Every task in the
+maintenance tick — the platform's own (`lib/orchestration/maintenance/platform-jobs.ts`),
+the schedules sweep, and a fork's `registerAppJob` registrations — declares a
+`scope` and is run by `lib/orchestration/maintenance/job-scope.ts`:
+
+- **`'per-org'`** — `forEachOrg`: once per `ACTIVE` org, each run inside
+  `runAsOrg(orgId, …, { source: 'job' })`. Inside it the data layer stamps
+  every create and, at `multi`, the policies confine every read and write —
+  so a `take: 50` in the job body is a per-org cap. This is the scope for
+  **every** job that touches a tenant-owned table, including the ones that
+  read like global queue drains: the zombie reaper writes lease events,
+  orphan/pending recovery and the scheduler start the engine (and the `void
+drainEngine` continuation keeps the scope it was started in — pinned by
+  test), the evaluation worker writes cases. Under the system scope nothing
+  is stamped, and each of those would land a `NULL`-org row outside every
+  policy for good. At `single` the one org is the install org and the run
+  happens once, with the result untouched; at `multi` the results fold
+  across orgs and a failing org is contained, logged with its id, and the
+  next org still runs.
+- **`{ system: reason }`** — `runAsSystem(reason)`, once, for genuinely global
+  work: in core, the prune of the two system audit tables
+  (`auditLogRetention`) and the idle gate's horizon read (the earliest
+  `nextRunAt` across every org). The reason is what the audit line carries.
+
+A tick fired from an admin's session does **not** inherit that admin's org:
+each job enters its own scope, and `tests/unit/lib/orchestration/maintenance/run-tick.test.ts`
+starts the tick inside a foreign org to prove it. A fork's job with no
+`scope` gets `'per-org'` — a job that forgets is scoped, never bypassing
+([scheduling.md → App jobs](../orchestration/scheduling.md#app-jobs--the-fork-seam-on-the-tick)).
+The smoke scripts under `scripts/smoke/` run their `main` inside
+`runAsOrg(INSTALL_ORG_ID)`; `scripts/smoke/tenancy-isolation.ts` drives a
+per-org job through the registry as its scenario [9].
 
 ## The fork's resolver — `lib/app/tenant-resolver.ts`
 
@@ -336,6 +361,14 @@ the drift probes are [`isolation.md`](./isolation.md).
   — the six ALS behaviours, both modes of `requireTenantContext`,
   `runAsSystem`'s logged reason, `forEachOrg`'s one-scope-per-active-org,
   and the seam keeping a non-async callback's context.
+- [`tests/unit/lib/orchestration/maintenance/job-scope.test.ts`](../../tests/unit/lib/orchestration/maintenance/job-scope.test.ts),
+  [`platform-jobs.test.ts`](../../tests/unit/lib/orchestration/maintenance/platform-jobs.test.ts),
+  [`app-jobs.test.ts`](../../tests/unit/lib/orchestration/maintenance/app-jobs.test.ts),
+  [`run-tick.test.ts`](../../tests/unit/lib/orchestration/maintenance/run-tick.test.ts)
+  — the job scopes: every platform task's declared scope, once inside the
+  install org at `single` with the summary unchanged, once per org at
+  `multi` with the fold and per-org containment, the system scope's audit
+  line, and a tick started inside a foreign org sweeping every org.
 - [`tests/unit/lib/db/tenancy-extension.test.ts`](../../tests/unit/lib/db/tenancy-extension.test.ts)
   — the real generated client and the real extension on a recording driver
   adapter: the stamped column on every create shape at both modes, no
