@@ -436,7 +436,7 @@ release process.
 
 ### Fixed
 
-- **Two process-global caches stopped mixing orgs** (multi-tenancy §108
+- **Three process-global caches stopped mixing orgs** (multi-tenancy §108
   t-712). Both are behaviour changes at `TENANCY_MODE=multi` only; at
   `single` there is one org and neither changes anything. The event-hook
   cache (`lib/orchestration/hooks/registry.ts`) was one process-wide
@@ -452,7 +452,16 @@ release process.
   which is unique across orgs — but it was *filled* inside whichever org's
   request triggered the refresh, and `McpApiKey` is tenant-owned, so every
   other org's `rateLimitOverride` was silently dropped for five minutes. The
-  read now runs under the audited system scope. An install at `single` is
+  read now runs under the audited system scope. And the chat prompt-context
+  cache (`lib/orchestration/chat/context-builder.ts`) keyed on
+  `(type, id, userId)`, all three of which a request supplies — the built-in
+  `pattern` type keys by a pattern *number* over tenant-owned
+  `AiKnowledgeChunk` rows, and a fork's registered contributor is handed the
+  caller's own `type`/`id` — so a user who belongs to two orgs could open
+  `pattern:3` in one and, inside the 60-second TTL, be served that org's
+  knowledge content in the other org's system prompt. The key now carries the
+  org first. `invalidateContext` builds the same key, so call it inside the
+  org whose entry you mean to drop. An install at `single` is
   unaffected by either, and multi-tenancy remains the opt-in capability the
   playbook's
   [what you do not yet get](./.context/architecture/multi-tenancy.md#what-you-get-at-multi-and-what-you-do-not-yet)

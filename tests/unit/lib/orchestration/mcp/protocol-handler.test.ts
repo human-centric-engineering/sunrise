@@ -73,6 +73,7 @@ import {
 import type { McpRateLimiter } from '@/lib/orchestration/mcp/rate-limiter';
 import type { McpServerState } from '@/lib/orchestration/mcp/types';
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import { getTenantContext, runAsOrg, type TenantContext } from '@/lib/tenancy/context';
 
 function makeAuth(overrides: Partial<McpAuthContext> = {}): McpAuthContext {
@@ -208,6 +209,57 @@ describe('handleMcpRequest', () => {
 
       await vi.waitFor(() => expect(scopes).toHaveLength(1));
       expect(scopes[0]).toEqual({ orgId: null, source: 'system' });
+    });
+
+    it('starts one refresh for a burst, not one per request', async () => {
+      __resetKeyRateLimitCacheForTests();
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      vi.mocked(prisma.mcpApiKey.findMany).mockImplementation(
+        () => blocked.then(() => []) as never
+      );
+
+      // The stamp is only written when the refresh resolves, so without the
+      // in-flight latch each of these starts its own audited bypass.
+      for (let i = 0; i < 5; i++) {
+        await handleMcpRequest(makeRequest({ method: 'ping' }), {
+          auth,
+          session,
+          serverState,
+          rateLimiter,
+        });
+      }
+
+      // The refresh reaches the database through two dynamic imports, so wait
+      // for the first call, then let every other pending chain settle before
+      // counting. Asserting "1" the moment one arrives would pass without the
+      // latch too, because the other four are still in flight.
+      await vi.waitFor(() => expect(prisma.mcpApiKey.findMany).toHaveBeenCalled());
+      for (let i = 0; i < 5; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(prisma.mcpApiKey.findMany).toHaveBeenCalledTimes(1);
+      release();
+    });
+
+    it('logs a failed refresh instead of leaving an unhandled rejection', async () => {
+      __resetKeyRateLimitCacheForTests();
+      vi.mocked(prisma.mcpApiKey.findMany).mockRejectedValue(new Error('pool exhausted'));
+
+      await handleMcpRequest(makeRequest({ method: 'ping' }), {
+        auth,
+        session,
+        serverState,
+        rateLimiter,
+      });
+
+      await vi.waitFor(() =>
+        expect(logger.warn).toHaveBeenCalledWith(
+          'MCP per-key rate-limit overrides could not be refreshed',
+          expect.objectContaining({ error: 'pool exhausted' })
+        )
+      );
     });
   });
 

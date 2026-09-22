@@ -50,7 +50,7 @@ vi.stubGlobal('fetch', mockFetch);
 // ─── Imports ────────────────────────────────────────────────────────────
 
 import { emitHookEvent, invalidateHookCache } from '@/lib/orchestration/hooks/registry';
-import { requireTenantContext, runAsOrg } from '@/lib/tenancy/context';
+import { requireTenantContext, runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 import {
   SIGNATURE_HEADER,
   TIMESTAMP_HEADER,
@@ -184,6 +184,45 @@ describe('the hook cache at multi', () => {
     await emitAs(ORG_A, 3);
     await emitAs(ORG_B, 4);
     expect(readScopes).toEqual([ORG_A, ORG_B, ORG_A, ORG_B]);
+  });
+
+  it('refuses the system scope, which would read every org and fan out to all of them', async () => {
+    await runAsSystem('test: a job that forgot to enter an org', async () => {
+      emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+    });
+
+    await vi.waitFor(() =>
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Hook dispatch error',
+        expect.objectContaining({ error: expect.stringContaining('runs as the system scope') })
+      )
+    );
+    expect(mockFindMany).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('forgets a partition the TTL has expired, rather than holding its secrets for ever', async () => {
+    vi.useFakeTimers();
+    try {
+      await emitAs(ORG_A, 1);
+      expect(readScopes).toEqual([ORG_A]);
+
+      // Past A's TTL. B's refresh is the sweep that collects A.
+      vi.advanceTimersByTime(61_000);
+      await runAsOrg(ORG_B, async () => {
+        emitHookEvent('conversation.started', { conversationId: 'conv-2' });
+      });
+      await vi.waitFor(() => expect(readScopes).toEqual([ORG_A, ORG_B]));
+
+      // A is gone, so A's next emit re-reads instead of being served a
+      // minute-old copy of its hooks.
+      await runAsOrg(ORG_A, async () => {
+        emitHookEvent('conversation.started', { conversationId: 'conv-3' });
+      });
+      await vi.waitFor(() => expect(readScopes).toEqual([ORG_A, ORG_B, ORG_A]));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('refuses to read at all when nothing entered an org, and says so', async () => {

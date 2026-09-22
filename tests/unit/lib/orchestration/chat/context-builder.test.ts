@@ -33,6 +33,8 @@ const {
   __resetContextContributorsForTests,
 } = await import('@/lib/orchestration/chat/context-builder');
 
+const { runAsOrg } = await import('@/lib/tenancy/context');
+
 const getPatternDetailMock = getPatternDetail as ReturnType<typeof vi.fn>;
 const loggerWarn = logger.warn as ReturnType<typeof vi.fn>;
 const loggerError = logger.error as ReturnType<typeof vi.fn>;
@@ -461,5 +463,69 @@ describe('knowledge_document context (Document Clean Up)', () => {
     const out = await buildContext('knowledge_document', 'missing');
 
     expect(out).toMatch(/not found/i);
+  });
+});
+
+describe('the cache partitions by org (§108 t-712)', () => {
+  const ORG_A = 'cmorg00000000000000000orga';
+  const ORG_B = 'cmorg00000000000000000orgb';
+
+  beforeEach(() => {
+    clearContextCache();
+    getPatternDetailMock.mockReset();
+  });
+
+  it('does not serve one org its pattern context inside another org', async () => {
+    // `pattern` keys by a pattern NUMBER, and `getPatternDetail` filters by
+    // that number alone — the org comes from the policies. So the body differs
+    // per org while the rest of the key is byte-identical.
+    // What the policies would return for each org, in the order the orgs ask.
+    // A cache collision means the second org is served from the first's entry
+    // and never reaches the loader at all — so the second fixture is left
+    // unused and `inB` comes back carrying org A's content.
+    getPatternDetailMock
+      .mockResolvedValueOnce(
+        patternFixture({
+          patternName: 'ReAct (A)',
+          chunks: [{ id: 'c1', content: `${ORG_A} private notes`, section: 'overview' }],
+        })
+      )
+      .mockResolvedValueOnce(
+        patternFixture({
+          patternName: 'ReAct (B)',
+          chunks: [{ id: 'c1', content: `${ORG_B} private notes`, section: 'overview' }],
+        })
+      );
+
+    // Same user, same pattern, inside the 60s TTL — which `OrgMembership`
+    // allows, since a user may belong to both orgs.
+    const inA = await runAsOrg(ORG_A, () => buildContext('pattern', '3', { userId: 'user-1' }));
+    const inB = await runAsOrg(ORG_B, () => buildContext('pattern', '3', { userId: 'user-1' }));
+
+    expect(inA).toContain(`${ORG_A} private notes`);
+    expect(inB).toContain(`${ORG_B} private notes`);
+    expect(inA).not.toContain(ORG_B);
+    expect(getPatternDetailMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('still caches within one org', async () => {
+    getPatternDetailMock.mockResolvedValue(patternFixture());
+
+    await runAsOrg(ORG_A, () => buildContext('pattern', '3', { userId: 'user-1' }));
+    await runAsOrg(ORG_A, () => buildContext('pattern', '3', { userId: 'user-1' }));
+
+    expect(getPatternDetailMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('invalidates the calling org, from the same key', async () => {
+    getPatternDetailMock.mockResolvedValue(patternFixture());
+
+    await runAsOrg(ORG_A, async () => {
+      await buildContext('pattern', '3');
+      invalidateContext('pattern', '3');
+      await buildContext('pattern', '3');
+    });
+
+    expect(getPatternDetailMock).toHaveBeenCalledTimes(2);
   });
 });

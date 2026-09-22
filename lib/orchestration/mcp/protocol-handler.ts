@@ -693,6 +693,18 @@ function extractResourceUri(request: JsonRpcRequest): string | undefined {
  */
 let keyRateLimitCache = new Map<string, number | null>();
 let keyRateLimitCacheAt = 0;
+/**
+ * The refresh in flight, if any.
+ *
+ * `getKeyRateLimit` kicks the refresh off without awaiting it, and the
+ * freshness stamp is only written when it resolves — so without this latch
+ * every request arriving during a refresh starts another one. That was a
+ * duplicate query before; now each duplicate is an audited RLS bypass with an
+ * `info` line, and a burst at a five-minute boundary would produce N of them,
+ * drowning the signal that log exists to give (`lib/tenancy/context.ts`).
+ * Same shape as `model-registry-db-hydrate.ts`.
+ */
+let keyRateLimitRefresh: Promise<void> | null = null;
 const KEY_RATE_CACHE_TTL = 5 * 60 * 1000;
 
 async function loadKeyRateLimits(): Promise<void> {
@@ -724,11 +736,32 @@ async function loadKeyRateLimits(): Promise<void> {
 export function __resetKeyRateLimitCacheForTests(): void {
   keyRateLimitCache = new Map<string, number | null>();
   keyRateLimitCacheAt = 0;
+  keyRateLimitRefresh = null;
+}
+
+/**
+ * Start a refresh unless one is already running, and never reject.
+ *
+ * The caller cannot await this — the limit is wanted now, from whatever the
+ * cache holds — so a database failure here has nowhere to go but a log line.
+ * Before this it had nowhere to go at all: an unhandled rejection.
+ */
+function refreshKeyRateLimits(): void {
+  if (keyRateLimitRefresh) return;
+  keyRateLimitRefresh = loadKeyRateLimits()
+    .catch((err: unknown) => {
+      logger.warn('MCP per-key rate-limit overrides could not be refreshed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    })
+    .finally(() => {
+      keyRateLimitRefresh = null;
+    });
 }
 
 function getKeyRateLimit(apiKeyId: string): number | null {
   if (Date.now() - keyRateLimitCacheAt > KEY_RATE_CACHE_TTL) {
-    void loadKeyRateLimits();
+    refreshKeyRateLimits();
   }
   return keyRateLimitCache.get(apiKeyId) ?? null;
 }

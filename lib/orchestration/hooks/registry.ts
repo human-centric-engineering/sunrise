@@ -77,9 +77,19 @@ interface OrgHookCache {
  * delivery row each dispatch writes lands against a hook the emitting org can
  * see.
  *
- * `'system'` is the key for the audited system scope, matching
- * `mcpSystemAgentIdByOrg` — a scope with no org still gets its own partition
- * rather than borrowing an org's.
+ * **There is no `'system'` partition, deliberately.** Under `runAsSystem` the
+ * data layer sets `app.bypass_rls`, so the `findMany` below would return
+ * EVERY org's hooks — and one such entry, cached under a shared sentinel key,
+ * would fan a single event out to every org's webhook URL, each signed with
+ * that org's secret. That is the defect this module just fixed, reintroduced
+ * through the back door. So a null-org scope is refused rather than keyed
+ * (§108 t-712, review round 1). Nothing emits under `runAsSystem` today; this
+ * is what keeps that true.
+ *
+ * Partitions older than the TTL are dropped on the next refresh, so the map
+ * does not accumulate one entry per org that has ever emitted — each holds
+ * every enabled hook's action, filter and secret, and stale ones are of no
+ * use to anybody.
  */
 const hookCacheByOrg = new Map<string, OrgHookCache>();
 
@@ -87,16 +97,24 @@ const hookCacheByOrg = new Map<string, OrgHookCache>();
  * Load the calling org's enabled hooks from the database, grouped by event
  * type. Results are cached per org for CACHE_TTL_MS.
  *
- * At `multi` a call stack with no tenant context throws here rather than
- * reading wide — `emitHookEvent` is fire-and-forget and logs it. That is the
- * right answer: an event emitted outside any org cannot know whose hooks to
- * fire. At `single` the context resolves to the install org, so there is one
- * partition and the behaviour is unchanged.
+ * Two call stacks are refused rather than served, and `emitHookEvent` —
+ * fire-and-forget — logs each: one that entered no context at all (`multi`
+ * only; at `single` the context resolves to the install org, so there is one
+ * partition and the behaviour is unchanged), and one running as the system
+ * scope, which has no org to name. Both are the same answer: **an event that
+ * cannot say whose it is cannot say whose hooks to fire**, and reading wide
+ * is never the fallback.
  */
 async function loadHooks(): Promise<Map<string, CachedHook[]>> {
-  const cacheKey = requireTenantContext().orgId ?? 'system';
+  const { orgId } = requireTenantContext();
+  if (orgId === null) {
+    throw new Error(
+      'Hook dispatch has no org: this call stack runs as the system scope, which sees every ' +
+        "org's hooks. Emit the event inside runAsOrg — see lib/tenancy/process-state.ts."
+    );
+  }
   const now = Date.now();
-  const cached = hookCacheByOrg.get(cacheKey);
+  const cached = hookCacheByOrg.get(orgId);
   if (cached && now - cached.loadedAt < CACHE_TTL_MS) {
     return cached.byType;
   }
@@ -144,7 +162,13 @@ async function loadHooks(): Promise<Map<string, CachedHook[]>> {
     byType.set(hook.eventType, list);
   }
 
-  hookCacheByOrg.set(cacheKey, { byType, loadedAt: now });
+  // Drop every partition the TTL has expired, this one included, before
+  // writing the fresh entry. One org's refresh is the natural moment to
+  // collect the orgs that have stopped emitting.
+  for (const [key, entry] of hookCacheByOrg) {
+    if (now - entry.loadedAt >= CACHE_TTL_MS) hookCacheByOrg.delete(key);
+  }
+  hookCacheByOrg.set(orgId, { byType, loadedAt: now });
   return byType;
 }
 

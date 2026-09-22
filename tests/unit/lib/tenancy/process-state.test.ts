@@ -87,7 +87,7 @@ const STATELESS_CONSTRUCTORS = new Set(['TextEncoder', 'TextDecoder']);
  * forms. A multi-declarator (`let a, b;`) would yield only its first name —
  * there are none in `lib/`, and the repo's style does not produce them.
  */
-const DECLARATION = /^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)\s*[:=;]/;
+const DECLARATION = /^(?:export\s+)?(const|let|var)\s+([A-Za-z_$][\w$]*)(?=\s*[:=;])/;
 
 interface Holder {
   name: string;
@@ -126,9 +126,17 @@ export function findStateHolders(source: string): Holder[] {
     // so read a short window and test its START — anchoring means a following
     // statement inside the window cannot produce a match of its own.
     const window = lines.slice(i, i + 6).join('\n');
-    const equals = window.indexOf('=');
-    if (equals === -1) continue;
-    const initialiser = window.slice(equals + 1).trim();
+    const initialiser = initialiserOf(window, match[0].length);
+    if (initialiser === null) continue;
+
+    if (/^(\[\s*\]|\{\s*\})/.test(initialiser)) {
+      // An EMPTY array or object literal: a holder something fills later.
+      // A populated one (`const SUBS = [[/x/, 'y']]`) is a constant table and
+      // is not matched, which is the same literal-versus-state line the
+      // lookup-container rule draws.
+      holders.push({ name, line: i + 1 });
+      continue;
+    }
 
     if (/^globalThis\b/.test(initialiser)) {
       holders.push({ name, line: i + 1 });
@@ -147,6 +155,31 @@ export function findStateHolders(source: string): Holder[] {
   }
 
   return holders;
+}
+
+/**
+ * The text after the declaration's `=`, or `null` when there is no assignment.
+ *
+ * Not `indexOf('=')`: the first `=` in
+ * `const handlers: Map<string, (x: T) => void> = new Map();` belongs to the
+ * arrow in the type annotation, which would make the initialiser `> void> =
+ * new Map();` and silently skip the holder. So it scans from the end of the
+ * declaration keyword and name, skipping `=>` and anything inside brackets.
+ */
+function initialiserOf(window: string, from: number): string | null {
+  let depth = 0;
+  for (let i = from; i < window.length; i++) {
+    const char = window[i];
+    if (char === '<' || char === '(' || char === '[' || char === '{') depth++;
+    else if (char === '>' || char === ')' || char === ']' || char === '}') depth--;
+    else if (char === '=' && depth <= 0) {
+      if (window[i + 1] === '>' || window[i - 1] === '=') continue;
+      return window.slice(i + 1).trim();
+    } else if (char === ';' && depth <= 0) {
+      return null;
+    }
+  }
+  return null;
 }
 
 function scannableFiles(dir: string, out: string[] = []): string[] {
@@ -207,6 +240,26 @@ describe('the scanner itself', () => {
       'const encoder = new TextEncoder();',
     ].join('\n');
     expect(findStateHolders(source)).toEqual([]);
+  });
+
+  it('matches an empty array or object a module fills later, not a populated one', () => {
+    const source = [
+      'const appRules: RateLimitRule[] = [];',
+      'const registry: Record<string, Handler> = {};',
+      "const SUBS: Array<[RegExp, string]> = [[/a/g, 'b']];",
+      "const DEFAULTS = { mode: 'log_only' };",
+    ].join('\n');
+    expect(findStateHolders(source).map((h) => h.name)).toEqual(['appRules', 'registry']);
+  });
+
+  it('finds the assignment past an arrow inside a type annotation', () => {
+    // `indexOf('=')` lands on the `=` of `=>` here and skips the holder.
+    const source = 'const handlers: Map<string, (x: T) => void> = new Map();';
+    expect(findStateHolders(source).map((h) => h.name)).toEqual(['handlers']);
+  });
+
+  it('ignores a declaration with no assignment at all', () => {
+    expect(findStateHolders('const enum Mode { A }').map((h) => h.name)).toEqual([]);
   });
 
   it('excludes anything indented — a class field is not module scope', () => {

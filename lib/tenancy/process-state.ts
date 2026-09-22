@@ -78,11 +78,15 @@ export type TenancyPosture =
    */
   | 'row-keyed'
   /**
-   * Tenant data partitioned by org id. Two holders use `'system'` as the
-   * partition for the audited system scope, which has no org. That sentinel
-   * is safe only because an org id is a cuid and `createOrg` has no
-   * caller-supplied-id path — a fork that ever lets an org id be chosen has
-   * to prefix these keys rather than rely on the shapes not colliding.
+   * Tenant data partitioned by org id. One holder
+   * (`mcpSystemAgentIdByOrg`) uses `'system'` as the partition for the
+   * audited system scope, which has no org. That sentinel is safe only
+   * because an org id is a cuid and `createOrg` has no caller-supplied-id
+   * path — a fork that ever lets an org id be chosen has to prefix these keys
+   * rather than rely on the shapes not colliding. And it is only safe where
+   * the system-scoped read fetches ONE row: the hook cache refuses the system
+   * scope outright, because there the bypass would put every org's rows under
+   * that one key.
    */
   | 'org-keyed'
   /**
@@ -143,14 +147,21 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     file: 'lib/orchestration/hooks/registry.ts',
     holders: ['hookCacheByOrg'],
     posture: 'org-keyed',
-    keyedBy: "org id, or 'system' for the system scope",
+    keyedBy: 'org id — the system scope is refused, not keyed',
     why: "AiEventHook is tenant-owned and eventType is a label every org shares, so the one process-wide map this replaced dispatched whichever org refreshed it last to all of them — org B's event to org A's URL, signed with org A's secret (§108 t-712).",
+  },
+  {
+    file: 'lib/orchestration/chat/context-builder.ts',
+    holders: ['cache'],
+    posture: 'org-keyed',
+    keyedBy: 'org id, then context type + entity id + optional user id',
+    why: "Keyed by org because the rest of the key is not unique across orgs — `pattern` keys by a pattern NUMBER over tenant-owned AiKnowledgeChunk rows, and a fork's contributor is handed the caller's own type and id — so a user in two orgs would have been served one org's knowledge inside the other's prompt (§108 t-712, review round 1); the 500-entry cap is still shared, which costs a rebuild and never a wrong answer.",
   },
   {
     file: 'lib/orchestration/mcp/tool-registry.ts',
     holders: ['mcpSystemAgentIdByOrg'],
     posture: 'org-keyed',
-    keyedBy: "org id, or 'system' for the system scope",
+    keyedBy: "org id, or 'system' for the audited system scope",
     why: "Agent slugs are unique per org (§107 t-708), so each org holds its own `mcp-system` agent and a single process-wide id would hand org B org A's agent — its disabled capabilities invisible under B's scope, its cost rows misattributed.",
   },
 
@@ -163,13 +174,6 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     posture: 'row-keyed',
     keyedBy: 'agent id for the binding maps; capability slug for the rest',
     why: 'The dispatcher instance holds capability handlers, guards and per-slug limiters, which are global config, plus per-agent capability bindings keyed by the agent cuid — the strictest of the two is what this row declares, and the bindings are what a fork adding a cache here must key the same way.',
-  },
-  {
-    file: 'lib/orchestration/chat/context-builder.ts',
-    holders: ['cache'],
-    posture: 'row-keyed',
-    keyedBy: 'context type + entity id + optional user id',
-    why: "The entity id is a cuid, so two orgs cannot collide, but the 500-entry cap is shared: a busy org can evict a quiet one's entries, which costs a rebuild and never a wrong answer.",
   },
   {
     file: 'lib/orchestration/knowledge/resolveAgentDocumentAccess.ts',
@@ -201,7 +205,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/mcp/protocol-handler.ts',
-    holders: ['keyRateLimitCache', 'keyRateLimitCacheAt'],
+    holders: ['keyRateLimitCache', 'keyRateLimitCacheAt', 'keyRateLimitRefresh'],
     posture: 'row-keyed',
     keyedBy: 'MCP API key id',
     why: "Key ids are unique across orgs so one map is correct, but filling it is not automatic — the refresh runs under runAsSystem because it inherited the refreshing org before §108 t-712 and silently dropped every other org's override for five minutes.",
@@ -567,8 +571,14 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "A fork's subject-export dispositions, which say which MODELS a data subject's export reads; the rows themselves are read per request inside the caller's scope.",
   },
   {
+    file: 'lib/db/drift-probes.ts',
+    holders: ['appDriftProbes'],
+    posture: 'no-tenant-data',
+    why: 'Fork-registered drift probes, populated from code by `registerAppDriftProbe` and read by the CI drift check; the probes describe database objects, not rows.',
+  },
+  {
     file: 'lib/security/rate-limit-policy.ts',
-    holders: ['effectivePolicyCache', 'appKeyResolvers'],
+    holders: ['effectivePolicyCache', 'appKeyResolvers', 'appRules'],
     posture: 'no-tenant-data',
     why: "The resolved policy table — core's rules plus a fork's — and the key resolvers that go with them, all derived from code rather than from rows.",
   },

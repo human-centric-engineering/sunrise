@@ -30,8 +30,8 @@
  * init are likewise caught (contributors are simply disabled), never failing
  * a turn.
  *
- * Tenancy posture: row-keyed — `cache` by entity id, with a shared 500-entry
- * cap (lib/tenancy/process-state.ts).
+ * Tenancy posture: org-keyed — `cache` by org, then entity, with a shared
+ * 500-entry cap (lib/tenancy/process-state.ts).
  */
 
 import { logger } from '@/lib/logging';
@@ -39,6 +39,7 @@ import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { prisma } from '@/lib/db/client';
 import { getPatternDetail } from '@/lib/orchestration/knowledge/search';
 import { initAppContextContributors } from '@/lib/app/context-contributors';
+import { getTenantContext } from '@/lib/tenancy/context';
 
 const CONTEXT_CACHE_TTL_MS = 60 * 1000;
 const CONTEXT_CACHE_MAX_SIZE = 500;
@@ -61,9 +62,24 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 
 function cacheKey(type: string, id: string, userId?: string): string {
-  // Empty `userId` collapses to a single shared partition (`type:id:`), which
-  // is byte-for-byte the pre-widening key space.
-  return `${type}:${id}:${userId ?? ''}`;
+  // The org comes FIRST, and it is not optional (§108 t-712, review round 1).
+  // `type` and `id` both arrive from the request, and the entries they key
+  // are built from tenant-owned rows: `pattern` is keyed by a pattern NUMBER
+  // over `AiKnowledgeChunk`, and the `default:` branch hands the same pair to
+  // a fork's contributor. So a user who belongs to two orgs — which
+  // `OrgMembership` allows — would otherwise open `pattern:3` in org A and,
+  // within the 60-second TTL, be served org A's knowledge content inside org
+  // B's system prompt. The entity ids being cuids elsewhere does not save
+  // these: a number and a caller-supplied string are not unique across orgs.
+  //
+  // At `single` there is one org, so this is one constant prefix and the key
+  // space is unchanged in shape. An unentered context (`null`) keys as `-`
+  // rather than throwing: `buildContext` is on the chat turn's critical path,
+  // and at `multi` the read inside it fails on its own terms anyway.
+  const orgId = getTenantContext()?.orgId ?? '-';
+  // Empty `userId` collapses to a single shared partition per org
+  // (`org:type:id:`), which is byte-for-byte the pre-widening key space.
+  return `${orgId}:${type}:${id}:${userId ?? ''}`;
 }
 
 /**
