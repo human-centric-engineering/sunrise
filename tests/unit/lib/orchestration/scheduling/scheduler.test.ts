@@ -343,6 +343,35 @@ describe('processDueSchedules', () => {
     });
   });
 
+  it('keeps the org the sweep was started in on the fire-and-forget engine drain (§108)', async () => {
+    // The tick runs this sweep once per org inside `runAsOrg`; the engine is
+    // then driven by a `void drainEngine(...)` that outlives the sweep's own
+    // await. Every row the engine writes (steps, cost logs, dispatches) is
+    // stamped from the ALS context it sees, so the continuation must carry
+    // the org — pinned here because a lost context would surface only as
+    // NULL-org rows at `multi`.
+    const { runAsOrg, getTenantContext } = await import('@/lib/tenancy/context');
+    const schedule = makeSchedule();
+    vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({ id: 'exec_1' } as never);
+
+    let orgSeenByEngine: string | null | undefined = 'never-ran';
+    mockExecute.mockImplementation(async function* () {
+      // Yield to a later macrotask first, so this observes the context after
+      // the sweep (and the tick) have returned, not merely on the same tick.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      orgSeenByEngine = getTenantContext()?.orgId;
+      yield* [];
+    });
+
+    await runAsOrg('org_a', () => processDueSchedules());
+    await vi.waitFor(() => expect(orgSeenByEngine).not.toBe('never-ran'));
+
+    expect(orgSeenByEngine).toBe('org_a');
+    // And nothing leaked onto the caller once the scope closed.
+    expect(getTenantContext()).toBeNull();
+  });
+
   it('never attributes a scheduled run to the schedule author', async () => {
     // Belt-and-braces against a re-regression: `objectContaining` above
     // would still pass if `userId` were dropped from the payload entirely

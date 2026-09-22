@@ -65,8 +65,15 @@ vi.mock('@/lib/orchestration/chat/message-embedder', () => ({
   backfillMissingEmbeddings: vi.fn(),
 }));
 
+// §108: every platform job now runs inside a tenant scope; the per-org runner
+// reads the active orgs. One install org is what a `single` install has.
+vi.mock('@/lib/db/client', () => ({
+  prisma: { org: { findMany: vi.fn(async () => [{ id: 'install' }]) } },
+}));
+
 vi.mock('@/lib/orchestration/retention', () => ({
   enforceRetentionPolicies: vi.fn(),
+  enforceSystemRetentionPolicies: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/evaluations/run-worker', () => ({
@@ -97,7 +104,10 @@ import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
 import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
-import { enforceRetentionPolicies } from '@/lib/orchestration/retention';
+import {
+  enforceRetentionPolicies,
+  enforceSystemRetentionPolicies,
+} from '@/lib/orchestration/retention';
 import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
 import { runDueAppJobs } from '@/lib/orchestration/maintenance/app-jobs';
 import { __resetPlatformJobsForTests } from '@/lib/orchestration/maintenance/platform-jobs';
@@ -148,11 +158,9 @@ const DEFAULT_RETENTION_RESULT = {
   webhookDeliveriesDeleted: 0,
   hookDeliveriesDeleted: 0,
   costLogsDeleted: 0,
-  auditLogsDeleted: 0,
   executionsDeleted: 0,
   evaluationSessionsDeleted: 0,
   evaluationRunsDeleted: 0,
-  mcpAuditLogsDeleted: 0,
 };
 const DEFAULT_PENDING_RECOVERY_RESULT = { recovered: 0, failed: 0, errors: [] };
 const DEFAULT_ORPHAN_RESULT = { recovered: 0, exhausted: 0, errors: [] };
@@ -183,6 +191,10 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     vi.mocked(reapZombieExecutions).mockResolvedValue(DEFAULT_REAPER_RESULT);
     vi.mocked(backfillMissingEmbeddings).mockResolvedValue(DEFAULT_EMBEDDER_RESULT as never);
     vi.mocked(enforceRetentionPolicies).mockResolvedValue(DEFAULT_RETENTION_RESULT);
+    vi.mocked(enforceSystemRetentionPolicies).mockResolvedValue({
+      auditLogsDeleted: 0,
+      mcpAuditLogsDeleted: 0,
+    });
     vi.mocked(processPendingExecutions).mockResolvedValue(DEFAULT_PENDING_RECOVERY_RESULT);
     vi.mocked(processOrphanedExecutions).mockResolvedValue(DEFAULT_ORPHAN_RESULT);
     vi.mocked(processPendingEvaluationRuns).mockResolvedValue(DEFAULT_EVAL_RUN_RESULT);
@@ -282,6 +294,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       'retention',
       'pendingExecutionRecovery',
       'evaluationRuns',
+      'auditLogRetention',
     ]);
     expect(typeof body.data.durationMs).toBe('number');
     expect(body.data.durationMs).toBeGreaterThanOrEqual(0);
@@ -299,6 +312,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data).not.toHaveProperty('retention');
     expect(body.data).not.toHaveProperty('pendingExecutionRecovery');
     expect(body.data).not.toHaveProperty('evaluationRuns');
+    expect(body.data).not.toHaveProperty('auditLogRetention');
   });
 
   it('still invokes all seven maintenance tasks (six in background)', async () => {
@@ -397,8 +411,8 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(response.status).toBe(202);
     expect(body.data.schedules).toEqual({ error: 'schedules DB down' });
     // Background tasks still kick off even when schedules fail
-    // (8 tasks since evaluationRuns added in Phase 1).
-    expect(body.data.backgroundTasks).toHaveLength(8);
+    // (9 tasks: evaluationRuns added in Phase 1, auditLogRetention split out in §108).
+    expect(body.data.backgroundTasks).toHaveLength(9);
   });
 
   it('returns a readable schedules.error when processDueSchedules rejects a non-Error', async () => {

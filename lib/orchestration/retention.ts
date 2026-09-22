@@ -19,7 +19,13 @@
  * work (running / pending / awaiting-approval executions; queued /
  * running / in-progress eval runs and sessions) is never pruned by age.
  *
- * Called by the unified maintenance tick endpoint.
+ * **Two sweeps, two tenant scopes (§108 t-711).** `enforceRetentionPolicies`
+ * prunes tenant-owned tables and runs once per org inside that org's scope
+ * (the `retention` platform job); `enforceSystemRetentionPolicies` prunes the
+ * two system audit tables — `AiAdminAuditLog`, `McpAuditLog`, neither of
+ * which has an org — and runs once under the audited system scope (the
+ * `auditLogRetention` job). Per org they would have run N times over the
+ * same rows. Both are driven by the unified maintenance tick.
  */
 
 import { prisma } from '@/lib/db/client';
@@ -37,25 +43,35 @@ export interface RetentionResult {
   hookDeliveriesDeleted: number;
   /** Number of cost log rows pruned. */
   costLogsDeleted: number;
-  /** Number of admin audit log rows pruned. */
-  auditLogsDeleted: number;
   /** Number of terminal workflow executions pruned (cascades steps/dispatches/lease events/cost logs). */
   executionsDeleted: number;
   /** Number of terminal evaluation sessions pruned (cascades logs). */
   evaluationSessionsDeleted: number;
   /** Number of terminal evaluation runs pruned (cascades cases). */
   evaluationRunsDeleted: number;
+}
+
+/** What the system-scoped audit sweep reports. */
+export interface SystemRetentionResult {
+  /** Number of admin audit log rows pruned. */
+  auditLogsDeleted: number;
   /** Number of MCP audit-log rows pruned. */
   mcpAuditLogsDeleted: number;
 }
 
 /**
  * Enforce retention policies for all agents that have `retentionDays` set,
- * then prune old webhook deliveries and cost logs per global settings.
+ * then prune old webhook deliveries, cost logs, executions and evaluation
+ * history per global settings.
  *
  * For each agent, deletes conversations whose `updatedAt` is older than
  * `now - retentionDays`. Cascade deletes handle messages, embeddings,
  * and cost logs.
+ *
+ * Every table this sweep touches is tenant-owned, so it runs inside an org
+ * scope — once per org at `multi`, where the policies confine each prune to
+ * that org's rows; the two system audit tables are
+ * {@link enforceSystemRetentionPolicies}' job.
  */
 export async function enforceRetentionPolicies(): Promise<RetentionResult> {
   const agents = await prisma.aiAgent.findMany({
@@ -98,10 +114,8 @@ export async function enforceRetentionPolicies(): Promise<RetentionResult> {
   );
   const hookResult = await pruneHookDeliveries(windows.webhookRetentionDays);
   const costLogResult = await pruneCostLogs(windows.costLogRetentionDays);
-  const auditLogResult = await pruneAuditLogs(windows.auditLogRetentionDays);
   const executionResult = await pruneExecutions(windows.executionRetentionDays);
   const evaluationResult = await pruneEvaluationData(windows.evaluationRetentionDays);
-  const mcpAuditResult = await pruneMcpAuditLogs();
 
   return {
     deleted: totalDeleted,
@@ -109,10 +123,26 @@ export async function enforceRetentionPolicies(): Promise<RetentionResult> {
     webhookDeliveriesDeleted: webhookResult.deleted,
     hookDeliveriesDeleted: hookResult.deleted,
     costLogsDeleted: costLogResult.deleted,
-    auditLogsDeleted: auditLogResult.deleted,
     executionsDeleted: executionResult.deleted,
     evaluationSessionsDeleted: evaluationResult.sessionsDeleted,
     evaluationRunsDeleted: evaluationResult.runsDeleted,
+  };
+}
+
+/**
+ * Prune the two system audit tables — the admin audit log per
+ * `auditLogRetentionDays`, the MCP audit log per
+ * `McpServerConfig.auditRetentionDays`.
+ *
+ * Neither table carries an org (`SYSTEM_MODELS` in
+ * `lib/tenancy/classification.ts`), so this runs once, under the audited
+ * system scope, rather than once per org with the tenant sweep.
+ */
+export async function enforceSystemRetentionPolicies(): Promise<SystemRetentionResult> {
+  const auditLogResult = await pruneAuditLogs();
+  const mcpAuditResult = await pruneMcpAuditLogs();
+  return {
+    auditLogsDeleted: auditLogResult.deleted,
     mcpAuditLogsDeleted: mcpAuditResult.deleted,
   };
 }

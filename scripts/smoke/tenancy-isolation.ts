@@ -23,7 +23,12 @@
  *   - the three credential resolvers and the inbound route, called as
  *     nobody, learn B's org from B's row and hand it back / run inside it;
  *   - the t-708 namespaces: `support` in both orgs, refused twice in one;
- *     the same file in both orgs; a default knowledge base per org.
+ *     the same file in both orgs; a default knowledge base per org;
+ *   - a per-org platform job driven through the registry (§108 t-711): the
+ *     zombie reaper, with a stale execution seeded in each org, reaps both
+ *     and every lease event it writes carries that org — the assertion that
+ *     fails on a `NULL`-org row, which is what a job run under the system
+ *     scope would have produced.
  *
  * Run it against a THROWAWAY database, never the dev one — it creates two
  * orgs and enables nothing itself; the sequence around it is the CI job's
@@ -65,6 +70,7 @@ import { searchConversationEmbeddings } from '@/lib/orchestration/chat/conversat
 import { getCostBreakdown, getCostSummary } from '@/lib/orchestration/llm/cost-reports';
 import { signHookPayload } from '@/lib/orchestration/hooks/signing';
 import { POST as inboundPost } from '@/app/api/v1/inbound/[channel]/[slug]/route';
+import { PLATFORM_JOBS } from '@/lib/orchestration/maintenance/platform-jobs';
 
 const PREFIX = 'smoke-iso';
 const stamp = Date.now();
@@ -720,6 +726,77 @@ async function main(): Promise<void> {
     );
     // The engine drain it started is fire-and-forget; let it settle before cleanup.
     await new Promise((r) => setTimeout(r, 1500));
+
+    // ── A per-org platform job through the registry (§108 t-711) ──────────
+    console.log('\n[9] a per-org platform job, driven through the registry');
+    // One stale `running` execution per org, older than the reaper's 30-minute
+    // threshold. `updatedAt` is `@updatedAt`, which an explicit value on
+    // create overrides.
+    const staleAt = new Date(Date.now() - 45 * 60 * 1000);
+    const staleIds: Record<string, string> = {};
+    for (const f of [a, b]) {
+      const stale = await runAsOrg(f.orgId, () =>
+        prisma.aiWorkflowExecution.create({
+          data: {
+            workflowId: f.workflowId,
+            status: 'running',
+            inputData: {},
+            executionTrace: [],
+            userId: f.ownerId,
+            leaseToken: `${PREFIX}-lease-${stamp}`,
+            leaseExpiresAt: staleAt,
+            updatedAt: staleAt,
+          },
+          select: { id: true },
+        })
+      );
+      staleIds[f.orgId] = stale.id;
+    }
+    const reaper = PLATFORM_JOBS.find((job) => job.name === 'zombieReaper');
+    check(reaper?.scope === 'per-org', 'the zombie reaper is registered per-org');
+    // Started inside a foreign org on purpose: the admin route's guard enters
+    // the caller's org before the tick runs, and the job must ignore it.
+    const reaped = reaper
+      ? await runAsOrg(a.orgId, () => reaper.run())
+      : { result: null, foundWork: false };
+    // The folded summary is `unknown` to the caller; read the two counters
+    // it must carry without asserting a shape on the rest.
+    const counter = (key: 'orgs' | 'reaped'): number | null => {
+      if (typeof reaped.result !== 'object' || reaped.result === null) return null;
+      const value: unknown = Reflect.get(reaped.result, key);
+      return typeof value === 'number' ? value : null;
+    };
+    const orgsRun = counter('orgs');
+    const reapedCount = counter('reaped');
+    check(orgsRun !== null && orgsRun >= 2, `the job ran once per org (${String(orgsRun)} orgs)`);
+    check(
+      reapedCount !== null && reapedCount >= 2,
+      `it reaped both orgs' stale executions (${String(reapedCount)})`
+    );
+    check(reaped.foundWork === true, 'and reported work, so the idle gate stays disarmed');
+    for (const f of [a, b]) {
+      const row = await runAsOrg(f.orgId, () =>
+        prisma.aiWorkflowExecution.findUnique({
+          where: { id: staleIds[f.orgId] },
+          select: { status: true },
+        })
+      );
+      check(row?.status === 'failed', `org ${f === a ? 'A' : 'B'}'s stale execution is now failed`);
+    }
+    // The release events are fire-and-forget inside the reaper; let them land.
+    await new Promise((r) => setTimeout(r, 1000));
+    const leaseEvents = await runAsSystem('smoke: lease-event rows', () =>
+      prisma.aiWorkflowExecutionLeaseEvent.findMany({
+        where: { executionId: { in: Object.values(staleIds) }, event: 'released' },
+        select: { executionId: true, orgId: true },
+      })
+    );
+    check(leaseEvents.length === 2, `two release events were written (${leaseEvents.length})`);
+    check(
+      leaseEvents.every((e) => e.orgId !== null && staleIds[e.orgId] === e.executionId),
+      'each release event carries the org of the execution it released — none is NULL'
+    );
+    check(getTenantContext() === null, 'the job left no context on the caller');
 
     if (failures > 0) throw new Error(`${failures} check(s) failed`);
     console.log('\n✓ smoke:tenancy-isolation passed');

@@ -8,9 +8,21 @@
  * are exempt from throttling (the retry drains — throttling them would miss a
  * 10s backoff), which are held back and for how long, and that a task failing
  * or hanging cannot take the rest of the sweep with it.
+ *
+ * Since §108 (t-711) every task also declares whose rows it acts on. The
+ * tenancy primitives are real here (env and the `Org` read mocked) so the
+ * assertions are about the context each task actually ran in: once inside the
+ * install org at `single` with the summary unchanged, once per org at `multi`.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+
+const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'single' }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+
+const mockOrgFindMany = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/db/client', () => ({ prisma: { org: { findMany: mockOrgFindMany } } }));
 
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -26,7 +38,10 @@ vi.mock('@/lib/orchestration/engine/execution-reaper', () => ({ reapZombieExecut
 vi.mock('@/lib/orchestration/chat/message-embedder', () => ({
   backfillMissingEmbeddings: vi.fn(),
 }));
-vi.mock('@/lib/orchestration/retention', () => ({ enforceRetentionPolicies: vi.fn() }));
+vi.mock('@/lib/orchestration/retention', () => ({
+  enforceRetentionPolicies: vi.fn(),
+  enforceSystemRetentionPolicies: vi.fn(),
+}));
 vi.mock('@/lib/orchestration/evaluations/run-worker', () => ({
   processPendingEvaluationRuns: vi.fn(),
 }));
@@ -40,8 +55,12 @@ import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
 import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
-import { enforceRetentionPolicies } from '@/lib/orchestration/retention';
+import {
+  enforceRetentionPolicies,
+  enforceSystemRetentionPolicies,
+} from '@/lib/orchestration/retention';
 import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
+import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 import {
   PLATFORM_JOBS,
   PLATFORM_JOB_NAMES,
@@ -53,7 +72,8 @@ import {
 const MINUTE = 60 * 1000;
 const T0 = 1_000_000;
 
-const ALL_TASKS = [
+/** Every task that runs per org, in table order. */
+const PER_ORG_TASKS = [
   processPendingRetries,
   processPendingHookRetries,
   processOrphanedExecutions,
@@ -64,18 +84,38 @@ const ALL_TASKS = [
   processPendingEvaluationRuns,
 ];
 
+const ALL_TASKS = [...PER_ORG_TASKS, enforceSystemRetentionPolicies];
+
 const RETENTION_IDLE = {
   deleted: 0,
   agentsProcessed: 0,
   webhookDeliveriesDeleted: 0,
   hookDeliveriesDeleted: 0,
   costLogsDeleted: 0,
-  auditLogsDeleted: 0,
   executionsDeleted: 0,
   evaluationSessionsDeleted: 0,
   evaluationRunsDeleted: 0,
-  mcpAuditLogsDeleted: 0,
 };
+
+const SYSTEM_RETENTION_IDLE = { auditLogsDeleted: 0, mcpAuditLogsDeleted: 0 };
+
+const ORG_A = 'org_a';
+const ORG_B = 'org_b';
+
+function orgs(...ids: string[]): void {
+  mockOrgFindMany.mockResolvedValue(ids.map((id) => ({ id })));
+}
+
+/** The tenant context a mocked task saw on each call, in call order. */
+function contextsSeenBy(task: (typeof ALL_TASKS)[number]): Array<string | null | undefined> {
+  const seen: Array<string | null | undefined> = [];
+  vi.mocked(task).mockImplementation(async () => {
+    const ctx = getTenantContext();
+    seen.push(ctx === null ? undefined : ctx.orgId);
+    return undefined as never;
+  });
+  return seen;
+}
 
 /** Every task reporting "nothing found" — the idle deployment this feature targets. */
 function mockIdleTasks(): void {
@@ -101,12 +141,15 @@ function mockIdleTasks(): void {
     failed: 0,
     cancelled: 0,
   });
+  vi.mocked(enforceSystemRetentionPolicies).mockResolvedValue(SYSTEM_RETENTION_IDLE);
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   __resetPlatformJobsForTests();
   mockIdleTasks();
+  mockEnv.TENANCY_MODE = 'single';
+  orgs(INSTALL_ORG_ID);
 });
 
 describe('PLATFORM_JOB_NAMES', () => {
@@ -122,6 +165,27 @@ describe('PLATFORM_JOB_NAMES', () => {
       'retention',
       'pendingExecutionRecovery',
       'evaluationRuns',
+      'auditLogRetention',
+    ]);
+  });
+
+  it('declares a scope on every task, and only the audit-table prune runs as system (§108)', () => {
+    // Every task that touches a tenant-owned table is per-org: under the
+    // system scope nothing is stamped, and the reaper, recovery, the scheduler
+    // and the evaluation worker all CREATE rows. The one system task prunes
+    // two tables that have no org column at all.
+    const scopes = PLATFORM_JOBS.map((job) => [job.name, job.scope] as const);
+
+    expect(scopes).toEqual([
+      ['webhookRetries', 'per-org'],
+      ['hookRetries', 'per-org'],
+      ['orphanSweep', 'per-org'],
+      ['zombieReaper', 'per-org'],
+      ['embeddingBackfill', 'per-org'],
+      ['retention', 'per-org'],
+      ['pendingExecutionRecovery', 'per-org'],
+      ['evaluationRuns', 'per-org'],
+      ['auditLogRetention', { system: expect.stringContaining('audit') }],
     ]);
   });
 
@@ -304,7 +368,14 @@ describe('runDuePlatformJobs — foundWork', () => {
       () =>
         vi
           .mocked(enforceRetentionPolicies)
-          .mockResolvedValue({ ...RETENTION_IDLE, mcpAuditLogsDeleted: 3 }),
+          .mockResolvedValue({ ...RETENTION_IDLE, executionsDeleted: 3 }),
+    ],
+    [
+      'auditLogRetention',
+      () =>
+        vi
+          .mocked(enforceSystemRetentionPolicies)
+          .mockResolvedValue({ auditLogsDeleted: 0, mcpAuditLogsDeleted: 3 }),
     ],
     [
       'pendingExecutionRecovery',
@@ -350,5 +421,88 @@ describe('runDuePlatformJobs — foundWork', () => {
 
     expect(summary.retention).toBe(THROTTLED);
     expect(foundWork).toBe(false);
+  });
+});
+
+describe('runDuePlatformJobs — tenant scope (§108)', () => {
+  it('at single runs every per-org task once, inside the install org, and the summary is the raw result', async () => {
+    const seen = PER_ORG_TASKS.filter((task) => task !== enforceRetentionPolicies).map((task) =>
+      contextsSeenBy(task)
+    );
+    vi.mocked(enforceRetentionPolicies).mockResolvedValue({ ...RETENTION_IDLE, deleted: 2 });
+
+    const { summary } = await runDuePlatformJobs(T0);
+
+    for (const contexts of seen) expect(contexts).toEqual([INSTALL_ORG_ID]);
+    // No fold at single: the log line keeps the shape it has always had.
+    expect(summary.retention).toEqual({ ...RETENTION_IDLE, deleted: 2 });
+    expect(summary.retention).not.toHaveProperty('orgs');
+  });
+
+  it('runs the audit-table prune under the system scope, not inside any org', async () => {
+    const seen = contextsSeenBy(enforceSystemRetentionPolicies);
+
+    await runDuePlatformJobs(T0);
+
+    // `null` orgId = the system scope entered; `undefined` would mean no scope.
+    expect(seen).toEqual([null]);
+    expect(logger.info).toHaveBeenCalledWith(
+      'Entering system tenant scope',
+      expect.objectContaining({ reason: expect.stringContaining('auditLogRetention') })
+    );
+  });
+
+  it('at multi runs each per-org task once per active org, in that org, and folds the summary', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    orgs(ORG_A, ORG_B);
+    const seen = contextsSeenBy(processPendingRetries);
+    vi.mocked(processOrphanedExecutions).mockImplementation(async () => ({
+      recovered: getTenantContext()?.orgId === ORG_A ? 1 : 4,
+      exhausted: 0,
+      errors: [],
+    }));
+
+    const { summary, foundWork } = await runDuePlatformJobs(T0);
+
+    expect(seen).toEqual([ORG_A, ORG_B]);
+    expect(summary.orphanSweep).toEqual({ orgs: 2, recovered: 5, exhausted: 0, errors: [] });
+    // The system task still ran exactly once.
+    expect(enforceSystemRetentionPolicies).toHaveBeenCalledTimes(1);
+    expect(foundWork).toBe(true);
+  });
+
+  it('at multi contains one org’s failure and still runs the task for the other org', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    orgs(ORG_A, ORG_B);
+    vi.mocked(reapZombieExecutions).mockImplementation(async () => {
+      if (getTenantContext()?.orgId === ORG_A) throw new Error('A down');
+      return { reaped: 1, stalePending: 0, abandonedApprovals: 0 };
+    });
+
+    const { summary, foundWork } = await runDuePlatformJobs(T0);
+
+    expect(reapZombieExecutions).toHaveBeenCalledTimes(2);
+    expect(summary.zombieReaper).toEqual({
+      orgs: 2,
+      reaped: 1,
+      stalePending: 0,
+      abandonedApprovals: 0,
+      orgErrors: [{ orgId: ORG_A, error: 'A down' }],
+    });
+    expect(foundWork).toBe(true);
+    // Other tasks were untouched by A's failure in the reaper.
+    expect(summary.retention).toEqual({ orgs: 2, ...RETENTION_IDLE });
+  });
+
+  it('ignores the org the caller entered — a tick fired from an admin session sweeps every org', async () => {
+    // `withAdminAuth` enters the admin's active org before the tick route runs.
+    // Before §108 every task inherited it and ran for that one org only.
+    mockEnv.TENANCY_MODE = 'multi';
+    orgs(ORG_A, ORG_B);
+    const seen = contextsSeenBy(processPendingHookRetries);
+
+    await runAsOrg('org_of_the_admin', () => runDuePlatformJobs(T0));
+
+    expect(seen).toEqual([ORG_A, ORG_B]);
   });
 });

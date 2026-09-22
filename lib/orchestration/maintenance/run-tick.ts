@@ -12,11 +12,21 @@
  * The background tasks themselves live in `platform-jobs.ts`, each with a
  * minimum interval — a task held back by its interval reports `'skipped'` in
  * the completion log line rather than being omitted (#442).
+ *
+ * **Tenant scope (§108 t-711).** Nothing in this file assumes a tenant
+ * context, and nothing in it inherits one: each platform and app job enters
+ * its own scope through `job-scope.ts`, the schedules sweep runs once per org
+ * the same way, and the one genuinely global read — the idle-gate horizon,
+ * the earliest `nextRunAt` across every org — runs under the audited system
+ * scope. So a tick fired from an admin's session (whose guard entered that
+ * admin's org) sweeps every org, not the caller's; the test pins it.
  */
 
 import { logger } from '@/lib/logging';
+import { runAsSystem } from '@/lib/tenancy/context';
 import { processDueSchedules, getNextScheduleRunAt } from '@/lib/orchestration/scheduling';
 import { runDueAppJobs, getAppJobsMinIntervalMs } from '@/lib/orchestration/maintenance/app-jobs';
+import { runScopedJob, type PerOrgSummary } from '@/lib/orchestration/maintenance/job-scope';
 import {
   PLATFORM_JOB_NAMES,
   runDuePlatformJobs,
@@ -59,7 +69,14 @@ export const BACKGROUND_TASK_NAMES = PLATFORM_JOB_NAMES;
  */
 const BACKGROUND_TASK_MAX_MS = 5 * 60 * 1000;
 
-export type ScheduleResult = Awaited<ReturnType<typeof processDueSchedules>> | { error: string };
+/**
+ * The awaited schedules sweep as the route reports it: one org's result (a
+ * `single` install, unchanged), the fold across orgs at `multi` (counters
+ * summed, `errors` concatenated, plus `orgs` and any `orgErrors`), or the
+ * sweep's own failure.
+ */
+export type ScheduleResult =
+  Awaited<ReturnType<typeof processDueSchedules>> | PerOrgSummary | { error: string };
 
 export interface TickResult {
   /** Skipped — either a previous tick is still running, or the gate is armed. */
@@ -87,6 +104,8 @@ export interface RunMaintenanceTickOptions {
 interface MaybeArmIdleGateInput {
   startMs: number;
   schedules: ScheduleResult;
+  /** Did the schedules sweep fire anything (in any org)? */
+  scheduleFoundWork: boolean;
   platformFoundWork: boolean;
 }
 
@@ -105,9 +124,10 @@ interface MaybeArmIdleGateInput {
 async function maybeArmIdleGate({
   startMs,
   schedules,
+  scheduleFoundWork,
   platformFoundWork,
 }: MaybeArmIdleGateInput): Promise<number> {
-  const scheduleWork = 'error' in schedules || schedules.processed > 0;
+  const scheduleWork = 'error' in schedules || scheduleFoundWork;
   if (platformFoundWork || scheduleWork) {
     // Clears any horizon left over from an earlier arming, so the logs and the
     // gate agree.
@@ -120,7 +140,11 @@ async function maybeArmIdleGate({
     const appJobsMinIntervalMs = getAppJobsMinIntervalMs();
     let nextWorkAtMs = appJobsMinIntervalMs === null ? null : startMs + appJobsMinIntervalMs;
 
-    const nextRunAt = await getNextScheduleRunAt(new Date(startMs));
+    // The earliest next run across EVERY org is a genuinely global read — the
+    // one place the tick needs the audited bypass rather than an org scope.
+    const nextRunAt = await runAsSystem('maintenance-tick: idle-gate horizon across all orgs', () =>
+      getNextScheduleRunAt(new Date(startMs))
+    );
     if (nextRunAt) {
       nextWorkAtMs = Math.min(nextWorkAtMs ?? Number.POSITIVE_INFINITY, nextRunAt.getTime());
     }
@@ -167,8 +191,18 @@ export async function runMaintenanceTick(
   const myTickToken = ++currentTickToken;
 
   let schedules: ScheduleResult;
+  let scheduleFoundWork = false;
   try {
-    schedules = await processDueSchedules();
+    // Per org: a due schedule's execution row, and everything the engine writes
+    // for it afterwards, must carry the schedule's org.
+    const outcome = await runScopedJob({
+      name: 'schedules',
+      scope: 'per-org',
+      run: processDueSchedules,
+      foundWork: (r) => r.processed > 0,
+    });
+    schedules = outcome.result;
+    scheduleFoundWork = outcome.foundWork;
   } catch (err) {
     schedules = { error: err instanceof Error ? err.message : String(err) };
   }
@@ -183,9 +217,10 @@ export async function runMaintenanceTick(
   }, BACKGROUND_TASK_MAX_MS);
 
   void Promise.allSettled([
-    // Sunrise's own tasks, each gated by its own minimum interval (#442). The
-    // helper contains per-task failures itself, so a rejection here would mean
-    // the registry rather than a sweep.
+    // Sunrise's own tasks, each gated by its own minimum interval (#442) and
+    // entering its own tenant scope (§108). The helper contains per-task
+    // failures itself, so a rejection here would mean the registry rather than
+    // a sweep.
     runDuePlatformJobs(startMs),
     // Fork-owned seam (#469). Second so app work never delays Sunrise's own
     // maintenance. `runDueAppJobs` never throws and returns undefined when no
@@ -209,6 +244,7 @@ export async function runMaintenanceTick(
       const idleUntilMs = await maybeArmIdleGate({
         startMs,
         schedules,
+        scheduleFoundWork,
         platformFoundWork: platform.foundWork,
       });
 

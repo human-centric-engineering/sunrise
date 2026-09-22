@@ -74,8 +74,15 @@ vi.mock('@/lib/orchestration/chat/message-embedder', () => ({
   backfillMissingEmbeddings: vi.fn(),
 }));
 
+// §108: every platform job now runs inside a tenant scope; the per-org runner
+// reads the active orgs. One install org is what a `single` install has.
+vi.mock('@/lib/db/client', () => ({
+  prisma: { org: { findMany: vi.fn(async () => [{ id: 'install' }]) } },
+}));
+
 vi.mock('@/lib/orchestration/retention', () => ({
   enforceRetentionPolicies: vi.fn(),
+  enforceSystemRetentionPolicies: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/evaluations/run-worker', () => ({
@@ -95,7 +102,10 @@ import { processPendingRetries } from '@/lib/orchestration/webhooks/dispatcher';
 import { processPendingHookRetries } from '@/lib/orchestration/hooks/registry';
 import { reapZombieExecutions } from '@/lib/orchestration/engine/execution-reaper';
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
-import { enforceRetentionPolicies } from '@/lib/orchestration/retention';
+import {
+  enforceRetentionPolicies,
+  enforceSystemRetentionPolicies,
+} from '@/lib/orchestration/retention';
 import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
 import { __resetPlatformJobsForTests } from '@/lib/orchestration/maintenance/platform-jobs';
 
@@ -120,11 +130,9 @@ const RETENTION_RESULT = {
   webhookDeliveriesDeleted: 0,
   hookDeliveriesDeleted: 0,
   costLogsDeleted: 0,
-  auditLogsDeleted: 0,
   executionsDeleted: 0,
   evaluationSessionsDeleted: 0,
   evaluationRunsDeleted: 0,
-  mcpAuditLogsDeleted: 0,
 };
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -149,6 +157,10 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     });
     vi.mocked(backfillMissingEmbeddings).mockResolvedValue({ processed: 5, failed: 0 });
     vi.mocked(enforceRetentionPolicies).mockResolvedValue(RETENTION_RESULT);
+    vi.mocked(enforceSystemRetentionPolicies).mockResolvedValue({
+      auditLogsDeleted: 0,
+      mcpAuditLogsDeleted: 0,
+    });
     vi.mocked(processPendingExecutions).mockResolvedValue({
       recovered: 0,
       failed: 0,
@@ -206,6 +218,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       'retention',
       'pendingExecutionRecovery',
       'evaluationRuns',
+      'auditLogRetention',
     ]);
     expect(body.data.durationMs).toEqual(expect.any(Number));
   });

@@ -29,7 +29,24 @@
  * distributed scheduler — if a job must run exactly once cluster-wide, it needs
  * its own lease, the way `execution-reaper` does.
  *
+ * ## Whose rows a job acts on — `scope` (§108 t-711)
+ *
+ * A job runs inside a tenant scope, declared by its optional `scope`:
+ *
+ *  - **`'per-org'` (the default)** — once per active org, inside that org's
+ *    context. Your Prisma calls see and stamp that org's rows only. At
+ *    `TENANCY_MODE=single` there is exactly one org, so a job written before
+ *    this field existed behaves as it always did.
+ *  - **`{ system: 'reason' }`** — once, under the audited platform bypass, for
+ *    work that is genuinely global (a table with no `orgId`). The reason is
+ *    logged on every entry; a job that creates tenant-owned rows here would
+ *    write them with no org, so this is for system tables only.
+ *
+ * The values and the runner are `job-scope.ts`; `JobScope` is re-exported here
+ * so a fork imports everything it needs from this one module.
+ *
  * @see lib/orchestration/maintenance/run-tick.ts — the consumer
+ * @see lib/orchestration/maintenance/job-scope.ts — the scopes
  * @see lib/app/jobs.ts — the fork-owned registration seam
  */
 
@@ -37,6 +54,9 @@ import { logger } from '@/lib/logging';
 import { createAppInitGate, restoreMap } from '@/lib/fork-init';
 import { initAppJobs } from '@/lib/app/jobs';
 import { createJobClock } from '@/lib/orchestration/maintenance/job-clock';
+import { runScopedJob, type JobScope } from '@/lib/orchestration/maintenance/job-scope';
+
+export type { JobScope } from '@/lib/orchestration/maintenance/job-scope';
 
 /** A unit of app-owned recurring work. */
 export interface AppJob {
@@ -53,7 +73,16 @@ export interface AppJob {
    * its own logging.
    */
   run: () => Promise<unknown>;
+  /**
+   * Whose rows the job acts on — see the module header. Omitted means
+   * `'per-org'`, the safe default: a job that forgets is scoped, never
+   * bypassing.
+   */
+  scope?: JobScope;
 }
+
+/** The scope a registration gets when it declares none. */
+export const DEFAULT_APP_JOB_SCOPE: JobScope = 'per-org';
 
 const jobs = new Map<string, AppJob>();
 /**
@@ -155,7 +184,17 @@ export async function runDueAppJobs(
       // rather than end-to-start.
       clock.markStarted(job.name, now);
       try {
-        return [job.name, await job.run()] as const;
+        // Entered per job, not once for the sweep: each job declares its own
+        // scope, and a per-org job's result folds across orgs (see job-scope).
+        const outcome = await runScopedJob({
+          name: job.name,
+          scope: job.scope ?? DEFAULT_APP_JOB_SCOPE,
+          run: job.run,
+          // App jobs carry no "found work" predicate; the idle gate is bounded
+          // by their cadence instead (`getAppJobsMinIntervalMs`).
+          foundWork: () => false,
+        });
+        return [job.name, outcome.result] as const;
       } catch (err) {
         logger.error('app job failed', {
           job: job.name,

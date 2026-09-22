@@ -61,6 +61,7 @@ import { logger } from '@/lib/logging';
 import { getMcpServerConfig } from '@/lib/orchestration/mcp/config';
 import {
   enforceRetentionPolicies,
+  enforceSystemRetentionPolicies,
   pruneWebhookDeliveries,
   pruneHookDeliveries,
   pruneCostLogs,
@@ -100,27 +101,35 @@ describe('enforceRetentionPolicies', () => {
   it('returns zeros when no agents have retention policies and no pruning configured', async () => {
     const result = await enforceRetentionPolicies();
 
-    // MCP audit prune is always-on (default 90 days), so mcpAuditLog.deleteMany IS called
-    // even with no config; the mock returns { count: 0 } → mcpAuditLogsDeleted: 0.
     expect(result).toEqual({
       deleted: 0,
       agentsProcessed: 0,
       webhookDeliveriesDeleted: 0,
       hookDeliveriesDeleted: 0,
       costLogsDeleted: 0,
-      auditLogsDeleted: 0,
       executionsDeleted: 0,
       evaluationSessionsDeleted: 0,
       evaluationRunsDeleted: 0,
-      mcpAuditLogsDeleted: 0,
     });
     expect(prisma.aiConversation.deleteMany).not.toHaveBeenCalled();
     // Execution/evaluation deletes ARE skipped when settings return null
     expect(prisma.aiWorkflowExecution.deleteMany).not.toHaveBeenCalled();
     expect(prisma.aiEvaluationSession.deleteMany).not.toHaveBeenCalled();
     expect(prisma.aiEvaluationRun.deleteMany).not.toHaveBeenCalled();
-    // MCP audit deleteMany IS called (always-on), returning count 0
-    expect(prisma.mcpAuditLog.deleteMany).toHaveBeenCalledOnce();
+  });
+
+  it('never touches the two system audit tables — those are the system sweep’s (§108)', async () => {
+    // The tenant sweep runs once per org inside that org's scope. The audit
+    // tables have no org, so pruning them here would repeat the same delete N
+    // times at `multi`; `enforceSystemRetentionPolicies` owns them.
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      auditLogRetentionDays: 365,
+    } as never);
+
+    await enforceRetentionPolicies();
+
+    expect(prisma.aiAdminAuditLog.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.mcpAuditLog.deleteMany).not.toHaveBeenCalled();
   });
 
   it('deletes conversations older than retentionDays for each agent', async () => {
@@ -162,7 +171,7 @@ describe('enforceRetentionPolicies', () => {
     expect(result.agentsProcessed).toBe(1);
   });
 
-  it('includes webhook, cost log, audit log, execution, evaluation, and MCP prune results', async () => {
+  it('includes webhook, cost log, execution and evaluation prune results', async () => {
     vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
       webhookRetentionDays: 30,
       costLogRetentionDays: 60,
@@ -172,11 +181,9 @@ describe('enforceRetentionPolicies', () => {
     } as never);
     vi.mocked(prisma.aiWebhookDelivery.deleteMany).mockResolvedValue({ count: 12 });
     vi.mocked(prisma.aiCostLog.deleteMany).mockResolvedValue({ count: 8 });
-    vi.mocked(prisma.aiAdminAuditLog.deleteMany).mockResolvedValue({ count: 3 });
     vi.mocked(prisma.aiWorkflowExecution.deleteMany).mockResolvedValue({ count: 5 });
     vi.mocked(prisma.aiEvaluationSession.deleteMany).mockResolvedValue({ count: 4 });
     vi.mocked(prisma.aiEvaluationRun.deleteMany).mockResolvedValue({ count: 7 });
-    vi.mocked(prisma.mcpAuditLog.deleteMany).mockResolvedValue({ count: 11 });
 
     const result = await enforceRetentionPolicies();
 
@@ -184,12 +191,10 @@ describe('enforceRetentionPolicies', () => {
     // runs twice (base + DLQ slice), each returning the mocked count.
     expect(result.webhookDeliveriesDeleted).toBe(24);
     expect(result.costLogsDeleted).toBe(8);
-    expect(result.auditLogsDeleted).toBe(3);
     expect(result.executionsDeleted).toBe(5);
     // Different counts (4 vs 7) prove the two fields aren't swapped
     expect(result.evaluationSessionsDeleted).toBe(4);
     expect(result.evaluationRunsDeleted).toBe(7);
-    expect(result.mcpAuditLogsDeleted).toBe(11);
   });
 
   it('reads the settings row exactly once for the whole sweep (#442)', async () => {
@@ -234,7 +239,7 @@ describe('enforceRetentionPolicies', () => {
     expect(prisma.aiCostLog.deleteMany).not.toHaveBeenCalled();
   });
 
-  it('swallows a settings-read failure and still runs the always-on MCP prune', async () => {
+  it('swallows a settings-read failure and completes the sweep with nothing pruned', async () => {
     // The pre-existing contract: a transient settings failure skips the
     // configurable prunes rather than throwing out of the sweep.
     vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockRejectedValue(
@@ -244,7 +249,8 @@ describe('enforceRetentionPolicies', () => {
     const result = await enforceRetentionPolicies();
 
     expect(result.webhookDeliveriesDeleted).toBe(0);
-    expect(prisma.mcpAuditLog.deleteMany).toHaveBeenCalledOnce();
+    expect(result.executionsDeleted).toBe(0);
+    expect(prisma.aiWorkflowExecution.deleteMany).not.toHaveBeenCalled();
   });
 });
 
@@ -785,6 +791,58 @@ describe('pruneEvaluationData', () => {
     const expectedMs = 30 * 24 * 60 * 60 * 1000;
     expect(cutoff.getTime()).toBeGreaterThanOrEqual(beforeMs - expectedMs - 100);
     expect(cutoff.getTime()).toBeLessThanOrEqual(afterMs - expectedMs + 100);
+  });
+});
+
+// ─── enforceSystemRetentionPolicies ──────────────────────────────────────────
+
+describe('enforceSystemRetentionPolicies', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.aiAdminAuditLog.deleteMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.mcpAuditLog.deleteMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+    vi.mocked(getMcpServerConfig).mockResolvedValue({
+      isEnabled: false,
+      serverName: 'Test MCP Server',
+      serverVersion: '1.0.0',
+      maxSessionsPerKey: 5,
+      globalRateLimit: 60,
+      auditRetentionDays: 90,
+    });
+  });
+
+  it('prunes both audit tables and reports each count', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      auditLogRetentionDays: 365,
+    } as never);
+    vi.mocked(prisma.aiAdminAuditLog.deleteMany).mockResolvedValue({ count: 3 });
+    vi.mocked(prisma.mcpAuditLog.deleteMany).mockResolvedValue({ count: 11 });
+
+    const result = await enforceSystemRetentionPolicies();
+
+    // Different counts prove the two fields aren't swapped.
+    expect(result).toEqual({ auditLogsDeleted: 3, mcpAuditLogsDeleted: 11 });
+    expect(prisma.aiAdminAuditLog.deleteMany).toHaveBeenCalledOnce();
+    expect(prisma.mcpAuditLog.deleteMany).toHaveBeenCalledOnce();
+  });
+
+  it('skips the admin audit prune when no window is configured, but MCP audit pruning is always on', async () => {
+    const result = await enforceSystemRetentionPolicies();
+
+    expect(result).toEqual({ auditLogsDeleted: 0, mcpAuditLogsDeleted: 0 });
+    expect(prisma.aiAdminAuditLog.deleteMany).not.toHaveBeenCalled();
+    // Non-nullable window (default 90) — the delete runs, returning count 0.
+    expect(prisma.mcpAuditLog.deleteMany).toHaveBeenCalledOnce();
+  });
+
+  it('touches no tenant-owned table', async () => {
+    await enforceSystemRetentionPolicies();
+
+    expect(prisma.aiAgent.findMany).not.toHaveBeenCalled();
+    expect(prisma.aiConversation.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.aiWorkflowExecution.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.aiCostLog.deleteMany).not.toHaveBeenCalled();
   });
 });
 
