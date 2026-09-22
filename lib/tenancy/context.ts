@@ -212,12 +212,29 @@ export function runAsCredentialLookup<T>(credential: string, fn: () => Promise<T
  * through it (`lib/orchestration/maintenance/job-scope.ts`, §108 t-711).
  */
 export async function forEachOrg(fn: (orgId: string) => Promise<void>): Promise<void> {
+  for (const orgId of await listActiveOrgIds()) {
+    await runAsOrg(orgId, () => fn(orgId), { source: 'job' });
+  }
+}
+
+/**
+ * The ids of every ACTIVE org, oldest first — the list {@link forEachOrg}
+ * iterates.
+ *
+ * Exposed so a caller that runs several per-org passes can read it **once**
+ * and hand it down (the maintenance tick does: one list per tick rather than
+ * one per job). Keeping it here rather than in the caller is what stops the
+ * `status: 'ACTIVE'` rule from being written down twice and drifting: a
+ * suspended org is skipped, and that must mean the same thing everywhere.
+ *
+ * `Org` is a system model with no policy, so this read answers every org
+ * whatever scope the caller is in.
+ */
+export async function listActiveOrgIds(): Promise<string[]> {
   const orgs = await prisma.org.findMany({
     where: { status: 'ACTIVE' },
     select: { id: true },
     orderBy: { createdAt: 'asc' },
   });
-  for (const org of orgs) {
-    await runAsOrg(org.id, () => fn(org.id), { source: 'job' });
-  }
+  return orgs.map((org) => org.id);
 }

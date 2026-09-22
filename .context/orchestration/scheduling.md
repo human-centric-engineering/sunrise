@@ -389,8 +389,12 @@ the same `job-clock.ts` mechanism (#442):
   slower than its own interval cannot stack up concurrent runs.
 - **`intervalMs` that is non-positive or `NaN` is refused at registration** and
   logged, rather than defaulted to something that would run every tick.
-- **Failures are contained.** Jobs run in parallel; a rejection is logged, folded
-  into the summary as `{ error }`, and does not affect the tick or other jobs.
+- **Failures are contained.** Jobs run in parallel and one failing never affects
+  the tick or another job. Where the failure is reported depends on the scope:
+  a per-org job on an install with several orgs has each org's throw contained
+  by the runner and listed under `orgErrors` in that job's own summary; with a
+  single org — and for a system-scoped job — the throw reaches the registry,
+  which logs `app job failed` and folds `{ error }` into the summary.
 - **Every job runs inside a tenant scope (§108).** `scope` defaults to
   `'per-org'`: `runDueAppJobs` runs the job once per active org through
   `forEachOrg`, each run inside that org's context, so its Prisma calls see and

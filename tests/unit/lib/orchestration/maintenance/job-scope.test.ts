@@ -211,6 +211,89 @@ describe('runScopedJob — per-org at multi', () => {
   });
 });
 
+describe('runScopedJob — an unrecognised scope fails CLOSED', () => {
+  // `scope !== 'per-org'` would have handed any of these to `runAsSystem` and
+  // run the job under the RLS bypass with `undefined` as its audit reason —
+  // the opposite of what the seam promises, and `'system'` is a plausible typo
+  // precisely because it is the word the docs use.
+  it.each([
+    ['the string "system"', 'system'],
+    ['an object with no reason', { system: undefined }],
+    ['an object with an empty reason', { system: '' }],
+    ['null', null],
+  ])('runs per-org and logs an error for %s', async (_label, badScope) => {
+    mockEnv.TENANCY_MODE = 'multi';
+    orgs(ORG_A, ORG_B);
+    const { run, seen } = recordingJob(() => 0);
+
+    const outcome = await runScopedJob({
+      name: 'demo',
+      // The type forbids these; the guard is for a fork registering from
+      // plain JavaScript, or a value that survived a JSON round-trip.
+      scope: badScope as never,
+      run,
+      foundWork: () => false,
+    });
+
+    expect(seen).toEqual([
+      { orgId: ORG_A, source: 'job' },
+      { orgId: ORG_B, source: 'job' },
+    ]);
+    expect(outcome.result).toEqual({ orgs: 2, total: 0 });
+    expect(logger.info).not.toHaveBeenCalledWith('Entering system tenant scope', expect.anything());
+    expect(logger.error).toHaveBeenCalledWith(
+      'maintenance task declared an unrecognised scope; running it per-org',
+      expect.objectContaining({ task: 'demo' })
+    );
+  });
+});
+
+describe('runScopedJob — a caller-supplied org list', () => {
+  it('iterates the given orgs and reads no org list of its own', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    orgs(ORG_A, ORG_B);
+    const { run, seen } = recordingJob(() => 0);
+
+    await runScopedJob({
+      name: 'demo',
+      scope: 'per-org',
+      run,
+      foundWork: () => false,
+      orgIds: [ORG_A, ORG_B],
+    });
+
+    expect(seen).toEqual([
+      { orgId: ORG_A, source: 'job' },
+      { orgId: ORG_B, source: 'job' },
+    ]);
+    // The point of the parameter: one org-list query per tick, not one per job.
+    expect(mockFindMany).not.toHaveBeenCalled();
+  });
+
+  it('still enters each org’s scope, so a failure is contained per org', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    const run = vi.fn(async () => {
+      if (getTenantContext()?.orgId === ORG_A) throw new Error('A down');
+      return 1;
+    });
+
+    const outcome = await runScopedJob({
+      name: 'demo',
+      scope: 'per-org',
+      run,
+      foundWork: () => false,
+      orgIds: [ORG_A, ORG_B],
+    });
+
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(outcome.result).toEqual({
+      orgs: 2,
+      total: 1,
+      orgErrors: [{ orgId: ORG_A, error: 'A down' }],
+    });
+  });
+});
+
 describe('runScopedJob — system', () => {
   it('runs once under the audited system scope with the declared reason, in either mode', async () => {
     mockEnv.TENANCY_MODE = 'multi';

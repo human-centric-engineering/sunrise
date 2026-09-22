@@ -238,7 +238,60 @@ describe('runMaintenanceTick — the idle-gate horizon', () => {
   });
 });
 
+describe('runMaintenanceTick — one org-list read per tick', () => {
+  it('reads the active orgs once and hands the list to every per-org job', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    mockOrgFindMany.mockResolvedValue([{ id: ORG_A }, { id: ORG_B }]);
+
+    await runMaintenanceTick();
+    await backgroundChainDone();
+
+    // Without the shared list each due job would read the same rows again —
+    // the per-tick query count #442 exists to hold down.
+    expect(mockOrgFindMany).toHaveBeenCalledTimes(1);
+    expect(runDuePlatformJobs).toHaveBeenCalledWith(expect.any(Number), [ORG_A, ORG_B]);
+    expect(runDueAppJobs).toHaveBeenCalledWith(expect.any(Number), [ORG_A, ORG_B]);
+  });
+
+  it('falls back to each job reading the list when the org read fails', async () => {
+    mockOrgFindMany.mockRejectedValue(new Error('org list unavailable'));
+
+    const result = await runMaintenanceTick();
+    await backgroundChainDone();
+
+    expect(result.skipped).toBe(false);
+    expect(runDuePlatformJobs).toHaveBeenCalledWith(expect.any(Number), undefined);
+  });
+});
+
 describe('runMaintenanceTick — guards', () => {
+  it('arms the watchdog before the awaited sweep, so a hung sweep cannot wedge the guard', async () => {
+    // The guard is taken above the sweep. A watchdog armed AFTER it is never
+    // armed at all when the sweep hangs, and `tickRunning` then stays true for
+    // the life of the process — every later tick reporting "previous tick
+    // still running" and maintenance stopping for good.
+    vi.useFakeTimers();
+    try {
+      vi.mocked(processDueSchedules).mockImplementation(() => new Promise<never>(() => {}));
+
+      void runMaintenanceTick();
+      // Let the org read settle, then run past the watchdog's five minutes.
+      await vi.advanceTimersByTimeAsync(6 * 60 * 1000);
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Maintenance tick: background chain exceeded max duration; releasing guard',
+        expect.objectContaining({ maxDurationMs: 5 * 60 * 1000 })
+      );
+
+      // And the guard really was released: the next tick is admitted.
+      vi.mocked(processDueSchedules).mockResolvedValue(IDLE_SCHEDULES);
+      const next = await runMaintenanceTick({ force: true });
+      expect(next.skipped).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('skips while a previous tick is still running', async () => {
     __test_setTickRunning(true);
 

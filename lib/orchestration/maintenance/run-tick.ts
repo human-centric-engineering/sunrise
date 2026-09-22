@@ -23,10 +23,10 @@
  */
 
 import { logger } from '@/lib/logging';
-import { runAsSystem } from '@/lib/tenancy/context';
 import { processDueSchedules, getNextScheduleRunAt } from '@/lib/orchestration/scheduling';
 import { runDueAppJobs, getAppJobsMinIntervalMs } from '@/lib/orchestration/maintenance/app-jobs';
 import { runScopedJob, type PerOrgSummary } from '@/lib/orchestration/maintenance/job-scope';
+import { listActiveOrgIds, runAsSystem } from '@/lib/tenancy/context';
 import {
   PLATFORM_JOB_NAMES,
   runDuePlatformJobs,
@@ -190,6 +190,34 @@ export async function runMaintenanceTick(
   tickRunning = true;
   const myTickToken = ++currentTickToken;
 
+  // Armed BEFORE the awaited sweep, not after it (§108 review round 2). The
+  // guard is taken above; if the sweep itself never settles — a stalled pool
+  // connection, a Prisma call that hangs — a watchdog armed after it is never
+  // armed at all, and `tickRunning` stays true for the life of the process, so
+  // every later tick reports "previous tick still running" and maintenance
+  // stops for good. The sweep is now N sequential per-org passes, so its
+  // duration scales with the org count and the window is wider than it was.
+  const watchdogId = setTimeout(() => {
+    if (currentTickToken !== myTickToken || !tickRunning) return;
+    logger.warn('Maintenance tick: background chain exceeded max duration; releasing guard', {
+      maxDurationMs: BACKGROUND_TASK_MAX_MS,
+      tickStartMs: startMs,
+    });
+    tickRunning = false;
+  }, BACKGROUND_TASK_MAX_MS);
+
+  // One org-list read for the whole tick, handed to every per-org job below.
+  // Without it each due job reads the same list again — the per-tick query
+  // count #442 exists to hold down.
+  let orgIds: readonly string[] | undefined;
+  try {
+    orgIds = await listActiveOrgIds();
+  } catch {
+    // Leave it undefined: each job falls back to reading the list itself, and
+    // a job that also cannot read it fails in its own containment.
+    orgIds = undefined;
+  }
+
   let schedules: ScheduleResult;
   let scheduleFoundWork = false;
   try {
@@ -200,6 +228,7 @@ export async function runMaintenanceTick(
       scope: 'per-org',
       run: processDueSchedules,
       foundWork: (r) => r.processed > 0,
+      orgIds,
     });
     schedules = outcome.result;
     scheduleFoundWork = outcome.foundWork;
@@ -207,25 +236,16 @@ export async function runMaintenanceTick(
     schedules = { error: err instanceof Error ? err.message : String(err) };
   }
 
-  const watchdogId = setTimeout(() => {
-    if (currentTickToken !== myTickToken || !tickRunning) return;
-    logger.warn('Maintenance tick: background chain exceeded max duration; releasing guard', {
-      maxDurationMs: BACKGROUND_TASK_MAX_MS,
-      tickStartMs: startMs,
-    });
-    tickRunning = false;
-  }, BACKGROUND_TASK_MAX_MS);
-
   void Promise.allSettled([
     // Sunrise's own tasks, each gated by its own minimum interval (#442) and
     // entering its own tenant scope (§108). The helper contains per-task
     // failures itself, so a rejection here would mean the registry rather than
     // a sweep.
-    runDuePlatformJobs(startMs),
+    runDuePlatformJobs(startMs, orgIds),
     // Fork-owned seam (#469). Second so app work never delays Sunrise's own
     // maintenance. `runDueAppJobs` never throws and returns undefined when no
     // jobs are registered, so vanilla Sunrise is unaffected.
-    runDueAppJobs(),
+    runDueAppJobs(Date.now(), orgIds),
   ])
     .then(async ([platformResult, appJobsResult]) => {
       const platform =

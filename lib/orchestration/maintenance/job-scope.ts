@@ -45,7 +45,7 @@
  */
 
 import { logger } from '@/lib/logging';
-import { forEachOrg, runAsSystem } from '@/lib/tenancy/context';
+import { forEachOrg, runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 
 /**
  * Where a job runs. `'per-org'` is the default for the fork seam and the only
@@ -53,6 +53,29 @@ import { forEachOrg, runAsSystem } from '@/lib/tenancy/context';
  * the reason a job needs the audited bypass.
  */
 export type JobScope = 'per-org' | { system: string };
+
+/**
+ * Is this a well-formed system scope?
+ *
+ * The runner asks this rather than testing `scope !== 'per-org'`, because that
+ * test is **fail-open**: any value that is not the exact literal — a typo like
+ * `'system'`, a value that survived a JSON round-trip, anything a fork
+ * registering from plain JavaScript passes — would have been handed to
+ * `runAsSystem` and run the job under the RLS bypass with `undefined` as its
+ * audit reason. That is the exact opposite of what the seam promises, and
+ * `'system'` is a plausible typo precisely because it is the word the docs
+ * use. Anything unrecognised is treated as per-org, which is the confining
+ * answer.
+ */
+function isSystemScope(scope: unknown): scope is { system: string } {
+  return (
+    typeof scope === 'object' &&
+    scope !== null &&
+    'system' in scope &&
+    typeof scope.system === 'string' &&
+    scope.system.length > 0
+  );
+}
 
 /**
  * What the runner hands back: the job's own result (one org, or the system
@@ -167,6 +190,16 @@ export interface RunScopedJobOptions<T> {
    * other orgs said.
    */
   foundWork: (result: T) => boolean;
+  /**
+   * The active orgs to iterate, when the caller has already read them.
+   *
+   * Without it each per-org job reads the org list itself, so one tick with
+   * eight due jobs pays eight identical queries — the per-tick query count
+   * #442 exists to hold down, on exactly the scale-to-zero Postgres it was
+   * measured against. {@link listActiveOrgIds} is the read; the tick does it
+   * once and passes the answer down. Ignored by a system-scoped job.
+   */
+  orgIds?: readonly string[];
 }
 
 /**
@@ -184,21 +217,41 @@ export interface RunScopedJobOptions<T> {
 export async function runScopedJob<T>(
   options: RunScopedJobOptions<T>
 ): Promise<ScopedJobOutcome<T>> {
-  const { name, scope, run, foundWork } = options;
+  const { name, scope, run, foundWork, orgIds } = options;
 
-  if (scope !== 'per-org') {
+  if (isSystemScope(scope)) {
     const result = await runAsSystem(scope.system, run);
     return { result, foundWork: foundWork(result) };
   }
 
+  if (scope !== 'per-org') {
+    // Unrecognised: run it scoped anyway, and say so. Refusing to run the job
+    // would be the other defensible answer, but this one keeps a fork's typo
+    // from silently stopping its maintenance as well as from silently
+    // bypassing the policies.
+    logger.error('maintenance task declared an unrecognised scope; running it per-org', {
+      task: name,
+      scope: JSON.stringify(scope),
+    });
+  }
+
   const outcomes: OrgOutcome<T>[] = [];
-  await forEachOrg(async (orgId) => {
+  const runForOrg = async (orgId: string): Promise<void> => {
     try {
       outcomes.push({ orgId, ok: true, result: await run() });
     } catch (error) {
       outcomes.push({ orgId, ok: false, error });
     }
-  });
+  };
+
+  if (orgIds) {
+    // The caller already read the active orgs for this tick — see `orgIds`.
+    for (const orgId of orgIds) {
+      await runAsOrg(orgId, () => runForOrg(orgId), { source: 'job' });
+    }
+  } else {
+    await forEachOrg(runForOrg);
+  }
 
   if (outcomes.length === 1) {
     const [only] = outcomes;

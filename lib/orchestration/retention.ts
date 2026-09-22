@@ -101,9 +101,15 @@ export async function enforceRetentionPolicies(): Promise<RetentionResult> {
     }
   }
 
-  // One settings read for the whole sweep. Each prune below would otherwise
-  // fetch the same singleton row again — eight round-trips for six columns
-  // (#442). Passing the windows explicitly is what makes them stop.
+  // One settings read per sweep. Each prune below would otherwise fetch the
+  // same singleton row again — eight round-trips for six columns (#442).
+  // Passing the windows explicitly is what makes them stop. At `multi` the
+  // sweep itself runs once per org (§108), so this read — and the coherence
+  // warning under it — repeat per org: the windows are global, so every org
+  // reads the same row and any warning says the same thing N times. Hoisting
+  // them above the iteration would mean passing them through the job
+  // registry, which is a wider seam change than one indexed singleton read an
+  // hour is worth.
   const windows = await loadRetentionWindows();
 
   warnOnIncoherentRetention(windows);

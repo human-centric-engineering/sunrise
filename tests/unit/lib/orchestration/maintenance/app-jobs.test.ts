@@ -106,6 +106,11 @@ describe('runDueAppJobs', () => {
 
     const t0 = 1_000_000;
     const first = runDueAppJobs(t0);
+    // Wait for the job to actually be in flight: entering its tenant scope
+    // reads the active orgs first (§108), so the run starts a tick or two
+    // after the call. The latch is set before that read, so the assertion
+    // below is about the guard, not about the ordering.
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
     // Next tick arrives while the job is still pending, and IS past the interval.
     const second = await runDueAppJobs(t0 + 10);
 

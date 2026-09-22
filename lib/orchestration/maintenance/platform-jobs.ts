@@ -1,7 +1,7 @@
 /**
  * Sunrise's own recurring maintenance tasks, with a minimum interval each.
  *
- * Before #442 all eight (now nine) ran on **every** tick. At the documented 60s cadence
+ * Before #442 all eight of the tasks that existed then ran on **every** tick. At the documented 60s cadence
  * that meant the retention sweep (whose windows are measured in days) ran 1,440
  * times a day and the embedding backfill full-scanned the message table just as
  * often. On a scale-to-zero Postgres (Neon, Aurora Serverless v2) the compute
@@ -80,7 +80,7 @@ export interface PlatformJob {
    */
   scope: JobScope;
   /** Run the task inside its scope and classify its outcome. */
-  run: () => Promise<PlatformJobOutcome>;
+  run: (orgIds?: readonly string[]) => Promise<PlatformJobOutcome>;
 }
 
 /**
@@ -100,12 +100,13 @@ function job<T>(spec: {
     name: spec.name,
     intervalMs: spec.intervalMs,
     scope: spec.scope,
-    run: () =>
+    run: (orgIds) =>
       runScopedJob({
         name: spec.name,
         scope: spec.scope,
         run: spec.run,
         foundWork: spec.foundWork,
+        orgIds,
       }),
   };
 }
@@ -247,8 +248,13 @@ export interface PlatformSweepResult {
  * the idle gate to skip the next sweep.
  *
  * @param now Tick start time. Intervals measure start-to-start from this value.
+ * @param orgIds The tick's already-read active orgs, passed to every per-org
+ *   task so one tick costs one org-list query rather than one per due task.
  */
-export async function runDuePlatformJobs(now: number = Date.now()): Promise<PlatformSweepResult> {
+export async function runDuePlatformJobs(
+  now: number = Date.now(),
+  orgIds?: readonly string[]
+): Promise<PlatformSweepResult> {
   const entries = await Promise.all(
     PLATFORM_JOBS.map(async (entry) => {
       if (!clock.isDue(entry.name, entry.intervalMs, now)) {
@@ -257,7 +263,7 @@ export async function runDuePlatformJobs(now: number = Date.now()): Promise<Plat
       }
       clock.markStarted(entry.name, now);
       try {
-        const outcome = await entry.run();
+        const outcome = await entry.run(orgIds);
         return [entry.name, outcome.result, outcome.foundWork] as const;
       } catch (err) {
         // Contained here rather than in `run-tick.ts` so one failing sweep can

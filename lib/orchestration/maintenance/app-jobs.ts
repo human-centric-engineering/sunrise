@@ -169,7 +169,8 @@ export function getAppJobsMinIntervalMs(): number | null {
  * An empty registry short-circuits, so vanilla Sunrise pays nothing.
  */
 export async function runDueAppJobs(
-  now: number = Date.now()
+  now: number = Date.now(),
+  orgIds?: readonly string[]
 ): Promise<Record<string, unknown> | undefined> {
   appInit.ensure();
   if (jobs.size === 0) return undefined;
@@ -195,9 +196,15 @@ export async function runDueAppJobs(
           // App jobs carry no "found work" predicate; the idle gate is bounded
           // by their cadence instead (`getAppJobsMinIntervalMs`).
           foundWork: () => false,
+          orgIds,
         });
         return [job.name, outcome.result] as const;
       } catch (err) {
+        // Reached when `runScopedJob` did not contain the throw: a system-scoped
+        // job, or a per-org job on an install with exactly one org (where the
+        // single org's throw propagates by design). With two or more orgs a
+        // failure is contained per org and appears as `orgErrors` in this job's
+        // summary instead — see the scope note in the module header.
         logger.error('app job failed', {
           job: job.name,
           error: err instanceof Error ? err.message : String(err),

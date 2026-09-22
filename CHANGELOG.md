@@ -337,7 +337,13 @@ release process.
   audit-log prunes move out of `enforceRetentionPolicies()` (now
   tenant-owned tables only, per org) into `enforceSystemRetentionPolicies()`
   (system scope, once), so `RetentionResult` loses `auditLogsDeleted` /
-  `mcpAuditLogsDeleted` and `SystemRetentionResult` carries them. At `multi`
+  `mcpAuditLogsDeleted` and `SystemRetentionResult` carries them; the exported
+  `RetentionWindows` / `loadRetentionWindows()` lose `auditLogRetentionDays`
+  with them, since the tenant sweep no longer reads that column.
+  `POST /api/v1/admin/orchestration/schedules/tick` runs per org too and gains
+  a `500 SCHEDULER_TICK_FAILED` for a sweep that failed in **every** org —
+  with one org that case already answered 500 by propagating, and without it
+  adding a second org would have turned the same total failure into a 200. At `multi`
   with more than one org, a per-org task's entry in the completion log line —
   and the route's `schedules` field — is the fold across orgs
   (`{ orgs, …summed counters, orgErrors? }`); a single-tenant install sees
