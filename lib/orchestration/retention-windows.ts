@@ -151,6 +151,17 @@ export async function loadRetentionWindows(): Promise<RetentionWindows> {
  * exist. A slice set at `single` is still stored and still returned by the org
  * API, so switching the install to `multi` turns it on; until then the global
  * row governs, and the PATCH that stored it said so at the time.
+ *
+ * **The mode is necessary, not sufficient.** `TENANCY_MODE=multi` is an env
+ * var, not evidence that `db:tenancy:enable` ever ran, and no prune carries an
+ * `orgId` — so on a `multi` install whose policies were never enabled, or left
+ * dormant by a `db:reset`, the shortest window any org sets still reaches
+ * every org's rows. This gate closes the `single` case, which needed no
+ * misconfiguration at all; the other is an operational one the playbook
+ * already requires the operator to close for isolation of any kind, and
+ * `.context/orchestration/retention.md` names what per-org windows change
+ * about it. Revisit when §111 gives an org admin the window, which is when
+ * that reliance becomes load-bearing for a cross-tenant delete.
  */
 export async function loadEffectiveRetentionWindows(): Promise<{
   windows: RetentionWindows;

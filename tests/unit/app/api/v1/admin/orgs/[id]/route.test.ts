@@ -279,6 +279,34 @@ describe('PATCH /api/v1/admin/orgs/[id] — the retention slice (§108 t-713)', 
     expect(mockUpdateOrg).toHaveBeenCalled();
   });
 
+  it('refuses an org that keeps executions for ever while its cost logs are pruned', async () => {
+    // The asymmetry two review rounds walked past: `null` on the cost-log side
+    // is always safe, and `null` on the execution side is the worst case —
+    // executions kept for ever outlive every finite cost-log window.
+    const res = await patch({ settings: { retention: { executionRetentionDays: null } } });
+    const json = JSON.parse(await res.text());
+
+    expect(res.status).toBe(400);
+    expect(json.error.details).toEqual({
+      costLogRetentionDays: 365,
+      executionRetentionDays: null,
+    });
+    expect(json.error.message).toContain('for ever');
+    // The remedy has to be in the message: cost-log retention caps at 365, so
+    // no number the admin could type would satisfy this one.
+    expect(json.error.message).toContain('null');
+    expect(mockUpdateOrg).not.toHaveBeenCalled();
+  });
+
+  it('accepts executions kept for ever when the cost logs are kept with them', async () => {
+    const res = await patch({
+      settings: { retention: { executionRetentionDays: null, costLogRetentionDays: null } },
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateOrg).toHaveBeenCalled();
+  });
+
   it('accepts an org that keeps cost logs forever under any execution window', async () => {
     const res = await patch({ settings: { retention: { costLogRetentionDays: null } } });
 

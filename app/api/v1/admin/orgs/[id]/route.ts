@@ -93,8 +93,17 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
   const incoherent = await incoherentRetentionPair(body.settings?.retention);
   if (incoherent) {
+    // The remedy is in the message because it is not guessable from the
+    // bounds: cost-log retention caps at 365 days and execution retention at
+    // 3650, so for any execution window past a year — and for keeping
+    // executions for ever — `null` is the only coherent answer, and nothing
+    // else would say so.
+    const executionText =
+      incoherent.executionRetentionDays === null
+        ? 'executions you are keeping for ever'
+        : `executions you are keeping for ${incoherent.executionRetentionDays} days`;
     return errorResponse(
-      `Cost log retention (${incoherent.costLogRetentionDays} days) must be at least as long as execution retention (${incoherent.executionRetentionDays} days), or the cost breakdown empties out for executions you are still keeping`,
+      `Cost log retention (${incoherent.costLogRetentionDays} days) is shorter than execution retention, so the cost breakdown empties out for ${executionText}. Lengthen costLogRetentionDays, or set it to null to keep cost logs for ever.`,
       { code: 'VALIDATION_ERROR', status: 400, details: incoherent }
     );
   }
@@ -171,7 +180,7 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
  */
 async function incoherentRetentionPair(
   slice: OrgRetentionSlice | null | undefined
-): Promise<{ costLogRetentionDays: number; executionRetentionDays: number } | null> {
+): Promise<{ costLogRetentionDays: number; executionRetentionDays: number | null } | null> {
   if (slice === undefined || slice === null) return null;
   if (slice.costLogRetentionDays === undefined && slice.executionRetentionDays === undefined) {
     return null;
@@ -191,7 +200,14 @@ async function incoherentRetentionPair(
       ? slice.executionRetentionDays
       : globalWindows.executionRetentionDays;
 
-  if (costLogRetentionDays === null || executionRetentionDays === null) return null;
-  if (costLogRetentionDays >= executionRetentionDays) return null;
+  // `null` is not symmetrical here, which the first draft of this guard — and
+  // the global schema's refine it was modelled on — both got wrong. Cost logs
+  // kept for ever outlive anything, so that case is always coherent.
+  // EXECUTIONS kept for ever are the opposite: they outlive every finite
+  // cost-log window, which is exactly the state this guard exists to refuse.
+  if (costLogRetentionDays === null) return null;
+  if (executionRetentionDays !== null && costLogRetentionDays >= executionRetentionDays) {
+    return null;
+  }
   return { costLogRetentionDays, executionRetentionDays };
 }

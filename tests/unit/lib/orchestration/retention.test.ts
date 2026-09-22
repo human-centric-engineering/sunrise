@@ -1028,10 +1028,32 @@ describe('retention coherence warning', () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it('stays quiet when execution retention is unset (executions are never pruned)', async () => {
+  it('warns LOUDEST when execution retention is unset — the parenthesis in this test’s old name had it backwards', async () => {
+    // This case used to assert silence, on the reading that an unset window
+    // means "that class isn't pruned, so there is no coupling". That is true
+    // of the cost-log side and false of this one: executions never pruned are
+    // executions kept FOR EVER, which outlives every finite cost-log window.
+    // Cost logs go at 7 days, the executions referencing them stay on file
+    // indefinitely, and every one of them reports spend with an empty
+    // breakdown — the exact state the warning describes.
     vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
       costLogRetentionDays: 7,
       executionRetentionDays: null,
+    } as never);
+
+    await enforceRetentionPolicies();
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('Retention windows are incoherent'),
+      { orgId: null, costLogRetentionDays: 7, executionRetentionDays: null }
+    );
+  });
+
+  it('stays quiet when cost logs are kept for ever, whatever the execution window', async () => {
+    // The genuinely uncoupled null: cost logs outlive anything.
+    vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue({
+      costLogRetentionDays: null,
+      executionRetentionDays: 90,
     } as never);
 
     await enforceRetentionPolicies();

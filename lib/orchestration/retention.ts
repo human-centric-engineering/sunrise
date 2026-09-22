@@ -449,15 +449,20 @@ export async function pruneMcpAuditLogs(maxAgeDays?: number): Promise<PruneResul
  * Runs on the EFFECTIVE windows, inside the org's own run of the sweep, so
  * the org it names is the org whose combination is wrong (§108 t-713).
  *
- * Reads nothing itself — the sweep's single `loadRetentionWindows()` already has
- * both values, and a failed read arrives here as `null`, which is silence.
+ * Reads nothing itself — the sweep's `loadEffectiveRetentionWindows()` already
+ * has both values, and a read it could not make arrives here as `null`, which
+ * is silence.
  */
 function warnOnIncoherentRetention(windows: RetentionWindows, orgId: string | null): void {
   const costLogDays = windows.costLogRetentionDays;
   const executionDays = windows.executionRetentionDays;
-  // Either window unset means that class isn't pruned at all — no coupling.
-  if (costLogDays === null || executionDays === null) return;
-  if (costLogDays >= executionDays) return;
+  // Cost logs kept for ever outlive anything, so that is the only unset window
+  // that means "no coupling". Executions kept for ever are the opposite: they
+  // outlive every finite cost-log window, and reading BOTH nulls as safe — as
+  // this did until §108 t-713's third review round — stayed silent on one of
+  // the two states it was written to report.
+  if (costLogDays === null) return;
+  if (executionDays !== null && costLogDays >= executionDays) return;
 
   logger.warn(
     'Retention windows are incoherent: cost logs are pruned before the executions that reference them, so cost breakdowns will read empty for executions still on file',

@@ -60,7 +60,10 @@ global row is what an org that sets nothing gets:
 | key set to **`null`**         | what `null` means for that column globally — see below |
 | slice absent, `{}`, or `null` | the org is on every global window                      |
 
-`null` means **keep that class forever** for four of the five keys. The
+Note `null` on `executionRetentionDays` is the one value the coherence rule
+below treats as the **longest** window rather than an absent one: executions
+kept for ever outlive every finite cost-log window, so that combination is
+refused. `null` means **keep that class forever** for four of the five keys. The
 exception is `webhookDlqRetentionDays`, where a null window means "use
 `webhookRetentionDays`" — the fallback in the first table, which preserves
 pre-DLQ behaviour for installs that never set the column. So nulling the DLQ
@@ -85,8 +88,10 @@ so confinement is the `org_isolation` policies' job, and at `single` there are
 no policies at all. `forEachOrg` iterates every ACTIVE org in both modes and
 the org API creates orgs in both, so a `single` install can hold more than one
 — and one org's seven-day window would then delete every org's rows. A slice
-set at `single` is stored and returned by the org API, and the sweep logs that
-it is ignoring it; switching the install to `multi` turns it on.
+set at `single` is stored and returned by the org API, and the PATCH that
+stores it says so at the time; switching the install to `multi` turns it on.
+The sweep itself is silent, and does not even read the slice — a read whose
+answer it must discard is an hourly query per org that can only fail.
 
 **Writing it**: `PATCH /api/v1/admin/orgs/[id]` with
 `{ "settings": { "retention": { … } } }` — platform admin only until the org
@@ -146,6 +151,12 @@ survives the `AiCostLog` rows behind it. Prune the logs first and an operator se
 an execution reporting real spend with an empty cost breakdown underneath — and no
 way to tell a retention artefact from a bug in cost capture. Dashboard aggregates
 are unaffected; it's the per-execution drill-down that empties.
+
+`null` is not symmetrical in this rule, and reading it as "unset, therefore
+uncoupled" was a real defect on both sides of it until §108 t-713: cost logs
+kept for ever satisfy the rule against anything, while **executions** kept for
+ever violate it against every finite cost-log window. The only coherent way to
+keep executions for ever is to keep cost logs for ever too.
 
 Unlike the evaluation coupling below, this one is **enforced in code**, in four
 places: the settings form blocks the save client-side, the Zod schema rejects a
