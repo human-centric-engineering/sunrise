@@ -434,6 +434,30 @@ release process.
   unchanged for every honest row: an unbound or install-org credential
   resolves to the install org exactly as before.
 
+### Fixed
+
+- **Two process-global caches stopped mixing orgs** (multi-tenancy §108
+  t-712). Both are behaviour changes at `TENANCY_MODE=multi` only; at
+  `single` there is one org and neither changes anything. The event-hook
+  cache (`lib/orchestration/hooks/registry.ts`) was one process-wide
+  `Map<eventType, CachedHook[]>` holding tenant-owned `AiEventHook` rows, so
+  whichever org refreshed it had **its** hooks dispatched for every org for
+  the next 60 seconds — org B's event POSTed its payload to org A's URL,
+  signed with org A's secret, while B's own hooks never fired. It is now
+  keyed by org; `invalidateHookCache()` still clears everything, and an
+  `emitHookEvent` from a call stack that entered no org logs and dispatches
+  nothing rather than reading wide. And the MCP per-key rate-limit override
+  cache (`lib/orchestration/mcp/protocol-handler.ts`) is keyed by API key id,
+  which is unique across orgs — but it was *filled* inside whichever org's
+  request triggered the refresh, and `McpApiKey` is tenant-owned, so every
+  other org's `rateLimitOverride` was silently dropped for five minutes. The
+  read now runs under the audited system scope. Neither cache could be
+  reached by a fork before this release, since `multi` is not usable until
+  §108–§111 land; the new
+  [`lib/tenancy/process-state.ts`](./lib/tenancy/process-state.ts) manifest
+  and its scanner test are what found them, and are what a fork editing a
+  platform module under `lib/` will meet if it adds process-global state.
+
 ## [0.12.1] — 2026-09-17
 
 > **Alpha release.** Eighteenth tagged Sunrise release. **PATCH bump** — one

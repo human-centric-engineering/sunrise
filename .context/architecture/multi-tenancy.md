@@ -82,9 +82,16 @@ says which piece each feature lands):
   MCP call logs `mcp-system agent not found`, the quiz and judge routes 404.
   They become platform-owned, tenant-consumed rows in §116 (decided
   2026-09-21: one copy, usable by every org, editable by none).
-- **Process-global state is global.** Settings caches, circuit breakers, the
-  in-flight counter, provider instance caches — RLS cannot see a Node heap
-  (§108 t-712 declares a posture per cache).
+- **Some process-global state is shared across orgs on purpose.** RLS cannot
+  see a Node heap, so every module-level holder in `lib/` is declared in
+  [`lib/tenancy/process-state.ts`](../../lib/tenancy/process-state.ts) with
+  the posture it carries (§108 t-712). What that leaves shared is the
+  deliberate part: an LLM provider's circuit breaker and in-flight counter
+  are keyed by provider slug, which IS the credential identity until §109
+  makes credentials per org, so a breaker one org opens pauses every org; the
+  outbound host limiter is per third-party host; the rate-limit counters are
+  keyed by the caller. One declared defect remains — the admin Logs page
+  shows an org admin every org's log lines (t-714).
 - **One admin console.** The authorization policy already distinguishes a
   platform admin from an org OWNER/ADMIN, but the console is not split; the
   [control-plane map](#the-control-plane-which-admin-surfaces-are-whose)
@@ -279,30 +286,35 @@ A Sunrise release can land code outside your isolation boundary, and the
 merge itself never says so. Most of that is now a build failure, upstream
 and in your fork:
 
-| Change in a release                                                  | Caught by                                                                                                     |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| A new model nobody classified                                        | `model-classification.test.ts`                                                                                |
-| A tenant-owned table without a policy; `migrate dev` dropping one    | `policy-coverage.test.ts`; the T-series in `db:drift-check`                                                   |
-| A new raw-SQL site                                                   | `db-raw-sql-allowlist.test.ts` (it must be admitted; whether it stamps or scopes correctly is the reviewer's) |
-| A global slug on a tenant-owned model                                | `org-scoped-slugs.test.ts`                                                                                    |
-| A model missing from the org export                                  | `org-sources.test.ts`                                                                                         |
-| A create shape the injection misses; a transaction the setter misses | `tests/unit/lib/db/tenancy-extension.test.ts` (real client, recording driver)                                 |
-| A platform job with no declared tenant scope                         | the type-check (`PlatformJob.scope` is required) and `platform-jobs.test.ts`, which pins every task's scope   |
-| A per-org job that would have run inside the caller's org            | `run-tick.test.ts` / `platform-jobs.test.ts` — the tick started inside a foreign org sweeps every org         |
-| A job's writes landing with no org                                   | `smoke-multi` scenario [10] — a per-org job through the registry; every row it creates carries its org        |
-| Anything the above miss that a real policy would refuse              | `smoke-multi` on every upstream PR — the harness as the restricted role                                       |
+| Change in a release                                                  | Caught by                                                                                                                   |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| A new model nobody classified                                        | `model-classification.test.ts`                                                                                              |
+| A tenant-owned table without a policy; `migrate dev` dropping one    | `policy-coverage.test.ts`; the T-series in `db:drift-check`                                                                 |
+| A new raw-SQL site                                                   | `db-raw-sql-allowlist.test.ts` (it must be admitted; whether it stamps or scopes correctly is the reviewer's)               |
+| A global slug on a tenant-owned model                                | `org-scoped-slugs.test.ts`                                                                                                  |
+| A model missing from the org export                                  | `org-sources.test.ts`                                                                                                       |
+| A create shape the injection misses; a transaction the setter misses | `tests/unit/lib/db/tenancy-extension.test.ts` (real client, recording driver)                                               |
+| A platform job with no declared tenant scope                         | the type-check (`PlatformJob.scope` is required) and `platform-jobs.test.ts`, which pins every task's scope                 |
+| A per-org job that would have run inside the caller's org            | `run-tick.test.ts` / `platform-jobs.test.ts` — the tick started inside a foreign org sweeps every org                       |
+| A job's writes landing with no org                                   | `smoke-multi` scenario [10] — a per-org job through the registry; every row it creates carries its org                      |
+| A new process-global cache nobody gave a tenancy posture             | `process-state.test.ts` — it scans `lib/**` and names the undeclared holder, and names a declared row whose holder has gone |
+| Anything the above miss that a real policy would refuse              | `smoke-multi` on every upstream PR — the harness as the restricted role                                                     |
 
-What is **not** enforced, and is the per-sync check that remains until §108
-t-712 ships its posture declarations:
+**Nothing in this section is a grep any more.** Both of the ones it used to
+carry are retired, and the second is why the first had to go: a job cannot be
+added to the platform table without a `scope` (§108 t-711), and new
+process-global state is now a build failure rather than a search somebody is
+asked to run (§108 t-712). The state grep also could not have worked — it
+looked for `new Map(`, and every cache in this tree is written
+`new Map<string, X>()`, so it matched none of them and reported clean.
 
-```bash
-# New process-global state — RLS cannot see a Node heap; is the cache keyed by org, or global by decision?
-git diff <last-sync>..HEAD -- 'lib/**' | grep -nE '^\+.*(new (Map|Set)\(|globalThis)'
-```
-
-(The second grep this section used to carry — new background jobs — is
-retired: a job cannot be added to the platform table without a `scope`, and a
-fork's `registerAppJob` defaults to `per-org`.)
+What replaces it: [`lib/tenancy/process-state.ts`](../../lib/tenancy/process-state.ts)
+declares every module-level holder in `lib/` with its posture, and
+`tests/unit/lib/tenancy/process-state.test.ts` fails on an undeclared holder
+**and** on a row whose holder is gone. A fork's own state under `lib/app/**`
+or `lib/framework/**` is not scanned — it is yours — but the question is the
+same one, and a manifest of your own is the cheap way to answer it: **if two
+orgs used this install, could one org's entry be served to the other?**
 
 Then run the harness at `multi` against a throwaway database. An unmodified
 fork gets `smoke-multi` for free — the job's `env` carries the role name,
@@ -576,5 +588,6 @@ both as the standing proof.
 - [`.context/privacy/data-erasure.md`](../privacy/data-erasure.md) — the
   cascade graph `eraseOrg` relies on.
 - [`CUSTOMIZATION.md` §9](../../CUSTOMIZATION.md#9-staying-in-sync-with-upstream-sunrise)
-  — merging a Sunrise release generally; the two greps above are the
-  tenancy-specific addition.
+  — merging a Sunrise release generally. The tenancy-specific additions this
+  checklist used to carry are tests now, so a sync runs them rather than
+  remembering them.
