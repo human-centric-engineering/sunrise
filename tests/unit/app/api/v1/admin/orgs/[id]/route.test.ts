@@ -34,6 +34,12 @@ vi.mock('@/lib/tenancy/lifecycle', async (importOriginal) => ({
 const mockEraseOrg = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/privacy/erase-org', () => ({ eraseOrg: mockEraseOrg }));
 
+// The global row the org's slice is checked against for coherence.
+const mockLoadRetentionWindows = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/orchestration/retention', () => ({
+  loadRetentionWindows: mockLoadRetentionWindows,
+}));
+
 const mockLog = vi.hoisted(() => ({
   info: vi.fn(),
   warn: vi.fn(),
@@ -101,6 +107,13 @@ beforeEach(() => {
     ],
   } as never);
   mockUpdateOrg.mockResolvedValue({ ...orgRow, name: 'Renamed' });
+  mockLoadRetentionWindows.mockResolvedValue({
+    webhookRetentionDays: 30,
+    webhookDlqRetentionDays: null,
+    costLogRetentionDays: 365,
+    executionRetentionDays: 90,
+    evaluationRetentionDays: 90,
+  });
   mockEraseOrg.mockResolvedValue({
     erasedAt: new Date('2026-09-18'),
     members: 1,
@@ -201,5 +214,97 @@ describe('DELETE /api/v1/admin/orgs/[id]', () => {
     mockGetSession.mockResolvedValue(session('USER'));
     expect((await del()).status).toBe(403);
     expect(mockEraseOrg).not.toHaveBeenCalled();
+  });
+});
+
+describe('PATCH /api/v1/admin/orgs/[id] — the retention slice (§108 t-713)', () => {
+  it('hands the lifecycle the validated slice', async () => {
+    const res = await patch({
+      settings: { retention: { executionRetentionDays: 365, webhookRetentionDays: null } },
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateOrg).toHaveBeenCalledWith(OTHER, {
+      settings: { retention: { executionRetentionDays: 365, webhookRetentionDays: null } },
+    });
+  });
+
+  it('accepts a null slice, which puts the org back on every global window', async () => {
+    const res = await patch({ settings: { retention: null } });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateOrg).toHaveBeenCalledWith(OTHER, { settings: { retention: null } });
+  });
+
+  it.each([
+    ['an unknown window', { settings: { retention: { somethingRetentionDays: 7 } } }],
+    ['an unknown slice', { settings: { billing: { plan: 'pro' } } }],
+    ['a string window', { settings: { retention: { executionRetentionDays: '365' } } }],
+    ['a zero window', { settings: { retention: { executionRetentionDays: 0 } } }],
+    ['a window past its bound', { settings: { retention: { webhookRetentionDays: 400 } } }],
+    ['settings that are not an object', { settings: 'retention' }],
+  ])('rejects %s with a 400, before writing', async (_label, body) => {
+    const res = await patch(body);
+    const json = JSON.parse(await res.text());
+
+    expect(res.status).toBe(400);
+    expect(json.success).toBe(false);
+    expect(json.error.code).toBe('VALIDATION_ERROR');
+    expect(mockUpdateOrg).not.toHaveBeenCalled();
+  });
+
+  it('refuses a pair that is only incoherent once the other half is inherited', async () => {
+    // The org shortens cost logs to 30 days and says nothing about executions,
+    // which the global row keeps for 90 — so every execution still on file
+    // would report spend with an empty breakdown.
+    const res = await patch({ settings: { retention: { costLogRetentionDays: 30 } } });
+    const json = JSON.parse(await res.text());
+
+    expect(res.status).toBe(400);
+    expect(json.error.code).toBe('VALIDATION_ERROR');
+    expect(json.error.details).toEqual({
+      costLogRetentionDays: 30,
+      executionRetentionDays: 90,
+    });
+    expect(mockUpdateOrg).not.toHaveBeenCalled();
+  });
+
+  it('accepts the same short cost-log window when the org shortens executions with it', async () => {
+    const res = await patch({
+      settings: { retention: { costLogRetentionDays: 30, executionRetentionDays: 30 } },
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateOrg).toHaveBeenCalled();
+  });
+
+  it('accepts an org that keeps cost logs forever under any execution window', async () => {
+    const res = await patch({ settings: { retention: { costLogRetentionDays: null } } });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateOrg).toHaveBeenCalled();
+  });
+
+  it('does not read the global windows for a patch that sets none', async () => {
+    await patch({ name: 'Renamed' });
+    expect(mockLoadRetentionWindows).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/v1/admin/orgs/[id] — settings', () => {
+  it('returns the whole settings column, a fork’s keys included', async () => {
+    // The vendor view. The member view publishes the validated slice only.
+    vi.mocked(prisma.org.findUnique).mockResolvedValue({
+      ...orgRow,
+      settings: { branding: { logo: 'x' }, retention: { executionRetentionDays: 365 } },
+      memberships: [],
+    } as never);
+
+    const json = JSON.parse(await (await get()).text());
+
+    expect(json.data.settings).toEqual({
+      branding: { logo: 'x' },
+      retention: { executionRetentionDays: 365 },
+    });
   });
 });

@@ -13,6 +13,7 @@
  * module — its own test covers the filter.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
 import { INSTALL_ORG_ID, INSTALL_ORG_SLUG } from '@/lib/tenancy/constants';
 import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import { PLATFORM_ADMIN_ROLE, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
@@ -593,5 +594,83 @@ describe('resolveOrgResource', () => {
     await expect(resolveOrgResource({ id: 'has space' })).resolves.toBeNull();
     await expect(resolveOrgResource(undefined)).resolves.toBeNull();
     expect(db.org.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateOrg — the retention slice (§108 t-713)', () => {
+  /** The org row, then what the transaction re-reads before merging. */
+  function stored(settings: unknown): void {
+    db.org.findUnique.mockResolvedValueOnce(orgRow()).mockResolvedValueOnce({ settings });
+    db.org.update.mockResolvedValue(orgRow());
+  }
+
+  it('replaces the retention slice and carries a fork’s own keys across', async () => {
+    stored({ branding: { logo: 'x' }, retention: { webhookRetentionDays: 7 } });
+
+    await updateOrg(ORG, { settings: { retention: { executionRetentionDays: 365 } } });
+
+    expect(db.org.update).toHaveBeenCalledWith({
+      where: { id: ORG },
+      data: {
+        settings: { branding: { logo: 'x' }, retention: { executionRetentionDays: 365 } },
+      },
+      select: expect.any(Object),
+    });
+  });
+
+  it('reads and writes in one SERIALIZABLE transaction, so a concurrent patch cannot lose a slice', async () => {
+    stored({ branding: { logo: 'x' } });
+
+    await updateOrg(ORG, { settings: { retention: { executionRetentionDays: 365 } } });
+
+    expect(db.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ isolationLevel: 'Serializable' })
+    );
+  });
+
+  it('writes the other fields in the same transaction as the slice', async () => {
+    stored({});
+
+    await updateOrg(ORG, {
+      name: 'Renamed',
+      settings: { retention: { costLogRetentionDays: 90 } },
+    });
+
+    expect(db.org.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { name: 'Renamed', settings: { retention: { costLogRetentionDays: 90 } } },
+      })
+    );
+  });
+
+  it('nulls the column when clearing the slice leaves nothing behind', async () => {
+    stored({ retention: { webhookRetentionDays: 7 } });
+
+    await updateOrg(ORG, { settings: { retention: null } });
+
+    expect(db.org.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { settings: Prisma.DbNull } })
+    );
+  });
+
+  it('takes no transaction when the patch does not touch settings', async () => {
+    db.org.findUnique.mockResolvedValue(orgRow());
+    db.org.update.mockResolvedValue(orgRow());
+
+    await updateOrg(ORG, { name: 'Renamed' });
+
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('is a 404 when the org is erased between the read and the merge', async () => {
+    db.org.findUnique.mockResolvedValueOnce(orgRow()).mockResolvedValueOnce(null);
+
+    const error = await refusal(() =>
+      updateOrg(ORG, { settings: { retention: { costLogRetentionDays: 90 } } })
+    );
+
+    expect(error.code).toBe('ORG_NOT_FOUND');
+    expect(db.org.update).not.toHaveBeenCalled();
   });
 });

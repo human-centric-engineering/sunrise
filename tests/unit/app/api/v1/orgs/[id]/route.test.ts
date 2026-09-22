@@ -84,6 +84,8 @@ describe('GET /api/v1/orgs/[id]', () => {
       name: 'Other Org',
       status: 'ACTIVE',
       createdAt: '2026-09-01T00:00:00.000Z',
+      // No slice stored: every window is the platform's (§108 t-713).
+      settings: { retention: null },
       memberCount: 4,
       role: DEFAULT_ORG_ROLE,
       joinedAt: '2026-09-02T00:00:00.000Z',
@@ -123,5 +125,39 @@ describe('GET /api/v1/orgs/[id]', () => {
   it('returns 401 without a session', async () => {
     mockGetSession.mockResolvedValue(null);
     expect((await get(OTHER)).status).toBe(401);
+  });
+});
+
+describe('GET /api/v1/orgs/[id] — the retention slice (§108 t-713)', () => {
+  it('publishes the validated slice and nothing else from the column', async () => {
+    // `Org.settings` is one JSON object and a fork keeps its own org config
+    // beside the platform's slice. This route is readable by every MEMBER, so
+    // it publishes only the key it can vouch for.
+    vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+      ...membershipRow,
+      org: {
+        ...membershipRow.org,
+        settings: {
+          retention: { executionRetentionDays: 365 },
+          integrations: { slackToken: 'xoxb-not-the-platforms-to-publish' },
+        },
+      },
+    } as never);
+
+    const json = JSON.parse(await (await get(OTHER)).text());
+
+    expect(json.data.settings).toEqual({ retention: { executionRetentionDays: 365 } });
+    expect(JSON.stringify(json)).not.toContain('xoxb-');
+  });
+
+  it('answers null for a slice it cannot read, the way the sweep treats it', async () => {
+    vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+      ...membershipRow,
+      org: { ...membershipRow.org, settings: { retention: 'nonsense' } },
+    } as never);
+
+    const json = JSON.parse(await (await get(OTHER)).text());
+
+    expect(json.data.settings).toEqual({ retention: null });
   });
 });
