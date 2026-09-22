@@ -728,7 +728,7 @@ async function main(): Promise<void> {
     await new Promise((r) => setTimeout(r, 1500));
 
     // ── A per-org platform job through the registry (§108 t-711) ──────────
-    console.log('\n[9] a per-org platform job, driven through the registry');
+    console.log('\n[10] a per-org platform job, driven through the registry');
     // One stale `running` execution per org, older than the reaper's 30-minute
     // threshold. `updatedAt` is `@updatedAt`, which an explicit value on
     // create overrides.
