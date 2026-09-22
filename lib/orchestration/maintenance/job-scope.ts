@@ -70,6 +70,22 @@ export interface OrgJobError {
 }
 
 /**
+ * Did the job fail for **every** org it ran for?
+ *
+ * The runner contains a per-org failure so the remaining orgs still run, which
+ * is right for the tick — one org's broken sweep must not stop the others. But
+ * a caller that reports a status rather than a log line needs to tell "some
+ * orgs failed" from "the sweep is down": with one org the throw propagates and
+ * such a caller answers 500, and without this it would answer 200 the day a
+ * second org was created, silencing a monitor exactly when the failure got
+ * bigger. Only meaningful on a folded summary.
+ */
+export function everyOrgFailed(result: unknown): result is PerOrgSummary {
+  if (!isRecord(result) || typeof result.orgs !== 'number' || result.orgs === 0) return false;
+  return Array.isArray(result.orgErrors) && result.orgErrors.length === result.orgs;
+}
+
+/**
  * The summary a per-org job produces when more than one org was visited (or
  * one failed): the numeric fields of every org's result summed, the array
  * fields concatenated, plus how many orgs ran and which failed. A job whose
@@ -125,7 +141,12 @@ export function foldOrgResults<T>(outcomes: ReadonlyArray<OrgOutcome<T>>): PerOr
         const items: unknown[] = value;
         const existing: unknown[] = Array.isArray(current) ? current : [];
         summary[key] = [...existing, ...items];
-      } else if (current === undefined) {
+      } else if (!(key in summary)) {
+        // First org to carry the key wins. Keyed on presence, not on
+        // `undefined`: a leading `null` is a value an org reported, and
+        // testing for undefined would let it be overwritten by the next org
+        // while a non-null first value would not be — two different rules for
+        // the same field.
         summary[key] = value;
       }
     }
@@ -183,6 +204,17 @@ export async function runScopedJob<T>(
     const [only] = outcomes;
     if (!only.ok) throw only.error;
     return { result: only.result, foundWork: foundWork(only.result) };
+  }
+
+  if (outcomes.length === 0) {
+    // The install org always exists and a suspended one cannot be the only
+    // org, so this is unreachable by design — which is exactly why it must
+    // not pass silently. Reporting "nothing found" here would arm the idle
+    // gate and stop all maintenance on the strength of a query that told us
+    // nothing: "I could not look" read as "I found nothing"
+    // (.context/architecture/checks.md).
+    logger.warn('maintenance task found no active org to run for', { task: name });
+    return { result: { orgs: 0 }, foundWork: true };
   }
 
   let anyFound = false;

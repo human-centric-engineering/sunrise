@@ -469,6 +469,45 @@ describe('Schedule CRUD API', () => {
       expect(res.status).toBe(401);
     });
 
+    it('answers 500 when the sweep failed for every org, not 200 with an error list (§108)', async () => {
+      // With one org the throw reaches the guard and this route 500s. Without
+      // this, adding a second org would turn the same total failure into a
+      // 200 — a cron monitor would stop alerting exactly when it got worse.
+      const { prisma } = await import('@/lib/db/client');
+      vi.mocked(prisma.org.findMany).mockResolvedValueOnce([
+        { id: 'org_a' },
+        { id: 'org_b' },
+      ] as never);
+      vi.mocked(processDueSchedules).mockRejectedValue(new Error('schedules down'));
+
+      const res = await tickScheduler(makePostRequest({}));
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(500);
+      expect(json.error.code).toBe('SCHEDULER_TICK_FAILED');
+      expect(json.error.details.orgErrors).toHaveLength(2);
+    });
+
+    it('still answers 200 when only some orgs failed', async () => {
+      const { prisma } = await import('@/lib/db/client');
+      const { getTenantContext } = await import('@/lib/tenancy/context');
+      vi.mocked(prisma.org.findMany).mockResolvedValueOnce([
+        { id: 'org_a' },
+        { id: 'org_b' },
+      ] as never);
+      vi.mocked(processDueSchedules).mockImplementation(async () => {
+        if (getTenantContext()?.orgId === 'org_a') throw new Error('A down');
+        return { processed: 1, succeeded: 1, failed: 0, errors: [] };
+      });
+
+      const res = await tickScheduler(makePostRequest({}));
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(200);
+      expect(json.data.processed).toBe(1);
+      expect(json.data.orgErrors).toHaveLength(1);
+    });
+
     it('runs the sweep inside the iterated org, not the calling admin’s session org (§108)', async () => {
       // Before §108 this route ran `processDueSchedules()` bare, so at `multi`
       // it swept only the org the admin's guard had entered. Now it goes

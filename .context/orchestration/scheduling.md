@@ -167,6 +167,22 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 | `evaluationRuns`           | every tick | per-org | the worker drives one time-slice per tick, so cadence is throughput |
 | `auditLogRetention`        | 1 hour     | system  | the two audit tables have no org column — once, not once per org    |
 
+**Tick duration grows with the org count, and the overlap guard does not.**
+`forEachOrg` is sequential, so at `multi` a per-org task costs roughly its
+single-org cost × the number of active orgs, and the awaited schedules sweep
+does the same before the route returns its 202. The background chain's
+watchdog is a fixed five minutes (`BACKGROUND_TASK_MAX_MS` in `run-tick.ts`):
+if the chain runs past it the watchdog releases the overlap guard, and the
+next tick starts its sweeps alongside the still-running ones. Every task is
+idempotent and the schedule claim is an optimistic lock, so that overlap is
+safe rather than corrupting — but it is wasted work, and at a few hundred
+active orgs it becomes the normal case rather than an incident. The design
+record's revisit trigger is that scale: the fix is to stop iterating every org
+every tick (a per-tick org budget with rotation, or a system-scoped scan that
+enters `runAsOrg` per row), and the `scope` field is where that change lands.
+A deployment approaching it should watch the `totalDurationMs` in the
+completion log line against its cron interval.
+
 **Scope.** A `per-org` task runs once per active org through `forEachOrg`, each run inside that org's tenant context (`source: 'job'`): its creates are stamped with the org and, at `TENANCY_MODE=multi`, the `org_isolation` policies confine its reads and writes to that org — so a `take: 50` in the task body is a per-org cap. A `{ system: reason }` task runs once under `runAsSystem`, the audited bypass, and the reason is logged on every entry. Every task that touches a tenant-owned table is per-org, including the ones that look like global queue drains: the reaper writes lease events, recovery and the scheduler start the engine, the evaluation worker writes cases, and under the system scope nothing is stamped, so each would have written a `NULL`-org row. The schedules sweep runs per org the same way (a due schedule's execution, and everything the engine writes for it, carries the schedule's org — the `void drainEngine` continuation keeps the scope it was started in), and the idle gate's horizon read (`getNextScheduleRunAt`, the earliest next run across every org) is the one system-scoped read in the tick. At `single` the one org is the install org, every per-org task runs exactly once, and the completion line keeps the shape it always had; at `multi` a per-org task's entry in that line is the fold across orgs — numeric fields summed, arrays concatenated, plus `orgs` (how many ran) and `orgErrors` (which failed, each contained so the next org still runs). A tick fired from an admin's browser session does not run inside that admin's org: every task enters its own scope. The runner is `lib/orchestration/maintenance/job-scope.ts`; see [`tenancy/context.md`](../tenancy/context.md).
 
 A task held back by its interval reports the string `'skipped'` under its own key in the completion log line — reported rather than omitted, so "did the sweep run?" is answerable from the logs. Intervals are **start-to-start** and held **in process memory**: persisting them would cost a DB round-trip per task per tick, which is the cost the throttle exists to remove. Consequences, both benign because every throttled task is idempotent: each instance in a multi-instance deployment keeps its own clock (so a task runs roughly once per instance per interval), and a restart re-arms everything immediately.

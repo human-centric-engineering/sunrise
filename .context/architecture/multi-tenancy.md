@@ -289,7 +289,7 @@ and in your fork:
 | A create shape the injection misses; a transaction the setter misses | `tests/unit/lib/db/tenancy-extension.test.ts` (real client, recording driver)                                 |
 | A platform job with no declared tenant scope                         | the type-check (`PlatformJob.scope` is required) and `platform-jobs.test.ts`, which pins every task's scope   |
 | A per-org job that would have run inside the caller's org            | `run-tick.test.ts` / `platform-jobs.test.ts` — the tick started inside a foreign org sweeps every org         |
-| A job's writes landing with no org                                   | `smoke-multi` scenario [9] — a per-org job through the registry; every row it creates carries its org         |
+| A job's writes landing with no org                                   | `smoke-multi` scenario [10] — a per-org job through the registry; every row it creates carries its org        |
 | Anything the above miss that a real policy would refuse              | `smoke-multi` on every upstream PR — the harness as the restricted role                                       |
 
 What is **not** enforced, and is the per-sync check that remains until §108

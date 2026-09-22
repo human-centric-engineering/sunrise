@@ -212,14 +212,16 @@ describe('enforceRetentionPolicies', () => {
     await enforceRetentionPolicies();
 
     expect(prisma.aiOrchestrationSettings.findUnique).toHaveBeenCalledTimes(1);
-    // All six columns in that one read, so no prune has to go back for its own.
+    // Every column this sweep uses, in that one read, so no prune has to go
+    // back for its own. `auditLogRetentionDays` is absent on purpose: the
+    // admin audit log moved to the system sweep (§108), and selecting it here
+    // would read a column nothing in this sweep consumes.
     expect(prisma.aiOrchestrationSettings.findUnique).toHaveBeenCalledWith({
       where: { slug: 'global' },
       select: {
         webhookRetentionDays: true,
         webhookDlqRetentionDays: true,
         costLogRetentionDays: true,
-        auditLogRetentionDays: true,
         executionRetentionDays: true,
         evaluationRetentionDays: true,
       },

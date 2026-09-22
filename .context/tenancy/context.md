@@ -237,7 +237,7 @@ starts the tick inside a foreign org to prove it. A fork's job with no
 ([scheduling.md → App jobs](../orchestration/scheduling.md#app-jobs--the-fork-seam-on-the-tick)).
 The smoke scripts under `scripts/smoke/` run their `main` inside
 `runAsOrg(INSTALL_ORG_ID)`; `scripts/smoke/tenancy-isolation.ts` drives a
-per-org job through the registry as its scenario [9].
+per-org job through the registry as its scenario [10].
 
 ## The fork's resolver — `lib/app/tenant-resolver.ts`
 

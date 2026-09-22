@@ -189,7 +189,9 @@ export async function runDueAppJobs(
         const outcome = await runScopedJob({
           name: job.name,
           scope: job.scope ?? DEFAULT_APP_JOB_SCOPE,
-          run: job.run,
+          // Called through the job, not detached: `AppJob.run` may legally be
+          // written as a method shorthand that reads `this`.
+          run: () => job.run(),
           // App jobs carry no "found work" predicate; the idle gate is bounded
           // by their cadence instead (`getAppJobsMinIntervalMs`).
           foundWork: () => false,

@@ -137,6 +137,12 @@ export async function enforceRetentionPolicies(): Promise<RetentionResult> {
  * Neither table carries an org (`SYSTEM_MODELS` in
  * `lib/tenancy/classification.ts`), so this runs once, under the audited
  * system scope, rather than once per org with the tenant sweep.
+ *
+ * Each prune resolves its own window here, which the tenant sweep's hoisted
+ * `loadRetentionWindows()` exists to avoid (#442). It is not the same shape:
+ * that was eight prunes re-reading one settings row inside a single sweep;
+ * this is one prune reading one column, once an hour, and the column is no
+ * longer in the tenant sweep's select.
  */
 export async function enforceSystemRetentionPolicies(): Promise<SystemRetentionResult> {
   const auditLogResult = await pruneAuditLogs();
@@ -427,12 +433,18 @@ function warnOnIncoherentRetention(windows: RetentionWindows): void {
   );
 }
 
-/** The six global retention windows, in days. `null` = that class is never pruned. */
+/**
+ * The global retention windows the TENANT sweep needs, in days. `null` = that
+ * class is never pruned.
+ *
+ * `auditLogRetentionDays` is deliberately absent: the admin audit log moved to
+ * {@link enforceSystemRetentionPolicies} (§108), so selecting it here would
+ * read a column this sweep never uses.
+ */
 export interface RetentionWindows {
   webhookRetentionDays: number | null;
   webhookDlqRetentionDays: number | null;
   costLogRetentionDays: number | null;
-  auditLogRetentionDays: number | null;
   executionRetentionDays: number | null;
   evaluationRetentionDays: number | null;
 }
@@ -441,7 +453,6 @@ const NO_RETENTION_WINDOWS: RetentionWindows = {
   webhookRetentionDays: null,
   webhookDlqRetentionDays: null,
   costLogRetentionDays: null,
-  auditLogRetentionDays: null,
   executionRetentionDays: null,
   evaluationRetentionDays: null,
 };
@@ -466,7 +477,6 @@ export async function loadRetentionWindows(): Promise<RetentionWindows> {
         webhookRetentionDays: true,
         webhookDlqRetentionDays: true,
         costLogRetentionDays: true,
-        auditLogRetentionDays: true,
         executionRetentionDays: true,
         evaluationRetentionDays: true,
       },
@@ -476,7 +486,6 @@ export async function loadRetentionWindows(): Promise<RetentionWindows> {
       webhookRetentionDays: row.webhookRetentionDays ?? null,
       webhookDlqRetentionDays: row.webhookDlqRetentionDays ?? null,
       costLogRetentionDays: row.costLogRetentionDays ?? null,
-      auditLogRetentionDays: row.auditLogRetentionDays ?? null,
       executionRetentionDays: row.executionRetentionDays ?? null,
       evaluationRetentionDays: row.evaluationRetentionDays ?? null,
     };
