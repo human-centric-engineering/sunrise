@@ -2,8 +2,17 @@
  * One org, as one of its members sees it (§106 t-672)
  *
  * GET /api/v1/orgs/[id] — the org's id / slug / name / status, the caller's
- * role in it, and its member count. Any member may read it; a non-member
- * gets the same `403 Access denied` whether the org exists or not.
+ * role in it, its member count, and the retention windows it has set for
+ * itself. Any member may read it; a non-member gets the same `403 Access
+ * denied` whether the org exists or not.
+ *
+ * **The validated `retention` slice, not the `settings` column** (§108 t-713).
+ * `Org.settings` is one JSON object, and only the `retention` key in it is the
+ * platform's: a fork keeps its own org config beside it, and the platform
+ * cannot promise every key a fork puts there is safe for every MEMBER of the
+ * org to read. So this route publishes what it can vouch for — the slice, read
+ * through the same validator the sweep uses, `null` when the org has set
+ * nothing. The whole column is on the platform-admin view.
  *
  * Self-scoped rather than `resource`-scoped, and the reason is the policy's
  * shape: with the org resolver the default policy's org arm admits the org's
@@ -19,6 +28,7 @@ import { successResponse } from '@/lib/api/responses';
 import { ForbiddenError } from '@/lib/api/errors';
 import { validateQueryParams } from '@/lib/api/validation';
 import { orgIdParamSchema } from '@/lib/validations/tenancy';
+import { readOrgRetention } from '@/lib/tenancy/org-settings';
 import { getRouteLogger } from '@/lib/api/context';
 
 export const GET = withAuth<{ id: string }>(
@@ -37,6 +47,7 @@ export const GET = withAuth<{ id: string }>(
             slug: true,
             name: true,
             status: true,
+            settings: true,
             createdAt: true,
             _count: { select: { memberships: true } },
           },
@@ -51,9 +62,10 @@ export const GET = withAuth<{ id: string }>(
       throw new ForbiddenError('Access denied');
     }
 
-    const { _count, ...org } = membership.org;
+    const { _count, settings, ...org } = membership.org;
     return successResponse({
       ...org,
+      settings: { retention: readOrgRetention(settings, { orgId: id }, log) },
       memberCount: _count.memberships,
       role: membership.role,
       joinedAt: membership.createdAt,

@@ -7,6 +7,11 @@
  * rows, admin audit log rows, workflow-execution history, evaluation
  * history, and MCP audit-log rows based on global settings.
  *
+ * **Each org may set its own windows** (§108 t-713). The global row is the
+ * default; an org's `settings.retention` slice overrides it per key — a key
+ * absent from the slice inherits, an explicit `null` keeps that class forever
+ * for that org. See {@link loadEffectiveRetentionWindows}.
+ *
  * Agents with `retentionDays = null` keep conversations forever.
  * Settings with `webhookRetentionDays`, `costLogRetentionDays`,
  * `auditLogRetentionDays`, `executionRetentionDays`, or
@@ -31,6 +36,8 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { getMcpServerConfig } from '@/lib/orchestration/mcp/config';
+import { getTenantContext } from '@/lib/tenancy/context';
+import { loadOrgRetention } from '@/lib/tenancy/org-settings';
 
 export interface RetentionResult {
   /** Number of conversations deleted. */
@@ -62,7 +69,7 @@ export interface SystemRetentionResult {
 /**
  * Enforce retention policies for all agents that have `retentionDays` set,
  * then prune old webhook deliveries, cost logs, executions and evaluation
- * history per global settings.
+ * history per the effective windows of the org this run is for.
  *
  * For each agent, deletes conversations whose `updatedAt` is older than
  * `now - retentionDays`. Cascade deletes handle messages, embeddings,
@@ -101,18 +108,22 @@ export async function enforceRetentionPolicies(): Promise<RetentionResult> {
     }
   }
 
-  // One settings read per sweep. Each prune below would otherwise fetch the
-  // same singleton row again — eight round-trips for six columns (#442).
-  // Passing the windows explicitly is what makes them stop. At `multi` the
-  // sweep itself runs once per org (§108), so this read — and the coherence
-  // warning under it — repeat per org: the windows are global, so every org
-  // reads the same row and any warning says the same thing N times. Hoisting
-  // them above the iteration would mean passing them through the job
-  // registry, which is a wider seam change than one indexed singleton read an
-  // hour is worth.
-  const windows = await loadRetentionWindows();
+  // Two settings reads per sweep — the global row and this org's slice. Each
+  // prune below would otherwise fetch the singleton again, eight round-trips
+  // for six columns (#442); passing the windows explicitly is what makes them
+  // stop. The reads repeat per org because the answer now differs per org, so
+  // hoisting them above the iteration is no longer even correct, never mind
+  // worth a seam change.
+  const { windows, orgId, overrides } = await loadEffectiveRetentionWindows();
 
-  warnOnIncoherentRetention(windows);
+  if (overrides.length > 0) {
+    // The only place an org's stored slice becomes visible as behaviour. A
+    // window written and never read again would be indistinguishable from one
+    // that was never written (HB9).
+    logger.info('Retention windows overridden for org', { orgId, windows: overrides });
+  }
+
+  warnOnIncoherentRetention(windows, orgId);
 
   const webhookResult = await pruneWebhookDeliveries(
     windows.webhookRetentionDays,
@@ -419,14 +430,20 @@ export async function pruneMcpAuditLogs(maxAgeDays?: number): Promise<PruneResul
  *
  * `AiWorkflowExecution.totalCostUsd` is a scalar column, so it outlives the
  * `AiCostLog` rows behind it: prune the logs first and an execution keeps
- * reporting spend while its breakdown reads empty. The settings route rejects
- * the combination at write time, but installs configured before that check
- * existed stay silently in this state — nobody re-saves settings to find out.
+ * reporting spend while its breakdown reads empty. Both write paths reject the
+ * combination — the settings route on the global row, the admin org route on
+ * an org's effective pair — but installs configured before those checks
+ * existed stay silently in this state, and an org's stored slice can be made
+ * incoherent later by a change to the global row it inherits the other half
+ * from. Nobody re-saves settings to find out.
+ *
+ * Runs on the EFFECTIVE windows, inside the org's own run of the sweep, so
+ * the org it names is the org whose combination is wrong (§108 t-713).
  *
  * Reads nothing itself — the sweep's single `loadRetentionWindows()` already has
  * both values, and a failed read arrives here as `null`, which is silence.
  */
-function warnOnIncoherentRetention(windows: RetentionWindows): void {
+function warnOnIncoherentRetention(windows: RetentionWindows, orgId: string | null): void {
   const costLogDays = windows.costLogRetentionDays;
   const executionDays = windows.executionRetentionDays;
   // Either window unset means that class isn't pruned at all — no coupling.
@@ -435,7 +452,7 @@ function warnOnIncoherentRetention(windows: RetentionWindows): void {
 
   logger.warn(
     'Retention windows are incoherent: cost logs are pruned before the executions that reference them, so cost breakdowns will read empty for executions still on file',
-    { costLogRetentionDays: costLogDays, executionRetentionDays: executionDays }
+    { orgId, costLogRetentionDays: costLogDays, executionRetentionDays: executionDays }
   );
 }
 
@@ -462,6 +479,19 @@ const NO_RETENTION_WINDOWS: RetentionWindows = {
   executionRetentionDays: null,
   evaluationRetentionDays: null,
 };
+
+/**
+ * The window names this sweep uses, derived from the shape above rather than
+ * written out, so the list cannot fall behind the interface.
+ *
+ * It is what an org's `settings.retention` slice may name —
+ * `ORG_RETENTION_KEYS` in `lib/validations/tenancy.ts` is the same set, and a
+ * test holds the two level. A window added to the global row and not to the
+ * slice would be one no org could override, silently.
+ */
+export const RETENTION_WINDOW_KEYS = Object.keys(
+  NO_RETENTION_WINDOWS
+) as readonly (keyof RetentionWindows)[];
 
 /**
  * Read all six retention windows in **one** query.
@@ -498,6 +528,61 @@ export async function loadRetentionWindows(): Promise<RetentionWindows> {
   } catch {
     return NO_RETENTION_WINDOWS;
   }
+}
+
+/**
+ * What the sweep actually prunes on: the global windows overlaid by this org's
+ * own slice (§108 t-713).
+ *
+ * The org is the one whose scope this run of the sweep is in — the job runner
+ * enters it (`lib/orchestration/maintenance/job-scope.ts`), so there is no
+ * argument to pass and no way for a caller to ask for another org's windows.
+ * Outside any tenant context, and under the system scope, there is no org and
+ * the global windows stand alone.
+ *
+ * Precedence, per key: a key **absent** from the slice inherits the global
+ * value; a key present — including an explicit `null`, which means keep this
+ * class forever — replaces it. So an org lengthens or shortens exactly the
+ * windows it names and follows the platform on the rest.
+ *
+ * **A failed org read skips the prunes rather than falling back to the global
+ * windows.** The two degradations are not symmetrical: falling back would
+ * prune an org's rows on a window that org had explicitly rejected, and
+ * deletion is the direction that cannot be undone. `loadRetentionWindows`
+ * degrades the same way for the same reason, one level up.
+ */
+export async function loadEffectiveRetentionWindows(): Promise<{
+  windows: RetentionWindows;
+  /** The org these windows are for; `null` outside a tenant context. */
+  orgId: string | null;
+  /** Which windows this org set for itself, for the log line. */
+  overrides: (keyof RetentionWindows)[];
+}> {
+  const globalWindows = await loadRetentionWindows();
+  const orgId = getTenantContext()?.orgId ?? null;
+  if (orgId === null) return { windows: globalWindows, orgId: null, overrides: [] };
+
+  let slice;
+  try {
+    slice = await loadOrgRetention(orgId);
+  } catch (error) {
+    logger.error('Could not read an org’s retention windows; skipping its prunes this sweep', {
+      orgId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { windows: NO_RETENTION_WINDOWS, orgId, overrides: [] };
+  }
+  if (!slice) return { windows: globalWindows, orgId, overrides: [] };
+
+  const windows = { ...globalWindows };
+  const overrides: (keyof RetentionWindows)[] = [];
+  for (const key of RETENTION_WINDOW_KEYS) {
+    const value = slice[key];
+    if (value === undefined) continue;
+    windows[key] = value;
+    overrides.push(key);
+  }
+  return { windows, orgId, overrides };
 }
 
 /** Read a named retention column from the singleton settings row. */

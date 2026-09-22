@@ -55,14 +55,92 @@ export const createOrgSchema = z.object({
 export type CreateOrgInput = z.infer<typeof createOrgSchema>;
 
 /**
- * `PATCH /api/v1/admin/orgs/[id]` body — rename, re-slug, suspend or
- * reinstate. At least one key; the route refuses an empty object.
+ * The retention windows an org may set for itself (§108 t-713), and the
+ * bounds each one is held to — the same bounds the global settings schema
+ * applies to its own column, because these values overlay those.
+ *
+ * **Five keys, not the six on `AiOrchestrationSettings`.** The sixth,
+ * `auditLogRetentionDays`, prunes `AiAdminAuditLog` — a system model with no
+ * `orgId` — which §108 t-711 moved to the system-scoped sweep. Rows nobody
+ * owns cannot be kept per owner, so there is nothing for an org to set. The
+ * MCP audit log is the same shape and lives on `McpServerConfig`.
+ *
+ * Per key: **absent** inherits the global window, and an explicit **`null`**
+ * keeps that class forever for this org — the meaning `null` already carries
+ * on the global row.
+ *
+ * `.strict()` on both objects: an unknown key here is a typo that would
+ * otherwise be written and silently ignored for ever. A fork storing its own
+ * slice of `Org.settings` owns its own route for it — this one is the
+ * platform's `retention` slice and nothing else.
+ */
+const retentionDays = (label: string, max: number) =>
+  z
+    .number()
+    .int()
+    .positive(`${label} must be a positive number of days`)
+    .max(max, `${label} must be at most ${max} days`)
+    .nullable();
+
+export const ORG_RETENTION_KEYS = [
+  'webhookRetentionDays',
+  'webhookDlqRetentionDays',
+  'costLogRetentionDays',
+  'executionRetentionDays',
+  'evaluationRetentionDays',
+] as const;
+
+export const orgRetentionSchema = z
+  .object({
+    webhookRetentionDays: retentionDays('Webhook retention', 365).optional(),
+    webhookDlqRetentionDays: retentionDays('Webhook DLQ retention', 365).optional(),
+    costLogRetentionDays: retentionDays('Cost log retention', 365).optional(),
+    executionRetentionDays: retentionDays('Execution retention', 3650).optional(),
+    evaluationRetentionDays: retentionDays('Evaluation retention', 3650).optional(),
+  })
+  .strict();
+
+/**
+ * One org's slice of `Org.settings`. Every key optional, so the stored object
+ * says only what the org has chosen to differ on.
+ *
+ * Deliberately no coherence refine (`costLogRetentionDays >=
+ * executionRetentionDays`) even though the global schema carries one: the pair
+ * that governs a prune is the **effective** one — this slice overlaid on the
+ * global row — so a rule applied to the slice alone would pass a body that is
+ * incoherent once inherited, and refuse one that is coherent. The admin route
+ * checks the effective pair, and the sweep warns per org when a later change
+ * to the global row makes a stored slice incoherent.
+ */
+export type OrgRetentionSlice = z.infer<typeof orgRetentionSchema>;
+
+/**
+ * The platform-owned slices of `Org.settings` a PATCH may write.
+ *
+ * `retention: null` removes the slice, so the org inherits every global
+ * window again. Omitting `retention` leaves the stored slice alone, and any
+ * other key a fork keeps in `settings` is preserved either way — the write
+ * replaces this slice rather than merging into unknown JSON.
+ */
+export const orgSettingsPatchSchema = z
+  .object({
+    retention: orgRetentionSchema.nullable().optional(),
+  })
+  .strict();
+
+export type OrgSettingsPatch = z.infer<typeof orgSettingsPatchSchema>;
+
+/**
+ * `PATCH /api/v1/admin/orgs/[id]` body — rename, re-slug, suspend, reinstate,
+ * or set the org's own retention windows. At least one key; the route refuses
+ * an empty object.
  */
 export const updateOrgSchema = z
   .object({
     name: z.string().trim().min(1, 'Name cannot be empty').max(200, 'Name is too long').optional(),
     slug: slugSchema.max(100, 'Slug is too long').optional(),
     status: z.enum(ORG_STATUSES).optional(),
+    settings: orgSettingsPatchSchema.optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
     message: 'At least one field must be provided',

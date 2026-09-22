@@ -1,9 +1,11 @@
 /**
  * One org, as the vendor sees it (§106 t-672)
  *
- * GET    /api/v1/admin/orgs/[id] — the org with its full roster.
- * PATCH  /api/v1/admin/orgs/[id] — rename, re-slug, suspend or reinstate:
- *        `{ name?, slug?, status? }`.
+ * GET    /api/v1/admin/orgs/[id] — the org with its full roster and its
+ *        `settings` column.
+ * PATCH  /api/v1/admin/orgs/[id] — rename, re-slug, suspend, reinstate, or
+ *        set this org's own retention windows:
+ *        `{ name?, slug?, status?, settings?: { retention? } }`.
  * DELETE /api/v1/admin/orgs/[id] — erase it (`eraseOrg`): the org, its
  *        memberships, its credentials and its pending invitations go; its
  *        members' accounts stay.
@@ -16,14 +18,24 @@
  * A platform admin suspending an org whose members are signed in does not
  * sign them out: the guard refuses their next request into it, and
  * `POST /api/v1/orgs/switch` remains their way to another org.
+ *
+ * **Retention windows are the vendor's to set for now** (§108 t-713). An org
+ * admin gets no say until the org console (§111) exists to give them one, so
+ * the slice is written here, behind `withAdminAuth`, and read back by the
+ * member view as a validated slice rather than as the raw column.
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
-import { successResponse } from '@/lib/api/responses';
+import { errorResponse, successResponse } from '@/lib/api/responses';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
-import { orgIdParamSchema, updateOrgSchema } from '@/lib/validations/tenancy';
+import {
+  orgIdParamSchema,
+  updateOrgSchema,
+  type OrgRetentionSlice,
+} from '@/lib/validations/tenancy';
 import { OrgLifecycleError, updateOrg } from '@/lib/tenancy/lifecycle';
+import { loadRetentionWindows } from '@/lib/orchestration/retention';
 import { eraseOrg } from '@/lib/privacy/erase-org';
 import { getRouteLogger } from '@/lib/api/context';
 
@@ -46,6 +58,7 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, _session, { pa
       slug: true,
       name: true,
       status: true,
+      settings: true,
       createdAt: true,
       updatedAt: true,
       memberships: {
@@ -77,6 +90,14 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
   const body = await validateRequestBody(request, updateOrgSchema);
 
+  const incoherent = await incoherentRetentionPair(body.settings?.retention);
+  if (incoherent) {
+    return errorResponse(
+      `Cost log retention (${incoherent.costLogRetentionDays} days) must be at least as long as execution retention (${incoherent.executionRetentionDays} days), or the cost breakdown empties out for executions you are still keeping`,
+      { code: 'VALIDATION_ERROR', status: 400, details: incoherent }
+    );
+  }
+
   const org = await updateOrg(id, body);
 
   log.info('Org updated by admin', {
@@ -99,3 +120,42 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
 
   return successResponse({ orgId: id, ...result });
 }, PLATFORM_ONLY);
+
+/**
+ * The one rule a retention slice cannot be checked against on its own: cost
+ * logs must outlive the executions that reference them, or an execution still
+ * on file reports spend whose breakdown has been deleted
+ * (`warnOnIncoherentRetention`).
+ *
+ * Checked on the **effective** pair, because half of it may be inherited: an
+ * org shortening only its cost-log window inherits the global execution
+ * window, and the two together are what the sweep will act on. That is the
+ * same check `PATCH /admin/orchestration/settings` makes against the persisted
+ * row for a one-sided patch, one level down.
+ *
+ * It is not the whole guard, and cannot be: a later change to the global row
+ * can make a stored slice incoherent without anyone touching the org. The
+ * sweep's per-org warning is what catches that.
+ *
+ * @returns the offending pair, or `null` when the body sets no windows, clears
+ *   them, or leaves a coherent combination.
+ */
+async function incoherentRetentionPair(
+  slice: OrgRetentionSlice | null | undefined
+): Promise<{ costLogRetentionDays: number; executionRetentionDays: number } | null> {
+  if (slice === undefined || slice === null) return null;
+
+  const globalWindows = await loadRetentionWindows();
+  const costLogRetentionDays =
+    slice.costLogRetentionDays !== undefined
+      ? slice.costLogRetentionDays
+      : globalWindows.costLogRetentionDays;
+  const executionRetentionDays =
+    slice.executionRetentionDays !== undefined
+      ? slice.executionRetentionDays
+      : globalWindows.executionRetentionDays;
+
+  if (costLogRetentionDays === null || executionRetentionDays === null) return null;
+  if (costLogRetentionDays >= executionRetentionDays) return null;
+  return { costLogRetentionDays, executionRetentionDays };
+}

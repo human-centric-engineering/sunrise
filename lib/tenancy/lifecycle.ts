@@ -56,7 +56,8 @@ import { APIError } from '@/lib/api/errors';
 import { revokeUserSessions } from '@/lib/auth/sessions';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { initialMembershipFor } from '@/lib/tenancy/membership';
-import { orgIdParamSchema } from '@/lib/validations/tenancy';
+import { orgIdParamSchema, type OrgSettingsPatch } from '@/lib/validations/tenancy';
+import { applyRetentionPatch } from '@/lib/tenancy/org-settings';
 import {
   DEFAULT_ORG_ROLE,
   ORG_OWNER_ROLE,
@@ -137,12 +138,20 @@ function requireOwnerStanding(actor: MembershipActor, what: string): void {
   }
 }
 
-/** The org row as the lifecycle returns it. */
+/**
+ * The org row as the lifecycle returns it.
+ *
+ * `settings` is the whole JSON column, the platform's `retention` slice
+ * (§108 t-713) and whatever else a fork keeps beside it. Every caller of this
+ * type is platform-admin-only; the member-facing org read publishes the
+ * validated slice alone, not the raw column.
+ */
 export interface OrgRecord {
   id: string;
   slug: string;
   name: string;
   status: OrgStatus;
+  settings: Prisma.JsonValue;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -165,6 +174,7 @@ const orgSelect = {
   slug: true,
   name: true,
   status: true,
+  settings: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.OrgSelect;
@@ -252,10 +262,19 @@ export async function createOrg(
  * purpose: the guard refuses entry to a suspended org on every request, and
  * the switch is the member's way to their other orgs. Reinstating is the
  * same write back, with nothing to repair.
+ *
+ * **A `settings` patch is a read-modify-write, so it takes a transaction**
+ * (§108 t-713). `Org.settings` is one JSON column holding the platform's
+ * `retention` slice beside whatever a fork keeps there, and writing it means
+ * reading the current object to preserve the rest. Under the default READ
+ * COMMITTED two concurrent patches would each read the object before the
+ * other wrote, and the second would silently drop the first's slice — the
+ * same shape, and the same answer, as the owner-count writes below. Patches
+ * that do not touch `settings` are a single update, exactly as before.
  */
 export async function updateOrg(
   orgId: string,
-  patch: { name?: string; slug?: string; status?: OrgStatus },
+  patch: { name?: string; slug?: string; status?: OrgStatus; settings?: OrgSettingsPatch },
   db: LifecycleDb = prisma
 ): Promise<OrgRecord> {
   const current = await requireOrg(orgId, db);
@@ -279,20 +298,37 @@ export async function updateOrg(
     await requireSlugFree(patch.slug, orgId, db);
   }
 
-  const updated = await db.org.update({
-    where: { id: orgId },
-    data: {
-      ...(patch.name !== undefined && { name: patch.name }),
-      ...(patch.slug !== undefined && { slug: patch.slug }),
-      ...(patch.status !== undefined && { status: patch.status }),
-    },
-    select: orgSelect,
-  });
+  const data: Prisma.OrgUpdateInput = {
+    ...(patch.name !== undefined && { name: patch.name }),
+    ...(patch.slug !== undefined && { slug: patch.slug }),
+    ...(patch.status !== undefined && { status: patch.status }),
+  };
+
+  const retentionPatch = patch.settings?.retention;
+
+  const updated =
+    retentionPatch === undefined
+      ? await db.org.update({ where: { id: orgId }, data, select: orgSelect })
+      : await db.$transaction(async (tx) => {
+          // Re-read inside the transaction: `current` was read before the
+          // slug check and is not the row this write is merging into.
+          const row = await tx.org.findUnique({
+            where: { id: orgId },
+            select: { settings: true },
+          });
+          if (!row) throw new OrgLifecycleError('ORG_NOT_FOUND', 'Organisation not found');
+          return tx.org.update({
+            where: { id: orgId },
+            data: { ...data, settings: applyRetentionPatch(row.settings, retentionPatch) },
+            select: orgSelect,
+          });
+        }, SERIALIZABLE);
 
   logger.info('Org updated', {
     orgId,
     changes: Object.keys(patch),
     ...(patch.status !== undefined && patch.status !== current.status && { status: patch.status }),
+    ...(retentionPatch !== undefined && { retention: retentionPatch === null ? 'cleared' : 'set' }),
   });
   return updated;
 }

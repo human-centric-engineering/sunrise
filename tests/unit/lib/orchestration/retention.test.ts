@@ -989,7 +989,9 @@ describe('retention coherence warning', () => {
 
     expect(logger.warn).toHaveBeenCalledWith(
       expect.stringContaining('Retention windows are incoherent'),
-      { costLogRetentionDays: 30, executionRetentionDays: 90 }
+      // `orgId: null` is this sweep running outside any tenant context; the
+      // per-org case is in the effective-windows suite.
+      { orgId: null, costLogRetentionDays: 30, executionRetentionDays: 90 }
     );
   });
 
