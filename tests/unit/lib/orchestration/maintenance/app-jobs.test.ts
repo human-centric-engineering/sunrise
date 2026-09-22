@@ -351,6 +351,24 @@ describe('scope (§108)', () => {
     });
   });
 
+  it('calls run() through the job, so a method-shorthand run reading `this` still works', async () => {
+    // `AppJob.run` may legally be written as a method shorthand; handing the
+    // function to the scope runner detached would break the receiver.
+    initAppJobs.mockImplementation(() =>
+      registerAppJob({
+        name: 'app:self',
+        intervalMs: HOUR,
+        run() {
+          return Promise.resolve({ ranAs: this.name });
+        },
+      })
+    );
+
+    const summary = await runDueAppJobs(1_000_000);
+
+    expect(summary).toEqual({ 'app:self': { ranAs: 'app:self' } });
+  });
+
   it('does not inherit the org the caller entered', async () => {
     const { run, seen } = recordingRun();
     initAppJobs.mockImplementation(() =>

@@ -180,6 +180,28 @@ describe('runScopedJob — per-org at multi', () => {
     );
   });
 
+  it('warns and reports work when there is no active org, rather than arming the gate', async () => {
+    // Unreachable by design (the install org always exists and cannot be
+    // suspended), which is why it must not pass silently: reporting "nothing
+    // found" here would arm the idle gate and stop all maintenance on the
+    // strength of a query that told us nothing.
+    orgs();
+    const { run } = recordingJob(() => 0);
+
+    const outcome = await runScopedJob({
+      name: 'demo',
+      scope: 'per-org',
+      run,
+      foundWork: () => false,
+    });
+
+    expect(run).not.toHaveBeenCalled();
+    expect(outcome).toEqual({ result: { orgs: 0 }, foundWork: true });
+    expect(logger.warn).toHaveBeenCalledWith('maintenance task found no active org to run for', {
+      task: 'demo',
+    });
+  });
+
   it('leaves no context on the caller afterwards', async () => {
     const { run } = recordingJob(() => 0);
 
@@ -248,6 +270,18 @@ describe('foldOrgResults', () => {
         { orgId: ORG_B, ok: true, result: { n: 2 } },
       ])
     ).toEqual({ orgs: 2, n: 2, orgErrors: [{ orgId: ORG_A, error: 'x' }] });
+  });
+
+  it('keeps the first org’s value for a descriptive key even when it is null', () => {
+    // Keyed on presence, not on `!== undefined`: a leading `null` is a value
+    // org A reported, and the next org must not silently replace it while a
+    // non-null first value would have been kept.
+    expect(
+      foldOrgResults([
+        { orgId: ORG_A, ok: true, result: { lastRunAt: null, n: 1 } },
+        { orgId: ORG_B, ok: true, result: { lastRunAt: 'later', n: 1 } },
+      ])
+    ).toEqual({ orgs: 2, lastRunAt: null, n: 2 });
   });
 
   it('never lets a job result overwrite the fold’s own keys', () => {
