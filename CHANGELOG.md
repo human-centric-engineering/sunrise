@@ -444,16 +444,19 @@ release process.
   whichever org refreshed it had **its** hooks dispatched for every org for
   the next 60 seconds — org B's event POSTed its payload to org A's URL,
   signed with org A's secret, while B's own hooks never fired. It is now
-  keyed by org; `invalidateHookCache()` still clears everything, and an
-  `emitHookEvent` from a call stack that entered no org logs and dispatches
-  nothing rather than reading wide. And the MCP per-key rate-limit override
+  keyed by org; `invalidateHookCache()` still clears every partition, and at
+  `multi` an `emitHookEvent` from a call stack that entered no org logs and
+  dispatches nothing rather than reading wide (at `single` the context is
+  the install org, so nothing changes). And the MCP per-key rate-limit override
   cache (`lib/orchestration/mcp/protocol-handler.ts`) is keyed by API key id,
   which is unique across orgs — but it was *filled* inside whichever org's
   request triggered the refresh, and `McpApiKey` is tenant-owned, so every
   other org's `rateLimitOverride` was silently dropped for five minutes. The
-  read now runs under the audited system scope. Neither cache could be
-  reached by a fork before this release, since `multi` is not usable until
-  §108–§111 land; the new
+  read now runs under the audited system scope. An install at `single` is
+  unaffected by either, and multi-tenancy remains the opt-in capability the
+  playbook's
+  [what you do not yet get](./.context/architecture/multi-tenancy.md#what-you-get-at-multi-and-what-you-do-not-yet)
+  describes; the new
   [`lib/tenancy/process-state.ts`](./lib/tenancy/process-state.ts) manifest
   and its scanner test are what found them, and are what a fork editing a
   platform module under `lib/` will meet if it adds process-global state.
