@@ -40,6 +40,9 @@ vi.mock('@/lib/db/client', () => ({
       count: vi.fn(),
     },
     aiAdminAuditLog: { create: vi.fn() },
+    // §108: the tick sweeps per org, so the scope runner reads the active
+    // orgs. One install org is what a `single` install has.
+    org: { findMany: vi.fn(async () => [{ id: 'install' }]) },
   },
 }));
 
@@ -464,6 +467,23 @@ describe('Schedule CRUD API', () => {
       const res = await tickScheduler(makePostRequest({}));
 
       expect(res.status).toBe(401);
+    });
+
+    it('runs the sweep inside the iterated org, not the calling admin’s session org (§108)', async () => {
+      // Before §108 this route ran `processDueSchedules()` bare, so at `multi`
+      // it swept only the org the admin's guard had entered. Now it goes
+      // through the same per-org runner as the maintenance tick.
+      const { getTenantContext } = await import('@/lib/tenancy/context');
+      let orgSeen: string | null | undefined = 'never-ran';
+      vi.mocked(processDueSchedules).mockImplementation(async () => {
+        orgSeen = getTenantContext()?.orgId;
+        return { processed: 0, succeeded: 0, failed: 0, errors: [] };
+      });
+
+      const res = await tickScheduler(makePostRequest({}));
+
+      expect(res.status).toBe(200);
+      expect(orgSeen).toBe('install');
     });
 
     it('returns partial results when some schedules fail', async () => {

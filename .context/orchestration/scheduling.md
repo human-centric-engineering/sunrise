@@ -136,7 +136,7 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 
 ### Scheduler Tick (admin-auth required)
 
-`POST /api/v1/admin/orchestration/schedules/tick` — calls `processDueSchedules()`. Legacy single-purpose endpoint.
+`POST /api/v1/admin/orchestration/schedules/tick` — runs `processDueSchedules()` through the same per-org runner as the unified tick (§108), so its response is the sweep's counters at `single` and the fold across orgs at `multi`. Legacy single-purpose endpoint.
 
 ### Unified Maintenance Tick (admin-auth required, **preferred**)
 
