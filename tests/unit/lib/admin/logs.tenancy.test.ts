@@ -18,6 +18,8 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
@@ -161,6 +163,44 @@ describe('at single', () => {
         .entries.map((e) => e.message)
         .sort()
     ).toEqual(['install org request', 'org B job line']);
+  });
+});
+
+describe('the buffer stays out of the browser bundle', () => {
+  // The invariant this file's design exists to protect, asserted on the source
+  // rather than on behaviour, because nothing else in the local gate sequence
+  // can see it: `lib/logging/index.ts` reaches the buffer with a literal
+  // `require('@/lib/admin/logs')` and is imported by fifteen-plus `'use
+  // client'` modules, so a RUNTIME import here lands in the browser bundle.
+  // The first version of §108 t-714 imported `@/lib/tenancy/context` directly
+  // and `npm run build` failed with seven unresolved Node builtins —
+  // `lib/db/client.ts` → `pg` → `dns`/`fs`/`net`/`tls`. type-check, lint and
+  // vitest were all green for it.
+  const RUNTIME_IMPORT = /^import\s+(?!type\b)/;
+
+  it('lib/admin/logs.ts has no runtime imports', () => {
+    const source = readFileSync(resolve(process.cwd(), 'lib/admin/logs.ts'), 'utf8');
+    const runtimeImports = source.split('\n').filter((line) => RUNTIME_IMPORT.test(line.trim()));
+
+    expect(runtimeImports, 'tenancy reaches this module by registration, not import').toEqual([]);
+  });
+
+  it('lib/logging/index.ts has no static imports either', () => {
+    // The other half of the same invariant: the logger is what the client
+    // components import, so anything it pulls in statically is in their
+    // bundle too. It is why the buffer is reached by `require` at call time.
+    const source = readFileSync(resolve(process.cwd(), 'lib/logging/index.ts'), 'utf8');
+    const staticImports = source.split('\n').filter((line) => /^import\s/.test(line.trim()));
+
+    expect(staticImports).toEqual([]);
+  });
+
+  it('proves it can fail — the detector sees a runtime import', () => {
+    // A scan that cannot demonstrate a hit is not evidence of a clean result.
+    expect(RUNTIME_IMPORT.test("import { getTenantContext } from '@/lib/tenancy/context';")).toBe(
+      true
+    );
+    expect(RUNTIME_IMPORT.test("import type { LogEntry } from '@/types/admin';")).toBe(false);
   });
 });
 

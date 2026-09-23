@@ -31,12 +31,57 @@
  * A platform operator therefore has **no** cross-org view through this page at
  * `multi`, which is the owner's ruling (2026-09-23) and §111's to supply.
  *
+ * ## Why the tenancy arrives through a registration and not an import
+ *
+ * This module must keep **no runtime imports**, and that is a load-bearing
+ * property rather than a style: `lib/logging/index.ts` reaches it with a
+ * literal `require('@/lib/admin/logs')`, and the logger is imported by fifteen
+ * or more `'use client'` modules. A static edge from here to
+ * `lib/tenancy/context.ts` therefore puts everything that module imports —
+ * `lib/db/client.ts`, and through it `pg` — into the **browser** bundle.
+ * Importing it directly was the first version of this change, and
+ * `npm run build` fails with seven unresolved Node builtins, naming exactly
+ * that chain. Neither `type-check`, `lint` nor the Vitest run can see it; the
+ * guard that can is in `tests/unit/lib/admin/logs.tenancy.test.ts`.
+ *
+ * So the dependency is inverted: `lib/tenancy/context.ts` — which is
+ * server-only and already imports the logger — registers a resolver here at
+ * its module scope. The resolver is module-local, **not** on `globalThis`,
+ * because an `AsyncLocalStorage` belongs to the module instance that created
+ * it; sharing one across bundles would read another realm's store.
+ *
  * Tenancy posture: org-keyed — every entry carries the org it was produced in
  * and the query filters to the reader's (lib/tenancy/process-state.ts).
  */
 
 import type { LogEntry } from '@/types/admin';
-import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
+
+/**
+ * What this module needs to know about tenancy, and nothing more.
+ *
+ * `orgId` is the org of the current call stack (`null` outside any scope);
+ * `multi` is whether the install runs more than one org.
+ */
+export interface LogTenancy {
+  orgId: () => string | null;
+  multi: () => boolean;
+}
+
+let tenancy: LogTenancy | null = null;
+
+/**
+ * Teach the buffer about tenancy. Called by `lib/tenancy/context.ts` at its
+ * module scope, so any realm that can enter an org can also stamp and filter.
+ *
+ * **Unregistered means single-tenant behaviour**, which is the right answer
+ * rather than a guess: a realm where the tenancy module was never loaded is a
+ * realm where nothing entered an org, so every entry it holds is unstamped.
+ * The reader is always the admin logs route, whose guard imports the tenancy
+ * module, so the reading side is registered wherever it matters.
+ */
+export function registerLogTenancy(bridge: LogTenancy | null): void {
+  tenancy = bridge;
+}
 
 /**
  * Maximum number of log entries to keep in memory
@@ -84,7 +129,7 @@ export function addLogEntry(entry: Omit<LogEntry, 'id'> & { id?: string }): void
 
   const logEntry: LogEntry = {
     ...entry,
-    orgId: entry.orgId !== undefined ? entry.orgId : (getTenantContext()?.orgId ?? null),
+    orgId: entry.orgId !== undefined ? entry.orgId : (tenancy?.orgId() ?? null),
     id,
   };
 
@@ -110,10 +155,10 @@ export function getLogEntries(options: {
 }): { entries: LogEntry[]; total: number } {
   const { level, search, page = 1, limit = 50 } = options;
 
-  // Whose lines these are. `getTenantContext` rather than
-  // `requireTenantContext`, because throwing is wrong for a read: a platform
-  // credential at `multi` enters no org and must get an empty page, not a 500.
-  const readerOrgId = getTenantContext()?.orgId ?? null;
+  // Whose lines these are. The resolver answers `null` rather than throwing —
+  // a platform credential at `multi` enters no org and must get an empty page,
+  // not a 500.
+  const readerOrgId = tenancy?.orgId() ?? null;
 
   // The scope filter comes first: `total` is what this reader can see, so the
   // pagination below counts their lines and not the process's.
@@ -166,7 +211,7 @@ function isVisibleTo(entry: LogEntry, readerOrgId: string | null): boolean {
   // stamps that org's job lines with it, and they would have vanished from the
   // page. Same gate as the per-org retention windows (§108 t-713): the
   // per-org behaviour applies where there is something to confine.
-  if (!isMultiTenant()) return true;
+  if (!(tenancy?.multi() ?? false)) return true;
   return (entry.orgId ?? null) === readerOrgId;
 }
 

@@ -43,6 +43,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { env } from '@/lib/env';
+import { registerLogTenancy } from '@/lib/admin/logs';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -87,6 +88,18 @@ const tenantContext = new AsyncLocalStorage<TenantContext>();
 export function isMultiTenant(): boolean {
   return env.TENANCY_MODE === 'multi';
 }
+
+// Teach the admin log buffer whose lines it is holding (§108 t-714).
+//
+// The registration points THIS way — server-only module into the buffer —
+// because `lib/admin/logs.ts` must keep no runtime imports: the logger reaches
+// it with a literal `require`, and the logger is imported by client
+// components, so an edge from the buffer to this module puts `pg` in the
+// browser bundle. `lib/admin/logs.ts` says the same thing at more length.
+registerLogTenancy({
+  orgId: () => getTenantContext()?.orgId ?? null,
+  multi: isMultiTenant,
+});
 
 /** The context the current call stack runs in, or `null` when none was entered. */
 export function getTenantContext(): TenantContext | null {
