@@ -616,7 +616,6 @@ describe('API Endpoints', () => {
     const toolId = 'tool-1';
     const resourceId = 'res-1';
     const keyId = 'key-1';
-    const sessionId = 'sess-1';
     const versionId = 'ver-1';
     const tokenId = 'tok-1';
 
@@ -831,11 +830,6 @@ describe('API Endpoints', () => {
       const path = API.ADMIN.ORCHESTRATION.mcpKeyRotate(keyId);
       expect(path).toBe('/api/v1/admin/orchestration/mcp/keys/key-1/rotate');
     });
-
-    it('mcpSessionById produces correct path', () => {
-      const path = API.ADMIN.ORCHESTRATION.mcpSessionById(sessionId);
-      expect(path).toBe('/api/v1/admin/orchestration/mcp/sessions/sess-1');
-    });
   });
 
   describe('ORCHESTRATION static constants', () => {
@@ -1013,10 +1007,6 @@ describe('API Endpoints', () => {
 
     it('MCP_AUDIT equals expected path', () => {
       expect(API.ADMIN.ORCHESTRATION.MCP_AUDIT).toBe('/api/v1/admin/orchestration/mcp/audit');
-    });
-
-    it('MCP_SESSIONS equals expected path', () => {
-      expect(API.ADMIN.ORCHESTRATION.MCP_SESSIONS).toBe('/api/v1/admin/orchestration/mcp/sessions');
     });
 
     it('AUDIT_LOG equals expected path', () => {

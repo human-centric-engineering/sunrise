@@ -92,14 +92,30 @@ describe('McpDashboard', () => {
   });
 
   describe('Quick links', () => {
-    it('renders all 6 quick link cards including Sessions', () => {
+    it('renders every quick link card', () => {
       render(<McpDashboard initialSettings={ENABLED_SETTINGS} stats={STATS_WITH_DATA} />);
       expect(screen.getByText('Exposed Tools')).toBeInTheDocument();
       expect(screen.getByText('Resources')).toBeInTheDocument();
       expect(screen.getByText('API Keys')).toBeInTheDocument();
-      expect(screen.getByText('Sessions')).toBeInTheDocument();
       expect(screen.getByText('Audit Log')).toBeInTheDocument();
       expect(screen.getByText('Settings')).toBeInTheDocument();
+    });
+
+    // The card outlived the page it linked to once already: the assertion above
+    // used to name Sessions, so deleting the page without touching this file
+    // would have left a card that 404s and a test still calling it correct
+    // (§39 t-718).
+    it('links no Sessions page — the stateful transport that had sessions is gone', () => {
+      render(<McpDashboard initialSettings={ENABLED_SETTINGS} stats={STATS_WITH_DATA} />);
+      expect(screen.queryByText('Sessions')).not.toBeInTheDocument();
+      // By href, not by accessible name: the Settings card's own description
+      // says "session limits", so a /sessions/i name match passes for the
+      // wrong reason.
+      const hrefs = screen
+        .getAllByRole('link')
+        .map((a) => a.getAttribute('href'))
+        .filter((h): h is string => h !== null);
+      expect(hrefs).not.toContain('/admin/orchestration/mcp/sessions');
     });
 
     it('shows count badges for tools, resources, and keys', () => {

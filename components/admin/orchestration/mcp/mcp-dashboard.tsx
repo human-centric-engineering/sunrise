@@ -15,7 +15,6 @@ import {
   FileText,
   Settings,
   Activity,
-  Monitor,
   MessageSquareText,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -99,13 +98,6 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
       count: stats.keys,
       description:
         'Create bearer tokens that clients use to authenticate. Each key has scoped permissions',
-    },
-    {
-      href: '/admin/orchestration/mcp/sessions',
-      label: 'Sessions',
-      icon: Monitor,
-      count: null,
-      description: 'View active MCP client connections — which keys are connected and since when',
     },
     {
       href: '/admin/orchestration/mcp/audit',

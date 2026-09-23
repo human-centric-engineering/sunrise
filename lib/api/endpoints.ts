@@ -330,8 +330,6 @@ export const API = {
       mcpKeyById: (id: string): string => `/api/v1/admin/orchestration/mcp/keys/${id}`,
       mcpKeyRotate: (id: string): string => `/api/v1/admin/orchestration/mcp/keys/${id}/rotate`,
       MCP_AUDIT: '/api/v1/admin/orchestration/mcp/audit',
-      MCP_SESSIONS: '/api/v1/admin/orchestration/mcp/sessions',
-      mcpSessionById: (id: string): string => `/api/v1/admin/orchestration/mcp/sessions/${id}`,
 
       /** Admin audit log */
       AUDIT_LOG: '/api/v1/admin/orchestration/audit-log',
