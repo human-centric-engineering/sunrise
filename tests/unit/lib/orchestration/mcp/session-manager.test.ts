@@ -930,6 +930,57 @@ describe('whose sessions a scope can see (§108 t-716)', () => {
       expect(sink).toHaveBeenCalledTimes(1);
     });
 
+    it('cuts the push channel on the LAZY expiry path too', async () => {
+      // The third way a session is forgotten, and the one that was incomplete:
+      // getSession's inline TTL check used to delete only the session row. Since
+      // evictExpired iterates `sessions`, once the lazy path had removed the row
+      // the sweep could never reach that id again — so the sink was orphaned for
+      // the life of the connection and kept receiving every list_changed ping.
+      const shortTtl = new McpSessionManager(40);
+      const s = await runAsOrg(ORG_A, async () => shortTtl.createSession('key-a', 5)!);
+      await runAsOrg(ORG_A, async () => shortTtl.subscribe(s.id, 'sunrise://agents'));
+      const sink = vi.fn();
+      shortTtl.registerSseListener(s.id, sink);
+
+      shortTtl.broadcastNotification({
+        jsonrpc: '2.0',
+        method: 'notifications/tools/list_changed',
+      });
+      expect(sink).toHaveBeenCalledTimes(1);
+
+      await new Promise((r) => setTimeout(r, 60));
+      // The lazy path ONLY — no evictExpired, no destroySession.
+      expect(shortTtl.getSession(s.id)).toBeNull();
+
+      shortTtl.broadcastNotification({
+        jsonrpc: '2.0',
+        method: 'notifications/tools/list_changed',
+      });
+      expect(sink).toHaveBeenCalledTimes(1);
+      // And the subscription, which the class docblock has always claimed is
+      // "cleared with the session on destroy / expiry".
+      expect(
+        await runAsOrg(ORG_A, async () => shortTtl.getSubscribers('sunrise://agents', 'this-org'))
+      ).toEqual([]);
+      shortTtl.destroy();
+    });
+
+    it('peekSession answers without extending the session it was asked about', async () => {
+      // An ownership check whose answer may be "refuse" must not refresh the
+      // session as a side effect, or polling with someone else's id keeps that
+      // session alive for ever — at multi, one org holding another org's open.
+      const shortTtl = new McpSessionManager(80);
+      const s = await runAsOrg(ORG_A, async () => shortTtl.createSession('key-a', 5)!);
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(shortTtl.peekSession(s.id)).not.toBeNull();
+      await new Promise((r) => setTimeout(r, 50));
+
+      // getSession would have bumped it at the 50ms mark and kept it alive.
+      expect(shortTtl.peekSession(s.id)).toBeNull();
+      shortTtl.destroy();
+    });
+
     it('cuts the push channel when a session is evicted', async () => {
       const shortTtl = new McpSessionManager(40);
       const s = await runAsOrg(ORG_A, async () => shortTtl.createSession('key-a', 5)!);

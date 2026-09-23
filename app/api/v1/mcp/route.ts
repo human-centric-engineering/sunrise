@@ -468,7 +468,12 @@ async function handleGet(request: NextRequest, auth: McpAuthContext): Promise<Re
   // for an address can belong to someone else. Refused the same way DELETE
   // refuses a foreign session, so the two are indistinguishable.
   if (sessionId) {
-    const existing = sessionManager.getSession(sessionId);
+    // `peekSession`, not `getSession`: a lookup whose answer may be "refuse"
+    // must not refresh the session's activity as a side effect. `getSession`
+    // bumps `lastActivityAt` BEFORE the caller can compare the key, so polling
+    // this endpoint with someone else's session id kept that session from ever
+    // expiring — at `multi`, one org holding another org's session open.
+    const existing = sessionManager.peekSession(sessionId);
     if (!existing || existing.apiKeyId !== auth.apiKeyId) {
       return jsonRpcErrorResponse(JsonRpcErrorCode.SESSION_NOT_FOUND, 'Session not found', 404);
     }
@@ -494,7 +499,7 @@ async function handleGet(request: NextRequest, auth: McpAuthContext): Promise<Re
     request.signal.addEventListener('abort', onAbort, { once: true });
 
     if (sessionId) {
-      sessionManager.registerSseListener(sessionId, (notification) => {
+      const attached = sessionManager.registerSseListener(sessionId, (notification) => {
         queue.push({
           type: 'notification',
           data: JSON.stringify(notification),
@@ -504,6 +509,12 @@ async function handleGet(request: NextRequest, auth: McpAuthContext): Promise<Re
           resolve = null;
         }
       });
+      // The ownership check above ran before this Response was returned; the
+      // platform pulls the body afterwards, so the session can be terminated or
+      // evicted in between (§108 t-716). Ending the generator closes the stream,
+      // which tells the client to re-`initialize` — better than parking on the
+      // queue for ever behind a keepalive that makes the connection look healthy.
+      if (!attached) return;
     }
 
     try {
@@ -567,7 +578,9 @@ function handleDelete(request: NextRequest, auth: McpAuthContext): Response {
   }
 
   const sessionManager = getMcpSessionManager();
-  const session = sessionManager.getSession(sessionId);
+  // `peekSession` for the same reason as GET above: this lookup's answer may be
+  // a refusal, and refusing should not extend the session it refused.
+  const session = sessionManager.peekSession(sessionId);
   if (session && session.apiKeyId !== auth.apiKeyId) {
     return jsonRpcErrorResponse(JsonRpcErrorCode.SESSION_NOT_FOUND, 'Session not found', 404);
   }

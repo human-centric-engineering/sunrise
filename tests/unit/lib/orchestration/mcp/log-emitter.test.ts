@@ -7,11 +7,19 @@ vi.mock('@/lib/logging', () => ({
 
 const broadcastSpy = vi.fn();
 const getActiveSessionsSpy = vi.fn();
+// A TARGETED emit resolves its one session through `peekSession`, not through
+// the org-filtered list (§108 t-716): `getActiveSessions()` answers only the
+// calling scope's org at `multi`, so a named session would be dropped whenever
+// the emit came from a scope that is not that session's — a system job, a
+// detached timer, a platform key. Backed by the same fixtures so these tests
+// describe one world.
+const peekSessionSpy = vi.fn();
 
 vi.mock('@/lib/orchestration/mcp/singletons', () => ({
   getMcpSessionManager: vi.fn(() => ({
     broadcastNotification: broadcastSpy,
     getActiveSessions: getActiveSessionsSpy,
+    peekSession: peekSessionSpy,
   })),
 }));
 
@@ -33,6 +41,14 @@ function makeSession(id: string, logLevel: McpSession['logLevel']): McpSession {
 beforeEach(() => {
   vi.clearAllMocks();
   _resetLogEmitter();
+  // Whatever the fixture list holds, a peek by id finds — so a test that seeds
+  // sessions does not have to know which of the two paths its call takes. Reads
+  // the spy's own configured value rather than its recorded results, because on
+  // the targeted path `getActiveSessions` is never called and there are none.
+  peekSessionSpy.mockImplementation(
+    (id: string) =>
+      (getActiveSessionsSpy() as McpSession[] | undefined)?.find((s) => s.id === id) ?? null
+  );
 });
 
 describe('emitMcpLog: level filter', () => {

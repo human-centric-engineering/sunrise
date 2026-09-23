@@ -23,7 +23,7 @@
 
 import { logger } from '@/lib/logging';
 import { getMcpSessionManager } from '@/lib/orchestration/mcp/singletons';
-import { McpLogLevelRank, type McpLogLevel } from '@/types/mcp';
+import { McpLogLevelRank, type McpLogLevel, type McpSession } from '@/types/mcp';
 
 const MAX_DATA_BYTES = 4 * 1024;
 const MAX_LOGGER_NAME_LENGTH = 64;
@@ -52,9 +52,26 @@ export function emitMcpLog(
   const requiredRank = McpLogLevelRank[level];
 
   // Resolve recipients with their session-level filter applied.
+  //
+  // A TARGETED emit resolves its one session directly; a broadcast goes through
+  // the org-filtered list (§108 t-716). That split matters because
+  // `getActiveSessions()` answers only the CALLING scope's org at `multi`, so
+  // resolving a named session through it would silently drop every targeted emit
+  // made from a scope that is not that session's — a `runAsSystem` job, a
+  // detached timer, a platform credential — where before it delivered. A caller
+  // naming a session has already said who the recipient is, which is the same
+  // reason every other id-taking method here is unfiltered: the id came from the
+  // caller's own context, and the transport is what establishes that.
+  //
+  // With no session id it IS a broadcast, and then the org filter is exactly
+  // right: one org's MCP log line has no business on another org's stream.
+  const candidates =
+    sessionId === null
+      ? manager.getActiveSessions()
+      : [manager.peekSession(sessionId)].filter((s): s is McpSession => s !== null);
+
   const targets: string[] = [];
-  for (const session of manager.getActiveSessions()) {
-    if (sessionId !== null && session.id !== sessionId) continue;
+  for (const session of candidates) {
     if (McpLogLevelRank[session.logLevel] <= requiredRank) {
       if (allowAnotherNotification(session.id)) {
         targets.push(session.id);

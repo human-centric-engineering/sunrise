@@ -227,12 +227,54 @@ export class McpSessionManager {
     if (!session) return null;
 
     if (Date.now() - session.lastActivityAt > this.ttlMs) {
-      this.sessions.delete(sessionId);
+      this.forget(sessionId);
       return null;
     }
 
     session.lastActivityAt = Date.now();
     return session;
+  }
+
+  /**
+   * The session, without refreshing its activity — for a lookup whose answer may
+   * be "refuse" (§108 t-716).
+   *
+   * {@link getSession} bumps `lastActivityAt` as a side effect of being asked,
+   * which is right for the request path and wrong for an ownership check: the
+   * bump lands *before* the caller compares `apiKeyId`, so polling GET or DELETE
+   * with someone else's session id kept that session from ever expiring. At
+   * `multi` that is one org holding another org's session open. Expired sessions
+   * answer `null` here and are torn down, same as `getSession`.
+   */
+  peekSession(sessionId: string): McpSession | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    if (Date.now() - session.lastActivityAt > this.ttlMs) {
+      this.forget(sessionId);
+      return null;
+    }
+    return session;
+  }
+
+  /**
+   * Drop every trace of a session: the row, its subscriptions, and its SSE sink.
+   *
+   * **One function because three paths forget a session and all three have to
+   * forget the same things** (§108 t-716). `destroySession`, `evictExpired` and
+   * `getSession`'s lazy TTL check each used to delete their own subset, and
+   * `getSession` deleted only from `sessions` — which is the worst place to be
+   * incomplete, because `evictExpired` iterates `sessions`, so once the lazy path
+   * had removed the row the sweep could never reach that id again. The sink was
+   * then orphaned for the life of the TCP connection and went on receiving every
+   * unscoped `list_changed` ping, which is the "sink outlives the address"
+   * defect this task closes, surviving on the one path nobody looked at. The
+   * class docblock's claim that subscriptions are "cleared with the session on
+   * destroy / expiry" was untrue for the same reason.
+   */
+  private forget(sessionId: string): void {
+    this.sessions.delete(sessionId);
+    this.subscriptions.delete(sessionId);
+    this.sseListeners.delete(sessionId);
   }
 
   markInitialized(sessionId: string): void {
@@ -252,11 +294,11 @@ export class McpSessionManager {
   destroySession(sessionId: string): boolean {
     const session = this.sessions.get(sessionId);
     if (!session || !this.isVisible(session)) return false;
-    this.subscriptions.delete(sessionId);
-    // And the push channel: `sseListeners` is what `broadcastNotification`
-    // enumerates, so without this a force-terminated client's open GET stream
-    // would go on receiving every `list_changed` ping for as long as it stayed
-    // connected (§108 t-716) — the "sink outlives the address" case the GET
+    // `forget`, not three deletes: the push channel goes with the session, or a
+    // force-terminated client's open GET stream keeps receiving every
+    // `list_changed` ping for as long as it stays connected. `sseListeners` is
+    // what `broadcastNotification`
+    // enumerates (§108 t-716) — the "sink outlives the address" case the GET
     // ownership check exists to prevent.
     //
     // **It stops the pushes; it does not close the connection.** Nothing aborts
@@ -266,8 +308,8 @@ export class McpSessionManager {
     // re-`initialize`. Tearing the stream down needs a per-session abort hook or
     // a terminal frame, which is the same question as idea #6 (what a stateful
     // session's liveness means) and is recorded there rather than half-built.
-    this.sseListeners.delete(sessionId);
-    return this.sessions.delete(sessionId);
+    this.forget(sessionId);
+    return true;
   }
 
   /**
@@ -342,11 +384,10 @@ export class McpSessionManager {
     let evicted = 0;
     for (const [id, session] of this.sessions) {
       if (now - session.lastActivityAt > this.ttlMs) {
-        this.sessions.delete(id);
-        this.subscriptions.delete(id);
-        // Same reason as `destroySession`: an expired session's stream must stop
-        // being a recipient, not merely stop being findable (§108 t-716).
-        this.sseListeners.delete(id);
+        // `forget` rather than `destroySession`, which would apply the org
+        // filter — the sweep runs detached (§108 t-715) and is meant to reach
+        // every org's expired sessions.
+        this.forget(id);
         evicted++;
       }
     }
@@ -431,7 +472,13 @@ export class McpSessionManager {
       // that is a behaviour change with its own consequences (a stream could
       // then hold a session for ever, which interacts with maxSessionsPerKey and
       // with the point of a TTL), so it is Hub idea #6 rather than smuggled in
-      // here.
+      // here. Asked directly at review round 3 whether that is the intended
+      // trade: yes. Keeping the refresh is worse than the regression, because it
+      // makes one org's `'every-org'` edit silently extend every other org's
+      // sessions, and a liveness rule that depends on who else is editing is not
+      // a rule. What round 3 did add is the half that WAS cheap — a stream that
+      // could not attach now closes instead of parking (see
+      // {@link registerSseListener}).
       const session = this.sessions.get(sessionId);
       if (!session || Date.now() - session.lastActivityAt > this.ttlMs) continue;
       if (audience === 'this-org' && !this.isVisible(session)) continue;
@@ -463,14 +510,21 @@ export class McpSessionManager {
    * generator runs, the request's `runAsOrg` scope has been left, so there is no
    * org to compare against. Ownership was established before the stream opened;
    * this re-checks only that there is still something to attach to.
+   *
+   * **Returns whether it attached**, so the caller can close the stream instead
+   * of holding one open that can never deliver. A refusal that only logged left
+   * the client with an established, keepalive-healthy event stream whose
+   * notification channel was silently unwired — it would find out on its next
+   * POST, which is a 404.
    */
-  registerSseListener(sessionId: string, sink: NotificationSink): void {
-    const session = this.sessions.get(sessionId);
-    if (!session || Date.now() - session.lastActivityAt > this.ttlMs) {
+  registerSseListener(sessionId: string, sink: NotificationSink): boolean {
+    const session = this.peekSession(sessionId);
+    if (!session) {
       logger.debug('MCP SSE: no live session to attach a listener to', { sessionId });
-      return;
+      return false;
     }
     this.sseListeners.set(sessionId, sink);
+    return true;
   }
 
   /**
