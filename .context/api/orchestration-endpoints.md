@@ -164,7 +164,14 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/mcp/audit` | GET | Query MCP audit log | 6 |
 | `/audit-log` | GET | Admin action audit trail (paginated, filterable) | 8 |
 
-120 admin route files, 8 consumer chat route files, 1 webhook trigger route file, 2 public approval route files (131 total). For architecture detail see `.context/orchestration/admin-api.md`.
+Measured on 2026-09-24, with the command beside each figure so the next reader
+re-derives rather than trusts: **201** admin route files
+(`find app/api/v1/admin -name route.ts | wc -l`), **192** of them under
+`orchestration/`, **9** consumer chat, **4** embed, **1** MCP transport, **242**
+under `app/api/v1` in total. The previous sentence here claimed 120 admin and 131
+overall, which had drifted by roughly seventy — it is quoted rather than quietly
+replaced because a count with no provenance is how that happens. For architecture
+detail see `.context/orchestration/admin-api.md`.
 
 ### Public Approval Endpoints (Token-Authenticated)
 

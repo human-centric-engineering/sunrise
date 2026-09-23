@@ -110,7 +110,7 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
       label: 'Settings',
       icon: Settings,
       count: null,
-      description: 'Configure rate limits, max sessions per key, and audit log retention',
+      description: 'Configure rate limits and audit log retention',
     },
   ];
 
@@ -163,8 +163,9 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
               {settings.isEnabled ? 'Server is accepting MCP connections' : 'Enable MCP server'}
             </Label>
             <FieldHelp title="MCP Server Status">
-              When disabled, all MCP clients receive 503 Service Unavailable. Existing sessions are
-              not terminated but cannot make new requests.
+              When disabled, every MCP request receives 503 Service Unavailable. There is nothing to
+              terminate — the server holds no session, so a client simply starts failing and starts
+              working again the moment you re-enable it.
             </FieldHelp>
           </div>
           {error && <p className="text-destructive mt-2 text-sm">{error}</p>}

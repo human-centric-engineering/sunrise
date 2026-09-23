@@ -228,7 +228,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     holders: ['rateLimiter'],
     posture: 'row-keyed',
     keyedBy: 'MCP API key id, inside McpRateLimiter',
-    why: "Key ids are unique across orgs and the read is keyed by the CALLER's own key — protocol-handler.ts asks check(auth.apiKeyId), so no caller can reach another org's counter. Kept as a separate row from the session manager beside it in the same file: same lazy-singleton shape, and it needed the opposite answer until §108 t-716, which is why the question is asked per holder.",
+    why: "Key ids are unique across orgs and the read is keyed by the CALLER's own key — protocol-handler.ts asks check(auth.apiKeyId), so no caller can reach another org's counter. It is the only holder left in that file. A session manager sat beside it with the same lazy-singleton shape and needed a different answer (org-keyed, §108 t-716) until §39 t-718 deleted the stateful MCP transport — which is why the posture question is asked per holder rather than per file.",
   },
 
   // ───────────────────────────────────────────────────────────────────────

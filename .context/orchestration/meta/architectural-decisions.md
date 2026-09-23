@@ -231,7 +231,7 @@ A short primer first: HTTP is request/response — the client asks, the server a
 
 **What is it?** Model Context Protocol (MCP) is the protocol Anthropic defined for letting AI clients (Claude Desktop, IDE extensions, other agents) discover and invoke tools and resources on a remote server. "Streamable HTTP" means the client uses ordinary HTTP requests for calls; it also defined an SSE stream for asynchronous notifications, which revision 2026-07-28 removed and Sunrise no longer offers (§39 t-718). JSON-RPC 2.0 is a small request/response protocol where every call has a `method` name, parameters, and an `id` for correlation.
 
-**What we chose:** A full MCP server implementation using JSON-RPC 2.0 over Streamable HTTP — POST for requests, GET for the notification stream, DELETE for session termination. Up to 20 batched JSON-RPC requests per call, 1 MB max body.
+**What we chose:** A full MCP server implementation using JSON-RPC 2.0 over Streamable HTTP. **POST is the only method** (§39 t-718); GET and DELETE answer `405 Allow: POST`. It was originally POST for requests, GET for the notification stream and DELETE for session termination — revision 2026-07-28 removed the latter two and Sunrise followed, which is the reversal §2.7 records. Up to 20 batched JSON-RPC requests per call, 1 MB max body.
 
 **Alternatives**
 

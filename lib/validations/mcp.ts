@@ -57,6 +57,21 @@ export const mcpKeyScopeSchema = capabilityScopeSchema;
 
 /**
  * Update MCP server config (PATCH /api/v1/admin/orchestration/mcp/settings)
+ *
+ * **`.strict()`, so an unknown key is a 400 rather than a silent drop** (§39
+ * t-718). A plain `z.object` STRIPS what it does not declare, which made the
+ * `maxSessionsPerKey` removal invisible in the case that matters: a fork's
+ * settings form PATCHes the whole object, so `{ globalRateLimit: 70,
+ * maxSessionsPerKey: 10 }` parsed to `{ globalRateLimit: 70 }`, returned 200, and
+ * discarded the field. The `.refine` below only fires when the removed field is
+ * the SOLE field — the least likely shape — so the removal announced itself
+ * exactly where nobody was looking.
+ *
+ * That is the failure this repo keeps paying for: a change a caller cannot
+ * observe. Strict costs a fork one 400 at upgrade time and tells it precisely
+ * which key to drop; the same reasoning made the §108 t-713 org retention slice
+ * strict. It also catches a typo — `globalRatelimit` used to be accepted and
+ * ignored.
  */
 export const updateMcpSettingsSchema = z
   .object({
@@ -66,6 +81,7 @@ export const updateMcpSettingsSchema = z
     globalRateLimit: z.number().int().min(1).max(10000).optional(),
     auditRetentionDays: z.number().int().min(0).max(3650).optional(),
   })
+  .strict()
   .refine((v) => Object.keys(v).length > 0, {
     message: 'At least one field must be provided',
   });

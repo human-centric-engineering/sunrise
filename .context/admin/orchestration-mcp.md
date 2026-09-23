@@ -124,8 +124,11 @@ Server configuration form using `react-hook-form` + Zod validation.
 There used to be a **Max Sessions Per Key** field here, annotated "no effect on
 this deployment" under the default session mode — a setting that validated, saved
 and was never consulted. Both it and the `McpServerConfig.maxSessionsPerKey`
-column behind it are gone (§39 t-718). A fork that PATCHes the field now gets a
-400: zod strips the unknown key, leaving a body with no settable field in it.
+column behind it are gone (§39 t-718). A fork that PATCHes the field gets a
+**400 naming the key**, whether it sends it alone or alongside a field that is
+still settable — `updateMcpSettingsSchema` is `.strict()` for exactly that reason
+(§39 t-718). It was not, briefly, and the realistic body (a settings form sending
+the whole object) returned 200 with the value silently discarded.
 
 - **isDirty tracking** — Save button disabled when pristine
 - **Error display** — API errors shown inline; generic fallback for non-API errors

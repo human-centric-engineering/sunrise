@@ -134,7 +134,11 @@ Multiple endpoints stream Server-Sent Events for minutes at a time:
 | `app/api/v1/embed/chat/stream/route.ts`                                 | Embedded widget chat                          |
 | `app/api/v1/admin/orchestration/chat/stream/route.ts`                   | Admin chat                                    |
 | `app/api/v1/admin/orchestration/workflows/[id]/execute-stream/route.ts` | Workflow execution event stream               |
-| `app/api/v1/mcp/route.ts`                                               | Model Context Protocol session                |
+
+`app/api/v1/mcp/route.ts` was in this table until §39 t-718 and is deliberately
+not any more: `GET /api/v1/mcp` answers `405` with an empty body, so MCP needs
+none of the host accommodations below. §5's in-memory-state row says the same
+thing from the other direction.
 
 **Host implications:**
 

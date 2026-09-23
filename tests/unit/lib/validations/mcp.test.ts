@@ -71,13 +71,42 @@ describe('updateMcpSettingsSchema', () => {
     expect(updateMcpSettingsSchema.safeParse({}).success).toBe(false);
   });
 
-  it('no longer carries maxSessionsPerKey — it is not a settable field (§39 t-718)', () => {
-    // `.refine(Object.keys(v).length > 0)` is what makes this bite: a zod object
-    // STRIPS an unknown key rather than rejecting it, so a body of only
-    // `maxSessionsPerKey` parses to `{}` and fails the "at least one field"
-    // rule. Asserted through the real schema, so re-adding the field turns this
-    // red instead of the field quietly coming back.
-    expect(updateMcpSettingsSchema.safeParse({ maxSessionsPerKey: 10 }).success).toBe(false);
+  describe('maxSessionsPerKey is gone, and its absence is LOUD (§39 t-718)', () => {
+    // The first version of this test only covered the lone-field case, and
+    // passed for the wrong reason: a plain `z.object` STRIPS an unknown key, so
+    // `{ maxSessionsPerKey: 10 }` parsed to `{}` and it was the "at least one
+    // field" refine that rejected it — not the key being unrecognised. The case
+    // that actually matters is a fork's settings form PATCHing the whole object,
+    // where the removed key travels ALONGSIDE a live one; that returned 200 and
+    // silently discarded the value. `.strict()` is what makes both cases fail,
+    // and this is the pair that holds it there.
+    it('rejects it as the only field', () => {
+      expect(updateMcpSettingsSchema.safeParse({ maxSessionsPerKey: 10 }).success).toBe(false);
+    });
+
+    it('rejects it ALONGSIDE a field that is still settable — the realistic body', () => {
+      const result = updateMcpSettingsSchema.safeParse({
+        globalRateLimit: 70,
+        maxSessionsPerKey: 10,
+      });
+
+      expect(result.success).toBe(false);
+      // The message has to name the key, or a fork reading a 400 cannot tell
+      // which of its fields to drop.
+      expect(result.success ? '' : JSON.stringify(result.error.issues)).toContain(
+        'maxSessionsPerKey'
+      );
+    });
+
+    it('still accepts the same body without it, so the rejection is about the key', () => {
+      // The control. Without this the two assertions above would pass against a
+      // schema that rejects everything.
+      expect(updateMcpSettingsSchema.safeParse({ globalRateLimit: 70 }).success).toBe(true);
+    });
+
+    it('rejects a typo in a live field too, which is the other half of strict', () => {
+      expect(updateMcpSettingsSchema.safeParse({ globalRatelimit: 70 }).success).toBe(false);
+    });
   });
 
   it('rejects serverName exceeding 100 chars', () => {

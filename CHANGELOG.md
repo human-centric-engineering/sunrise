@@ -398,7 +398,7 @@ release process.
   | `MCP_SESSION_MODE`                                             | delete it from every env file and deploy config; an unknown key is inert    |
   | `GET /api/v1/admin/orchestration/mcp/sessions`                 | nothing to list                                                            |
   | `DELETE /api/v1/admin/orchestration/mcp/sessions/:id`          | nothing to terminate                                                       |
-  | `McpServerConfig.maxSessionsPerKey` (migration drops the column) | stop sending it to `PATCH …/mcp/settings` — the body is now refused with 400 |
+  | `McpServerConfig.maxSessionsPerKey` (migration drops the column) | stop sending it to `PATCH …/mcp/settings` — the body is refused with a 400 naming the key, alone or alongside a live field |
   | `McpSession`, `McpLogLevel`, `MCP_LOG_LEVELS`, `McpLogLevelRank`, `JsonRpcNotification` on `types/mcp.ts` | drop the imports |
   | `JsonRpcErrorCode.SESSION_NOT_FOUND` (`-32002`) and `.STATELESS_UNSUPPORTED` (`-32005`) | nothing emits either |
   | `McpSessionManager`, `createEphemeralSession`, `McpResourceAudience`, `NotificationSink` | — |
@@ -408,6 +408,16 @@ release process.
   | `lib/orchestration/mcp/log-emitter.ts` (`emitMcpLog`) and `progress-tracker.ts` (`createProgressReporter`, `extractProgressToken`) | a fork using `emitMcpLog` has no transport to send on |
   | `resources/subscribe`, `resources/unsubscribe`, `logging/setLevel` | an attempt now answers `METHOD_NOT_FOUND`                                |
   | `admin/orchestration/mcp/sessions` page, `mcp-sessions-list.tsx`, `API.ADMIN.ORCHESTRATION.MCP_SESSIONS` and `mcpSessionById` | — |
+
+  **`PATCH /api/v1/admin/orchestration/mcp/settings` now rejects an unknown key**
+  rather than stripping it (`updateMcpSettingsSchema` is `.strict()`). This is
+  what makes the line above true: a plain `z.object` strips what it does not
+  declare, so a settings form PATCHing the whole object got a 200 and lost the
+  `maxSessionsPerKey` value with no signal — the removal announcing itself only in
+  the one shape nobody sends (that key alone). Strict costs a fork one 400 at
+  upgrade time and names the offending key; the same reasoning made §108 t-713's
+  org retention slice strict. It also catches a typo in a field that IS settable,
+  which used to be accepted and ignored.
 
   **`lib/api/sse.ts` is untouched.** Six non-MCP routes stream through it —
   `grep -rn "from '@/lib/api/sse'" app` is the list, rather than one copied here

@@ -1333,6 +1333,67 @@ describe('the three methods that needed a session are gone', () => {
   );
 });
 
+describe('tool annotations are gated on the version the CALLER declared', () => {
+  // The one branch this change rewired: `emitAnnotations` used to read
+  // `session.protocolVersion` off a stored session and now reads
+  // `context.protocolVersion`, resolved per request from the
+  // `MCP-Protocol-Version` header. Nothing exercised it as FALSE — every call in
+  // this file passes the latest version, and no assertion in it mentioned
+  // `annotations` at all. The route test proves the header resolves correctly and
+  // `tool-registry.test.ts` proves annotations are produced, but nothing joined
+  // them, so hard-wiring this to the latest version (or deleting the gate) left
+  // the whole suite green while a 2024-11-05 client silently received a field it
+  // never negotiated.
+  let auth: McpAuthContext;
+  let serverState: McpServerState;
+  let rateLimiter: ReturnType<typeof makeRateLimiter>;
+
+  const ANNOTATED = {
+    slug: 'search_kb',
+    name: 'search_kb',
+    description: 'Search',
+    inputSchema: {},
+    annotations: { readOnlyHint: true, destructiveHint: false },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    auth = makeAuth();
+    serverState = makeServerState();
+    rateLimiter = makeRateLimiter();
+    vi.mocked(listMcpTools).mockResolvedValue([ANNOTATED]);
+  });
+
+  async function firstToolAt(
+    protocolVersion: McpProtocolVersion
+  ): Promise<Record<string, unknown>> {
+    const result = await handleMcpRequest(makeRequest({ id: 1, method: 'tools/list' }), {
+      auth,
+      protocolVersion,
+      serverState,
+      rateLimiter,
+    });
+    return (result?.result as { tools: Record<string, unknown>[] }).tools[0];
+  }
+
+  it('emits annotations at 2025-06-18, the revision that introduced them', async () => {
+    expect(await firstToolAt('2025-06-18')).toHaveProperty('annotations', ANNOTATED.annotations);
+  });
+
+  it('WITHHOLDS them at 2024-11-05, which never agreed to the field', async () => {
+    // The half that could not fail before. `not.toHaveProperty` rather than an
+    // undefined check: the field is spread in conditionally, so it must be
+    // absent from the object, not present-and-undefined.
+    expect(await firstToolAt('2024-11-05')).not.toHaveProperty('annotations');
+  });
+
+  it('still returns the tool itself at the older version', async () => {
+    // The control. Without it the assertion above would pass against a
+    // `tools/list` that had stopped returning anything.
+    expect(await firstToolAt('2024-11-05')).toMatchObject({ name: 'search_kb' });
+  });
+});
+
 describe('initialize advertises nothing it cannot deliver', () => {
   let auth: McpAuthContext;
   let serverState: McpServerState;
