@@ -386,8 +386,8 @@ release process.
   behind `GET /api/v1/admin/logs` — filters to the reader's org and counts
   `total` after that filter. The buffer itself is unchanged: one process-wide
   ring, scoped at the query. An entry produced outside any tenant scope (boot,
-  a `runAsSystem` job, or a request on a platform credential, which carries no
-  org in either mode) is stamped `null`. **The scope rule applies at `multi`
+  a `runAsSystem` job, a request on a platform credential, which carries no org
+  in either mode, or a timer armed through `runDetached`) is stamped `null`. **The scope rule applies at `multi`
   only**: at `single` the page shows the process's lines exactly as it always
   has, so a single-tenant install is unchanged. At `multi` an unstamped entry
   is visible only to a reader who is also outside an org, and an org admin
