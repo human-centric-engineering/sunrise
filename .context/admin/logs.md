@@ -227,9 +227,11 @@ Hiding anything at `single` would empty the page of what an operator opens it
 for while protecting nothing, since there is one org. It would also not even be
 safe to do narrowly: `forEachOrg` iterates every ACTIVE org in **both** modes,
 so a single-mode install holding a second org stamps that org's job lines with
-it, and a rule scoped to the install org would have made them vanish. At `multi` a **platform operator has no cross-org view through this
-page** — that is §111's to supply, and the owner's ruling (2026-09-23) is that
-it waits for it, since `multi` is not used until the phase is complete.
+it, and a rule scoped to the install org would have made them vanish.
+
+At `multi` a **platform operator has no cross-org view through this page**.
+That is the owner's ruling (2026-09-23) — `multi` is not used until the whole
+phase is built, so it is not a view anyone loses today — and §111's to supply.
 
 ### What an org admin will not see at `multi`, and why
 
@@ -257,9 +259,8 @@ that can be is a platform-admin **API key**: `enterSessionOrg` refuses a
 session with no active org at `multi`, so every browser-authenticated admin
 always has one. In practice that means `curl` with a platform key, and it means
 a failing nightly tick leaves `/admin/logs` empty of any trace for every human
-looking at it. Giving the page a system view is §111's, and the owner ruled
-(2026-09-23) that it waits for §111 — `multi` is not used until the phase is
-complete.
+looking at it. Giving the page a system view is part of the operator view §111
+supplies.
 
 None of this is new behaviour in the logger; it is what scoping the _read_
 makes visible.

@@ -29,11 +29,12 @@
  *   practice means a platform-admin API key and NOT a browser, because
  *   `enterSessionOrg` refuses a session with no active org at `multi`. So a
  *   failing maintenance tick leaves `/admin/logs` empty of any trace of it for
- *   every human looking at the page. That is the owner's ruling (2026-09-23)
- *   and §111's to fix with an operator view, not an accident.
+ *   every human looking at the page.
  *
- * A platform operator therefore has **no** cross-org view through this page at
- * `multi`, which is the owner's ruling (2026-09-23) and §111's to supply.
+ * So at `multi` a platform operator has **no** cross-org view through this
+ * page, and no view of the unstamped lines either except by API key. That is
+ * the owner's ruling (2026-09-23) — `multi` is not used until the phase is
+ * complete — and §111's to supply, not an accident.
  *
  * ## Why the tenancy arrives through a registration and not an import
  *
