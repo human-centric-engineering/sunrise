@@ -54,8 +54,11 @@ export {
 //
 // The three `list_changed` helpers reach EVERY org's sessions, and that is
 // correct rather than an oversight (§108 t-716): each announces a change to
-// `McpExposedTool` / `McpExposedPrompt` / `McpExposedResource`, which are
-// `GLOBAL_CONFIG_MODELS` (`lib/tenancy/classification.ts`). One org's admin
+// `McpExposedTool`, `McpExposedPrompt` or `McpExposedResource` — and
+// `broadcastMcpToolsChanged` also fires on an `AiCapability` PATCH and
+// soft-delete from `app/api/v1/admin/orchestration/capabilities/[id]/route.ts`,
+// which is the subject the first three versions of this list forgot. All four
+// are `GLOBAL_CONFIG_MODELS` (`lib/tenancy/classification.ts`). One org's admin
 // enabling a tool changes what every org's `tools/list` returns, so scoping the
 // ping to the editing org would leave every other org holding a stale list with
 // nothing to tell them. Contrast `broadcastMcpResourceUpdated` below, whose

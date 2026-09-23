@@ -850,6 +850,67 @@ describe('whose sessions a scope can see (§108 t-716)', () => {
     });
   });
 
+  describe('the failure modes this change introduces', () => {
+    it('warns and reaches nobody when this-org is asked from a scope with no org', async () => {
+      // Unreachable today — every 'this-org' caller fires after a tenant-owned
+      // write, which at multi the data layer refuses with no org before any SQL.
+      // Asserted anyway because the day a 'this-org' notify is attached to a
+      // GLOBAL-config write, a platform credential CAN get there, and "nobody
+      // was told" is indistinguishable from "nothing changed".
+      const { a } = await seed();
+      await runAsOrg(ORG_A, async () => mgr.subscribe(a.id, 'sunrise://agents'));
+
+      const recipients = mgr.getSubscribers('sunrise://agents', 'this-org');
+
+      expect(recipients).toEqual([]);
+      expect(logger.warn).toHaveBeenCalledWith(
+        'MCP resource fan-out asked for this-org from a scope with no org',
+        { uri: 'sunrise://agents' }
+      );
+    });
+
+    it('cuts the push channel when a session is terminated', async () => {
+      // Otherwise terminate does not terminate: `sseListeners` is what
+      // broadcastNotification enumerates, so a force-terminated client's open
+      // stream would keep receiving every list_changed ping.
+      const { a } = await seed();
+      const sink = vi.fn();
+      await runAsOrg(ORG_A, async () => mgr.registerSseListener(a.id, sink));
+
+      // Population check — it really was a recipient first.
+      mgr.broadcastNotification({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+      expect(sink).toHaveBeenCalledTimes(1);
+
+      await runAsOrg(ORG_A, async () => mgr.destroySession(a.id));
+      mgr.broadcastNotification({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+
+      expect(sink).toHaveBeenCalledTimes(1);
+    });
+
+    it('cuts the push channel when a session is evicted', async () => {
+      const shortTtl = new McpSessionManager(40);
+      const s = await runAsOrg(ORG_A, async () => shortTtl.createSession('key-a', 5)!);
+      const sink = vi.fn();
+      shortTtl.registerSseListener(s.id, sink);
+
+      shortTtl.broadcastNotification({
+        jsonrpc: '2.0',
+        method: 'notifications/tools/list_changed',
+      });
+      expect(sink).toHaveBeenCalledTimes(1);
+
+      await new Promise((r) => setTimeout(r, 60));
+      (shortTtl as unknown as { evictExpired: () => void }).evictExpired();
+      shortTtl.broadcastNotification({
+        jsonrpc: '2.0',
+        method: 'notifications/tools/list_changed',
+      });
+
+      expect(sink).toHaveBeenCalledTimes(1);
+      shortTtl.destroy();
+    });
+  });
+
   describe('what is deliberately not scoped', () => {
     it('getActiveSessionCount counts one key’s sessions from any scope', async () => {
       // A key belongs to one org, so this cannot cross orgs — and filtering it

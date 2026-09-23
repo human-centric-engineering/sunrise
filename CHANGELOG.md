@@ -383,6 +383,20 @@ release process.
   [`agent-visibility.md`](./.context/orchestration/agent-visibility.md#org-binding-106)
   and [`mcp.md`](./.context/orchestration/mcp.md#api-key-lifecycle).
 
+### Security
+
+- **`GET /api/v1/mcp` now refuses a session that is not the
+  authenticated key's** (multi-tenancy §108 t-716), with the same
+  `SESSION_NOT_FOUND` 404 that `POST` and `DELETE` have always returned for
+  one. It is the path that attaches the SSE listener and it was the only one
+  not re-checking the key, so a caller holding any valid MCP key could open the
+  stream with another key's — at `multi`, another org's — `Mcp-Session-Id` and
+  receive that session's `notifications/message`, `resources/updated` and
+  `progress` pushes, while the rightful owner stopped receiving them, since the
+  sink registry is keyed by session id and a second registration replaces the
+  first. A client that was passing a session id it does not own was already
+  getting nothing useful; one passing its own is unaffected.
+
 ### Changed
 
 - **An MCP session belongs to the org whose key opened it** (multi-tenancy §108
@@ -393,9 +407,11 @@ release process.
   ordinary 404, indistinguishable from an unknown one. At `single` both behave
   exactly as before. Previously, at `multi` with `MCP_SESSION_MODE=stateful`, an
   org admin read every other org's session ids, `apiKeyId`s and activity times
-  and could terminate any of them; an MCP log line raised in one org was also
-  pushed to every org's open SSE stream, because `lib/orchestration/mcp/log-emitter.ts`
-  builds its targets from the same list.
+  and could terminate any of them. An MCP log line raised in one org would also
+  reach every org's open SSE stream, since `lib/orchestration/mcp/log-emitter.ts`
+  builds its targets from the same list — latent rather than live, because
+  `emitMcpLog` has no caller in the platform and is reachable only by a fork
+  using that documented API.
   **Breaking for a fork that calls `broadcastMcpResourceUpdated(uri)`**: it now
   takes a required second argument, `'this-org' | 'every-org'` (the exported
   type `McpResourceAudience`), as does `McpSessionManager.getSubscribers`. There
@@ -407,19 +423,8 @@ release process.
   the callers, and wrong invisibly — a notification that never arrives looks
   exactly like nothing having happened. The three `list_changed` broadcasts are
   unchanged and still reach every org, for the same reason: their subjects
-  (`McpExposedTool`, `McpExposedPrompt`, `McpExposedResource`) are all global
-  config. A fork constructing an `McpSession` literal must add `orgId`.
-- **Security: `GET /api/v1/mcp` now refuses a session that is not the
-  authenticated key's** (multi-tenancy §108 t-716), with the same
-  `SESSION_NOT_FOUND` 404 that `POST` and `DELETE` have always returned for
-  one. It is the path that attaches the SSE listener and it was the only one
-  not re-checking the key, so a caller holding any valid MCP key could open the
-  stream with another key's — at `multi`, another org's — `Mcp-Session-Id` and
-  receive that session's `notifications/message`, `resources/updated` and
-  `progress` pushes, while the rightful owner stopped receiving them, since the
-  sink registry is keyed by session id and a second registration replaces the
-  first. A client that was passing a session id it does not own was already
-  getting nothing useful; one passing its own is unaffected.
+  (`McpExposedTool`, `McpExposedPrompt`, `McpExposedResource`, and `AiCapability`
+  for the tools ping) are all global config. A fork constructing an `McpSession` literal must add `orgId`.
 - **The admin Logs page shows only the reading org's lines** (multi-tenancy
   §108 t-714). `LogEntry` (`types/admin.ts`) gains `orgId?: string | null`,
   stamped by `addLogEntry` from the tenant context, and `getLogEntries` —

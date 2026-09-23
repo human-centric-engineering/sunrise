@@ -253,6 +253,14 @@ export class McpSessionManager {
     const session = this.sessions.get(sessionId);
     if (!session || !this.isVisible(session)) return false;
     this.subscriptions.delete(sessionId);
+    // And the push channel, or terminate does not terminate: `sseListeners` is
+    // what `broadcastNotification` enumerates, so a force-terminated client's
+    // open GET stream would go on receiving every `list_changed` ping for as
+    // long as it stayed connected (§108 t-716). Leaving that would contradict
+    // this task's own argument for the GET ownership check — that controlling
+    // who a notification is addressed to means nothing if the sink outlives the
+    // address.
+    this.sseListeners.delete(sessionId);
     return this.sessions.delete(sessionId);
   }
 
@@ -282,7 +290,9 @@ export class McpSessionManager {
    * route served this array verbatim, so an org admin read every other org's
    * session ids, `apiKeyId`s and activity times; and `lib/.../log-emitter.ts`
    * builds its notification targets from it, so an MCP log line raised in one
-   * org was pushed to every org's open SSE stream.
+   * org would be pushed to every org's open SSE stream. The second was reachable
+   * only by a fork: `emitMcpLog` has no caller in the platform, and it is a
+   * documented server-side API, so the fix is real but the leak was latent.
    */
   getActiveSessions(): McpSession[] {
     const now = Date.now();
@@ -328,6 +338,9 @@ export class McpSessionManager {
       if (now - session.lastActivityAt > this.ttlMs) {
         this.sessions.delete(id);
         this.subscriptions.delete(id);
+        // Same reason as `destroySession`: an expired session's stream must stop
+        // being a recipient, not merely stop being findable (§108 t-716).
+        this.sseListeners.delete(id);
         evicted++;
       }
     }
@@ -378,12 +391,38 @@ export class McpSessionManager {
    * when what changed was global config.
    */
   getSubscribers(uri: string, audience: McpResourceAudience): string[] {
+    // `'this-org'` asked from a scope with no org matches nothing, because
+    // production stamps every session. Today that is unreachable and the reason
+    // is not obvious, so it is logged rather than left silent: a platform
+    // credential runs unscoped in both modes, but every caller of `'this-org'`
+    // fires after a TENANT-OWNED write, and at `multi` the data layer refuses
+    // such a write with no org before any SQL — so the route 500s and never
+    // reaches the notify. What this line exists for is the day someone attaches
+    // a `'this-org'` notification to a global-config write, where the platform
+    // credential CAN succeed: the fan-out would then reach nobody, and "nobody
+    // was told" is indistinguishable from "nothing changed" (§108 t-716).
+    if (audience === 'this-org' && isMultiTenant() && !getTenantContext()?.orgId) {
+      logger.warn('MCP resource fan-out asked for this-org from a scope with no org', { uri });
+      return [];
+    }
+
     const out: string[] = [];
     for (const [sessionId, set] of this.subscriptions) {
       if (!set.has(uri)) continue;
       // `this.sessions.get` rather than `getSession`, because `getSession` is
       // unfiltered by design and also refreshes `lastActivityAt` — a fan-out
-      // must not keep a session alive by being interested in it.
+      // must not keep a session alive by being interested in it, or one org's
+      // `'every-org'` edit silently extends every other org's sessions.
+      //
+      // **The cost, stated rather than discovered:** a client that subscribes
+      // and then only LISTENS used to be kept alive by that refresh and now
+      // expires at the TTL like any other idle session. Its stream stays open
+      // and still receives the unscoped `list_changed` pings, so the symptom is
+      // a healthy-looking connection that stops delivering `resources/updated`.
+      // The real answer is for an open SSE stream to refresh its own session,
+      // which is a behaviour change with its own consequences (a stream could
+      // hold a session for ever) and is captured as an idea rather than smuggled
+      // in here.
       const session = this.sessions.get(sessionId);
       if (!session || Date.now() - session.lastActivityAt > this.ttlMs) continue;
       if (audience === 'this-org' && !this.isVisible(session)) continue;
@@ -425,9 +464,11 @@ export class McpSessionManager {
    * **This is deliberately not org-filtered (§108 t-716), and that needs
    * saying because it is the one fan-out here that is not.** Every caller is
    * already in one of two correct positions: the three `list_changed` helpers
-   * in `lib/orchestration/mcp/index.ts` announce a change to `McpExposedTool` /
-   * `McpExposedPrompt` / `McpExposedResource`, all of which are
-   * `GLOBAL_CONFIG_MODELS` — so every org's answer really did change and an
+   * in `lib/orchestration/mcp/index.ts` announce a change to `McpExposedTool`,
+   * `McpExposedPrompt`, `McpExposedResource` — or `AiCapability`, which
+   * `broadcastMcpToolsChanged` also fires for, from the capabilities routes —
+   * and all four are `GLOBAL_CONFIG_MODELS`, so every org's answer really did
+   * change and an
    * org filter here would leave every org but one holding a stale list; and
    * every other caller passes ids it already chose under a scope, from
    * `getSubscribers(uri, audience)`, from the org-filtered
