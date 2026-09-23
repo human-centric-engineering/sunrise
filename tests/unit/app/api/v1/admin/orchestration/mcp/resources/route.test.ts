@@ -54,7 +54,6 @@ vi.mock('@/lib/api/context', () => ({
 vi.mock('@/lib/orchestration/mcp', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/mcp')>()),
   clearMcpResourceCache: vi.fn(),
-  broadcastMcpResourcesChanged: vi.fn(),
 }));
 
 // The fork seam ships empty; the app-type test below fills it explicitly.
@@ -68,7 +67,7 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 // The two spies come from the MOCKED barrel; the registrar comes from the real
 // module the barrel re-exports, so a registration here is visible to the route.
-import { clearMcpResourceCache, broadcastMcpResourcesChanged } from '@/lib/orchestration/mcp';
+import { clearMcpResourceCache } from '@/lib/orchestration/mcp';
 import {
   registerMcpResourceHandler,
   __resetAppMcpResourcesForTests,
@@ -227,8 +226,6 @@ describe('POST /mcp/resources', () => {
 
     // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(clearMcpResourceCache).toHaveBeenCalled();
-    // test-review:accept no_arg_called — zero-arg side-effect trigger
-    expect(broadcastMcpResourcesChanged).toHaveBeenCalled();
   });
 
   it('rejects URI without sunrise:// scheme', async () => {

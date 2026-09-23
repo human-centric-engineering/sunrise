@@ -10,11 +10,7 @@ import { prisma } from '@/lib/db/client';
 import { successResponse, paginatedResponse, errorResponse } from '@/lib/api/responses';
 import { validateRequestBody, validateQueryParams } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
-import {
-  broadcastMcpPromptsChanged,
-  clearMcpPromptCache,
-  MAX_ENABLED_PROMPTS,
-} from '@/lib/orchestration/mcp';
+import { clearMcpPromptCache, MAX_ENABLED_PROMPTS } from '@/lib/orchestration/mcp';
 import { createPromptSchema, listPromptsQuerySchema } from '@/lib/validations/mcp';
 
 export const GET = withAdminAuth(async (request) => {
@@ -72,7 +68,6 @@ export const POST = withAdminAuth(async (request, session) => {
   });
 
   clearMcpPromptCache();
-  broadcastMcpPromptsChanged();
 
   log.info('MCP prompt created', {
     adminId: session.user.id,

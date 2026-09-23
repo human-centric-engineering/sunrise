@@ -52,19 +52,13 @@ vi.mock('@/lib/api/context', () => ({
 
 vi.mock('@/lib/orchestration/mcp', () => ({
   clearMcpResourceCache: vi.fn(),
-  broadcastMcpResourcesChanged: vi.fn(),
-  broadcastMcpResourceUpdated: vi.fn(),
 }));
 
 // ─── Imports ─────────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import {
-  broadcastMcpResourceUpdated,
-  broadcastMcpResourcesChanged,
-  clearMcpResourceCache,
-} from '@/lib/orchestration/mcp';
+import { clearMcpResourceCache } from '@/lib/orchestration/mcp';
 import {
   mockAdminUser,
   mockUnauthenticatedUser,
@@ -200,24 +194,6 @@ describe('PATCH /mcp/resources/:id', () => {
 
     // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(clearMcpResourceCache).toHaveBeenCalled();
-    // test-review:accept no_arg_called — zero-arg side-effect trigger
-    expect(broadcastMcpResourcesChanged).toHaveBeenCalled();
-    // Per-URI fan-out lets subscribed clients refresh just this resource
-    // without re-running resources/list. Asserting the URI argument
-    // exercises the new Phase 4 wiring.
-    //
-    // `'every-org'` is the half of §108 t-716 that is NOT a narrowing, and it
-    // is asserted here because this is its only caller. What changed is the
-    // `McpExposedResource` row — a `GLOBAL_CONFIG_MODEL` — so every org's
-    // definition of this URI changed. Scoping it to the editing org (which at
-    // `multi` is one org's admin, since the console is not split until §111)
-    // would leave every other org holding a stale definition with nothing to
-    // tell them. The three tenant-derived callers ask for `'this-org'`, and
-    // `resource-update-hooks.test.ts` holds them to it.
-    expect(broadcastMcpResourceUpdated).toHaveBeenCalledWith(
-      'sunrise://knowledge/search',
-      'every-org'
-    );
   });
 
   it('toggles isEnabled to false', async () => {
@@ -348,7 +324,5 @@ describe('DELETE /mcp/resources/:id', () => {
 
     // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(clearMcpResourceCache).toHaveBeenCalled();
-    // test-review:accept no_arg_called — zero-arg side-effect trigger
-    expect(broadcastMcpResourcesChanged).toHaveBeenCalled();
   });
 });

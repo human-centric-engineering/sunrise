@@ -34,7 +34,6 @@ import { parseDocument, requiresPreview } from '@/lib/orchestration/knowledge/pa
 import { listDocumentsQuerySchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { invalidateAllAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
-import { notifyMcpKnowledgeChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
 import { cuidSchema } from '@/lib/validations/common';
 
 /**
@@ -375,8 +374,6 @@ export const POST = withAdminAuth(async (request, session) => {
       clientIp: clientIP,
     });
 
-    notifyMcpKnowledgeChanged();
-
     return successResponse({ document }, undefined, { status: 201 });
   }
 
@@ -521,8 +518,6 @@ export const POST = withAdminAuth(async (request, session) => {
     entityName: file.name,
     clientIp: clientIP,
   });
-
-  notifyMcpKnowledgeChanged();
 
   return successResponse({ document }, undefined, { status: 201 });
 });

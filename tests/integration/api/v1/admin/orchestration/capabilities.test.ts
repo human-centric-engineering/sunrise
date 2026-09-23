@@ -74,7 +74,6 @@ vi.mock('@/lib/orchestration/capabilities', async () => ({
 
 vi.mock('@/lib/orchestration/mcp', () => ({
   clearMcpToolCache: vi.fn(),
-  broadcastMcpToolsChanged: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({

@@ -15,11 +15,7 @@ import { successResponse, errorResponse } from '@/lib/api/responses';
 import { NotFoundError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
-import {
-  broadcastMcpPromptsChanged,
-  clearMcpPromptCache,
-  MAX_ENABLED_PROMPTS,
-} from '@/lib/orchestration/mcp';
+import { clearMcpPromptCache, MAX_ENABLED_PROMPTS } from '@/lib/orchestration/mcp';
 import { updatePromptSchema } from '@/lib/validations/mcp';
 import { cuidSchema } from '@/lib/validations/common';
 
@@ -56,7 +52,6 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   });
 
   clearMcpPromptCache();
-  broadcastMcpPromptsChanged();
 
   log.info('MCP prompt updated', {
     adminId: session.user.id,
@@ -78,7 +73,6 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
 
   await prisma.mcpExposedPrompt.delete({ where: { id } });
   clearMcpPromptCache();
-  broadcastMcpPromptsChanged();
 
   log.info('MCP prompt deleted', {
     adminId: session.user.id,

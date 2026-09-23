@@ -24,7 +24,6 @@ import { commitCleanupAndChunk } from '@/lib/orchestration/knowledge/document-ma
 import { getEditLockState } from '@/lib/orchestration/knowledge/edit-lock';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { notifyMcpKnowledgeChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
 
 const bodySchema = z.object({
   action: z.enum(['commit', 'use-original', 'delete']),
@@ -88,7 +87,6 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       clientIp: clientIP,
     });
 
-    notifyMcpKnowledgeChanged();
     return successResponse({ deleted: true });
   }
 
@@ -110,8 +108,6 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     metadata: { mode: body.action, chunkCount: document.chunkCount },
     clientIp: clientIP,
   });
-
-  notifyMcpKnowledgeChanged();
 
   return successResponse({ document });
 });

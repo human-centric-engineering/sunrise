@@ -18,9 +18,9 @@
  * - delete (not in cleaning / not owned) → 400 VALIDATION_ERROR, $transaction NOT called
  *
  * Side effects:
- * - commit → logAdminAction('knowledge_document.cleanup_commit') + notifyMcpKnowledgeChanged()
- * - delete → logAdminAction('knowledge_document.cleanup_delete') + notifyMcpKnowledgeChanged()
- * - error paths → neither logAdminAction nor notifyMcpKnowledgeChanged called
+ * - commit → logAdminAction('knowledge_document.cleanup_commit')
+ * - delete → logAdminAction('knowledge_document.cleanup_delete')
+ * - error paths → no logAdminAction
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -67,10 +67,6 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
 }));
 
-vi.mock('@/lib/orchestration/mcp/resource-update-hooks', () => ({
-  notifyMcpKnowledgeChanged: vi.fn(),
-}));
-
 vi.mock('@/lib/orchestration/knowledge/edit-lock', async () => {
   const actual = await vi.importActual<typeof import('@/lib/orchestration/knowledge/edit-lock')>(
     '@/lib/orchestration/knowledge/edit-lock'
@@ -84,7 +80,6 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { commitCleanupAndChunk } from '@/lib/orchestration/knowledge/document-manager';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { notifyMcpKnowledgeChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
 import { getEditLockState } from '@/lib/orchestration/knowledge/edit-lock';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -309,14 +304,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/cleanup/final
       );
     });
 
-    it('calls notifyMcpKnowledgeChanged() after commit', async () => {
-      // Act
-      await POST(makeRequest(VALID_DOC_ID, { action: 'commit' }), makeParams(VALID_DOC_ID));
-
-      // Assert
-      expect(notifyMcpKnowledgeChanged).toHaveBeenCalledOnce();
-    });
-
     it('returns 500-range error envelope when commitCleanupAndChunk throws', async () => {
       // Arrange — simulate a chunking or embedding failure
       vi.mocked(commitCleanupAndChunk).mockRejectedValue(
@@ -368,14 +355,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/cleanup/final
         expect.objectContaining({ action: 'knowledge_document.cleanup_commit' })
       );
     });
-
-    it('calls notifyMcpKnowledgeChanged() after use-original', async () => {
-      // Act
-      await POST(makeRequest(VALID_DOC_ID, { action: 'use-original' }), makeParams(VALID_DOC_ID));
-
-      // Assert
-      expect(notifyMcpKnowledgeChanged).toHaveBeenCalledOnce();
-    });
   });
 
   // ─── action: 'delete' — success ───────────────────────────────────────────
@@ -423,14 +402,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/cleanup/final
         })
       );
     });
-
-    it('calls notifyMcpKnowledgeChanged() after delete', async () => {
-      // Act
-      await POST(makeRequest(VALID_DOC_ID, { action: 'delete' }), makeParams(VALID_DOC_ID));
-
-      // Assert
-      expect(notifyMcpKnowledgeChanged).toHaveBeenCalledOnce();
-    });
   });
 
   // ─── action: 'delete' — guard failures ───────────────────────────────────
@@ -453,7 +424,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/cleanup/final
       expect(data.error.code).toBe('VALIDATION_ERROR');
       expect(data.error.message).toBeTruthy();
       expect(prisma.$transaction).not.toHaveBeenCalled();
-      expect(notifyMcpKnowledgeChanged).not.toHaveBeenCalled();
     });
   });
 });

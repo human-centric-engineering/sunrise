@@ -45,14 +45,13 @@ vi.mock('@/lib/api/context', () => ({
 }));
 
 vi.mock('@/lib/orchestration/mcp', () => ({
-  broadcastMcpPromptsChanged: vi.fn(),
   clearMcpPromptCache: vi.fn(),
   MAX_ENABLED_PROMPTS: 200,
 }));
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { broadcastMcpPromptsChanged, clearMcpPromptCache } from '@/lib/orchestration/mcp';
+import { clearMcpPromptCache } from '@/lib/orchestration/mcp';
 import {
   mockAdminUser,
   mockUnauthenticatedUser,
@@ -142,7 +141,6 @@ describe('PATCH /mcp/prompts/:id', () => {
       })
     );
     expect(clearMcpPromptCache).toHaveBeenCalled();
-    expect(broadcastMcpPromptsChanged).toHaveBeenCalled();
   });
 
   it('returns 404 when the prompt does not exist', async () => {
@@ -226,7 +224,6 @@ describe('DELETE /mcp/prompts/:id', () => {
     expect(response.status).toBe(200);
     expect(prisma.mcpExposedPrompt.delete).toHaveBeenCalledWith({ where: { id: VALID_ID } });
     expect(clearMcpPromptCache).toHaveBeenCalled();
-    expect(broadcastMcpPromptsChanged).toHaveBeenCalled();
   });
 
   it('returns 404 when the prompt does not exist', async () => {

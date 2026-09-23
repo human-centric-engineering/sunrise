@@ -18,7 +18,6 @@ import { getClientIP } from '@/lib/security/ip';
 import { createAgentSchema, listAgentsQuerySchema } from '@/lib/validations/orchestration';
 import { getMonthToDateGlobalSpend } from '@/lib/orchestration/llm/cost-tracker';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { notifyMcpAgentsChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
 import {
   INITIAL_VERSION_SUMMARY,
   asSnapshotJson,
@@ -243,9 +242,6 @@ export const POST = withAdminAuth(async (request, session) => {
       entityName: agent.name,
       clientIp: clientIP,
     });
-
-    // MCP subscribers to sunrise://agents need to know the list changed.
-    notifyMcpAgentsChanged();
 
     return successResponse(agent, undefined, { status: 201 });
   } catch (err) {

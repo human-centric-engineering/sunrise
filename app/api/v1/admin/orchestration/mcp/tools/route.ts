@@ -10,7 +10,7 @@ import { prisma } from '@/lib/db/client';
 import { successResponse, paginatedResponse } from '@/lib/api/responses';
 import { validateRequestBody, validateQueryParams } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
-import { clearMcpToolCache, broadcastMcpToolsChanged } from '@/lib/orchestration/mcp';
+import { clearMcpToolCache } from '@/lib/orchestration/mcp';
 import { createExposedToolSchema, listExposedToolsQuerySchema } from '@/lib/validations/mcp';
 
 export const GET = withAdminAuth(async (request) => {
@@ -57,7 +57,6 @@ export const POST = withAdminAuth(async (request, session) => {
   });
 
   clearMcpToolCache();
-  broadcastMcpToolsChanged();
 
   log.info('MCP exposed tool created', {
     adminId: session.user.id,

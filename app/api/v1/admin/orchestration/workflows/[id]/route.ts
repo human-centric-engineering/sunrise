@@ -22,7 +22,6 @@ import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-
 import { saveDraft } from '@/lib/orchestration/workflows/version-service';
 import { updateWorkflowSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
-import { notifyMcpWorkflowsChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
 
 export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
   const log = await getRouteLogger(request);
@@ -126,8 +125,6 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       clientIp: clientIP,
     });
 
-    notifyMcpWorkflowsChanged();
-
     return successResponse(workflow);
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -170,8 +167,6 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     entityName: current.name,
     clientIp: clientIP,
   });
-
-  notifyMcpWorkflowsChanged();
 
   return successResponse({ id, isActive: false });
 });

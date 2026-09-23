@@ -28,7 +28,7 @@ import {
   updateCapabilitySchema,
 } from '@/lib/validations/orchestration';
 import { mcpToolNameSchema } from '@/lib/validations/mcp';
-import { clearMcpToolCache, broadcastMcpToolsChanged } from '@/lib/orchestration/mcp';
+import { clearMcpToolCache } from '@/lib/orchestration/mcp';
 import { cuidSchema } from '@/lib/validations/common';
 import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
@@ -297,7 +297,6 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     // under `/mcp/tools` already pairs its write with this; this route became a
     // writer of MCP state when it started pinning `customName` (#509).
     clearMcpToolCache();
-    broadcastMcpToolsChanged();
 
     log.info('Capability updated', {
       capabilityId: id,
@@ -353,7 +352,6 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   // deleted tool for up to five minutes and `tools/call` resolves it before
   // failing at dispatch.
   clearMcpToolCache();
-  broadcastMcpToolsChanged();
 
   log.info('Capability soft-deleted', {
     capabilityId: id,

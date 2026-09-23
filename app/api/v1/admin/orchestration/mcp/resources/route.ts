@@ -13,7 +13,6 @@ import { getRouteLogger } from '@/lib/api/context';
 import { Prisma } from '@prisma/client';
 import {
   clearMcpResourceCache,
-  broadcastMcpResourcesChanged,
   isDispatchableMcpResourceType,
   isAllowedMcpResourceUri,
   isUriSchemeValidForResourceType,
@@ -111,7 +110,6 @@ export const POST = withAdminAuth(async (request, session) => {
   });
 
   clearMcpResourceCache();
-  broadcastMcpResourcesChanged();
 
   log.info('MCP exposed resource created', {
     adminId: session.user.id,

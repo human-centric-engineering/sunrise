@@ -40,7 +40,6 @@ const mockMcpFindUnique = vi.fn().mockResolvedValue({ id: 'mcp-self' });
 
 vi.mock('@/lib/orchestration/mcp', () => ({
   clearMcpToolCache: vi.fn(),
-  broadcastMcpToolsChanged: vi.fn(),
 }));
 
 vi.mock('@/lib/db/client', () => ({

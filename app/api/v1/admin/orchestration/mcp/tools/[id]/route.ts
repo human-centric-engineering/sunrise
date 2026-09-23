@@ -11,7 +11,7 @@ import { successResponse } from '@/lib/api/responses';
 import { NotFoundError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
-import { clearMcpToolCache, broadcastMcpToolsChanged } from '@/lib/orchestration/mcp';
+import { clearMcpToolCache } from '@/lib/orchestration/mcp';
 import { updateExposedToolSchema } from '@/lib/validations/mcp';
 import { cuidSchema } from '@/lib/validations/common';
 
@@ -32,7 +32,6 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   });
 
   clearMcpToolCache();
-  broadcastMcpToolsChanged();
 
   log.info('MCP exposed tool updated', {
     adminId: session.user.id,
@@ -54,7 +53,6 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
 
   await prisma.mcpExposedTool.delete({ where: { id } });
   clearMcpToolCache();
-  broadcastMcpToolsChanged();
 
   log.info('MCP exposed tool deleted', {
     adminId: session.user.id,

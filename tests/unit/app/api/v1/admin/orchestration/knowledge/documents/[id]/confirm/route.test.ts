@@ -66,10 +66,6 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
 }));
 
-vi.mock('@/lib/orchestration/mcp/resource-update-hooks', () => ({
-  notifyMcpKnowledgeChanged: vi.fn(),
-}));
-
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';

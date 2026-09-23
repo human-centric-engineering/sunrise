@@ -42,14 +42,13 @@ vi.mock('@/lib/api/context', () => ({
 }));
 
 vi.mock('@/lib/orchestration/mcp', () => ({
-  broadcastMcpPromptsChanged: vi.fn(),
   clearMcpPromptCache: vi.fn(),
   MAX_ENABLED_PROMPTS: 200,
 }));
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { broadcastMcpPromptsChanged, clearMcpPromptCache } from '@/lib/orchestration/mcp';
+import { clearMcpPromptCache } from '@/lib/orchestration/mcp';
 import {
   mockAdminUser,
   mockUnauthenticatedUser,
@@ -164,7 +163,6 @@ describe('POST /mcp/prompts', () => {
       })
     );
     expect(clearMcpPromptCache).toHaveBeenCalled();
-    expect(broadcastMcpPromptsChanged).toHaveBeenCalled();
   });
 
   it('rejects names that do not match the regex', async () => {

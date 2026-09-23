@@ -9,7 +9,6 @@
  * - action: 'delete' → deletes conversation + document in a transaction when doc is owned + in cleaning
  * - action: 'delete' when doc not in cleaning or not owned → 400 (ValidationError)
  * - Each action logs an admin-audit entry with the right action code
- * - Each successful path calls notifyMcpKnowledgeChanged()
  *
  * @see app/api/v1/admin/orchestration/knowledge/documents/[id]/cleanup/finalise/route.ts
  */
@@ -52,10 +51,6 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
 }));
 
-vi.mock('@/lib/orchestration/mcp/resource-update-hooks', () => ({
-  notifyMcpKnowledgeChanged: vi.fn(),
-}));
-
 vi.mock('@/lib/orchestration/knowledge/edit-lock', async () => {
   const actual = await vi.importActual<typeof import('@/lib/orchestration/knowledge/edit-lock')>(
     '@/lib/orchestration/knowledge/edit-lock'
@@ -70,7 +65,6 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { commitCleanupAndChunk } from '@/lib/orchestration/knowledge/document-manager';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { notifyMcpKnowledgeChanged } from '@/lib/orchestration/mcp/resource-update-hooks';
 import { getEditLockState } from '@/lib/orchestration/knowledge/edit-lock';
 import {
   mockAdminUser,
@@ -272,14 +266,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/cleanup/final
         })
       );
     });
-
-    it('calls notifyMcpKnowledgeChanged() after commit', async () => {
-      // Act
-      await POST(makeRequest(VALID_DOC_ID, { action: 'commit' }), makeContext(VALID_DOC_ID));
-
-      // Assert
-      expect(notifyMcpKnowledgeChanged).toHaveBeenCalledOnce();
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -320,14 +306,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/cleanup/final
       expect(logAdminAction).toHaveBeenCalledWith(
         expect.objectContaining({ action: 'knowledge_document.cleanup_commit' })
       );
-    });
-
-    it('calls notifyMcpKnowledgeChanged() after use-original', async () => {
-      // Act
-      await POST(makeRequest(VALID_DOC_ID, { action: 'use-original' }), makeContext(VALID_DOC_ID));
-
-      // Assert
-      expect(notifyMcpKnowledgeChanged).toHaveBeenCalledOnce();
     });
   });
 
@@ -377,14 +355,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/cleanup/final
         })
       );
     });
-
-    it('calls notifyMcpKnowledgeChanged() after delete', async () => {
-      // Act
-      await POST(makeRequest(VALID_DOC_ID, { action: 'delete' }), makeContext(VALID_DOC_ID));
-
-      // Assert
-      expect(notifyMcpKnowledgeChanged).toHaveBeenCalledOnce();
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -408,7 +378,6 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/:id/cleanup/final
       expect(data.success).toBe(false);
       expect(data.error.code).toBe('VALIDATION_ERROR');
       expect(prisma.$transaction).not.toHaveBeenCalled();
-      expect(notifyMcpKnowledgeChanged).not.toHaveBeenCalled();
     });
   });
 

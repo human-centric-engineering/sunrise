@@ -78,10 +78,6 @@ vi.mock('@/lib/orchestration/knowledge/parsers', () => ({
   requiresPreview: vi.fn((fileName: string) => fileName.toLowerCase().endsWith('.pdf')),
 }));
 
-vi.mock('@/lib/orchestration/mcp/resource-update-hooks', () => ({
-  notifyMcpKnowledgeChanged: vi.fn(),
-}));
-
 vi.mock('@/lib/orchestration/knowledge/resolveAgentDocumentAccess', () => ({
   invalidateAllAgentAccess: vi.fn(),
 }));

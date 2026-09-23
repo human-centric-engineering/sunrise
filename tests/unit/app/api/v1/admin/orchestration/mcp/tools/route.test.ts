@@ -49,14 +49,13 @@ vi.mock('@/lib/api/context', () => ({
 
 vi.mock('@/lib/orchestration/mcp', () => ({
   clearMcpToolCache: vi.fn(),
-  broadcastMcpToolsChanged: vi.fn(),
 }));
 
 // ─── Imports ─────────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { clearMcpToolCache, broadcastMcpToolsChanged } from '@/lib/orchestration/mcp';
+import { clearMcpToolCache } from '@/lib/orchestration/mcp';
 import {
   mockAdminUser,
   mockUnauthenticatedUser,
@@ -221,8 +220,6 @@ describe('POST /mcp/tools', () => {
 
     // test-review:accept no_arg_called — zero-arg side-effect trigger
     expect(clearMcpToolCache).toHaveBeenCalled();
-    // test-review:accept no_arg_called — zero-arg side-effect trigger
-    expect(broadcastMcpToolsChanged).toHaveBeenCalled();
   });
 
   it('creates tool with customName when provided', async () => {
