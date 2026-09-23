@@ -64,23 +64,42 @@ import type { LogEntry } from '@/types/admin';
  */
 export interface LogTenancy {
   orgId: () => string | null;
-  multi: () => boolean;
 }
 
 let tenancy: LogTenancy | null = null;
 
 /**
- * Teach the buffer about tenancy. Called by `lib/tenancy/context.ts` at its
- * module scope, so any realm that can enter an org can also stamp and filter.
+ * Teach the buffer whose call stack it is running in. Called by
+ * `lib/tenancy/context.ts` at its module scope, so any realm that can enter an
+ * org can also stamp and filter.
  *
- * **Unregistered means single-tenant behaviour**, which is the right answer
- * rather than a guess: a realm where the tenancy module was never loaded is a
- * realm where nothing entered an org, so every entry it holds is unstamped.
- * The reader is always the admin logs route, whose guard imports the tenancy
- * module, so the reading side is registered wherever it matters.
+ * **Unregistered fails closed at `multi`**, and that is deliberate. An earlier
+ * version read "no resolver" as "single-tenant, show everything", justified by
+ * "a realm without the tenancy module is a realm where nothing entered an
+ * org". That reasoning is wrong: under `NODE_ENV !== 'production'` the ring is
+ * shared across module instances through `globalThis`, so an unregistered
+ * realm can hold fully stamped entries another realm wrote — `next dev` at
+ * `multi`, a reader that reaches this module without pulling in the tenancy
+ * one, and it would have answered with every org's lines. Now the mode is read
+ * from the environment instead of the registration, so a missing resolver
+ * leaves the reader org `null` and it sees only unstamped entries.
  */
 export function registerLogTenancy(bridge: LogTenancy | null): void {
   tenancy = bridge;
+}
+
+/**
+ * Is this install running more than one org?
+ *
+ * Read from the environment rather than from `@/lib/env`, because this module
+ * may have **no runtime imports** (see the header) — and rather than from the
+ * registration above, because whether the scope rule applies must not depend
+ * on whether anything happened to load the tenancy module. It is the same
+ * value `isMultiTenant()` reads. In a browser bundle it is `undefined`, which
+ * is single, which is meaningless there and harmless.
+ */
+function isMultiMode(): boolean {
+  return process.env.TENANCY_MODE === 'multi';
 }
 
 /**
@@ -111,9 +130,8 @@ if (process.env.NODE_ENV !== 'production') {
  * If the buffer is full, the oldest entry is removed.
  *
  * The org is read here rather than passed in, so every producer is stamped by
- * the same rule and the logger needs to know nothing about tenancy. An
- * explicit `orgId` on the entry is honoured — a test, or a future caller
- * replaying a line, can say which org it belonged to.
+ * the same rule, the logger needs to know nothing about tenancy, and no caller
+ * can label a line with an org it is not running in.
  *
  * @param entry - Log entry (without id)
  */
@@ -129,7 +147,12 @@ export function addLogEntry(entry: Omit<LogEntry, 'id'> & { id?: string }): void
 
   const logEntry: LogEntry = {
     ...entry,
-    orgId: entry.orgId !== undefined ? entry.orgId : (tenancy?.orgId() ?? null),
+    // Always the call stack's own org, never the caller's word for it. An
+    // "honour an explicit orgId" branch stood here for one commit: it had no
+    // production caller — the logger's payload type does not carry the field —
+    // and what it actually provided was a way for code running in one org to
+    // write a line onto another org's Logs page.
+    orgId: tenancy?.orgId() ?? null,
     id,
   };
 
@@ -211,7 +234,7 @@ function isVisibleTo(entry: LogEntry, readerOrgId: string | null): boolean {
   // stamps that org's job lines with it, and they would have vanished from the
   // page. Same gate as the per-org retention windows (§108 t-713): the
   // per-org behaviour applies where there is something to confine.
-  if (!(tenancy?.multi() ?? false)) return true;
+  if (!isMultiMode()) return true;
   return (entry.orgId ?? null) === readerOrgId;
 }
 

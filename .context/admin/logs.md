@@ -233,19 +233,21 @@ it waits for it, since `multi` is not used until the phase is complete.
 
 ### What an org admin will not see at `multi`, and why
 
-Some lines about an org's own requests are produced _outside_ that org's
-scope, so they are unstamped and invisible to it:
+A request's **own 500 is visible** to the org that made it. The guards log
+through `handleAPIError` in their outer `catch`, which sits after
+`inTenantScope` has exited — so §108 t-714 re-enters the entered org around
+that call. Without it the org whose request failed would have been the one org
+unable to see its own error, on the page that exists for exactly that.
 
-- **A request's own 500.** `withAuth` / `withAdminAuth` catch and log through
-  `handleAPIError` in the outer `catch`, after `inTenantScope` has exited
-  (`lib/auth/guards.ts`), so the error line carries no org.
-- **A refused org entry**, logged before any scope is entered.
-- **The proxy's HTTP access lines**, which run before the guard.
+Two classes remain unstamped, both produced before an org is chosen and so
+invisible to org admins at `multi`:
 
-None of this is new behaviour in the logger — it is what scoping the _read_
-makes visible. Expect "my errors are missing from the Logs page" at `multi`
-until §111 gives the operator view that shows unstamped lines, or the guard
-logs inside the scope. Worth knowing before it is reported as a bug.
+- **A refused org entry** — a non-member, or a suspended org — logged by the
+  guard before any scope exists.
+- **The proxy's HTTP access lines**, which run ahead of the guard entirely.
+
+Neither is new behaviour in the logger; it is what scoping the _read_ makes
+visible. Both are the platform operator's to read, which is §111's to supply.
 
 ## Integration with Logger
 

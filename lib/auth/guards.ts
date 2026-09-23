@@ -835,6 +835,12 @@ export function withAuth(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return async (...args: any[]): Promise<Response> => {
+    // Declared outside the try so the catch can log inside the org the
+    // request entered (§108 t-714): `handleAPIError` runs in that catch, and a
+    // 500 logged outside the scope is stamped with no org, which at `multi`
+    // means the org whose request failed cannot see its own error.
+    let entry: OrgEntry | null = null;
+
     try {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const [request, context] = args;
@@ -851,8 +857,8 @@ export function withAuth(
       // Which org this request acts for (§106), decided once here and carried
       // two ways: on the principal for the policy, and as the tenant context
       // the handler runs inside. `null` is the platform-credential answer (an
-      // `admin` key) — no org scope; a refusal is a 403.
-      let entry: OrgEntry | null;
+      // `admin` key) — no org scope; a refusal is a 403. Declared above the
+      // try; see the note there.
 
       if (apiKey) {
         if (options?.scope && !hasScope(apiKey.scopes, options.scope)) {
@@ -947,7 +953,11 @@ export function withAuth(
         });
       });
     } catch (error) {
-      return handleAPIError(error);
+      // Logged inside the org the request entered, so the org that saw the 500
+      // is the org whose Logs page shows it (§108 t-714). `entry` is null when
+      // the failure came before an org was chosen, or from a platform
+      // credential, and then this is what it always was.
+      return await inTenantScope(entry, () => Promise.resolve(handleAPIError(error)));
     }
   };
 }
@@ -1185,6 +1195,12 @@ export function withAdminAuth(
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return async (...args: any[]): Promise<Response> => {
+    // Declared outside the try so the catch can log inside the org the
+    // request entered (§108 t-714): `handleAPIError` runs in that catch, and a
+    // 500 logged outside the scope is stamped with no org, which at `multi`
+    // means the org whose request failed cannot see its own error.
+    let entry: OrgEntry | null = null;
+
     try {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       const [request, context] = args;
@@ -1198,7 +1214,6 @@ export function withAdminAuth(
       const apiKey = await resolveApiKey(request as NextRequest);
       let session: AuthSession;
       let principal: AuthorizationPrincipal;
-      let entry: OrgEntry | null;
 
       if (apiKey) {
         // Kept in the guard as a FLOOR, not moved into the policy: it means a
@@ -1282,7 +1297,11 @@ export function withAdminAuth(
         });
       });
     } catch (error) {
-      return handleAPIError(error);
+      // Logged inside the org the request entered, so the org that saw the 500
+      // is the org whose Logs page shows it (§108 t-714). `entry` is null when
+      // the failure came before an org was chosen, or from a platform
+      // credential, and then this is what it always was.
+      return await inTenantScope(entry, () => Promise.resolve(handleAPIError(error)));
     }
   };
 }

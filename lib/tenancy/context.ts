@@ -96,10 +96,7 @@ export function isMultiTenant(): boolean {
 // it with a literal `require`, and the logger is imported by client
 // components, so an edge from the buffer to this module puts `pg` in the
 // browser bundle. `lib/admin/logs.ts` says the same thing at more length.
-registerLogTenancy({
-  orgId: () => getTenantContext()?.orgId ?? null,
-  multi: isMultiTenant,
-});
+registerLogTenancy({ orgId: () => getTenantContext()?.orgId ?? null });
 
 /** The context the current call stack runs in, or `null` when none was entered. */
 export function getTenantContext(): TenantContext | null {

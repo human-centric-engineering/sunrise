@@ -402,6 +402,50 @@ describe('the scope', () => {
     expect(getTenantContext()).toBeNull();
   });
 
+  it('is still entered when the handler throws, so the org sees its own 500 (§108 t-714)', async () => {
+    // handleAPIError logs from the guard's outer catch. Logged outside the
+    // scope, that line carries no org — and once the admin Logs page is
+    // scoped to the reading org, the org whose request failed is the one org
+    // that cannot see its own error.
+    mockEnv.TENANCY_MODE = 'multi';
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', OTHER));
+    memberOf(ORG_ADMIN_ROLE);
+
+    const loggedIn: (string | null)[] = [];
+    vi.mocked(logger.error).mockImplementation(() => {
+      loggedIn.push(getTenantContext()?.orgId ?? null);
+    });
+
+    const handler = withAuth(() => {
+      throw new Error('handler blew up');
+    }, NOT_ABOUT_OWNERSHIP);
+
+    const response = await handler(request());
+
+    expect(response.status).toBe(500);
+    expect(loggedIn).toEqual([OTHER]);
+    // And nothing leaks past the response.
+    expect(getTenantContext()).toBeNull();
+  });
+
+  it('logs outside any org when the failure came before one was chosen', async () => {
+    // A throw from the session read itself: there is no org to enter, and the
+    // catch must not invent one.
+    mockEnv.TENANCY_MODE = 'multi';
+    vi.mocked(auth.api.getSession).mockRejectedValue(new Error('auth is down'));
+
+    const loggedIn: (string | null)[] = [];
+    vi.mocked(logger.error).mockImplementation(() => {
+      loggedIn.push(getTenantContext()?.orgId ?? null);
+    });
+
+    const handler = withAuth(() => ok(), NOT_ABOUT_OWNERSHIP);
+    const response = await handler(request());
+
+    expect(response.status).toBe(500);
+    expect(loggedIn).toEqual([null]);
+  });
+
   it('is entered before the handler and the policy alike: the policy sees the same org', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', OTHER));
     memberOf(ORG_ADMIN_ROLE);

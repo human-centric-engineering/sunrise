@@ -21,11 +21,21 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+// Two readers of one variable, on purpose: `lib/tenancy/context.ts` goes
+// through the validated `env` module, and `lib/admin/logs.ts` reads
+// `process.env` directly because it may have no runtime imports. Both are
+// stubbed here, and a test below pins that they agree.
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
 
+/** Put the install in a mode, for both readers of it. */
+function setMode(mode: 'single' | 'multi'): void {
+  mockEnv.TENANCY_MODE = mode;
+  vi.stubEnv('TENANCY_MODE', mode);
+}
+
 import { addLogEntry, getLogEntries, clearLogBuffer, getBufferSize } from '@/lib/admin/logs';
-import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
+import { isMultiTenant, runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import type { LogEntry } from '@/types/admin';
 
@@ -38,7 +48,7 @@ function entry(message: string, over: Partial<Omit<LogEntry, 'id'>> = {}): Omit<
 
 beforeEach(() => {
   clearLogBuffer();
-  mockEnv.TENANCY_MODE = 'multi';
+  setMode('multi');
 });
 
 describe('at multi', () => {
@@ -120,7 +130,7 @@ describe('at multi', () => {
 
 describe('at single', () => {
   beforeEach(() => {
-    mockEnv.TENANCY_MODE = 'single';
+    setMode('single');
   });
 
   it('shows the unstamped lines, so the page keeps showing what it always did', async () => {
@@ -176,11 +186,20 @@ describe('the buffer stays out of the browser bundle', () => {
   // and `npm run build` failed with seven unresolved Node builtins —
   // `lib/db/client.ts` → `pg` → `dns`/`fs`/`net`/`tls`. type-check, lint and
   // vitest were all green for it.
-  const RUNTIME_IMPORT = /^import\s+(?!type\b)/;
+  //
+  // `require(` and `await import(` are in the detector because the coupling
+  // this guard prevents is itself written as a `require` — a bundler resolves
+  // a literal specifier whichever form it takes, so a lazy
+  // `const { x } = require('@/lib/tenancy/context')` inside a function would
+  // reproduce the same build failure while an import-only regex stayed green.
+  const RUNTIME_IMPORT = /^import\s+(?!type\b)|\brequire\s*\(|\bimport\s*\(/;
 
-  it('lib/admin/logs.ts has no runtime imports', () => {
+  it('lib/admin/logs.ts reaches no other module at runtime', () => {
     const source = readFileSync(resolve(process.cwd(), 'lib/admin/logs.ts'), 'utf8');
-    const runtimeImports = source.split('\n').filter((line) => RUNTIME_IMPORT.test(line.trim()));
+    const runtimeImports = source
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('*') && !line.trim().startsWith('//'))
+      .filter((line) => RUNTIME_IMPORT.test(line.trim()));
 
     expect(runtimeImports, 'tenancy reaches this module by registration, not import').toEqual([]);
   });
@@ -195,12 +214,24 @@ describe('the buffer stays out of the browser bundle', () => {
     expect(staticImports).toEqual([]);
   });
 
-  it('proves it can fail — the detector sees a runtime import', () => {
-    // A scan that cannot demonstrate a hit is not evidence of a clean result.
-    expect(RUNTIME_IMPORT.test("import { getTenantContext } from '@/lib/tenancy/context';")).toBe(
-      true
-    );
-    expect(RUNTIME_IMPORT.test("import type { LogEntry } from '@/types/admin';")).toBe(false);
+  it.each([
+    ["import { getTenantContext } from '@/lib/tenancy/context';", true],
+    ["const { getTenantContext } = require('@/lib/tenancy/context');", true],
+    ["const mod = await import('@/lib/tenancy/context');", true],
+    ["import type { LogEntry } from '@/types/admin';", false],
+  ])('proves it can fail — %s is a hit: %s', (line, expected) => {
+    expect(RUNTIME_IMPORT.test(line)).toBe(expected);
+  });
+
+  it('agrees with the tenancy module about what multi means', () => {
+    // The buffer reads `process.env.TENANCY_MODE` and everything else reads the
+    // validated `env` module. One variable, two readers, so pin that they
+    // answer the same question — a rename on one side would otherwise make the
+    // scope rule silently stop applying.
+    setMode('multi');
+    expect(isMultiTenant()).toBe(true);
+    setMode('single');
+    expect(isMultiTenant()).toBe(false);
   });
 });
 
@@ -213,20 +244,27 @@ describe('the stamp', () => {
   });
 
   it('is null for a line produced outside any scope', async () => {
-    mockEnv.TENANCY_MODE = 'single';
+    setMode('single');
     addLogEntry(entry('boot line'));
 
     expect(getLogEntries({ limit: 100 }).entries[0].orgId).toBeNull();
   });
 
-  it('honours an explicit org on the entry rather than overwriting it', async () => {
-    // A replayed or reconstructed line can say which org it belonged to; the
-    // ambient scope must not silently relabel it.
-    await runAsOrg(ORG_A, async () => addLogEntry(entry('replayed', { orgId: ORG_B })));
+  it('ignores an org the caller supplies, so nobody can write onto another org’s page', async () => {
+    // The stamp is the call stack's, never the caller's word for it. An
+    // "honour an explicit orgId" branch stood here for one commit, and what it
+    // actually provided was a mislabel primitive: code running in org A
+    // writing a line that appears on org B's Logs page.
+    await runAsOrg(ORG_A, async () => addLogEntry(entry('claims to be B', { orgId: ORG_B })));
 
     const asB = await runAsOrg(ORG_B, async () =>
       getLogEntries({ limit: 100 }).entries.map((e) => e.message)
     );
-    expect(asB).toEqual(['replayed']);
+    const asA = await runAsOrg(ORG_A, async () =>
+      getLogEntries({ limit: 100 }).entries.map((e) => e.message)
+    );
+
+    expect(asB).toEqual([]);
+    expect(asA).toEqual(['claims to be B']);
   });
 });
