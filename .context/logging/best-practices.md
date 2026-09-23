@@ -311,19 +311,28 @@ The logger automatically pushes entries to the admin log buffer via `lib/logging
 **Key characteristics**:
 
 - **Ring buffer**: When full, oldest entries are automatically removed
-- **Max size**: 1000 entries
+- **Max size**: 1000 entries, shared by every org
 - **Persistence**: Survives hot reloads in development, resets on server restart
 - **Non-blocking**: Failures to write to buffer are silently ignored
+- **Scoped to the reading org** (§108 t-714): each entry is stamped with the
+  org its call stack ran in, and `getLogEntries` returns only the reader's —
+  see [the admin guide](../admin/logs.md#whose-lines-a-reader-sees) for the
+  rules, including what `null` means on each side of `TENANCY_MODE`
 
 ### Available Functions
 
-| Function                 | Description                                                    |
-| ------------------------ | -------------------------------------------------------------- |
-| `addLogEntry(entry)`     | Add a log entry to the buffer (called automatically by logger) |
-| `getLogEntries(options)` | Get entries with filtering (level, search) and pagination      |
-| `clearLogBuffer()`       | Clear all entries from the buffer                              |
-| `getBufferSize()`        | Get current number of entries in buffer                        |
-| `getMaxBufferSize()`     | Get maximum buffer capacity (1000)                             |
+| Function                     | Description                                                                             |
+| ---------------------------- | --------------------------------------------------------------------------------------- |
+| `addLogEntry(entry)`         | Add a log entry, stamped with the current org (called automatically by logger)          |
+| `getLogEntries(options)`     | Get **the reading org's** entries, with filtering (level, search) and pagination        |
+| `clearLogBuffer()`           | Clear all entries from the buffer, every org's                                          |
+| `getBufferSize()`            | Current number of entries in the buffer, every org's — the ring's occupancy, not a view |
+| `registerLogTenancy(bridge)` | Teach the buffer about orgs. Called by `lib/tenancy/context.ts`; nothing else should    |
+
+**Calling `getLogEntries` outside a request** — from a script or a job — returns
+only unstamped entries at `multi`, because the caller is in no org. That is the
+rule working, not an empty buffer.
+| `getMaxBufferSize()` | Get maximum buffer capacity (1000) |
 
 ### Example: Querying Logs
 

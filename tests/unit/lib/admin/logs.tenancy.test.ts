@@ -21,21 +21,25 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// Two readers of one variable, on purpose: `lib/tenancy/context.ts` goes
-// through the validated `env` module, and `lib/admin/logs.ts` reads
-// `process.env` directly because it may have no runtime imports. Both are
-// stubbed here, and a test below pins that they agree.
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
 
-/** Put the install in a mode, for both readers of it. */
+/**
+ * Put the install in a mode. One reader — the buffer asks the tenancy module
+ * through the registration, so this is the only place the mode comes from.
+ */
 function setMode(mode: 'single' | 'multi'): void {
   mockEnv.TENANCY_MODE = mode;
-  vi.stubEnv('TENANCY_MODE', mode);
 }
 
-import { addLogEntry, getLogEntries, clearLogBuffer, getBufferSize } from '@/lib/admin/logs';
-import { isMultiTenant, runAsOrg, runAsSystem } from '@/lib/tenancy/context';
+import {
+  addLogEntry,
+  getLogEntries,
+  clearLogBuffer,
+  getBufferSize,
+  registerLogTenancy,
+} from '@/lib/admin/logs';
+import { getTenantContext, isMultiTenant, runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import type { LogEntry } from '@/types/admin';
 
@@ -223,15 +227,23 @@ describe('the buffer stays out of the browser bundle', () => {
     expect(RUNTIME_IMPORT.test(line)).toBe(expected);
   });
 
-  it('agrees with the tenancy module about what multi means', () => {
-    // The buffer reads `process.env.TENANCY_MODE` and everything else reads the
-    // validated `env` module. One variable, two readers, so pin that they
-    // answer the same question — a rename on one side would otherwise make the
-    // scope rule silently stop applying.
-    setMode('multi');
-    expect(isMultiTenant()).toBe(true);
-    setMode('single');
-    expect(isMultiTenant()).toBe(false);
+  it('confines rather than exposes when no resolver was registered', async () => {
+    // The fail-closed default, asserted on the module's own behaviour rather
+    // than on a claim about it. With no resolver the buffer cannot know the
+    // mode, and the strict answer is `multi`: a reader with no org sees only
+    // unstamped entries, never a stamped one another realm wrote into the
+    // shared dev ring.
+    // Written by a realm that HAS a resolver — the dev case, where the ring is
+    // shared across module instances through globalThis.
+    await runAsOrg(ORG_A, async () => addLogEntry(entry('belongs to A')));
+    addLogEntry(entry('unstamped'));
+
+    registerLogTenancy(null);
+    try {
+      expect(getLogEntries({ limit: 100 }).entries.map((e) => e.message)).toEqual(['unstamped']);
+    } finally {
+      registerLogTenancy({ orgId: () => getTenantContext()?.orgId ?? null, multi: isMultiTenant });
+    }
   });
 });
 

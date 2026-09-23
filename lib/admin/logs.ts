@@ -64,6 +64,7 @@ import type { LogEntry } from '@/types/admin';
  */
 export interface LogTenancy {
   orgId: () => string | null;
+  multi: () => boolean;
 }
 
 let tenancy: LogTenancy | null = null;
@@ -73,33 +74,32 @@ let tenancy: LogTenancy | null = null;
  * `lib/tenancy/context.ts` at its module scope, so any realm that can enter an
  * org can also stamp and filter.
  *
- * **Unregistered fails closed at `multi`**, and that is deliberate. An earlier
- * version read "no resolver" as "single-tenant, show everything", justified by
- * "a realm without the tenancy module is a realm where nothing entered an
- * org". That reasoning is wrong: under `NODE_ENV !== 'production'` the ring is
- * shared across module instances through `globalThis`, so an unregistered
- * realm can hold fully stamped entries another realm wrote — `next dev` at
- * `multi`, a reader that reaches this module without pulling in the tenancy
- * one, and it would have answered with every org's lines. Now the mode is read
- * from the environment instead of the registration, so a missing resolver
- * leaves the reader org `null` and it sees only unstamped entries.
+ * **Unregistered means `multi`**, which is the confining answer, and it took
+ * two review rounds to land on it. The first version read "no resolver" as
+ * "single-tenant, show everything", justified by "a realm without the tenancy
+ * module is a realm where nothing entered an org" — wrong, because under
+ * `NODE_ENV !== 'production'` the ring is shared across module instances
+ * through `globalThis`, so an unregistered realm can hold fully stamped
+ * entries another realm wrote. The second read the mode from
+ * `process.env.TENANCY_MODE` instead, which moved the fail-open rather than
+ * removing it: two readers of one variable, and any divergence answers
+ * "single" and shows every org's lines.
+ *
+ * So there is **one** reader of the mode, the same `isMultiTenant()`
+ * everything else uses, reached through this registration — and no resolver
+ * means the strict answer. The cost is that a realm which never loaded the
+ * tenancy module hides stamped entries it holds; that is `next dev` only
+ * (production gives each realm its own ring), it is not a leak, and the
+ * reading path — the admin logs route, whose guard imports the tenancy module
+ * — always has a resolver.
+ *
+ * **The writer side has the same realm split**: a realm that stamps without a
+ * resolver writes `null` onto lines produced inside a real org scope, so in
+ * `next dev` at `multi` they vanish from their own org's page. Also not a
+ * leak, and also only reachable where the buffer is shared.
  */
 export function registerLogTenancy(bridge: LogTenancy | null): void {
   tenancy = bridge;
-}
-
-/**
- * Is this install running more than one org?
- *
- * Read from the environment rather than from `@/lib/env`, because this module
- * may have **no runtime imports** (see the header) — and rather than from the
- * registration above, because whether the scope rule applies must not depend
- * on whether anything happened to load the tenancy module. It is the same
- * value `isMultiTenant()` reads. In a browser bundle it is `undefined`, which
- * is single, which is meaningless there and harmless.
- */
-function isMultiMode(): boolean {
-  return process.env.TENANCY_MODE === 'multi';
 }
 
 /**
@@ -182,10 +182,14 @@ export function getLogEntries(options: {
   // a platform credential at `multi` enters no org and must get an empty page,
   // not a 500.
   const readerOrgId = tenancy?.orgId() ?? null;
+  // Resolved once, not per entry: `isVisibleTo` runs for every line in the
+  // ring, and a thousand calls through the registration to answer one question
+  // is a thousand answers that cannot differ.
+  const multi = tenancy?.multi() ?? true;
 
   // The scope filter comes first: `total` is what this reader can see, so the
   // pagination below counts their lines and not the process's.
-  let filtered = logBuffer.filter((entry) => isVisibleTo(entry, readerOrgId));
+  let filtered = logBuffer.filter((entry) => isVisibleTo(entry, readerOrgId, multi));
 
   if (level) {
     filtered = filtered.filter((entry) => entry.level === level);
@@ -225,7 +229,7 @@ export function getLogEntries(options: {
  * everyone's at `single`, where there is one org and nothing to confine, and
  * nobody's at `multi` except a reader who is also outside an org.
  */
-function isVisibleTo(entry: LogEntry, readerOrgId: string | null): boolean {
+function isVisibleTo(entry: LogEntry, readerOrgId: string | null, multi: boolean): boolean {
   // At `single` the page shows the process's lines, exactly as it always has.
   // The narrower rule below would have been *nearly* right there — the install
   // org reading its own lines plus the unstamped ones — and wrong in the one
@@ -234,7 +238,7 @@ function isVisibleTo(entry: LogEntry, readerOrgId: string | null): boolean {
   // stamps that org's job lines with it, and they would have vanished from the
   // page. Same gate as the per-org retention windows (§108 t-713): the
   // per-org behaviour applies where there is something to confine.
-  if (!isMultiMode()) return true;
+  if (!multi) return true;
   return (entry.orgId ?? null) === readerOrgId;
 }
 

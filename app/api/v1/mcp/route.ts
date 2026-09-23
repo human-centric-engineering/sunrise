@@ -117,7 +117,26 @@ async function withMcpKey(
     return jsonRpcErrorResponse(JsonRpcErrorCode.UNAUTHORIZED, 'Unauthorized', 401);
   }
 
-  return runAsOrg(auth.orgId, () => handler(auth), { source: 'mcp-key' });
+  // The handler's own failure is caught INSIDE the org (§108 t-714). Each
+  // verb's outer catch sits outside `runAsOrg`, so an error that reached it
+  // was logged with no org — and once the admin Logs page is scoped to the
+  // reading org, the org whose MCP call failed is the one org that cannot see
+  // it. The outer catches remain for what happens before an org is known:
+  // `authenticateMcpRequest` itself.
+  return runAsOrg(
+    auth.orgId,
+    async () => {
+      try {
+        return await handler(auth);
+      } catch (error) {
+        logger.error('MCP transport: unhandled error', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return handleAPIError(error);
+      }
+    },
+    { source: 'mcp-key' }
+  );
 }
 
 function statelessProtocolVersion(request: NextRequest): McpProtocolVersion {

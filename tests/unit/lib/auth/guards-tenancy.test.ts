@@ -428,6 +428,30 @@ describe('the scope', () => {
     expect(getTenantContext()).toBeNull();
   });
 
+  it('does the same in withAdminAuth — the guard serving the Logs page itself', async () => {
+    // Both guards or neither: this seam's own docblock records that a rule
+    // applied to one and not the other has already shipped three times. And
+    // withAdminAuth is what serves /api/v1/admin/logs, so its 500s are the
+    // ones an org admin is likeliest to go looking for.
+    mockEnv.TENANCY_MODE = 'multi';
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', OTHER));
+    memberOf(ORG_ADMIN_ROLE);
+
+    const loggedIn: (string | null)[] = [];
+    vi.mocked(logger.error).mockImplementation(() => {
+      loggedIn.push(getTenantContext()?.orgId ?? null);
+    });
+
+    const handler = withAdminAuth(() => {
+      throw new Error('admin handler blew up');
+    }, NOT_ABOUT_OWNERSHIP);
+
+    const response = await handler(request());
+
+    expect(response.status).toBe(500);
+    expect(loggedIn).toEqual([OTHER]);
+  });
+
   it('logs outside any org when the failure came before one was chosen', async () => {
     // A throw from the session read itself: there is no org to enter, and the
     // catch must not invent one.

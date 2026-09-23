@@ -18,6 +18,17 @@ release process.
 
 ### Added
 
+- **`registerLogTenancy(bridge)` and the `LogTenancy` type on
+  `lib/admin/logs.ts`** (multi-tenancy §108 t-714) — how the admin log buffer
+  learns which org a line was produced in, and whether the install runs more
+  than one. `lib/tenancy/context.ts` registers it at module scope; nothing else
+  needs to call it. It exists as a registration rather than an import because
+  `lib/admin/logs.ts` must reach no other module at runtime: the logger pulls
+  it in with a literal `require` and is itself imported by client components,
+  so an import here puts `lib/db/client.ts` — and `pg` — in the browser
+  bundle. **Forks:** a test that does `vi.mock('@/lib/admin/logs', …)` must now
+  return `registerLogTenancy`, or importing anything that loads the tenancy
+  module throws.
 - **Each org can set its own retention windows** (multi-tenancy §108 t-713).
   `PATCH /api/v1/admin/orgs/[id]` takes
   `settings: { retention: { … } }` — the five windows the tenant retention

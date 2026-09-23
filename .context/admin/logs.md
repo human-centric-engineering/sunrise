@@ -245,6 +245,9 @@ invisible to org admins at `multi`:
 - **A refused org entry** — a non-member, or a suspended org — logged by the
   guard before any scope exists.
 - **The proxy's HTTP access lines**, which run ahead of the guard entirely.
+- **An MCP transport failure before the key is authenticated**, for the same
+  reason: there is no org yet. A failure _after_ it is inside the org, like
+  the guards' (`app/api/v1/mcp/route.ts`).
 
 Neither is new behaviour in the logger; it is what scoping the _read_ makes
 visible. Both are the platform operator's to read, which is §111's to supply.
