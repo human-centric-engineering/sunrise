@@ -22,6 +22,7 @@ proves it by sweep rather than by sentence.
 | The org this call stack acts for             | `getTenantContext()` (nullable) / `requireTenantContext()` — `lib/tenancy/context.ts` |
 | Run something as an org / as the platform    | `runAsOrg(orgId, fn)` / `runAsSystem(reason, fn)` — same module                       |
 | Iterate every active org, one scope each     | `forEachOrg(fn)` — same module; the maintenance tick's per-org jobs run through it    |
+| Arm a timer that outlives the request        | `runDetached(fn)` — same module; the store is captured when `setInterval` is called   |
 | Is this install multi-tenant?                | `isMultiTenant()` — same module (`env.TENANCY_MODE`)                                  |
 | How the guards decide the org for a request  | `enterSessionOrg` / `enterApiKeyOrg` — `lib/tenancy/entry.ts`                         |
 | The org facts the policy is told             | `viewer.orgId` / `viewer.orgRole` on `AuthorizationPrincipal`; `scope.org`            |
@@ -115,6 +116,10 @@ interface TenantContext {
   sites are enumerable by grep, and what an audit needs is that nothing but
   the lookup — and the credential's last-used touch, which rides with it —
   runs inside one.
+- **`runDetached(fn)`** (§108 t-715) — runs `fn` outside every scope, for
+  arming something whose lifetime is the **process's** from inside a request.
+  Synchronous and unawaited, unlike the runners above: its callers arm timers
+  rather than run queries. See "A timer is stamped where it was armed" below.
 - **`forEachOrg(fn)`** — one `runAsOrg` scope per `ACTIVE` org, sequential on
   purpose (per-org batch caps are meaningless if every org runs at once).
   The maintenance tick's per-org jobs run through it (§108 t-711) — see
@@ -405,12 +410,67 @@ question, and it is the reviewer's.** A cache keyed by a slug, a name or any
 other label two orgs can both use is the shape to look for; it is what took
 the event-hook cache a minute of every org dispatching one org's webhooks.
 
+## A timer is stamped where it was armed, not where it fires
+
+`runAsOrg` scopes an async subtree, and a timer callback is not in it — it is a
+new one, starting from the store that was captured **when `setInterval` was
+called**. So a timer armed inside a request runs, for ever, as that request:
+
+- every line it logs is attributed to that org on the admin Logs page
+  (§108 t-714 stamps entries from the context);
+- at `multi` every query it makes is scoped to that org by the data layer.
+
+The pattern that produces it is the one this codebase uses deliberately.
+A lazily constructed singleton is built by whichever request reaches it first
+(`platform.seam-realm` — a registry filled at boot is empty in the realm that
+reads it), so its constructor runs inside that request's org, and anything it
+arms inherits it until the process restarts. "Construct it eagerly" is
+therefore not the fix.
+
+**Arm it through `runDetached`.** One call, at the arming site; the callback
+body needs no change.
+
+```typescript
+// ❌ Inherits the org of whichever request built the singleton, for ever.
+this.evictionTimer = setInterval(() => this.evictExpired(), EVICTION_INTERVAL_MS);
+
+// ✅ Every tick runs outside any scope, so its lines are unstamped.
+this.evictionTimer = runDetached(() =>
+  setInterval(() => this.evictExpired(), EVICTION_INTERVAL_MS)
+);
+```
+
+**The question is not "is this a timer" but "does this outlive the request that
+armed it".** Most timers here do not, and those must KEEP their context:
+
+| Timer                                                                            | Lives as long as | Scope                                                                   |
+| -------------------------------------------------------------------------------- | ---------------- | ----------------------------------------------------------------------- |
+| `McpSessionManager`'s eviction sweep                                             | the process      | **detached** — one in-memory map of every org's sessions, no database   |
+| An execution's lease heartbeat (`lib/orchestration/engine/lease.ts`)             | one execution    | the execution's org — it writes that org's lease row                    |
+| A hook or webhook delivery retry (`hooks/registry.ts`, `webhooks/dispatcher.ts`) | one delivery     | the delivery's org — it reads and writes that org's rows                |
+| The maintenance tick's overrun watchdog                                          | one tick         | the tick's own scope; its warning belongs to whoever triggered the tick |
+| A `fetch` abort, an SSE keepalive, a retry backoff sleep                         | one request      | the request's; nothing tenant-visible happens in the callback           |
+
+Detaching one of the lower rows would not fix an attribution, it would break a
+write: at `multi` a create with no org in context is refused before any SQL.
+
+**Not `runAsSystem`** for the top row either, though it would work. That logs
+its reason at `info` on every entry — once every few minutes, for the life of
+the process — and it is the audited _database bypass_: at `multi` it sets
+`app.bypass_rls`, a claim about what the code may read that arming a timer is
+not making. `runDetached` enters no scope, so a detached caller that asks for an
+org is refused like any other path nobody taught to enter one.
+
 ## Proving it
 
 - [`tests/unit/lib/tenancy/context.test.ts`](../../tests/unit/lib/tenancy/context.test.ts)
   — the six ALS behaviours, both modes of `requireTenantContext`,
   `runAsSystem`'s logged reason, `forEachOrg`'s one-scope-per-active-org,
-  and the seam keeping a non-async callback's context.
+  and the seam keeping a non-async callback's context. Plus `runDetached` with
+  REAL timers in both directions: a timer armed through it fires with no org,
+  and the same timer armed without it fires with the arming request's — the
+  propagation §108 t-715 exists to interrupt, pinned so the primitive cannot
+  quietly become dead weight.
 - [`tests/unit/lib/orchestration/maintenance/job-scope.test.ts`](../../tests/unit/lib/orchestration/maintenance/job-scope.test.ts),
   [`platform-jobs.test.ts`](../../tests/unit/lib/orchestration/maintenance/platform-jobs.test.ts),
   [`app-jobs.test.ts`](../../tests/unit/lib/orchestration/maintenance/app-jobs.test.ts),
@@ -443,6 +503,11 @@ the event-hook cache a minute of every org dispatching one org's webhooks.
   — the posture manifest against the `lib/` tree, both directions, preceded by
   a block of self-tests proving the scanner can report before a clean result
   is trusted (each one is a shape that fooled an earlier version of it).
+- [`tests/unit/lib/orchestration/mcp/session-manager.test.ts`](../../tests/unit/lib/orchestration/mcp/session-manager.test.ts)
+  — the eviction timer armed with no org though the manager was constructed
+  inside one, asserted on the store at the arming call (which is what decides
+  the callback's, not a proxy for it), and the constructing request keeping its
+  own org afterwards.
 - [`tests/unit/lib/orchestration/hooks/registry.tenancy.test.ts`](../../tests/unit/lib/orchestration/hooks/registry.tenancy.test.ts)
   — two orgs through the real context: each dispatches its own hook, signed
   with its own secret, verified against the real signing scheme.

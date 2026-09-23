@@ -18,6 +18,19 @@ release process.
 
 ### Added
 
+- **`runDetached(fn)` on `lib/tenancy/context.ts`** (multi-tenancy §108 t-715)
+  — runs `fn` outside every tenant scope, for arming something whose lifetime
+  is the **process's** from inside a request. An `AsyncLocalStorage` store is
+  captured when `setInterval` is called, so a repeating timer armed inside
+  `runAsOrg` carries that org for the life of the process: every line it logs
+  is attributed to whichever org made the first request after boot, and at
+  `multi` every query it makes is scoped to them. `McpSessionManager`'s
+  eviction sweep is armed through it, so its "evicted expired sessions" lines
+  are now unstamped rather than one arbitrary org's. Use it only for something
+  that **outlives** its unit of work: a lease heartbeat, a delivery retry or a
+  `fetch` abort must keep the context it was armed in, because its callback
+  writes that org's rows. Not `runAsSystem` — that logs a reason on every entry
+  and is the audited database bypass, which arming a timer is not asking for.
 - **`registerLogTenancy(bridge)` and the `LogTenancy` type on
   `lib/admin/logs.ts`** (multi-tenancy §108 t-714) — how the admin log buffer
   learns which org a line was produced in, and whether the install runs more

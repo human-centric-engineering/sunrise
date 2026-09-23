@@ -529,7 +529,8 @@ nothing to evict or terminate. See
 - Created on `initialize`, identified by `Mcp-Session-Id` header
 - `maxSessionsPerKey` enforced per API key
 - Sessions lost on restart (clients re-initialize per MCP spec)
-- Expired sessions are evicted lazily on `getSession()` access, not by a proactive timer — an expired session may still appear in the admin sessions list until it is next accessed or the list is refreshed
+- Expired sessions are evicted two ways: lazily on `getSession()` access, and by a 5-minute sweep the manager arms in its constructor. So an expired session can still appear in the admin sessions list for up to five minutes after its TTL, until it is next accessed or the sweep reaches it. (This line previously said there was no proactive timer, which was never true of the code.)
+- The sweep is armed through `runDetached` (§108 t-715). The manager is a lazily constructed singleton, so the first MCP request after boot builds it — inside that request's org — and an `AsyncLocalStorage` store is captured when `setInterval` is called, so without detaching it every "evicted expired sessions" line would be attributed to that one org for the life of the process. See [Tenant context](../tenancy/context.md#a-timer-is-stamped-where-it-was-armed-not-where-it-fires).
 - Admin can force-terminate sessions via `DELETE /api/v1/admin/orchestration/mcp/sessions/:id` or the Sessions page UI
 
 ## Admin Pages

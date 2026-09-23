@@ -104,13 +104,13 @@ let tenancy: LogTenancy | null = null;
  * leak, and also only reachable where the buffer is shared.
  *
  * **A timer is stamped where it was armed, not where it fires.** An
- * `AsyncLocalStorage` propagates into `setInterval`, so a process-lifetime
- * timer first armed inside a request — a lazily constructed singleton, which
- * is the pattern this codebase uses for realm safety — inherits that request's
- * org for the life of the process, and every line it writes is attributed to
- * it. `McpSessionManager`'s eviction timer is the known instance (§108 t-715);
- * anything else that arms a repeating timer from inside a request has
- * the same shape and should arm it outside one.
+ * `AsyncLocalStorage` propagates into `setInterval`, so a timer that outlives
+ * the request which armed it would attribute every line it writes to that one
+ * org — for the life of the process, where the holder is a lazily constructed
+ * singleton. Those timers are armed through `runDetached`
+ * (`lib/tenancy/context.ts`, §108 t-715), so their lines are unstamped and read
+ * like any other line produced outside a scope. A timer whose lifetime *is* its
+ * unit of work keeps the org it was armed in, which for it is the right answer.
  */
 export function registerLogTenancy(bridge: LogTenancy | null): void {
   tenancy = bridge;
