@@ -25,8 +25,12 @@
  *   applies at `multi` only, which is where something confines it: hiding
  *   anything at `single` would empty the Logs page of what an operator opens
  *   it for while protecting nothing, since there is one org;
- * - at `multi`, only to a reader who is themselves outside an org, which today
- *   means a platform credential. An org admin never sees them.
+ * - at `multi`, only to a reader who is themselves outside an org — which in
+ *   practice means a platform-admin API key and NOT a browser, because
+ *   `enterSessionOrg` refuses a session with no active org at `multi`. So a
+ *   failing maintenance tick leaves `/admin/logs` empty of any trace of it for
+ *   every human looking at the page. That is the owner's ruling (2026-09-23)
+ *   and §111's to fix with an operator view, not an accident.
  *
  * A platform operator therefore has **no** cross-org view through this page at
  * `multi`, which is the owner's ruling (2026-09-23) and §111's to supply.
@@ -97,6 +101,15 @@ let tenancy: LogTenancy | null = null;
  * resolver writes `null` onto lines produced inside a real org scope, so in
  * `next dev` at `multi` they vanish from their own org's page. Also not a
  * leak, and also only reachable where the buffer is shared.
+ *
+ * **A timer is stamped where it was armed, not where it fires.** An
+ * `AsyncLocalStorage` propagates into `setInterval`, so a process-lifetime
+ * timer first armed inside a request — a lazily constructed singleton, which
+ * is the pattern this codebase uses for realm safety — inherits that request's
+ * org for the life of the process, and every line it writes is attributed to
+ * it. `McpSessionManager`'s eviction timer is the known instance (#840);
+ * anything else that arms a repeating timer from inside a request has
+ * the same shape and should arm it outside one.
  */
 export function registerLogTenancy(bridge: LogTenancy | null): void {
   tenancy = bridge;

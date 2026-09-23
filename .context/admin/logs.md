@@ -239,8 +239,7 @@ through `handleAPIError` in their outer `catch`, which sits after
 that call. Without it the org whose request failed would have been the one org
 unable to see its own error, on the page that exists for exactly that.
 
-Two classes remain unstamped, both produced before an org is chosen and so
-invisible to org admins at `multi`:
+Three classes stay unstamped, each produced before an org is chosen:
 
 - **A refused org entry** — a non-member, or a suspended org — logged by the
   guard before any scope exists.
@@ -249,8 +248,21 @@ invisible to org admins at `multi`:
   reason: there is no org yet. A failure _after_ it is inside the org, like
   the guards' (`app/api/v1/mcp/route.ts`).
 
-Neither is new behaviour in the logger; it is what scoping the _read_ makes
-visible. Both are the platform operator's to read, which is §111's to supply.
+Boot-time lines and everything a `runAsSystem` job writes — the whole
+maintenance tick — are unstamped too, for the same reason.
+
+**At `multi`, nobody reaches any of that through the UI.** The table above says
+an unstamped line is visible to "a reader with no org", and the only reader
+that can be is a platform-admin **API key**: `enterSessionOrg` refuses a
+session with no active org at `multi`, so every browser-authenticated admin
+always has one. In practice that means `curl` with a platform key, and it means
+a failing nightly tick leaves `/admin/logs` empty of any trace for every human
+looking at it. Giving the page a system view is §111's, and the owner ruled
+(2026-09-23) that it waits for §111 — `multi` is not used until the phase is
+complete.
+
+None of this is new behaviour in the logger; it is what scoping the _read_
+makes visible.
 
 ## Integration with Logger
 

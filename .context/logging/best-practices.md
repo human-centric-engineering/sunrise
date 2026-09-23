@@ -328,11 +328,11 @@ The logger automatically pushes entries to the admin log buffer via `lib/logging
 | `clearLogBuffer()`           | Clear all entries from the buffer, every org's                                          |
 | `getBufferSize()`            | Current number of entries in the buffer, every org's — the ring's occupancy, not a view |
 | `registerLogTenancy(bridge)` | Teach the buffer about orgs. Called by `lib/tenancy/context.ts`; nothing else should    |
+| `getMaxBufferSize()`         | Get maximum buffer capacity (1000)                                                      |
 
 **Calling `getLogEntries` outside a request** — from a script or a job — returns
 only unstamped entries at `multi`, because the caller is in no org. That is the
 rule working, not an empty buffer.
-| `getMaxBufferSize()` | Get maximum buffer capacity (1000) |
 
 ### Example: Querying Logs
 
