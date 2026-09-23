@@ -28,10 +28,11 @@
  * org (see {@link requireTenantContext}) and at `multi` refuses, so it
  * fails loud rather than reads wide.
  *
- * **And what outlives the request that created it has to leave it.** The store
- * propagates into `setInterval`, so a process-lifetime timer armed inside a
- * request would keep that request's org for ever — {@link runDetached} is how
- * such a timer is armed (§108 t-715).
+ * **And what belongs to the process rather than to one org has to leave.** The
+ * store propagates into `setInterval`, so a process-lifetime timer armed inside
+ * a request would keep that request's org for ever — {@link runDetached} is how
+ * such a timer is armed (§108 t-715). A timer belonging to one org's work is the
+ * other case and keeps its scope, however long it outlives the request.
  *
  * **At `single` the install org is the only answer.** A single-tenant install
  * runs exactly the same components (design record, request-path diagram);

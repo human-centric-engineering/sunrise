@@ -104,13 +104,16 @@ let tenancy: LogTenancy | null = null;
  * leak, and also only reachable where the buffer is shared.
  *
  * **A timer is stamped where it was armed, not where it fires.** An
- * `AsyncLocalStorage` propagates into `setInterval`, so a timer that outlives
- * the request which armed it would attribute every line it writes to that one
- * org — for the life of the process, where the holder is a lazily constructed
- * singleton. Those timers are armed through `runDetached`
- * (`lib/tenancy/context.ts`, §108 t-715), so their lines are unstamped and read
- * like any other line produced outside a scope. A timer whose lifetime *is* its
- * unit of work keeps the org it was armed in, which for it is the right answer.
+ * `AsyncLocalStorage` propagates into `setInterval`, so a timer whose work
+ * belongs to the PROCESS rather than to one org would otherwise attribute every
+ * line it writes to whichever org happened to build the holder — for the life
+ * of the process, where that holder is a lazily constructed singleton. Those
+ * timers are armed through `runDetached` (`lib/tenancy/context.ts`, §108 t-715),
+ * so their lines are unstamped and read like any other line produced outside a
+ * scope. A timer belonging to one org's work keeps the org it was armed in,
+ * which for it is the right answer — and note that is not the same as "does it
+ * outlive the request", since a delivery retry outlives its request and still
+ * belongs to that org.
  */
 export function registerLogTenancy(bridge: LogTenancy | null): void {
   tenancy = bridge;

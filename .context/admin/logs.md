@@ -215,13 +215,17 @@ authenticated by a platform credential — an admin API key with no org, which
 the guards run unscoped in both modes, and which is how a cron calls the
 maintenance tick.
 
-A fourth producer is a **repeating timer that outlives the request which armed
-it** (§108 t-715). An `AsyncLocalStorage` propagates into `setInterval`, so such
-a timer would otherwise attribute every line it writes to whichever org happened
-to build the holder — for the life of the process. They are armed through
+A fourth producer is a **repeating timer whose work belongs to the process
+rather than to one org** (§108 t-715). An `AsyncLocalStorage` propagates into
+`setInterval`, so such a timer would otherwise attribute every line it writes to
+whichever org happened to build the holder — for the life of the process, where
+that holder is a lazily constructed singleton. They are armed through
 [`runDetached`](../tenancy/context.md#a-timer-is-stamped-where-it-was-armed-not-where-it-fires),
 so their lines are unstamped and read like any other line produced outside a
-scope. `McpSessionManager`'s session-eviction sweep is the one in the tree, and it writes a line only under `MCP_SESSION_MODE=stateful`.
+scope. `McpSessionManager`'s session-eviction sweep is the one in the tree, and
+it writes a line only under `MCP_SESSION_MODE=stateful`. Note that "outlives the
+request" is not the test: a webhook delivery retry does, and it still belongs to
+the org that armed it.
 
 | Entry               | At `single` | At `multi`                           |
 | ------------------- | ----------- | ------------------------------------ |

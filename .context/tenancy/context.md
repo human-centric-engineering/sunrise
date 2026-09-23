@@ -17,18 +17,18 @@ proves it by sweep rather than by sentence.
 
 ## Quick Reference
 
-| Need                                         | Use                                                                                   |
-| -------------------------------------------- | ------------------------------------------------------------------------------------- |
-| The org this call stack acts for             | `getTenantContext()` (nullable) / `requireTenantContext()` — `lib/tenancy/context.ts` |
-| Run something as an org / as the platform    | `runAsOrg(orgId, fn)` / `runAsSystem(reason, fn)` — same module                       |
-| Iterate every active org, one scope each     | `forEachOrg(fn)` — same module; the maintenance tick's per-org jobs run through it    |
-| Arm a timer that outlives the request        | `runDetached(fn)` — same module; the store is captured when `setInterval` is called   |
-| Is this install multi-tenant?                | `isMultiTenant()` — same module (`env.TENANCY_MODE`)                                  |
-| How the guards decide the org for a request  | `enterSessionOrg` / `enterApiKeyOrg` — `lib/tenancy/entry.ts`                         |
-| The org facts the policy is told             | `viewer.orgId` / `viewer.orgRole` on `AuthorizationPrincipal`; `scope.org`            |
-| Resolve a tenant in the proxy (fork)         | `registerAppTenantResolver()` — `lib/app/tenant-resolver.ts` (Web-standard only)      |
-| The header the proxy writes, the guards read | `TENANT_HEADER_NAME` = `x-sunrise-org` — `lib/tenancy/resolver.ts`                    |
-| The org in a log line                        | `orgId` in `getRequestContext()` / `getFullContext()` — `lib/logging/context.ts`      |
+| Need                                          | Use                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------------------------------------- |
+| The org this call stack acts for              | `getTenantContext()` (nullable) / `requireTenantContext()` — `lib/tenancy/context.ts` |
+| Run something as an org / as the platform     | `runAsOrg(orgId, fn)` / `runAsSystem(reason, fn)` — same module                       |
+| Iterate every active org, one scope each      | `forEachOrg(fn)` — same module; the maintenance tick's per-org jobs run through it    |
+| Arm a PROCESS-lifetime timer inside a request | `runDetached(fn)` — same module; the store is captured when `setInterval` is called   |
+| Is this install multi-tenant?                 | `isMultiTenant()` — same module (`env.TENANCY_MODE`)                                  |
+| How the guards decide the org for a request   | `enterSessionOrg` / `enterApiKeyOrg` — `lib/tenancy/entry.ts`                         |
+| The org facts the policy is told              | `viewer.orgId` / `viewer.orgRole` on `AuthorizationPrincipal`; `scope.org`            |
+| Resolve a tenant in the proxy (fork)          | `registerAppTenantResolver()` — `lib/app/tenant-resolver.ts` (Web-standard only)      |
+| The header the proxy writes, the guards read  | `TENANT_HEADER_NAME` = `x-sunrise-org` — `lib/tenancy/resolver.ts`                    |
+| The org in a log line                         | `orgId` in `getRequestContext()` / `getFullContext()` — `lib/logging/context.ts`      |
 
 ### Anti-Pattern
 
