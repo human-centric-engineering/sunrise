@@ -396,6 +396,15 @@ release process.
   sink registry is keyed by session id and a second registration replaces the
   first. A client that was passing a session id it does not own was already
   getting nothing useful; one passing its own is unaffected.
+  Two further properties of the same check. It uses a **non-mutating** lookup
+  (the new `McpSessionManager.peekSession`), so refusing a session no longer
+  refreshes it — previously, polling `GET` or `DELETE` with another key's session
+  id kept that session from ever expiring, which at `multi` is one org holding
+  another org's session open. And if the session is terminated or evicted in the
+  window between the check and the platform pulling the response body, the SSE
+  stream now **closes** rather than staying open with an unwired notification
+  channel: the client sees the close and re-`initialize`s instead of waiting on a
+  keepalive-healthy connection that can never deliver.
 
 ### Changed
 
@@ -407,11 +416,16 @@ release process.
   ordinary 404, indistinguishable from an unknown one. At `single` both behave
   exactly as before. Previously, at `multi` with `MCP_SESSION_MODE=stateful`, an
   org admin read every other org's session ids, `apiKeyId`s and activity times
-  and could terminate any of them. An MCP log line raised in one org would also
-  reach every org's open SSE stream, since `lib/orchestration/mcp/log-emitter.ts`
+  and could terminate any of them. An MCP log line **broadcast** from one org would
+  also reach every org's open SSE stream, since `lib/orchestration/mcp/log-emitter.ts`
   builds its targets from the same list — latent rather than live, because
   `emitMcpLog` has no caller in the platform and is reachable only by a fork
-  using that documented API.
+  using that documented API. A **targeted** `emitMcpLog(sessionId, …)` is
+  unaffected in either direction: it resolves that one session directly, so it
+  still delivers when called from a `runAsSystem` job, a detached timer or a
+  platform credential, none of which shares the session's org. Terminating or
+  evicting a session now also drops its SSE sink, so a force-terminated client
+  stops receiving pushes — though its stream is not closed.
   **Breaking for a fork that calls `broadcastMcpResourceUpdated(uri)`**: it now
   takes a required second argument, `'this-org' | 'every-org'` (the exported
   type `McpResourceAudience`), as does `McpSessionManager.getSubscribers`. There
