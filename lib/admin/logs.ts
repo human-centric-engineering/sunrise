@@ -108,7 +108,7 @@ let tenancy: LogTenancy | null = null;
  * timer first armed inside a request — a lazily constructed singleton, which
  * is the pattern this codebase uses for realm safety — inherits that request's
  * org for the life of the process, and every line it writes is attributed to
- * it. `McpSessionManager`'s eviction timer is the known instance (#840);
+ * it. `McpSessionManager`'s eviction timer is the known instance (§108 t-715);
  * anything else that arms a repeating timer from inside a request has
  * the same shape and should arm it outside one.
  */
