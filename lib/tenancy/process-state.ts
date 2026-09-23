@@ -146,19 +146,14 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   // ───────────────────────────────────────────────────────────────────────
   // mixes-orgs — declared defects, each with the task that fixes it
   //
-  // The posture exists so a defect that cannot be fixed in the change that
-  // finds it is DECLARED rather than described in a commit message nobody
-  // reads again. `lib/admin/logs.ts` was the first row and is now org-keyed
-  // below (§108 t-714); the MCP session map is the current one (§108 t-716),
-  // found by reading these rows back against the tree rather than by any test.
+  // Empty again, and the vocabulary is what keeps the value: the posture exists
+  // so a defect that cannot be fixed in the change that finds it is DECLARED
+  // rather than described in a commit message nobody reads again. Two rows have
+  // passed through it — `lib/admin/logs.ts` (§108 t-714) and the MCP session map
+  // (§108 t-716) — and BOTH were found by reading these rows back against the
+  // tree, neither by a test. That is the argument for keeping the rows honest
+  // rather than for trusting the scanner.
   // ───────────────────────────────────────────────────────────────────────
-  {
-    file: 'lib/orchestration/mcp/singletons.ts',
-    holders: ['sessionManager'],
-    posture: 'mixes-orgs',
-    keyedBy: 'MCP session id — unique across orgs, and filtered on by nothing',
-    why: "The KEY is fine and the READS are not, which is the distinction this manifest exists to force (§108 t-712). getActiveSessions() filters on TTL alone and GET /api/v1/admin/orchestration/mcp/sessions serves it verbatim, so at multi an org admin reads every other org's session ids, apiKeyIds and activity times; DELETE .../sessions/[id] calls destroySession(id) with no ownership check, so an id read off that page ends another org's session; and broadcastNotification with no targetSessionIds reaches every connected org's SSE sink. McpSession carries no orgId, so the filter does not exist to be applied. §108 t-716 records it on the session and filters the three reads. Needs multi AND MCP_SESSION_MODE=stateful, which is not the default and is refused where more than one process serves traffic.",
-  },
 
   // ───────────────────────────────────────────────────────────────────────
   // org-keyed
@@ -247,7 +242,15 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     holders: ['rateLimiter'],
     posture: 'row-keyed',
     keyedBy: 'MCP API key id, inside McpRateLimiter',
-    why: "Key ids are unique across orgs and the read is keyed by the CALLER's own key — protocol-handler.ts asks check(auth.apiKeyId), so no caller can reach another org's counter. The session manager beside it in this file is a separate row: same file, same lazy-singleton shape, and the opposite answer, because its reads filter on nothing (§108 t-716).",
+    why: "Key ids are unique across orgs and the read is keyed by the CALLER's own key — protocol-handler.ts asks check(auth.apiKeyId), so no caller can reach another org's counter. Kept as a separate row from the session manager beside it in the same file: same lazy-singleton shape, and it needed the opposite answer until §108 t-716, which is why the question is asked per holder.",
+  },
+  {
+    file: 'lib/orchestration/mcp/singletons.ts',
+    holders: ['sessionManager'],
+    posture: 'org-keyed',
+    keyedBy:
+      'the org stamped on each session; every read that can cross orgs filters to the caller’s',
+    why: "One process-wide map of every org's MCP sessions, scoped at the READS rather than partitioned (§108 t-716). McpSession.orgId is stamped from the tenant context at createSession. getActiveSessions() answers the calling scope's org — which fixes both the admin sessions page, that served it verbatim, and log-emitter.ts, that builds its SSE notification targets from it; destroySession() refuses another org's id indistinguishably from an unknown one; getSubscribers(uri, audience) takes a REQUIRED audience because the same sunrise:// URI is subscribed to by every org, so 'this-org' is right when tenant-owned contents changed and 'every-org' when a global-config definition did, and either default would be wrong for half the callers, invisibly. Deliberately unfiltered, each with a reason in the code: getSession (the transport's apiKeyId check is strictly stronger), getActiveSessionCount (a key belongs to one org), and broadcastNotification itself (its unscoped callers are the three list_changed helpers, whose subjects are all GLOBAL_CONFIG_MODELS).",
   },
 
   // ───────────────────────────────────────────────────────────────────────

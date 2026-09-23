@@ -385,6 +385,30 @@ release process.
 
 ### Changed
 
+- **An MCP session belongs to the org whose key opened it** (multi-tenancy §108
+  t-716). `McpSession` (`types/mcp.ts`) gains a **required** `orgId: string | null`,
+  stamped by `createSession` from the tenant context. `GET /api/v1/admin/orchestration/mcp/sessions`
+  returns it and, at `TENANCY_MODE=multi`, returns only the reading org's
+  sessions; `DELETE …/mcp/sessions/:id` refuses another org's id with its
+  ordinary 404, indistinguishable from an unknown one. At `single` both behave
+  exactly as before. Previously, at `multi` with `MCP_SESSION_MODE=stateful`, an
+  org admin read every other org's session ids, `apiKeyId`s and activity times
+  and could terminate any of them; an MCP log line raised in one org was also
+  pushed to every org's open SSE stream, because `lib/orchestration/mcp/log-emitter.ts`
+  builds its targets from the same list.
+  **Breaking for a fork that calls `broadcastMcpResourceUpdated(uri)`**: it now
+  takes a required second argument, `'this-org' | 'every-org'` (the exported
+  type `McpResourceAudience`), as does `McpSessionManager.getSubscribers`. There
+  is deliberately no default. Every org's sessions subscribe to the same
+  `sunrise://…` URI, so who is subscribed does not decide who should be told:
+  pass `'this-org'` when tenant-owned contents changed (an agent, a workflow, a
+  knowledge document) and `'every-org'` when the `McpExposedResource` definition
+  did, since that row is global config. Either default would be wrong for half
+  the callers, and wrong invisibly — a notification that never arrives looks
+  exactly like nothing having happened. The three `list_changed` broadcasts are
+  unchanged and still reach every org, for the same reason: their subjects
+  (`McpExposedTool`, `McpExposedPrompt`, `McpExposedResource`) are all global
+  config. A fork constructing an `McpSession` literal must add `orgId`.
 - **The admin Logs page shows only the reading org's lines** (multi-tenancy
   §108 t-714). `LogEntry` (`types/admin.ts`) gains `orgId?: string | null`,
   stamped by `addLogEntry` from the tenant context, and `getLogEntries` —

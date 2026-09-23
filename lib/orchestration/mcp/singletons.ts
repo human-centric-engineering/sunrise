@@ -7,18 +7,19 @@
  *
  * Platform-agnostic: no Next.js imports.
  *
- * Tenancy posture, and the two holders here differ (lib/tenancy/process-state.ts):
+ * Tenancy posture — both holders are keyed, by different things
+ * (lib/tenancy/process-state.ts):
  *
- * - `rateLimiter` — row-keyed. Keyed by MCP API key id, and the READ is keyed by
- *   the caller's own key (`check(auth.apiKeyId, …)`), so no caller reaches
- *   another org's counter.
- * - `sessionManager` — **mixes-orgs, a declared defect** (§108 t-716). The key is
- *   equally fine and the reads are not: `getActiveSessions()` filters on TTL
- *   alone and `GET /api/v1/admin/orchestration/mcp/sessions` serves it verbatim,
- *   `DELETE …/sessions/[id]` destroys by id with no ownership check, and
- *   `broadcastNotification` with no targets reaches every org's SSE sink.
- *   `McpSession` carries no `orgId`, so the filter does not exist to be applied.
- *   Needs `multi` AND `MCP_SESSION_MODE=stateful`, which is not the default.
+ * - `rateLimiter` — row-keyed on MCP API key id, and the READ is keyed by the
+ *   caller's own key (`check(auth.apiKeyId, …)`), so no caller reaches another
+ *   org's counter.
+ * - `sessionManager` — org-keyed since §108 t-716. One process-wide map of every
+ *   org's sessions, scoped at the READS: `McpSession.orgId` is stamped from the
+ *   tenant context at `createSession`, `getActiveSessions()` answers the calling
+ *   scope's org, `destroySession()` refuses another org's id, and
+ *   `getSubscribers(uri, audience)` takes a required audience because a
+ *   `sunrise://` URI is subscribed to by every org. Three reads are unfiltered
+ *   on purpose and each says why where it lives.
  */
 
 import { McpSessionManager } from '@/lib/orchestration/mcp/session-manager';
