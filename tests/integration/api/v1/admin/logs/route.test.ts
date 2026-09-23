@@ -83,9 +83,16 @@ const mockLogEntries = [
   },
 ];
 
-// Mock the log buffer module
+// Mock the log buffer module.
+//
+// `registerLogTenancy` has to be here even though this test never calls it:
+// `lib/tenancy/context.ts` calls it at MODULE scope — that registration is how
+// the buffer learns about orgs without importing the tenancy module and
+// dragging `pg` into the browser bundle (§108 t-714) — and the guard under
+// test imports that module.
 vi.mock('@/lib/admin/logs', () => ({
   getLogEntries: vi.fn(() => ({ entries: mockLogEntries, total: mockLogEntries.length })),
+  registerLogTenancy: vi.fn(),
 }));
 
 // Import mocked modules

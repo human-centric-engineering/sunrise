@@ -160,7 +160,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     holders: ['globalForLogs'],
     posture: 'org-keyed',
     keyedBy: 'the org stamped on each entry; the query filters to the reader’s',
-    why: "One process-wide ring holding every org's lines, scoped at the QUERY rather than partitioned — at multi an org admin used to see every other org's messages, context and meta, searchable (§108 t-714). An entry produced outside any tenant scope — boot, a runAsSystem job, a platform credential — is stamped null and is readable at single (one org, nothing to confine) but at multi only by a reader who is also outside an org. A platform operator therefore has no cross-org view here until §111; owner's ruling, 2026-09-23.",
+    why: "One process-wide ring holding every org's lines, scoped at the QUERY rather than partitioned — at multi an org admin used to see every other org's messages, context and meta, searchable (§108 t-714). An entry produced outside any tenant scope — boot, a runAsSystem job, a platform credential — is stamped null and is readable at single (one org, nothing to confine) but at multi only by a reader who is also outside an org. A platform operator therefore has no cross-org view here until §111; owner's ruling, 2026-09-23. Two things stay shared because the ring is: the 1000-entry cap, so a noisy org evicts a quiet one's lines, and the entry id counter, so a gap in the ids an org sees tells it roughly how much everyone else logged.",
   },
   {
     file: 'lib/orchestration/hooks/registry.ts',
@@ -476,6 +476,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     holders: ['processedErrors'],
     posture: 'no-tenant-data',
     why: "A bounded set of error fingerprints already handled, so the handler cannot loop on itself; browser-only (initialised from a client component, `typeof window` guarded), so the process it is global to is one visitor's tab.",
+  },
+  {
+    file: 'lib/admin/logs.ts',
+    holders: ['tenancy'],
+    posture: 'no-tenant-data',
+    why: "The resolver `lib/tenancy/context.ts` registers so the buffer can stamp and filter without importing it — two functions, no org data of its own (§108 t-714). Module-local on purpose, and NOT on globalThis: an AsyncLocalStorage belongs to the module instance that created it, so a shared slot would let one realm read another's store.",
   },
   {
     file: 'lib/logging/index.ts',

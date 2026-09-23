@@ -231,6 +231,22 @@ it, and a rule scoped to the install org would have made them vanish. At `multi`
 page** — that is §111's to supply, and the owner's ruling (2026-09-23) is that
 it waits for it, since `multi` is not used until the phase is complete.
 
+### What an org admin will not see at `multi`, and why
+
+Some lines about an org's own requests are produced _outside_ that org's
+scope, so they are unstamped and invisible to it:
+
+- **A request's own 500.** `withAuth` / `withAdminAuth` catch and log through
+  `handleAPIError` in the outer `catch`, after `inTenantScope` has exited
+  (`lib/auth/guards.ts`), so the error line carries no org.
+- **A refused org entry**, logged before any scope is entered.
+- **The proxy's HTTP access lines**, which run before the guard.
+
+None of this is new behaviour in the logger — it is what scoping the _read_
+makes visible. Expect "my errors are missing from the Logs page" at `multi`
+until §111 gives the operator view that shows unstamped lines, or the guard
+logs inside the scope. Worth knowing before it is reported as a bug.
+
 ## Integration with Logger
 
 The structured logger automatically writes to the log buffer:
