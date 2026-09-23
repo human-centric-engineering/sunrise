@@ -200,6 +200,32 @@ Returns paginated log entries with optional filtering.
 }
 ```
 
+## Whose lines a reader sees
+
+Every entry carries the org whose request or job produced it, and the query
+returns only the reading org's (§108 t-714). The buffer itself stays
+process-wide — one ring, every org's lines in it — so `getBufferSize()` is the
+ring's occupancy and not a count of what anyone can read. `total` in the
+response is computed after the scope filter, so the pager offers a reader only
+their own pages.
+
+An entry is **unstamped** (`orgId: null`) when it was produced outside any
+tenant scope: at boot, inside a `runAsSystem` job, or on a request
+authenticated by a platform credential — an admin API key with no org, which
+the guards run unscoped in both modes, and which is how a cron calls the
+maintenance tick.
+
+| Entry               | At `single`                | At `multi`                           |
+| ------------------- | -------------------------- | ------------------------------------ |
+| stamped with an org | the install org's, visible | visible to that org only             |
+| unstamped (`null`)  | visible                    | visible only to a reader with no org |
+
+At `single` nothing changed: there is one org, so hiding the unstamped lines
+would empty the page of exactly what an operator opens it for and protect
+nothing. At `multi` a **platform operator has no cross-org view through this
+page** — that is §111's to supply, and the owner's ruling (2026-09-23) is that
+it waits for it, since `multi` is not used until the phase is complete.
+
 ## Integration with Logger
 
 The structured logger automatically writes to the log buffer:
@@ -218,6 +244,10 @@ addLogEntry({
   error: errorDetails,
 });
 ```
+
+The logger passes no org: `addLogEntry` reads it from the tenant context
+itself, so every producer is stamped by one rule and the logging hot path
+knows nothing about tenancy.
 
 ## Production Considerations
 

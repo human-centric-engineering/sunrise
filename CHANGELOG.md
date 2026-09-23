@@ -356,6 +356,19 @@ release process.
 
 ### Changed
 
+- **The admin Logs page shows only the reading org's lines** (multi-tenancy
+  §108 t-714). `LogEntry` (`types/admin.ts`) gains `orgId?: string | null`,
+  stamped by `addLogEntry` from the tenant context, and `getLogEntries` —
+  behind `GET /api/v1/admin/logs` — filters to the reader's org and counts
+  `total` after that filter. The buffer itself is unchanged: one process-wide
+  ring, scoped at the query. An entry produced outside any tenant scope (boot,
+  a `runAsSystem` job, or a request on a platform credential, which carries no
+  org in either mode) is stamped `null` and stays visible at `single`, where
+  there is one org and nothing to confine, so a single-tenant install's Logs
+  page is unchanged. At `multi` such an entry is visible only to a reader who
+  is also outside an org, and an org admin never sees another org's lines —
+  which they previously did, messages, `context` and `meta`, searchable. A
+  platform operator has no cross-org view through this page until §111.
 - **Both org reads now carry the org's settings** (multi-tenancy §108 t-713).
   `GET /api/v1/admin/orgs/[id]` returns the whole `Org.settings` column, and
   `createOrg` / `updateOrg` return it on `OrgRecord`. `GET /api/v1/orgs/[id]`
