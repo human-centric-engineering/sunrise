@@ -221,7 +221,7 @@ a timer would otherwise attribute every line it writes to whichever org happened
 to build the holder — for the life of the process. They are armed through
 [`runDetached`](../tenancy/context.md#a-timer-is-stamped-where-it-was-armed-not-where-it-fires),
 so their lines are unstamped and read like any other line produced outside a
-scope. `McpSessionManager`'s session-eviction sweep is the one in the tree.
+scope. `McpSessionManager`'s session-eviction sweep is the one in the tree, and it writes a line only under `MCP_SESSION_MODE=stateful`.
 
 | Entry               | At `single` | At `multi`                           |
 | ------------------- | ----------- | ------------------------------------ |

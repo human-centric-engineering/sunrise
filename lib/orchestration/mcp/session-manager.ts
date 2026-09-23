@@ -92,9 +92,18 @@ export class McpSessionManager {
    * boot is what builds it — and that request runs inside `runAsOrg(auth.orgId)`.
    * An `AsyncLocalStorage` store is captured when `setInterval` is *called*, so
    * without `runDetached` the eviction timer would carry that one org for the
-   * life of the process: every "evicted expired sessions" line would be
-   * attributed to it, which at `multi` means org A reading a count of org B's
-   * evictions on its own Logs page while B sees none of its own.
+   * life of the process, and every "evicted expired sessions" line would be
+   * attributed to it: at `multi`, org A reading a count of org B's evictions on
+   * its own Logs page while B sees none of its own.
+   *
+   * **Under `MCP_SESSION_MODE=stateful` only**, because that is the only mode
+   * with sessions to evict — `stateless` synthesises an ephemeral session per
+   * request and indexes nothing, so the map stays empty, `evicted > 0` never
+   * holds and the sweep logs nothing at all. It is the default, which is why
+   * this is groundwork rather than a live mis-attribution. The reason to fix it
+   * anyway is that the wrong stamp is a property of the arming, not of the
+   * mode: it is already wrong in every `stateful` install, and it would become
+   * wrong everywhere the day anything else is armed here.
    *
    * The eviction pass itself is genuinely process-wide — one in-memory map of
    * every org's sessions, keyed by ids unique across orgs — so no scope is the

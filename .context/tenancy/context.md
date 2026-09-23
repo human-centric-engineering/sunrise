@@ -440,16 +440,19 @@ this.evictionTimer = runDetached(() =>
 );
 ```
 
-**The question is not "is this a timer" but "does this outlive the request that
-armed it".** Most timers here do not, and those must KEEP their context:
+**The question is whether the timer's work belongs to one org at all, or to the
+process** — not whether it outlives the request that armed it. That second test
+is the tempting one and it is wrong: a delivery retry is armed inside a request
+and fires a minute after the response, and it still belongs to that org. Most
+timers here belong to one org's work, and those must KEEP their context:
 
-| Timer                                                                                                                | Lives as long as | Scope                                                                   |
-| -------------------------------------------------------------------------------------------------------------------- | ---------------- | ----------------------------------------------------------------------- |
-| `McpSessionManager`'s eviction sweep                                                                                 | the process      | **detached** — one in-memory map of every org's sessions, no database   |
-| An execution's lease heartbeat (`lib/orchestration/engine/lease.ts`)                                                 | one execution    | the execution's org — it writes that org's lease row                    |
-| A hook or webhook delivery retry (`lib/orchestration/hooks/registry.ts`, `lib/orchestration/webhooks/dispatcher.ts`) | one delivery     | the delivery's org — it reads and writes that org's rows                |
-| The maintenance tick's overrun watchdog                                                                              | one tick         | the tick's own scope; its warning belongs to whoever triggered the tick |
-| A `fetch` abort, an SSE keepalive, a retry backoff sleep                                                             | one request      | the request's; nothing tenant-visible happens in the callback           |
+| Timer                                                                                                                | Lives as long as | Scope                                                                                                                       |
+| -------------------------------------------------------------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `McpSessionManager`'s eviction sweep                                                                                 | the process      | **detached** — one in-memory map of every org's sessions, no database. Writes a line only under `MCP_SESSION_MODE=stateful` |
+| An execution's lease heartbeat (`lib/orchestration/engine/lease.ts`)                                                 | one execution    | the execution's org — it writes that org's lease row                                                                        |
+| A hook or webhook delivery retry (`lib/orchestration/hooks/registry.ts`, `lib/orchestration/webhooks/dispatcher.ts`) | one delivery     | the delivery's org — it reads and writes that org's rows                                                                    |
+| The maintenance tick's overrun watchdog                                                                              | one tick         | the tick's own scope; its warning belongs to whoever triggered the tick                                                     |
+| A `fetch` abort, an SSE keepalive, a retry backoff sleep                                                             | one request      | the request's; nothing tenant-visible happens in the callback                                                               |
 
 Detaching one of the lower rows would not fix an attribution, it would break a
 write: at `multi` a create with no org in context is refused before any SQL.

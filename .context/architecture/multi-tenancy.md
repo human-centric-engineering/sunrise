@@ -93,7 +93,11 @@ says which piece each feature lands):
   keyed by the caller. The admin log buffer is the one holder scoped at the
   QUERY rather than partitioned: one process-wide ring, each entry stamped
   with the org that produced it, and `getLogEntries` filtering to the reader's
-  (§108 t-714). No row in the manifest is a declared defect.
+  (§108 t-714). One declared defect remains — at `multi` the admin MCP
+  sessions page shows an org admin every org's live sessions and lets them
+  terminate any of them, and a server-push notification reaches every org's
+  SSE stream (t-716); it needs `MCP_SESSION_MODE=stateful`, which is not the
+  default.
 - **One admin console.** The authorization policy already distinguishes a
   platform admin from an org OWNER/ADMIN, but the console is not split; the
   [control-plane map](#the-control-plane-which-admin-surfaces-are-whose)

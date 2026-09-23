@@ -247,12 +247,15 @@ export function runAsCredentialLookup<T>(credential: string, fn: () => Promise<T
  * ({@link requireTenantContext} throws at `multi`) rather than silently
  * reading every org's rows.
  *
- * **Detach only what outlives its unit of work.** A timer whose lifetime *is*
- * the work — an execution's lease heartbeat, a webhook delivery retry, an
- * abort timer for one fetch — must KEEP the context it was armed in: its
+ * **Detach only what the PROCESS outlives its work by.** A timer belonging to
+ * one unit of work — an execution's lease heartbeat, a webhook delivery retry,
+ * an abort timer for one fetch — must KEEP the context it was armed in: its
  * callback writes that org's rows, and detaching it would break the write
- * rather than fix an attribution. The question is not "is this a timer" but
- * "does this outlive the request that armed it".
+ * rather than fix an attribution. Note that "outlives the request" is NOT the
+ * test, though it is the tempting one: a delivery retry is armed inside a
+ * request and fires a minute after the response, and it still belongs to that
+ * org. The question is whether the timer's work belongs to one org at all, or
+ * to the process.
  *
  * Synchronous and unawaited, unlike the scope-entering runners above: its
  * callers arm timers rather than run queries. A detached *query* is a

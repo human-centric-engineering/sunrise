@@ -26,7 +26,9 @@ release process.
   is attributed to whichever org made the first request after boot, and at
   `multi` every query it makes is scoped to them. `McpSessionManager`'s
   eviction sweep is armed through it, so its "evicted expired sessions" lines
-  are now unstamped rather than one arbitrary org's. Use it only for something
+  are now unstamped rather than one arbitrary org's — a line only
+  `MCP_SESSION_MODE=stateful` produces, since `stateless` (the default) stores
+  no session for the sweep to find. Use it only for something
   that **outlives** its unit of work: a lease heartbeat, a delivery retry or a
   `fetch` abort must keep the context it was armed in, because its callback
   writes that org's rows. Not `runAsSystem` — that logs a reason on every entry
