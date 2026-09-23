@@ -887,6 +887,49 @@ describe('whose sessions a scope can see (§108 t-716)', () => {
       expect(sink).toHaveBeenCalledTimes(1);
     });
 
+    it('refuses to attach a sink to a session that no longer exists', async () => {
+      // The route verifies ownership and then RETURNS a Response; the generator
+      // that calls registerSseListener runs later, when the platform pulls the
+      // body. A session destroyed in between would otherwise leave a sink with
+      // no session — and broadcastNotification with no targets enumerates the
+      // sinks, not the sessions, so that zombie would receive every
+      // list_changed ping for the life of the connection.
+      const { a } = await seed();
+      await runAsOrg(ORG_A, async () => mgr.destroySession(a.id));
+
+      const sink = vi.fn();
+      mgr.registerSseListener(a.id, sink);
+      mgr.broadcastNotification({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+
+      expect(sink).not.toHaveBeenCalled();
+    });
+
+    it('refuses to attach a sink to an EXPIRED session', async () => {
+      const shortTtl = new McpSessionManager(40);
+      const s = await runAsOrg(ORG_A, async () => shortTtl.createSession('key-a', 5)!);
+      await new Promise((r) => setTimeout(r, 60));
+
+      const sink = vi.fn();
+      shortTtl.registerSseListener(s.id, sink);
+      shortTtl.broadcastNotification({
+        jsonrpc: '2.0',
+        method: 'notifications/tools/list_changed',
+      });
+
+      expect(sink).not.toHaveBeenCalled();
+      shortTtl.destroy();
+    });
+
+    it('still attaches for a live session — so the refusals above are not vacuous', async () => {
+      const { a } = await seed();
+      const sink = vi.fn();
+
+      mgr.registerSseListener(a.id, sink);
+      mgr.broadcastNotification({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+
+      expect(sink).toHaveBeenCalledTimes(1);
+    });
+
     it('cuts the push channel when a session is evicted', async () => {
       const shortTtl = new McpSessionManager(40);
       const s = await runAsOrg(ORG_A, async () => shortTtl.createSession('key-a', 5)!);
@@ -924,7 +967,7 @@ describe('whose sessions a scope can see (§108 t-716)', () => {
 
     it('getSession answers across orgs, because the transport checks the key', async () => {
       // The stronger check lives in the route: a session whose `apiKeyId` is
-      // not the authenticated key's is refused there, at both entry points. An
+      // not the authenticated key's is refused there, at all three places the transport accepts an Mcp-Session-Id. An
       // org filter here would guard a state no caller can reach.
       const { b } = await seed();
       expect(await runAsOrg(ORG_A, async () => mgr.getSession(b.id)?.apiKeyId)).toBe('key-b');

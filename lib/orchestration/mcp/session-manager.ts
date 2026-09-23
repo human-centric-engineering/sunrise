@@ -253,13 +253,19 @@ export class McpSessionManager {
     const session = this.sessions.get(sessionId);
     if (!session || !this.isVisible(session)) return false;
     this.subscriptions.delete(sessionId);
-    // And the push channel, or terminate does not terminate: `sseListeners` is
-    // what `broadcastNotification` enumerates, so a force-terminated client's
-    // open GET stream would go on receiving every `list_changed` ping for as
-    // long as it stayed connected (§108 t-716). Leaving that would contradict
-    // this task's own argument for the GET ownership check — that controlling
-    // who a notification is addressed to means nothing if the sink outlives the
-    // address.
+    // And the push channel: `sseListeners` is what `broadcastNotification`
+    // enumerates, so without this a force-terminated client's open GET stream
+    // would go on receiving every `list_changed` ping for as long as it stayed
+    // connected (§108 t-716) — the "sink outlives the address" case the GET
+    // ownership check exists to prevent.
+    //
+    // **It stops the pushes; it does not close the connection.** Nothing aborts
+    // the generator in `app/api/v1/mcp/route.ts`, which stays parked on its
+    // queue until the client disconnects, so a terminated client sees an open
+    // stream that has gone quiet rather than a close that would make it
+    // re-`initialize`. Tearing the stream down needs a per-session abort hook or
+    // a terminal frame, which is the same question as idea #6 (what a stateful
+    // session's liveness means) and is recorded there rather than half-built.
     this.sseListeners.delete(sessionId);
     return this.sessions.delete(sessionId);
   }
@@ -416,13 +422,16 @@ export class McpSessionManager {
       //
       // **The cost, stated rather than discovered:** a client that subscribes
       // and then only LISTENS used to be kept alive by that refresh and now
-      // expires at the TTL like any other idle session. Its stream stays open
-      // and still receives the unscoped `list_changed` pings, so the symptom is
-      // a healthy-looking connection that stops delivering `resources/updated`.
-      // The real answer is for an open SSE stream to refresh its own session,
-      // which is a behaviour change with its own consequences (a stream could
-      // hold a session for ever) and is captured as an idea rather than smuggled
-      // in here.
+      // expires at the TTL like any other idle session. When the sweep reaches
+      // it, `evictExpired` drops its sink too, so the stream then delivers
+      // NOTHING — not `resources/updated`, not the unscoped `list_changed`
+      // pings, nothing — while the SSE keepalive holds the connection open and
+      // healthy-looking. The client finds out on its next POST, which is a 404.
+      // The real answer is for an open SSE stream to refresh its own session;
+      // that is a behaviour change with its own consequences (a stream could
+      // then hold a session for ever, which interacts with maxSessionsPerKey and
+      // with the point of a TTL), so it is Hub idea #6 rather than smuggled in
+      // here.
       const session = this.sessions.get(sessionId);
       if (!session || Date.now() - session.lastActivityAt > this.ttlMs) continue;
       if (audience === 'this-org' && !this.isVisible(session)) continue;
@@ -439,8 +448,28 @@ export class McpSessionManager {
   /**
    * Register an SSE notification sink for a session.
    * Called when a client opens a GET /api/v1/mcp SSE stream.
+   *
+   * **Refuses an id with no live session, which closes a window the route's own
+   * check cannot** (§108 t-716). `handleGet` verifies ownership and then returns
+   * a `Response`; the generator that gets here runs later, when the platform
+   * pulls the body. A session destroyed in between — an admin terminate, the
+   * eviction sweep — would otherwise leave a sink registered for a session that
+   * no longer exists, and `broadcastNotification` with no targets enumerates
+   * `sseListeners` rather than `sessions`, so that zombie would receive every
+   * `list_changed` ping for the life of the connection. Precisely the "the sink
+   * outlives the address" case the GET check exists to prevent.
+   *
+   * Existence only, deliberately **not** {@link isVisible}: by the time the
+   * generator runs, the request's `runAsOrg` scope has been left, so there is no
+   * org to compare against. Ownership was established before the stream opened;
+   * this re-checks only that there is still something to attach to.
    */
   registerSseListener(sessionId: string, sink: NotificationSink): void {
+    const session = this.sessions.get(sessionId);
+    if (!session || Date.now() - session.lastActivityAt > this.ttlMs) {
+      logger.debug('MCP SSE: no live session to attach a listener to', { sessionId });
+      return;
+    }
     this.sseListeners.set(sessionId, sink);
   }
 

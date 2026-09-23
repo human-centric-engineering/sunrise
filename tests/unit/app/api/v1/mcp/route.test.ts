@@ -130,6 +130,7 @@ import {
   getMcpSessionManager,
   logMcpAudit,
 } from '@/lib/orchestration/mcp';
+import { sseResponse } from '@/lib/api/sse';
 import { POST, GET, DELETE } from '@/app/api/v1/mcp/route';
 import { logger } from '@/lib/logging';
 import { getTenantContext, type TenantContext } from '@/lib/tenancy/context';
@@ -786,10 +787,15 @@ describe('GET /mcp — whose stream the caller may attach to (§108 t-716)', () 
     expect(response.status).toBe(404);
     const body = await parseJson<{ error: { code: number } }>(response);
     expect(body.error.code).toBe(JsonRpcErrorCode.SESSION_NOT_FOUND);
-    // The assertion that matters: no sink was registered, so nothing would
-    // have been delivered even if the stream had been consumed.
-    // test-review:accept no_arg_called — error-path guard: function must not be called
-    expect(mockSessionManager.registerSseListener).not.toHaveBeenCalled();
+    // No STREAM was opened — asserted on `sseResponse`, not on
+    // `registerSseListener`. The first version of this test asserted the
+    // listener was not registered and could not fail: `registerSseListener`
+    // runs inside the async generator, which `sseResponse` is mocked to capture
+    // without iterating, so it is never called in a test that does not drive it
+    // by hand — including on the success path. The `no_arg_called` suppression I
+    // put on it hid exactly that.
+    expect(sseResponse).not.toHaveBeenCalled();
+    expect(capturedIterable).toBeNull();
   });
 
   it('refuses an unknown session the same way, so the two are indistinguishable', async () => {
@@ -805,13 +811,26 @@ describe('GET /mcp — whose stream the caller may attach to (§108 t-716)', () 
   });
 
   it('attaches for the caller’s own session', async () => {
-    // The population check: the refusals above would pass for free if GET
-    // never registered a listener at all.
+    // The population check, and it has to drive the generator to be one: the
+    // refusals above would pass for free if GET never attached a listener at
+    // all, so this asserts the sink really is registered for a legitimate
+    // caller. Two `next()` calls, the same way the other GET tests reach it —
+    // the first yields `connected`, the second runs as far as
+    // `registerSseListener` and then parks on the queue.
     vi.mocked(mockSessionManager.getSession).mockReturnValue(mockSession);
 
     const response = await GET(makeGetRequest({ [MCP_SESSION_HEADER]: mockSession.id }));
 
     expect(response.status).toBe(200);
+    expect(capturedIterable).not.toBeNull();
+    const iterator = capturedIterable![Symbol.asyncIterator]();
+    await iterator.next();
+    void iterator.next();
+
+    expect(mockSessionManager.registerSseListener).toHaveBeenCalledWith(
+      mockSession.id,
+      expect.any(Function)
+    );
   });
 });
 
