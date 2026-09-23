@@ -495,10 +495,13 @@ export function clearMcpResourceCache(): void {
  * Check whether a concrete URI is registered (exactly or as the
  * concrete instance of a parameterised template).
  *
- * Used by `resources/subscribe` to reject ghost subscriptions — the spec
- * lets a client subscribe to any URI, but accepting subs for URIs that
- * have no handler is misleading (the client will never get an `updated`
- * notification). Reject early instead.
+ * **No platform caller since §39 t-718.** It existed for
+ * `resources/subscribe`, to reject a ghost subscription: the spec let a client
+ * subscribe to any URI, and accepting one for a URI with no handler was
+ * misleading, because no `updated` notification would ever arrive. That method
+ * went with the stateful transport. Kept because it is on the MCP barrel and a
+ * fork may use it, and because whatever implements `subscriptions/listen` will
+ * want exactly this check for its `resourceSubscriptions` filter.
  *
  * Returns true when:
  *   - the URI matches an enabled resource exactly, OR

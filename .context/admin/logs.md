@@ -335,5 +335,5 @@ sequenceDiagram
 
 - [Overview](./overview.md) - Admin dashboard architecture
 - [Error Handling](../errors/overview.md) - Logging integration
-- [Logging Best Practices](../errors/logging.md) - When and what to log
+- [Logging Best Practices](../logging/best-practices.md) - When and what to log
 - [Log Aggregation](../monitoring/log-aggregation.md) - Production log services

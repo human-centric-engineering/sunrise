@@ -93,8 +93,11 @@ describe('McpDashboard', () => {
   describe('Quick links', () => {
     it('renders every quick link card', () => {
       render(<McpDashboard initialSettings={ENABLED_SETTINGS} stats={STATS_WITH_DATA} />);
+      // All six, named: the assertion this replaced listed five of them plus
+      // Sessions, so "all N cards" was never what it checked.
       expect(screen.getByText('Exposed Tools')).toBeInTheDocument();
       expect(screen.getByText('Resources')).toBeInTheDocument();
+      expect(screen.getByText('Prompts')).toBeInTheDocument();
       expect(screen.getByText('API Keys')).toBeInTheDocument();
       expect(screen.getByText('Audit Log')).toBeInTheDocument();
       expect(screen.getByText('Settings')).toBeInTheDocument();

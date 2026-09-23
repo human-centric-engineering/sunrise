@@ -114,26 +114,30 @@ const RESOLVABLE_EXEMPT: ReadonlyArray<{ test: (spec: string) => boolean; why: s
  *
  * ## Why every entry below is safe
  *
- * Twenty-two are under `app/api/v1/admin/`, which is admin-only — **measured,
- * not assumed: 197 of 197 route files under that prefix wrap in
- * `withAdminAuth`**. Note that is a convention this repo keeps, not a control
- * something enforces: `proxy.ts`'s `protectedRoutes` covers `/dashboard`,
- * `/settings` and `/profile`, and API routes are guarded by the in-handler
- * wrapper alone. The twenty-third is the MCP transport, which authenticates a
- * bearer API key via `authenticateMcpRequest` and answers JSON-RPC 401 before
- * it reads any config.
+ * Twelve are under `app/api/v1/admin/`, which is admin-only — **measured, not
+ * assumed: every route file under that prefix wraps in `withAdminAuth`**. Note
+ * that is a convention this repo keeps, not a control something enforces:
+ * `proxy.ts`'s `protectedRoutes` covers `/dashboard`, `/settings` and
+ * `/profile`, and API routes are guarded by the in-handler wrapper alone. The
+ * thirteenth is the MCP transport, which authenticates a bearer API key via
+ * `authenticateMcpRequest` and answers JSON-RPC 401 before it reads any config.
  *
  * Most reach the constant only transitively, through
  * `lib/orchestration/mcp/config.ts`, which defaults `serverVersion` to it.
+ *
+ * **The list was twenty-three until §39 t-718**, and the ten that left are worth
+ * a sentence because they are the same fact `singletons.ts` used to cite as its
+ * blast radius. Deleting `resource-update-hooks.ts` and the four broadcast
+ * helpers cut the MCP barrel out of the agents, workflows and knowledge-document
+ * routes, none of which is an MCP surface — they imported a named notify helper,
+ * which re-exported the barrel, which reached `config.ts`, which defaults
+ * `serverVersion` to the platform version. The two `mcp/sessions` routes went
+ * with the admin Sessions page. This list shrinking is the intended signal: a
+ * route DISAPPEARING is flagged as loudly as one appearing, because a stale list
+ * is how a guard quietly stops guarding.
  */
 const ALLOWED_ROUTES: readonly string[] = [
-  'app/api/v1/admin/orchestration/agents/[id]/route.ts',
-  'app/api/v1/admin/orchestration/agents/route.ts',
   'app/api/v1/admin/orchestration/capabilities/[id]/route.ts',
-  'app/api/v1/admin/orchestration/knowledge/documents/[id]/cleanup/finalise/route.ts',
-  'app/api/v1/admin/orchestration/knowledge/documents/[id]/confirm/route.ts',
-  'app/api/v1/admin/orchestration/knowledge/documents/[id]/route.ts',
-  'app/api/v1/admin/orchestration/knowledge/documents/route.ts',
   'app/api/v1/admin/orchestration/maintenance/tick/route.ts',
   'app/api/v1/admin/orchestration/mcp/audit/route.ts',
   'app/api/v1/admin/orchestration/mcp/keys/route.ts',
@@ -141,13 +145,9 @@ const ALLOWED_ROUTES: readonly string[] = [
   'app/api/v1/admin/orchestration/mcp/prompts/route.ts',
   'app/api/v1/admin/orchestration/mcp/resources/[id]/route.ts',
   'app/api/v1/admin/orchestration/mcp/resources/route.ts',
-  'app/api/v1/admin/orchestration/mcp/sessions/[id]/route.ts',
-  'app/api/v1/admin/orchestration/mcp/sessions/route.ts',
   'app/api/v1/admin/orchestration/mcp/settings/route.ts',
   'app/api/v1/admin/orchestration/mcp/tools/[id]/route.ts',
   'app/api/v1/admin/orchestration/mcp/tools/route.ts',
-  'app/api/v1/admin/orchestration/workflows/[id]/route.ts',
-  'app/api/v1/admin/orchestration/workflows/route.ts',
   'app/api/v1/admin/stats/route.ts',
   'app/api/v1/mcp/route.ts',
 ];

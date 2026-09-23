@@ -157,7 +157,7 @@ header: ignore what you no longer honour.
 
 | Area          | Files                                                                                                   |
 | ------------- | ------------------------------------------------------------------------------------------------------- |
-| Core library  | `lib/orchestration/mcp/` (13 files, platform-agnostic)                                                  |
+| Core library  | `lib/orchestration/mcp/` (12 files + 4 resource handlers, platform-agnostic)                            |
 | Transport     | `app/api/v1/mcp/route.ts` (POST; GET and DELETE answer 405)                                             |
 | Admin API     | `app/api/v1/admin/orchestration/mcp/` (6 route trees: tools, resources, prompts, keys, settings, audit) |
 | Admin UI      | `app/admin/orchestration/mcp/` (7 pages: dashboard + tools, resources, prompts, keys, settings, audit)  |

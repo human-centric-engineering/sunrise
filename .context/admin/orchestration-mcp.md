@@ -23,7 +23,7 @@ The MCP server uses **JSON-RPC 2.0** over **Streamable HTTP** transport (protoco
 ## Dashboard (`mcp-dashboard.tsx`)
 
 - **Master toggle** — enables/disables the MCP server via `apiClient.patch`
-- **Quick links** — cards linking to Tools, Resources, Prompts, Keys, Audit, Settings
+- **Quick links** — six cards: Exposed Tools, Resources, Prompts, API Keys, Audit Log, Settings
 - **Client config snippet** — shown when server is enabled; copy-paste JSON for MCP clients
 - **Getting started wizard** — shown when no tools and no keys are configured
 
