@@ -1,0 +1,178 @@
+/**
+ * Tests: the admin log buffer is scoped to the org reading it (§108 t-714)
+ *
+ * The buffer is one process-wide ring and the *query* is what is scoped, so
+ * these tests drive the real tenant context — `runAsOrg` to produce a line,
+ * `runAsOrg` again to read it — rather than passing an org in. A stamp that
+ * came from anywhere other than the call stack would pass a test that hands it
+ * over and fail in production, where nobody does.
+ *
+ * The case worth the file is the **unstamped** entry: boot, a `runAsSystem`
+ * job, and a platform credential (an admin API key with no org, which
+ * `inTenantScope` runs unscoped in both modes) all produce one. It is everyone's
+ * at `single` and nobody's at `multi` — which is what keeps every existing
+ * single-tenant install's Logs page showing what it always showed.
+ *
+ * @see lib/admin/logs.ts
+ * @see lib/tenancy/process-state.ts
+ */
+
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+
+import { addLogEntry, getLogEntries, clearLogBuffer, getBufferSize } from '@/lib/admin/logs';
+import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import type { LogEntry } from '@/types/admin';
+
+const ORG_A = 'cmorg00000000000000000orga';
+const ORG_B = 'cmorg00000000000000000orgb';
+
+function entry(message: string, over: Partial<Omit<LogEntry, 'id'>> = {}): Omit<LogEntry, 'id'> {
+  return { timestamp: new Date().toISOString(), level: 'info', message, ...over };
+}
+
+beforeEach(() => {
+  clearLogBuffer();
+  mockEnv.TENANCY_MODE = 'multi';
+});
+
+describe('at multi', () => {
+  /** Seed one line per producer: org A, org B, a system job, and no context. */
+  async function seed(): Promise<void> {
+    await runAsOrg(ORG_A, async () => addLogEntry(entry('org A request')));
+    await runAsOrg(ORG_B, async () => addLogEntry(entry('org B request')));
+    await runAsSystem('test: a system-scoped job', async () =>
+      addLogEntry(entry('system job line'))
+    );
+    addLogEntry(entry('platform credential line'));
+  }
+
+  it('shows each org its own lines and nobody else’s', async () => {
+    await seed();
+
+    const asA = await runAsOrg(ORG_A, async () =>
+      getLogEntries({ limit: 100 }).entries.map((e) => e.message)
+    );
+    const asB = await runAsOrg(ORG_B, async () =>
+      getLogEntries({ limit: 100 }).entries.map((e) => e.message)
+    );
+
+    expect(asA).toEqual(['org A request']);
+    expect(asB).toEqual(['org B request']);
+  });
+
+  it('hides the unstamped lines from an org admin — system jobs included', async () => {
+    await seed();
+
+    const asA = await runAsOrg(ORG_A, async () =>
+      getLogEntries({ limit: 100 }).entries.map((e) => e.message)
+    );
+
+    expect(asA).not.toContain('system job line');
+    expect(asA).not.toContain('platform credential line');
+  });
+
+  it('shows the unstamped lines to a reader who is also outside an org', async () => {
+    // The platform credential: `inTenantScope` enters no org for it, in either
+    // mode. It is the nearest thing to an operator view until §111, and it
+    // still sees no org's lines.
+    await seed();
+
+    const asPlatform = getLogEntries({ limit: 100 }).entries.map((e) => e.message);
+
+    expect(asPlatform.sort()).toEqual(['platform credential line', 'system job line']);
+  });
+
+  it('counts only what the reader can see, so pagination is not of other orgs’ lines', async () => {
+    await runAsOrg(ORG_A, async () => addLogEntry(entry('a1')));
+    for (const message of ['b1', 'b2', 'b3']) {
+      await runAsOrg(ORG_B, async () => addLogEntry(entry(message)));
+    }
+
+    const asA = await runAsOrg(ORG_A, async () => getLogEntries({ limit: 100 }));
+
+    // `total` drives the admin table's pager — reporting 4 here would offer a
+    // reader pages of rows that do not exist for them.
+    expect(asA.total).toBe(1);
+    expect(getBufferSize()).toBe(4);
+  });
+
+  it('keeps every org’s lines in the one ring — the scope is the query, not the buffer', async () => {
+    await seed();
+    expect(getBufferSize()).toBe(4);
+  });
+
+  it('applies the level and search filters within the reader’s own lines', async () => {
+    await runAsOrg(ORG_A, async () => addLogEntry(entry('database timeout', { level: 'error' })));
+    await runAsOrg(ORG_B, async () => addLogEntry(entry('database timeout', { level: 'error' })));
+
+    const asA = await runAsOrg(ORG_A, async () => getLogEntries({ search: 'database' }));
+
+    expect(asA.total).toBe(1);
+    expect(asA.entries[0].orgId).toBe(ORG_A);
+  });
+});
+
+describe('at single', () => {
+  beforeEach(() => {
+    mockEnv.TENANCY_MODE = 'single';
+  });
+
+  it('shows the unstamped lines, so the page keeps showing what it always did', async () => {
+    // Boot, the maintenance tick under a platform key, a system-scoped job:
+    // none of them enters an org, in either mode. Hiding them at `single`
+    // would empty the page of exactly what an operator opens it for, and
+    // protect nothing — there is one org.
+    addLogEntry(entry('boot line'));
+    await runAsSystem('test: a system-scoped job', async () =>
+      addLogEntry(entry('system job line'))
+    );
+    await runAsOrg(INSTALL_ORG_ID, async () => addLogEntry(entry('install org request')));
+
+    const seen = getLogEntries({ limit: 100 })
+      .entries.map((e) => e.message)
+      .sort();
+
+    expect(seen).toEqual(['boot line', 'install org request', 'system job line']);
+  });
+
+  it('reads as the install org even when nothing entered a scope', async () => {
+    await runAsOrg(INSTALL_ORG_ID, async () => addLogEntry(entry('install org request')));
+
+    // No `runAsOrg` around the read: `requireTenantContext`'s rule, applied to
+    // a read that must not throw.
+    expect(getLogEntries({ limit: 100 }).entries.map((e) => e.message)).toEqual([
+      'install org request',
+    ]);
+  });
+});
+
+describe('the stamp', () => {
+  it('records the org the line was produced in', async () => {
+    await runAsOrg(ORG_A, async () => addLogEntry(entry('org A request')));
+
+    const [line] = await runAsOrg(ORG_A, async () => getLogEntries({ limit: 100 }).entries);
+    expect(line.orgId).toBe(ORG_A);
+  });
+
+  it('is null for a line produced outside any scope', async () => {
+    mockEnv.TENANCY_MODE = 'single';
+    addLogEntry(entry('boot line'));
+
+    expect(getLogEntries({ limit: 100 }).entries[0].orgId).toBeNull();
+  });
+
+  it('honours an explicit org on the entry rather than overwriting it', async () => {
+    // A replayed or reconstructed line can say which org it belonged to; the
+    // ambient scope must not silently relabel it.
+    await runAsOrg(ORG_A, async () => addLogEntry(entry('replayed', { orgId: ORG_B })));
+
+    const asB = await runAsOrg(ORG_B, async () =>
+      getLogEntries({ limit: 100 }).entries.map((e) => e.message)
+    );
+    expect(asB).toEqual(['replayed']);
+  });
+});

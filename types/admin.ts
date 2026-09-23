@@ -60,6 +60,15 @@ export interface LogEntry {
   level: 'debug' | 'info' | 'warn' | 'error';
   /** Log message */
   message: string;
+  /**
+   * The org whose request or job produced the line (§108 t-714), or `null`
+   * for one produced outside any tenant scope — boot, a system-scoped job, or
+   * a platform credential, which enters no org in either mode.
+   *
+   * The reader only ever sees their own org's entries; see `getLogEntries`
+   * for what `null` means on each side of `TENANCY_MODE`.
+   */
+  orgId?: string | null;
   /** Additional context (requestId, userId, etc.) */
   context?: Record<string, unknown>;
   /** Additional metadata */

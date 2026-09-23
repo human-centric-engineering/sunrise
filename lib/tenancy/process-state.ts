@@ -145,18 +145,23 @@ export interface ProcessStateDeclaration {
 export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   // ───────────────────────────────────────────────────────────────────────
   // mixes-orgs — declared defects, each with the task that fixes it
+  //
+  // Empty, and the vocabulary keeps the value: the posture exists so a defect
+  // that cannot be fixed in the change that finds it can be DECLARED rather
+  // than described in a commit message nobody reads again. `lib/admin/logs.ts`
+  // was the one row and is now org-keyed below (§108 t-714).
   // ───────────────────────────────────────────────────────────────────────
-  {
-    file: 'lib/admin/logs.ts',
-    holders: ['globalForLogs'],
-    posture: 'mixes-orgs',
-    keyedBy: 'nothing — a flat 1000-entry ring buffer',
-    why: "At multi an org admin's Logs page shows every org's log lines, message, context and meta; t-714 gives the entry an org and filters the query, and carries the operator-versus-org-admin question underneath it.",
-  },
 
   // ───────────────────────────────────────────────────────────────────────
   // org-keyed
   // ───────────────────────────────────────────────────────────────────────
+  {
+    file: 'lib/admin/logs.ts',
+    holders: ['globalForLogs'],
+    posture: 'org-keyed',
+    keyedBy: 'the org stamped on each entry; the query filters to the reader’s',
+    why: "One process-wide ring holding every org's lines, scoped at the QUERY rather than partitioned — at multi an org admin used to see every other org's messages, context and meta, searchable (§108 t-714). An entry produced outside any tenant scope — boot, a runAsSystem job, a platform credential — is stamped null and is readable at single (one org, nothing to confine) but at multi only by a reader who is also outside an org. A platform operator therefore has no cross-org view here until §111; owner's ruling, 2026-09-23.",
+  },
   {
     file: 'lib/orchestration/hooks/registry.ts',
     holders: ['hookCacheByOrg'],
@@ -476,7 +481,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     file: 'lib/logging/index.ts',
     holders: ['logger'],
     posture: 'no-tenant-data',
-    why: 'The logger instance itself; what it writes into the admin ring buffer is the `mixes-orgs` row above.',
+    why: 'The logger instance itself; what it writes into the admin ring buffer is the `org-keyed` lib/admin/logs.ts row.',
   },
   {
     file: 'lib/logging/visitor-id.ts',
