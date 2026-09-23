@@ -761,6 +761,60 @@ describe('GET /mcp', () => {
 // DELETE tests
 // ─────────────────────────────────────────────────────────────────────────────
 
+describe('GET /mcp — whose stream the caller may attach to (§108 t-716)', () => {
+  // A session id is not a capability; the key is. POST and DELETE have always
+  // re-checked that a named session belongs to the authenticated key, and this
+  // path — the one that attaches a LISTENER — did not. With any valid MCP key a
+  // caller could open GET with another key's session id and receive that
+  // session's `notifications/message`, `resources/updated` and `progress`
+  // pushes, while the rightful owner silently stopped receiving them, because
+  // `sseListeners` is keyed by session id and the second registration replaces
+  // the first.
+  //
+  // Scoping who a notification is ADDRESSED to is worth nothing while the sink
+  // for an address can belong to someone else, which is why this sits in t-716
+  // rather than in a follow-up.
+
+  it('refuses another key’s session with 404 and attaches nothing', async () => {
+    vi.mocked(mockSessionManager.getSession).mockReturnValue({
+      ...mockSession,
+      apiKeyId: 'a-different-key',
+    });
+
+    const response = await GET(makeGetRequest({ [MCP_SESSION_HEADER]: mockSession.id }));
+
+    expect(response.status).toBe(404);
+    const body = await parseJson<{ error: { code: number } }>(response);
+    expect(body.error.code).toBe(JsonRpcErrorCode.SESSION_NOT_FOUND);
+    // The assertion that matters: no sink was registered, so nothing would
+    // have been delivered even if the stream had been consumed.
+    // test-review:accept no_arg_called — error-path guard: function must not be called
+    expect(mockSessionManager.registerSseListener).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unknown session the same way, so the two are indistinguishable', async () => {
+    vi.mocked(mockSessionManager.getSession).mockReturnValue(null as never);
+
+    const foreign = await GET(makeGetRequest({ [MCP_SESSION_HEADER]: mockSession.id }));
+    const unknown = await GET(makeGetRequest({ [MCP_SESSION_HEADER]: 'no-such-session' }));
+
+    expect(foreign.status).toBe(unknown.status);
+    expect(await parseJson<{ error: { code: number } }>(foreign)).toEqual(
+      await parseJson<{ error: { code: number } }>(unknown)
+    );
+  });
+
+  it('attaches for the caller’s own session', async () => {
+    // The population check: the refusals above would pass for free if GET
+    // never registered a listener at all.
+    vi.mocked(mockSessionManager.getSession).mockReturnValue(mockSession);
+
+    const response = await GET(makeGetRequest({ [MCP_SESSION_HEADER]: mockSession.id }));
+
+    expect(response.status).toBe(200);
+  });
+});
+
 describe('DELETE /mcp', () => {
   it('returns 401 JSON-RPC error when authentication fails', async () => {
     vi.mocked(authenticateMcpRequest).mockResolvedValue(null);

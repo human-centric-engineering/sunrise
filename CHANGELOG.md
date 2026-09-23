@@ -409,6 +409,17 @@ release process.
   unchanged and still reach every org, for the same reason: their subjects
   (`McpExposedTool`, `McpExposedPrompt`, `McpExposedResource`) are all global
   config. A fork constructing an `McpSession` literal must add `orgId`.
+- **Security: `GET /api/v1/mcp` now refuses a session that is not the
+  authenticated key's** (multi-tenancy §108 t-716), with the same
+  `SESSION_NOT_FOUND` 404 that `POST` and `DELETE` have always returned for
+  one. It is the path that attaches the SSE listener and it was the only one
+  not re-checking the key, so a caller holding any valid MCP key could open the
+  stream with another key's — at `multi`, another org's — `Mcp-Session-Id` and
+  receive that session's `notifications/message`, `resources/updated` and
+  `progress` pushes, while the rightful owner stopped receiving them, since the
+  sink registry is keyed by session id and a second registration replaces the
+  first. A client that was passing a session id it does not own was already
+  getting nothing useful; one passing its own is unaffected.
 - **The admin Logs page shows only the reading org's lines** (multi-tenancy
   §108 t-714). `LogEntry` (`types/admin.ts`) gains `orgId?: string | null`,
   stamped by `addLogEntry` from the tenant context, and `getLogEntries` —
