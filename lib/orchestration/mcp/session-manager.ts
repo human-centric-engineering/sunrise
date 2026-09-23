@@ -212,11 +212,15 @@ export class McpSessionManager {
 
   /**
    * Deliberately NOT org-filtered (§108 t-716). The transport is the only
-   * caller and it already refuses a session whose `apiKeyId` is not the
-   * authenticated key's (`app/api/v1/mcp/route.ts`, both entry points) — a
-   * strictly stronger check, since a key belongs to one org. Adding an org
-   * filter here would be a guard against a state the callers cannot reach,
-   * which reads as safety and is not.
+   * caller and it refuses a session whose `apiKeyId` is not the authenticated
+   * key's at all three places it accepts an `Mcp-Session-Id` —
+   * `app/api/v1/mcp/route.ts` POST, DELETE and GET — which is strictly stronger
+   * than an org filter, since a key belongs to one org. Adding one here would
+   * guard a state the callers cannot reach, which reads as safety and is not.
+   *
+   * GET was the third only from t-716: it attaches the SSE sink and was passing
+   * the header through unchecked, which is why the count in this sentence is
+   * worth keeping right.
    */
   getSession(sessionId: string): McpSession | null {
     const session = this.sessions.get(sessionId);
@@ -300,6 +304,17 @@ export class McpSessionManager {
    * org API creates orgs in both modes, so a single-mode install can hold a
    * second org whose key mints sessions stamped with it, and narrowing to the
    * install org would hide them from a page that has always shown them.
+   *
+   * **A platform credential sees nothing here at `multi`, and that is the
+   * owner's standing ruling rather than an oversight.** An admin API key with no
+   * org runs unscoped in both modes, so its context has no org and this compares
+   * `null` against a stamp that production always sets — an empty list, and a 404
+   * from the terminate route. It is the identical trade the owner ruled on for
+   * the admin Logs page (2026-09-23, t-714): scope to the reading org and accept
+   * that an operator loses the cross-org view until §111 supplies the operator
+   * role, because `multi` is not used until the phase is complete. The loss is
+   * total here rather than partial — the Logs page at least still shows a
+   * platform key the unstamped lines — so §111 owns restoring both.
    */
   private isVisible(session: McpSession): boolean {
     if (!isMultiTenant()) return true;
