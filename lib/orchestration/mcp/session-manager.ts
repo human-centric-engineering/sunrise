@@ -5,11 +5,13 @@
  * Sessions are lost on restart — MCP clients re-initialize on
  * session-not-found, which is acceptable for v1.
  *
- * Platform-agnostic: no Next.js imports. Server-only, though: the eviction
- * timer is armed through `lib/tenancy/context.ts` (see the constructor), whose
- * graph reaches the database client. Nothing client-side imports this tree, and
- * `lib/orchestration/mcp/singletons.ts` already throws at module scope on a
- * misconfigured deploy, so it was never importable from a browser bundle.
+ * Platform-agnostic: no Next.js imports. Server-only, though, and now more
+ * firmly so: the eviction timer is armed through `lib/tenancy/context.ts` (see
+ * the constructor), so this module's graph reaches `lib/db/client.ts` and
+ * therefore `pg`. Nothing client-side imports this tree — checked before adding
+ * that import, because the same edge into `lib/admin/logs.ts` put `pg` in the
+ * browser bundle one task ago, and only `npm run build` catches it (§108
+ * t-714).
  */
 
 import { randomUUID } from 'node:crypto';
