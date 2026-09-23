@@ -131,6 +131,7 @@ import {
   logMcpAudit,
 } from '@/lib/orchestration/mcp';
 import { POST, GET, DELETE } from '@/app/api/v1/mcp/route';
+import { logger } from '@/lib/logging';
 import { getTenantContext, type TenantContext } from '@/lib/tenancy/context';
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -208,6 +209,46 @@ beforeEach(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 // POST tests
 // ─────────────────────────────────────────────────────────────────────────────
+
+describe('POST /mcp — the org an unhandled error is logged in (§108 t-714)', () => {
+  it('logs a handler failure INSIDE the key’s org', async () => {
+    // withMcpKey enters the org and each verb's outer catch sits outside it,
+    // so before this an org's MCP 500 was stamped with no org — and once the
+    // admin Logs page is scoped to the reading org, the org whose call failed
+    // is the one org that cannot see it.
+    vi.mocked(handleMcpRequest).mockRejectedValueOnce(new Error('tool dispatch blew up'));
+
+    const loggedIn: (string | null)[] = [];
+    vi.mocked(logger.error).mockImplementation(() => {
+      loggedIn.push(getTenantContext()?.orgId ?? null);
+    });
+
+    // `initialize` rather than `tools/list`: a non-initialize method needs a
+    // session header in stateful mode and is refused at 400 before dispatch,
+    // which would have made this test green without ever reaching the catch.
+    const response = await POST(makePostRequest(makeRpcRequest('initialize')));
+
+    expect(response.status).toBe(500);
+    expect(loggedIn.length).toBeGreaterThan(0);
+    expect(loggedIn.every((orgId) => orgId === mockAuthContext.orgId)).toBe(true);
+  });
+
+  it('logs outside any org when the key itself could not be authenticated', async () => {
+    // There is genuinely no org yet, so the outer catch is still right there.
+    vi.mocked(authenticateMcpRequest).mockRejectedValueOnce(new Error('auth store is down'));
+
+    const loggedIn: (string | null)[] = [];
+    vi.mocked(logger.error).mockImplementation(() => {
+      loggedIn.push(getTenantContext()?.orgId ?? null);
+    });
+
+    const response = await POST(makePostRequest(makeRpcRequest('initialize')));
+
+    expect(response.status).toBe(500);
+    expect(loggedIn.length).toBeGreaterThan(0);
+    expect(loggedIn.every((orgId) => orgId === null)).toBe(true);
+  });
+});
 
 describe('POST /mcp', () => {
   it('returns 401 JSON-RPC error when authentication fails', async () => {
