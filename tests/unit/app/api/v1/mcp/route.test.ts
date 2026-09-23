@@ -349,6 +349,28 @@ describe('POST /mcp', () => {
     expect(mockSessionManager.createSession).toHaveBeenCalledOnce();
   });
 
+  it('mints the session INSIDE the key’s org scope (§108 t-716)', async () => {
+    // The wiring half of the stamp. `createSession` reads the org from the
+    // tenant context rather than taking it as an argument (the mislabel rule
+    // t-714 set for `addLogEntry`), so what has to be true here is that the
+    // transport has already entered the key's org by the time it is called.
+    // The manager's own tests prove the stamp given a scope; this proves the
+    // scope. Neither alone is the property, and the manager is mocked in this
+    // file so the stamp itself is not observable here.
+    let orgAtCall: string | null | undefined;
+    mockSessionManager.createSession.mockImplementation(() => {
+      orgAtCall = getTenantContext()?.orgId ?? null;
+      return mockSession;
+    });
+
+    await POST(makePostRequest(makeRpcRequest('initialize')));
+
+    expect(orgAtCall).toBe(mockAuthContext.orgId);
+    // Not merely "some org": the key's own, and mockAuthContext.orgId is
+    // deliberately not the install org, so a fallback would read differently.
+    expect(orgAtCall).not.toBeNull();
+  });
+
   it('returns 429 when max sessions exceeded on initialize', async () => {
     mockSessionManager.createSession.mockReturnValue(null as never);
 
