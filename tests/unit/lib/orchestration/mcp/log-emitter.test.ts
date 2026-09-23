@@ -21,6 +21,7 @@ function makeSession(id: string, logLevel: McpSession['logLevel']): McpSession {
   return {
     id,
     apiKeyId: 'k',
+    orgId: 'install',
     initialized: true,
     protocolVersion: '2025-06-18',
     logLevel,

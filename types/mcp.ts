@@ -315,6 +315,20 @@ export const McpLogLevelRank: Record<McpLogLevel, number> = {
 export interface McpSession {
   id: string;
   apiKeyId: string;
+  /**
+   * The org this session belongs to — the org of the MCP key it was minted
+   * from, read from the tenant context at creation and never from a caller
+   * (§108 t-716). `null` only for a session created outside any scope, which
+   * no production path does: the MCP transport enters `runAsOrg(auth.orgId)`
+   * for every request in both modes, because an MCP key is bound to an org at
+   * mint (t-673).
+   *
+   * It is what scopes the admin sessions list, the terminate action and the
+   * per-URI `resources/updated` fan-out. Without it those three filtered on
+   * nothing, so at `multi` an org admin read and could terminate every other
+   * org's sessions.
+   */
+  orgId: string | null;
   initialized: boolean;
   /**
    * Protocol version negotiated during `initialize`. Set to the latest

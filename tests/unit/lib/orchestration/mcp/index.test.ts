@@ -56,13 +56,13 @@ describe('broadcastMcpPromptsChanged', () => {
 describe('broadcastMcpResourceUpdated', () => {
   it('no-ops when no session is subscribed to the URI', () => {
     getSubscribersSpy.mockReturnValue([]);
-    broadcastMcpResourceUpdated('sunrise://agents');
+    broadcastMcpResourceUpdated('sunrise://agents', 'this-org');
     expect(broadcastSpy).not.toHaveBeenCalled();
   });
 
   it('targets only sessions subscribed to the URI', () => {
     getSubscribersSpy.mockReturnValue(['session-a', 'session-b']);
-    broadcastMcpResourceUpdated('sunrise://agents');
+    broadcastMcpResourceUpdated('sunrise://agents', 'this-org');
 
     expect(broadcastSpy).toHaveBeenCalledTimes(1);
     const [notification, targets] = broadcastSpy.mock.calls[0];
@@ -76,7 +76,7 @@ describe('broadcastMcpResourceUpdated', () => {
 
   it('round-trips the URI in the params', () => {
     getSubscribersSpy.mockReturnValue(['s-1']);
-    broadcastMcpResourceUpdated('sunrise://knowledge/search');
+    broadcastMcpResourceUpdated('sunrise://knowledge/search', 'this-org');
     const [notification] = broadcastSpy.mock.calls[0];
     expect((notification.params as { uri: string }).uri).toBe('sunrise://knowledge/search');
   });

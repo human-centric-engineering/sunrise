@@ -45,7 +45,13 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   broadcastMcpResourcesChanged();
   // Subscribed clients also get a per-URI updated notification so they can
   // refresh just this resource without re-running resources/list.
-  broadcastMcpResourceUpdated(updated.uri);
+  //
+  // `'every-org'`, unlike the three `resource-update-hooks` callers (§108
+  // t-716): what changed here is the `McpExposedResource` ROW — a
+  // `GLOBAL_CONFIG_MODEL` — so every org's definition of this URI changed, not
+  // just the editing org's. Scoping it would leave every other org holding a
+  // stale definition with nothing to tell them.
+  broadcastMcpResourceUpdated(updated.uri, 'every-org');
 
   log.info('MCP exposed resource updated', {
     adminId: session.user.id,

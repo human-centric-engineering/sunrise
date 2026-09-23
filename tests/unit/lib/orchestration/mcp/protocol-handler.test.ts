@@ -94,6 +94,7 @@ function makeSession(overrides: Partial<McpSession> = {}): McpSession {
   return {
     id: 'session-1',
     apiKeyId: 'key-1',
+    orgId: 'install',
     initialized: true,
     protocolVersion: MCP_LATEST_PROTOCOL_VERSION,
     logLevel: 'warning',

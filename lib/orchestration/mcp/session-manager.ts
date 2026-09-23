@@ -16,7 +16,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/lib/logging';
-import { runDetached } from '@/lib/tenancy/context';
+import { getTenantContext, isMultiTenant, runDetached } from '@/lib/tenancy/context';
 import {
   MCP_LATEST_PROTOCOL_VERSION,
   type McpLogLevel,
@@ -63,6 +63,9 @@ export function createEphemeralSession(
     // id was never registered anywhere and cannot be looked up.
     id: `stateless-${randomUUID()}`,
     apiKeyId,
+    // Stamped like any other session even though nothing indexes this one, so
+    // `orgId` is never the field a reader has to remember is sometimes absent.
+    orgId: getTenantContext()?.orgId ?? null,
     initialized: true,
     protocolVersion,
     // The default. `logging/setLevel` refuses in this mode, so nothing can move it.
@@ -72,6 +75,29 @@ export function createEphemeralSession(
     ephemeral: true,
   };
 }
+
+/**
+ * Whose subscribers a per-URI `resources/updated` notification is for (§108 t-716).
+ *
+ * **Both answers are correct for different callers, which is why this is an
+ * argument and not a default.** The same `sunrise://agents` URI is subscribed
+ * to by every org's sessions, so "who is subscribed" does not decide "who
+ * should be told":
+ *
+ * - `'this-org'` — the CONTENTS changed, and the contents are tenant-owned. An
+ *   agent, a workflow or a knowledge document was mutated in one org, so only
+ *   that org's subscribers should re-read. Telling another org its list changed
+ *   when it did not is a false signal derived from someone else's activity.
+ * - `'every-org'` — the DEFINITION changed, and definitions are global config.
+ *   `McpExposedResource` is in `GLOBAL_CONFIG_MODELS`
+ *   (`lib/tenancy/classification.ts`), so editing the row really does change
+ *   every org's answer, and scoping it to the editing org would leave every
+ *   other org holding a stale definition with nothing to tell them.
+ *
+ * A default would be wrong for half the callers either way, and wrong silently
+ * — an absent notification looks exactly like nothing having happened.
+ */
+export type McpResourceAudience = 'this-org' | 'every-org';
 
 export class McpSessionManager {
   private sessions = new Map<string, McpSession>();
@@ -143,6 +169,10 @@ export class McpSessionManager {
     const session: McpSession = {
       id: randomUUID(),
       apiKeyId,
+      // The call stack's own org, never a caller's word for it — the same rule
+      // `addLogEntry` follows (§108 t-714). An argument here would be a
+      // mislabel primitive: code in org A minting a session onto org B's page.
+      orgId: getTenantContext()?.orgId ?? null,
       initialized: false,
       protocolVersion: MCP_LATEST_PROTOCOL_VERSION,
       // Default to 'warning' so clients that never call logging/setLevel
@@ -180,6 +210,14 @@ export class McpSessionManager {
     }
   }
 
+  /**
+   * Deliberately NOT org-filtered (§108 t-716). The transport is the only
+   * caller and it already refuses a session whose `apiKeyId` is not the
+   * authenticated key's (`app/api/v1/mcp/route.ts`, both entry points) — a
+   * strictly stronger check, since a key belongs to one org. Adding an org
+   * filter here would be a guard against a state the callers cannot reach,
+   * which reads as safety and is not.
+   */
   getSession(sessionId: string): McpSession | null {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
@@ -201,11 +239,26 @@ export class McpSessionManager {
     }
   }
 
+  /**
+   * Terminate a session. Returns `false` for an unknown id **and for a session
+   * belonging to another org** (§108 t-716), which the admin route turns into
+   * its ordinary `NotFoundError` — so the two are indistinguishable to the
+   * caller and an org cannot probe for another's session ids.
+   */
   destroySession(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    if (!session || !this.isVisible(session)) return false;
     this.subscriptions.delete(sessionId);
     return this.sessions.delete(sessionId);
   }
 
+  /**
+   * Not org-filtered, and correct without it (§108 t-716): an MCP key belongs
+   * to one org, so counting one key's sessions cannot cross orgs whatever
+   * scope asks. Filtering by the caller's org as well would change nothing
+   * except to make `maxSessionsPerKey` silently unenforceable from a scope
+   * that is not the key's.
+   */
   getActiveSessionCount(apiKeyId: string): number {
     const now = Date.now();
     let count = 0;
@@ -217,15 +270,40 @@ export class McpSessionManager {
     return count;
   }
 
+  /**
+   * Every live session the CALLING scope may see — its own org's at `multi`,
+   * all of them at `single` (§108 t-716).
+   *
+   * Two callers, and the filter is what each one needed: the admin sessions
+   * route served this array verbatim, so an org admin read every other org's
+   * session ids, `apiKeyId`s and activity times; and `lib/.../log-emitter.ts`
+   * builds its notification targets from it, so an MCP log line raised in one
+   * org was pushed to every org's open SSE stream.
+   */
   getActiveSessions(): McpSession[] {
     const now = Date.now();
     const active: McpSession[] = [];
     for (const session of this.sessions.values()) {
-      if (now - session.lastActivityAt <= this.ttlMs) {
+      if (now - session.lastActivityAt <= this.ttlMs && this.isVisible(session)) {
         active.push(session);
       }
     }
     return active;
+  }
+
+  /**
+   * May the calling scope see this session?
+   *
+   * At `single` everything is visible — the same gate as the admin log buffer
+   * (§108 t-714) and the per-org retention windows (t-713): the per-org rule
+   * applies where something confines it. It is not merely a shortcut there: the
+   * org API creates orgs in both modes, so a single-mode install can hold a
+   * second org whose key mints sessions stamped with it, and narrowing to the
+   * install org would hide them from a page that has always shown them.
+   */
+  private isVisible(session: McpSession): boolean {
+    if (!isMultiTenant()) return true;
+    return (session.orgId ?? null) === (getTenantContext()?.orgId ?? null);
   }
 
   private evictExpired(): void {
@@ -275,11 +353,26 @@ export class McpSessionManager {
     return 'ok';
   }
 
-  /** Returns the session IDs subscribed to a given URI (active sessions only). */
-  getSubscribers(uri: string): string[] {
+  /**
+   * The session ids subscribed to a URI (active sessions only), narrowed to the
+   * given {@link McpResourceAudience} — see that type for why the caller has to
+   * say which, rather than this defaulting (§108 t-716).
+   *
+   * `'this-org'` is the calling scope's org at `multi` and everything at
+   * `single`; `'every-org'` is every subscriber in the process, which is right
+   * when what changed was global config.
+   */
+  getSubscribers(uri: string, audience: McpResourceAudience): string[] {
     const out: string[] = [];
     for (const [sessionId, set] of this.subscriptions) {
-      if (set.has(uri) && this.getSession(sessionId)) out.push(sessionId);
+      if (!set.has(uri)) continue;
+      // `this.sessions.get` rather than `getSession`, because `getSession` is
+      // unfiltered by design and also refreshes `lastActivityAt` — a fan-out
+      // must not keep a session alive by being interested in it.
+      const session = this.sessions.get(sessionId);
+      if (!session || Date.now() - session.lastActivityAt > this.ttlMs) continue;
+      if (audience === 'this-org' && !this.isVisible(session)) continue;
+      out.push(sessionId);
     }
     return out;
   }
@@ -313,6 +406,22 @@ export class McpSessionManager {
    *  - An array: deliver only to those sessions that are still connected.
    *    Used by per-session features (progress updates, targeted resource
    *    update fan-out) so notifications don't leak across sessions.
+   *
+   * **This is deliberately not org-filtered (§108 t-716), and that needs
+   * saying because it is the one fan-out here that is not.** Every caller is
+   * already in one of two correct positions: the three `list_changed` helpers
+   * in `lib/orchestration/mcp/index.ts` announce a change to `McpExposedTool` /
+   * `McpExposedPrompt` / `McpExposedResource`, all of which are
+   * `GLOBAL_CONFIG_MODELS` — so every org's answer really did change and an
+   * org filter here would leave every org but one holding a stale list; and
+   * every other caller passes ids it already chose under a scope, from
+   * `getSubscribers(uri, audience)`, from the org-filtered
+   * {@link getActiveSessions}, or from its own session.
+   *
+   * So the rule for a new caller is: **decide the audience where you know what
+   * changed**, not here. If a fourth caller ever wants "this org, no URI", add
+   * an explicit arm rather than making `undefined` mean it — an unfiltered
+   * default is right for today's callers and silently wrong for that one.
    */
   broadcastNotification(
     notification: JsonRpcNotification,

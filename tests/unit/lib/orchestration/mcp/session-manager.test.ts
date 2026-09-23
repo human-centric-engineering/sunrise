@@ -174,7 +174,7 @@ describe('McpSessionManager', () => {
       const b = manager.createSession(KEY_ID_2, 5)!;
       manager.subscribe(a.id, 'sunrise://agents');
       manager.subscribe(b.id, 'sunrise://agents');
-      const subscribers = manager.getSubscribers('sunrise://agents');
+      const subscribers = manager.getSubscribers('sunrise://agents', 'every-org');
       expect(subscribers.sort()).toEqual([a.id, b.id].sort());
     });
 
@@ -182,7 +182,7 @@ describe('McpSessionManager', () => {
       const s = manager.createSession(KEY_ID, 5)!;
       manager.subscribe(s.id, 'sunrise://agents');
       manager.destroySession(s.id);
-      expect(manager.getSubscribers('sunrise://agents')).toEqual([]);
+      expect(manager.getSubscribers('sunrise://agents', 'every-org')).toEqual([]);
     });
 
     it('expired session no longer appears as a subscriber', async () => {
@@ -190,7 +190,7 @@ describe('McpSessionManager', () => {
       const s = shortTtl.createSession(KEY_ID, 5)!;
       shortTtl.subscribe(s.id, 'sunrise://agents');
       await new Promise((r) => setTimeout(r, 60));
-      expect(shortTtl.getSubscribers('sunrise://agents')).toEqual([]);
+      expect(shortTtl.getSubscribers('sunrise://agents', 'every-org')).toEqual([]);
       shortTtl.destroy();
     });
   });
