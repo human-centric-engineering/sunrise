@@ -505,8 +505,9 @@ customer console that leaks an aggregate.
   console publishes one tenant's prompt to all of them. Assign it to the
   customer only after scoping the model (column, `@@unique([orgId, name])`,
   per-org cache key and cap).
-- **`orchestration/mcp` (landing) and `mcp/sessions`** — sit above both
-  halves of the MCP split.
+- **`orchestration/mcp` (landing)** — sits above both halves of the MCP split.
+  (`mcp/sessions` was listed here too until §39 t-718 deleted the page with the
+  stateful transport.)
 
 ### Why the URL tree is not the answer
 

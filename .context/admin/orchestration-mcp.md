@@ -16,7 +16,6 @@ The MCP server uses **JSON-RPC 2.0** over **Streamable HTTP** transport (protoco
 ├── tools/page.tsx    → Exposed tools management
 ├── resources/page.tsx → Exposed resources management
 ├── keys/page.tsx     → API key management
-├── sessions/page.tsx → Active session monitoring
 ├── audit/page.tsx    → Audit log with filters + pagination
 └── settings/page.tsx → Server configuration form
 ```
@@ -24,7 +23,7 @@ The MCP server uses **JSON-RPC 2.0** over **Streamable HTTP** transport (protoco
 ## Dashboard (`mcp-dashboard.tsx`)
 
 - **Master toggle** — enables/disables the MCP server via `apiClient.patch`
-- **Quick links** — 6 cards linking to Tools, Resources, Keys, Sessions, Audit, Settings
+- **Quick links** — cards linking to Tools, Resources, Prompts, Keys, Audit, Settings
 - **Client config snippet** — shown when server is enabled; copy-paste JSON for MCP clients
 - **Getting started wizard** — shown when no tools and no keys are configured
 
@@ -79,21 +78,16 @@ Name, Key Prefix, Scopes, Status (Active/Revoked/Expired), Expires, Rate Limit, 
 
 **Plaintext display:** Key material is shown exactly once on creation or rotation, then never stored or retrievable.
 
-## Sessions (`mcp-sessions-list.tsx`)
+## Sessions — the page is gone
 
-Displays active in-memory MCP sessions.
+There was a Sessions page listing in-memory MCP sessions, and it has been removed
+(§39 t-718) along with `mcp-sessions-list.tsx`, `GET …/mcp/sessions` and
+`DELETE …/sessions/:id`. There are no sessions: every MCP request stands alone.
 
-**Empty by design under the default session mode.** `MCP_SESSION_MODE=stateless`
-(the default) holds no session state, so `getActiveSessions()` can never return a
-row and this page shows nothing even while clients are connected. Without a
-signal that reads as "nobody is connected", so the page renders an explanatory
-panel when the mode is stateless — it is a server component and reads
-`env.MCP_SESSION_MODE` directly. See
-[Session model](../orchestration/mcp.md#session-model--mcp_session_mode).
-
-- **Refresh button** — re-fetches from `/api/v1/admin/orchestration/mcp/sessions`
-- **Columns**: Session ID (truncated), API Key ID, Status (Initialized/Pending), Connected, Last Activity, Duration
-- Sessions are ephemeral — stored in-memory, expire after inactivity (stateful mode only)
+Under the default session mode the page was **permanently empty** and said so in
+an explanatory panel, because `getActiveSessions()` could never return a row.
+That panel was the tell. See
+[One transport, and it holds nothing](../orchestration/mcp.md#one-transport-and-it-holds-nothing).
 
 ## Audit Log (`mcp-audit-log.tsx`)
 
@@ -125,15 +119,13 @@ Server configuration form using `react-hook-form` + Zod validation.
 | Server Name          | string | 1-100 chars | "Sunrise MCP Server" |
 | Server Version       | string | 1-20 chars  | "1.0.0"              |
 | Global Rate Limit    | int    | 1-10,000    | 60                   |
-| Max Sessions Per Key | int    | 1-100       | 5 (see note)         |
 | Audit Retention Days | int    | 0-3,650     | 90                   |
 
-**`Max Sessions Per Key` has no effect under `MCP_SESSION_MODE=stateless`.** The
-stateless path creates no session, so the cap is never consulted — the field
-still validates and still saves, which is why the form annotates it rather than
-hiding it. The mode reaches this client component as a `sessionsAreTracked` prop
-from the page (a server component); `MCP_SESSION_MODE` is server-only and cannot
-be read here directly.
+There used to be a **Max Sessions Per Key** field here, annotated "no effect on
+this deployment" under the default session mode — a setting that validated, saved
+and was never consulted. Both it and the `McpServerConfig.maxSessionsPerKey`
+column behind it are gone (§39 t-718). A fork that PATCHes the field now gets a
+400: zod strips the unknown key, leaving a body with no settable field in it.
 
 - **isDirty tracking** — Save button disabled when pristine
 - **Error display** — API errors shown inline; generic fallback for non-API errors
@@ -159,7 +151,6 @@ All components use `apiClient` from `@/lib/api/client` (not raw `fetch`). The cl
 | `API.ADMIN.ORCHESTRATION.MCP_KEYS`            | List/create API keys                       |
 | `API.ADMIN.ORCHESTRATION.mcpKeyById(id)`      | PATCH individual key                       |
 | `API.ADMIN.ORCHESTRATION.mcpKeyRotate(id)`    | POST to rotate key                         |
-| `API.ADMIN.ORCHESTRATION.MCP_SESSIONS`        | GET active sessions                        |
 | `API.ADMIN.ORCHESTRATION.MCP_AUDIT`           | GET (filtered) / DELETE (purge) audit logs |
 
 ## Test Coverage
@@ -171,4 +162,3 @@ Component tests in `tests/unit/components/admin/orchestration/mcp/`:
 - `mcp-keys-list.test.tsx` — create, revoke, rotate, expiry, rate limit
 - `mcp-tools-list.test.tsx` — add, toggle, remove, edit dialog
 - `mcp-audit-log.test.tsx` — filters, pagination, purge
-- `mcp-sessions-list.test.tsx` — refresh, session rows

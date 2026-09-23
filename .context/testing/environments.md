@@ -80,9 +80,12 @@ in short supply when two suites overlap.
 **Correctness, which is the better half of the argument.** happy-dom defines
 `window`, so `lib/env.ts`'s `typeof window !== 'undefined'` check selected the
 **client** schema and every server variable read as `undefined`. Any test
-branching on `TENANCY_MODE`, `CAPABILITY_BINDING_MODE` or `MCP_SESSION_MODE` was
-silently exercising the undefined path — a downstream MCP change once had 40
-tests pass against a stateless branch none of them entered. 44 of the 47 test
+branching on `TENANCY_MODE` or `CAPABILITY_BINDING_MODE` was silently exercising
+the undefined path — and so was anything branching on `MCP_SESSION_MODE`, which
+is where this was measured: a downstream MCP change once had 40 tests pass
+against a stateless branch none of them entered. (That variable was removed in
+§39 t-718; the trap it demonstrated is a property of the environment, not of the
+variable.) 44 of the 47 test
 files that import `@/lib/env` now run under node and see the real server schema.
 Three still opt into happy-dom, and all three are deliberate: two component
 tests, plus `env.test.ts`, which asserts on `typeof window` in both directions.

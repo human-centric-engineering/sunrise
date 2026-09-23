@@ -113,7 +113,9 @@ let tenancy: LogTenancy | null = null;
  * scope. A timer belonging to one org's work keeps the org it was armed in,
  * which for it is the right answer — and note that is not the same as "does it
  * outlive the request", since a delivery retry outlives its request and still
- * belongs to that org.
+ * belongs to that org. **No timer in the tree is currently detached**: the one
+ * that was — `McpSessionManager`'s eviction sweep — went with the stateful MCP
+ * transport (§39 t-718), so the rule stands with nothing presently obeying it.
  */
 export function registerLogTenancy(bridge: LogTenancy | null): void {
   tenancy = bridge;

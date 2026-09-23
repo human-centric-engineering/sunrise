@@ -258,10 +258,24 @@ export function runAsCredentialLookup<T>(credential: string, fn: () => Promise<T
  * org. The question is whether the timer's work belongs to one org at all, or
  * to the process.
  *
- * Synchronous and unawaited, unlike the scope-entering runners above: its
- * callers arm timers rather than run queries. A detached *query* is a
- * different request — the audited bypass — so reach for {@link runAsSystem}
- * there and let it be logged.
+ * Synchronous and unawaited, unlike the scope-entering runners above: a caller
+ * arms a timer rather than running a query. A detached *query* is a different
+ * request — the audited bypass — so reach for {@link runAsSystem} there and let
+ * it be logged.
+ *
+ * **It has no caller in the platform as of §39 t-718**, and that is worth
+ * saying rather than leaving a reader to grep. Its one caller was
+ * `McpSessionManager`'s eviction sweep, and the whole stateful MCP transport
+ * went. Kept, because the asset is the RULE and this is what enforces it: the
+ * next process-lifetime timer armed from a request needs it, and without it the
+ * choice on offer is `runAsSystem` (wrong — an audited database bypass) or raw
+ * `AsyncLocalStorage.exit` at the call site (right, and re-derived from
+ * scratch each time). `tests/unit/lib/tenancy/context.test.ts` also pins the
+ * Node behaviour the rule rests on, in both directions, including the defect —
+ * so if Node ever stopped propagating into a timer, that is where it would
+ * show. The timer table in `.context/tenancy/context.md` says which scope every
+ * repeating timer in the tree belongs in; every one of them currently keeps its
+ * context, which is why this has nothing to do.
  */
 export function runDetached<T>(fn: () => T): T {
   return tenantContext.exit(fn);

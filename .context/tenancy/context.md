@@ -118,8 +118,10 @@ interface TenantContext {
   runs inside one.
 - **`runDetached(fn)`** (§108 t-715) — runs `fn` outside every scope, for
   arming something whose lifetime is the **process's** from inside a request.
-  Synchronous and unawaited, unlike the runners above: its callers arm timers
-  rather than run queries. See "A timer is stamped where it was armed" below.
+  Synchronous and unawaited, unlike the runners above: a caller arms a timer
+  rather than running a query. It has **no caller in the tree** since §39 t-718
+  took the stateful MCP transport, which is why the rule matters more than the
+  count. See "A timer is stamped where it was armed" below.
 - **`forEachOrg(fn)`** — one `runAsOrg` scope per `ACTIVE` org, sequential on
   purpose (per-org batch caps are meaningless if every org runs at once).
   The maintenance tick's per-org jobs run through it (§108 t-711) — see
@@ -442,13 +444,21 @@ body needs no change.
 
 ```typescript
 // ❌ Inherits the org of whichever request built the singleton, for ever.
-this.evictionTimer = setInterval(() => this.evictExpired(), EVICTION_INTERVAL_MS);
+this.sweepTimer = setInterval(() => this.sweep(), SWEEP_INTERVAL_MS);
 
 // ✅ Every tick runs outside any scope, so its lines are unstamped.
-this.evictionTimer = runDetached(() =>
-  setInterval(() => this.evictExpired(), EVICTION_INTERVAL_MS)
-);
+this.sweepTimer = runDetached(() => setInterval(() => this.sweep(), SWEEP_INTERVAL_MS));
 ```
+
+**Nothing in the tree currently needs this.** The one caller was
+`McpSessionManager`'s eviction sweep, and the whole stateful MCP transport went in
+§39 t-718; every timer in the table below keeps its context, which is the right
+answer for each of them. The primitive stays because the RULE is the asset — the
+next process-lifetime timer armed from a request needs it, and without it the
+choice on offer is `runAsSystem` (wrong, see below) or re-deriving
+`AsyncLocalStorage.exit` at the call site. `context.test.ts` pins the Node
+behaviour the rule rests on, in both directions, so the day Node stops propagating
+into a timer is the day that file goes red.
 
 **The question is whether the timer's work belongs to one org at all, or to the
 process** — not whether it outlives the request that armed it. That second test
@@ -456,18 +466,17 @@ is the tempting one and it is wrong: a delivery retry is armed inside a request
 and fires a minute after the response, and it still belongs to that org. Most
 timers here belong to one org's work, and those must KEEP their context:
 
-| Timer                                                                                                                | Lives as long as | Scope                                                                                                                       |
-| -------------------------------------------------------------------------------------------------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `McpSessionManager`'s eviction sweep                                                                                 | the process      | **detached** — one in-memory map of every org's sessions, no database. Writes a line only under `MCP_SESSION_MODE=stateful` |
-| An execution's lease heartbeat (`lib/orchestration/engine/lease.ts`)                                                 | one execution    | the execution's org — it writes that org's lease row                                                                        |
-| A hook or webhook delivery retry (`lib/orchestration/hooks/registry.ts`, `lib/orchestration/webhooks/dispatcher.ts`) | one delivery     | the delivery's org — it reads and writes that org's rows                                                                    |
-| The maintenance tick's overrun watchdog                                                                              | one tick         | the tick's own scope; its warning belongs to whoever triggered the tick                                                     |
-| A `fetch` abort, an SSE keepalive, a retry backoff sleep                                                             | one request      | the request's; nothing tenant-visible happens in the callback                                                               |
+| Timer                                                                                                                | Lives as long as | Scope                                                                   |
+| -------------------------------------------------------------------------------------------------------------------- | ---------------- | ----------------------------------------------------------------------- |
+| An execution's lease heartbeat (`lib/orchestration/engine/lease.ts`)                                                 | one execution    | the execution's org — it writes that org's lease row                    |
+| A hook or webhook delivery retry (`lib/orchestration/hooks/registry.ts`, `lib/orchestration/webhooks/dispatcher.ts`) | one delivery     | the delivery's org — it reads and writes that org's rows                |
+| The maintenance tick's overrun watchdog                                                                              | one tick         | the tick's own scope; its warning belongs to whoever triggered the tick |
+| A `fetch` abort, an SSE keepalive, a retry backoff sleep                                                             | one request      | the request's; nothing tenant-visible happens in the callback           |
 
-Detaching one of the lower rows would not fix an attribution, it would break a
-write: at `multi` a create with no org in context is refused before any SQL.
+Detaching any of these would not fix an attribution, it would break a write: at
+`multi` a create with no org in context is refused before any SQL.
 
-**Not `runAsSystem`** for the top row either, though it would work. That logs
+**Not `runAsSystem`** for a process-lifetime timer either, though it would work. That logs
 its reason at `info` on every entry — once every few minutes, for the life of
 the process — and it is the audited _database bypass_: at `multi` it sets
 `app.bypass_rls`, a claim about what the code may read that arming a timer is
@@ -516,11 +525,6 @@ org is refused like any other path nobody taught to enter one.
   — the posture manifest against the `lib/` tree, both directions, preceded by
   a block of self-tests proving the scanner can report before a clean result
   is trusted (each one is a shape that fooled an earlier version of it).
-- [`tests/unit/lib/orchestration/mcp/session-manager.test.ts`](../../tests/unit/lib/orchestration/mcp/session-manager.test.ts)
-  — the eviction timer armed with no org though the manager was constructed
-  inside one, asserted on the store at the arming call (which is what decides
-  the callback's, not a proxy for it), and the constructing request keeping its
-  own org afterwards.
 - [`tests/unit/lib/orchestration/hooks/registry.tenancy.test.ts`](../../tests/unit/lib/orchestration/hooks/registry.tenancy.test.ts)
   — two orgs through the real context: each dispatches its own hook, signed
   with its own secret, verified against the real signing scheme.

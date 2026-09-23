@@ -24,11 +24,12 @@ release process.
   captured when `setInterval` is called, so a repeating timer armed inside
   `runAsOrg` carries that org for the life of the process: every line it logs
   is attributed to whichever org made the first request after boot, and at
-  `multi` every query it makes is scoped to them. `McpSessionManager`'s
-  eviction sweep is armed through it, so its "evicted expired sessions" lines
-  are now unstamped rather than one arbitrary org's — a line only
-  `MCP_SESSION_MODE=stateful` produces, since `stateless` (the default) stores
-  no session for the sweep to find. **Use it only where the timer's
+  `multi` every query it makes is scoped to them. It has **no caller in the
+  platform**: the one it was written for, `McpSessionManager`'s eviction sweep,
+  went with the stateful MCP transport later in this same release (see
+  `Removed`). It ships anyway, because the rule is the asset and the alternatives
+  at a call site are both wrong — `runAsSystem` (an audited database bypass) or a
+  re-derived `AsyncLocalStorage.exit`. **Use it only where the timer's
   work belongs to the process rather than to one org** — a timer belonging to
   one org's work (a lease heartbeat, a delivery retry, a `fetch` abort) must
   KEEP the context it was armed in, because its callback writes that org's rows.
@@ -383,62 +384,98 @@ release process.
   [`agent-visibility.md`](./.context/orchestration/agent-visibility.md#org-binding-106)
   and [`mcp.md`](./.context/orchestration/mcp.md#api-key-lifecycle).
 
+### Removed
+
+- **The stateful MCP transport, and every session-shaped surface with it**
+  (§39 t-718). There is one MCP transport now and it holds nothing: every request
+  stands alone, no `Mcp-Session-Id` is issued, one arriving is **ignored**, and
+  `GET` / `DELETE /api/v1/mcp` answer `405` with `Allow: POST`.
+
+  **Breaking, and the parts a fork has to act on:**
+
+  | Gone                                                          | What to do                                                                 |
+  | ------------------------------------------------------------- | -------------------------------------------------------------------------- |
+  | `MCP_SESSION_MODE`                                             | delete it from every env file and deploy config; an unknown key is inert    |
+  | `GET /api/v1/admin/orchestration/mcp/sessions`                 | nothing to list                                                            |
+  | `DELETE /api/v1/admin/orchestration/mcp/sessions/:id`          | nothing to terminate                                                       |
+  | `McpServerConfig.maxSessionsPerKey` (migration drops the column) | stop sending it to `PATCH …/mcp/settings` — the body is now refused with 400 |
+  | `McpSession`, `McpLogLevel`, `MCP_LOG_LEVELS`, `McpLogLevelRank`, `JsonRpcNotification` on `types/mcp.ts` | drop the imports |
+  | `JsonRpcErrorCode.SESSION_NOT_FOUND` (`-32002`) and `.STATELESS_UNSUPPORTED` (`-32005`) | nothing emits either |
+  | `McpSessionManager`, `createEphemeralSession`, `McpResourceAudience`, `NotificationSink` | — |
+  | `getMcpSessionManager()` from `@/lib/orchestration/mcp`        | —                                                                          |
+  | `broadcastMcpToolsChanged`, `broadcastMcpResourcesChanged`, `broadcastMcpPromptsChanged`, `broadcastMcpResourceUpdated` | remove the calls; keep the `clearMcp*Cache()` beside them |
+  | `lib/orchestration/mcp/resource-update-hooks.ts` (`notifyMcpAgentsChanged`, `notifyMcpWorkflowsChanged`, `notifyMcpKnowledgeChanged`) | remove the calls |
+  | `lib/orchestration/mcp/log-emitter.ts` (`emitMcpLog`) and `progress-tracker.ts` (`createProgressReporter`, `extractProgressToken`) | a fork using `emitMcpLog` has no transport to send on |
+  | `resources/subscribe`, `resources/unsubscribe`, `logging/setLevel` | an attempt now answers `METHOD_NOT_FOUND`                                |
+  | `admin/orchestration/mcp/sessions` page, `mcp-sessions-list.tsx`, `API.ADMIN.ORCHESTRATION.MCP_SESSIONS` and `mcpSessionById` | — |
+
+  **`lib/api/sse.ts` is untouched** — the consumer chat stream, the embed chat
+  stream, the admin chat stream and workflow execute-stream all use it. The SSE
+  bridge was never MCP's.
+
+  **Why now.** MCP revision
+  [`2026-07-28`](https://modelcontextprotocol.io/specification/2026-07-28/changelog)
+  removes protocol-level sessions, the session headers, the `initialize` handshake
+  and the GET stream; tells a server to answer `405` for GET and DELETE and to
+  **ignore** a legacy `Mcp-Session-Id`; and moves server-push to
+  `subscriptions/listen`. Sunrise's default (`stateless`) was already most of that
+  shape. The other mode could not be run — it threw at module scope on `VERCEL` or
+  `AWS_LAMBDA_FUNCTION_NAME`, which is the platform's own deployment target, and
+  it **refused** a current client outright, answering `400 Missing Mcp-Session-Id
+  header` to a request that correctly sends none. Keeping it meant maintaining two
+  transports where one was unusable and increasingly non-conforming.
+
+  **Server-push is not replaced yet.** `subscriptions/listen` is a different
+  design problem from the one that killed `stateful` — a long-lived stream on a
+  function-per-request platform, rather than state shared across processes — and
+  is tracked separately. Until it lands, an MCP client learns a list changed by
+  asking again; the 5-minute registry caches are cleared on every admin mutation
+  exactly as before, so the next `tools/list` is correct.
+  [`mcp.md`](./.context/orchestration/mcp.md#one-transport-and-it-holds-nothing)
+  carries the two decisions that survive the code: a push audience is decided by
+  what CHANGED rather than by who is subscribed, and a session id is not a
+  capability — the key is.
+
 ### Security
 
-- **`GET /api/v1/mcp` now refuses a session that is not the
-  authenticated key's** (multi-tenancy §108 t-716), with the same
-  `SESSION_NOT_FOUND` 404 that `POST` and `DELETE` have always returned for
-  one. It is the path that attaches the SSE listener and it was the only one
-  not re-checking the key, so a caller holding any valid MCP key could open the
-  stream with another key's — at `multi`, another org's — `Mcp-Session-Id` and
-  receive that session's `notifications/message`, `resources/updated` and
-  `progress` pushes, while the rightful owner stopped receiving them, since the
-  sink registry is keyed by session id and a second registration replaces the
-  first. A client that was passing a session id it does not own was already
-  getting nothing useful; one passing its own is unaffected.
-  Two further properties of the same check. It uses a **non-mutating** lookup
-  (the new `McpSessionManager.peekSession`), so refusing a session no longer
-  refreshes it — previously, polling `GET` or `DELETE` with another key's session
-  id kept that session from ever expiring, which at `multi` is one org holding
-  another org's session open. And if the session is terminated or evicted in the
-  window between the check and the platform pulling the response body, the SSE
-  stream now **closes** rather than staying open with an unwired notification
-  channel: the client sees the close and re-`initialize`s instead of waiting on a
-  keepalive-healthy connection that can never deliver.
+- **A cross-key MCP SSE hijack is fixed, and then the surface it was on is
+  removed** (multi-tenancy §108 t-716, then §39 t-718 — both in this release).
+  Read this one even though the code is gone, because **a fork still on 0.12.x or
+  earlier is running it.**
+
+  `GET /api/v1/mcp` attached the SSE notification listener and was the only verb
+  not re-checking that the named session belonged to the authenticated key. A
+  caller holding **any** valid MCP key could open the stream with another key's —
+  at `multi`, another org's — `Mcp-Session-Id` and receive that session's
+  `notifications/message`, `resources/updated` and `progress` pushes, while the
+  rightful owner silently stopped receiving them, because the sink registry was
+  keyed by session id and a second registration replaced the first. Polling that
+  endpoint with someone else's session id also **refreshed** it, so a foreign
+  caller could keep another org's session alive indefinitely.
+
+  Reachable only under `MCP_SESSION_MODE=stateful`, which is not the default and
+  throws on any platform announcing itself function-per-request. **If you run the
+  default (`stateless`), you were never exposed.** If you run `stateful` on an
+  older release, upgrade or switch to the default — in this release the mode, the
+  `GET` stream and the whole session plane are removed, so there is no session for
+  a caller to name.
 
 ### Changed
 
-- **An MCP session belongs to the org whose key opened it** (multi-tenancy §108
-  t-716). `McpSession` (`types/mcp.ts`) gains a **required** `orgId: string | null`,
-  stamped by `createSession` from the tenant context. `GET /api/v1/admin/orchestration/mcp/sessions`
-  returns it and, at `TENANCY_MODE=multi`, returns only the reading org's
-  sessions; `DELETE …/mcp/sessions/:id` refuses another org's id with its
-  ordinary 404, indistinguishable from an unknown one. At `single` both behave
-  exactly as before. Previously, at `multi` with `MCP_SESSION_MODE=stateful`, an
-  org admin read every other org's session ids, `apiKeyId`s and activity times
-  and could terminate any of them. An MCP log line **broadcast** from one org would
-  also reach every org's open SSE stream, since `lib/orchestration/mcp/log-emitter.ts`
-  builds its targets from the same list — latent rather than live, because
-  `emitMcpLog` has no caller in the platform and is reachable only by a fork
-  using that documented API. A **targeted** `emitMcpLog(sessionId, …)` is
-  unaffected in either direction: it resolves that one session directly, so it
-  still delivers when called from a `runAsSystem` job, a detached timer or a
-  platform credential, none of which shares the session's org. Terminating or
-  evicting a session now also drops its SSE sink, so a force-terminated client
-  stops receiving pushes — though its stream is not closed.
-  **Breaking for a fork that calls `broadcastMcpResourceUpdated(uri)`**: it now
-  takes a required second argument, `'this-org' | 'every-org'` (the exported
-  type `McpResourceAudience`), as does `McpSessionManager.getSubscribers`. There
-  is deliberately no default. Every org's sessions subscribe to the same
-  `sunrise://…` URI, so who is subscribed does not decide who should be told:
-  pass `'this-org'` when tenant-owned contents changed (an agent, a workflow, a
-  knowledge document) and `'every-org'` when the `McpExposedResource` definition
-  did, since that row is global config. Either default would be wrong for half
-  the callers, and wrong invisibly — a notification that never arrives looks
-  exactly like nothing having happened. The three `list_changed` broadcasts are
-  unchanged and still reach every org, for the same reason: their subjects
-  (`McpExposedTool`, `McpExposedPrompt`, `McpExposedResource`, and `AiCapability`
-  for the tools ping) are all global config. A fork constructing an `McpSession` literal must add `orgId`.
+- **MCP sessions were scoped to the org whose key opened them, and are then gone
+  entirely** (multi-tenancy §108 t-716, then §39 t-718 — both in this release).
+  t-716 stamped `McpSession.orgId` from the tenant context, filtered the admin
+  sessions list and the terminate route to the reading org, and made
+  `broadcastMcpResourceUpdated` take a required audience. t-718 removes the
+  transport all of that belonged to, so **nothing in that paragraph is a surface
+  in this release** — it is recorded in `Removed` instead, as one story rather
+  than a breaking change followed by a deletion.
+
+  What it was fixing is still worth knowing if you run an older version at
+  `multi` with `MCP_SESSION_MODE=stateful`: an org admin read every other org's
+  session ids, `apiKeyId`s and activity times and could terminate any of them,
+  and one org's agent edit told every other org that its agent list had changed.
+
 - **The admin Logs page shows only the reading org's lines** (multi-tenancy
   §108 t-714). `LogEntry` (`types/admin.ts`) gains `orgId?: string | null`,
   stamped by `addLogEntry` from the tenant context, and `getLogEntries` —

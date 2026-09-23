@@ -246,7 +246,9 @@ describe('runDetached — arming something that outlives the request', () => {
     // The whole point of the primitive. An AsyncLocalStorage store is captured
     // when setTimeout/setInterval is CALLED, so a timer armed in here is
     // detached for every tick it ever fires — the callback body needs no
-    // change. This is McpSessionManager's eviction timer, in miniature.
+    // change. It was McpSessionManager's eviction timer in miniature; that
+    // timer went with the stateful MCP transport (§39 t-718), so these two tests
+    // are now the only thing holding the rule up.
     const seen = await runAsOrg(ORG_A, async () =>
       orgSeenByTimer((schedule) => runDetached(() => setTimeout(schedule, 1)))
     );

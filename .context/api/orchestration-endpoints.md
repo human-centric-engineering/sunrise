@@ -162,8 +162,6 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/mcp/keys/:id` | GET, PATCH, DELETE | Read / update / revoke MCP API key | 6 |
 | `/mcp/keys/:id/rotate` | POST | Rotate an MCP API key | 6 |
 | `/mcp/audit` | GET | Query MCP audit log | 6 |
-| `/mcp/sessions` | GET | List MCP sessions | 6 |
-| `/mcp/sessions/:id` | GET | Read a single MCP session | 6 |
 | `/audit-log` | GET | Admin action audit trail (paginated, filterable) | 8 |
 
 120 admin route files, 8 consumer chat route files, 1 webhook trigger route file, 2 public approval route files (131 total). For architecture detail see `.context/orchestration/admin-api.md`.

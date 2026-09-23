@@ -783,10 +783,10 @@ Frequent enough that any regression matters. Walk these after Tier 1 is clean.
 - C[ ] L[ ] M[ ] A[ ] — Submit malformed JSON-RPC → verify clean error with the right code.
 - C[ ] L[ ] M[ ] A[ ] — Use an unauthenticated request → verify rejection.
 - C[ ] L[ ] M[ ] A[ ] — Use an API key whose scope excludes the requested tool → verify rejection.
-- C[ ] L[ ] M[ ] A[ ] — Open more sessions than `maxSessionsPerKey` → verify enforcement.
+- C[ ] L[ ] M[ ] A[ ] — Send a POST carrying a stray `Mcp-Session-Id` → verify it is IGNORED and the request served, not refused (§39 t-718; the spec says ignore the legacy header).
 - C[ ] L[ ] M[ ] A[ ] — Hit the IP-level rate limit → verify clean 429.
 - C[ ] L[ ] M[ ] A[ ] — Hit the per-key rate limit → verify clean 429.
-- C[ ] L[ ] M[ ] A[ ] — Spam the SSE notification stream with rapid notifications → verify backpressure / no memory leak.
+- C[ ] L[ ] M[ ] A[ ] — `GET` and `DELETE /api/v1/mcp`, with and without a bearer → verify `405` and `Allow: POST` every time, including when the MCP server is disabled.
 - C[ ] L[ ] M[ ] A[ ] — MCP client speaks an older protocol revision (e.g. before a method was added) → verify the server returns a graceful capability-negotiation response, not a 500.
 - C[ ] L[ ] M[ ] A[ ] — MCP client speaks a newer revision the server doesn't yet recognise → verify clean error with a documented protocol-version mismatch code, not silent acceptance.
 - C[ ] L[ ] M[ ] A[ ] — JSON-RPC notification (no `id`, no response expected) → verify the server processes it correctly without sending back a response envelope.

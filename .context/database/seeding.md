@@ -156,7 +156,7 @@ Two things to preserve if you touch that guard, both of which shipped broken onc
 
 Two caveats when seeding a live box:
 
-- **Caches do not clear across processes.** The PATCH route pairs every `functionDefinition` write with `capabilityDispatcher.clearCache()`, `clearMcpToolCache()` and `broadcastMcpToolsChanged()`. `db:seed` runs in a different process and cannot, so a running app keeps serving the previous MCP `inputSchema` on `tools/list` for up to the dispatcher's 5-minute TTL. Restart the app after a seed that changes a capability, or wait it out.
+- **Caches do not clear across processes.** The PATCH route pairs every `functionDefinition` write with `capabilityDispatcher.clearCache()` and `clearMcpToolCache()`. `db:seed` runs in a different process and cannot, so a running app keeps serving the previous MCP `inputSchema` on `tools/list` for up to the dispatcher's 5-minute TTL. Restart the app after a seed that changes a capability, or wait it out.
 - **A re-seed only happens when the seed FILE hash changes** (plus any `hashInputs`). Editing a capability class alone will not trigger one — which is why the parity test below matters: it forces the seed constant to change whenever the class does, which is what moves the hash.
 
 Enforced by `tests/unit/prisma/seeds/capability-code-owned-fields.test.ts`, which parses every `aiCapability.upsert` in this directory and checks both directions. **The same shape applies to any seeded row with code-owned fields** — built-in agents' `systemInstructions` are the obvious next case, and the agent seeds are currently inconsistent about it (`008`/`016`/`017`/`018` re-apply them; `005`/`006`/`010` do not).

@@ -508,24 +508,25 @@ Sunrise implements a **full MCP server** — exposing its capabilities to extern
 ### 8.1 Transport
 
 - **Protocol**: Streamable HTTP (JSON-RPC 2.0)
-- **Methods**: POST (requests), GET (SSE notification stream), DELETE (session termination)
+- **Methods**: POST (requests). GET and DELETE answer `405 Allow: POST` — MCP revision 2026-07-28 removes the GET stream and session termination, and Sunrise holds no session (§39 t-718)
 - **Batch support**: Up to 20 JSON-RPC requests per batch
 - **Size limit**: 1 MB max request body
 
 ### 8.2 Features
 
-| Feature                | Implementation                                                               |
-| ---------------------- | ---------------------------------------------------------------------------- |
-| **Tools**              | Dynamic exposure from registered capabilities, scoped to agent config        |
-| **Resources**          | Agent details, capabilities, system information                              |
-| **Authentication**     | Bearer token (MCP API keys), not session cookies                             |
-| **Session management** | In-memory sessions with `maxSessionsPerKey` limit                            |
-| **Rate limiting**      | IP-level + per-key enforcement                                               |
-| **Audit logging**      | Every request logged: method, response code, duration, client IP, user agent |
+| Feature            | Implementation                                                               |
+| ------------------ | ---------------------------------------------------------------------------- |
+| **Tools**          | Dynamic exposure from registered capabilities, scoped to agent config        |
+| **Resources**      | Agent details, capabilities, system information                              |
+| **Authentication** | Bearer token (MCP API keys), not session cookies                             |
+| **Sessions**       | None — every request stands alone; no `Mcp-Session-Id` is issued or read     |
+| **Rate limiting**  | IP-level + per-key enforcement                                               |
+| **Audit logging**  | Every request logged: method, response code, duration, client IP, user agent |
 
 ### 8.3 Admin Interface (7 pages)
 
-Settings, tools browser, resources browser, sessions, audit log, API key management, and connection testing.
+Dashboard, settings, tools browser, resources browser, prompts, audit log and API
+key management. (A Sessions page was the eighth until §39 t-718.)
 
 ---
 
@@ -807,7 +808,7 @@ Covers approximately 6/10 OWASP Agentic Application Top 10 categories natively:
 | **Executions**      | List, Detail (trace)          | Browse runs, filter by status/workflow, timeline strip, aggregates, latency attribution, per-call cost |
 | **Approvals**       | Queue page                    | Browse, approve/reject pending executions                                                              |
 | **Audit Log**       | Filterable list               | Config change history                                                                                  |
-| **MCP**             | 7 sub-pages                   | Tools, resources, sessions, audit, keys                                                                |
+| **MCP**             | 7 sub-pages                   | Tools, resources, prompts, audit, keys, settings                                                       |
 | **Learning**        | Pattern explorer, Quiz        | 21 patterns, advisor chatbot                                                                           |
 | **Settings**        | Global config                 | Defaults, guards, search tuning                                                                        |
 | **Setup Wizard**    | 5-step flow                   | Guided initial configuration                                                                           |
