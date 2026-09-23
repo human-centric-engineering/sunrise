@@ -5,11 +5,16 @@
  * Sessions are lost on restart — MCP clients re-initialize on
  * session-not-found, which is acceptable for v1.
  *
- * Platform-agnostic: no Next.js imports.
+ * Platform-agnostic: no Next.js imports. Server-only, though: the eviction
+ * timer is armed through `lib/tenancy/context.ts` (see the constructor), whose
+ * graph reaches the database client. Nothing client-side imports this tree, and
+ * `lib/orchestration/mcp/singletons.ts` already throws at module scope on a
+ * misconfigured deploy, so it was never importable from a browser bundle.
  */
 
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/lib/logging';
+import { runDetached } from '@/lib/tenancy/context';
 import {
   MCP_LATEST_PROTOCOL_VERSION,
   type McpLogLevel,
@@ -77,8 +82,27 @@ export class McpSessionManager {
   private subscriptions = new Map<string, Set<string>>();
   private evictionTimer: ReturnType<typeof setInterval> | null = null;
 
+  /**
+   * Armed OUTSIDE whatever tenant scope constructed this manager (§108 t-715).
+   *
+   * The manager is a lazily constructed process singleton
+   * (`lib/orchestration/mcp/singletons.ts`), so the first MCP request after
+   * boot is what builds it — and that request runs inside `runAsOrg(auth.orgId)`.
+   * An `AsyncLocalStorage` store is captured when `setInterval` is *called*, so
+   * without `runDetached` the eviction timer would carry that one org for the
+   * life of the process: every "evicted expired sessions" line would be
+   * attributed to it, which at `multi` means org A reading a count of org B's
+   * evictions on its own Logs page while B sees none of its own.
+   *
+   * The eviction pass itself is genuinely process-wide — one in-memory map of
+   * every org's sessions, keyed by ids unique across orgs — so no scope is the
+   * honest one. It touches no database, which is why detaching is safe here and
+   * would not be for a timer whose callback writes an org's rows.
+   */
   constructor(private readonly ttlMs: number = DEFAULT_TTL_MS) {
-    this.evictionTimer = setInterval(() => this.evictExpired(), EVICTION_INTERVAL_MS);
+    this.evictionTimer = runDetached(() =>
+      setInterval(() => this.evictExpired(), EVICTION_INTERVAL_MS)
+    );
     // Allow process to exit even if this timer is still running
     if (this.evictionTimer.unref) {
       this.evictionTimer.unref();

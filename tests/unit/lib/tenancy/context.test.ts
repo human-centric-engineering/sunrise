@@ -34,6 +34,7 @@ import {
   runAsCredentialLookup,
   runAsOrg,
   runAsSystem,
+  runDetached,
 } from '@/lib/tenancy/context';
 
 const ORG_A = 'cmorg00000000000000000orga';
@@ -208,6 +209,83 @@ describe('runAsCredentialLookup — the one read that learns the org', () => {
     await expect(runAsCredentialLookup('x', async () => requireOrgId())).rejects.toThrow(
       /system scope/
     );
+  });
+});
+
+describe('runDetached — arming something that outlives the request', () => {
+  /**
+   * Arm a timer and resolve with the org its callback saw when it fired.
+   * `arm` is what differs between the two tests below: the primitive, or
+   * nothing.
+   */
+  function orgSeenByTimer(arm: (schedule: () => void) => void): Promise<string | null> {
+    return new Promise<string | null>((resolve) => {
+      arm(() => resolve(getTenantContext()?.orgId ?? null));
+    });
+  }
+
+  it('runs the callback with no context, from inside an org scope', async () => {
+    const seen = await runAsOrg(ORG_A, async () => runDetached(() => getTenantContext()));
+    expect(seen).toBeNull();
+  });
+
+  it('leaves the surrounding scope intact once it returns', async () => {
+    const after = await runAsOrg(ORG_A, async () => {
+      runDetached(() => getTenantContext());
+      return getTenantContext()?.orgId;
+    });
+    expect(after).toBe(ORG_A);
+  });
+
+  it('returns the callback’s value — the timer handle, for its callers', async () => {
+    const handle = await runAsOrg(ORG_A, async () => runDetached(() => 'timer'));
+    expect(handle).toBe('timer');
+  });
+
+  it('is what a timer armed inside a request needs: the callback fires with no org', async () => {
+    // The whole point of the primitive. An AsyncLocalStorage store is captured
+    // when setTimeout/setInterval is CALLED, so a timer armed in here is
+    // detached for every tick it ever fires — the callback body needs no
+    // change. This is McpSessionManager's eviction timer, in miniature.
+    const seen = await runAsOrg(ORG_A, async () =>
+      orgSeenByTimer((schedule) => runDetached(() => setTimeout(schedule, 1)))
+    );
+    expect(seen).toBeNull();
+  });
+
+  it('and without it the same timer keeps the arming request’s org — the defect', async () => {
+    // The negative control, in the tree rather than in a commit message: this
+    // is the propagation §108 t-715 exists to interrupt. If this assertion ever
+    // flips to null, AsyncLocalStorage stopped propagating into timers and
+    // runDetached is dead weight rather than load-bearing.
+    const seen = await runAsOrg(ORG_A, async () =>
+      orgSeenByTimer((schedule) => setTimeout(schedule, 1))
+    );
+    expect(seen).toBe(ORG_A);
+  });
+
+  it('detaches async work started inside it, not just the synchronous frame', async () => {
+    const seen = await runAsOrg(ORG_A, async () =>
+      runDetached(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        return getTenantContext();
+      })
+    );
+    expect(seen).toBeNull();
+  });
+
+  it('makes a detached caller that needs an org fail loud at multi, not read wide', async () => {
+    // Detaching is not the audited bypass: nothing inside it may name an org,
+    // and asking refuses rather than answering from whichever org armed it.
+    mockEnv.TENANCY_MODE = 'multi';
+    await expect(
+      runAsOrg(ORG_A, async () => runDetached(() => requireTenantContext()))
+    ).rejects.toThrow(/No tenant context/);
+  });
+
+  it('is a no-op outside any scope', () => {
+    expect(runDetached(() => getTenantContext())).toBeNull();
+    expect(getTenantContext()).toBeNull();
   });
 });
 

@@ -5,11 +5,21 @@ vi.mock('@/lib/logging', () => ({
     warn: vi.fn(),
     error: vi.fn(),
     info: vi.fn(),
+    debug: vi.fn(),
   },
 }));
 
+// The eviction timer is armed through `lib/tenancy/context.ts` (§108 t-715),
+// whose graph reaches `lib/db/client.ts` — which builds a `pg` Pool at module
+// scope and reads the server env. Neither is wanted here, and the tenant store
+// itself needs neither.
+const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+vi.mock('@/lib/db/client', () => ({ prisma: {} }));
+
 import { McpSessionManager, createEphemeralSession } from '@/lib/orchestration/mcp/session-manager';
 import { logger } from '@/lib/logging';
+import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 import type { JsonRpcNotification } from '@/types/mcp';
 
 const KEY_ID = 'api-key-abc';
@@ -604,5 +614,66 @@ describe('createEphemeralSession', () => {
 
     expect(manager.getSession(session.id)).toBeNull();
     manager.destroy();
+  });
+});
+
+describe('the eviction timer’s tenant scope (§108 t-715)', () => {
+  // The manager is a lazily constructed process singleton
+  // (`lib/orchestration/mcp/singletons.ts`), so the first MCP request after
+  // boot is what builds it — and that request runs inside `runAsOrg`. An
+  // AsyncLocalStorage store is captured when `setInterval` is CALLED, so an
+  // eviction timer armed there carries that one org for the life of the
+  // process, and t-714's `addLogEntry` stamps every line it writes with it:
+  // org A reads a count of org B's session evictions on its own Logs page,
+  // and B sees none of its own.
+  //
+  // **What is asserted is the store at the arming call, and that is not a
+  // proxy for the stamp — it is what decides it.** The store a timer callback
+  // runs in is fixed when the timer is created; that `runDetached` makes a
+  // real timer fire outside the arming org is pinned with real timers in
+  // `tests/unit/lib/tenancy/context.test.ts`, and that the log entry takes the
+  // org from the context at the moment of the call in `logs.tenancy.test.ts`.
+  //
+  // Asserting it here through vitest's FAKE timers instead was the first
+  // version of this test and it could not fail: `advanceTimersByTime` invokes
+  // the stored callback from its own call stack, so the callback sees the
+  // advancing test's context and not the arming one, whatever the code does.
+  const ORG_A = 'cmorg00000000000000000orga';
+
+  it('arms the timer outside the org that constructed the manager', async () => {
+    const armedIn: (string | null)[] = [];
+    const realSetInterval = globalThis.setInterval;
+    const spy = vi.spyOn(globalThis, 'setInterval').mockImplementation(((
+      handler: TimerHandler,
+      timeout?: number
+    ) => {
+      armedIn.push(getTenantContext()?.orgId ?? null);
+      return realSetInterval(handler, timeout);
+    }) as typeof globalThis.setInterval);
+
+    try {
+      const manager = await runAsOrg(ORG_A, async () => new McpSessionManager(1000));
+      // Non-vacuous: the manager did arm a repeating timer, and exactly one.
+      expect(armedIn).toEqual([null]);
+      manager.destroy();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('leaves the constructing request in its own org', async () => {
+    // `runDetached` wraps the arming call and nothing else. The mis-fix this
+    // catches is `enterWith`, the other AsyncLocalStorage escape hatch: it
+    // clears the store for the REST of the surrounding async resource, so the
+    // request that happened to build the singleton would carry on unscoped —
+    // silently, and only for whichever org got there first after boot.
+    const seen = await runAsOrg(ORG_A, async () => {
+      const manager = new McpSessionManager(1000);
+      const after = getTenantContext()?.orgId ?? null;
+      manager.destroy();
+      return after;
+    });
+
+    expect(seen).toBe(ORG_A);
   });
 });
