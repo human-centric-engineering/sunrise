@@ -215,14 +215,19 @@ authenticated by a platform credential — an admin API key with no org, which
 the guards run unscoped in both modes, and which is how a cron calls the
 maintenance tick.
 
-| Entry               | At `single`                | At `multi`                           |
-| ------------------- | -------------------------- | ------------------------------------ |
-| stamped with an org | the install org's, visible | visible to that org only             |
-| unstamped (`null`)  | visible                    | visible only to a reader with no org |
+| Entry               | At `single` | At `multi`                           |
+| ------------------- | ----------- | ------------------------------------ |
+| stamped with an org | visible     | visible to that org only             |
+| unstamped (`null`)  | visible     | visible only to a reader with no org |
 
-At `single` nothing changed: there is one org, so hiding the unstamped lines
-would empty the page of exactly what an operator opens it for and protect
-nothing. At `multi` a **platform operator has no cross-org view through this
+**At `single` the page shows the process's lines, exactly as it always has** —
+the scope rule applies at `multi`, which is where something confines it (the
+same gate as the [per-org retention windows](../orchestration/retention.md#per-org-windows)).
+Hiding anything at `single` would empty the page of what an operator opens it
+for while protecting nothing, since there is one org. It would also not even be
+safe to do narrowly: `forEachOrg` iterates every ACTIVE org in **both** modes,
+so a single-mode install holding a second org stamps that org's job lines with
+it, and a rule scoped to the install org would have made them vanish. At `multi` a **platform operator has no cross-org view through this
 page** — that is §111's to supply, and the owner's ruling (2026-09-23) is that
 it waits for it, since `multi` is not used until the phase is complete.
 

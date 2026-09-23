@@ -139,14 +139,28 @@ describe('at single', () => {
     expect(seen).toEqual(['boot line', 'install org request', 'system job line']);
   });
 
-  it('reads as the install org even when nothing entered a scope', async () => {
+  it('reads the install org’s lines with no scope entered around the read', async () => {
     await runAsOrg(INSTALL_ORG_ID, async () => addLogEntry(entry('install org request')));
 
-    // No `runAsOrg` around the read: `requireTenantContext`'s rule, applied to
-    // a read that must not throw.
     expect(getLogEntries({ limit: 100 }).entries.map((e) => e.message)).toEqual([
       'install org request',
     ]);
+  });
+
+  it('still shows a second org’s job lines, which the narrower rule would have hidden', async () => {
+    // `forEachOrg` iterates every ACTIVE org in BOTH modes, and the org API
+    // creates orgs in both, so a single-mode install CAN hold a second org and
+    // stamp its job lines with it. Scoping the read to the install org here
+    // would have made those lines vanish from a page that has always shown
+    // them — a narrowing at `single` with nothing to show for it.
+    await runAsOrg(ORG_B, async () => addLogEntry(entry('org B job line')));
+    await runAsOrg(INSTALL_ORG_ID, async () => addLogEntry(entry('install org request')));
+
+    expect(
+      getLogEntries({ limit: 100 })
+        .entries.map((e) => e.message)
+        .sort()
+    ).toEqual(['install org request', 'org B job line']);
   });
 });
 

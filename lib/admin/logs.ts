@@ -21,9 +21,10 @@
  * `lib/auth/guards.ts` deliberately runs unscoped in *both* modes, and which
  * is how a cron calls the maintenance tick. Those lines are visible:
  *
- * - at `single`, to everyone — there is one org, so there is nothing to
- *   confine, and hiding them would empty the Logs page of exactly what an
- *   operator opens it for;
+ * - at `single`, to everyone — as is every other line there. The scope rule
+ *   applies at `multi` only, which is where something confines it: hiding
+ *   anything at `single` would empty the Logs page of what an operator opens
+ *   it for while protecting nothing, since there is one org;
  * - at `multi`, only to a reader who is themselves outside an org, which today
  *   means a platform credential. An org admin never sees them.
  *
@@ -36,7 +37,6 @@
 
 import type { LogEntry } from '@/types/admin';
 import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 /**
  * Maximum number of log entries to keep in memory
@@ -110,13 +110,10 @@ export function getLogEntries(options: {
 }): { entries: LogEntry[]; total: number } {
   const { level, search, page = 1, limit = 50 } = options;
 
-  // Whose lines these are. At `single` the reader is always the install org,
-  // including on a request that entered no scope — `requireTenantContext`'s
-  // rule, spelled out here because throwing is wrong for a read: a platform
-  // credential at `multi` has no org and must get an empty page, not a 500.
-  const readerOrgId = isMultiTenant()
-    ? (getTenantContext()?.orgId ?? null)
-    : (getTenantContext()?.orgId ?? INSTALL_ORG_ID);
+  // Whose lines these are. `getTenantContext` rather than
+  // `requireTenantContext`, because throwing is wrong for a read: a platform
+  // credential at `multi` enters no org and must get an empty page, not a 500.
+  const readerOrgId = getTenantContext()?.orgId ?? null;
 
   // The scope filter comes first: `total` is what this reader can see, so the
   // pagination below counts their lines and not the process's.
@@ -161,9 +158,16 @@ export function getLogEntries(options: {
  * nobody's at `multi` except a reader who is also outside an org.
  */
 function isVisibleTo(entry: LogEntry, readerOrgId: string | null): boolean {
-  const entryOrgId = entry.orgId ?? null;
-  if (entryOrgId === readerOrgId) return true;
-  return entryOrgId === null && !isMultiTenant();
+  // At `single` the page shows the process's lines, exactly as it always has.
+  // The narrower rule below would have been *nearly* right there — the install
+  // org reading its own lines plus the unstamped ones — and wrong in the one
+  // case that matters: `forEachOrg` iterates every ACTIVE org in BOTH modes,
+  // so a single-mode install holding a second org (which the org API allows)
+  // stamps that org's job lines with it, and they would have vanished from the
+  // page. Same gate as the per-org retention windows (§108 t-713): the
+  // per-org behaviour applies where there is something to confine.
+  if (!isMultiTenant()) return true;
+  return (entry.orgId ?? null) === readerOrgId;
 }
 
 /**
