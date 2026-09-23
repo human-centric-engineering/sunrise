@@ -368,9 +368,19 @@ inside org B is a cross-tenant read that every control on this page allows**:
 the query that filled it was correctly scoped, and the read that served it
 was not a query at all.
 
+**Arming a repeating timer is the same review step even though it adds no
+holder.** A timer inherits a scope rather than storing one, so none of the
+triggers below fire and neither does the manifest test — the MCP instance was
+found by reading the manifest's rows back against the tree, not by any check. If
+a change calls `setInterval` (or re-arms a `setTimeout`) from anything built
+lazily and kept for the process, answer
+[the timer question](#a-timer-is-stamped-where-it-was-armed-not-where-it-fires)
+above before going on.
+
 So when a change adds module-level mutable state anywhere in `lib/` — a
-cache, a registry, a counter, a latch, a `globalThis` bag — the review step
-is one question, and the answer goes in
+cache, a registry, a counter, a latch, a `globalThis` bag — or arms a timer whose
+work belongs to the process rather than to one org, the review step is one
+question, and the answer goes in
 [`lib/tenancy/process-state.ts`](../../lib/tenancy/process-state.ts) as a row:
 
 > **If two orgs used this install, could one org's entry be served to the

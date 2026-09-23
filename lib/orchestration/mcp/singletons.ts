@@ -7,8 +7,18 @@
  *
  * Platform-agnostic: no Next.js imports.
  *
- * Tenancy posture: row-keyed — sessions and limiters by ids unique across
- * orgs (lib/tenancy/process-state.ts).
+ * Tenancy posture, and the two holders here differ (lib/tenancy/process-state.ts):
+ *
+ * - `rateLimiter` — row-keyed. Keyed by MCP API key id, and the READ is keyed by
+ *   the caller's own key (`check(auth.apiKeyId, …)`), so no caller reaches
+ *   another org's counter.
+ * - `sessionManager` — **mixes-orgs, a declared defect** (§108 t-716). The key is
+ *   equally fine and the reads are not: `getActiveSessions()` filters on TTL
+ *   alone and `GET /api/v1/admin/orchestration/mcp/sessions` serves it verbatim,
+ *   `DELETE …/sessions/[id]` destroys by id with no ownership check, and
+ *   `broadcastNotification` with no targets reaches every org's SSE sink.
+ *   `McpSession` carries no `orgId`, so the filter does not exist to be applied.
+ *   Needs `multi` AND `MCP_SESSION_MODE=stateful`, which is not the default.
  */
 
 import { McpSessionManager } from '@/lib/orchestration/mcp/session-manager';

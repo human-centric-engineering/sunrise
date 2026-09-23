@@ -28,11 +28,14 @@ release process.
   eviction sweep is armed through it, so its "evicted expired sessions" lines
   are now unstamped rather than one arbitrary org's — a line only
   `MCP_SESSION_MODE=stateful` produces, since `stateless` (the default) stores
-  no session for the sweep to find. Use it only for something
-  that **outlives** its unit of work: a lease heartbeat, a delivery retry or a
-  `fetch` abort must keep the context it was armed in, because its callback
-  writes that org's rows. Not `runAsSystem` — that logs a reason on every entry
-  and is the audited database bypass, which arming a timer is not asking for.
+  no session for the sweep to find. **Use it only where the timer's
+  work belongs to the process rather than to one org** — a timer belonging to
+  one org's work (a lease heartbeat, a delivery retry, a `fetch` abort) must
+  KEEP the context it was armed in, because its callback writes that org's rows.
+  "Outlives the request" is not the test: a delivery retry does, and it still
+  belongs to the org that armed it. Nor is this `runAsSystem`, which logs a
+  reason on every entry and is the audited database bypass — a claim about what
+  the code may read that arming a timer is not making.
 - **`registerLogTenancy(bridge)` and the `LogTenancy` type on
   `lib/admin/logs.ts`** (multi-tenancy §108 t-714) — how the admin log buffer
   learns which org a line was produced in, and whether the install runs more
