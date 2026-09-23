@@ -409,9 +409,9 @@ release process.
   | `resources/subscribe`, `resources/unsubscribe`, `logging/setLevel` | an attempt now answers `METHOD_NOT_FOUND`                                |
   | `admin/orchestration/mcp/sessions` page, `mcp-sessions-list.tsx`, `API.ADMIN.ORCHESTRATION.MCP_SESSIONS` and `mcpSessionById` | — |
 
-  **`lib/api/sse.ts` is untouched** — the consumer chat stream, the embed chat
-  stream, the admin chat stream and workflow execute-stream all use it. The SSE
-  bridge was never MCP's.
+  **`lib/api/sse.ts` is untouched.** Six non-MCP routes stream through it —
+  `grep -rn "from '@/lib/api/sse'" app` is the list, rather than one copied here
+  that would go stale. The SSE bridge was never MCP's.
 
   **Why now.** MCP revision
   [`2026-07-28`](https://modelcontextprotocol.io/specification/2026-07-28/changelog)

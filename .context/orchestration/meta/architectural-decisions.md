@@ -229,7 +229,7 @@ A short primer first: HTTP is request/response — the client asks, the server a
 
 ### 2.2 JSON-RPC 2.0 over Streamable HTTP for the MCP server
 
-**What is it?** Model Context Protocol (MCP) is the protocol Anthropic defined for letting AI clients (Claude Desktop, IDE extensions, other agents) discover and invoke tools and resources on a remote server. "Streamable HTTP" means the client uses ordinary HTTP requests for calls and an SSE stream for asynchronous notifications. JSON-RPC 2.0 is a small request/response protocol where every call has a `method` name, parameters, and an `id` for correlation.
+**What is it?** Model Context Protocol (MCP) is the protocol Anthropic defined for letting AI clients (Claude Desktop, IDE extensions, other agents) discover and invoke tools and resources on a remote server. "Streamable HTTP" means the client uses ordinary HTTP requests for calls; it also defined an SSE stream for asynchronous notifications, which revision 2026-07-28 removed and Sunrise no longer offers (§39 t-718). JSON-RPC 2.0 is a small request/response protocol where every call has a `method` name, parameters, and an `id` for correlation.
 
 **What we chose:** A full MCP server implementation using JSON-RPC 2.0 over Streamable HTTP — POST for requests, GET for the notification stream, DELETE for session termination. Up to 20 batched JSON-RPC requests per call, 1 MB max body.
 
@@ -246,9 +246,12 @@ A short primer first: HTTP is request/response — the client asks, the server a
 
 - Any MCP client — Claude Desktop, an IDE, another agent platform — can connect to Sunrise without bespoke client code.
 - HTTP transport works through corporate proxies and is debuggable with `curl`.
-- Sessions are bounded per-key (`maxSessionsPerKey`), so a noisy client cannot exhaust the server.
+- No session is held at all (§39 t-718), so there is nothing for a noisy client to
+  exhaust and nothing that breaks when consecutive requests land on different
+  instances. This bullet used to read "sessions are bounded per-key
+  (`maxSessionsPerKey`)"; see 2.7 for why that whole design was withdrawn.
 
-**Where it lives:** `lib/orchestration/mcp/` (server, session manager, resource handlers), `app/api/v1/orchestration/mcp/` (the route), `.context/orchestration/mcp.md`.
+**Where it lives:** `lib/orchestration/mcp/` (server, resource handlers), `app/api/v1/mcp/route.ts` (the route), `.context/orchestration/mcp.md`.
 
 ### 2.3 Outbound webhooks with retry
 
@@ -340,9 +343,20 @@ A short primer first: HTTP is request/response — the client asks, the server a
 
 **Where it lives:** `lib/orchestration/llm/` (cost logging), `lib/orchestration/hooks/` (hook dispatch), `lib/orchestration/webhooks/` (webhook dispatch).
 
-### 2.7 MCP session lifecycle and eviction
+### 2.7 MCP session lifecycle and eviction — WITHDRAWN (§39 t-718)
 
-**What is it?** When an MCP client connects to Sunrise, the server tracks a session in memory for that client — notification queue, active subscriptions, last-seen timestamp. Letting sessions accumulate forever leaks memory; expiring them too aggressively breaks long-running clients that are simply idle between tool calls.
+> **This decision was reversed, not refined.** MCP holds no session at all now:
+> revision 2026-07-28 removes protocol-level sessions, the `initialize`
+> handshake and the GET stream, and the transport that held them threw on any
+> platform serving traffic from more than one process — which is the platform's
+> own deployment target. The section is kept because the reasoning below was
+> sound for the design it served, and because the trade-off it names (in-memory,
+> per-process, per-instance) is the one that decided the reversal. Nothing in it
+> describes shipped code. `maxSessionsPerKey` is dropped by migration and
+> `lib/orchestration/mcp/session-manager.ts` no longer exists. Current design:
+> [`mcp.md`](../mcp.md#one-transport-and-it-holds-nothing).
+
+**What is it?** When an MCP client connected to Sunrise, the server tracked a session in memory for that client — notification queue, active subscriptions, last-seen timestamp. Letting sessions accumulate forever leaks memory; expiring them too aggressively breaks long-running clients that are simply idle between tool calls.
 
 **What we chose:** A 1-hour idle TTL on every session, plus a `maxSessionsPerKey` cap that rejects new sessions for an API key already at the limit. Sessions are reaped on creation attempts (the manager prunes expired entries before counting toward the cap).
 
@@ -360,7 +374,7 @@ A short primer first: HTTP is request/response — the client asks, the server a
 - The per-key cap fails closed — a runaway client cannot exhaust the server by opening sessions.
 - State is in-memory and per-process; the multi-instance trade-off is covered in Section 10.2.
 
-**Where it lives:** `lib/orchestration/mcp/session-manager.ts`, `.context/orchestration/mcp.md`.
+**Where it lived:** `lib/orchestration/mcp/session-manager.ts`, deleted in §39 t-718.
 
 ---
 

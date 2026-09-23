@@ -390,13 +390,13 @@ Sunrise ships a multi-layered security model built into the orchestration core:
 
 Sunrise ships a **full MCP server** (`lib/orchestration/mcp/`, `app/api/v1/mcp/route.ts`) — not just client-side MCP tool calls:
 
-- **Transport**: Streamable HTTP (JSON-RPC 2.0 over POST, SSE notification stream via GET, session termination via DELETE)
+- **Transport**: Streamable HTTP (JSON-RPC 2.0 over POST). GET and DELETE answer `405 Allow: POST` — MCP revision 2026-07-28 removes the SSE stream and session termination (§39 t-718).
 - **Authentication**: Bearer token (MCP API keys), not session cookies. IP-level + per-key rate limiting.
-- **Session management**: In-memory session manager with `maxSessionsPerKey` limit. Sessions track initialization state.
+- **Sessions**: none. Every request stands alone; no `Mcp-Session-Id` is issued, and one arriving is ignored.
 - **Tools**: Dynamic tool exposure from registered capabilities. Tools are scoped to agent configuration.
 - **Resources**: Resource listing and reading (agent details, capabilities, system info).
 - **Audit logging**: Every MCP request logged with method, response code, duration, client IP, user agent. Dedicated admin UI for audit review.
-- **Admin UI**: Settings, tools browser, resources browser, sessions, audit log, API key management — 7 admin pages total.
+- **Admin UI**: dashboard, settings, tools browser, resources browser, prompts, audit log, API key management — 7 admin pages total (a Sessions page was the eighth until §39 t-718).
 - **Batch support**: Up to 20 JSON-RPC requests per batch. `initialize` must be sole request in batch.
 - **Size limits**: 1MB max request body.
 

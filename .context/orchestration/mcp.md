@@ -614,4 +614,4 @@ Claude Desktop example (`claude_desktop_config.json`):
 
 ## No External Dependencies
 
-JSON-RPC 2.0 is hand-rolled (~100 lines of types). Crypto uses Node.js built-in `crypto`. SSE reuses `lib/api/sse.ts`. Rate limiting reuses `lib/security/rate-limit.ts`.
+JSON-RPC 2.0 is hand-rolled (~100 lines of types). Crypto uses Node.js built-in `crypto`. Rate limiting reuses `lib/security/rate-limit.ts`. It used to reuse `lib/api/sse.ts` as well; MCP streams nothing now (§39 t-718), and that bridge belongs to the chat and workflow-execution routes.

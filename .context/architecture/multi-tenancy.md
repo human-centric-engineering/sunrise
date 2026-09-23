@@ -93,9 +93,9 @@ says which piece each feature lands):
   keyed by the caller. The admin log buffer is the one holder scoped at the
   QUERY rather than partitioned: one process-wide ring, each entry stamped
   with the org that produced it, and `getLogEntries` filtering to the reader's
-  (§108 t-714), and the MCP session map is the second (t-716): one map, each
-  session stamped with the org of the key that opened it, every read that could
-  cross orgs filtered to the caller's. No row in the manifest is a declared
+  (§108 t-714). The MCP session map was the second (t-716) and is no longer in
+  the manifest at all: the stateful MCP transport was removed in §39 t-718, so
+  there is no session map to scope. No row in the manifest is a declared
   defect.
 - **One admin console.** The authorization policy already distinguishes a
   platform admin from an org OWNER/ADMIN, but the console is not split; the
