@@ -12,7 +12,7 @@
 // Re-exports
 // ============================================================================
 
-export { getMcpSessionManager, getMcpRateLimiter } from '@/lib/orchestration/mcp/singletons';
+export { getMcpRateLimiter } from '@/lib/orchestration/mcp/singletons';
 export { handleMcpRequest, McpProtocolError } from '@/lib/orchestration/mcp/protocol-handler';
 export { getMcpServerConfig, invalidateMcpConfigCache } from '@/lib/orchestration/mcp/config';
 export { authenticateMcpRequest, generateApiKey, hashApiKey } from '@/lib/orchestration/mcp/auth';

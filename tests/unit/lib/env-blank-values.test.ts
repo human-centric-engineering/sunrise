@@ -48,8 +48,8 @@ describe('withoutBlankClientValues — server vars keep failing loudly', () => {
     expect(withoutBlankClientValues({ SIGNUP_MODE: '' })).toEqual({ SIGNUP_MODE: '' });
   });
 
-  it('does not drop blank TENANCY_MODE, MCP_SESSION_MODE or CAPABILITY_BINDING_MODE', () => {
-    const blanks = { TENANCY_MODE: '', MCP_SESSION_MODE: '', CAPABILITY_BINDING_MODE: '' };
+  it('does not drop blank TENANCY_MODE or CAPABILITY_BINDING_MODE', () => {
+    const blanks = { TENANCY_MODE: '', CAPABILITY_BINDING_MODE: '' };
     expect(withoutBlankClientValues(blanks)).toEqual(blanks);
   });
 

@@ -63,7 +63,6 @@ export const updateMcpSettingsSchema = z
     isEnabled: z.boolean().optional(),
     serverName: z.string().min(1).max(100).trim().optional(),
     serverVersion: z.string().min(1).max(20).trim().optional(),
-    maxSessionsPerKey: z.number().int().min(1).max(100).optional(),
     globalRateLimit: z.number().int().min(1).max(10000).optional(),
     auditRetentionDays: z.number().int().min(0).max(3650).optional(),
   })
@@ -423,7 +422,6 @@ export const mcpSettingsResponseSchema = z.object({
   isEnabled: z.boolean(),
   serverName: z.string(),
   serverVersion: z.string(),
-  maxSessionsPerKey: z.number(),
   globalRateLimit: z.number(),
   auditRetentionDays: z.number(),
 });

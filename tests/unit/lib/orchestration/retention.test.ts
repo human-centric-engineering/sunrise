@@ -103,7 +103,6 @@ describe('enforceRetentionPolicies', () => {
       isEnabled: false,
       serverName: 'Test MCP Server',
       serverVersion: '1.0.0',
-      maxSessionsPerKey: 5,
       globalRateLimit: 60,
       auditRetentionDays: 90,
     });
@@ -601,7 +600,6 @@ describe('enforceRetentionPolicies (hookDeliveriesDeleted)', () => {
       isEnabled: false,
       serverName: 'Test MCP Server',
       serverVersion: '1.0.0',
-      maxSessionsPerKey: 5,
       globalRateLimit: 60,
       auditRetentionDays: 90,
     });
@@ -819,7 +817,6 @@ describe('enforceSystemRetentionPolicies', () => {
       isEnabled: false,
       serverName: 'Test MCP Server',
       serverVersion: '1.0.0',
-      maxSessionsPerKey: 5,
       globalRateLimit: 60,
       auditRetentionDays: 90,
     });
@@ -869,7 +866,6 @@ describe('pruneMcpAuditLogs', () => {
       isEnabled: false,
       serverName: 'Test MCP Server',
       serverVersion: '1.0.0',
-      maxSessionsPerKey: 5,
       globalRateLimit: 60,
       auditRetentionDays: 90,
     });
@@ -896,7 +892,6 @@ describe('pruneMcpAuditLogs', () => {
       isEnabled: false,
       serverName: 'Test MCP Server',
       serverVersion: '1.0.0',
-      maxSessionsPerKey: 5,
       globalRateLimit: 60,
       auditRetentionDays: 0,
     });
@@ -981,7 +976,6 @@ describe('retention coherence warning', () => {
       isEnabled: false,
       serverName: 'Test MCP Server',
       serverVersion: '1.0.0',
-      maxSessionsPerKey: 5,
       globalRateLimit: 60,
       auditRetentionDays: 90,
     });

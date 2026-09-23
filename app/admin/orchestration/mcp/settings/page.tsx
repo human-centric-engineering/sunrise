@@ -6,11 +6,10 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { mcpSettingsResponseSchema, type McpSettingsResponse } from '@/lib/validations/mcp';
-import { env } from '@/lib/env';
 
 export const metadata: Metadata = {
   title: 'MCP Settings · AI Orchestration',
-  description: 'Configure MCP server rate limits, sessions, and retention.',
+  description: 'Configure MCP server rate limits and audit retention.',
 };
 
 async function getSettings(): Promise<McpSettingsResponse | null> {
@@ -46,14 +45,11 @@ export default async function McpSettingsPage() {
       <header className="bg-background sticky top-0 z-30 -mx-6 border-b px-6 pt-3 pb-3">
         <h1 className="text-2xl font-semibold">MCP Settings</h1>
         <p className="text-muted-foreground text-sm">
-          Configure rate limits, session limits, and audit log retention.
+          Configure rate limits and audit log retention.
         </p>
       </header>
 
-      <McpSettingsForm
-        initialSettings={settings}
-        sessionsAreTracked={env.MCP_SESSION_MODE === 'stateful'}
-      />
+      <McpSettingsForm initialSettings={settings} />
     </div>
   );
 }

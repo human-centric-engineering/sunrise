@@ -52,7 +52,6 @@ export async function getMcpServerConfig(): Promise<McpServerState> {
       // serverVersion bump on the next upsert; existing rows are preserved
       // by the `update: {}` clause so an admin's manual override is sticky.
       serverVersion: SUNRISE_VERSION,
-      maxSessionsPerKey: 5,
       globalRateLimit: 60,
       auditRetentionDays: 90,
     },
@@ -63,7 +62,6 @@ export async function getMcpServerConfig(): Promise<McpServerState> {
     isEnabled: row.isEnabled,
     serverName: row.serverName,
     serverVersion: row.serverVersion,
-    maxSessionsPerKey: row.maxSessionsPerKey,
     globalRateLimit: row.globalRateLimit,
     auditRetentionDays: row.auditRetentionDays,
   };

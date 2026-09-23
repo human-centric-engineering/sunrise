@@ -166,14 +166,6 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "One process-wide ring holding every org's lines, scoped at the QUERY rather than partitioned — at multi an org admin used to see every other org's messages, context and meta, searchable (§108 t-714). An entry produced outside any tenant scope — boot, a runAsSystem job, a platform credential — is stamped null and is readable at single (one org, nothing to confine) but at multi only by a reader who is also outside an org. A platform operator therefore has no cross-org view here until §111; owner's ruling, 2026-09-23. Two things stay shared because the ring is: the 1000-entry cap, so a noisy org evicts a quiet one's lines, and the entry id counter, so a gap in the ids an org sees tells it roughly how much everyone else logged. A timer whose work belongs to the process rather than to one org is armed through runDetached, so it stamps nothing rather than whichever org happened to build the holder (§108 t-715).",
   },
   {
-    file: 'lib/orchestration/mcp/singletons.ts',
-    holders: ['sessionManager'],
-    posture: 'org-keyed',
-    keyedBy:
-      'the org stamped on each session; every read that can cross orgs filters to the caller’s',
-    why: "One process-wide map of every org's MCP sessions, scoped at the READS rather than partitioned (§108 t-716). McpSession.orgId is stamped from the tenant context at createSession. getActiveSessions() answers the calling scope's org — which fixes both the admin sessions page, that served it verbatim, and log-emitter.ts, that builds its SSE notification targets from it — the latter reachable only by a fork, since emitMcpLog has no caller in the platform; destroySession() refuses another org's id indistinguishably from an unknown one; getSubscribers(uri, audience) takes a REQUIRED audience because the same sunrise:// URI is subscribed to by every org, so 'this-org' is right when tenant-owned contents changed and 'every-org' when a global-config definition did, and either default would be wrong for half the callers, invisibly. Deliberately unfiltered, each with a reason in the code: getSession (the transport's apiKeyId check is strictly stronger), getActiveSessionCount (a key belongs to one org), and broadcastNotification itself (its unscoped callers are the three list_changed helpers, whose subjects — McpExposedTool, McpExposedPrompt, McpExposedResource and AiCapability — are all GLOBAL_CONFIG_MODELS).",
-  },
-  {
     file: 'lib/orchestration/hooks/registry.ts',
     holders: ['hookCacheByOrg'],
     posture: 'org-keyed',
@@ -218,20 +210,6 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     posture: 'row-keyed',
     keyedBy: 'agent id',
     why: 'A serialising lock per agent cuid, so two orgs never contend for the same lock and the TOCTOU window it closes is per agent, as the file header says.',
-  },
-  {
-    file: 'lib/orchestration/mcp/log-emitter.ts',
-    holders: ['sentTimestamps'],
-    posture: 'row-keyed',
-    keyedBy: 'MCP session id',
-    why: 'A per-session sliding window for notification rate limiting; session ids are minted by the session manager and are unique across orgs.',
-  },
-  {
-    file: 'lib/orchestration/mcp/progress-tracker.ts',
-    holders: ['sentTimestamps'],
-    posture: 'row-keyed',
-    keyedBy: 'MCP session id',
-    why: 'The same per-session sliding window as the log emitter, for progress notifications.',
   },
   {
     file: 'lib/orchestration/mcp/protocol-handler.ts',

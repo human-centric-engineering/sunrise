@@ -17,7 +17,6 @@ function makeConfigRow(
     isEnabled: boolean;
     serverName: string;
     serverVersion: string;
-    maxSessionsPerKey: number;
     globalRateLimit: number;
     auditRetentionDays: number;
   }> = {}
@@ -28,7 +27,6 @@ function makeConfigRow(
     isEnabled: false,
     serverName: 'Sunrise MCP Server',
     serverVersion: SUNRISE_VERSION,
-    maxSessionsPerKey: 5,
     globalRateLimit: 60,
     auditRetentionDays: 90,
     createdAt: new Date(),
@@ -65,7 +63,6 @@ describe('getMcpServerConfig', () => {
           isEnabled: false,
           serverName: 'Sunrise MCP Server',
           serverVersion: SUNRISE_VERSION,
-          maxSessionsPerKey: 5,
           globalRateLimit: 60,
           auditRetentionDays: 90,
         }),
@@ -95,7 +92,6 @@ describe('getMcpServerConfig', () => {
     expect(result.serverName).toBe('Custom MCP');
     expect(result.globalRateLimit).toBe(120);
     expect(result.serverVersion).toBe(SUNRISE_VERSION);
-    expect(result.maxSessionsPerKey).toBe(5);
     expect(result.auditRetentionDays).toBe(90);
   });
 

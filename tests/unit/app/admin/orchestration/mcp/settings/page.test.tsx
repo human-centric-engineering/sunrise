@@ -38,7 +38,6 @@ const mockSettings = {
   isEnabled: true,
   serverName: 'sunrise-mcp',
   serverVersion: '1.0.0',
-  maxSessionsPerKey: 5,
   globalRateLimit: 60,
   auditRetentionDays: 30,
 };
@@ -51,7 +50,7 @@ describe('McpSettingsPage', () => {
   // 1. Metadata
   it('has correct title and description metadata', () => {
     expect(metadata.title).toBe('MCP Settings · AI Orchestration');
-    expect(metadata.description).toBe('Configure MCP server rate limits, sessions, and retention.');
+    expect(metadata.description).toBe('Configure MCP server rate limits and audit retention.');
   });
 
   // 2. serverFetch called with correct endpoint
@@ -169,8 +168,6 @@ describe('McpSettingsPage', () => {
 
     render(await McpSettingsPage());
 
-    expect(
-      screen.getByText('Configure rate limits, session limits, and audit log retention.')
-    ).toBeInTheDocument();
+    expect(screen.getByText('Configure rate limits and audit log retention.')).toBeInTheDocument();
   });
 });

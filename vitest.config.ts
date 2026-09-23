@@ -38,9 +38,8 @@ export default defineConfig({
     // IT IS ALSO A CORRECTNESS FIX, which is the better half of the argument.
     // happy-dom defines `window`, so `lib/env.ts`'s `typeof window !==
     // 'undefined'` check selected the **client** schema and every server
-    // variable read as `undefined`. Anything branching on `TENANCY_MODE`,
-    // `CAPABILITY_BINDING_MODE` or `MCP_SESSION_MODE` was silently exercising
-    // the undefined path. 44 of the 47 test files that import `@/lib/env` now
+    // variable read as `undefined`. Anything branching on `TENANCY_MODE` or
+    // `CAPABILITY_BINDING_MODE` was silently exercising the undefined path. 44 of the 47 test files that import `@/lib/env` now
     // run under node and see the real server schema; the remaining three are
     // two component tests and `env.test.ts`, which asserts on `typeof window`
     // deliberately.

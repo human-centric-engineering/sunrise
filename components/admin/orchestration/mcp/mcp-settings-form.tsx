@@ -23,22 +23,11 @@ import { useTimeout } from '@/lib/hooks/use-timeout';
 
 interface McpSettingsFormProps {
   initialSettings: McpSettingsResponse | null;
-  /**
-   * Whether the deployment tracks MCP sessions. Passed in because
-   * `MCP_SESSION_MODE` is server-only and this is a client component.
-   *
-   * When false, `maxSessionsPerKey` still validates and still saves, but the
-   * runtime never consults it — the stateless path creates no session, so there
-   * is nothing to cap. Saying so beside the field is the difference between a
-   * setting that is inert and a setting that looks broken.
-   */
-  sessionsAreTracked: boolean;
 }
 
 const mcpSettingsFormSchema = z.object({
   serverName: z.string().min(1, 'Required').max(100).trim(),
   serverVersion: z.string().min(1, 'Required').max(20).trim(),
-  maxSessionsPerKey: z.coerce.number().int().min(1, 'Min 1').max(100, 'Max 100'),
   globalRateLimit: z.coerce.number().int().min(1, 'Min 1').max(10000, 'Max 10,000'),
   auditRetentionDays: z.coerce.number().int().min(0, 'Min 0').max(3650, 'Max 3,650'),
 });
@@ -46,7 +35,7 @@ const mcpSettingsFormSchema = z.object({
 type McpSettingsFormInput = z.input<typeof mcpSettingsFormSchema>;
 type McpSettingsFormData = z.output<typeof mcpSettingsFormSchema>;
 
-export function McpSettingsForm({ initialSettings, sessionsAreTracked }: McpSettingsFormProps) {
+export function McpSettingsForm({ initialSettings }: McpSettingsFormProps) {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const schedule = useTimeout();
@@ -61,7 +50,6 @@ export function McpSettingsForm({ initialSettings, sessionsAreTracked }: McpSett
     defaultValues: {
       serverName: initialSettings?.serverName ?? 'Sunrise MCP Server',
       serverVersion: initialSettings?.serverVersion ?? '1.0.0',
-      maxSessionsPerKey: initialSettings?.maxSessionsPerKey ?? 5,
       globalRateLimit: initialSettings?.globalRateLimit ?? 60,
       auditRetentionDays: initialSettings?.auditRetentionDays ?? 90,
     },
@@ -140,39 +128,6 @@ export function McpSettingsForm({ initialSettings, sessionsAreTracked }: McpSett
                 <p className="mt-1 text-xs text-red-600">{errors.globalRateLimit.message}</p>
               )}
               <p className="text-muted-foreground mt-1 text-xs">requests/min per key</p>
-            </div>
-            <div>
-              <Label htmlFor="maxSessionsPerKey">
-                Max Sessions Per Key
-                <FieldHelp title="Max Sessions Per Key">
-                  Maximum concurrent MCP sessions allowed per API key. Prevents a single key from
-                  exhausting server resources.
-                  {!sessionsAreTracked && (
-                    <>
-                      {' '}
-                      <strong>This setting has no effect on this deployment.</strong> It runs{' '}
-                      <code>MCP_SESSION_MODE=stateless</code> (the default), which creates no
-                      sessions, so there is nothing to cap. It applies only under{' '}
-                      <code>MCP_SESSION_MODE=stateful</code>.
-                    </>
-                  )}
-                </FieldHelp>
-              </Label>
-              <Input
-                id="maxSessionsPerKey"
-                type="number"
-                min={1}
-                max={100}
-                {...register('maxSessionsPerKey')}
-              />
-              {errors.maxSessionsPerKey && (
-                <p className="mt-1 text-xs text-red-600">{errors.maxSessionsPerKey.message}</p>
-              )}
-              {!sessionsAreTracked && (
-                <p className="text-muted-foreground mt-1 text-xs">
-                  No effect — this deployment runs <code>MCP_SESSION_MODE=stateless</code>
-                </p>
-              )}
             </div>
             <div>
               <Label htmlFor="auditRetentionDays">

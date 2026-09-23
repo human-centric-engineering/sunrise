@@ -50,7 +50,6 @@ const FULL_SETTINGS = {
   isEnabled: true,
   serverName: 'Sunrise MCP Server',
   serverVersion: '1.0.0',
-  maxSessionsPerKey: 5,
   globalRateLimit: 60,
   auditRetentionDays: 90,
 };
@@ -68,35 +67,34 @@ describe('McpSettingsForm', () => {
 
   describe('Initial render', () => {
     it('renders all form fields with initial values', () => {
-      render(<McpSettingsForm initialSettings={FULL_SETTINGS} sessionsAreTracked />);
+      render(<McpSettingsForm initialSettings={FULL_SETTINGS} />);
       expect(document.getElementById('serverName')).toHaveValue('Sunrise MCP Server');
       expect(document.getElementById('serverVersion')).toHaveValue('1.0.0');
-      expect(document.getElementById('maxSessionsPerKey')).toHaveValue(5);
       expect(document.getElementById('globalRateLimit')).toHaveValue(60);
       expect(document.getElementById('auditRetentionDays')).toHaveValue(90);
     });
 
     it('renders defaults when initialSettings is null', () => {
-      render(<McpSettingsForm initialSettings={null} sessionsAreTracked />);
+      render(<McpSettingsForm initialSettings={null} />);
       expect(document.getElementById('serverName')).toHaveValue('Sunrise MCP Server');
       expect(document.getElementById('globalRateLimit')).toHaveValue(60);
     });
 
     it('renders FieldHelp tooltips for numeric fields', () => {
-      render(<McpSettingsForm initialSettings={FULL_SETTINGS} sessionsAreTracked />);
+      render(<McpSettingsForm initialSettings={FULL_SETTINGS} />);
       expect(screen.getByText('Server Configuration')).toBeInTheDocument();
     });
   });
 
   describe('Button state', () => {
     it('disables save button when form is pristine', () => {
-      render(<McpSettingsForm initialSettings={FULL_SETTINGS} sessionsAreTracked />);
+      render(<McpSettingsForm initialSettings={FULL_SETTINGS} />);
       expect(screen.getByRole('button', { name: /save settings/i })).toBeDisabled();
     });
 
     it('enables save button when form is dirty', async () => {
       const user = userEvent.setup();
-      render(<McpSettingsForm initialSettings={FULL_SETTINGS} sessionsAreTracked />);
+      render(<McpSettingsForm initialSettings={FULL_SETTINGS} />);
 
       const nameInput = document.getElementById('serverName') as HTMLInputElement;
       await user.clear(nameInput);
@@ -110,7 +108,7 @@ describe('McpSettingsForm', () => {
     it('calls apiClient.patch with correct payload on submit', async () => {
       vi.mocked(apiClient.patch).mockResolvedValue({});
 
-      render(<McpSettingsForm initialSettings={FULL_SETTINGS} sessionsAreTracked />);
+      render(<McpSettingsForm initialSettings={FULL_SETTINGS} />);
 
       const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
       await act(async () => {
@@ -124,7 +122,6 @@ describe('McpSettingsForm', () => {
             body: expect.objectContaining({
               serverName: 'Sunrise MCP Server',
               globalRateLimit: 60,
-              maxSessionsPerKey: 5,
               auditRetentionDays: 90,
             }),
           })
@@ -135,7 +132,7 @@ describe('McpSettingsForm', () => {
     it('shows Saved indicator after successful submission', async () => {
       vi.mocked(apiClient.patch).mockResolvedValue({});
 
-      render(<McpSettingsForm initialSettings={FULL_SETTINGS} sessionsAreTracked />);
+      render(<McpSettingsForm initialSettings={FULL_SETTINGS} />);
 
       const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
       await act(async () => {
@@ -154,7 +151,7 @@ describe('McpSettingsForm', () => {
         new APIClientError('Rate limit must be between 1 and 10000')
       );
 
-      render(<McpSettingsForm initialSettings={FULL_SETTINGS} sessionsAreTracked />);
+      render(<McpSettingsForm initialSettings={FULL_SETTINGS} />);
 
       const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
       await act(async () => {
@@ -169,7 +166,7 @@ describe('McpSettingsForm', () => {
     it('shows generic error for non-API errors', async () => {
       vi.mocked(apiClient.patch).mockRejectedValue(new Error('network failure'));
 
-      render(<McpSettingsForm initialSettings={FULL_SETTINGS} sessionsAreTracked />);
+      render(<McpSettingsForm initialSettings={FULL_SETTINGS} />);
 
       const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
       await act(async () => {
@@ -183,24 +180,14 @@ describe('McpSettingsForm', () => {
   });
 });
 
-describe('an inert setting says so (#609)', () => {
-  it('marks Max Sessions Per Key as having no effect under stateless', () => {
-    // `MCP_SESSION_MODE=stateless` (the default) creates no sessions, so the cap
-    // is never consulted. The field still validates and still saves — what it
-    // must not do is look like it is working. An operator setting this as a
-    // concurrency control on a shared key would otherwise get no cap and no
-    // signal.
-    render(<McpSettingsForm initialSettings={FULL_SETTINGS} sessionsAreTracked={false} />);
+describe('the session cap is gone, not merely inert (§39 t-718)', () => {
+  it('renders no Max Sessions Per Key field at all', () => {
+    // It used to render with a "No effect" caption under the default session
+    // mode — a setting that validated and saved and was never consulted. The
+    // column behind it is dropped, so there is nothing to caption.
+    render(<McpSettingsForm initialSettings={FULL_SETTINGS} />);
 
-    expect(screen.getByText(/No effect/i)).toBeInTheDocument();
-    expect(screen.getByText(/MCP_SESSION_MODE=stateless/)).toBeInTheDocument();
-  });
-
-  it('says nothing when sessions ARE tracked', () => {
-    // The counterpart, or the assertion above would pass against a component
-    // that always shows the warning.
-    render(<McpSettingsForm initialSettings={FULL_SETTINGS} sessionsAreTracked />);
-
-    expect(screen.queryByText(/No effect/i)).not.toBeInTheDocument();
+    expect(document.getElementById('maxSessionsPerKey')).toBeNull();
+    expect(screen.queryByText(/max sessions per key/i)).not.toBeInTheDocument();
   });
 });

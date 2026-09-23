@@ -128,23 +128,6 @@ const serverEnvSchema = z.object({
         'NOBYPASSRLS role — see .context/architecture/multi-tenancy-design.md.'
     ),
 
-  // MCP session model (see .context/orchestration/mcp.md)
-  MCP_SESSION_MODE: z
-    .enum(['stateless', 'stateful'])
-    .default('stateless')
-    .describe(
-      'How the MCP server holds session state. "stateless" (default) holds none: every ' +
-        'request stands alone, no Mcp-Session-Id is issued, and the three methods that ' +
-        'need continuity (resources/subscribe, resources/unsubscribe, logging/setLevel) ' +
-        'refuse by name. This is the only mode that is correct where more than one ' +
-        'process serves traffic — on Vercel or any function-per-request platform the ' +
-        'handshake otherwise fails intermittently, because initialize lands on one ' +
-        "instance and the next request looks the id up in a sibling's empty map. " +
-        '"stateful" keeps an in-memory Map and is for a single long-running process ' +
-        'only; it is also a legacy-compatibility mode, since MCP revision 2026-07-28 ' +
-        'removes protocol-level sessions and the initialize handshake outright.'
-    ),
-
   // Capability authorization model (see lib/orchestration/capabilities/dispatcher.ts)
   CAPABILITY_BINDING_MODE: z
     .enum(['permissive', 'strict'])
@@ -354,7 +337,8 @@ export type Env = z.infer<typeof envSchema>;
  * a deploy template produces when it interpolates an unset source — stopped
  * failing the enum and started resolving to `.default('open')`. An invite-only
  * deployment would have booted with open signups and said nothing. The same
- * applied to `TENANCY_MODE`, `MCP_SESSION_MODE` and `CAPABILITY_BINDING_MODE`.
+ * applied to `TENANCY_MODE` and `CAPABILITY_BINDING_MODE` (and to
+ * `MCP_SESSION_MODE`, until §39 t-718 removed it).
  *
  * Blank-is-unset is right for a var we forward as a build arg, because Docker
  * gives us no way to distinguish the two. It is wrong for a server var, where a

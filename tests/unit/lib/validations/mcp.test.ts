@@ -48,10 +48,6 @@ describe('updateMcpSettingsSchema', () => {
     expect(updateMcpSettingsSchema.safeParse({ serverVersion: '2.0.0' }).success).toBe(true);
   });
 
-  it('accepts maxSessionsPerKey within range', () => {
-    expect(updateMcpSettingsSchema.safeParse({ maxSessionsPerKey: 10 }).success).toBe(true);
-  });
-
   it('accepts globalRateLimit within range', () => {
     expect(updateMcpSettingsSchema.safeParse({ globalRateLimit: 500 }).success).toBe(true);
   });
@@ -65,7 +61,6 @@ describe('updateMcpSettingsSchema', () => {
       isEnabled: false,
       serverName: 'Test',
       serverVersion: '1.0.0',
-      maxSessionsPerKey: 5,
       globalRateLimit: 60,
       auditRetentionDays: 90,
     };
@@ -76,16 +71,17 @@ describe('updateMcpSettingsSchema', () => {
     expect(updateMcpSettingsSchema.safeParse({}).success).toBe(false);
   });
 
+  it('no longer carries maxSessionsPerKey — it is not a settable field (§39 t-718)', () => {
+    // `.refine(Object.keys(v).length > 0)` is what makes this bite: a zod object
+    // STRIPS an unknown key rather than rejecting it, so a body of only
+    // `maxSessionsPerKey` parses to `{}` and fails the "at least one field"
+    // rule. Asserted through the real schema, so re-adding the field turns this
+    // red instead of the field quietly coming back.
+    expect(updateMcpSettingsSchema.safeParse({ maxSessionsPerKey: 10 }).success).toBe(false);
+  });
+
   it('rejects serverName exceeding 100 chars', () => {
     expect(updateMcpSettingsSchema.safeParse({ serverName: 'a'.repeat(101) }).success).toBe(false);
-  });
-
-  it('rejects maxSessionsPerKey below 1', () => {
-    expect(updateMcpSettingsSchema.safeParse({ maxSessionsPerKey: 0 }).success).toBe(false);
-  });
-
-  it('rejects maxSessionsPerKey above 100', () => {
-    expect(updateMcpSettingsSchema.safeParse({ maxSessionsPerKey: 101 }).success).toBe(false);
   });
 
   it('rejects globalRateLimit above 10000', () => {

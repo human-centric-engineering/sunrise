@@ -1,9 +1,18 @@
 /**
  * MCP Transport Endpoint — Streamable HTTP
  *
- * POST   /api/v1/mcp — JSON-RPC 2.0 request
- * GET    /api/v1/mcp — SSE notification stream (keepalive only for v1)
- * DELETE /api/v1/mcp — Session termination
+ * POST   /api/v1/mcp — JSON-RPC 2.0 request. The only method this server has.
+ * GET    /api/v1/mcp — 405, `Allow: POST`
+ * DELETE /api/v1/mcp — 405, `Allow: POST`
+ *
+ * **There is one transport and it holds nothing** (§39 t-718). Every request
+ * stands alone: no `Mcp-Session-Id` is issued, one arriving on a request is
+ * ignored, and there is no server-to-client stream. That is the shape MCP
+ * revision 2026-07-28 specifies — it removes protocol-level sessions, the
+ * `initialize` handshake and the GET stream, tells a server to answer 405 for
+ * GET and DELETE, and moves server-push to `subscriptions/listen`, which Sunrise
+ * does not implement yet. `initialize` is still answered, for older clients that
+ * open with one.
  *
  * Authentication: MCP API key (bearer token), not session cookies.
  * Rate limiting is layered: the proxy applies the section-level `mcp` tier
@@ -15,19 +24,14 @@
 import { NextRequest } from 'next/server';
 import { handleAPIError } from '@/lib/api/errors';
 import { getClientIP } from '@/lib/security/ip';
-import { sseResponse } from '@/lib/api/sse';
 import { logger } from '@/lib/logging';
 import {
   authenticateMcpRequest,
   getMcpServerConfig,
   handleMcpRequest,
-  getMcpSessionManager,
   getMcpRateLimiter,
-  logMcpAudit,
 } from '@/lib/orchestration/mcp';
-import { createEphemeralSession } from '@/lib/orchestration/mcp/session-manager';
 import { jsonRpcRequestSchema } from '@/lib/validations/mcp';
-import { env } from '@/lib/env';
 import { runAsOrg } from '@/lib/tenancy/context';
 import {
   JsonRpcErrorCode,
@@ -53,50 +57,16 @@ function jsonRpcErrorResponse(code: JsonRpcErrorCode, message: string, status: n
 
 const MAX_BODY_SIZE = 1_048_576; // 1MB
 const MAX_BATCH_SIZE = 20;
-const MCP_SESSION_HEADER = 'mcp-session-id';
 /** Spec revision 2025-06-18 onward: the client echoes the negotiated version per request. */
 const MCP_PROTOCOL_HEADER = 'mcp-protocol-version';
 
-/**
- * Whether this deployment holds no session state.
- *
- * Read per request rather than captured in a module-level const. There is
- * nothing to gain from caching a string comparison, and a const is evaluated
- * once at import — which in a unit test happens before any mock can change it,
- * so the whole branch silently tests as `false`. That is not hypothetical: it is
- * how a downstream implementation of this feature got 40 passing tests over a
- * path none of them took.
- */
-function isStateless(): boolean {
-  return env.MCP_SESSION_MODE === 'stateless';
-}
+/** Every unsupported method answers with this. */
+const METHOD_NOT_ALLOWED_HEADERS = { Allow: 'POST' } as const;
 
-/**
- * The protocol version for a stateless request, from the client's
- * `MCP-Protocol-Version` header.
- *
- * There is no session remembering what was negotiated, and defaulting to the
- * server's latest would emit annotations the client never agreed to. So the
- * header is the only evidence available.
- *
- * **Delegated to `negotiateMcpProtocolVersion` rather than re-deciding here**,
- * because "unrecognised → oldest" is only right for a *missing* or malformed
- * value. A date-shaped header NEWER than our latest comes from a client that
- * understands strictly more than we do, and flooring it to `2024-11-05` would
- * mean the newer the client, the worse it is treated — losing it the tool
- * annotations that `protocol-handler` gates on `>= 2025-06-18`, on the default
- * path. That function already draws the distinction (missing → oldest, known →
- * itself, forward-dated → downgrade to our latest, junk → reject); a second
- * rule beside it would be two docblocks disagreeing.
- *
- * A rejected value falls back to the missing-header default: the request is
- * still servable, and refusing it outright is the conformance question tracked
- * separately, not this bug.
- */
 /**
  * Authenticate the bearer, then run `handler` inside the key's org (§106).
  *
- * The three methods share this shape. No guard wraps this route, so it
+ * POST is the only verb that gets here. No guard wraps this route, so it
  * enters the org itself: `authenticateMcpRequest` has already applied the
  * read rule (a suspended org's key, or a null-org key at `multi`, is a 401
  * here), and everything the handler does — tool calls, resource reads, the
@@ -139,7 +109,29 @@ async function withMcpKey(
   );
 }
 
-function statelessProtocolVersion(request: NextRequest): McpProtocolVersion {
+/**
+ * The protocol version for this request, from the client's
+ * `MCP-Protocol-Version` header.
+ *
+ * Nothing remembers what was negotiated, and defaulting to the
+ * server's latest would emit annotations the client never agreed to. So the
+ * header is the only evidence available.
+ *
+ * **Delegated to `negotiateMcpProtocolVersion` rather than re-deciding here**,
+ * because "unrecognised → oldest" is only right for a *missing* or malformed
+ * value. A date-shaped header NEWER than our latest comes from a client that
+ * understands strictly more than we do, and flooring it to `2024-11-05` would
+ * mean the newer the client, the worse it is treated — losing it the tool
+ * annotations that `protocol-handler` gates on `>= 2025-06-18`, on the default
+ * path. That function already draws the distinction (missing → oldest, known →
+ * itself, forward-dated → downgrade to our latest, junk → reject); a second
+ * rule beside it would be two docblocks disagreeing.
+ *
+ * A rejected value falls back to the missing-header default: the request is
+ * still servable, and refusing it outright is the conformance question tracked
+ * separately, not this bug.
+ */
+function declaredProtocolVersion(request: NextRequest): McpProtocolVersion {
   const declared = request.headers.get(MCP_PROTOCOL_HEADER);
   return (
     negotiateMcpProtocolVersion(declared ?? undefined)?.version ??
@@ -250,29 +242,21 @@ async function handlePost(request: NextRequest, auth: McpAuthContext): Promise<R
     return p.data;
   });
 
-  const sessionManager = getMcpSessionManager();
   const rateLimiter = getMcpRateLimiter();
 
-  // 4. Session management
+  // 4. `initialize` must be alone in a batch.
+  //
+  // Not a session rule — there is no session state to make ambiguous. Every
+  // request in a batch takes its protocol version from the
+  // `MCP-Protocol-Version` header, which is absent on a handshake request, so a
+  // `[initialize, tools/list]` batch would serve the `tools/list` at
+  // `2024-11-05` even though the `initialize` beside it negotiated `2025-06-18`
+  // microseconds earlier — silently dropping the tool annotations gated on
+  // `>= 2025-06-18`.
+  //
+  // Cheap to keep: spec revision 2025-06-18 removed JSON-RPC batching, and a
+  // 2026-07-28 client sends no `initialize` at all.
   const hasInitialize = validRequests.some((r) => r.method === 'initialize');
-  const sessionId = request.headers.get(MCP_SESSION_HEADER);
-  let session;
-
-  // `initialize` must be alone in a batch, in BOTH modes.
-  //
-  // Stateful enforces it to avoid ambiguous session state. Stateless has no
-  // session state to make ambiguous — but it has a subtler version of the same
-  // problem: every request in the batch takes its protocol version from the
-  // `MCP-Protocol-Version` header, which is absent on a handshake request, so
-  // a `[initialize, tools/list]` batch would serve the `tools/list` at
-  // `2024-11-05` even though the `initialize` beside it negotiated
-  // `2025-06-18` microseconds earlier — silently dropping the tool annotations
-  // gated on `>= 2025-06-18`.
-  //
-  // Keeping the guard in both modes costs nothing (spec revision 2025-06-18
-  // removed JSON-RPC batching, and a 2026-07-28 client sends no `initialize`
-  // at all) and removes a mode-dependent behaviour difference rather than
-  // documenting one.
   if (hasInitialize && validRequests.length > 1) {
     const initReq = validRequests.find((r) => r.method === 'initialize');
     return Response.json(
@@ -288,108 +272,29 @@ async function handlePost(request: NextRequest, auth: McpAuthContext): Promise<R
     );
   }
 
-  if (isStateless()) {
-    // Ahead of the remaining branches, so none of the session bookkeeping
-    // runs: no per-key session limit, no lookup that could 404. A stale
-    // `Mcp-Session-Id` from a previous stateful deploy — or from a sibling
-    // instance — is simply ignored rather than rejected.
-    session = createEphemeralSession(auth.apiKeyId, statelessProtocolVersion(request));
-  } else if (hasInitialize) {
-    // The batch-position guard now runs for both modes, above.
-
-    // Reject initialize when a session header is already present — prevents
-    // unlimited session creation by replaying initialize-first batches.
-    if (sessionId) {
-      return Response.json(
-        {
-          jsonrpc: '2.0',
-          id: validRequests[0].id ?? null,
-          error: {
-            code: JsonRpcErrorCode.INVALID_REQUEST,
-            message: 'Cannot send initialize with an existing session header',
-          },
-        },
-        { status: 400 }
-      );
-    }
-
-    // Create new session
-    session = sessionManager.createSession(auth.apiKeyId, serverState.maxSessionsPerKey);
-    if (!session) {
-      return Response.json(
-        {
-          jsonrpc: '2.0',
-          id: validRequests[0].id ?? null,
-          error: { code: JsonRpcErrorCode.SESSION_NOT_FOUND, message: 'Max sessions exceeded' },
-        },
-        { status: 429 }
-      );
-    }
-  } else if (sessionId) {
-    session = sessionManager.getSession(sessionId);
-    if (!session || session.apiKeyId !== auth.apiKeyId) {
-      return Response.json(
-        {
-          jsonrpc: '2.0',
-          id: validRequests[0].id ?? null,
-          error: {
-            code: JsonRpcErrorCode.SESSION_NOT_FOUND,
-            message: 'Session not found or expired',
-          },
-        },
-        { status: 404 }
-      );
-    }
-  } else {
-    return Response.json(
-      {
-        jsonrpc: '2.0',
-        id: validRequests[0].id ?? null,
-        error: {
-          code: JsonRpcErrorCode.INVALID_REQUEST,
-          message: 'Missing Mcp-Session-Id header',
-        },
-      },
-      { status: 400 }
-    );
-  }
-
   // 5. Dispatch each request
-  const handlerContext = { auth, session, serverState, rateLimiter };
+  //
+  // A stray `Mcp-Session-Id` on the way in is never read, which is what the
+  // 2026-07-28 revision asks for: a server should IGNORE the legacy session
+  // headers, not refuse the request carrying them. Nothing is sent back either
+  // — the Streamable HTTP transport says a client sends the header only if the
+  // server issued one, so withholding it is what keeps a client from quoting an
+  // id nothing can look up.
+  const handlerContext = {
+    auth,
+    protocolVersion: declaredProtocolVersion(request),
+    serverState,
+    rateLimiter,
+  };
   const responses: (JsonRpcResponse | null)[] = [];
 
   for (const rpcRequest of validRequests) {
-    const response = await handleMcpRequest(rpcRequest, handlerContext);
-
-    // Persist the negotiated protocol version + flip the session to
-    // initialised after a successful `initialize` call. The version comes
-    // out of the response payload, which the handler has already validated.
-    if (!isStateless() && rpcRequest.method === 'initialize' && response && !response.error) {
-      const result = response.result as { protocolVersion?: string } | undefined;
-      const negotiated = result?.protocolVersion;
-      if (
-        negotiated === '2024-11-05' ||
-        negotiated === '2025-06-18' // keep this list aligned with MCP_PROTOCOL_VERSIONS
-      ) {
-        sessionManager.setProtocolVersion(session.id, negotiated);
-      }
-      sessionManager.markInitialized(session.id);
-    }
-
-    responses.push(response);
+    responses.push(await handleMcpRequest(rpcRequest, handlerContext));
   }
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  // Withholding this header is what makes stateless work end-to-end. The
-  // Streamable HTTP transport says a client sends `Mcp-Session-Id` only if the
-  // server issued one — so no header out means no id on the next request, and
-  // nothing that can fail to be found. Advertising an id nothing stores would
-  // be worse than having none.
-  if (!isStateless()) {
-    headers[MCP_SESSION_HEADER] = session.id;
-  }
 
   if (isBatch) {
     // Filter out nulls (notifications don't produce responses)
@@ -409,192 +314,33 @@ async function handlePost(request: NextRequest, auth: McpAuthContext): Promise<R
   return Response.json(singleResponse, { headers });
 }
 
-export async function GET(request: NextRequest): Promise<Response> {
-  try {
-    return await withMcpKey(request, (auth) => handleGet(request, auth));
-  } catch (error) {
-    return handleAPIError(error);
-  }
+/**
+ * GET and DELETE: 405, unconditionally.
+ *
+ * 405 rather than 404 or 501 because it is the status the Streamable HTTP
+ * transport designates for a server offering no GET stream, and the one clients
+ * special-case as "no SSE here, carry on" instead of surfacing a transport error
+ * on every healthy connect. Revision 2026-07-28 makes it explicit: a
+ * modern-only server answers GET and DELETE with 405.
+ *
+ * **No authentication, no server-enabled check and no audit row** (§39 t-718).
+ * Both used to run the full bearer path first, so an unauthenticated GET got a
+ * 401 and a disabled server a 503, and a stateless DELETE wrote an audit row
+ * recording what the key had asked for. All three are gone deliberately: there
+ * is no session in any configuration of this server, so these verbs are not
+ * conditionally unavailable — they do not exist, and saying so costs no database
+ * lookup and reveals nothing an `Allow` header does not. The audit trail loses
+ * the "a client is still trying to terminate sessions" signal; a client sending
+ * DELETE is reading an `Mcp-Session-Id` this server never issued, which is a
+ * client bug rather than an operator one.
+ *
+ * `_request` is unread on purpose: nothing about the request can change the
+ * answer. That is the point of the header being unconditional.
+ */
+export function GET(_request: NextRequest): Response {
+  return new Response(null, { status: 405, headers: METHOD_NOT_ALLOWED_HEADERS });
 }
 
-/** The SSE notification stream, opened inside the key's org scope. */
-async function handleGet(request: NextRequest, auth: McpAuthContext): Promise<Response> {
-  const serverState = await getMcpServerConfig();
-  if (!serverState.isEnabled) {
-    return jsonRpcErrorResponse(JsonRpcErrorCode.SERVER_DISABLED, 'MCP server is disabled', 503);
-  }
-
-  if (isStateless()) {
-    // 405, not 501: this is the status the Streamable HTTP transport
-    // designates for a server that offers no GET stream, and the one clients
-    // special-case as "no SSE here, carry on" instead of surfacing a transport
-    // error on every healthy connect. Revision 2026-07-28 makes it explicit —
-    // a modern-only server answers GET and DELETE with 405.
-    //
-    // After auth and the server-enabled check, so an unauthenticated GET still
-    // gets 401 and a disabled server still gets 503; the method is only
-    // unavailable to callers who would otherwise have been allowed to use it.
-    return Response.json(
-      {
-        jsonrpc: '2.0',
-        id: null,
-        error: {
-          code: JsonRpcErrorCode.STATELESS_UNSUPPORTED,
-          message:
-            'This server does not offer an SSE stream (MCP_SESSION_MODE=stateless). ' +
-            'Server-push notifications require MCP_SESSION_MODE=stateful, which needs a ' +
-            'single long-running process.',
-        },
-      },
-      { status: 405, headers: { Allow: 'POST' } }
-    );
-  }
-
-  const sessionId = request.headers.get(MCP_SESSION_HEADER);
-  const sessionManager = getMcpSessionManager();
-
-  // A session id is not a capability: the key is (§108 t-716). POST and DELETE
-  // have always re-checked that the named session belongs to the authenticated
-  // key; this path did not, and it is the path that attaches a LISTENER. A
-  // caller with any valid MCP key could open GET with another key's — at
-  // `multi`, another ORG's — session id and have that session's
-  // `notifications/message`, `resources/updated` and `progress` pushes
-  // delivered to it, while the rightful owner silently stopped receiving them,
-  // because `sseListeners` is a Map keyed by session id and the second
-  // registration replaces the first.
-  //
-  // Which is also why it belongs in this change rather than in a follow-up:
-  // scoping who a notification is ADDRESSED to means nothing while the sink
-  // for an address can belong to someone else. Refused the same way DELETE
-  // refuses a foreign session, so the two are indistinguishable.
-  if (sessionId) {
-    // `peekSession`, not `getSession`: a lookup whose answer may be "refuse"
-    // must not refresh the session's activity as a side effect. `getSession`
-    // bumps `lastActivityAt` BEFORE the caller can compare the key, so polling
-    // this endpoint with someone else's session id kept that session from ever
-    // expiring — at `multi`, one org holding another org's session open.
-    const existing = sessionManager.peekSession(sessionId);
-    if (!existing || existing.apiKeyId !== auth.apiKeyId) {
-      return jsonRpcErrorResponse(JsonRpcErrorCode.SESSION_NOT_FOUND, 'Session not found', 404);
-    }
-  }
-
-  // SSE notification stream with server-push notifications
-  async function* notificationStream(): AsyncIterable<{ type: string; data?: string }> {
-    yield { type: 'connected' };
-
-    // Create a queue that the session manager can push notifications into
-    const queue: Array<{ type: string; data?: string }> = [];
-    let resolve: (() => void) | null = null;
-    let aborted = false;
-
-    // Wire request.signal so a client disconnect resolves any pending await
-    const onAbort = (): void => {
-      aborted = true;
-      if (resolve) {
-        resolve();
-        resolve = null;
-      }
-    };
-    request.signal.addEventListener('abort', onAbort, { once: true });
-
-    if (sessionId) {
-      const attached = sessionManager.registerSseListener(sessionId, (notification) => {
-        queue.push({
-          type: 'notification',
-          data: JSON.stringify(notification),
-        });
-        if (resolve) {
-          resolve();
-          resolve = null;
-        }
-      });
-      // The ownership check above ran before this Response was returned; the
-      // platform pulls the body afterwards, so the session can be terminated or
-      // evicted in between (§108 t-716). Ending the generator closes the stream,
-      // which tells the client to re-`initialize` — better than parking on the
-      // queue for ever behind a keepalive that makes the connection look healthy.
-      if (!attached) return;
-    }
-
-    try {
-      // Yield notifications as they arrive
-      while (!aborted) {
-        if (queue.length > 0) {
-          yield queue.shift()!;
-        } else {
-          await new Promise<void>((r) => {
-            resolve = r;
-          });
-        }
-      }
-    } finally {
-      request.signal.removeEventListener('abort', onAbort);
-      if (sessionId) {
-        sessionManager.unregisterSseListener(sessionId);
-      }
-    }
-  }
-
-  return sseResponse(notificationStream(), { signal: request.signal });
-}
-
-export async function DELETE(request: NextRequest): Promise<Response> {
-  try {
-    return await withMcpKey(request, (auth) => Promise.resolve(handleDelete(request, auth)));
-  } catch (error) {
-    return handleAPIError(error);
-  }
-}
-
-/** Session termination, run inside the key's org scope. */
-function handleDelete(request: NextRequest, auth: McpAuthContext): Response {
-  if (isStateless()) {
-    // Audited before refusing, deliberately: the log records what a key ASKED
-    // for, and the stateful path already writes a row for a DELETE it cannot
-    // honour. A terminate request against a server with nothing to terminate
-    // is a client-configuration signal worth keeping.
-    logMcpAudit({
-      apiKeyId: auth.apiKeyId,
-      method: 'session/destroy',
-      responseCode: 'error',
-      errorMessage: 'Sessions are not tracked in stateless mode',
-      durationMs: 0,
-      clientIp: auth.clientIp,
-      userAgent: auth.userAgent,
-    });
-    // Empty body, matching the stateful 204/404 shape — a DELETE response
-    // carries no JSON-RPC envelope for a client to parse.
-    return new Response(null, { status: 405, headers: { Allow: 'POST' } });
-  }
-
-  const sessionId = request.headers.get(MCP_SESSION_HEADER);
-  if (!sessionId) {
-    return jsonRpcErrorResponse(
-      JsonRpcErrorCode.INVALID_REQUEST,
-      'Missing Mcp-Session-Id header',
-      400
-    );
-  }
-
-  const sessionManager = getMcpSessionManager();
-  // `peekSession` for the same reason as GET above: this lookup's answer may be
-  // a refusal, and refusing should not extend the session it refused.
-  const session = sessionManager.peekSession(sessionId);
-  if (session && session.apiKeyId !== auth.apiKeyId) {
-    return jsonRpcErrorResponse(JsonRpcErrorCode.SESSION_NOT_FOUND, 'Session not found', 404);
-  }
-  const destroyed = session ? sessionManager.destroySession(sessionId) : false;
-
-  logMcpAudit({
-    apiKeyId: auth.apiKeyId,
-    method: 'session/destroy',
-    responseCode: destroyed ? 'success' : 'error',
-    errorMessage: destroyed ? undefined : 'Session not found',
-    durationMs: 0,
-    clientIp: auth.clientIp,
-    userAgent: auth.userAgent,
-  });
-
-  return new Response(null, { status: destroyed ? 204 : 404 });
+export function DELETE(_request: NextRequest): Response {
+  return new Response(null, { status: 405, headers: METHOD_NOT_ALLOWED_HEADERS });
 }

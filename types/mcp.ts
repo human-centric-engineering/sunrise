@@ -32,12 +32,6 @@ export interface JsonRpcResponse {
   error?: JsonRpcError;
 }
 
-export interface JsonRpcNotification {
-  jsonrpc: '2.0';
-  method: string;
-  params?: Record<string, unknown>;
-}
-
 export interface JsonRpcError {
   code: number;
   message: string;
@@ -53,20 +47,10 @@ export const JsonRpcErrorCode = {
   INTERNAL_ERROR: -32603,
   /** Application-level: authentication failed (invalid or missing API key) */
   UNAUTHORIZED: -32001,
-  /** Application-level: session not found or expired */
-  SESSION_NOT_FOUND: -32002,
   /** Application-level: MCP server is disabled */
   SERVER_DISABLED: -32003,
   /** Application-level: per-key or global rate limit exceeded — client should back off and retry */
   RATE_LIMITED: -32004,
-  /**
-   * The method needs a session that outlives the request, and this server does
-   * not have one (`MCP_SESSION_MODE=stateless`). Distinct from METHOD_NOT_FOUND
-   * because the method exists and is implemented — it is the deployment
-   * topology that cannot carry it. A client can act on that; "no such method"
-   * would send it looking for a version mismatch that is not there.
-   */
-  STATELESS_UNSUPPORTED: -32005,
 } as const;
 export type JsonRpcErrorCode = (typeof JsonRpcErrorCode)[keyof typeof JsonRpcErrorCode];
 
@@ -110,17 +94,19 @@ export interface McpServerInfo {
  * features the server actually implements should be set — advertising a
  * feature without a handler is a spec violation that breaks compliant clients.
  *
- * Per MCP spec: `listChanged: true` means the server will push
- * `notifications/{tools,resources,prompts}/list_changed` when its catalogue
- * changes. `subscribe: true` (resources only) means the server accepts
- * `resources/subscribe` / `resources/unsubscribe` requests.
+ * **`listChanged`, `subscribe` and `logging` are gone** (§39 t-718). Each was a
+ * promise to push something to the client later, which needed a session
+ * outliving the request; there is no such session and no server→client stream.
+ * They are absent from the TYPE rather than merely unset, so a future push
+ * implementation has to add them back deliberately — under MCP revision
+ * 2026-07-28 that means `subscriptions/listen`, whose filter is a REQUEST
+ * parameter, not an `initialize` capability, so these fields would not come
+ * back in this shape.
  */
 export interface McpCapabilities {
-  tools?: { listChanged?: boolean };
-  resources?: { listChanged?: boolean; subscribe?: boolean };
-  prompts?: { listChanged?: boolean };
-  /** Empty object signals support for `logging/setLevel` + `notifications/message`. */
-  logging?: Record<string, never>;
+  tools?: Record<string, never>;
+  resources?: Record<string, never>;
+  prompts?: Record<string, never>;
   /** Empty object signals support for `completion/complete`. */
   completions?: Record<string, never>;
 }
@@ -280,85 +266,8 @@ export const McpResourceType = {
 } as const;
 export type McpResourceType = (typeof McpResourceType)[keyof typeof McpResourceType];
 
-// ============================================================================
-// MCP Session
-// ============================================================================
-
 /**
- * MCP logging severity levels per RFC 5424, ordered most → least verbose.
- * The ordering must be preserved — `McpLogLevelRank` uses index lookup.
- */
-export const MCP_LOG_LEVELS = [
-  'debug',
-  'info',
-  'notice',
-  'warning',
-  'error',
-  'critical',
-  'alert',
-  'emergency',
-] as const;
-export type McpLogLevel = (typeof MCP_LOG_LEVELS)[number];
-
-/** Numeric rank — useful for "emit if rank ≥ session level rank" comparisons. */
-export const McpLogLevelRank: Record<McpLogLevel, number> = {
-  debug: 0,
-  info: 1,
-  notice: 2,
-  warning: 3,
-  error: 4,
-  critical: 5,
-  alert: 6,
-  emergency: 7,
-};
-
-export interface McpSession {
-  id: string;
-  apiKeyId: string;
-  /**
-   * The org this session belongs to — the org of the MCP key it was minted
-   * from, read from the tenant context at creation and never from a caller
-   * (§108 t-716). `null` only for a session created outside any scope, which
-   * no production path does: the MCP transport enters `runAsOrg(auth.orgId)`
-   * for every request in both modes, because an MCP key is bound to an org at
-   * mint (t-673).
-   *
-   * It is what scopes the admin sessions list, the terminate action and the
-   * per-URI `resources/updated` fan-out. Without it those three filtered on
-   * nothing, so at `multi` an org admin read and could terminate every other
-   * org's sessions.
-   */
-  orgId: string | null;
-  initialized: boolean;
-  /**
-   * Protocol version negotiated during `initialize`. Set to the latest
-   * supported version at session creation and replaced with the negotiated
-   * value once the client sends `initialize`. Per-call handlers may branch
-   * on this to gate features that exist only in newer spec revisions.
-   */
-  protocolVersion: McpProtocolVersion;
-  /**
-   * Minimum severity the client wants pushed via `notifications/message`.
-   * Defaults to `warning` so clients that never call `logging/setLevel`
-   * don't drown in `info`/`debug` chatter. Replaced via `setLogLevel`.
-   */
-  logLevel: McpLogLevel;
-  createdAt: number;
-  lastActivityAt: number;
-  /**
-   * True for a session synthesised per request under
-   * `MCP_SESSION_MODE=stateless`. Nothing stores it, so anything that has to
-   * outlive one request — a subscription, a log level, an SSE sink — must
-   * refuse rather than accept work it will drop.
-   *
-   * Optional so every existing stateful path and test fixture is unchanged; the
-   * checks read `session.ephemeral` truthily.
-   */
-  ephemeral?: boolean;
-}
-
-/**
- * Negotiate the protocol version to use for a session.
+ * Negotiate the protocol version to use for a request.
  *
  * Rules:
  *  - Client omits `protocolVersion` entirely → use the most conservative

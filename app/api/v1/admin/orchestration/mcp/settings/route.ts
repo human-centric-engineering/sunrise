@@ -41,7 +41,6 @@ export const PATCH = withAdminAuth(async (request, session) => {
       // serverVersion tracks SUNRISE_VERSION — see lib/orchestration/mcp/config.ts
       // for the rationale (Sunrise IS the MCP server implementation here).
       serverVersion: SUNRISE_VERSION,
-      maxSessionsPerKey: 5,
       globalRateLimit: 60,
       auditRetentionDays: 90,
       ...body,

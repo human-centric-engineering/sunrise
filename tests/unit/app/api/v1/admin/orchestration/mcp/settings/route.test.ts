@@ -79,7 +79,6 @@ function makeMcpConfig(overrides: Record<string, unknown> = {}) {
     isEnabled: true,
     serverName: 'Sunrise MCP Server',
     serverVersion: SUNRISE_VERSION,
-    maxSessionsPerKey: 5,
     globalRateLimit: 60,
     auditRetentionDays: 90,
     createdAt: new Date('2025-01-01'),
@@ -214,17 +213,17 @@ describe('PATCH /mcp/settings', () => {
   it('updates multiple fields', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.mcpServerConfig.upsert).mockResolvedValue(
-      makeMcpConfig({ serverName: 'My MCP', maxSessionsPerKey: 10 })
+      makeMcpConfig({ serverName: 'My MCP', globalRateLimit: 120 })
     );
 
-    const response = await PATCH(makePatchRequest({ serverName: 'My MCP', maxSessionsPerKey: 10 }));
+    const response = await PATCH(makePatchRequest({ serverName: 'My MCP', globalRateLimit: 120 }));
 
     expect(response.status).toBe(200);
     expect(prisma.mcpServerConfig.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         update: expect.objectContaining({
           serverName: 'My MCP',
-          maxSessionsPerKey: 10,
+          globalRateLimit: 120,
         }),
       })
     );
@@ -248,12 +247,23 @@ describe('PATCH /mcp/settings', () => {
   // upsert-call-args assertion at "updates isEnabled to false" (L186-194)
   // is the meaningful contract test for this handler.
 
-  it('rejects maxSessionsPerKey above 100', async () => {
+  it('rejects globalRateLimit above 10000', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 
-    const response = await PATCH(makePatchRequest({ maxSessionsPerKey: 999 }));
+    const response = await PATCH(makePatchRequest({ globalRateLimit: 10001 }));
 
     expect(response.status).toBe(400);
+  });
+
+  it('refuses a body of only maxSessionsPerKey — the field is gone (§39 t-718)', () => {
+    // The column is dropped, so accepting this key would send Prisma an unknown
+    // field and 500 the route. Zod strips it, leaving `{}`, which the
+    // "at least one field" refinement rejects at 400.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    return PATCH(makePatchRequest({ maxSessionsPerKey: 10 })).then((response) => {
+      expect(response.status).toBe(400);
+    });
   });
 
   it('rejects empty serverName', async () => {

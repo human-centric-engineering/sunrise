@@ -89,7 +89,6 @@ function makeMcpConfig(overrides: Record<string, unknown> = {}) {
     isEnabled: true,
     serverName: 'Sunrise MCP Server',
     serverVersion: '1.0.0',
-    maxSessionsPerKey: 5,
     globalRateLimit: 60,
     auditRetentionDays: 90,
     createdAt: new Date('2025-01-01'),

@@ -13,7 +13,6 @@ model McpServerConfig {
   isEnabled          Boolean  @default(false)
   serverName         String   @default("Sunrise MCP Server")
   serverVersion      String   @default("1.0.0")
-  maxSessionsPerKey  Int      @default(5)
   globalRateLimit    Int      @default(60) // requests per minute per API key
   auditRetentionDays Int      @default(90)
   createdAt          DateTime @default(now())

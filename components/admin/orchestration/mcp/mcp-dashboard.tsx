@@ -36,7 +36,6 @@ const DEFAULT_SETTINGS: McpSettingsResponse = {
   isEnabled: false,
   serverName: 'Sunrise MCP Server',
   serverVersion: '1.0.0',
-  maxSessionsPerKey: 5,
   globalRateLimit: 60,
   auditRetentionDays: 90,
 };
