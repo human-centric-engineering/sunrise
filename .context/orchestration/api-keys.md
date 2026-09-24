@@ -114,8 +114,10 @@ nowhere rather than refused on the admin routes and admitted, unscoped, on
 the rest.
 
 A key whose `orgId` is still `NULL` without being `admin` — minted between
-the identity migration and the backfill that re-ran it, both in 0.13.0 — is read as the install org at
-`single` and refused at `multi`; the backfill leaves none behind.
+the identity migration and the backfill that re-ran it — is read as the install org at
+`single` and refused at `multi`; the backfill leaves none behind. Both migrations ship in 0.13.0, so an install upgrading
+from a release applies them together and never holds such a key; only one
+deployed from `main` between them could.
 
 ### `DELETE /api/v1/user/api-keys/:keyId`
 

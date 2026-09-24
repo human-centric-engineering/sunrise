@@ -420,7 +420,9 @@ a fork's policy cannot widen it. That is also why the read rule keys on the scop
 
 **The interim rows.** The column landed in `20260917120000_org_identity`
 (0.13.0 — no release before it carried the column), backfilled once, and nothing wrote it at mint until t-673 — so every
-credential minted in between carried `orgId = NULL`. At `single` the read
+credential minted in between carried `orgId = NULL`. Both migrations ship in
+0.13.0, so an install upgrading from a release applies them together and
+never holds such a row; only a deployment tracking `main` between them could. At `single` the read
 rule resolves such a row to the install org, so nothing was wrong; at
 `multi` it is refused, so an install that switches modes must never meet one.
 `20260918120000_credential_org_backfill` re-runs the identity migration's

@@ -13,8 +13,7 @@
  * is listed in the export manifest. Nothing imports the schema, so no module
  * graph connects them, so `--changed` will never select that test no matter
  * which model you add. Same for the reserved-namespace rule, the fork-init
- * seam roster, the outbound-redirect roster, and the tenancy guards
- * (org-sources, model-classification, policy-coverage, process-state). Those are exactly the checks
+ * seam roster, the outbound-redirect roster, and the tenancy guards. Those are exactly the checks
  * this repo leans on hardest, and a scoped run that silently stopped running
  * them would be the "skipped gate reads as green" shape
  * `.context/architecture/ci.md` spends a section on.
@@ -141,10 +140,11 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
   {
     path: 'tests/unit/lib/tenancy/roles.test.ts',
     reason:
-      'holds `ORG_ROLES` / `ORG_STATUSES` equal to the Prisma `OrgRole` / ' +
-      '`OrgStatus` enums, and is the only thing that notices when they drift. ' +
-      'Adding an enum value edits only `prisma/schema/tenancy.prisma`; the ' +
-      'generated client is gitignored, so no changed module reaches this test.',
+      'holds `ORG_ROLES` / `ORG_STATUSES` equal to the generated Prisma ' +
+      '`OrgRole` / `OrgStatus` enums. Adding an enum value edits only ' +
+      '`prisma/schema/tenancy.prisma`, and the generated client is gitignored, ' +
+      'so no changed module reaches this test. It compares against the client, ' +
+      'so it catches the drift once `prisma generate` has run.',
   },
   {
     path: 'tests/unit/lib/orchestration/scope-authority.test.ts',
