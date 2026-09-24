@@ -50,8 +50,10 @@ release process.
 > entries below**. They carry these things to act on:
 >
 > - **Two migrations:** `20260917120000_org_identity` (the `Org` and
->   `OrgMembership` tables, the install org, a membership for every user, and
->   nullable `orgId` on the four credential tables) and
+>   `OrgMembership` tables, the install org, a membership for every user,
+>   nullable `orgId` on the four credential tables, and
+>   `Session.activeOrgId`, which is also a better-auth session
+>   `additionalField` now) and
 >   `20260918120000_credential_org_backfill`. The second re-runs the first's
 >   backfill; on a fork, where both run in one deploy, it updates nothing.
 > - **A new seam row**, `lib/app/tenant-resolver.ts`, in
@@ -61,7 +63,14 @@ release process.
 >   `resource.orgId === viewer.orgId`, guard the resource side: two
 >   `undefined`s compare equal.
 > - **Type changes a build finds:** `EmbedContext` and `McpAuthContext` require
->   `orgId`, and `runInvitedSignup` takes the invitation as a second argument.
+>   `orgId`.
+> - **One change a build does NOT find:** `runInvitedSignup` takes the
+>   invitation as a second argument, and that argument defaults to `null`. So
+>   a fork's own call with one argument still compiles and still passes the
+>   `invite_only` gate. But the new user's org membership is then decided
+>   without the invitation. An invited platform admin joins the install org as
+>   `MEMBER`, not `OWNER`. An invitation naming another org is ignored. Pass
+>   the invitation metadata at every call site you own.
 > - **Test changes:** the role-literal guard now also polices `'OWNER'` and
 >   `'MEMBER'`. `org-sources.test.ts` fails on any model of yours that carries
 >   `orgId` until it has a disposition in `lib/privacy/org-sources.ts`.
@@ -105,8 +114,10 @@ release process.
 >    cache to a platform file under `lib/` meets the
 >    `lib/tenancy/process-state.ts` scanner test.
 >
-> One new optional env var, `MIGRATE_DATABASE_URL`, is needed only to enable
-> `multi`. Delete `MCP_SESSION_MODE` wherever you set it.
+> Three new optional env vars, all needed only to enable `multi`:
+> `MIGRATE_DATABASE_URL`, plus `TENANCY_APP_ROLE_PASSWORD` and
+> `TENANCY_APP_ROLE` (defaults to `sunrise_app`) for `db:tenancy:role`. Delete `MCP_SESSION_MODE`
+> wherever you set it.
 >
 > **Two behaviour changes at `single`, both corrections.**
 > `AiApiKey.lastUsedAt` is now written; it had been `NULL` for every key. And
