@@ -21,8 +21,8 @@ release process.
 > **Alpha release.** Nineteenth tagged Sunrise release. **MINOR bump**. It
 > carries three multi-tenancy features: org identity (§106), row and namespace
 > isolation (§107), and tenant-aware jobs and caches (§108). It also removes the
-> stateful MCP transport. Measured against `v0.12.1`: 19 PRs merged, no direct
-> commits, one issue closed; the suite is 1,220 files and 24,763 tests.
+> stateful MCP transport. Measured against `v0.12.1`: 20 PRs merged, no direct
+> commits, two issues closed; the suite is 1,220 files and 24,767 tests.
 >
 > **`TENANCY_MODE=single` stays the default, and every tenancy entry below
 > states its single-mode behaviour.** `multi` can now be switched on end to end;
