@@ -105,6 +105,15 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'the change no import chain connects to this test.',
   },
   {
+    path: 'tests/unit/lib/privacy/org-sources.test.ts',
+    reason:
+      'parses `prisma/schema/*.prisma` and fails until every model carrying ' +
+      '`orgId` appears in the org export manifest (`ORG_DATA_SOURCES` / ' +
+      '`ORG_EXCLUDED_SOURCES`) — the org-subject twin of export-sources. Adding ' +
+      'a tenant-owned model is exactly the change no import chain connects to ' +
+      'this test, and a miss ships an org export and erasure silently short.',
+  },
+  {
     path: 'tests/unit/lib/tenancy/model-classification.test.ts',
     reason:
       'parses `prisma/schema/*.prisma` and fails naming any model that neither ' +
@@ -118,6 +127,15 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       '`slug` is a global `@unique` or lacks `@@unique([orgId, slug])`, and reads the ' +
       'migrations for the two per-org partial uniques. A new tenant-owned model with a ' +
       'slug reaches no test through the module graph.',
+  },
+  {
+    path: 'tests/unit/lib/tenancy/process-state.test.ts',
+    reason:
+      'scans every module under `lib/` for module-level mutable state and fails ' +
+      'on any holder not declared, with its tenancy posture, in ' +
+      '`lib/tenancy/process-state.ts`. The change it exists to catch — a new ' +
+      '`Map` cache in some far-off module — is one whose import graph never ' +
+      'reaches this test, and an undeclared holder is a cross-org cache at multi.',
   },
   {
     path: 'tests/unit/lib/tenancy/policy-coverage.test.ts',
