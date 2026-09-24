@@ -13,7 +13,8 @@
  * is listed in the export manifest. Nothing imports the schema, so no module
  * graph connects them, so `--changed` will never select that test no matter
  * which model you add. Same for the reserved-namespace rule, the fork-init
- * seam roster, and the outbound-redirect roster. Those are exactly the checks
+ * seam roster, the outbound-redirect roster, and the tenancy guards
+ * (org-sources, model-classification, policy-coverage, process-state). Those are exactly the checks
  * this repo leans on hardest, and a scoped run that silently stopped running
  * them would be the "skipped gate reads as green" shape
  * `.context/architecture/ci.md` spends a section on.
@@ -136,6 +137,22 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       '`lib/tenancy/process-state.ts`. The change it exists to catch — a new ' +
       '`Map` cache in some far-off module — is one whose import graph never ' +
       'reaches this test, and an undeclared holder is a cross-org cache at multi.',
+  },
+  {
+    path: 'tests/unit/lib/tenancy/roles.test.ts',
+    reason:
+      'holds `ORG_ROLES` / `ORG_STATUSES` equal to the Prisma `OrgRole` / ' +
+      '`OrgStatus` enums, and is the only thing that notices when they drift. ' +
+      'Adding an enum value edits only `prisma/schema/tenancy.prisma`; the ' +
+      'generated client is gitignored, so no changed module reaches this test.',
+  },
+  {
+    path: 'tests/unit/lib/orchestration/scope-authority.test.ts',
+    reason:
+      'walks `lib/` for every capability-dispatch site that threads a scope and ' +
+      'checks which ones may treat it as authoritative. A new dispatch site in ' +
+      'some far-off module is exactly the change no import chain connects to ' +
+      'this test, and a miss lets a request-body scope decide what a tool acts on.',
   },
   {
     path: 'tests/unit/lib/tenancy/policy-coverage.test.ts',

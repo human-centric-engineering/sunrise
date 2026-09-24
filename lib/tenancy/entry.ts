@@ -26,8 +26,8 @@
  *
  * **API keys.** Feature finding 13: an `admin`-scoped key is a platform
  * credential and enters no org; any other key enters the org it was minted
- * in. A key whose column is still `NULL` — one minted between 0.12.0 and the
- * backfill that t-673 re-ran — is the install org at `single` and nothing
+ * in. A key whose column is still `NULL` — one minted between the identity
+ * migration and the backfill that t-673 re-ran — is the install org at `single` and nothing
  * at `multi`.
  *
  * **Credentials with no user behind them** — an embed token, an MCP key
@@ -213,8 +213,8 @@ export function resolveCredentialOrg(
 /**
  * What a credential's nullable `orgId` column means, in one place: the org
  * it names, else the install org at `single` and no org at `multi`. The
- * null arm exists for rows minted before the column was written (0.12.0 to
- * the t-673 backfill); nothing mints a null org any more.
+ * null arm exists for rows minted before the column was written (the identity
+ * migration to the t-673 backfill); nothing mints a null org any more.
  */
 export function orgOfColumn(orgId: string | null | undefined): string | null {
   if (orgId) return orgId;

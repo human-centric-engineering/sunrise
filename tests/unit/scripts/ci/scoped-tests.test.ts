@@ -108,6 +108,19 @@ describe('ALWAYS_RUN_TESTS', () => {
     // calls that manifest out as the thing never to quietly shorten.
     expect(alwaysRunPaths()).toContain('tests/unit/lib/privacy/export-sources.test.ts');
   });
+
+  it.each([
+    // The org-subject twin of the manifest above: dropping it ships an org
+    // export and erasure silently short.
+    'tests/unit/lib/privacy/org-sources.test.ts',
+    // Walks lib/ for module-level state; an undeclared holder is a cross-org
+    // cache at multi, and the change that adds one never imports this test.
+    'tests/unit/lib/tenancy/process-state.test.ts',
+  ])('includes %s, which the 0.13.0 notes promise a fork', (path) => {
+    // Named for the same reason: the release notes tell forks these guards
+    // catch them, so their presence is a claim, not a count.
+    expect(alwaysRunPaths()).toContain(path);
+  });
 });
 
 describe('undeclaredRepoRootedTests', () => {

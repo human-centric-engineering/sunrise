@@ -48,7 +48,9 @@ off disk and fails until every model with a user FK appears in the export
 manifest. Nothing imports the schema, so no module graph connects the two, so
 `--changed` will never select that test no matter which model you add. Same
 shape for the reserved-namespace rule, the fork-init seam roster, the
-outbound-redirect roster, and the ESLint app-boundary check.
+outbound-redirect roster, the ESLint app-boundary check, and the tenancy
+guards: the org export manifest (`org-sources`), model classification, RLS
+policy coverage and the process-state scanner.
 
 Those are the checks this repo leans on hardest. A scoped run that silently
 stopped running them would be the "skipped gate reads as green" failure

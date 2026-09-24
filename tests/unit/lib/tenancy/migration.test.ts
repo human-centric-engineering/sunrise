@@ -157,7 +157,7 @@ describe('hand-folding', () => {
 });
 
 describe('the credential backfill re-run (t-673)', () => {
-  // Every credential minted between 0.12.0 and t-673 carries orgId = NULL —
+  // Every credential minted between the identity migration and t-673 carries orgId = NULL —
   // the column existed, nothing wrote it. The re-run is the identity
   // migration's four statements, again; holding them byte-equal is what
   // makes "re-run" a fact rather than a paraphrase, and what keeps the
