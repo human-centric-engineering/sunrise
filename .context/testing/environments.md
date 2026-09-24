@@ -85,10 +85,15 @@ the undefined path — and so was anything branching on `MCP_SESSION_MODE`, whic
 is where this was measured: a downstream MCP change once had 40 tests pass
 against a stateless branch none of them entered. (That variable was removed in
 §39 t-718; the trap it demonstrated is a property of the environment, not of the
-variable.) 44 of the 47 test
-files that import `@/lib/env` now run under node and see the real server schema.
-Three still opt into happy-dom, and all three are deliberate: two component
-tests, plus `env.test.ts`, which asserts on `typeof window` in both directions.
+variable.)
+
+**79** test files reference `@/lib/env` and **5** of them opt into
+happy-dom, measured 2026-09-24 with
+`grep -rl '@/lib/env' tests | xargs grep -l '@vitest-environment happy-dom'` —
+re-derive rather than trust, because this figure has already drifted twice (it
+read 37/47 in one place and 44/47 in two others, all written when the suite was
+smaller). The five are deliberate: a component test, `env.test.ts` asserting on
+`typeof window` in both directions, and three maintenance-tick tests.
 
 `tests/unit/lib/env-server-vars.test.ts` pins this and asserts it, and keeps its
 own `// @vitest-environment node` directive so a future flip of the default

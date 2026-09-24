@@ -1,6 +1,7 @@
 -- The MCP session cap goes with the sessions (§39 t-718).
 --
--- `mcp_server_config.max_sessions_per_key` was read in exactly one place: the
+-- `mcp_server_config."maxSessionsPerKey"` — camelCase and quoted, as the DDL
+-- below and the baseline both have it — was read in exactly one place: the
 -- `createSession` call on the stateful transport, which enforced it per API key.
 -- That transport is gone — MCP revision 2026-07-28 removes protocol-level
 -- sessions outright, and the mode that held them threw on any platform serving

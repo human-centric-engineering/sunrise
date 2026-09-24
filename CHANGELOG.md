@@ -407,6 +407,7 @@ release process.
   | `lib/orchestration/mcp/resource-update-hooks.ts` (`notifyMcpAgentsChanged`, `notifyMcpWorkflowsChanged`, `notifyMcpKnowledgeChanged`) | remove the calls |
   | `lib/orchestration/mcp/log-emitter.ts` (`emitMcpLog`) and `progress-tracker.ts` (`createProgressReporter`, `extractProgressToken`) | a fork using `emitMcpLog` has no transport to send on |
   | `resources/subscribe`, `resources/unsubscribe`, `logging/setLevel` | an attempt now answers `METHOD_NOT_FOUND`                                |
+  | the JSON-RPC envelope `GET /api/v1/mcp` used to return with its 405 | stop parsing that 405's body — it is now EMPTY. The stateless GET answered `405` with `{jsonrpc, error: {code: -32005, message}}`; a client or ops script doing `JSON.parse(await res.text())` on it now throws. Read the status and `Allow` instead |
   | `admin/orchestration/mcp/sessions` page, `mcp-sessions-list.tsx`, `API.ADMIN.ORCHESTRATION.MCP_SESSIONS` and `mcpSessionById` | — |
 
   **`PATCH /api/v1/admin/orchestration/mcp/settings` now rejects an unknown key**

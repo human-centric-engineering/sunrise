@@ -36,8 +36,11 @@ DELETE /api/v1/mcp  → 405, Allow: POST
 ## One transport, and it holds nothing
 
 **Every request stands alone.** No `Mcp-Session-Id` is issued, one arriving is
-ignored, `GET` and `DELETE` answer `405` with `Allow: POST`, and there is no
-server-to-client stream. There is no mode switch: `MCP_SESSION_MODE` was removed
+ignored, `GET` and `DELETE` answer `405` with `Allow: POST` **and an empty body**,
+and there is no server-to-client stream. (The empty body is a wire change worth
+knowing: the stateless `GET` used to put a JSON-RPC `-32005` envelope in its 405,
+so anything parsing that body now has nothing to parse. Read the status and the
+`Allow` header.) There is no mode switch: `MCP_SESSION_MODE` was removed
 in §39 t-718 along with the stateful transport it selected.
 
 That is the shape MCP revision
@@ -56,10 +59,14 @@ It held its sessions in a per-process `Map`, which is wrong anywhere more than
 one process serves traffic — and that was not theoretical. `initialize` minted a
 session on instance A and returned its id; the client's next call was
 load-balanced to instance B, which looked that id up in its **own** empty map and
-returned `404 Session not found or expired`. Observed in production on Vercel:
-one session id, one instant, three instances, two 404s and a 200. No client retry
-recovered it, because the session was not lost — it was invisible to live
-siblings — so re-initialising repeated the race.
+returned `404 Session not found or expired`. Observed in production on Vercel,
+**before the startup guard landed in 0.10.0 (#644)**: one session id, one
+instant, three instances, two 404s and a 200. No client retry recovered it,
+because the session was not lost — it was invisible to live siblings — so
+re-initialising repeated the race. Once the guard shipped, that deploy stopped
+being reachable rather than stopping being broken, which is why the next
+paragraph can say nothing was running the mode and this one can say it was
+observed running.
 
 It had also become actively wrong for current clients: a `2026-07-28` client
 sends no `initialize` and no session id, and got `400 Missing Mcp-Session-Id

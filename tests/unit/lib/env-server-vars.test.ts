@@ -21,10 +21,15 @@
  * `CAPABILITY_BINDING_MODE` are both this shape, and so was `MCP_SESSION_MODE`
  * until §39 t-718 removed it. A downstream implementation of the MCP change had
  * 40 tests pass against a stateless branch none of them entered, for exactly
- * this reason. 37 of the 47
- * test files importing `@/lib/env` now run under node and see the real schema;
- * the 10 that still opt into happy-dom are component tests, where the client
- * schema is the correct one.
+ * this reason.
+ *
+ * **79** test files reference `@/lib/env` and **5** of them opt into
+ * happy-dom, measured 2026-09-24 with
+ * `grep -rl '@/lib/env' tests | xargs grep -l '@vitest-environment happy-dom'` —
+ * re-derive rather than trust, because this figure has already drifted twice (it
+ * read 37/47 in one place and 44/47 in two others, all written when the suite was
+ * smaller). The five are deliberate: a component test, `env.test.ts` asserting on
+ * `typeof window` in both directions, and three maintenance-tick tests.
  *
  * Tests that need to VARY a mode still mock `@/lib/env` — the value is read at
  * module load, so `process.env` cannot be moved per case. But a mock cannot tell
