@@ -16,6 +16,107 @@ release process.
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-09-24
+
+> **Alpha release.** Nineteenth tagged Sunrise release. **MINOR bump**. It
+> carries three multi-tenancy features: org identity (§106), row and namespace
+> isolation (§107), and tenant-aware jobs and caches (§108). It also removes the
+> stateful MCP transport. Measured against `v0.12.1`: 19 PRs merged, no direct
+> commits, one issue closed; the suite is 1,220 files and 24,763 tests.
+>
+> **`TENANCY_MODE=single` stays the default, and every tenancy entry below
+> states its single-mode behaviour.** `multi` can now be switched on end to end;
+> [`multi-tenancy.md`](./.context/architecture/multi-tenancy.md#enabling-it-end-to-end)
+> gives the steps. The rest of the phase has not landed, so read
+> [what you do not yet get](./.context/architecture/multi-tenancy.md#what-you-get-at-multi-and-what-you-do-not-yet)
+> before turning it on. The system agents, for one, are still the install
+> org's rows.
+>
+> ## What a fork has to do: merge it in two stages
+>
+> Six migrations. One of them, `20260919200000_tenant_owned_org_id`, adds
+> `orgId` to 38 tables and backfills every existing row: 38 `UPDATE`s and 38
+> new indexes. That rewrite is the one to schedule on a large database. To
+> apply the identity half first, **merge in two stages, deploying each**.
+> Staging is recommended, not required; a fork with small tables can take the
+> tag in one merge.
+>
+> **Stage 1: merge commit `7d511506`** (#815, the end of §106). Name the SHA,
+> not a branch. Make it a **merge commit, never a squash**. Then run `prisma
+> migrate deploy` and deploy before starting stage 2. If you merge twice and
+> deploy once, every migration runs together and the staging buys nothing.
+> At this commit `lib/sunrise-version.ts` still reads `0.12.1`, which is an
+> ancestor, so the fork-sync ancestry check passes. Stage 1 is the **§106
+> entries below**. They carry these things to act on:
+>
+> - **Two migrations:** `20260917120000_org_identity` (the `Org` and
+>   `OrgMembership` tables, the install org, a membership for every user, and
+>   nullable `orgId` on the four credential tables) and
+>   `20260918120000_credential_org_backfill`. The second re-runs the first's
+>   backfill; on a fork, where both run in one deploy, it updates nothing.
+> - **A new seam row**, `lib/app/tenant-resolver.ts`, in
+>   `tests/unit/lib/app/defaults.test.ts`. It ships empty.
+> - **Docblock-only edits to `lib/app/authorization.ts`.** A fork that filled
+>   that file keeps its code and takes the comment. If your policy compares
+>   `resource.orgId === viewer.orgId`, guard the resource side: two
+>   `undefined`s compare equal.
+> - **Type changes a build finds:** `EmbedContext` and `McpAuthContext` require
+>   `orgId`, and `runInvitedSignup` takes the invitation as a second argument.
+> - **Test changes:** the role-literal guard now also polices `'OWNER'` and
+>   `'MEMBER'`. `org-sources.test.ts` fails on any model of yours that carries
+>   `orgId` until it has a disposition in `lib/privacy/org-sources.ts`.
+> - **A dependency move:** `@better-auth/core` moves to `dependencies` at the
+>   same pin.
+>
+> **Stage 2: merge `v0.13.0`.** It brings the other four migrations:
+>
+> - `tenant_owned_org_id`, the backfill above;
+> - `org_isolation_policies`, which creates the RLS policies but does **not**
+>   enable them;
+> - `org_scoped_slugs`;
+> - `remove_mcp_max_sessions_per_key`.
+>
+> And these, each of which announces itself:
+>
+> 1. **Three new always-run tests name your models.**
+>    `model-classification.test.ts` fails on any model that neither carries
+>    `orgId` nor sits on an allowlist. `policy-coverage.test.ts` fails on a
+>    tenant-owned table without its `org_isolation` policy.
+>    `org-scoped-slugs.test.ts` fails on a tenant-owned slug that is still a
+>    global `@unique`. The fix for each is in the §107 entries; never delete
+>    an allowlist row to pass.
+> 2. **`where: { slug }` on `AiAgent`, `AiKnowledgeBase` or
+>    `AiKnowledgeDocument` no longer type-checks.** Use `findFirst` inside an
+>    org context, or `orgId_slug`.
+> 3. **`prisma` is a `TenancyClient`.** Only a parameter annotated exactly
+>    `PrismaClient` needs changing.
+> 4. **The stateful MCP transport is gone.** The table under _Removed_ lists
+>    every symbol, route and env var. `PATCH …/mcp/settings` is now strict: a
+>    body carrying `maxSessionsPerKey`, or any unknown key, gets a 400.
+> 5. **Retention's exported shapes moved.** `RetentionResult` and
+>    `RetentionWindows` lose their audit-log fields.
+>    `POST …/maintenance/tick` gains a ninth `backgroundTasks` name,
+>    `auditLogRetention`.
+> 6. **A test that mocks `@/lib/admin/logs`** must now return
+>    `registerLogTenancy`.
+> 7. **A docblock-only edit to `lib/app/db-drift.ts`**, handled the same way
+>    as the `authorization.ts` edit in stage 1.
+> 8. **Process-global state is now declared.** A fork that adds a module-level
+>    cache to a platform file under `lib/` meets the
+>    `lib/tenancy/process-state.ts` scanner test.
+>
+> One new optional env var, `MIGRATE_DATABASE_URL`, is needed only to enable
+> `multi`. Delete `MCP_SESSION_MODE` wherever you set it.
+>
+> **Two behaviour changes at `single`, both corrections.**
+> `AiApiKey.lastUsedAt` is now written; it had been `NULL` for every key. And
+> `POST /api/v1/user/api-keys` refuses an `admin` key asked for while acting
+> in any org but the install org.
+>
+> **Read the MCP entry under _Security_ even though the code is gone.** A fork
+> still on 0.12.x that runs `MCP_SESSION_MODE=stateful` is exposed to a
+> cross-key SSE hijack; the default (`stateless`) never was.
+
 ### Added
 
 - **`runDetached(fn)` on `lib/tenancy/context.ts`** (multi-tenancy §108 t-715)
@@ -354,7 +455,7 @@ release process.
 - **A credential remembers the org it was minted in, and acts only there**
   (multi-tenancy §106, fifth and last task). The four long-lived credentials
   — API keys, embed tokens, agent invite tokens, MCP keys — gained an `orgId`
-  column in 0.12.0 that nothing wrote at mint; under tenancy each was a
+  column in the identity migration above that nothing wrote at mint; under tenancy each was a
   credential that worked everywhere. Now every mint writes the org the
   request was acting in (`orgForMint()` in `lib/tenancy/entry.ts`, one read
   of the tenant context, never a body field) and every resolution enters it:
@@ -374,7 +475,7 @@ release process.
   rule once (install org at `single`, no org at `multi`). One data migration,
   `20260918120000_credential_org_backfill`, re-runs the identity migration's
   four backfill `UPDATE`s verbatim (a test holds them byte-equal) so the
-  credentials minted between 0.12.0 and this release — `orgId = NULL`, read
+  credentials minted between that migration and this one — `orgId = NULL`, read
   as the install org at `single`, refused at `multi` — are bound before any
   install switches modes; from here no mint writes a null org. Guides:
   [`.context/tenancy/identity.md`](./.context/tenancy/identity.md#credentials)
@@ -6774,7 +6875,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.12.1...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.1...v0.11.2
