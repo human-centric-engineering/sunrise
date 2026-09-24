@@ -23,13 +23,17 @@
  * 40 tests pass against a stateless branch none of them entered, for exactly
  * this reason.
  *
- * **79** test files reference `@/lib/env` and **5** of them opt into
- * happy-dom, measured 2026-09-24 with
- * `grep -rl '@/lib/env' tests | xargs grep -l '@vitest-environment happy-dom'` —
- * re-derive rather than trust, because this figure has already drifted twice (it
- * read 37/47 in one place and 44/47 in two others, all written when the suite was
- * smaller). The five are deliberate: a component test, `env.test.ts` asserting on
- * `typeof window` in both directions, and three maintenance-tick tests.
+ * **79** test files reference `@/lib/env` and **5** of them opt into a DOM,
+ * measured 2026-09-24. `.context/testing/environments.md` carries the command
+ * that produces those two numbers — it is not repeated here, because writing the
+ * directive token in prose inside a TEST file is the trap
+ * `tests/unit/vitest-environment-directives.test.ts` exists to catch: vitest
+ * matches the first occurrence anywhere in the file, comments included, so a
+ * quoted example can silently move the whole file to another environment. An
+ * earlier version of this very docblock did exactly that and CI caught it.
+ * Re-derive the figure rather than trusting it: it has already drifted twice,
+ * reading 37/47 in one place and 44/47 in two others, all written when the suite
+ * was smaller.
  *
  * Tests that need to VARY a mode still mock `@/lib/env` — the value is read at
  * module load, so `process.env` cannot be moved per case. But a mock cannot tell
