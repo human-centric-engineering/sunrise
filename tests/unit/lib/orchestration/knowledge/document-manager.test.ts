@@ -1759,6 +1759,20 @@ describe('getOrCreateDefaultKnowledgeBase', () => {
     expect(id).toBe('kb_generated');
   });
 
+  it('writes through the client it is given — the seed passes its own', async () => {
+    const upsert = vi.fn().mockResolvedValue({ id: 'kb_seed' });
+
+    const id = await runAsOrg('org_b', () =>
+      getOrCreateDefaultKnowledgeBase({ aiKnowledgeBase: { upsert } } as never)
+    );
+
+    expect(id).toBe('kb_seed');
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { orgId_slug: { orgId: 'org_b', slug: 'default' } } })
+    );
+    expect(prisma.aiKnowledgeBase.upsert).not.toHaveBeenCalled();
+  });
+
   it('passes the canonical id, slug, name, description, and isDefault on create', async () => {
     vi.mocked(prisma.aiKnowledgeBase.upsert).mockResolvedValue({
       id: DEFAULT_KNOWLEDGE_BASE_ID,
