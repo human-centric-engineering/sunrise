@@ -256,6 +256,16 @@ export function listPlatformAgents(): readonly PlatformAgentDefinition[] {
   return Array.from(registry.values());
 }
 
+/**
+ * The registered definition for a slug, or `undefined`. Every org's audience
+ * is ignored: a slug is a platform slug everywhere, whether or not this org
+ * gets an instance of it.
+ */
+export function getPlatformAgent(slug: string): PlatformAgentDefinition | undefined {
+  appInit.ensure();
+  return registry.get(slug);
+}
+
 /** The platform agents an org gets an instance of. */
 export function platformAgentsForOrg(orgId: string): readonly PlatformAgentDefinition[] {
   return listPlatformAgents().filter(
