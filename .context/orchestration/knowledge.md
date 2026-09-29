@@ -29,7 +29,7 @@ Skipping step 2 doesn't silently produce wrong results — search calls `assertA
 `AiKnowledgeBase` is a grouping above documents. Every `AiKnowledgeDocument.knowledgeBaseId` is required, and each org has its own default knowledge base. Two paths guarantee it exists at runtime:
 
 1. **Seed pipeline.** `prisma/seeds/003-default-knowledge-base.ts` upserts the install org's row, `kb_default`, before `007-knowledge-chunks.ts` loads the install org's copy of the patterns knowledge into it.
-2. **Runtime self-heal.** Every upload path (`uploadDocument`, `uploadDocumentFromBuffer`, `previewDocument`), and the platform-agent reconcile when it writes an org's copy of the patterns knowledge, calls `getOrCreateDefaultKnowledgeBase()` to upsert the calling org's row on first use. Another org's row gets a generated id. A fork that skips `db:seed` still gets a functional upload flow, and the maintenance job writes the patterns knowledge.
+2. **Runtime self-heal.** Every upload path (`uploadDocument`, `uploadDocumentFromBuffer`, `previewDocument`), and every write of a copy of the patterns knowledge, calls `getOrCreateDefaultKnowledgeBase()` to upsert the calling org's row on first use. Another org's row gets a generated id. A fork that skips `db:seed` still gets a functional upload flow.
 
 The helper upserts by `slug` (the natural key, `'default'`), so it tolerates a pre-existing row whose `id` happens not to be `kb_default` (e.g. a fork that pre-seeded a different id). The runtime hardcoded constant `DEFAULT_KNOWLEDGE_BASE_ID` from `document-manager.ts` is the canonical id used everywhere; the helper returns the _actual_ row id, which is what the FK references.
 
@@ -66,7 +66,7 @@ The resolver (`resolveAgentDocumentAccess` in `lib/orchestration/knowledge/resol
 
 Tags have no required semantic meaning — they're labels. "Internal", "HR-confidential", "Onboarding" are all valid. Operators can create tags inline from the upload zone (type a non-matching name → "Create '…'" row).
 
-**Built-in `agentic-design-patterns` tag.** The patterns document carries a managed tag with slug `agentic-design-patterns`. Writing the first copy of the document creates the tag (tags are global; the document↔tag link is the org's). The `pattern-advisor` and `quiz-master` platform agents declare the tag and run in `restricted` mode. The platform-agent reconcile grants it to them in every org, after writing that org's copy, so the grant lands on the same run (see [platform agents](./platform-agents.md#the-patterns-knowledge)).
+**Built-in `agentic-design-patterns` tag.** The patterns document carries a managed tag with slug `agentic-design-patterns`. Writing the first copy of the document creates the tag (tags are global; the document↔tag link is the org's). The `pattern-advisor` and `quiz-master` platform agents declare the tag and run in `restricted` mode. Both are install-only, so the platform-agent reconcile writes the copy and grants the tag in the install org, copy first, so the grant lands on the same run (see [platform agents](./platform-agents.md#the-patterns-knowledge)).
 
 **Tag deletion safety.** When a tag is granted to one or more agents, `DELETE /knowledge/tags/:id` returns 409 unconditionally and includes the agents in `details.agents` — `?force=true` does not bypass this guard. The operator must remove the grant from each agent first. Tag deletion only force-deletes through when the tag is only linked to documents (where strip-on-delete is safe).
 
@@ -332,7 +332,7 @@ The admin route guards against double-rechunk: if the document is currently `sta
 
 ## Seeder
 
-`materialisePatternsKnowledge(chunks, { db?, log? })` writes the calling org's copy of the "Agentic Design Patterns" reference that the built-in `get_pattern_detail` and `search_knowledge_base` capabilities rely on. Every org holds its own copy (§116 t-726):
+`materialisePatternsKnowledge(chunks, { db?, log? })` writes the calling org's copy of the "Agentic Design Patterns" reference that the built-in `get_pattern_detail` and `search_knowledge_base` capabilities rely on. A copy belongs to one org (§116 t-726); in core only the install org gets one (t-733):
 
 - **Into the org's own default knowledge base**, resolved by `getOrCreateDefaultKnowledgeBase()` in the caller's scope. Document, chunks and tag link are one transaction, so a failure leaves no partial copy.
 - **Idempotent by slug.** The document's slug is `agentic-design-patterns-<first 8 of the content hash>`, the org's key for it. An org that holds this version is not written (`'present'`). Don't wrap calls in existence checks — that's the seeder's job.
@@ -342,7 +342,7 @@ The admin route guards against double-rechunk: if the document is currently `sta
 
 Its callers:
 
-- **The platform-agent reconcile**, for every org, from the bundled chunk file (`loadPatternsChunks()`, a module import rather than a file read, so the app's bundle always carries it).
+- **The platform-agent reconcile**, for an org one of whose agents declares the patterns tag (the install org, in core), from the bundled chunk file (`loadPatternsChunks()`, a module import rather than a file read, so the app's bundle always carries it).
 - **`seedChunks(chunksJsonPath)`**, which reads and validates a chunks file and runs it for the org the caller is in: the `007-knowledge-chunks` seed unit (the install org) and `POST /knowledge/seed` (the admin's org, which is the **Load Agentic Design Patterns** button). It records `lastSeededAt` when it wrote a copy. The route resolves the file via `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')` and returns `{ seeded: true }`.
 
 `PATTERNS_DOCUMENT_SLUG` in `patterns-knowledge.ts` is the slug the committed `chunks.json` produces. It is part of the platform-agent registry's digest, and a test recomputes it from the file, so editing the file fails that test until the constant follows.

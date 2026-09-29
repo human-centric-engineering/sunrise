@@ -9,8 +9,8 @@
  * clean-up upload threw, MCP calls found no agent, and evaluation runs had no
  * judge.
  *
- * So each one is now a **definition** here, and every org gets its own
- * **instance** of it: an ordinary tenant row, created when the org is and
+ * So each one is now a **definition** here, and every org it is for (its
+ * `audience`) gets its own **instance** of it: an ordinary tenant row, created when the org is and
  * brought back in line with the definition on each release
  * (`reconcile-platform-agents.ts`). Nothing is shared between orgs, so every
  * §107/§108 mechanism (row isolation, caches, rate limits, budgets,

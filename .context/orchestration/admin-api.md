@@ -991,7 +991,7 @@ Empty body. Re-runs the chunker + embedder on an existing document — use it af
 curl -X POST /api/v1/admin/orchestration/knowledge/seed
 ```
 
-Empty body. Resolves `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')` and calls `seedChunks`, which writes the **caller's org's** copy of the "Agentic Design Patterns" document into that org's default knowledge base. **Idempotent** — if the org already holds the document (by its slug), or an earlier version of it, the seeder is a no-op. Every org normally has its copy already: the platform-agent reconcile writes it. Returns `{ seeded: true }`.
+Empty body. Resolves `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')` and calls `seedChunks`, which writes the **caller's org's** copy of the "Agentic Design Patterns" document into that org's default knowledge base. **Idempotent** — if the org already holds the document (by its slug), or an earlier version of it, the seeder is a no-op. The install org normally has its copy already: the platform-agent reconcile writes it there, beside the install-only pattern advisor and quiz master. Returns `{ seeded: true }`.
 
 ### List patterns
 

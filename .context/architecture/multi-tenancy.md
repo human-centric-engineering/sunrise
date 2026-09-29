@@ -76,13 +76,13 @@ record's [target architecture](./multi-tenancy-design.md#target-architecture)
 says which piece each feature lands):
 
 - **The platform agents are only partly finished (§116).** Every org now gets
-  its own instance of each of Sunrise's agents, and its own copy of the
-  patterns knowledge the Pattern Advisor and Quiz Master search. So a new
-  org's clean-up upload, MCP calls, judges, case generator and pattern
-  explorer work with no manual step, and its advisor and quiz once it embeds
-  its copy. See [platform agents](../orchestration/platform-agents.md). One
-  piece is still open: the built-in workflow templates are still install-org
-  rows.
+  its own instance of each of Sunrise's tenant-facing agents, so a new org's
+  clean-up upload, MCP calls, judges and case generator work with no manual
+  step. The Pattern Advisor, Quiz Master and their patterns knowledge (the
+  Learn page) stay the install org's: they help the install's app admins, and
+  §111 hides that page from org admins. See
+  [platform agents](../orchestration/platform-agents.md). One piece is still
+  open: the built-in workflow templates are still install-org rows.
 - **Some process-global state is shared across orgs on purpose.** RLS cannot
   see a Node heap, so every module-level holder in `lib/` is declared in
   [`lib/tenancy/process-state.ts`](../../lib/tenancy/process-state.ts) with

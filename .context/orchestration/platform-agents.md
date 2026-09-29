@@ -3,13 +3,13 @@
 Sunrise ships its own agents: the Pattern Advisor, the Pattern Quiz Master, the
 MCP dispatch identity, nine evaluation judges, the evaluation case generator,
 the Document Clean Up Assistant, and the two provider auditors. They are
-platform machinery rather than content an admin wrote, and they have to exist
+platform machinery rather than content an admin wrote, and most have to exist
 in **every** org, because features call them by slug. The clean-up upload opens
 a conversation with `cleanup-agent`, an unscoped MCP tool call dispatches as
 `mcp-system`, and an evaluation run is scored by `eval-judge-*`.
 
-So each one is a **definition in code**, and every org gets its own
-**instance** of it: an ordinary `AiAgent` row with `isSystem: true`, in that
+So each one is a **definition in code**, and every org it is for gets its own
+**instance** of it (a few are the install org's only; see below): an ordinary `AiAgent` row with `isSystem: true`, in that
 org, created when the org is and kept in line with the definition on every
 release. Nothing is shared between orgs, so row isolation, the per-org caches,
 rate limits, budgets and retention apply to them exactly as to an org's own
@@ -30,15 +30,17 @@ agents (§116, decided 2026-09-29).
 
 ## Who gets which agent
 
-| Audience       | Agents                                                                                                                                           |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `every-org`    | `pattern-advisor`, `quiz-master`, `mcp-system`, the six answer-quality judges, the three RAG judges, `eval-case-generator`, `cleanup-agent` (14) |
-| `install-only` | `provider-model-auditor`, `audit-report-writer` (2)                                                                                              |
+| Audience       | Agents                                                                                                         |
+| -------------- | -------------------------------------------------------------------------------------------------------------- |
+| `every-org`    | `mcp-system`, the six answer-quality judges, the three RAG judges, `eval-case-generator`, `cleanup-agent` (12) |
+| `install-only` | `pattern-advisor`, `quiz-master`, `provider-model-auditor`, `audit-report-writer` (4)                          |
 
 The provider auditors run inside the install org's Provider Model Audit
 workflow. That workflow writes the provider-model catalogue every org reads,
-so no other org may run them. At `TENANCY_MODE=single` the install org is the
-only org there is, and the only one reconciled.
+so no other org may run them. The Pattern Advisor and Quiz Master (the Learn
+page) are there to help the install's app admins build their app, not as a
+tenant product (§116 ruling, 2026-09-29). At `TENANCY_MODE=single` the install
+org is the only org there is, and the only one reconciled.
 
 ## What the platform owns, and what the org owns
 
@@ -177,24 +179,26 @@ These are the properties the unit tests pin, one test each:
 
 The Pattern Advisor and Quiz Master search the patterns document, "Agentic
 Design Patterns": one document of 191 chunks, built from the committed
-`prisma/seeds/data/chunks/chunks.json`. **Every org holds its own copy**, and
-the reconcile writes it (`materialisePatternsKnowledge` in
-`lib/orchestration/knowledge/seeder.ts`). After that it is ordinary tenant
-knowledge: every search, list and grant sees it the way it sees the org's own
-documents.
+`prisma/seeds/data/chunks/chunks.json`. **The knowledge goes where its agents
+go**: the reconcile writes a copy only into an org one of whose definitions
+declares the `agentic-design-patterns` tag (`materialisePatternsKnowledge` in
+`lib/orchestration/knowledge/seeder.ts`). In core that is the install org
+alone, since both agents are install-only. A fork that gives one of its own
+agents the tag gets a copy wherever that agent goes. The copy is ordinary
+tenant knowledge: every search, list and grant sees it the way it sees the
+org's own documents.
 
 - **Before the agents.** Writing an org's first copy creates the managed
   `agentic-design-patterns` tag, which both agents are granted. So their
   grants land on the same run.
-- **In the org's own default knowledge base**, never the install org's
-  `kb_default`. `AiKnowledgeChunk.chunkKey` is unique per org, because the
-  seeded keys are fixed and every org holds them.
-- **Without embeddings.** Vector search needs them. An org's quiz or advisor
-  search finds nothing until the org embeds its chunks, the same as an
-  install before its first embed run. Use **Generate Embeddings** on the
-  knowledge page (`POST /knowledge/embed`), which embeds that org's chunks
-  and no other org's. The pattern explorer and `get_pattern_detail` read
-  chunks directly, so they work straight away.
+- **In the org's own default knowledge base.** `AiKnowledgeChunk.chunkKey` is
+  unique per org, because the seeded keys are fixed and any org that loads the
+  document (the knowledge page's **Load Agentic Design Patterns**) holds them.
+- **Without embeddings.** Vector search needs them. The advisor and quiz find
+  nothing until the chunks are embedded, as before: **Generate Embeddings** on
+  the knowledge page (`POST /knowledge/embed`, the calling org's chunks only)
+  or `npm run db:seed:embeddings` (the install org's). The pattern explorer and
+  `get_pattern_detail` read chunks directly, so they work straight away.
 - **Idempotent by slug.** The slug carries the content hash, so an org that
   holds this version is not written.
 - **An existing copy is never refreshed.** An org holding a copy of an

@@ -30,8 +30,9 @@ release process.
   `createOrg`, from the new seed unit `021-platform-agents`, and from a new
   per-org maintenance job. At `multi` a new org's clean-up upload, MCP tool
   calls, evaluation judges and case generator now work with no manual step.
-  `provider-model-auditor` and `audit-report-writer` stay in the install org
-  only. **At `single` the install org's agents are the same rows as before**:
+  `provider-model-auditor`, `audit-report-writer`, `pattern-advisor` and
+  `quiz-master` stay in the install org only (the last two, the Learn page's,
+  help the install's app admins; t-733). **At `single` the install org's agents are the same rows as before**:
   a fresh `db:seed` produces the same sixteen, field for field (`cleanup-agent`
   now also gets its `v1` version, which the old seed order skipped). See
   [`platform-agents.md`](./.context/orchestration/platform-agents.md).
@@ -120,23 +121,23 @@ release process.
   clears it (a blank used to leave the old value in place).
   **"Audit Models" shows in the install org only**, and the
   dashboard's agent count excludes system agents.
-- **Every org has its own copy of the patterns knowledge, and
-  `AiKnowledgeChunk.chunkKey` is unique per org** (§116 t-726). Migration
+- **`AiKnowledgeChunk.chunkKey` is unique per org, and the patterns knowledge
+  follows its agents** (§116 t-726, t-733). Migration
   `20260929180000_chunk_key_per_org` replaces the global `UNIQUE (chunkKey)`
   with `UNIQUE (orgId, chunkKey)`, so `chunkKey` alone is no longer a
   `findUnique` / `upsert` key: a fork that looks a chunk up by it must add
-  the org. The platform-agent reconcile now writes each org's copy of the
-  "Agentic Design Patterns" document, with its 191 chunks and tag link, into
-  that org's own default knowledge base, without embeddings. The registry
-  digest covers the document's slug, so after deploy the maintenance job
-  reconciles every existing org once and each gets its copy. `seedChunks()`
-  and `POST /knowledge/seed` write into the caller's org's default knowledge
-  base, are idempotent by the document's slug rather than its name, and no
-  longer grant the tag to the pattern advisor and quiz master themselves: the
-  reconcile does. **An org's advisor and quiz search its copy once the org
-  embeds it** (Generate Embeddings, `POST /knowledge/embed`, which embeds that
-  org's chunks only). **An existing copy is never refreshed**, as before: an
-  org holding one from an earlier `chunks.json` keeps it, with a warning.
+  the org. The platform-agent reconcile writes the "Agentic Design Patterns"
+  document, its 191 chunks and tag link into an org's own default knowledge
+  base, without embeddings, wherever an agent declares the patterns tag: in
+  core, the install org only. A fork agent that declares it takes a copy into
+  every org it is for. `seedChunks()` and `POST /knowledge/seed` write into
+  the caller's org's default knowledge base, are idempotent by the
+  document's slug rather than its name, and no longer grant the tag to the
+  pattern advisor and quiz master themselves: the reconcile does. **An
+  existing copy is never refreshed**, as before: an org holding one from an
+  earlier `chunks.json` keeps it, with a warning. `npm run
+  db:seed:embeddings` embeds the install org's chunks, and now runs at
+  `multi` too.
 - **Seeds `005-pattern-advisor`, `008-mcp-server` and `010-model-auditor` no
   longer create agents** (§116 t-724). They still seed the pattern and cost
   capabilities, the MCP server config and resources, and the audit

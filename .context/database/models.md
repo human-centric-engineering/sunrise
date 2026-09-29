@@ -851,7 +851,7 @@ Use the `AgentWithCapabilities` type from `@/types/orchestration` to load an age
   - `embedding` is `Unsupported("vector(1536)")?` — it is **not selectable through the Prisma client**. All reads/writes must use `prisma.$queryRaw` with pgvector operators (`<=>` for cosine distance).
   - An HNSW index on `embedding` (`vector_cosine_ops`, m=16, ef_construction=64) supports approximate nearest-neighbour search.
   - `searchVector` is `Unsupported("tsvector")?`, declared as a `GENERATED ALWAYS AS (to_tsvector('english', content || keywords)) STORED` column at the database layer — Postgres auto-populates it on `INSERT`/`UPDATE`, so application code never writes to it. A GIN index supports `ts_rank_cd` ranking when hybrid search is enabled (see `searchConfig.hybridEnabled` in [Knowledge Base — Search](../orchestration/knowledge.md#search)).
-  - `chunkKey` is a business key (distinct from `id`) used by the application to stably address chunks across re-ingest. It is unique **per org** (`@@unique([orgId, chunkKey])`, §116 t-726): every org holds its own copy of the seeded patterns knowledge, whose keys are fixed.
+  - `chunkKey` is a business key (distinct from `id`) used by the application to stably address chunks across re-ingest. It is unique **per org** (`@@unique([orgId, chunkKey])`, §116 t-726): any org that loads the seeded patterns knowledge holds its fixed keys.
   - `chunkType`, `patternNumber`, `patternName`, `category`, `section` are indexed for filtering; these carry forward metadata from the source document structure.
   - Cascade deletes with the parent document.
 
