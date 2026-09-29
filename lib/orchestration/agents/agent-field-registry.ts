@@ -98,7 +98,27 @@ export interface AgentFieldDescriptor {
    * runtime and remains safe to bundle into client components.)
    */
   json?: true;
+  /**
+   * Who decides this field's value on a **platform agent** — one of Sunrise's
+   * own agents, defined in code and materialised in every org (§116, see
+   * `lib/orchestration/agents/platform-agents.ts`).
+   *
+   * `'code'` — part of what the agent IS. The definition supplies the value (or
+   * the platform baseline does), and every reconcile writes it back.
+   * `'org'` — part of how the agent RUNS in one org: which provider and model it
+   * uses and what it may spend. Set once when the agent is materialised, never
+   * touched again by a reconcile, so an org's choice survives every release.
+   *
+   * Required on every platform field (the ruling on §116 is exhaustive, so a new
+   * column has to take a side). Optional here only because a fork's own
+   * descriptors predate it: a fork field that declares neither is outside the
+   * platform agents' reconcile altogether.
+   */
+  platformAgent?: PlatformAgentOwnership;
 }
+
+/** See {@link AgentFieldDescriptor.platformAgent}. */
+export type PlatformAgentOwnership = 'code' | 'org';
 
 /**
  * `AiAgent` columns that are NOT user-editable config: audit/system/derived
@@ -129,6 +149,9 @@ export type AgentConfigScalarField = Exclude<
 /** Per-scalar spec (everything except `name`/`kind`, which are filled in below). */
 type ScalarFieldSpec = Omit<AgentFieldDescriptor, 'name' | 'kind'>;
 
+/** A core scalar's spec: ownership on a platform agent is not optional here. */
+type CoreScalarFieldSpec = ScalarFieldSpec & { platformAgent: PlatformAgentOwnership };
+
 /**
  * The scalar config fields. Keyed by field name and `satisfies`-checked against
  * `AgentConfigScalarField`, so this object is **exhaustive by construction**:
@@ -140,72 +163,133 @@ type ScalarFieldSpec = Omit<AgentFieldDescriptor, 'name' | 'kind'>;
  * `agent-field-registry.test.ts` (and closed when consumers switch over).
  */
 const CORE_SCALAR_FIELDS = {
-  name: { versioned: true, ui: { label: 'Name', tab: 'General', order: 10 } },
-  slug: { versioned: true, ui: { label: 'Slug', tab: 'General', order: 20 } },
-  description: { versioned: true, ui: { label: 'Description', tab: 'General', order: 30 } },
-  isActive: { versioned: true, ui: { label: 'Active', tab: 'General', order: 40 } },
-  visibility: { versioned: true, ui: { label: 'Visibility', tab: 'General', order: 50 } },
-  model: { versioned: true, ui: { label: 'Model', tab: 'Model', order: 60 } },
-  provider: { versioned: true, ui: { label: 'Provider', tab: 'Model', order: 70 } },
+  name: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Name', tab: 'General', order: 10 },
+  },
+  slug: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Slug', tab: 'General', order: 20 },
+  },
+  description: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Description', tab: 'General', order: 30 },
+  },
+  isActive: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Active', tab: 'General', order: 40 },
+  },
+  visibility: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Visibility', tab: 'General', order: 50 },
+  },
+  model: {
+    platformAgent: 'org',
+    versioned: true,
+    ui: { label: 'Model', tab: 'Model', order: 60 },
+  },
+  provider: {
+    platformAgent: 'org',
+    versioned: true,
+    ui: { label: 'Provider', tab: 'Model', order: 70 },
+  },
   fallbackProviders: {
+    platformAgent: 'org',
     versioned: true,
     ui: { label: 'Fallback providers', tab: 'Model', order: 80 },
   },
   systemInstructions: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'System instructions', tab: 'Instructions', order: 90 },
     write: 'historyTracked',
   },
   runtimePromptManaged: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Runtime-built prompt', tab: 'Instructions', order: 100 },
   },
   runtimePromptNote: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Runtime prompt note', tab: 'Instructions', order: 110 },
   },
-  temperature: { versioned: true, ui: { label: 'Temperature', tab: 'Model', order: 120 } },
-  maxTokens: { versioned: true, ui: { label: 'Max output tokens', tab: 'Model', order: 130 } },
+  temperature: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Temperature', tab: 'Model', order: 120 },
+  },
+  maxTokens: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Max output tokens', tab: 'Model', order: 130 },
+  },
   // Truth fix: reasoningEffort is user config and was written to the snapshot but
   // omitted from VERSIONED_FIELDS and every diff map — invisible in history today.
   reasoningEffort: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Reasoning effort', tab: 'Model', order: 135 },
   },
   maxHistoryTokens: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Max history tokens', tab: 'Model', order: 140 },
   },
   maxHistoryMessages: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Memory length (messages)', tab: 'Model', order: 150 },
   },
   monthlyBudgetUsd: {
+    platformAgent: 'org',
     versioned: true,
     ui: { label: 'Monthly budget (USD)', tab: 'Model', order: 160 },
   },
   // Truth fix: in VERSIONED_FIELDS + the snapshot writer, but absent from the diff
   // maps — a change was tracked yet unrenderable.
   maxCostPerTurnUsd: {
+    platformAgent: 'org',
     versioned: true,
     ui: { label: 'Per-turn cost cap (USD)', tab: 'Model', order: 165 },
   },
   rateLimitRpm: {
+    platformAgent: 'org',
     versioned: true,
     ui: { label: 'Rate limit (req/min)', tab: 'Model', order: 170 },
   },
-  retentionDays: { versioned: true, ui: { label: 'Retention (days)', tab: 'General', order: 180 } },
-  inputGuardMode: { versioned: true, ui: { label: 'Input guard', tab: 'Model', order: 190 } },
-  outputGuardMode: { versioned: true, ui: { label: 'Output guard', tab: 'Model', order: 200 } },
+  retentionDays: {
+    platformAgent: 'org',
+    versioned: true,
+    ui: { label: 'Retention (days)', tab: 'General', order: 180 },
+  },
+  inputGuardMode: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Input guard', tab: 'Model', order: 190 },
+  },
+  outputGuardMode: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Output guard', tab: 'Model', order: 200 },
+  },
   citationGuardMode: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Citation guard', tab: 'Model', order: 210 },
   },
   topicBoundaries: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Topic boundaries', tab: 'Instructions', order: 220 },
   },
   brandVoiceInstructions: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Brand voice', tab: 'Instructions', order: 230 },
   },
@@ -213,46 +297,94 @@ const CORE_SCALAR_FIELDS = {
   // editing them logs a "changed" version — yet none were written to the snapshot,
   // none are in the diff maps, and none are applied on restore. History claimed a
   // change it never captured or recovered. They become versioned + renderable here.
-  persona: { versioned: true, ui: { label: 'Persona', tab: 'Instructions', order: 232 } },
-  personaMode: { versioned: true, ui: { label: 'Persona mode', tab: 'Instructions', order: 234 } },
-  voiceMode: { versioned: true, ui: { label: 'Voice mode', tab: 'Instructions', order: 236 } },
-  guardrails: { versioned: true, ui: { label: 'Guardrails', tab: 'Instructions', order: 238 } },
+  persona: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Persona', tab: 'Instructions', order: 232 },
+  },
+  personaMode: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Persona mode', tab: 'Instructions', order: 234 },
+  },
+  voiceMode: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Voice mode', tab: 'Instructions', order: 236 },
+  },
+  guardrails: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Guardrails', tab: 'Instructions', order: 238 },
+  },
   guardrailsMode: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Guardrails mode', tab: 'Instructions', order: 239 },
   },
   knowledgeAccessMode: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Knowledge access mode', tab: 'Instructions', order: 240 },
   },
   knowledgeRetrievalMode: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Knowledge retrieval mode', tab: 'Instructions', order: 250 },
   },
   knowledgeTriggerKeywords: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Knowledge trigger keywords', tab: 'Instructions', order: 260 },
   },
-  enableVoiceInput: { versioned: true, ui: { label: 'Voice input', tab: 'Model', order: 290 } },
-  enableImageInput: { versioned: true, ui: { label: 'Image input', tab: 'Model', order: 300 } },
+  enableVoiceInput: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Voice input', tab: 'Model', order: 290 },
+  },
+  enableImageInput: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Image input', tab: 'Model', order: 300 },
+  },
   enableDocumentInput: {
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Document input', tab: 'Model', order: 310 },
   },
   providerConfig: {
+    platformAgent: 'org',
     versioned: true,
     ui: { label: 'Provider config', tab: 'Model', order: 320 },
     json: true,
   },
-  metadata: { versioned: true, ui: { label: 'Metadata', tab: 'Model', order: 330 }, json: true },
+  metadata: {
+    platformAgent: 'code',
+    versioned: true,
+    ui: { label: 'Metadata', tab: 'Model', order: 330 },
+    json: true,
+  },
   // Not versioned. `profileId` is a relation pointer, not content — the
   // inheritance change surfaces implicitly through the resolved persona/voice/
   // guardrails values (see the PATCH route's VERSIONED_FIELDS note). `kind` is
   // immutable after create. `widgetConfig` carries embed presentation only.
-  profileId: { versioned: false, write: 'relation' },
-  kind: { versioned: false, patchOmit: true },
-  widgetConfig: { versioned: false, patchOmit: true, json: true },
-} satisfies Record<AgentConfigScalarField, ScalarFieldSpec>;
+  profileId: {
+    platformAgent: 'code',
+    versioned: false,
+    write: 'relation',
+  },
+  kind: {
+    platformAgent: 'code',
+    versioned: false,
+    patchOmit: true,
+  },
+  widgetConfig: {
+    platformAgent: 'code',
+    versioned: false,
+    patchOmit: true,
+    json: true,
+  },
+} satisfies Record<AgentConfigScalarField, CoreScalarFieldSpec>;
 
 /**
  * Knowledge-grant relations. Not columns on `AiAgent` (they live in join tables),
@@ -263,12 +395,14 @@ const CORE_RELATION_FIELDS: readonly AgentFieldDescriptor[] = [
   {
     name: 'grantedTagIds',
     kind: 'relation',
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Knowledge tag grants', tab: 'Instructions', order: 270 },
   },
   {
     name: 'grantedDocumentIds',
     kind: 'relation',
+    platformAgent: 'code',
     versioned: true,
     ui: { label: 'Knowledge document grants', tab: 'Instructions', order: 280 },
   },
@@ -383,6 +517,40 @@ export function cloneCopiedScalarFields(): { name: string; json: boolean }[] {
     name: f.name,
     json: f.json === true,
   }));
+}
+
+/**
+ * The scalar columns an org tunes on a platform agent — how the agent runs
+ * there. Written once when the agent is materialised in the org, never by a
+ * reconcile afterwards. Ruling on §116 (2026-09-29): provider, model and its
+ * fallbacks and config, what the agent may spend, how fast it may be called,
+ * and how long its conversations are kept.
+ */
+export type PlatformAgentOrgTunableField = {
+  [
+    K in keyof typeof CORE_SCALAR_FIELDS
+  ]: (typeof CORE_SCALAR_FIELDS)[K]['platformAgent'] extends 'org' ? K : never;
+}[keyof typeof CORE_SCALAR_FIELDS];
+
+/**
+ * The scalar columns the platform owns on a platform agent — what the agent
+ * is. Every reconcile writes them back (`slug` is the key it reconciles by).
+ */
+export type PlatformAgentCodeOwnedField = Exclude<
+  AgentConfigScalarField,
+  PlatformAgentOrgTunableField
+>;
+
+/**
+ * Field names (scalars and the two grant relations) by their ownership on a
+ * platform agent. Read by the reconcile, which writes the `'code'` ones, and by
+ * anything that has to refuse an org's edit to them.
+ *
+ * Core fields only: a fork field that declares no `platformAgent` is in
+ * neither list, and nothing about platform agents touches it.
+ */
+export function platformAgentFieldNames(ownership: PlatformAgentOwnership): string[] {
+  return AGENT_FIELDS.filter((f) => f.platformAgent === ownership).map((f) => f.name);
 }
 
 /** Look up a single descriptor by field name. */
