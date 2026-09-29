@@ -485,6 +485,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'The imported HMAC key for hashing visitor ids, derived once from an install-wide secret.',
   },
   {
+    file: 'lib/orchestration/agents/platform-agents.ts',
+    holders: ['registry', 'appInit'],
+    posture: 'no-tenant-data',
+    why: "Platform-agent definitions by slug, core and fork-registered, all from code; every org's instances of them are ordinary tenant rows the reconcile writes inside that org's scope (§116 t-724).",
+  },
+  {
     file: 'lib/orchestration/capabilities/registry.ts',
     holders: [
       'registered',
