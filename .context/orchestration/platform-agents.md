@@ -1,0 +1,151 @@
+# Platform Agents
+
+Sunrise ships its own agents: the Pattern Advisor, the Pattern Quiz Master, the
+MCP dispatch identity, nine evaluation judges, the evaluation case generator,
+the Document Clean Up Assistant, and the two provider auditors. They are
+platform machinery rather than content an admin wrote, and they have to exist
+in **every** org, because features call them by slug. The clean-up upload opens
+a conversation with `cleanup-agent`, an unscoped MCP tool call dispatches as
+`mcp-system`, and an evaluation run is scored by `eval-judge-*`.
+
+So each one is a **definition in code**, and every org gets its own
+**instance** of it: an ordinary `AiAgent` row with `isSystem: true`, in that
+org, created when the org is and kept in line with the definition on every
+release. Nothing is shared between orgs, so row isolation, the per-org caches,
+rate limits, budgets and retention apply to them exactly as to an org's own
+agents (§116, decided 2026-09-29).
+
+## Where things are
+
+| Piece                | Location                                                             |
+| -------------------- | -------------------------------------------------------------------- |
+| The registry         | `lib/orchestration/agents/platform-agents.ts`                        |
+| The definitions      | `lib/orchestration/agents/platform-agent-definitions/*.ts`           |
+| The reconcile        | `lib/orchestration/agents/reconcile-platform-agents.ts`              |
+| Who owns which field | `platformAgent` on each descriptor in `agent-field-registry.ts`      |
+| The org's marker     | `Org.settings.platformAgents` (`lib/tenancy/org-settings.ts`)        |
+| The fork seam        | `lib/app/platform-agents.ts` → `initAppPlatformAgents()`             |
+| The seed unit        | `prisma/seeds/021-platform-agents.ts`                                |
+| The maintenance job  | `platformAgents` in `lib/orchestration/maintenance/platform-jobs.ts` |
+
+## Who gets which agent
+
+| Audience       | Agents                                                                                                                                           |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `every-org`    | `pattern-advisor`, `quiz-master`, `mcp-system`, the six answer-quality judges, the three RAG judges, `eval-case-generator`, `cleanup-agent` (14) |
+| `install-only` | `provider-model-auditor`, `audit-report-writer` (2)                                                                                              |
+
+The provider auditors run inside the install org's Provider Model Audit
+workflow. That workflow writes the provider-model catalogue every org reads,
+so no other org may run them. At `TENANCY_MODE=single` the install org is the
+only org there is, and the only one reconciled.
+
+## What the platform owns, and what the org owns
+
+Every agent field declares its side (see
+[agent fields](./agent-fields.md#ownership-on-a-platform-agent)):
+
+- **The platform owns what the agent is.** That covers name, description,
+  kind, instructions, temperature, max tokens, knowledge access and
+  retrieval, visibility, persona, guardrails, brand voice and every other
+  behavioural field. It also covers the capability set (bound and enabled,
+  exactly the declared list), the knowledge-tag grants (document grants are
+  always empty), and the active flag. Every reconcile writes these back: a
+  definition's value where it has one, otherwise
+  `PLATFORM_AGENT_BASELINE`, the schema default.
+- **The org owns how it runs there.** That covers provider, model, fallback
+  providers, provider config, monthly budget, per-turn cost cap, rate limit
+  and retention. They are set once, when the instance is created, and never
+  touched again. A definition may give a starting value (the auditor starts
+  with a $25 monthly budget), and `cleanup-agent` pins the strongest
+  tool-using model the org can reach while provider and model are both
+  still empty.
+
+An admin can still edit a platform-owned field through the agent form and
+API today, and the next reconcile reverts it. Refusing that edit at the API
+is the next task on §116.
+
+## When the reconcile runs
+
+`reconcilePlatformAgents(orgId)` is the only writer of instances. It enters
+the org's own scope itself, and it has three callers:
+
+1. **`createOrg`**, after the org is committed. A new org has its agents
+   before the request that made it returns. A failure is logged and never
+   fails the org's creation.
+2. **`npm run db:seed`**: the `021-platform-agents` unit reconciles every
+   active org. Its `hashInputs` include every definition file, so editing a
+   definition re-runs it on the next seed.
+3. **The `platformAgents` maintenance job**, every 15 minutes, per org. It
+   compares the org's stored digest with the running registry's and
+   reconciles only an org that is behind: after a deploy changed a
+   definition, or after a creation-time reconcile failed. Otherwise it is
+   one `Org` read per org.
+
+## What a reconcile does, and refuses to do
+
+These are the properties the unit tests pin, one test each:
+
+- **Idempotent.** An instance that already matches is not written: no update,
+  no version row, no `updatedAt` churn. The marker is rewritten only when it
+  changed.
+- **Code-owned fields are written back; org-tunable ones never are.**
+- **Bindings and tag grants are set to the declared set.** Stray bindings are
+  removed and disabled ones re-enabled; capability and tag rows that don't
+  exist yet are skipped with a warning.
+- **A version row when a versioned field changes**, holding the post-change
+  config and summarised as `Platform definition: …`. The service account is
+  its author, and it is the creator of every instance. A change to bindings
+  alone writes no version, because bindings are not in the snapshot.
+- **It never takes over an org's own agent.** A non-system agent holding a
+  platform slug is logged and left alone.
+- **A definition removed from the registry deactivates its instances; it
+  never deletes them.** Conversations, cost rows and evaluations point at
+  them. Only agents this reconcile placed (the marker's `slugs`) are
+  candidates, so a fork's own seeded `isSystem` agent is never switched
+  off.
+- **Safe on empty.** A registry that resolves empty changes nothing. A fork
+  cannot remove a core agent, so an empty registry means an import broke,
+  not that every agent should go.
+
+## Adding or replacing one in a fork
+
+Register it from `lib/app/platform-agents.ts`:
+
+```ts
+import { registerPlatformAgent } from '@/lib/orchestration/agents/platform-agents';
+
+export function initAppPlatformAgents(): void {
+  registerPlatformAgent({
+    slug: 'intake-triage',
+    audience: 'every-org',
+    agent: {
+      name: 'Intake Triage',
+      description: 'Routes new requests to the right queue.',
+      systemInstructions: 'You triage incoming requests…',
+      temperature: 0.2,
+      maxTokens: 2048,
+    },
+    capabilities: ['search_knowledge_base'],
+    knowledgeTags: [],
+  });
+}
+```
+
+It runs once, lazily, before the registry's first read, through the shared
+init gate ([fork init seams](../architecture/fork-init-seams.md)). A throwing
+init is rolled back. Registering a slug Sunrise uses replaces Sunrise's
+definition in every org, and that is logged at warn.
+
+An agent seeded once as the install org's content is still the right shape
+for an app's own agent. Register a platform agent only when every org needs
+its own instance.
+
+## Not yet
+
+- The patterns knowledge the Pattern Advisor and Quiz Master are granted is
+  still the install org's documents, so in another org they find nothing to
+  search.
+- The built-in workflow templates are still install-org rows.
+
+Both are open tasks on §116.

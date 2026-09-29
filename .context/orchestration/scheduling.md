@@ -140,7 +140,7 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 
 ### Unified Maintenance Tick (admin-auth required, **preferred**)
 
-`POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call. **Returns `202 Accepted`** as soon as `processDueSchedules()` has claimed and fired any due schedules; the remaining nine tasks run as a fire-and-forget background chain inside the same overlap guard and log per-task results when they settle. Each background task also has a minimum interval, so most ticks run only a subset — see the table below.
+`POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call. **Returns `202 Accepted`** as soon as `processDueSchedules()` has claimed and fired any due schedules; the remaining ten tasks run as a fire-and-forget background chain inside the same overlap guard and log per-task results when they settle. Each background task also has a minimum interval, so most ticks run only a subset — see the table below.
 
 1. `processDueSchedules()` — workflow cron schedules **(awaited synchronously)**
 2. `processPendingRetries()` — webhook subscription delivery retry queue _(background)_
@@ -152,6 +152,7 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 8. `processPendingExecutions()` — recover orphaned `pending` workflow executions _(background)_
 9. `processPendingEvaluationRuns()` — drive one time-slice of the queued dataset-evaluation runs _(background)_
 10. `enforceSystemRetentionPolicies()` — prune the admin and MCP audit logs (system tables, no org) _(background)_
+11. `reconcilePlatformAgentsIfStale()` — bring an org's platform agents in line with the running code, when its stored registry digest is behind ([platform agents](./platform-agents.md)) _(background)_
 
 **Per-task minimum intervals (#442) and tenant scope (§108).** The background tasks do **not** all run on every tick. Each declares the shortest gap at which running it can still find work, and whose rows it acts on, in `lib/orchestration/maintenance/platform-jobs.ts`:
 
@@ -166,6 +167,7 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 | `pendingExecutionRecovery` | 2 min      | per-org | its own stale-pending threshold is 2 min                            |
 | `evaluationRuns`           | every tick | per-org | the worker drives one time-slice per tick, so cadence is throughput |
 | `auditLogRetention`        | 1 hour     | system  | the two audit tables have no org column — once, not once per org    |
+| `platformAgents`           | 15 min     | per-org | catches up an org behind the running code; otherwise one `Org` read |
 
 **Tick duration grows with the org count, and the overlap guard does not.**
 `forEachOrg` is sequential, so at `multi` a per-org task costs roughly its
@@ -210,6 +212,7 @@ Forks add their own recurring work through `registerAppJob`, which shares the th
       "pendingExecutionRecovery",
       "evaluationRuns",
       "auditLogRetention",
+      "platformAgents",
     ],
     "durationMs": 47,
   },

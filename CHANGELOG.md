@@ -16,6 +16,75 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **Platform agents: Sunrise's own agents, defined in code, with one instance
+  per org** (multi-tenancy §116 t-724). The sixteen agents seeds used to write
+  once, as the install org's rows, are now definitions in
+  `lib/orchestration/agents/platform-agents.ts` (`CORE_PLATFORM_AGENTS`,
+  `PlatformAgentDefinition`, `PLATFORM_AGENT_BASELINE`, `listPlatformAgents()`,
+  `platformAgentsForOrg()`, `registerPlatformAgent()`). They are materialised
+  as ordinary `isSystem` agents in **every** org by
+  `reconcilePlatformAgents(orgId)`
+  (`lib/orchestration/agents/reconcile-platform-agents.ts`), which runs from
+  `createOrg`, from the new seed unit `021-platform-agents`, and from a new
+  per-org maintenance job. At `multi` a new org's clean-up upload, MCP tool
+  calls, evaluation judges and case generator now work with no manual step.
+  `provider-model-auditor` and `audit-report-writer` stay in the install org
+  only. **At `single` the install org's agents are the same rows as before**:
+  a fresh `db:seed` produces the same sixteen, field for field (`cleanup-agent`
+  now also gets its `v1` version, which the old seed order skipped). See
+  [`platform-agents.md`](./.context/orchestration/platform-agents.md).
+- **A new fork seam, `lib/app/platform-agents.ts` → `initAppPlatformAgents()`**
+  (§116 t-724). It registers a fork's own platform agent, or replaces a
+  Sunrise one by slug (logged at warn). Run once, lazily, through
+  `createAppInitGate`. It ships empty, with a new row in
+  `tests/unit/lib/app/defaults.test.ts`.
+- **`platformAgent: 'code' | 'org'` on `AgentFieldDescriptor`, and
+  `platformAgentFieldNames()`** in `agent-field-registry.ts` (§116 t-724).
+  This is who owns a field on a platform agent. It is required on every core
+  field, so a new `AiAgent` column must take a side and (if `'code'`) a
+  baseline value. It is optional on a fork's `appAgentFields`: a fork field
+  without it is ignored by the reconcile.
+- **A `platformAgents` background task on the maintenance tick** (§116 t-724),
+  appended to the `backgroundTasks` list the tick route returns. Every 15
+  minutes, per org, it reconciles an org whose platform agents are behind
+  the running code. Otherwise it is one `Org` read per org. It records its
+  progress in a new platform-owned `Org.settings.platformAgents` key, beside
+  `retention`. Every other key in `settings` is preserved.
+- **`listActiveOrgIds(db?)`** takes an optional client (§116 t-724), for a
+  caller holding its own connection, such as the seed runner.
+
+### Changed
+
+- **Admin edits to a system agent's platform-owned fields no longer
+  survive** (§116 t-724). This is the upgrade to look at. On the first
+  `db:seed` after merging, and on every reconcile after that, each
+  platform agent's name, description, instructions, temperature, max tokens,
+  knowledge settings, visibility, persona, guardrails and brand voice are
+  written back to the definition's. So are its capability bindings (stray
+  ones removed, disabled ones re-enabled) and its knowledge-tag grants
+  (document grants cleared). A version row records each change. **Provider,
+  model, fallback providers, provider config, monthly budget, per-turn cap,
+  rate limit and retention are the org's, and are never touched.** Before this, re-seeding overwrote the prompts (and descriptions) of the judges, the case generator and `mcp-system`, refreshed `cleanup-agent`'s prompt only while it had never been edited, and left the others alone. An install that customised a system agent's
+  prompt should recreate it as its own agent (clone it) before upgrading.
+  Refusing these edits at the API is a later §116 task. Until then, the form
+  still accepts them.
+- **Seeds `005-pattern-advisor`, `008-mcp-server` and `010-model-auditor` no
+  longer create agents** (§116 t-724). They still seed the pattern and cost
+  capabilities, the MCP server config and resources, and the audit
+  capabilities and workflow. Their content changed, so each re-runs once.
+
+### Removed
+
+- **The agent-only seed units `006-quiz-master`, `016-evaluation-judges`,
+  `017-case-generator-agent`, `018-rag-evaluation-judges` and
+  `020-cleanup-agent`** (§116 t-724), replaced by `021-platform-agents`. Their
+  prompts moved verbatim to
+  `lib/orchestration/agents/platform-agent-definitions/`. A fork that edited
+  one of these files will see a modify/delete conflict. Carry the edit into a
+  replacement registered from `lib/app/platform-agents.ts` instead.
+
 ## [0.13.0] — 2026-09-24
 
 > **Alpha release.** Nineteenth tagged Sunrise release. **MINOR bump**. It

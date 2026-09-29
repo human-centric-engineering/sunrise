@@ -17,11 +17,22 @@ All three were divergences between hand-maintained lists. The registry makes the
 ## Adding an agent config field
 
 1. **Add the column** to `prisma/schema/orchestration-agents.prisma` and migrate. The column now appears in Prisma's generated `AiAgentScalarFieldEnum`.
-2. **Add one descriptor** to `CORE_SCALAR_FIELDS` in `agent-field-registry.ts`. This is now a **compile error until you do** — the object is `satisfies Record<AgentConfigScalarField, …>`, and `AgentConfigScalarField` is derived from the scalar enum, so a registered-but-missing or unregistered-but-present field won't type-check. (If the column is genuinely not user config — an audit/derived column — add it to `NonConfigScalar` instead.)
+2. **Add one descriptor** to `CORE_SCALAR_FIELDS` in `agent-field-registry.ts`, including its `platformAgent` side (below). This is now a **compile error until you do** — the object is `satisfies Record<AgentConfigScalarField, …>`, and `AgentConfigScalarField` is derived from the scalar enum, so a registered-but-missing or unregistered-but-present field won't type-check. (If the column is genuinely not user config — an audit/derived column — add it to `NonConfigScalar` instead.)
 3. **Add validation** to `createAgentObjectSchema` / `updateAgentObjectSchema` in `lib/validations/orchestration.ts`. A registry parity test fails if the field sets don't agree, so you can't forget this.
 4. If the field should round-trip through config export/import, **add it to** `bundledAgentSchema` (`lib/validations/orchestration.ts`) and `agentBackupSchema` + the exporter select + the importer apply (`lib/orchestration/backup/`). A parity test fails if a config scalar is missing from either serialised shape.
 
 That's it. The version snapshot, diff labels/tabs/order, restore apply, the PATCH data mapping, and the clone copy **derive from the descriptor automatically** — no further edits.
+
+A `'code'` field also needs a value in `PLATFORM_AGENT_BASELINE` (`lib/orchestration/agents/platform-agents.ts`), which is likewise a compile error until you add it.
+
+### Ownership on a platform agent
+
+Every core field declares `platformAgent: 'code' | 'org'`: who decides its value on one of the [platform agents](./platform-agents.md), the agents every org gets its own instance of.
+
+- **`'code'`** is what the agent _is_: its name, prompt, temperature, knowledge settings, guardrails, and the rest. Every reconcile writes the definition's value back, or the platform baseline's where the definition says nothing.
+- **`'org'`** is how it _runs_ in one org. That covers `provider`, `model`, `fallbackProviders`, `providerConfig`, `monthlyBudgetUsd`, `maxCostPerTurnUsd`, `rateLimitRpm` and `retentionDays` (ruling on §116, 2026-09-29). These are set once when the instance is created and never touched by a reconcile, so an org's choice of model or budget survives every release.
+
+The org-tunable list is pinned in `agent-field-registry.test.ts`: moving a field across the line changes what every org may edit on every platform agent. A fork's own field may leave `platformAgent` out, and the platform agents' reconcile then ignores it.
 
 ### What derives vs what's parity-tested
 
@@ -68,6 +79,7 @@ interface AgentFieldDescriptor {
   write?: 'relation' | 'historyTracked'; // special create/PATCH write (profileId / systemInstructions)
   patchOmit?: true; // not in the PATCH body (kind, widgetConfig)
   json?: true; // Prisma Json column — write paths coerce null → Prisma.JsonNull
+  platformAgent?: 'code' | 'org'; // who owns it on a platform agent; required on core fields
 }
 ```
 

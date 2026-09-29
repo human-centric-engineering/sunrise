@@ -75,13 +75,17 @@ own it have not shipped (the Multi-tenancy phase on the Hub; the design
 record's [target architecture](./multi-tenancy-design.md#target-architecture)
 says which piece each feature lands):
 
-- **The system agents are the install org's rows.** `cleanup-agent`,
-  `mcp-system`, `quiz-master`, the evaluation judges, the model auditor and
-  the case generator are seeded once, as the install org. Another org finds
-  none of them: the cleanup upload reports the agent unseeded, an unscoped
-  MCP call logs `mcp-system agent not found`, the quiz and judge routes 404.
-  They become platform-owned, tenant-consumed rows in §116 (decided
-  2026-09-21: one copy, usable by every org, editable by none).
+- **The platform agents are only partly finished (§116).** Every org now gets
+  its own instance of each of Sunrise's agents, so a new org's clean-up
+  upload, MCP calls, judges and case generator work with no manual step.
+  See [platform agents](../orchestration/platform-agents.md). Three pieces
+  are still open:
+  - the Pattern Advisor and Quiz Master in another org find nothing to
+    search, because the patterns reference they are granted is still the
+    install org's documents;
+  - the built-in workflow templates are still install-org rows;
+  - the API does not yet refuse an org's edit to the fields the platform
+    owns, so the next reconcile silently reverts it.
 - **Some process-global state is shared across orgs on purpose.** RLS cannot
   see a Node heap, so every module-level holder in `lib/` is declared in
   [`lib/tenancy/process-state.ts`](../../lib/tenancy/process-state.ts) with
