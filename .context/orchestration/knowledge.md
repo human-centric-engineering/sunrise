@@ -26,14 +26,14 @@ Skipping step 2 doesn't silently produce wrong results — search calls `assertA
 
 ### Knowledge bases
 
-`AiKnowledgeBase` is a grouping above documents. Every `AiKnowledgeDocument.knowledgeBaseId` is required. Two paths guarantee the `kb_default` row exists at runtime:
+`AiKnowledgeBase` is a grouping above documents. Every `AiKnowledgeDocument.knowledgeBaseId` is required, and each org has its own default knowledge base. Two paths guarantee it exists at runtime:
 
-1. **Seed pipeline.** `prisma/seeds/003-default-knowledge-base.ts` upserts the row before `007-knowledge-chunks.ts` runs — the seed-pipeline ordering that loads the pre-built pattern-advisor corpus into `kb_default`.
-2. **Runtime self-heal.** Every upload path (`uploadDocument`, `uploadDocumentFromBuffer`, `previewDocument`) calls `getOrCreateDefaultKnowledgeBase()` to upsert the row on first use. A fork that skips `db:seed` still gets a functional upload flow — the pattern-advisor chunks won't be present, but new uploads succeed.
+1. **Seed pipeline.** `prisma/seeds/003-default-knowledge-base.ts` upserts the install org's row, `kb_default`, before `007-knowledge-chunks.ts` loads the install org's copy of the patterns knowledge into it.
+2. **Runtime self-heal.** Every upload path (`uploadDocument`, `uploadDocumentFromBuffer`, `previewDocument`), and the platform-agent reconcile when it writes an org's copy of the patterns knowledge, calls `getOrCreateDefaultKnowledgeBase()` to upsert the calling org's row on first use. Another org's row gets a generated id. A fork that skips `db:seed` still gets a functional upload flow, and the maintenance job writes the patterns knowledge.
 
 The helper upserts by `slug` (the natural key, `'default'`), so it tolerates a pre-existing row whose `id` happens not to be `kb_default` (e.g. a fork that pre-seeded a different id). The runtime hardcoded constant `DEFAULT_KNOWLEDGE_BASE_ID` from `document-manager.ts` is the canonical id used everywhere; the helper returns the _actual_ row id, which is what the FK references.
 
-Today the system is single-corpus — every document goes to `kb_default`, the picker UI is intentionally deferred. The model exists now so the future "per-KB embedding model" feature is a non-breaking additive change (add `embeddingSpaceId` to `AiKnowledgeBase`, route writes by space, partition chunks by physical table per dim) rather than a schema refactor. Don't build the per-KB UI until a real multi-corpus use case lands.
+Today the system is single-corpus — every document goes to its org's default knowledge base, and the picker UI is intentionally deferred. The model exists now so the future "per-KB embedding model" feature is a non-breaking additive change (add `embeddingSpaceId` to `AiKnowledgeBase`, route writes by space, partition chunks by physical table per dim) rather than a schema refactor. Don't build the per-KB UI until a real multi-corpus use case lands.
 
 ## Tags and Indexed Keywords
 
@@ -66,7 +66,7 @@ The resolver (`resolveAgentDocumentAccess` in `lib/orchestration/knowledge/resol
 
 Tags have no required semantic meaning — they're labels. "Internal", "HR-confidential", "Onboarding" are all valid. Operators can create tags inline from the upload zone (type a non-matching name → "Create '…'" row).
 
-**Built-in `agentic-design-patterns` tag.** When `seedChunks` loads the bundled patterns reference, it also creates a tag with slug `agentic-design-patterns` and grants it to the seeded `pattern-advisor` and `quiz-master` system agents (both run in `restricted` mode out of the box). The grant is created bidirectionally — the agent seeds also apply the tag if the patterns are already loaded — so this works regardless of whether the operator loads the patterns or runs the prisma seeds first. Pre-existing installs whose system agents are still on the `full` default get promoted to `restricted` automatically, but only when no admin customization is detected (no doc grants and no tag grants on the agent); any sign of customization is treated as the admin owning that agent's scope.
+**Built-in `agentic-design-patterns` tag.** The patterns document carries a managed tag with slug `agentic-design-patterns`. Writing the first copy of the document creates the tag (tags are global; the document↔tag link is the org's). The `pattern-advisor` and `quiz-master` platform agents declare the tag and run in `restricted` mode. The platform-agent reconcile grants it to them in every org, after writing that org's copy, so the grant lands on the same run (see [platform agents](./platform-agents.md#the-patterns-knowledge)).
 
 **Tag deletion safety.** When a tag is granted to one or more agents, `DELETE /knowledge/tags/:id` returns 409 unconditionally and includes the agents in `details.agents` — `?force=true` does not bypass this guard. The operator must remove the grant from each agent first. Tag deletion only force-deletes through when the tag is only linked to documents (where strip-on-delete is safe).
 
@@ -89,7 +89,7 @@ On the Manage tab, the per-row **Enrich keywords** action (between Rechunk and D
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `document-manager.ts` | `uploadDocument`, `uploadDocumentFromBuffer`, `previewDocument`, `confirmPreview`, `deleteDocument`, `rechunkDocument`, `listDocuments`, `getOrCreateDefaultKnowledgeBase` | Full document lifecycle: upload, preview, confirm, delete, rechunk, list. `getOrCreateDefaultKnowledgeBase()` is the runtime self-heal helper every upload path calls before creating a document. |
 | `search.ts`           | `searchKnowledge`, `getPatternDetail`, `listPatterns`                                                                                                                      | Vector + keyword search; single-pattern lookup; pattern list for explorer                                                                                                                         |
-| `seeder.ts`           | `seedChunks`, `embedChunks`                                                                                                                                                | Idempotent seeder for the "Agentic Design Patterns" doc; embedding backfill                                                                                                                       |
+| `seeder.ts`           | `materialisePatternsKnowledge`, `loadPatternsChunks`, `seedChunks`, `embedChunks`                                                                                          | The calling org's copy of the "Agentic Design Patterns" doc, idempotent by slug; embedding backfill for the calling org                                                                           |
 | `chunker.ts`          | `chunkMarkdownDocument(content, name, documentId?) → Promise<Chunk[]>`, `chunkCsvDocument`, `parseMetadataComments`                                                        | Markdown / DOCX / EPUB / confirmed-PDF → chunks. **Async** because generic sections route through the semantic chunker (see below)                                                                |
 | `semantic-chunker.ts` | `chunkBySemanticBreakpoints(text, options?)`, `splitSentences(text)`                                                                                                       | Embedding-similarity splitter for generic prose. Called by `chunker.ts` when a section has no explicit headings                                                                                   |
 | `embedder.ts`         | `embedText`, `embedBatch`                                                                                                                                                  | Generates embeddings for text and chunk batches                                                                                                                                                   |
@@ -133,7 +133,7 @@ const results = await searchKnowledge(
 // Single pattern lookup
 const pattern = await getPatternDetail(3);
 
-// Seed (idempotent — see below)
+// Seed the calling org's copy (idempotent — see below)
 await seedChunks('prisma/seeds/data/chunks/chunks.json');
 ```
 
@@ -332,22 +332,30 @@ The admin route guards against double-rechunk: if the document is currently `sta
 
 ## Seeder
 
-`seedChunks(chunksJsonPath)` loads a pre-built chunks file and upserts a single canonical document — the "Agentic Design Patterns" reference that the built-in `get_pattern_detail` and `search_knowledge_base` capabilities rely on.
+`materialisePatternsKnowledge(chunks, { db?, log? })` writes the calling org's copy of the "Agentic Design Patterns" reference that the built-in `get_pattern_detail` and `search_knowledge_base` capabilities rely on. Every org holds its own copy (§116 t-726):
 
-**The seeder is idempotent.** Safe to call on every deploy: if the "Agentic Design Patterns" document already exists, the seeder is a no-op. Don't wrap calls in existence checks — that's the seeder's job.
+- **Into the org's own default knowledge base**, resolved by `getOrCreateDefaultKnowledgeBase()` in the caller's scope. Document, chunks and tag link are one transaction, so a failure leaves no partial copy.
+- **Idempotent by slug.** The document's slug is `agentic-design-patterns-<first 8 of the content hash>`, the org's key for it. An org that holds this version is not written (`'present'`). Don't wrap calls in existence checks — that's the seeder's job.
+- **An earlier version is left in place** (`'outdated'`, with a warning). Replacing it would drop the org's embeddings, and the seeder has never refreshed a copy.
+- **Chunk keys are fixed** (`getting_started-main`), which is why `AiKnowledgeChunk.chunkKey` is unique per org, not globally.
 
-Seed file lives at `prisma/seeds/data/chunks/chunks.json`. The admin route (`POST /knowledge/seed`) resolves this via `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')` and returns `{ seeded: true }` when the call completes.
+Its callers:
+
+- **The platform-agent reconcile**, for every org, from the bundled chunk file (`loadPatternsChunks()`, a module import rather than a file read, so the app's bundle always carries it).
+- **`seedChunks(chunksJsonPath)`**, which reads and validates a chunks file and runs it for the org the caller is in: the `007-knowledge-chunks` seed unit (the install org) and `POST /knowledge/seed` (the admin's org, which is the **Load Agentic Design Patterns** button). It records `lastSeededAt` when it wrote a copy. The route resolves the file via `path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json')` and returns `{ seeded: true }`.
+
+`PATTERNS_DOCUMENT_SLUG` in `patterns-knowledge.ts` is the slug the committed `chunks.json` produces. It is part of the platform-agent registry's digest, and a test recomputes it from the file, so editing the file fails that test until the constant follows.
 
 ## Embedding backfill
 
 Chunks are written with `embedding: NULL` when no active embedding provider is configured at upload time (e.g. a dev environment without an `OPENAI_API_KEY`). Two admin endpoints close that loop without rechunking.
 
-| Route                                                    | Method | Purpose                                                                     |
-| -------------------------------------------------------- | ------ | --------------------------------------------------------------------------- |
-| `/api/v1/admin/orchestration/knowledge/embed`            | `POST` | Backfill: finds every chunk where `embedding IS NULL` and embeds in batches |
-| `/api/v1/admin/orchestration/knowledge/embedding-status` | `GET`  | Polling snapshot: `{ total, embedded, pending, hasActiveProvider }`         |
+| Route                                                    | Method | Purpose                                                                    |
+| -------------------------------------------------------- | ------ | -------------------------------------------------------------------------- |
+| `/api/v1/admin/orchestration/knowledge/embed`            | `POST` | Backfill: finds the org's chunks where `embedding IS NULL` and embeds them |
+| `/api/v1/admin/orchestration/knowledge/embedding-status` | `GET`  | Polling snapshot: `{ total, embedded, pending, hasActiveProvider }`        |
 
-**Implementation:** `embedChunks()` in `seeder.ts` is the shared primitive — the seed flow also calls it after inserting chunks. Both routes rate-limit via `adminLimiter`. The `hasActiveProvider` flag on the status endpoint is `true` when `resolveProvider()` actually resolves — `resolveEmbeddingAvailability()` in `embedder.ts` — so the admin UI can disable the "Generate Embeddings" button until embedding can genuinely run. It used to mean "an active `AiProviderConfig` row exists **or** `OPENAI_API_KEY` is set", which was the same thing until the chain started consulting the eligibility rule (see **Provider resolution** below); on a fork whose rule refuses every arm, the old check enabled the button for a run that could not succeed. A transient database error is not an answer of "no" either: it reports `providerState: 'unknown'` and still returns the chunk counts, because 500ing loses the counts and the client falls back to the same misleading "add a provider" banner.
+**Implementation:** `embedChunks()` in `seeder.ts` is the shared primitive. It embeds the calling org's chunks only: at `multi` the chokepoint runs its raw SQL under the org's `app.current_org`, so the policies hide every other org's rows. That is how a new org embeds its copy of the patterns knowledge. The seeders never call it: embedding needs a provider and costs money. Both routes rate-limit via `adminLimiter`. The `hasActiveProvider` flag on the status endpoint is `true` when `resolveProvider()` actually resolves — `resolveEmbeddingAvailability()` in `embedder.ts` — so the admin UI can disable the "Generate Embeddings" button until embedding can genuinely run. It used to mean "an active `AiProviderConfig` row exists **or** `OPENAI_API_KEY` is set", which was the same thing until the chain started consulting the eligibility rule (see **Provider resolution** below); on a fork whose rule refuses every arm, the old check enabled the button for a run that could not succeed. A transient database error is not an answer of "no" either: it reports `providerState: 'unknown'` and still returns the chunk counts, because 500ing loses the counts and the client falls back to the same misleading "add a provider" banner.
 
 **Provider resolution.** `resolveProvider()` in `embedder.ts` first checks `AiOrchestrationSettings.activeEmbeddingModelId` via `resolveActiveEmbeddingConfig()`; an operator-picked model wins, with model id + dim + `schemaCompatible` flag coming from the `AiProviderModel` row and `baseUrl` + `apiKey` from the matching `AiProviderConfig`. When no model is picked (or the picked row fails the validity gates), it falls back to the legacy priority chain: (1) Voyage AI; (2) local provider (e.g. Ollama); (3) OpenAI-compatible with custom `baseUrl`; (4) OpenAI API directly via `OPENAI_API_KEY`. The fallback always reports 1536-dim — every branch is configured to produce that.
 

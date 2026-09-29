@@ -129,15 +129,22 @@ the org's own scope itself, and it has three callers:
    before the request that made it returns. A failure is logged and never
    fails the org's creation.
 2. **`npm run db:seed`**: the `021-platform-agents` unit reconciles every
-   active org. Its `hashInputs` include every definition file, so editing a
-   definition re-runs it on the next seed.
+   active org. Its `hashInputs` include every definition file, the seeder
+   and the patterns chunk file, so editing one re-runs it on the next seed.
 3. **The `platformAgents` maintenance job**, every 15 minutes, per org. It
    compares the org's stored digest with the running registry's and
    reconciles only an org that is behind: after a deploy changed a
-   definition, or after a creation-time reconcile failed. An org whose
-   definitions name a capability or tag that has no row yet is reconciled
-   on every run, with a warning, until the row exists. Otherwise it is one
-   `Org` read per org.
+   definition or the patterns knowledge, or after a creation-time reconcile
+   failed. An org whose definitions name a capability or tag that has no
+   row yet, or whose copy of the patterns knowledge could not be written, is
+   reconciled on every run until it is complete. Otherwise it is one `Org`
+   read per org.
+
+The digest covers every definition, the baseline, and the patterns
+document's slug (`PATTERNS_DOCUMENT_SLUG` in
+`lib/orchestration/knowledge/patterns-knowledge.ts`, which carries the chunk
+file's content hash). A test recomputes that slug from the committed file, so
+editing `chunks.json` fails until the constant follows.
 
 ## What a reconcile does, and refuses to do
 
@@ -165,6 +172,38 @@ These are the properties the unit tests pin, one test each:
 - **Safe on empty.** A registry that resolves empty changes nothing. A fork
   cannot remove a core agent, so an empty registry means an import broke,
   not that every agent should go.
+
+## The patterns knowledge
+
+The Pattern Advisor and Quiz Master search the patterns document, "Agentic
+Design Patterns": one document of 191 chunks, built from the committed
+`prisma/seeds/data/chunks/chunks.json`. **Every org holds its own copy**, and
+the reconcile writes it (`materialisePatternsKnowledge` in
+`lib/orchestration/knowledge/seeder.ts`). After that it is ordinary tenant
+knowledge: every search, list and grant sees it the way it sees the org's own
+documents.
+
+- **Before the agents.** Writing an org's first copy creates the managed
+  `agentic-design-patterns` tag, which both agents are granted. So their
+  grants land on the same run.
+- **In the org's own default knowledge base**, never the install org's
+  `kb_default`. `AiKnowledgeChunk.chunkKey` is unique per org, because the
+  seeded keys are fixed and every org holds them.
+- **Without embeddings.** Vector search needs them. An org's quiz or advisor
+  search finds nothing until the org embeds its chunks, the same as an
+  install before its first embed run. Use **Generate Embeddings** on the
+  knowledge page (`POST /knowledge/embed`), which embeds that org's chunks
+  and no other org's. The pattern explorer and `get_pattern_detail` read
+  chunks directly, so they work straight away.
+- **Idempotent by slug.** The slug carries the content hash, so an org that
+  holds this version is not written.
+- **An existing copy is never refreshed.** An org holding a copy of an
+  earlier `chunks.json` keeps it, with a warning logged on each run.
+  Replacing it would drop the org's embeddings, and the seeder has never
+  done so. Only an org's first copy comes from the current file.
+- **A failure never stops the agents.** It is logged, the agents are
+  reconciled anyway, and the org's marker is left unwritten, so the next
+  run tries again.
 
 ## Adding or replacing one in a fork
 
@@ -201,9 +240,5 @@ its own instance.
 
 ## Not yet
 
-- The patterns knowledge the Pattern Advisor and Quiz Master are granted is
-  still the install org's documents, so in another org they find nothing to
-  search.
-- The built-in workflow templates are still install-org rows.
-
-Both are open tasks on §116.
+- The built-in workflow templates are still install-org rows. This is an
+  open task on §116.
