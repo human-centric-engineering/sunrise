@@ -28,7 +28,8 @@ FORMAT: Present questions clearly with lettered options (A, B, C, D). Wait for t
 
 export const QUIZ_MASTER_AGENT: PlatformAgentDefinition = {
   slug: 'quiz-master',
-  audience: 'every-org',
+  // Install-only, with the Pattern Advisor and the knowledge they share.
+  audience: 'install-only',
   agent: {
     name: 'Pattern Quiz Master',
     description:

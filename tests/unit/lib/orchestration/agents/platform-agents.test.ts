@@ -42,8 +42,6 @@ import {
 import { platformAgentFieldNames } from '@/lib/orchestration/agents/agent-field-registry';
 
 const EVERY_ORG = [
-  'pattern-advisor',
-  'quiz-master',
   'mcp-system',
   'eval-judge-correctness',
   'eval-judge-relevance',
@@ -57,7 +55,14 @@ const EVERY_ORG = [
   'eval-judge-answer-similarity',
   'cleanup-agent',
 ];
-const INSTALL_ONLY = ['provider-model-auditor', 'audit-report-writer'];
+// The provider auditors write the catalogue every org reads; the Learn page's
+// advisor and quiz serve the install's app admins (§116 t-733).
+const INSTALL_ONLY = [
+  'pattern-advisor',
+  'quiz-master',
+  'provider-model-auditor',
+  'audit-report-writer',
+];
 
 function fork(slug: string): PlatformAgentDefinition {
   return {

@@ -43,11 +43,13 @@
  *    and lock them out of it. It is logged and skipped.
  *  - **Install-only agents go only into the install org**, and **at `single`
  *    only the install org is reconciled** — the one org there is.
- *  - **The org gets its own copy of the patterns knowledge** (t-726), before
- *    the agents, since writing it creates the tag two of them are granted.
- *    A copy the org already holds is left alone. A failure there is logged
- *    and does not stop the agents; the marker then waits, so the next run
- *    tries again.
+ *  - **The patterns knowledge goes where its agents go** (t-726, t-733): an
+ *    org gets its own copy only when one of its definitions declares the
+ *    patterns tag, which in core means the install org (the Pattern Advisor
+ *    and Quiz Master are install-only). It is written before the agents,
+ *    since writing it creates that tag. A copy the org already holds is
+ *    left alone. A failure there is logged and does not stop the agents; the
+ *    marker then waits, so the next run tries again.
  *
  * Tenancy posture: runs inside `runAsOrg(orgId)`; writes nothing global.
  */
@@ -74,6 +76,7 @@ import {
 } from '@/lib/orchestration/agents/platform-agents';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
+import { PATTERNS_TAG_SLUG } from '@/lib/orchestration/knowledge/patterns-knowledge';
 import {
   loadPatternsChunks,
   materialisePatternsKnowledge,
@@ -105,7 +108,10 @@ export interface PlatformAgentReconcileResult {
   refused: Array<{ slug: string; reason: PlatformAgentRefusal }>;
   /** Declared capability or tag slugs with no row yet — skipped, not fatal. */
   missing: { capabilities: string[]; knowledgeTags: string[] };
-  /** How the org's copy of the patterns knowledge stood; `'failed'` when it could not be written. */
+  /**
+   * How the org's copy of the patterns knowledge stood; `'failed'` when it
+   * could not be written. Absent when no agent of the org's declares its tag.
+   */
   knowledge?: PatternsKnowledgeOutcome | 'failed';
 }
 
@@ -187,8 +193,11 @@ export async function reconcilePlatformAgents(
     }
 
     // First: writing the copy creates the tag the knowledge agents declare,
-    // so a new org's grants land on this run rather than the next.
-    result.knowledge = await reconcilePatternsKnowledge(db, log, orgId);
+    // so a new org's grants land on this run rather than the next. Only where
+    // an agent of this org's declares it: the knowledge serves those agents.
+    if (definitions.some((d) => d.knowledgeTags.includes(PATTERNS_TAG_SLUG))) {
+      result.knowledge = await reconcilePatternsKnowledge(db, log, orgId);
+    }
 
     const wanted = new Set(definitions.map((d) => d.slug));
     const placedBefore = previous?.slugs ?? [];

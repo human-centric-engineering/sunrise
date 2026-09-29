@@ -47,7 +47,9 @@ Use descriptive step labels. Include all required fields. Keep workflows focused
 
 export const PATTERN_ADVISOR_AGENT: PlatformAgentDefinition = {
   slug: 'pattern-advisor',
-  audience: 'every-org',
+  // The Learn page's advisor helps the install's app admins build their app;
+  // it is not a tenant product (§116 ruling, 2026-09-29).
+  audience: 'install-only',
   agent: {
     name: 'Pattern Advisor',
     description:

@@ -256,6 +256,7 @@ import {
   PLATFORM_AGENT_BASELINE,
 } from '@/lib/orchestration/agents/platform-agents';
 import { platformAgentFieldNames } from '@/lib/orchestration/agents/agent-field-registry';
+import { PATTERNS_TAG_SLUG } from '@/lib/orchestration/knowledge/patterns-knowledge';
 import { getTenantContext } from '@/lib/tenancy/context';
 
 const ORG_B = 'cmorg00000000000000000orgb';
@@ -275,7 +276,7 @@ function definition(
       maxTokens: 1000,
     },
     capabilities: ['search_knowledge_base'],
-    knowledgeTags: ['patterns'],
+    knowledgeTags: [PATTERNS_TAG_SLUG],
     ...overrides,
   };
 }
@@ -308,7 +309,7 @@ beforeEach(() => {
     { id: 'cap-search', slug: 'search_knowledge_base' },
     { id: 'cap-detail', slug: 'get_pattern_detail' },
   ];
-  s.tags = [{ id: 'tag-patterns', slug: 'patterns' }];
+  s.tags = [{ id: 'tag-patterns', slug: PATTERNS_TAG_SLUG }];
   s.providers = [];
   s.models = [];
   s.writes = [];
@@ -628,6 +629,26 @@ describe('reconcilePlatformAgents', () => {
     expect(agent('judge')).toMatchObject({ isActive: true });
   });
 
+  it('deactivates, never deletes, an agent in an org once it turns install-only', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    await reconcilePlatformAgents(ORG_B);
+    const placed = agent('advisor', ORG_B)!;
+    expect(placed.isActive).toBe(true);
+    registry.definitions = [
+      definition('advisor', { audience: 'install-only' }),
+      definition('judge'),
+    ];
+
+    const result = await reconcilePlatformAgents(ORG_B);
+
+    expect(result.deactivated).toEqual(['advisor']);
+    expect(agent('advisor', ORG_B)).toBe(placed); // same row, still there
+    expect(placed.isActive).toBe(false);
+    expect(agent('judge', ORG_B)?.isActive).toBe(true);
+    // Kept in the marker, so every later reconcile keeps it switched off.
+    expect(marker(ORG_B)?.slugs).toEqual(['advisor', 'judge']);
+  });
+
   it('puts install-only agents into the install org only', async () => {
     mockEnv.TENANCY_MODE = 'multi';
     registry.definitions = [
@@ -652,10 +673,37 @@ describe('reconcilePlatformAgents', () => {
   });
 
   describe('the patterns knowledge (t-726)', () => {
+    it('writes no copy in an org none of whose agents declares the patterns tag (t-733)', async () => {
+      mockEnv.TENANCY_MODE = 'multi';
+      registry.definitions = [
+        definition('advisor', { audience: 'install-only' }),
+        definition('judge', { knowledgeTags: [] }),
+      ];
+
+      const other = await reconcilePlatformAgents(ORG_B);
+      const install = await reconcilePlatformAgents('install');
+
+      expect(other.knowledge).toBeUndefined();
+      expect(install.knowledge).toBe('present');
+      expect(knowledge.calls.map((c) => c.orgId)).toEqual(['install']);
+      // Nothing is missing for B, so its marker is written as usual.
+      expect(marker(ORG_B)).toEqual({ hash: expect.any(String), slugs: ['judge'] });
+    });
+
+    it('writes a copy in any org one of whose agents declares the tag — a fork’s included', async () => {
+      mockEnv.TENANCY_MODE = 'multi';
+      registry.definitions = [definition('fork-tutor', { knowledgeTags: [PATTERNS_TAG_SLUG] })];
+
+      const result = await reconcilePlatformAgents(ORG_B);
+
+      expect(result.knowledge).toBe('present');
+      expect(knowledge.calls).toEqual([{ orgId: ORG_B, db: fake.db }]);
+    });
+
     it('writes the org’s copy in its own scope, before the tags are read, so its tag is granted on the same run', async () => {
       mockEnv.TENANCY_MODE = 'multi';
       fake.state.tags = []; // a new install: no tag until the first copy exists
-      knowledge.createsTag = { id: 'tag-patterns', slug: 'patterns' };
+      knowledge.createsTag = { id: 'tag-patterns', slug: PATTERNS_TAG_SLUG };
       knowledge.outcome = 'created';
 
       const result = await reconcilePlatformAgents(ORG_B);
@@ -713,7 +761,7 @@ describe('reconcilePlatformAgents', () => {
 
     const result = await reconcilePlatformAgents('install');
 
-    expect(result.missing).toEqual({ capabilities: [], knowledgeTags: ['patterns'] });
+    expect(result.missing).toEqual({ capabilities: [], knowledgeTags: [PATTERNS_TAG_SLUG] });
     expect(fake.state.tagGrants).toEqual([]);
     expect(mockLogger.warn).toHaveBeenCalled();
   });
@@ -724,7 +772,7 @@ describe('reconcilePlatformAgents', () => {
     // No digest recorded: the job will come back for this org.
     expect(marker()).toBeUndefined();
 
-    fake.state.tags = [{ id: 'tag-patterns', slug: 'patterns' }];
+    fake.state.tags = [{ id: 'tag-patterns', slug: PATTERNS_TAG_SLUG }];
     const outcome = await reconcilePlatformAgentsIfStale('install');
 
     expect(outcome.reconciled).toBe(true);
@@ -846,7 +894,7 @@ describe('reconcilePlatformAgents', () => {
     });
   });
 
-  it('materialises the real registry: 14 agents per org, 16 in the install org', async () => {
+  it('materialises the real registry: 12 agents per org, 16 in the install org', async () => {
     mockEnv.TENANCY_MODE = 'multi';
     registry.definitions = null;
     fake.state.capabilities = [];
@@ -857,9 +905,19 @@ describe('reconcilePlatformAgents', () => {
 
     expect(install.created).toHaveLength(CORE_PLATFORM_AGENTS.length);
     expect(install.created).toHaveLength(16);
-    expect(other.created).toHaveLength(14);
-    expect(other.created).not.toContain('provider-model-auditor');
-    expect(other.created).not.toContain('audit-report-writer');
+    expect(other.created).toHaveLength(12);
+    for (const slug of [
+      'provider-model-auditor',
+      'audit-report-writer',
+      'pattern-advisor',
+      'quiz-master',
+    ]) {
+      expect(other.created).not.toContain(slug);
+    }
+    // The patterns knowledge follows its agents (t-733): the install org's only.
+    expect(install.knowledge).toBe('present');
+    expect(other.knowledge).toBeUndefined();
+    expect(knowledge.calls.map((c) => c.orgId)).toEqual(['install']);
   });
 });
 
