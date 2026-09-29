@@ -3,7 +3,7 @@
  *
  * materialisePatternsKnowledge (Phase 1, §116 t-726):
  * - Writes the calling org's copy into that org's own default knowledge base
- * - Idempotent by slug; an earlier version is left in place; a failed copy is replaced
+ * - Idempotent by slug; an earlier or failed copy is left in place; a lost race reports 'present'
  * - Document, chunks and tag link in one transaction, through the caller's client
  * - Uploader: service account, then any user, else a descriptive error
  * - Chunks written in one createMany, stamped by the chokepoint, with no embedding
@@ -23,6 +23,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'crypto';
+import { Prisma } from '@prisma/client';
 
 // --- Mocks ---
 
@@ -42,6 +43,7 @@ function makeClient() {
   return {
     aiKnowledgeDocument: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
       create: vi.fn(),
       deleteMany: vi.fn(),
     },
@@ -225,7 +227,7 @@ describe('materialisePatternsKnowledge', () => {
     // here would meet this one's fixed chunk keys on every run.
     expect(db.aiKnowledgeDocument.findMany).toHaveBeenCalledWith({
       where: { orgId: ORG_B, OR: [{ slug: slugFor(chunks) }, { scope: 'system' }] },
-      select: { id: true, slug: true, status: true },
+      select: { id: true, slug: true },
       orderBy: { createdAt: 'asc' },
     });
   });
@@ -265,20 +267,62 @@ describe('materialisePatternsKnowledge', () => {
     );
   });
 
-  it('removes a copy a failed seed left, then writes it again', async () => {
+  it('leaves a copy whose re-chunk failed in place — it still holds its embedded chunks', async () => {
     const chunks = [makeSeedChunk()];
-    const tx = armFirstCopy(db);
+    armFirstCopy(db);
     db.aiKnowledgeDocument.findMany.mockResolvedValue([
       { id: 'doc-failed', slug: slugFor(chunks), status: 'failed' },
     ]);
 
     const result = await inOrgB(() => materialisePatternsKnowledge(chunks));
 
-    expect(db.aiKnowledgeDocument.deleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ['doc-failed'] } },
+    expect(result).toEqual({ outcome: 'present', documentId: 'doc-failed' });
+    expect(db.aiKnowledgeDocument.deleteMany).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('reports a copy another run wrote first as present, not as an error', async () => {
+    armFirstCopy(db);
+    db.$transaction.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      })
+    );
+    db.aiKnowledgeDocument.findFirst.mockResolvedValue({ id: 'doc-winner' });
+    const chunks = [makeSeedChunk()];
+
+    const result = await inOrgB(() => materialisePatternsKnowledge(chunks));
+
+    expect(result).toEqual({ outcome: 'present', documentId: 'doc-winner' });
+    expect(db.aiKnowledgeDocument.findFirst).toHaveBeenCalledWith({
+      where: { orgId: ORG_B, slug: slugFor(chunks) },
+      select: { id: true },
     });
-    expect(result.outcome).toBe('created');
-    expect(tx.aiKnowledgeDocument.create).toHaveBeenCalled();
+  });
+
+  it('throws a unique violation that left no copy — another document holds the keys', async () => {
+    armFirstCopy(db);
+    const violation = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+      code: 'P2002',
+      clientVersion: 'test',
+    });
+    db.$transaction.mockRejectedValue(violation);
+    db.aiKnowledgeDocument.findFirst.mockResolvedValue(null);
+
+    await expect(inOrgB(() => materialisePatternsKnowledge([makeSeedChunk()]))).rejects.toBe(
+      violation
+    );
+  });
+
+  it('throws any other failure without looking for a winner', async () => {
+    armFirstCopy(db);
+    db.$transaction.mockRejectedValue(new Error('connection reset'));
+
+    await expect(inOrgB(() => materialisePatternsKnowledge([makeSeedChunk()]))).rejects.toThrow(
+      'connection reset'
+    );
+    expect(db.aiKnowledgeDocument.findFirst).not.toHaveBeenCalled();
   });
 
   it('writes the document, its chunks and its tag link in one transaction', async () => {

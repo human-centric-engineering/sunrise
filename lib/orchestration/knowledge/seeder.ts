@@ -14,6 +14,7 @@
  */
 
 import { createHash } from 'crypto';
+import { Prisma } from '@prisma/client';
 import { readFile } from 'fs/promises';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
@@ -122,10 +123,11 @@ export interface MaterialiseOptions {
  * its content hash, so an org that holds this version is left alone. An
  * earlier version is left alone too (`'outdated'`): any `scope: 'system'`
  * document, whatever an admin renamed it to, since only this seeder writes
- * that scope and every copy holds the same fixed chunk keys. A copy left
- * `failed` by an old, non-transactional seed is removed and written again.
- * Document, chunks and tag link are one transaction, so a failure leaves no
- * partial copy.
+ * that scope and every copy holds the same fixed chunk keys. Whatever its
+ * status: a copy whose re-chunk failed still holds its embedded chunks, and
+ * is the admin's to retry. Document, chunks and tag link are one
+ * transaction, so a failure leaves no partial copy, and a run that loses the
+ * race to write it (the document's per-org slug key) reports `'present'`.
  *
  * Runs in the caller's org scope; every row it writes is stamped with it.
  */
@@ -149,27 +151,20 @@ export async function materialisePatternsKnowledge(
   // copy missed here would meet this one's chunk keys on every run.
   const copies = await db.aiKnowledgeDocument.findMany({
     where: { orgId, OR: [{ slug }, { scope: 'system' }] },
-    select: { id: true, slug: true, status: true },
+    select: { id: true, slug: true },
     orderBy: { createdAt: 'asc' },
   });
 
-  const failed = copies.filter((c) => c.status === 'failed').map((c) => c.id);
-  if (failed.length > 0) {
-    log.info('Removing a failed copy of the patterns knowledge', { orgId, documentIds: failed });
-    // Chunks and tag links cascade with the document.
-    await db.aiKnowledgeDocument.deleteMany({ where: { id: { in: failed } } });
-  }
-  const held = copies.filter((c) => c.status !== 'failed');
-  const current = held.find((c) => c.slug === slug);
+  const current = copies.find((c) => c.slug === slug);
   if (current) return { outcome: 'present', documentId: current.id };
-  if (held.length > 0) {
+  if (copies.length > 0) {
     log.warn('An earlier copy of the patterns knowledge is left in place', {
       orgId,
-      documentId: held[0].id,
-      heldSlug: held[0].slug,
+      documentId: copies[0].id,
+      heldSlug: copies[0].slug,
       currentSlug: slug,
     });
-    return { outcome: 'outdated', documentId: held[0].id };
+    return { outcome: 'outdated', documentId: copies[0].id };
   }
 
   // The service account owns platform content; any user is the fallback on
@@ -193,7 +188,7 @@ export async function materialisePatternsKnowledge(
     update: {},
   });
 
-  const documentId = await db.$transaction(
+  const write = db.$transaction(
     async (tx) => {
       const document = await tx.aiKnowledgeDocument.create({
         data: {
@@ -239,6 +234,24 @@ export async function materialisePatternsKnowledge(
     // Past the 5 s default for a 191-row insert on a slow remote database.
     { timeout: 30_000 }
   );
+  let documentId: string;
+  try {
+    documentId = await write;
+  } catch (err) {
+    // Another run wrote the copy first and this one met its slug key. Any
+    // other unique violation (another document holding the fixed chunk keys)
+    // leaves no copy to show for it, and is thrown.
+    const winner =
+      err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
+        ? await db.aiKnowledgeDocument.findFirst({ where: { orgId, slug }, select: { id: true } })
+        : null;
+    if (!winner) throw err;
+    log.info('Patterns knowledge written concurrently by another run', {
+      orgId,
+      documentId: winner.id,
+    });
+    return { outcome: 'present', documentId: winner.id };
+  }
 
   log.info('Patterns knowledge written (chunks only, no embeddings)', {
     orgId,

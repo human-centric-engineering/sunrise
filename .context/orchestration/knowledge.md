@@ -336,7 +336,8 @@ The admin route guards against double-rechunk: if the document is currently `sta
 
 - **Into the org's own default knowledge base**, resolved by `getOrCreateDefaultKnowledgeBase()` in the caller's scope. Document, chunks and tag link are one transaction, so a failure leaves no partial copy.
 - **Idempotent by slug.** The document's slug is `agentic-design-patterns-<first 8 of the content hash>`, the org's key for it. An org that holds this version is not written (`'present'`). Don't wrap calls in existence checks — that's the seeder's job.
-- **An earlier version is left in place** (`'outdated'`, with a warning). Replacing it would drop the org's embeddings, and the seeder has never refreshed a copy.
+- **An earlier version is left in place** (`'outdated'`, with a warning), found by its `scope: 'system'` whatever an admin renamed it to. So is a copy whose re-chunk failed: it still holds its embedded chunks. Replacing either would drop the org's embeddings, and the seeder has never refreshed a copy.
+- **A run that loses the race to write the copy** (the document's per-org slug key) reports `'present'`. Any other failure is thrown.
 - **Chunk keys are fixed** (`getting_started-main`), which is why `AiKnowledgeChunk.chunkKey` is unique per org, not globally.
 
 Its callers:
