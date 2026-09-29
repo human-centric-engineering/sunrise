@@ -114,6 +114,8 @@ export function assertBindingsEditable(agent: {
 export interface PlatformAgentEditPolicy {
   /** Fields the API refuses to change (scalars and the two grant lists). */
   lockedFields: string[];
+  /** Fields this org may change: how the agent runs here. */
+  tunableFields: string[];
   /** Whether the capability-binding routes refuse changes. */
   bindingsLocked: boolean;
 }
@@ -125,6 +127,7 @@ export function platformAgentEditPolicy(agent: {
   if (!agent.isSystem) return null;
   return {
     lockedFields: platformAgentFieldNames('code'),
+    tunableFields: platformAgentFieldNames('org'),
     bindingsLocked: platformBindingsLocked(agent),
   };
 }

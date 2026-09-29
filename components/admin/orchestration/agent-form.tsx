@@ -188,7 +188,43 @@ const createFormSchema = agentFormSchema.superRefine((data, ctx) => {
 export type AgentWithGrants = AiAgent & {
   grantedTagIds?: string[];
   grantedDocumentIds?: string[];
+  /**
+   * On a system (platform) agent, what the API refuses to change and what
+   * this org may tune — returned by `GET /agents/:id` from the same rule the
+   * API enforces. `null` or absent for an org's own agent.
+   */
+  platformAgent?: {
+    lockedFields: string[];
+    tunableFields: string[];
+    bindingsLocked: boolean;
+  } | null;
 };
+
+/**
+ * A group of controls a platform agent's org may not change. A `fieldset`
+ * disables every native control and Radix trigger inside it at once; the
+ * submit payload drops the locked fields separately, so nothing here decides
+ * what is sent.
+ */
+function PlatformLockedGroup({
+  locked,
+  className = 'space-y-4',
+  children,
+}: {
+  locked: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <fieldset
+      disabled={locked}
+      data-platform-locked={locked ? '' : undefined}
+      className={`min-w-0 disabled:opacity-60 ${className}`}
+    >
+      {children}
+    </fieldset>
+  );
+}
 
 /** Slim profile summary passed to the form for the dropdown + preview. */
 export interface AgentProfileSummary {
@@ -242,6 +278,14 @@ export function AgentForm({
   const searchParams = useSearchParams();
   const schedule = useTimeout();
   const isEdit = mode === 'edit';
+
+  // A platform agent's fields split into the platform's (read-only here) and
+  // the org's (§116 t-725). The API sends the split; a group is locked only
+  // when every field in it is.
+  const platformAgent = isEdit ? (agent?.platformAgent ?? null) : null;
+  const lockedFields = useMemo(() => new Set(platformAgent?.lockedFields ?? []), [platformAgent]);
+  const groupLocked = (...fields: string[]): boolean =>
+    fields.every((field) => lockedFields.has(field));
 
   // On a fresh create, honour `?kind=judge` from the URL (used by the
   // "Create custom judge" CTA in the run-create form). On edit, the
@@ -633,6 +677,9 @@ export function AgentForm({
         // `updateAgentObjectSchema` requires non-empty when present.
         const editPayload: Record<string, unknown> = { ...payload };
         delete editPayload.kind;
+        // A platform agent's platform-owned fields are read-only here and the
+        // API refuses a change to them, so they are never sent (§116 t-725).
+        for (const field of lockedFields) delete editPayload[field];
         if (!authored.provider || data.provider.length === 0) delete editPayload.provider;
         if (!authored.model || data.model.length === 0) delete editPayload.model;
 
@@ -785,172 +832,195 @@ export function AgentForm({
         {/* ================= TAB 1 — GENERAL ================= */}
         <TabsContent value="general" className="space-y-4 pt-4">
           {isEdit && agent?.isSystem && (
-            <div className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+            <div
+              data-testid="platform-agent-banner"
+              className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400"
+            >
               <Shield className="h-4 w-4 shrink-0" />
               <span>
-                This is a system agent used internally by the platform. It cannot be deleted or
-                deactivated. Editing instructions, model, and capabilities is supported — changes
-                are versioned and can be reverted.
+                This is a platform agent. The platform sets what it is — its instructions, settings,
+                knowledge
+                {platformAgent?.bindingsLocked === false ? '' : ' and capabilities'} — and updates
+                them with each release, so they are read-only here and it cannot be deleted. This
+                org sets how it runs:{' '}
+                {(platformAgent?.tunableFields ?? [])
+                  .map((field) => fieldLabels()[field] ?? field)
+                  .join(', ')}
+                {platformAgent?.bindingsLocked === false
+                  ? ', and which capabilities it may use'
+                  : ''}
+                .
               </span>
             </div>
           )}
-          <div className="grid gap-2">
-            <Label htmlFor="name">
-              Name{' '}
-              <FieldHelp title="Agent name">
-                A human-readable label. This is what admins and end-users see in lists and in the
-                chat UI.
-              </FieldHelp>
-            </Label>
-            <Input id="name" {...register('name')} placeholder="Research Assistant" />
-            {errors.name && <p className="text-destructive text-xs">{errors.name.message}</p>}
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="slug">
-              Slug{' '}
-              <FieldHelp title="URL-safe identifier">
-                The stable identifier used in URLs and the chat stream endpoint. Auto-generated from
-                the name on first type, but you can edit it. Lowercase letters, numbers, and hyphens
-                only.
-              </FieldHelp>
-            </Label>
-            <Input
-              id="slug"
-              {...register('slug')}
-              onChange={(e) => {
-                setSlugTouched(true);
-                setValue('slug', e.target.value, { shouldValidate: true });
-              }}
-              disabled={isEdit}
-              className="font-mono"
-              placeholder="research-assistant"
-            />
-            {errors.slug && <p className="text-destructive text-xs">{errors.slug.message}</p>}
-            {isEdit && (
-              <p className="text-muted-foreground text-xs">
-                Slug cannot be changed after creation.
-              </p>
+          <PlatformLockedGroup
+            locked={groupLocked(
+              'name',
+              'slug',
+              'description',
+              'profileId',
+              'isActive',
+              'visibility'
             )}
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="description">
-              Description{' '}
-              <FieldHelp title="What this agent does">
-                A short summary that helps other admins understand this agent at a glance. It
-                appears on the agents list page and in search results. Keep it to one or two
-                sentences — e.g. &ldquo;Answers customer billing questions using the help docs
-                knowledge base&rdquo; or &ldquo;Triages incoming support requests and routes to
-                specialists.&rdquo;
-              </FieldHelp>
-            </Label>
-            <Textarea
-              id="description"
-              rows={3}
-              {...register('description')}
-              placeholder="Summarizes research papers and answers follow-up questions."
-            />
-            {errors.description && (
-              <p className="text-destructive text-xs">{errors.description.message}</p>
-            )}
-          </div>
-
-          {profiles && profiles.length > 0 && (
+          >
             <div className="grid gap-2">
-              <Label htmlFor="profileId">
-                Inherit from profile{' '}
-                <FieldHelp title="Agent profile" contentClassName="w-96">
-                  <p>
-                    Profiles supply default <strong>persona</strong>, <strong>brand voice</strong>,
-                    and <strong>guardrails</strong>. Pick one to inherit them; leave the matching
-                    fields below blank to use the profile&apos;s text, populate them to override on
-                    this agent only.
-                  </p>
-                  <p className="mt-2">
-                    Use the{' '}
-                    <Link href="/admin/orchestration/agent-profiles" className="underline">
-                      Agent Profiles
-                    </Link>{' '}
-                    page to create, edit, and review what each profile defines.
-                  </p>
+              <Label htmlFor="name">
+                Name{' '}
+                <FieldHelp title="Agent name">
+                  A human-readable label. This is what admins and end-users see in lists and in the
+                  chat UI.
+                </FieldHelp>
+              </Label>
+              <Input id="name" {...register('name')} placeholder="Research Assistant" />
+              {errors.name && <p className="text-destructive text-xs">{errors.name.message}</p>}
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="slug">
+                Slug{' '}
+                <FieldHelp title="URL-safe identifier">
+                  The stable identifier used in URLs and the chat stream endpoint. Auto-generated
+                  from the name on first type, but you can edit it. Lowercase letters, numbers, and
+                  hyphens only.
+                </FieldHelp>
+              </Label>
+              <Input
+                id="slug"
+                {...register('slug')}
+                onChange={(e) => {
+                  setSlugTouched(true);
+                  setValue('slug', e.target.value, { shouldValidate: true });
+                }}
+                disabled={isEdit}
+                className="font-mono"
+                placeholder="research-assistant"
+              />
+              {errors.slug && <p className="text-destructive text-xs">{errors.slug.message}</p>}
+              {isEdit && (
+                <p className="text-muted-foreground text-xs">
+                  Slug cannot be changed after creation.
+                </p>
+              )}
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="description">
+                Description{' '}
+                <FieldHelp title="What this agent does">
+                  A short summary that helps other admins understand this agent at a glance. It
+                  appears on the agents list page and in search results. Keep it to one or two
+                  sentences — e.g. &ldquo;Answers customer billing questions using the help docs
+                  knowledge base&rdquo; or &ldquo;Triages incoming support requests and routes to
+                  specialists.&rdquo;
+                </FieldHelp>
+              </Label>
+              <Textarea
+                id="description"
+                rows={3}
+                {...register('description')}
+                placeholder="Summarizes research papers and answers follow-up questions."
+              />
+              {errors.description && (
+                <p className="text-destructive text-xs">{errors.description.message}</p>
+              )}
+            </div>
+
+            {profiles && profiles.length > 0 && (
+              <div className="grid gap-2">
+                <Label htmlFor="profileId">
+                  Inherit from profile{' '}
+                  <FieldHelp title="Agent profile" contentClassName="w-96">
+                    <p>
+                      Profiles supply default <strong>persona</strong>, <strong>brand voice</strong>
+                      , and <strong>guardrails</strong>. Pick one to inherit them; leave the
+                      matching fields below blank to use the profile&apos;s text, populate them to
+                      override on this agent only.
+                    </p>
+                    <p className="mt-2">
+                      Use the{' '}
+                      <Link href="/admin/orchestration/agent-profiles" className="underline">
+                        Agent Profiles
+                      </Link>{' '}
+                      page to create, edit, and review what each profile defines.
+                    </p>
+                  </FieldHelp>
+                </Label>
+                <Select
+                  value={currentProfileId ?? '__none__'}
+                  onValueChange={(v) =>
+                    setValue('profileId', v === '__none__' ? null : v, { shouldDirty: true })
+                  }
+                >
+                  <SelectTrigger id="profileId">
+                    <SelectValue placeholder="No profile" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">No profile (agent-only)</SelectItem>
+                    {profiles.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between rounded-lg border p-4">
+              <div className="space-y-0.5">
+                <Label htmlFor="isActive">
+                  Active{' '}
+                  <FieldHelp title="Is this agent available?">
+                    Inactive agents are hidden from consumer lists and reject new chats. Existing
+                    conversations, cost logs, and history are preserved. Default: on.
+                  </FieldHelp>
+                </Label>
+                <p className="text-muted-foreground text-sm">
+                  Toggle this off to pause the agent without deleting it.
+                </p>
+              </div>
+              <Switch
+                id="isActive"
+                checked={currentIsActive}
+                onCheckedChange={(v) => setValue('isActive', v)}
+                disabled={isEdit && agent?.isSystem}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="visibility">
+                Visibility{' '}
+                <FieldHelp title="Who can access this agent">
+                  <strong>Internal</strong> — Admins only, via the dashboard. For internal tools,
+                  testing, or sensitive data.
+                  <br />
+                  <br />
+                  <strong>Public</strong> — Anyone with the chat URL. For support bots, Q&amp;A, or
+                  open demos.
+                  <br />
+                  <br />
+                  <strong>Invite only</strong> — Requires an invite token. For beta programs,
+                  partner access, or gated agents. Use the Invite tokens tab above to create and
+                  manage tokens.
                 </FieldHelp>
               </Label>
               <Select
-                value={currentProfileId ?? '__none__'}
+                value={currentVisibility}
                 onValueChange={(v) =>
-                  setValue('profileId', v === '__none__' ? null : v, { shouldDirty: true })
+                  setValue('visibility', v as AgentFormData['visibility'], { shouldValidate: true })
                 }
               >
-                <SelectTrigger id="profileId">
-                  <SelectValue placeholder="No profile" />
+                <SelectTrigger id="visibility">
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">No profile (agent-only)</SelectItem>
-                  {profiles.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.name}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="internal">Internal</SelectItem>
+                  <SelectItem value="public">Public</SelectItem>
+                  <SelectItem value="invite_only">Invite only</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-          )}
-
-          <div className="flex items-center justify-between rounded-lg border p-4">
-            <div className="space-y-0.5">
-              <Label htmlFor="isActive">
-                Active{' '}
-                <FieldHelp title="Is this agent available?">
-                  Inactive agents are hidden from consumer lists and reject new chats. Existing
-                  conversations, cost logs, and history are preserved. Default: on.
-                </FieldHelp>
-              </Label>
-              <p className="text-muted-foreground text-sm">
-                Toggle this off to pause the agent without deleting it.
-              </p>
-            </div>
-            <Switch
-              id="isActive"
-              checked={currentIsActive}
-              onCheckedChange={(v) => setValue('isActive', v)}
-              disabled={isEdit && agent?.isSystem}
-            />
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="visibility">
-              Visibility{' '}
-              <FieldHelp title="Who can access this agent">
-                <strong>Internal</strong> — Admins only, via the dashboard. For internal tools,
-                testing, or sensitive data.
-                <br />
-                <br />
-                <strong>Public</strong> — Anyone with the chat URL. For support bots, Q&amp;A, or
-                open demos.
-                <br />
-                <br />
-                <strong>Invite only</strong> — Requires an invite token. For beta programs, partner
-                access, or gated agents. Use the Invite tokens tab above to create and manage
-                tokens.
-              </FieldHelp>
-            </Label>
-            <Select
-              value={currentVisibility}
-              onValueChange={(v) =>
-                setValue('visibility', v as AgentFormData['visibility'], { shouldValidate: true })
-              }
-            >
-              <SelectTrigger id="visibility">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="internal">Internal</SelectItem>
-                <SelectItem value="public">Public</SelectItem>
-                <SelectItem value="invite_only">Invite only</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          </PlatformLockedGroup>
 
           <div className="grid gap-2">
             <Label htmlFor="retentionDays">
@@ -1211,48 +1281,53 @@ export function AgentForm({
             {errors.model && <p className="text-destructive text-xs">{errors.model.message}</p>}
           </div>
 
-          <div className="grid gap-2">
-            <Label>
-              Temperature: <span className="tabular-nums">{currentTemp.toFixed(2)}</span>{' '}
-              <FieldHelp title="Creativity dial">
-                How much the model varies its wording. 0 = always picks the most likely next word
-                (good for deterministic tasks). 1 = balanced. 2 = very creative, sometimes
-                incoherent. Default: <code>0.7</code>.
-              </FieldHelp>
-            </Label>
-            <Slider
-              min={0}
-              max={2}
-              step={0.05}
-              value={[currentTemp]}
-              onValueChange={([v]) => setValue('temperature', v, { shouldValidate: true })}
-            />
-          </div>
+          <PlatformLockedGroup locked={groupLocked('temperature', 'maxTokens', 'reasoningEffort')}>
+            <div className="grid gap-2">
+              <Label>
+                Temperature: <span className="tabular-nums">{currentTemp.toFixed(2)}</span>{' '}
+                <FieldHelp title="Creativity dial">
+                  How much the model varies its wording. 0 = always picks the most likely next word
+                  (good for deterministic tasks). 1 = balanced. 2 = very creative, sometimes
+                  incoherent. Default: <code>0.7</code>.
+                </FieldHelp>
+              </Label>
+              <Slider
+                min={0}
+                max={2}
+                step={0.05}
+                value={[currentTemp]}
+                onValueChange={([v]) => setValue('temperature', v, { shouldValidate: true })}
+                // Radix's slider is not a native control, so the fieldset does
+                // not reach it.
+                disabled={groupLocked('temperature')}
+              />
+            </div>
 
-          <div className="grid gap-2">
-            <Label htmlFor="maxTokens">
-              Max output tokens{' '}
-              <FieldHelp title="Maximum reply length">
-                Upper bound on how long one reply can be, measured in tokens (roughly &frac34; of a
-                word — so 4 096 tokens &asymp; 3 000 words). Defaults to <code>4096</code>. Only
-                raise this if replies are getting cut off — higher values cost more on every turn.
-              </FieldHelp>
-            </Label>
-            <Input
-              id="maxTokens"
-              type="number"
-              {...register('maxTokens', { valueAsNumber: true })}
-            />
-            {errors.maxTokens && (
-              <p className="text-destructive text-xs">{errors.maxTokens.message}</p>
-            )}
-          </div>
+            <div className="grid gap-2">
+              <Label htmlFor="maxTokens">
+                Max output tokens{' '}
+                <FieldHelp title="Maximum reply length">
+                  Upper bound on how long one reply can be, measured in tokens (roughly &frac34; of
+                  a word — so 4 096 tokens &asymp; 3 000 words). Defaults to <code>4096</code>. Only
+                  raise this if replies are getting cut off — higher values cost more on every turn.
+                </FieldHelp>
+              </Label>
+              <Input
+                id="maxTokens"
+                type="number"
+                {...register('maxTokens', { valueAsNumber: true })}
+              />
+              {errors.maxTokens && (
+                <p className="text-destructive text-xs">{errors.maxTokens.message}</p>
+              )}
+            </div>
 
-          <ReasoningEffortSelect
-            id="reasoningEffort"
-            value={watch('reasoningEffort')}
-            onChange={(v) => setValue('reasoningEffort', v, { shouldDirty: true })}
-          />
+            <ReasoningEffortSelect
+              id="reasoningEffort"
+              value={watch('reasoningEffort')}
+              onChange={(v) => setValue('reasoningEffort', v, { shouldDirty: true })}
+            />
+          </PlatformLockedGroup>
 
           <div className="grid gap-2">
             <Label htmlFor="monthlyBudgetUsd">
@@ -1331,325 +1406,341 @@ export function AgentForm({
             )}
           </div>
 
-          <div className="flex items-center justify-between rounded-lg border p-4">
-            <div className="space-y-0.5">
-              <Label htmlFor="enableVoiceInput">
-                Enable voice input{' '}
-                <FieldHelp title="Speech-to-text">
-                  When on, users see a microphone control in this agent&apos;s chat surfaces (admin
-                  test panel and any embed widgets) and can record audio that&apos;s transcribed
-                  before sending. Audio is forwarded to the configured speech-to-text provider and
-                  discarded after transcription — only the transcript is stored as a normal user
-                  message. Default: off.
-                  <br />
-                  <br />
-                  <strong>Requirements:</strong>
-                  <ul className="mt-1 list-disc pl-4">
-                    <li>
-                      The platform-wide switch at{' '}
-                      <strong>
-                        Admin → Orchestration → Settings → Voice input globally enabled
-                      </strong>{' '}
-                      must be on.
-                    </li>
-                    <li>
-                      An audio-capable model row in the provider-models matrix (
-                      <code>capability: audio</code>) — Whisper-1 ships in the default seed.
-                    </li>
-                    <li>
-                      The audio default model under{' '}
-                      <strong>Admin → Orchestration → Settings → Default models → Audio</strong>{' '}
-                      pins which row <code>getAudioProvider()</code> selects at runtime. If unset,
-                      the matrix falls back to the first audio-capable row by <code>isDefault</code>{' '}
-                      /<code>createdAt</code>.
-                    </li>
-                  </ul>
-                </FieldHelp>
-              </Label>
-              <p className="text-muted-foreground text-sm">
-                Lets users speak instead of typing. Requires an audio-capable provider to be
-                configured.
-              </p>
-            </div>
-            <Switch
-              id="enableVoiceInput"
-              checked={currentVoiceInput}
-              onCheckedChange={(v) => setValue('enableVoiceInput', v, { shouldDirty: true })}
-            />
-          </div>
-
-          <div className="flex items-center justify-between rounded-lg border p-4">
-            <div className="space-y-0.5">
-              <Label htmlFor="enableImageInput">
-                Enable image input{' '}
-                <FieldHelp title="Image attachments on chat">
-                  When on, users see a paperclip control in this agent&apos;s chat surfaces (admin
-                  test panel and any embed widgets) and can attach images (JPEG, PNG, WebP, GIF) to
-                  their message. Images are forwarded to the LLM as multimodal parts and discarded
-                  after the turn — bytes are not persisted. Default: off.
-                  <br />
-                  <br />
-                  <strong>Requirements:</strong>
-                  <ul className="mt-1 list-disc pl-4">
-                    <li>
-                      The platform-wide switch at{' '}
-                      <strong>
-                        Admin → Orchestration → Settings → Image input globally enabled
-                      </strong>{' '}
-                      must be on.
-                    </li>
-                    <li>
-                      The agent&apos;s resolved chat model must carry the <code>vision</code>{' '}
-                      capability. Open the provider-models matrix to see which seeded rows qualify —
-                      models without the capability return <code>IMAGE_NOT_SUPPORTED</code> at send
-                      time.
-                    </li>
-                    <li>
-                      Per-attachment cap: ~5 MB. Per-turn combined cap: ~25 MB. Max 10 attachments.
-                    </li>
-                  </ul>
-                </FieldHelp>
-              </Label>
-              <p className="text-muted-foreground text-sm">
-                {supportsVision ? (
-                  <>Lets users attach images to a turn. Requires a vision-capable model.</>
-                ) : (
-                  <>
-                    The current model doesn&apos;t support image input. Switch to a{' '}
-                    <code>vision</code>-capable model in the Model tab to enable.
-                  </>
-                )}
-              </p>
-            </div>
-            <Switch
-              id="enableImageInput"
-              checked={currentImageInput}
-              disabled={!supportsVision}
-              onCheckedChange={(v) => setValue('enableImageInput', v, { shouldDirty: true })}
-            />
-          </div>
-
-          <div className="flex items-center justify-between rounded-lg border p-4">
-            <div className="space-y-0.5">
-              <Label htmlFor="enableDocumentInput">
-                Enable document (PDF) input{' '}
-                <FieldHelp title="PDF attachments on chat">
-                  When on, users can attach PDFs to a chat turn alongside images. PDFs are sent to
-                  the LLM as native document parts (no pre-extraction). Bytes are not persisted.
-                  Default: off.
-                  <br />
-                  <br />
-                  <strong>Requirements:</strong>
-                  <ul className="mt-1 list-disc pl-4">
-                    <li>
-                      The platform-wide switch at{' '}
-                      <strong>
-                        Admin → Orchestration → Settings → Document input globally enabled
-                      </strong>{' '}
-                      must be on.
-                    </li>
-                    <li>
-                      The agent&apos;s resolved chat model must carry the <code>documents</code>{' '}
-                      capability. Open the provider-models matrix to see which seeded rows qualify —
-                      models without the capability return <code>PDF_NOT_SUPPORTED</code>
-                      at send time.
-                    </li>
-                    <li>
-                      Per-attachment cap: ~5 MB. Counts against the same per-turn 25 MB combined cap
-                      as images.
-                    </li>
-                  </ul>
-                </FieldHelp>
-              </Label>
-              <p className="text-muted-foreground text-sm">
-                {supportsDocuments ? (
-                  <>
-                    Lets users attach PDFs to a turn. Requires a model with the{' '}
-                    <code>documents</code> capability.
-                  </>
-                ) : (
-                  <>
-                    The current model doesn&apos;t support PDF input. Switch to a model with the{' '}
-                    <code>documents</code> capability in the Model tab to enable.
-                  </>
-                )}
-              </p>
-            </div>
-            <Switch
-              id="enableDocumentInput"
-              checked={currentDocumentInput}
-              disabled={!supportsDocuments}
-              onCheckedChange={(v) => setValue('enableDocumentInput', v, { shouldDirty: true })}
-            />
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="maxHistoryTokens">
-              Max history tokens{' '}
-              <FieldHelp title="Context window override">
-                Override the context window budget used when building the prompt. The system fits as
-                much conversation history as possible after reserving space for instructions and the
-                current message. Lower values reduce cost; higher values let the agent remember
-                more. Leave blank to use the model&apos;s full context window.
-                <br />
-                <br />
-                Token counts are computed with a provider-aware tokeniser — exact for OpenAI
-                (gpt-4o, gpt-4, etc.) and a calibrated approximation for Anthropic, Gemini, and
-                Llama-family models. Estimates lean conservative, so the agent may drop a slightly
-                older message rather than risk overflowing the model&apos;s window.
-              </FieldHelp>
-            </Label>
-            <Input
-              id="maxHistoryTokens"
-              type="number"
-              placeholder="Use model default"
-              {...register('maxHistoryTokens', {
-                setValueAs: (v: string | number) =>
-                  v === '' || v === null || v === undefined ? null : Number(v),
-              })}
-            />
-            {errors.maxHistoryTokens && (
-              <p className="text-destructive text-xs">{errors.maxHistoryTokens.message}</p>
+          <PlatformLockedGroup
+            locked={groupLocked(
+              'enableVoiceInput',
+              'enableImageInput',
+              'enableDocumentInput',
+              'maxHistoryTokens',
+              'maxHistoryMessages',
+              'inputGuardMode',
+              'outputGuardMode',
+              'citationGuardMode'
             )}
-          </div>
-
-          <div className="grid gap-2">
-            <Label htmlFor="maxHistoryMessages">
-              Memory length (messages){' '}
-              <FieldHelp title="Behavioural memory length">
-                How many prior messages this agent remembers verbatim per turn. Older messages get
-                rolled into a rolling summary that&apos;s persisted on the conversation row, so
-                older context survives even when dropped from the live history — just in compressed
-                form. Leave blank to use the platform default (50).
-                <br />
-                <br />
-                Lower this for stateless or single-turn agents (e.g. classifiers, summarisers); use
-                <code className="font-mono"> 0</code> for &ldquo;no verbatim history at all&rdquo;.
-                Raise it for support concierges that benefit from a long memory. Distinct from
-                <em> Max history tokens</em> above: that knob protects the model&apos;s context
-                window; this one controls cost and behaviour even when the window has plenty of
-                room.
-              </FieldHelp>
-            </Label>
-            <Input
-              id="maxHistoryMessages"
-              type="number"
-              min={0}
-              max={500}
-              placeholder="Use platform default (50)"
-              {...register('maxHistoryMessages', {
-                setValueAs: (v: string | number) =>
-                  v === '' || v === null || v === undefined ? null : Number(v),
-              })}
-            />
-            {errors.maxHistoryMessages && (
-              <p className="text-destructive text-xs">{errors.maxHistoryMessages.message}</p>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="grid gap-2 rounded-md border p-3">
-              <Label htmlFor="inputGuardMode">
-                Input guard{' '}
-                <FieldHelp title="Prompt injection protection">
-                  Controls how the agent handles suspected prompt injection in user messages.
-                  &ldquo;Log only&rdquo; silently logs, &ldquo;Warn&rdquo; shows a warning in the
-                  chat, &ldquo;Block&rdquo; rejects the message. Leave on &ldquo;Use global
-                  default&rdquo; to inherit the platform-wide setting.
-                </FieldHelp>
-              </Label>
-              <Select
-                value={currentInputGuard ?? '__global__'}
-                onValueChange={(v) =>
-                  setValue(
-                    'inputGuardMode',
-                    v === '__global__' ? null : (v as 'log_only' | 'warn_and_continue' | 'block'),
-                    {
-                      shouldValidate: true,
-                    }
-                  )
-                }
-              >
-                <SelectTrigger id="inputGuardMode">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__global__">Use global default</SelectItem>
-                  <SelectItem value="log_only">Log only</SelectItem>
-                  <SelectItem value="warn_and_continue">Warn and continue</SelectItem>
-                  <SelectItem value="block">Block</SelectItem>
-                </SelectContent>
-              </Select>
+          >
+            <div className="flex items-center justify-between rounded-lg border p-4">
+              <div className="space-y-0.5">
+                <Label htmlFor="enableVoiceInput">
+                  Enable voice input{' '}
+                  <FieldHelp title="Speech-to-text">
+                    When on, users see a microphone control in this agent&apos;s chat surfaces
+                    (admin test panel and any embed widgets) and can record audio that&apos;s
+                    transcribed before sending. Audio is forwarded to the configured speech-to-text
+                    provider and discarded after transcription — only the transcript is stored as a
+                    normal user message. Default: off.
+                    <br />
+                    <br />
+                    <strong>Requirements:</strong>
+                    <ul className="mt-1 list-disc pl-4">
+                      <li>
+                        The platform-wide switch at{' '}
+                        <strong>
+                          Admin → Orchestration → Settings → Voice input globally enabled
+                        </strong>{' '}
+                        must be on.
+                      </li>
+                      <li>
+                        An audio-capable model row in the provider-models matrix (
+                        <code>capability: audio</code>) — Whisper-1 ships in the default seed.
+                      </li>
+                      <li>
+                        The audio default model under{' '}
+                        <strong>Admin → Orchestration → Settings → Default models → Audio</strong>{' '}
+                        pins which row <code>getAudioProvider()</code> selects at runtime. If unset,
+                        the matrix falls back to the first audio-capable row by{' '}
+                        <code>isDefault</code> /<code>createdAt</code>.
+                      </li>
+                    </ul>
+                  </FieldHelp>
+                </Label>
+                <p className="text-muted-foreground text-sm">
+                  Lets users speak instead of typing. Requires an audio-capable provider to be
+                  configured.
+                </p>
+              </div>
+              <Switch
+                id="enableVoiceInput"
+                checked={currentVoiceInput}
+                onCheckedChange={(v) => setValue('enableVoiceInput', v, { shouldDirty: true })}
+              />
             </div>
 
-            <div className="grid gap-2 rounded-md border p-3">
-              <Label htmlFor="outputGuardMode">
-                Output guard{' '}
-                <FieldHelp title="Response content filtering">
-                  Controls how the agent handles flagged content in its own responses (off-topic,
-                  PII, brand-voice violations). Same modes as the input guard. Leave on &ldquo;Use
-                  global default&rdquo; to inherit the platform-wide setting.
-                </FieldHelp>
-              </Label>
-              <Select
-                value={currentOutputGuard ?? '__global__'}
-                onValueChange={(v) =>
-                  setValue(
-                    'outputGuardMode',
-                    v === '__global__' ? null : (v as 'log_only' | 'warn_and_continue' | 'block'),
-                    {
-                      shouldValidate: true,
-                    }
-                  )
-                }
-              >
-                <SelectTrigger id="outputGuardMode">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__global__">Use global default</SelectItem>
-                  <SelectItem value="log_only">Log only</SelectItem>
-                  <SelectItem value="warn_and_continue">Warn and continue</SelectItem>
-                  <SelectItem value="block">Block</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="flex items-center justify-between rounded-lg border p-4">
+              <div className="space-y-0.5">
+                <Label htmlFor="enableImageInput">
+                  Enable image input{' '}
+                  <FieldHelp title="Image attachments on chat">
+                    When on, users see a paperclip control in this agent&apos;s chat surfaces (admin
+                    test panel and any embed widgets) and can attach images (JPEG, PNG, WebP, GIF)
+                    to their message. Images are forwarded to the LLM as multimodal parts and
+                    discarded after the turn — bytes are not persisted. Default: off.
+                    <br />
+                    <br />
+                    <strong>Requirements:</strong>
+                    <ul className="mt-1 list-disc pl-4">
+                      <li>
+                        The platform-wide switch at{' '}
+                        <strong>
+                          Admin → Orchestration → Settings → Image input globally enabled
+                        </strong>{' '}
+                        must be on.
+                      </li>
+                      <li>
+                        The agent&apos;s resolved chat model must carry the <code>vision</code>{' '}
+                        capability. Open the provider-models matrix to see which seeded rows qualify
+                        — models without the capability return <code>IMAGE_NOT_SUPPORTED</code> at
+                        send time.
+                      </li>
+                      <li>
+                        Per-attachment cap: ~5 MB. Per-turn combined cap: ~25 MB. Max 10
+                        attachments.
+                      </li>
+                    </ul>
+                  </FieldHelp>
+                </Label>
+                <p className="text-muted-foreground text-sm">
+                  {supportsVision ? (
+                    <>Lets users attach images to a turn. Requires a vision-capable model.</>
+                  ) : (
+                    <>
+                      The current model doesn&apos;t support image input. Switch to a{' '}
+                      <code>vision</code>-capable model in the Model tab to enable.
+                    </>
+                  )}
+                </p>
+              </div>
+              <Switch
+                id="enableImageInput"
+                checked={currentImageInput}
+                disabled={!supportsVision}
+                onCheckedChange={(v) => setValue('enableImageInput', v, { shouldDirty: true })}
+              />
             </div>
 
-            <div className="grid gap-2 rounded-md border p-3">
-              <Label htmlFor="citationGuardMode">
-                Citation guard{' '}
-                <FieldHelp title="Citation hygiene">
-                  Validates that responses grounded in retrieved knowledge include the{' '}
-                  <code>[N]</code> markers that align to the citation envelope. Flags under-citation
-                  (sources retrieved but none cited) and hallucinated markers (a marker referenced
-                  that no source produced). Leave on &ldquo;Use global default&rdquo; to inherit the
-                  platform-wide setting.
+            <div className="flex items-center justify-between rounded-lg border p-4">
+              <div className="space-y-0.5">
+                <Label htmlFor="enableDocumentInput">
+                  Enable document (PDF) input{' '}
+                  <FieldHelp title="PDF attachments on chat">
+                    When on, users can attach PDFs to a chat turn alongside images. PDFs are sent to
+                    the LLM as native document parts (no pre-extraction). Bytes are not persisted.
+                    Default: off.
+                    <br />
+                    <br />
+                    <strong>Requirements:</strong>
+                    <ul className="mt-1 list-disc pl-4">
+                      <li>
+                        The platform-wide switch at{' '}
+                        <strong>
+                          Admin → Orchestration → Settings → Document input globally enabled
+                        </strong>{' '}
+                        must be on.
+                      </li>
+                      <li>
+                        The agent&apos;s resolved chat model must carry the <code>documents</code>{' '}
+                        capability. Open the provider-models matrix to see which seeded rows qualify
+                        — models without the capability return <code>PDF_NOT_SUPPORTED</code>
+                        at send time.
+                      </li>
+                      <li>
+                        Per-attachment cap: ~5 MB. Counts against the same per-turn 25 MB combined
+                        cap as images.
+                      </li>
+                    </ul>
+                  </FieldHelp>
+                </Label>
+                <p className="text-muted-foreground text-sm">
+                  {supportsDocuments ? (
+                    <>
+                      Lets users attach PDFs to a turn. Requires a model with the{' '}
+                      <code>documents</code> capability.
+                    </>
+                  ) : (
+                    <>
+                      The current model doesn&apos;t support PDF input. Switch to a model with the{' '}
+                      <code>documents</code> capability in the Model tab to enable.
+                    </>
+                  )}
+                </p>
+              </div>
+              <Switch
+                id="enableDocumentInput"
+                checked={currentDocumentInput}
+                disabled={!supportsDocuments}
+                onCheckedChange={(v) => setValue('enableDocumentInput', v, { shouldDirty: true })}
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="maxHistoryTokens">
+                Max history tokens{' '}
+                <FieldHelp title="Context window override">
+                  Override the context window budget used when building the prompt. The system fits
+                  as much conversation history as possible after reserving space for instructions
+                  and the current message. Lower values reduce cost; higher values let the agent
+                  remember more. Leave blank to use the model&apos;s full context window.
+                  <br />
+                  <br />
+                  Token counts are computed with a provider-aware tokeniser — exact for OpenAI
+                  (gpt-4o, gpt-4, etc.) and a calibrated approximation for Anthropic, Gemini, and
+                  Llama-family models. Estimates lean conservative, so the agent may drop a slightly
+                  older message rather than risk overflowing the model&apos;s window.
                 </FieldHelp>
               </Label>
-              <Select
-                value={currentCitationGuard ?? '__global__'}
-                onValueChange={(v) =>
-                  setValue(
-                    'citationGuardMode',
-                    v === '__global__' ? null : (v as 'log_only' | 'warn_and_continue' | 'block'),
-                    {
-                      shouldValidate: true,
-                    }
-                  )
-                }
-              >
-                <SelectTrigger id="citationGuardMode">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__global__">Use global default</SelectItem>
-                  <SelectItem value="log_only">Log only</SelectItem>
-                  <SelectItem value="warn_and_continue">Warn and continue</SelectItem>
-                  <SelectItem value="block">Block</SelectItem>
-                </SelectContent>
-              </Select>
+              <Input
+                id="maxHistoryTokens"
+                type="number"
+                placeholder="Use model default"
+                {...register('maxHistoryTokens', {
+                  setValueAs: (v: string | number) =>
+                    v === '' || v === null || v === undefined ? null : Number(v),
+                })}
+              />
+              {errors.maxHistoryTokens && (
+                <p className="text-destructive text-xs">{errors.maxHistoryTokens.message}</p>
+              )}
             </div>
-          </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="maxHistoryMessages">
+                Memory length (messages){' '}
+                <FieldHelp title="Behavioural memory length">
+                  How many prior messages this agent remembers verbatim per turn. Older messages get
+                  rolled into a rolling summary that&apos;s persisted on the conversation row, so
+                  older context survives even when dropped from the live history — just in
+                  compressed form. Leave blank to use the platform default (50).
+                  <br />
+                  <br />
+                  Lower this for stateless or single-turn agents (e.g. classifiers, summarisers);
+                  use
+                  <code className="font-mono"> 0</code> for &ldquo;no verbatim history at
+                  all&rdquo;. Raise it for support concierges that benefit from a long memory.
+                  Distinct from
+                  <em> Max history tokens</em> above: that knob protects the model&apos;s context
+                  window; this one controls cost and behaviour even when the window has plenty of
+                  room.
+                </FieldHelp>
+              </Label>
+              <Input
+                id="maxHistoryMessages"
+                type="number"
+                min={0}
+                max={500}
+                placeholder="Use platform default (50)"
+                {...register('maxHistoryMessages', {
+                  setValueAs: (v: string | number) =>
+                    v === '' || v === null || v === undefined ? null : Number(v),
+                })}
+              />
+              {errors.maxHistoryMessages && (
+                <p className="text-destructive text-xs">{errors.maxHistoryMessages.message}</p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-2 rounded-md border p-3">
+                <Label htmlFor="inputGuardMode">
+                  Input guard{' '}
+                  <FieldHelp title="Prompt injection protection">
+                    Controls how the agent handles suspected prompt injection in user messages.
+                    &ldquo;Log only&rdquo; silently logs, &ldquo;Warn&rdquo; shows a warning in the
+                    chat, &ldquo;Block&rdquo; rejects the message. Leave on &ldquo;Use global
+                    default&rdquo; to inherit the platform-wide setting.
+                  </FieldHelp>
+                </Label>
+                <Select
+                  value={currentInputGuard ?? '__global__'}
+                  onValueChange={(v) =>
+                    setValue(
+                      'inputGuardMode',
+                      v === '__global__' ? null : (v as 'log_only' | 'warn_and_continue' | 'block'),
+                      {
+                        shouldValidate: true,
+                      }
+                    )
+                  }
+                >
+                  <SelectTrigger id="inputGuardMode">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__global__">Use global default</SelectItem>
+                    <SelectItem value="log_only">Log only</SelectItem>
+                    <SelectItem value="warn_and_continue">Warn and continue</SelectItem>
+                    <SelectItem value="block">Block</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid gap-2 rounded-md border p-3">
+                <Label htmlFor="outputGuardMode">
+                  Output guard{' '}
+                  <FieldHelp title="Response content filtering">
+                    Controls how the agent handles flagged content in its own responses (off-topic,
+                    PII, brand-voice violations). Same modes as the input guard. Leave on &ldquo;Use
+                    global default&rdquo; to inherit the platform-wide setting.
+                  </FieldHelp>
+                </Label>
+                <Select
+                  value={currentOutputGuard ?? '__global__'}
+                  onValueChange={(v) =>
+                    setValue(
+                      'outputGuardMode',
+                      v === '__global__' ? null : (v as 'log_only' | 'warn_and_continue' | 'block'),
+                      {
+                        shouldValidate: true,
+                      }
+                    )
+                  }
+                >
+                  <SelectTrigger id="outputGuardMode">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__global__">Use global default</SelectItem>
+                    <SelectItem value="log_only">Log only</SelectItem>
+                    <SelectItem value="warn_and_continue">Warn and continue</SelectItem>
+                    <SelectItem value="block">Block</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid gap-2 rounded-md border p-3">
+                <Label htmlFor="citationGuardMode">
+                  Citation guard{' '}
+                  <FieldHelp title="Citation hygiene">
+                    Validates that responses grounded in retrieved knowledge include the{' '}
+                    <code>[N]</code> markers that align to the citation envelope. Flags
+                    under-citation (sources retrieved but none cited) and hallucinated markers (a
+                    marker referenced that no source produced). Leave on &ldquo;Use global
+                    default&rdquo; to inherit the platform-wide setting.
+                  </FieldHelp>
+                </Label>
+                <Select
+                  value={currentCitationGuard ?? '__global__'}
+                  onValueChange={(v) =>
+                    setValue(
+                      'citationGuardMode',
+                      v === '__global__' ? null : (v as 'log_only' | 'warn_and_continue' | 'block'),
+                      {
+                        shouldValidate: true,
+                      }
+                    )
+                  }
+                >
+                  <SelectTrigger id="citationGuardMode">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__global__">Use global default</SelectItem>
+                    <SelectItem value="log_only">Log only</SelectItem>
+                    <SelectItem value="warn_and_continue">Warn and continue</SelectItem>
+                    <SelectItem value="block">Block</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </PlatformLockedGroup>
 
           <AgentTestCard providerId={currentProviderId} model={currentModel || null} />
         </TabsContent>
@@ -1661,332 +1752,359 @@ export function AgentForm({
               preview do not reflect what the live model receives, because the
               prompt is assembled in application code per call (the capability
               pattern). Behaviour-neutral: the runtime never reads this flag. */}
-          <div className="grid gap-2">
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="runtimePromptManaged"
-                checked={currentRuntimePromptManaged}
-                onCheckedChange={(v) => {
-                  const next = v === true;
-                  setValue('runtimePromptManaged', next, { shouldDirty: true });
-                  // Clear the note when turning the flag off so a stale note
-                  // isn't persisted (and silently resurrected) against an agent
-                  // that no longer claims a runtime-built prompt.
-                  if (!next) setValue('runtimePromptNote', null, { shouldDirty: true });
-                }}
-              />
-              <Label htmlFor="runtimePromptManaged" className="font-normal">
-                Prompt is built at runtime (stored instructions not sent to the model){' '}
-                <FieldHelp title="For agents dispatched by code, not by their stored prompt">
-                  Tick this when the agent is dispatched for its provider/model binding only and its
-                  system prompt is assembled in application code per call — the capability pattern,
-                  where a capability <code>extends BaseCapability</code> and builds its prompt from
-                  live runtime data. When set, the persona, system instructions, guardrails, and
-                  brand voice below are <strong>not</strong> sent to the model, and the effective
-                  prompt preview is re-labelled to say so. This is an advisory marker only — it does
-                  not change what the runtime does.
+          <PlatformLockedGroup
+            className="space-y-6"
+            locked={groupLocked(
+              'runtimePromptManaged',
+              'runtimePromptNote',
+              'persona',
+              'personaMode',
+              'systemInstructions',
+              'guardrails',
+              'guardrailsMode',
+              'brandVoiceInstructions',
+              'voiceMode',
+              'knowledgeAccessMode',
+              'grantedTagIds',
+              'grantedDocumentIds',
+              'knowledgeRetrievalMode',
+              'knowledgeTriggerKeywords',
+              'topicBoundaries'
+            )}
+          >
+            <div className="grid gap-2">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="runtimePromptManaged"
+                  checked={currentRuntimePromptManaged}
+                  onCheckedChange={(v) => {
+                    const next = v === true;
+                    setValue('runtimePromptManaged', next, { shouldDirty: true });
+                    // Clear the note when turning the flag off so a stale note
+                    // isn't persisted (and silently resurrected) against an agent
+                    // that no longer claims a runtime-built prompt.
+                    if (!next) setValue('runtimePromptNote', null, { shouldDirty: true });
+                  }}
+                />
+                <Label htmlFor="runtimePromptManaged" className="font-normal">
+                  Prompt is built at runtime (stored instructions not sent to the model){' '}
+                  <FieldHelp title="For agents dispatched by code, not by their stored prompt">
+                    Tick this when the agent is dispatched for its provider/model binding only and
+                    its system prompt is assembled in application code per call — the capability
+                    pattern, where a capability <code>extends BaseCapability</code> and builds its
+                    prompt from live runtime data. When set, the persona, system instructions,
+                    guardrails, and brand voice below are <strong>not</strong> sent to the model,
+                    and the effective prompt preview is re-labelled to say so. This is an advisory
+                    marker only — it does not change what the runtime does.
+                  </FieldHelp>
+                </Label>
+              </div>
+              {currentRuntimePromptManaged && (
+                <>
+                  <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+                    <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>
+                      This agent&apos;s prompt is built in application code. The persona, system
+                      instructions, guardrails, and brand voice on this tab are{' '}
+                      <strong>not sent to the model</strong> — editing them changes nothing at
+                      runtime. The &ldquo;Effective prompt preview&rdquo; below shows the stored
+                      fields, not what the LLM actually receives.
+                    </span>
+                  </div>
+                  <Textarea
+                    id="runtimePromptNote"
+                    rows={2}
+                    placeholder="Optional: where is the real prompt built? e.g. lib/questionnaire/extractor-capability.ts"
+                    {...register('runtimePromptNote', {
+                      setValueAs: (v: string) => (v === '' ? null : v),
+                    })}
+                  />
+                  {errors.runtimePromptNote && (
+                    <p className="text-destructive text-xs">{errors.runtimePromptNote.message}</p>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Persona — inheritable */}
+            <div className="grid gap-2">
+              <Label htmlFor="persona">
+                Persona{' '}
+                <FieldHelp title="Who the agent is">
+                  Identity, role, perspective, backstory. Goes into the LLM&apos;s system message
+                  under a <code>[Persona]</code> header before the instructions below. Inheritable
+                  from the selected profile — leave blank to inherit, or populate to override (or
+                  append, see the checkbox).
                 </FieldHelp>
               </Label>
-            </div>
-            {currentRuntimePromptManaged && (
-              <>
-                <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span>
-                    This agent&apos;s prompt is built in application code. The persona, system
-                    instructions, guardrails, and brand voice on this tab are{' '}
-                    <strong>not sent to the model</strong> — editing them changes nothing at
-                    runtime. The &ldquo;Effective prompt preview&rdquo; below shows the stored
-                    fields, not what the LLM actually receives.
-                  </span>
+              {selectedProfile?.persona && !currentPersona && (
+                <p className="text-muted-foreground text-xs">
+                  Inheriting from profile &ldquo;{selectedProfile.name}&rdquo;.
+                </p>
+              )}
+              <Textarea
+                id="persona"
+                rows={5}
+                placeholder={
+                  selectedProfile?.persona
+                    ? `Profile says: ${selectedProfile.persona.slice(0, 80)}${selectedProfile.persona.length > 80 ? '…' : ''}`
+                    : 'You are Sky, a calm senior support specialist...'
+                }
+                {...register('persona', { setValueAs: (v: string) => (v === '' ? null : v) })}
+              />
+              {selectedProfile && currentPersona && (
+                <div className="text-muted-foreground flex items-center gap-2 text-xs">
+                  <Checkbox
+                    id="personaAppend"
+                    checked={currentPersonaMode === 'append'}
+                    onCheckedChange={(v) =>
+                      setValue('personaMode', v ? 'append' : 'override', { shouldDirty: true })
+                    }
+                  />
+                  <Label
+                    htmlFor="personaAppend"
+                    className="text-muted-foreground text-xs font-normal"
+                  >
+                    Append to profile (otherwise this overrides the profile&apos;s persona)
+                  </Label>
                 </div>
-                <Textarea
-                  id="runtimePromptNote"
-                  rows={2}
-                  placeholder="Optional: where is the real prompt built? e.g. lib/questionnaire/extractor-capability.ts"
-                  {...register('runtimePromptNote', {
-                    setValueAs: (v: string) => (v === '' ? null : v),
-                  })}
-                />
-                {errors.runtimePromptNote && (
-                  <p className="text-destructive text-xs">{errors.runtimePromptNote.message}</p>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Persona — inheritable */}
-          <div className="grid gap-2">
-            <Label htmlFor="persona">
-              Persona{' '}
-              <FieldHelp title="Who the agent is">
-                Identity, role, perspective, backstory. Goes into the LLM&apos;s system message
-                under a <code>[Persona]</code> header before the instructions below. Inheritable
-                from the selected profile — leave blank to inherit, or populate to override (or
-                append, see the checkbox).
-              </FieldHelp>
-            </Label>
-            {selectedProfile?.persona && !currentPersona && (
-              <p className="text-muted-foreground text-xs">
-                Inheriting from profile &ldquo;{selectedProfile.name}&rdquo;.
-              </p>
-            )}
-            <Textarea
-              id="persona"
-              rows={5}
-              placeholder={
-                selectedProfile?.persona
-                  ? `Profile says: ${selectedProfile.persona.slice(0, 80)}${selectedProfile.persona.length > 80 ? '…' : ''}`
-                  : 'You are Sky, a calm senior support specialist...'
-              }
-              {...register('persona', { setValueAs: (v: string) => (v === '' ? null : v) })}
-            />
-            {selectedProfile && currentPersona && (
-              <div className="text-muted-foreground flex items-center gap-2 text-xs">
-                <Checkbox
-                  id="personaAppend"
-                  checked={currentPersonaMode === 'append'}
-                  onCheckedChange={(v) =>
-                    setValue('personaMode', v ? 'append' : 'override', { shouldDirty: true })
-                  }
-                />
-                <Label
-                  htmlFor="personaAppend"
-                  className="text-muted-foreground text-xs font-normal"
-                >
-                  Append to profile (otherwise this overrides the profile&apos;s persona)
-                </Label>
-              </div>
-            )}
-            {errors.persona && <p className="text-destructive text-xs">{errors.persona.message}</p>}
-          </div>
-
-          {/* System instructions — never inherited */}
-          <div className="grid gap-2">
-            <Label htmlFor="systemInstructions">
-              System instructions{' '}
-              <FieldHelp title="What the agent does">
-                The task description — what this agent is for, what it should and shouldn&apos;t do,
-                formatting rules. Always agent-specific, never inherited from a profile. Every save
-                snapshots the previous value to the version history below for compare and rollback.
-              </FieldHelp>
-            </Label>
-            <Textarea
-              id="systemInstructions"
-              rows={16}
-              {...register('systemInstructions')}
-              className="font-mono text-xs"
-            />
-            <div className="text-muted-foreground flex justify-between text-xs">
-              <span>
-                {errors.systemInstructions ? (
-                  <span className="text-destructive">{errors.systemInstructions.message}</span>
-                ) : (
-                  'Changes are saved when you click Save changes.'
-                )}
-              </span>
-              <span>{currentInstructions.length.toLocaleString()} characters</span>
+              )}
+              {errors.persona && (
+                <p className="text-destructive text-xs">{errors.persona.message}</p>
+              )}
             </div>
-          </div>
 
-          {/* Guardrails — inheritable */}
-          <div className="grid gap-2">
-            <Label htmlFor="guardrails">
-              Guardrails{' '}
-              <FieldHelp title="What the agent must not do">
-                Refusals, escalation triggers, topic boundaries. Goes into the system message under
-                a <code>[Guardrails]</code> header after the instructions. Inheritable from the
-                selected profile. For hard enforcement use the workflow guard step — this is
-                in-prompt steering.
-              </FieldHelp>
-            </Label>
-            {selectedProfile?.guardrails && !currentGuardrails && (
-              <p className="text-muted-foreground text-xs">
-                Inheriting from profile &ldquo;{selectedProfile.name}&rdquo;.
-              </p>
-            )}
-            <Textarea
-              id="guardrails"
-              rows={4}
-              placeholder={
-                selectedProfile?.guardrails
-                  ? `Profile says: ${selectedProfile.guardrails.slice(0, 80)}${selectedProfile.guardrails.length > 80 ? '…' : ''}`
-                  : 'Never give medical or legal advice...'
-              }
-              {...register('guardrails', { setValueAs: (v: string) => (v === '' ? null : v) })}
-            />
-            {selectedProfile && currentGuardrails && (
-              <div className="text-muted-foreground flex items-center gap-2 text-xs">
-                <Checkbox
-                  id="guardrailsAppend"
-                  checked={currentGuardrailsMode === 'append'}
-                  onCheckedChange={(v) =>
-                    setValue('guardrailsMode', v ? 'append' : 'override', { shouldDirty: true })
-                  }
-                />
-                <Label
-                  htmlFor="guardrailsAppend"
-                  className="text-muted-foreground text-xs font-normal"
-                >
-                  Append to profile (otherwise this overrides the profile&apos;s guardrails)
-                </Label>
-              </div>
-            )}
-            {errors.guardrails && (
-              <p className="text-destructive text-xs">{errors.guardrails.message}</p>
-            )}
-          </div>
-
-          {/* Brand voice — inheritable */}
-          <div className="grid gap-2">
-            <Label htmlFor="brandVoiceInstructions">
-              Brand voice{' '}
-              <FieldHelp title="How the agent should sound">
-                Tone, register, style — short rules. Goes into the system message under a{' '}
-                <code>[Brand Voice]</code> header as the final section. Inheritable from the
-                selected profile.
-              </FieldHelp>
-            </Label>
-            {selectedProfile?.brandVoiceInstructions && !currentVoice && (
-              <p className="text-muted-foreground text-xs">
-                Inheriting from profile &ldquo;{selectedProfile.name}&rdquo;.
-              </p>
-            )}
-            <Textarea
-              id="brandVoiceInstructions"
-              rows={4}
-              placeholder={
-                selectedProfile?.brandVoiceInstructions
-                  ? `Profile says: ${selectedProfile.brandVoiceInstructions.slice(0, 80)}${selectedProfile.brandVoiceInstructions.length > 80 ? '…' : ''}`
-                  : 'e.g. Use a friendly, professional tone. Avoid jargon.'
-              }
-              {...register('brandVoiceInstructions', {
-                setValueAs: (v: string) => (v === '' ? null : v),
-              })}
-            />
-            {selectedProfile && currentVoice && (
-              <div className="text-muted-foreground flex items-center gap-2 text-xs">
-                <Checkbox
-                  id="voiceAppend"
-                  checked={currentVoiceMode === 'append'}
-                  onCheckedChange={(v) =>
-                    setValue('voiceMode', v ? 'append' : 'override', { shouldDirty: true })
-                  }
-                />
-                <Label htmlFor="voiceAppend" className="text-muted-foreground text-xs font-normal">
-                  Append to profile (otherwise this overrides the profile&apos;s brand voice)
-                </Label>
-              </div>
-            )}
-            {errors.brandVoiceInstructions && (
-              <p className="text-destructive text-xs">{errors.brandVoiceInstructions.message}</p>
-            )}
-          </div>
-
-          {/* Effective prompt preview — live merge of agent + profile */}
-          <EffectivePromptPreview
-            resolved={effectivePrompt}
-            profile={selectedProfile}
-            runtimePromptManaged={currentRuntimePromptManaged}
-          />
-
-          <KnowledgeAccessSection
-            mode={watch('knowledgeAccessMode')}
-            tagIds={watch('knowledgeTagIds')}
-            documentIds={watch('knowledgeDocumentIds')}
-            agentId={agent?.id}
-            onModeChange={(next) => setValue('knowledgeAccessMode', next, { shouldDirty: true })}
-            onTagsChange={(next) => setValue('knowledgeTagIds', next, { shouldDirty: true })}
-            onDocumentsChange={(next) =>
-              setValue('knowledgeDocumentIds', next, { shouldDirty: true })
-            }
-          />
-
-          <div className="grid gap-2">
-            <Label htmlFor="knowledgeRetrievalMode">
-              Knowledge retrieval{' '}
-              <FieldHelp title="When the agent searches its knowledge base">
-                Controls when a knowledge base search is forced.
-                <br />
-                <br />
-                <strong>Model decides</strong> — the agent searches only when it judges the question
-                needs it (default).
-                <br />
-                <br />
-                <strong>Force on first message</strong> — search on the first message of each
-                conversation, then let the agent decide.
-                <br />
-                <br />
-                <strong>Force on every message</strong> — search before answering every message.
-                <br />
-                <br />
-                <strong>Force on keywords</strong> — search whenever the message contains a trigger
-                word from the list below.
-                <br />
-                <br />
-                Forcing has no effect unless the Search Knowledge Base capability is enabled for
-                this agent on the Capabilities tab.
-              </FieldHelp>
-            </Label>
-            <Select
-              value={watch('knowledgeRetrievalMode')}
-              onValueChange={(v) =>
-                setValue('knowledgeRetrievalMode', v as AgentFormData['knowledgeRetrievalMode'], {
-                  shouldDirty: true,
-                })
-              }
-            >
-              <SelectTrigger id="knowledgeRetrievalMode">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="model">Model decides (default)</SelectItem>
-                <SelectItem value="first_turn">Force on first message</SelectItem>
-                <SelectItem value="every_turn">Force on every message</SelectItem>
-                <SelectItem value="keywords">Force on keywords</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {watch('knowledgeRetrievalMode') === 'keywords' && (
+            {/* System instructions — never inherited */}
             <div className="grid gap-2">
-              <Label htmlFor="knowledgeTriggerKeywords">
-                Trigger keywords{' '}
-                <FieldHelp title="Words that force a knowledge base search">
-                  Comma-separated words or phrases. When a user message contains any of them
-                  (matched whole-word, case-insensitive), the agent must search the knowledge base
-                  before replying. For example: &ldquo;refund, warranty, returns&rdquo;.
+              <Label htmlFor="systemInstructions">
+                System instructions{' '}
+                <FieldHelp title="What the agent does">
+                  The task description — what this agent is for, what it should and shouldn&apos;t
+                  do, formatting rules. Always agent-specific, never inherited from a profile. Every
+                  save snapshots the previous value to the version history below for compare and
+                  rollback.
+                </FieldHelp>
+              </Label>
+              <Textarea
+                id="systemInstructions"
+                rows={16}
+                {...register('systemInstructions')}
+                className="font-mono text-xs"
+              />
+              <div className="text-muted-foreground flex justify-between text-xs">
+                <span>
+                  {errors.systemInstructions ? (
+                    <span className="text-destructive">{errors.systemInstructions.message}</span>
+                  ) : (
+                    'Changes are saved when you click Save changes.'
+                  )}
+                </span>
+                <span>{currentInstructions.length.toLocaleString()} characters</span>
+              </div>
+            </div>
+
+            {/* Guardrails — inheritable */}
+            <div className="grid gap-2">
+              <Label htmlFor="guardrails">
+                Guardrails{' '}
+                <FieldHelp title="What the agent must not do">
+                  Refusals, escalation triggers, topic boundaries. Goes into the system message
+                  under a <code>[Guardrails]</code> header after the instructions. Inheritable from
+                  the selected profile. For hard enforcement use the workflow guard step — this is
+                  in-prompt steering.
+                </FieldHelp>
+              </Label>
+              {selectedProfile?.guardrails && !currentGuardrails && (
+                <p className="text-muted-foreground text-xs">
+                  Inheriting from profile &ldquo;{selectedProfile.name}&rdquo;.
+                </p>
+              )}
+              <Textarea
+                id="guardrails"
+                rows={4}
+                placeholder={
+                  selectedProfile?.guardrails
+                    ? `Profile says: ${selectedProfile.guardrails.slice(0, 80)}${selectedProfile.guardrails.length > 80 ? '…' : ''}`
+                    : 'Never give medical or legal advice...'
+                }
+                {...register('guardrails', { setValueAs: (v: string) => (v === '' ? null : v) })}
+              />
+              {selectedProfile && currentGuardrails && (
+                <div className="text-muted-foreground flex items-center gap-2 text-xs">
+                  <Checkbox
+                    id="guardrailsAppend"
+                    checked={currentGuardrailsMode === 'append'}
+                    onCheckedChange={(v) =>
+                      setValue('guardrailsMode', v ? 'append' : 'override', { shouldDirty: true })
+                    }
+                  />
+                  <Label
+                    htmlFor="guardrailsAppend"
+                    className="text-muted-foreground text-xs font-normal"
+                  >
+                    Append to profile (otherwise this overrides the profile&apos;s guardrails)
+                  </Label>
+                </div>
+              )}
+              {errors.guardrails && (
+                <p className="text-destructive text-xs">{errors.guardrails.message}</p>
+              )}
+            </div>
+
+            {/* Brand voice — inheritable */}
+            <div className="grid gap-2">
+              <Label htmlFor="brandVoiceInstructions">
+                Brand voice{' '}
+                <FieldHelp title="How the agent should sound">
+                  Tone, register, style — short rules. Goes into the system message under a{' '}
+                  <code>[Brand Voice]</code> header as the final section. Inheritable from the
+                  selected profile.
+                </FieldHelp>
+              </Label>
+              {selectedProfile?.brandVoiceInstructions && !currentVoice && (
+                <p className="text-muted-foreground text-xs">
+                  Inheriting from profile &ldquo;{selectedProfile.name}&rdquo;.
+                </p>
+              )}
+              <Textarea
+                id="brandVoiceInstructions"
+                rows={4}
+                placeholder={
+                  selectedProfile?.brandVoiceInstructions
+                    ? `Profile says: ${selectedProfile.brandVoiceInstructions.slice(0, 80)}${selectedProfile.brandVoiceInstructions.length > 80 ? '…' : ''}`
+                    : 'e.g. Use a friendly, professional tone. Avoid jargon.'
+                }
+                {...register('brandVoiceInstructions', {
+                  setValueAs: (v: string) => (v === '' ? null : v),
+                })}
+              />
+              {selectedProfile && currentVoice && (
+                <div className="text-muted-foreground flex items-center gap-2 text-xs">
+                  <Checkbox
+                    id="voiceAppend"
+                    checked={currentVoiceMode === 'append'}
+                    onCheckedChange={(v) =>
+                      setValue('voiceMode', v ? 'append' : 'override', { shouldDirty: true })
+                    }
+                  />
+                  <Label
+                    htmlFor="voiceAppend"
+                    className="text-muted-foreground text-xs font-normal"
+                  >
+                    Append to profile (otherwise this overrides the profile&apos;s brand voice)
+                  </Label>
+                </div>
+              )}
+              {errors.brandVoiceInstructions && (
+                <p className="text-destructive text-xs">{errors.brandVoiceInstructions.message}</p>
+              )}
+            </div>
+
+            {/* Effective prompt preview — live merge of agent + profile */}
+            <EffectivePromptPreview
+              resolved={effectivePrompt}
+              profile={selectedProfile}
+              runtimePromptManaged={currentRuntimePromptManaged}
+            />
+
+            <KnowledgeAccessSection
+              mode={watch('knowledgeAccessMode')}
+              tagIds={watch('knowledgeTagIds')}
+              documentIds={watch('knowledgeDocumentIds')}
+              agentId={agent?.id}
+              onModeChange={(next) => setValue('knowledgeAccessMode', next, { shouldDirty: true })}
+              onTagsChange={(next) => setValue('knowledgeTagIds', next, { shouldDirty: true })}
+              onDocumentsChange={(next) =>
+                setValue('knowledgeDocumentIds', next, { shouldDirty: true })
+              }
+            />
+
+            <div className="grid gap-2">
+              <Label htmlFor="knowledgeRetrievalMode">
+                Knowledge retrieval{' '}
+                <FieldHelp title="When the agent searches its knowledge base">
+                  Controls when a knowledge base search is forced.
+                  <br />
+                  <br />
+                  <strong>Model decides</strong> — the agent searches only when it judges the
+                  question needs it (default).
+                  <br />
+                  <br />
+                  <strong>Force on first message</strong> — search on the first message of each
+                  conversation, then let the agent decide.
+                  <br />
+                  <br />
+                  <strong>Force on every message</strong> — search before answering every message.
+                  <br />
+                  <br />
+                  <strong>Force on keywords</strong> — search whenever the message contains a
+                  trigger word from the list below.
+                  <br />
+                  <br />
+                  Forcing has no effect unless the Search Knowledge Base capability is enabled for
+                  this agent on the Capabilities tab.
+                </FieldHelp>
+              </Label>
+              <Select
+                value={watch('knowledgeRetrievalMode')}
+                onValueChange={(v) =>
+                  setValue('knowledgeRetrievalMode', v as AgentFormData['knowledgeRetrievalMode'], {
+                    shouldDirty: true,
+                  })
+                }
+              >
+                <SelectTrigger id="knowledgeRetrievalMode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="model">Model decides (default)</SelectItem>
+                  <SelectItem value="first_turn">Force on first message</SelectItem>
+                  <SelectItem value="every_turn">Force on every message</SelectItem>
+                  <SelectItem value="keywords">Force on keywords</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {watch('knowledgeRetrievalMode') === 'keywords' && (
+              <div className="grid gap-2">
+                <Label htmlFor="knowledgeTriggerKeywords">
+                  Trigger keywords{' '}
+                  <FieldHelp title="Words that force a knowledge base search">
+                    Comma-separated words or phrases. When a user message contains any of them
+                    (matched whole-word, case-insensitive), the agent must search the knowledge base
+                    before replying. For example: &ldquo;refund, warranty, returns&rdquo;.
+                  </FieldHelp>
+                </Label>
+                <Input
+                  id="knowledgeTriggerKeywords"
+                  placeholder="e.g. refund, warranty, returns"
+                  {...register('knowledgeTriggerKeywords')}
+                />
+                {errors.knowledgeTriggerKeywords && (
+                  <p className="text-destructive text-xs">
+                    {errors.knowledgeTriggerKeywords.message}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="grid gap-2">
+              <Label htmlFor="topicBoundaries">
+                Topic boundaries{' '}
+                <FieldHelp title="Forbidden topics for output guard">
+                  Comma-separated list of topics the agent should not discuss. The output guard
+                  checks responses against these boundaries and takes action based on the guard mode
+                  (log, warn, or block). For example: &ldquo;competitor pricing, legal advice,
+                  medical&rdquo;.
                 </FieldHelp>
               </Label>
               <Input
-                id="knowledgeTriggerKeywords"
-                placeholder="e.g. refund, warranty, returns"
-                {...register('knowledgeTriggerKeywords')}
+                id="topicBoundaries"
+                placeholder="e.g. competitor pricing, legal advice, medical"
+                {...register('topicBoundaries')}
               />
-              {errors.knowledgeTriggerKeywords && (
-                <p className="text-destructive text-xs">
-                  {errors.knowledgeTriggerKeywords.message}
-                </p>
-              )}
             </div>
-          )}
-
-          <div className="grid gap-2">
-            <Label htmlFor="topicBoundaries">
-              Topic boundaries{' '}
-              <FieldHelp title="Forbidden topics for output guard">
-                Comma-separated list of topics the agent should not discuss. The output guard checks
-                responses against these boundaries and takes action based on the guard mode (log,
-                warn, or block). For example: &ldquo;competitor pricing, legal advice,
-                medical&rdquo;.
-              </FieldHelp>
-            </Label>
-            <Input
-              id="topicBoundaries"
-              placeholder="e.g. competitor pricing, legal advice, medical"
-              {...register('topicBoundaries')}
-            />
-          </div>
+          </PlatformLockedGroup>
 
           {isEdit && agent && (
             <InstructionsHistoryPanel
@@ -2014,7 +2132,10 @@ export function AgentForm({
         {/* ================= TAB 4 — CAPABILITIES ================= */}
         <TabsContent value="capabilities" className="pt-4">
           {isEdit && agent ? (
-            <AgentCapabilitiesTab agentId={agent.id} />
+            <AgentCapabilitiesTab
+              agentId={agent.id}
+              bindingsLocked={platformAgent?.bindingsLocked ?? false}
+            />
           ) : (
             <div className="text-muted-foreground space-y-2 rounded-md border p-6 text-sm leading-relaxed">
               <p>

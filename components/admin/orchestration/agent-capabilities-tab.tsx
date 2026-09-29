@@ -75,9 +75,18 @@ const PINNED_CAPABILITY_SLUG = 'search_knowledge_base';
 
 export interface AgentCapabilitiesTabProps {
   agentId: string;
+  /**
+   * The agent is a platform agent whose bindings are the platform's (§116
+   * t-725): the API refuses attach, detach, the on/off switch and custom
+   * config, so they are shown read-only. The rate limit stays the org's.
+   */
+  bindingsLocked?: boolean;
 }
 
-export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
+export function AgentCapabilitiesTab({
+  agentId,
+  bindingsLocked = false,
+}: AgentCapabilitiesTabProps) {
   const [attached, setAttached] = useState<AttachedLink[] | null>(null);
   const [catalogue, setCatalogue] = useState<AiCapability[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -258,6 +267,17 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
         </FieldHelp>
       </div>
 
+      {bindingsLocked && (
+        <p
+          data-testid="platform-bindings-note"
+          className="text-muted-foreground rounded-md border px-3 py-2 text-sm"
+        >
+          This platform agent&apos;s capabilities are set by the platform and updated with each
+          release, so they cannot be attached, detached or switched here. You can still set a
+          per-agent rate limit under <strong>Configure</strong>.
+        </p>
+      )}
+
       {error && (
         <div className="border-destructive/50 bg-destructive/5 text-destructive rounded-md border px-3 py-2 text-sm">
           {error}
@@ -286,6 +306,7 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
                       checked={link.isEnabled}
                       onCheckedChange={(v) => void handleToggleEnabled(link, v)}
                       aria-label={`Toggle ${link.capability.name}`}
+                      disabled={bindingsLocked}
                     />
                     <Button
                       type="button"
@@ -296,16 +317,18 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
                     >
                       Configure
                     </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="text-red-600"
-                      onClick={() => void handleDetach(link.capabilityId)}
-                      aria-label={`Detach ${link.capability.name}`}
-                    >
-                      Detach
-                    </Button>
+                    {!bindingsLocked && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-red-600"
+                        onClick={() => void handleDetach(link.capabilityId)}
+                        aria-label={`Detach ${link.capability.name}`}
+                      >
+                        Detach
+                      </Button>
+                    )}
                   </div>
                 </li>
               ))}
@@ -370,14 +393,16 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
                       </p>
                     )}
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void handleAttach(cap.id)}
-                  >
-                    Attach
-                  </Button>
+                  {!bindingsLocked && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleAttach(cap.id)}
+                    >
+                      Attach
+                    </Button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -404,6 +429,7 @@ export function AgentCapabilitiesTab({ agentId }: AgentCapabilitiesTabProps) {
           void fetchAll();
         }}
         agentId={agentId}
+        configLocked={bindingsLocked}
       />
     </div>
   );
@@ -414,9 +440,17 @@ interface ConfigureDialogProps {
   agentId: string;
   onOpenChange: (open: boolean) => void;
   onSaved: (opts?: { keepDialogOpen?: boolean }) => void;
+  /** Custom config is the platform's on this agent; only the rate limit is sent. */
+  configLocked?: boolean;
 }
 
-function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDialogProps) {
+function ConfigureDialog({
+  link,
+  agentId,
+  onOpenChange,
+  onSaved,
+  configLocked = false,
+}: ConfigureDialogProps) {
   const [configText, setConfigText] = useState('');
   const [rateLimit, setRateLimit] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
@@ -441,7 +475,7 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
     setError(null);
     try {
       let customConfig: unknown = undefined;
-      if (configText.trim()) {
+      if (!configLocked && configText.trim()) {
         try {
           customConfig = JSON.parse(configText);
         } catch {
@@ -546,6 +580,7 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
               }}
               className="font-mono text-xs"
               placeholder="{}"
+              disabled={configLocked}
             />
           </div>
           <div className="grid gap-2">
