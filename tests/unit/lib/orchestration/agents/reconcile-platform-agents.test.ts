@@ -589,6 +589,35 @@ describe('reconcilePlatformAgents', () => {
     expect(mockLogger.warn).toHaveBeenCalled();
   });
 
+  it('treats a create that lost a race as done, and leaves the marker for the next run', async () => {
+    // Another run created `advisor` between this run's read and its write.
+    const realCreate = fake.db.aiAgent.create;
+    fake.db.aiAgent.create = async (args: { data: Record<string, unknown> }) => {
+      if (args.data.slug === 'advisor') {
+        throw new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+        });
+      }
+      return realCreate(args);
+    };
+    try {
+      const result = await reconcilePlatformAgents('install');
+
+      expect(result.created).toEqual(['judge']);
+      expect(result.unchanged).toEqual(['advisor']);
+      expect(marker()).toBeUndefined();
+    } finally {
+      fake.db.aiAgent.create = realCreate;
+    }
+  });
+
+  it('still fails on any other create error', async () => {
+    fake.state.failOn = 'aiAgent.create';
+
+    await expect(reconcilePlatformAgents('install')).rejects.toThrow(/injected failure/);
+  });
+
   it('does not store the marker when a write fails, so the job runs it again', async () => {
     fake.state.failOn = 'aiAgentVersion.create';
 

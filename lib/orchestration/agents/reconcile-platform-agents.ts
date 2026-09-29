@@ -123,6 +123,10 @@ function writeData(values: Record<string, unknown>): Record<string, unknown> {
   );
 }
 
+function isUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+}
+
 function sameSet(a: readonly string[], b: readonly string[]): boolean {
   const left = new Set(a);
   return left.size === new Set(b).size && b.every((x) => left.has(x));
@@ -207,6 +211,8 @@ export async function reconcilePlatformAgents(
 
     const placed: string[] = [];
     let bindingsChanged = false;
+    /** False when a concurrent run got there first: leave the marker, so the next run records it. */
+    let complete = true;
 
     for (const definition of definitions) {
       const existing = bySlug.get(definition.slug);
@@ -236,17 +242,36 @@ export async function reconcilePlatformAgents(
         continue;
       }
 
-      placed.push(definition.slug);
       if (!existing) {
-        await createInstance(db, definition, {
-          ownerId: owner.id,
-          capabilityIds: desiredCapabilityIds,
-          tagIds: desiredTagIds,
-        });
+        try {
+          await createInstance(db, definition, {
+            ownerId: owner.id,
+            capabilityIds: desiredCapabilityIds,
+            tagIds: desiredTagIds,
+          });
+        } catch (err) {
+          // Two reconciles of one org at once — the seed beside the job, or
+          // two instances each serving a tick — both find the agent missing,
+          // and the second create meets the per-org slug key. The row exists
+          // either way; the next run reconciles whatever it holds, or refuses
+          // it if an org's own agent took the slug in between — and the
+          // marker is not written, so that next run happens.
+          if (!isUniqueViolation(err)) throw err;
+          complete = false;
+          log.info('Platform agent created concurrently — left to the next run', {
+            orgId,
+            slug: definition.slug,
+          });
+          result.unchanged.push(definition.slug);
+          continue;
+        }
+        placed.push(definition.slug);
         bindingsChanged ||= desiredCapabilityIds.length > 0;
         result.created.push(definition.slug);
         continue;
       }
+
+      placed.push(definition.slug);
 
       const outcome = await updateInstance(db, definition, existing, {
         ownerId: owner.id,
@@ -284,7 +309,9 @@ export async function reconcilePlatformAgents(
     if (bindingsChanged) capabilityDispatcher.clearCache();
 
     const marker: PlatformAgentsMarker = { hash, slugs: placed.sort() };
-    if (!previous || previous.hash !== marker.hash || !sameSet(previous.slugs, marker.slugs)) {
+    const markerChanged =
+      !previous || previous.hash !== marker.hash || !sameSet(previous.slugs, marker.slugs);
+    if (complete && markerChanged) {
       await writePlatformAgentsMarker(orgId, marker, db);
     }
 
