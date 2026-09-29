@@ -128,6 +128,11 @@ describe('AgentForm — platform agent', () => {
 
     await user.click(screen.getByRole('tab', { name: /instructions/i }));
 
+    // Every tab has locked controls, so the banner sits above the tabs.
+    expect(screen.getByTestId('platform-agent-banner')).toBeInTheDocument();
+    expect(screen.getByText('Set by the platform.')).toBeInTheDocument();
+    expect(screen.queryByText('Changes are saved when you click Save changes.')).toBeNull();
+
     expect(screen.getByRole('textbox', { name: /system instructions/i })).toBeDisabled();
     expect(screen.getByRole('textbox', { name: /^persona/i })).toBeDisabled();
     expect(screen.getByRole('textbox', { name: /topic boundaries/i })).toBeDisabled();

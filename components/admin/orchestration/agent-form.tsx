@@ -788,6 +788,28 @@ export function AgentForm({
         </div>
       )}
 
+      {/* Above the tabs: every tab has locked controls to explain. */}
+      {isEdit && agent?.isSystem && (
+        <div
+          data-testid="platform-agent-banner"
+          className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400"
+        >
+          <Shield className="h-4 w-4 shrink-0" />
+          <span>
+            This is a platform agent. The platform sets what it is — its instructions, settings,
+            knowledge
+            {platformAgent?.bindingsLocked === false ? '' : ' and capabilities'} — and updates it
+            with each release, so those are read-only here and it cannot be deleted. Here, this org
+            sets its{' '}
+            {describeTunableFields(
+              platformAgent?.tunableFields ?? [],
+              platformAgent?.bindingsLocked === false
+            )}
+            .
+          </span>
+        </div>
+      )}
+
       <Tabs defaultValue="general" className="w-full">
         <TabsList className="w-full justify-start">
           <TabsTrigger value="general">General</TabsTrigger>
@@ -838,26 +860,6 @@ export function AgentForm({
 
         {/* ================= TAB 1 — GENERAL ================= */}
         <TabsContent value="general" className="space-y-4 pt-4">
-          {isEdit && agent?.isSystem && (
-            <div
-              data-testid="platform-agent-banner"
-              className="flex items-center gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400"
-            >
-              <Shield className="h-4 w-4 shrink-0" />
-              <span>
-                This is a platform agent. The platform sets what it is — its instructions, settings,
-                knowledge
-                {platformAgent?.bindingsLocked === false ? '' : ' and capabilities'} — and updates
-                it with each release, so those are read-only here and it cannot be deleted. Here,
-                this org sets its{' '}
-                {describeTunableFields(
-                  platformAgent?.tunableFields ?? [],
-                  platformAgent?.bindingsLocked === false
-                )}
-                .
-              </span>
-            </div>
-          )}
           <div className="grid gap-2">
             <Label htmlFor="name">
               Name{' '}
@@ -1867,6 +1869,8 @@ export function AgentForm({
               <span>
                 {errors.systemInstructions ? (
                   <span className="text-destructive">{errors.systemInstructions.message}</span>
+                ) : locked('systemInstructions') ? (
+                  'Set by the platform.'
                 ) : (
                   'Changes are saved when you click Save changes.'
                 )}
