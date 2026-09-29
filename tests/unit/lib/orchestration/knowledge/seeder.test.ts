@@ -1,15 +1,19 @@
 /**
  * Knowledge Base Seeder Unit Tests
  *
- * Tests for the two-phase seeder:
+ * materialisePatternsKnowledge (Phase 1, §116 t-726):
+ * - Writes the calling org's copy into that org's own default knowledge base
+ * - Idempotent by slug; an earlier version is left in place; a failed copy is replaced
+ * - Document, chunks and tag link in one transaction, through the caller's client
+ * - Uploader: service account, then any user, else a descriptive error
+ * - Chunk INSERT shape (no embedding column; org read from the document)
  *
- * seedChunks (Phase 1):
- * - Idempotency: skips seeding if document already exists
- * - Cleans up failed documents before re-seeding
- * - Happy path: reads file, resolves uploader, creates doc, inserts chunks (no embeddings)
- * - ADMIN user fallback to any user
- * - No users: throws with descriptive message
- * - File read / JSON parse error propagation
+ * loadPatternsChunks / PATTERNS_DOCUMENT_SLUG:
+ * - The bundled chunk file parses, and the constant is the slug it produces
+ *
+ * seedChunks:
+ * - Reads and validates the file, materialises in the caller's org, records lastSeededAt
+ * - File read / JSON parse / shape errors propagate
  *
  * embedChunks (Phase 2):
  * - Skips when all chunks already embedded
@@ -22,6 +26,9 @@ import { createHash } from 'crypto';
 
 // --- Mocks ---
 
+const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+
 vi.mock('fs/promises', () => {
   const mockReadFile = vi.fn();
   return {
@@ -30,29 +37,22 @@ vi.mock('fs/promises', () => {
   };
 });
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+/** A client's delegates: the default client and a transaction client each get their own. */
+function makeClient() {
+  return {
     aiKnowledgeDocument: {
-      findFirst: vi.fn(),
+      findMany: vi.fn(),
       create: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
+      deleteMany: vi.fn(),
     },
     aiKnowledgeChunk: {
       count: vi.fn(),
-      deleteMany: vi.fn(),
     },
     knowledgeTag: {
       upsert: vi.fn(),
     },
     aiKnowledgeDocumentTag: {
-      upsert: vi.fn(),
-    },
-    aiAgent: {
-      findMany: vi.fn(),
-    },
-    aiAgentKnowledgeTag: {
-      upsert: vi.fn(),
+      create: vi.fn(),
     },
     user: {
       findFirst: vi.fn(),
@@ -62,7 +62,14 @@ vi.mock('@/lib/db/client', () => ({
     },
     $executeRawUnsafe: vi.fn(),
     $queryRawUnsafe: vi.fn(),
-  },
+    $transaction: vi.fn(),
+  };
+}
+
+vi.mock('@/lib/db/client', () => ({ prisma: makeClient() }));
+
+vi.mock('@/lib/orchestration/knowledge/document-manager', () => ({
+  getOrCreateDefaultKnowledgeBase: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/knowledge/embedder', () => ({
@@ -82,11 +89,32 @@ vi.mock('@/lib/logging', () => ({
 
 import { readFile } from 'fs/promises';
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
+import { getOrCreateDefaultKnowledgeBase } from '@/lib/orchestration/knowledge/document-manager';
+import { buildDocumentSlugBase } from '@/lib/orchestration/knowledge/document-slug';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
 import type { EmbedBatchResult } from '@/lib/orchestration/knowledge/embedder';
-import { seedChunks, embedChunks } from '@/lib/orchestration/knowledge/seeder';
+import {
+  PATTERNS_DOCUMENT_NAME,
+  PATTERNS_DOCUMENT_SLUG,
+  PATTERNS_TAG_SLUG,
+} from '@/lib/orchestration/knowledge/patterns-knowledge';
+import {
+  embedChunks,
+  loadPatternsChunks,
+  materialisePatternsKnowledge,
+  parseSeedChunks,
+  seedChunks,
+  type SeedChunk,
+} from '@/lib/orchestration/knowledge/seeder';
+import { runAsOrg } from '@/lib/tenancy/context';
+
+type Client = ReturnType<typeof makeClient>;
+const db = prisma as unknown as Client;
 
 // --- Helpers ---
+
+const ORG_B = 'cmorg00000000000000000orgb';
 
 function mockEmbedResult(embeddings: number[][]): EmbedBatchResult {
   return {
@@ -100,7 +128,7 @@ function mockEmbedResult(embeddings: number[][]): EmbedBatchResult {
   };
 }
 
-function makeSeedChunk(overrides: Record<string, unknown> = {}) {
+function makeSeedChunk(overrides: Partial<SeedChunk> = {}): SeedChunk {
   return {
     id: 'chunk-001',
     chunk_id: 1,
@@ -123,333 +151,335 @@ function makeSeedChunk(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function makeDocument(overrides = {}) {
-  return {
-    id: 'seed-doc-id',
-    name: 'Agentic Design Patterns',
-    fileName: 'agentic-design-patterns.md',
-    fileHash: 'hash-abc',
-    status: 'ready',
-    chunkCount: 0,
-    uploadedBy: 'user-001',
-    errorMessage: null,
-    createdAt: new Date('2024-01-01'),
-    updatedAt: new Date('2024-01-01'),
-    ...overrides,
-  };
+function slugFor(chunks: SeedChunk[]): string {
+  const hash = createHash('sha256')
+    .update(chunks.map((c) => c.content).join(''))
+    .digest('hex');
+  return buildDocumentSlugBase(PATTERNS_DOCUMENT_NAME, hash);
 }
 
-const CHUNKS_PATH = '/data/chunks.json';
+/**
+ * Arm `client` for a first copy: nothing held, a service account, a tag.
+ * The transaction runs its callback against a SEPARATE client, so a test can
+ * tell a write made inside it from one made outside.
+ */
+function armFirstCopy(client: Client): Client {
+  const tx = makeClient();
+  client.aiKnowledgeDocument.findMany.mockResolvedValue([]);
+  client.user.findFirst.mockResolvedValue({ id: 'service-account' });
+  client.knowledgeTag.upsert.mockResolvedValue({ id: 'tag-patterns', slug: PATTERNS_TAG_SLUG });
+  client.$transaction.mockImplementation(async (fn: (t: Client) => Promise<unknown>) => fn(tx));
+  tx.aiKnowledgeDocument.create.mockResolvedValue({ id: 'doc-b' });
+  tx.$executeRawUnsafe.mockResolvedValue(1);
+  tx.aiKnowledgeDocumentTag.create.mockResolvedValue({});
+  vi.mocked(getOrCreateDefaultKnowledgeBase).mockResolvedValue('kb-org-b');
+  return tx;
+}
 
-// --- Phase 1: seedChunks ---
+const inOrgB = <T>(fn: () => Promise<T>) => runAsOrg(ORG_B, fn);
 
-describe('seedChunks', () => {
+// --- Phase 1: materialisePatternsKnowledge ---
+
+describe('materialisePatternsKnowledge', () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    // New seeder upserts tags and document↔tag links; default no-op mocks keep tests
-    // focused on the legacy assertions (chunk insert SQL, uploader resolution, etc.).
-    (
-      vi.mocked(prisma.knowledgeTag.upsert) as unknown as {
-        mockImplementation: (fn: (args: unknown) => unknown) => void;
-      }
-    ).mockImplementation((args: unknown) => {
-      const a = args as { where: { slug: string }; create: { slug: string; name: string } };
-      return Promise.resolve({
-        id: `tag-${a.where.slug}`,
-        slug: a.where.slug,
-        name: a.create?.name ?? a.where.slug,
-      });
-    });
-    vi.mocked(prisma.aiKnowledgeDocumentTag.upsert).mockResolvedValue({} as never);
-    vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue({} as never);
-    // Most tests don't care about the bidirectional system-agent grant —
-    // default to "no system agents seeded yet" so the loop is a no-op.
-    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([] as never);
-    vi.mocked(prisma.aiAgentKnowledgeTag.upsert).mockResolvedValue({} as never);
+    mockEnv.TENANCY_MODE = 'multi';
   });
 
-  it('grants the patterns tag to existing system agents (pattern-advisor, quiz-master)', async () => {
-    // Bidirectional safety net: if the prisma seeds have already created
-    // the system agents, loading the patterns should grant them the tag
-    // so the relationship is explicit in the admin UI. Idempotent — the
-    // upsert is keyed on (agentId, tagId).
-    const chunks = [makeSeedChunk({ id: 'c1', content: 'Content A' })];
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
-    vi.mocked(readFile).mockResolvedValue(JSON.stringify(chunks));
-    vi.mocked(prisma.user.findFirst)
-      .mockResolvedValueOnce({ id: 'admin-001' } as never)
-      .mockResolvedValueOnce({ id: 'user-001' } as never);
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(makeDocument() as never);
-    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
-    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
-      { id: 'agent-pa', slug: 'pattern-advisor' },
-      { id: 'agent-qm', slug: 'quiz-master' },
-    ] as never);
+  it('writes the calling org’s copy into that org’s own default knowledge base', async () => {
+    const chunks = [makeSeedChunk({ id: 'c1', content: 'Alpha' })];
+    const tx = armFirstCopy(db);
 
-    await seedChunks(CHUNKS_PATH);
+    const result = await inOrgB(() => materialisePatternsKnowledge(chunks));
 
-    // A raw INSERT is the one create the tenancy chokepoint cannot stamp: each
-    // chunk's org is its document's, read in the same statement (§107).
-    const insertSql = vi
-      .mocked(prisma.$executeRawUnsafe)
-      .mock.calls.map((c) => c[0])
-      .filter((sql) => sql.includes('INSERT INTO ai_knowledge_chunk'));
-    expect(insertSql.length).toBeGreaterThan(0);
-    for (const sql of insertSql) {
-      expect(sql).toContain('"orgId"');
-      expect(sql).toContain('(SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)');
-    }
-
-    // The seeded document carries the deterministic export slug (#338):
-    // slugify('Agentic Design Patterns') + '-' + first8(fileHash). The hash is
-    // derived from the committed chunk content, so it's stable across envs.
-    const createCall = vi.mocked(prisma.aiKnowledgeDocument.create).mock.calls[0][0] as {
-      data: { slug: string };
-    };
-    expect(createCall.data.slug).toMatch(/^agentic-design-patterns-[0-9a-f]{8}$/);
-
-    expect(prisma.aiAgent.findMany).toHaveBeenCalledWith({
-      where: { slug: { in: ['pattern-advisor', 'quiz-master'] }, isSystem: true },
-      select: { id: true, slug: true },
+    expect(result).toEqual({ outcome: 'created', documentId: 'doc-b' });
+    // Not the install org's `kb_default`: the org's own, resolved in its scope.
+    expect(getOrCreateDefaultKnowledgeBase).toHaveBeenCalledWith(db);
+    expect(tx.aiKnowledgeDocument.create).toHaveBeenCalledWith({
+      data: {
+        slug: slugFor(chunks),
+        name: PATTERNS_DOCUMENT_NAME,
+        fileName: 'agentic-design-patterns.md',
+        fileHash: createHash('sha256').update('Alpha').digest('hex'),
+        scope: 'system',
+        status: 'ready',
+        uploadedBy: 'service-account',
+        chunkCount: 1,
+        knowledgeBaseId: 'kb-org-b',
+      },
     });
-    expect(prisma.aiAgentKnowledgeTag.upsert).toHaveBeenCalledTimes(2);
-    expect(prisma.aiAgentKnowledgeTag.upsert).toHaveBeenCalledWith({
-      where: { agentId_tagId: { agentId: 'agent-pa', tagId: 'tag-agentic-design-patterns' } },
-      create: { agentId: 'agent-pa', tagId: 'tag-agentic-design-patterns' },
-      update: {},
+    expect(tx.aiKnowledgeDocumentTag.create).toHaveBeenCalledWith({
+      data: { documentId: 'doc-b', tagId: 'tag-patterns' },
     });
-    expect(prisma.aiAgentKnowledgeTag.upsert).toHaveBeenCalledWith({
-      where: { agentId_tagId: { agentId: 'agent-qm', tagId: 'tag-agentic-design-patterns' } },
-      create: { agentId: 'agent-qm', tagId: 'tag-agentic-design-patterns' },
-      update: {},
-    });
-  });
-
-  it('skips the system-agent grant loop when no system agents are seeded yet', async () => {
-    const chunks = [makeSeedChunk({ id: 'c1', content: 'Content A' })];
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
-    vi.mocked(readFile).mockResolvedValue(JSON.stringify(chunks));
-    vi.mocked(prisma.user.findFirst)
-      .mockResolvedValueOnce({ id: 'admin-001' } as never)
-      .mockResolvedValueOnce({ id: 'user-001' } as never);
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(makeDocument() as never);
-    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
-    // beforeEach already mocks aiAgent.findMany → [], so no grants should fire.
-
-    await seedChunks(CHUNKS_PATH);
-
-    expect(prisma.aiAgentKnowledgeTag.upsert).not.toHaveBeenCalled();
-  });
-
-  it('skips when the legacy single document already exists (refuses to silently delete embeddings)', async () => {
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(
-      makeDocument({ status: 'ready' }) as never
-    );
-
-    await seedChunks(CHUNKS_PATH);
-
-    expect(vi.mocked(readFile)).not.toHaveBeenCalled();
-    expect(prisma.aiKnowledgeDocument.create).not.toHaveBeenCalled();
-    expect(prisma.$executeRawUnsafe).not.toHaveBeenCalled();
-  });
-
-  it('detects the legacy single document by its exact name', async () => {
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(
-      makeDocument({ status: 'ready' }) as never
-    );
-
-    await seedChunks(CHUNKS_PATH);
-
-    expect(prisma.aiKnowledgeDocument.findFirst).toHaveBeenCalledWith({
-      where: { name: 'Agentic Design Patterns' },
-    });
-  });
-
-  it('cleans up a failed seed document before re-seeding', async () => {
-    const failedDoc = makeDocument({ id: 'failed-doc', status: 'failed' });
-    const chunks = [makeSeedChunk()];
-
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(failedDoc as never);
-    vi.mocked(prisma.aiKnowledgeChunk.deleteMany).mockResolvedValue({ count: 0 });
-    vi.mocked(prisma.aiKnowledgeDocument.delete).mockResolvedValue(failedDoc as never);
-    vi.mocked(readFile).mockResolvedValue(JSON.stringify(chunks));
-    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'user-001' } as never);
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(makeDocument() as never);
-    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
-
-    await seedChunks(CHUNKS_PATH);
-
-    expect(prisma.aiKnowledgeChunk.deleteMany).toHaveBeenCalledWith({
-      where: { documentId: 'failed-doc' },
-    });
-    expect(prisma.aiKnowledgeDocument.delete).toHaveBeenCalledWith({
-      where: { id: 'failed-doc' },
-    });
-    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalled();
-  });
-
-  it('seeds successfully without calling embedBatch', async () => {
-    const chunks = [makeSeedChunk({ id: 'c1', content: 'Content A' })];
-
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
-    vi.mocked(readFile).mockResolvedValue(JSON.stringify(chunks));
-    vi.mocked(prisma.user.findFirst)
-      .mockResolvedValueOnce({ id: 'admin-001' } as never)
-      .mockResolvedValueOnce({ id: 'user-001' } as never);
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(makeDocument() as never);
-    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
-
-    await seedChunks(CHUNKS_PATH);
-
     expect(embedBatch).not.toHaveBeenCalled();
-    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalledWith(
+  });
+
+  it('looks for the org’s copy by its slug, and for any earlier one the platform wrote', async () => {
+    const chunks = [makeSeedChunk()];
+    armFirstCopy(db);
+
+    await inOrgB(() => materialisePatternsKnowledge(chunks));
+
+    expect(db.aiKnowledgeDocument.findMany).toHaveBeenCalledWith({
+      where: {
+        orgId: ORG_B,
+        OR: [{ slug: slugFor(chunks) }, { scope: 'system', name: PATTERNS_DOCUMENT_NAME }],
+      },
+      select: { id: true, slug: true, status: true },
+    });
+  });
+
+  it('is idempotent by slug: an org holding this version is left alone', async () => {
+    const chunks = [makeSeedChunk()];
+    db.aiKnowledgeDocument.findMany.mockResolvedValue([
+      { id: 'doc-held', slug: slugFor(chunks), status: 'ready' },
+    ]);
+
+    const result = await inOrgB(() => materialisePatternsKnowledge(chunks));
+
+    expect(result).toEqual({ outcome: 'present', documentId: 'doc-held' });
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(db.knowledgeTag.upsert).not.toHaveBeenCalled();
+    expect(getOrCreateDefaultKnowledgeBase).not.toHaveBeenCalled();
+  });
+
+  it('leaves an earlier version in place and says so, rather than colliding with its keys', async () => {
+    const chunks = [makeSeedChunk()];
+    db.aiKnowledgeDocument.findMany.mockResolvedValue([
+      { id: 'doc-old', slug: 'agentic-design-patterns-00000000', status: 'ready' },
+    ]);
+
+    const result = await inOrgB(() => materialisePatternsKnowledge(chunks));
+
+    expect(result).toEqual({ outcome: 'outdated', documentId: 'doc-old' });
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(db.aiKnowledgeDocument.deleteMany).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringMatching(/earlier copy/),
       expect.objectContaining({
-        data: expect.objectContaining({
-          uploadedBy: 'admin-001',
-          status: 'ready',
-          chunkCount: 1,
-        }),
+        orgId: ORG_B,
+        heldSlug: 'agentic-design-patterns-00000000',
+        currentSlug: slugFor(chunks),
       })
     );
   });
 
-  it('falls back to any user when no ADMIN user exists', async () => {
+  it('removes a copy a failed seed left, then writes it again', async () => {
     const chunks = [makeSeedChunk()];
+    const tx = armFirstCopy(db);
+    db.aiKnowledgeDocument.findMany.mockResolvedValue([
+      { id: 'doc-failed', slug: slugFor(chunks), status: 'failed' },
+    ]);
 
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
-    vi.mocked(readFile).mockResolvedValue(JSON.stringify(chunks));
-    vi.mocked(prisma.user.findFirst)
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ id: 'regular-user' } as never);
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(
-      makeDocument({ uploadedBy: 'regular-user' }) as never
+    const result = await inOrgB(() => materialisePatternsKnowledge(chunks));
+
+    expect(db.aiKnowledgeDocument.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['doc-failed'] } },
+    });
+    expect(result.outcome).toBe('created');
+    expect(tx.aiKnowledgeDocument.create).toHaveBeenCalled();
+  });
+
+  it('writes the document, its chunks and its tag link in one transaction', async () => {
+    const chunks = [makeSeedChunk({ id: 'c1' }), makeSeedChunk({ id: 'c2' })];
+    const tx = armFirstCopy(db);
+
+    await inOrgB(() => materialisePatternsKnowledge(chunks));
+
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 60_000 });
+    expect(tx.$executeRawUnsafe).toHaveBeenCalledTimes(2);
+    // Nothing written on the outer client, where a failure would strand it.
+    expect(db.aiKnowledgeDocument.create).not.toHaveBeenCalled();
+    expect(db.$executeRawUnsafe).not.toHaveBeenCalled();
+    expect(db.aiKnowledgeDocumentTag.create).not.toHaveBeenCalled();
+  });
+
+  it('reads and writes through the client it is given', async () => {
+    const own = makeClient();
+    const tx = armFirstCopy(own);
+
+    await inOrgB(() =>
+      materialisePatternsKnowledge([makeSeedChunk()], { db: own as unknown as never })
     );
-    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
 
-    await seedChunks(CHUNKS_PATH);
+    expect(own.aiKnowledgeDocument.findMany).toHaveBeenCalled();
+    expect(getOrCreateDefaultKnowledgeBase).toHaveBeenCalledWith(own);
+    expect(tx.aiKnowledgeDocument.create).toHaveBeenCalled();
+    expect(db.aiKnowledgeDocument.findMany).not.toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
 
-    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ uploadedBy: 'regular-user' }),
-      })
-    );
+  it('throws outside any org scope rather than writing a copy with no org', async () => {
+    armFirstCopy(db);
+
+    await expect(materialisePatternsKnowledge([makeSeedChunk()])).rejects.toThrow();
+
+    expect(db.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('falls back to any user when there is no service account', async () => {
+    const tx = armFirstCopy(db);
+    db.user.findFirst.mockReset();
+    db.user.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'regular-user' });
+
+    await inOrgB(() => materialisePatternsKnowledge([makeSeedChunk()]));
+
+    expect(tx.aiKnowledgeDocument.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ uploadedBy: 'regular-user' }),
+    });
   });
 
   it('throws with a descriptive message when no users exist at all', async () => {
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
-    vi.mocked(readFile).mockResolvedValue(JSON.stringify([makeSeedChunk()]));
-    vi.mocked(prisma.user.findFirst).mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    armFirstCopy(db);
+    db.user.findFirst.mockReset();
+    db.user.findFirst.mockResolvedValue(null);
 
-    await expect(seedChunks(CHUNKS_PATH)).rejects.toThrow(/No users/);
-
-    expect(prisma.aiKnowledgeDocument.create).not.toHaveBeenCalled();
-  });
-
-  it('computes fileHash as sha256 of joined chunk contents', async () => {
-    const chunks = [
-      makeSeedChunk({ id: 'c1', content: 'Alpha' }),
-      makeSeedChunk({ id: 'c2', content: 'Beta' }),
-    ];
-    const expectedHash = createHash('sha256').update('AlphaBeta').digest('hex');
-
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
-    vi.mocked(readFile).mockResolvedValue(JSON.stringify(chunks));
-    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'user-001' } as never);
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(makeDocument() as never);
-    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
-
-    await seedChunks(CHUNKS_PATH);
-
-    expect(prisma.aiKnowledgeDocument.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ fileHash: expectedHash }),
-      })
+    await expect(inOrgB(() => materialisePatternsKnowledge([makeSeedChunk()]))).rejects.toThrow(
+      /No users/
     );
+
+    expect(db.$transaction).not.toHaveBeenCalled();
   });
 
-  it('inserts chunks without embedding column via $executeRawUnsafe', async () => {
+  it('inserts chunks without the embedding column, taking the org from the document', async () => {
     const chunk = makeSeedChunk();
-    const doc = makeDocument();
+    const tx = armFirstCopy(db);
 
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
-    vi.mocked(readFile).mockResolvedValue(JSON.stringify([chunk]));
-    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'user-001' } as never);
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(doc as never);
-    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
+    await inOrgB(() => materialisePatternsKnowledge([chunk]));
 
-    await seedChunks(CHUNKS_PATH);
-
-    expect(prisma.$executeRawUnsafe).toHaveBeenCalledTimes(1);
-    const call = vi.mocked(prisma.$executeRawUnsafe).mock.calls[0];
-    const sql = call[0];
-
-    // Should NOT include embedding or ::vector
+    const call = tx.$executeRawUnsafe.mock.calls[0];
+    const sql = String(call[0]);
     expect(sql).not.toContain('embedding');
     expect(sql).not.toContain('::vector');
-
+    expect(sql).toContain('(SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)');
     // Positional params: [sql, $1=chunkKey, $2=docId, $3=content,
     //   $4=chunkType, $5=patternNumber, $6=patternName,
     //   $7=section, $8=keywords, $9=estimatedTokens, $10=metadata]
-    expect(call[1]).toBe(chunk.id); // chunkKey
-    expect(call[2]).toBe(doc.id); // documentId
-    expect(call[3]).toBe(chunk.content); // content
-    expect(call[4]).toBe(chunk.metadata.type); // chunkType
-    expect(call[5]).toBe(chunk.metadata.pattern_number); // patternNumber
-    expect(call[6]).toBe(chunk.metadata.pattern_name); // patternName
-    expect(call[7]).toBe(chunk.metadata.section_title); // section
-    expect(call[8]).toBe(chunk.metadata.keywords); // keywords
-    expect(call[9]).toBe(chunk.estimated_tokens); // estimatedTokens
-  });
-
-  it('propagates file read errors', async () => {
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
-    vi.mocked(readFile).mockRejectedValue(new Error('ENOENT: no such file'));
-
-    await expect(seedChunks('/bad/path/chunks.json')).rejects.toThrow('ENOENT: no such file');
-  });
-
-  it('propagates JSON parse errors from malformed file content', async () => {
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
-    vi.mocked(readFile).mockResolvedValue('{ this is not valid json');
-
-    await expect(seedChunks(CHUNKS_PATH)).rejects.toThrow();
-  });
-
-  it('throws a descriptive error when chunks.json has a valid-JSON but invalid shape', async () => {
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
-    // Valid JSON, but `content` field is missing — fails the Zod schema
-    const badChunks = [
-      { id: 'bad-chunk', chunk_id: 1, metadata: { type: 'overview' }, estimated_tokens: 50 },
-    ];
-    vi.mocked(readFile).mockResolvedValue(JSON.stringify(badChunks));
-
-    await expect(seedChunks(CHUNKS_PATH)).rejects.toThrow(/Invalid chunks\.json/);
-    await expect(seedChunks(CHUNKS_PATH)).rejects.toThrow(CHUNKS_PATH);
+    expect(call.slice(1, 10)).toEqual([
+      chunk.id,
+      'doc-b',
+      chunk.content,
+      chunk.metadata.type,
+      chunk.metadata.pattern_number,
+      chunk.metadata.pattern_name,
+      chunk.metadata.section_title,
+      chunk.metadata.keywords,
+      chunk.estimated_tokens,
+    ]);
+    expect(JSON.parse(String(call[10]))).toEqual({
+      complexity: 'medium',
+      relatedPatterns: ['pattern-2'],
+      patternId: 'tp-001',
+      source: 'handbook',
+    });
   });
 
   it('passes null for optional metadata fields when they are absent', async () => {
-    const minimalChunk = {
+    const tx = armFirstCopy(db);
+    const minimal: SeedChunk = {
       id: 'minimal-chunk',
       chunk_id: 1,
       content: 'Minimal content',
       metadata: { type: 'overview' },
       estimated_tokens: 50,
     };
-    const doc = makeDocument();
 
-    vi.mocked(prisma.aiKnowledgeDocument.findFirst).mockResolvedValue(null);
-    vi.mocked(readFile).mockResolvedValue(JSON.stringify([minimalChunk]));
-    vi.mocked(prisma.user.findFirst).mockResolvedValue({ id: 'user-001' } as never);
-    vi.mocked(prisma.aiKnowledgeDocument.create).mockResolvedValue(doc as never);
-    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
+    await inOrgB(() => materialisePatternsKnowledge([minimal]));
 
-    await seedChunks(CHUNKS_PATH);
+    const call = tx.$executeRawUnsafe.mock.calls[0];
+    expect(call.slice(5, 9)).toEqual([null, null, null, null]);
+  });
+});
 
-    const call = vi.mocked(prisma.$executeRawUnsafe).mock.calls[0];
-    expect(call[5]).toBeNull(); // patternNumber
-    expect(call[6]).toBeNull(); // patternName
-    expect(call[7]).toBeNull(); // section
-    expect(call[8]).toBeNull(); // keywords
+// --- The committed chunk file ---
+
+describe('loadPatternsChunks', () => {
+  it('parses the bundled chunk file, and PATTERNS_DOCUMENT_SLUG is the slug it produces', async () => {
+    const chunks = await loadPatternsChunks();
+
+    expect(chunks.length).toBeGreaterThan(100);
+    // Editing chunks.json fails this until the constant follows — and the
+    // constant is what makes the maintenance job reconcile every org for it.
+    expect(slugFor(chunks)).toBe(PATTERNS_DOCUMENT_SLUG);
+  });
+});
+
+describe('parseSeedChunks', () => {
+  it('names the source and the path of the first bad field', () => {
+    const bad = [{ id: 'bad', chunk_id: 1, metadata: { type: 'overview' }, estimated_tokens: 5 }];
+
+    expect(() => parseSeedChunks(bad, '/data/chunks.json')).toThrow(
+      /Invalid chunks\.json at \/data\/chunks\.json: .* \(at 0\.content\)/
+    );
+  });
+});
+
+// --- seedChunks ---
+
+const CHUNKS_PATH = '/data/chunks.json';
+
+describe('seedChunks', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockEnv.TENANCY_MODE = 'multi';
+  });
+
+  it('seeds the file into the caller’s org and records when', async () => {
+    const chunks = [makeSeedChunk({ id: 'c1', content: 'Content A' })];
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify(chunks));
+    const tx = armFirstCopy(db);
+
+    await inOrgB(() => seedChunks(CHUNKS_PATH));
+
+    expect(readFile).toHaveBeenCalledWith(CHUNKS_PATH, 'utf-8');
+    expect(tx.aiKnowledgeDocument.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ slug: slugFor(chunks), knowledgeBaseId: 'kb-org-b' }),
+    });
+    expect(db.aiOrchestrationSettings.upsert).toHaveBeenCalledWith({
+      where: { slug: 'global' },
+      create: { slug: 'global', defaultModels: {}, lastSeededAt: expect.any(Date) },
+      update: { lastSeededAt: expect.any(Date) },
+    });
+  });
+
+  it('records nothing when the org already holds the copy', async () => {
+    const chunks = [makeSeedChunk()];
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify(chunks));
+    db.aiKnowledgeDocument.findMany.mockResolvedValue([
+      { id: 'doc-held', slug: slugFor(chunks), status: 'ready' },
+    ]);
+
+    await inOrgB(() => seedChunks(CHUNKS_PATH));
+
+    expect(db.$transaction).not.toHaveBeenCalled();
+    expect(db.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it('propagates file read errors', async () => {
+    vi.mocked(readFile).mockRejectedValue(new Error('ENOENT: no such file'));
+
+    await expect(inOrgB(() => seedChunks('/bad/path/chunks.json'))).rejects.toThrow(
+      'ENOENT: no such file'
+    );
+  });
+
+  it('propagates JSON parse errors from malformed file content', async () => {
+    vi.mocked(readFile).mockResolvedValue('{ this is not valid json');
+
+    await expect(inOrgB(() => seedChunks(CHUNKS_PATH))).rejects.toThrow(SyntaxError);
+  });
+
+  it('throws a descriptive error when chunks.json has a valid-JSON but invalid shape', async () => {
+    const badChunks = [
+      { id: 'bad-chunk', chunk_id: 1, metadata: { type: 'overview' }, estimated_tokens: 50 },
+    ];
+    vi.mocked(readFile).mockResolvedValue(JSON.stringify(badChunks));
+
+    await expect(inOrgB(() => seedChunks(CHUNKS_PATH))).rejects.toThrow(
+      `Invalid chunks.json at ${CHUNKS_PATH}`
+    );
+    expect(db.aiKnowledgeDocument.findMany).not.toHaveBeenCalled();
   });
 });
 
@@ -459,8 +489,8 @@ describe('embedChunks', () => {
   beforeEach(() => vi.resetAllMocks());
 
   it('returns immediately when all chunks are already embedded', async () => {
-    vi.mocked(prisma.aiKnowledgeChunk.count).mockResolvedValue(10);
-    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([] as never);
+    db.aiKnowledgeChunk.count.mockResolvedValue(10);
+    db.$queryRawUnsafe.mockResolvedValue([]);
 
     const result = await embedChunks();
 
@@ -474,19 +504,20 @@ describe('embedChunks', () => {
       { id: 'c2', content: 'Chunk 2' },
     ];
 
-    vi.mocked(prisma.aiKnowledgeChunk.count).mockResolvedValue(5);
-    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue(pending);
+    db.aiKnowledgeChunk.count.mockResolvedValue(5);
+    db.$queryRawUnsafe.mockResolvedValue(pending);
     vi.mocked(embedBatch).mockResolvedValue(
       mockEmbedResult([
         [0.1, 0.2],
         [0.3, 0.4],
       ])
     );
-    vi.mocked(prisma.$executeRawUnsafe).mockResolvedValue(1);
+    db.$executeRawUnsafe.mockResolvedValue(1);
 
     const result = await embedChunks();
 
     expect(result).toEqual({ processed: 2, total: 5, alreadyEmbedded: 3 });
+    expect(String(db.$queryRawUnsafe.mock.calls[0][0])).toContain('WHERE embedding IS NULL');
     expect(embedBatch).toHaveBeenCalledWith(
       ['Chunk 1', 'Chunk 2'],
       undefined,
@@ -495,22 +526,22 @@ describe('embedChunks', () => {
         metadata: expect.objectContaining({ kind: 'knowledge_seed', chunkCount: 2 }),
       })
     );
-    expect(prisma.$executeRawUnsafe).toHaveBeenCalledTimes(2);
+    expect(db.$executeRawUnsafe).toHaveBeenCalledTimes(2);
 
     // Verify UPDATE calls
-    const call1 = vi.mocked(prisma.$executeRawUnsafe).mock.calls[0];
+    const call1 = db.$executeRawUnsafe.mock.calls[0];
     expect(call1[0]).toContain('UPDATE');
     expect(call1[1]).toBe('[0.1,0.2]');
     expect(call1[2]).toBe('c1');
 
-    const call2 = vi.mocked(prisma.$executeRawUnsafe).mock.calls[1];
+    const call2 = db.$executeRawUnsafe.mock.calls[1];
     expect(call2[1]).toBe('[0.3,0.4]');
     expect(call2[2]).toBe('c2');
   });
 
   it('propagates embedding errors', async () => {
-    vi.mocked(prisma.aiKnowledgeChunk.count).mockResolvedValue(3);
-    vi.mocked(prisma.$queryRawUnsafe).mockResolvedValue([{ id: 'c1', content: 'text' }] as never);
+    db.aiKnowledgeChunk.count.mockResolvedValue(3);
+    db.$queryRawUnsafe.mockResolvedValue([{ id: 'c1', content: 'text' }]);
     vi.mocked(embedBatch).mockRejectedValue(new Error('Provider unavailable'));
 
     await expect(embedChunks()).rejects.toThrow('Provider unavailable');

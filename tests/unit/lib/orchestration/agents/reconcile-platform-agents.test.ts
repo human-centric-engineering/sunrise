@@ -221,6 +221,32 @@ const fake = vi.hoisted(() => {
 
 vi.mock('@/lib/db/client', () => ({ prisma: fake.db }));
 
+/**
+ * The patterns-knowledge step (t-726), which has its own tests (`seeder.test.ts`):
+ * here only its place in the run matters. It records the scope and client it
+ * was called with, and — like the real one on an org's first copy — creates
+ * the tag if it is missing.
+ */
+const knowledge = vi.hoisted(() => ({
+  calls: [] as Array<{ orgId: string | null | undefined; db: unknown }>,
+  outcome: 'present',
+  error: null as Error | null,
+  createsTag: null as { id: string; slug: string } | null,
+}));
+vi.mock('@/lib/orchestration/knowledge/seeder', async () => {
+  const { getTenantContext: context } = await import('@/lib/tenancy/context');
+  return {
+    loadPatternsChunks: async () => [],
+    materialisePatternsKnowledge: async (_chunks: unknown, options?: { db?: unknown }) => {
+      knowledge.calls.push({ orgId: context()?.orgId, db: options?.db });
+      if (knowledge.error) throw knowledge.error;
+      const tag = knowledge.createsTag;
+      if (tag && !fake.state.tags.some((t) => t.slug === tag.slug)) fake.state.tags.push(tag);
+      return { outcome: knowledge.outcome, documentId: 'doc-patterns' };
+    },
+  };
+});
+
 import {
   reconcilePlatformAgents,
   reconcilePlatformAgentsIfStale,
@@ -290,6 +316,10 @@ beforeEach(() => {
   // The org the data layer would stamp: whatever the REAL context holds.
   s.orgOf = () => getTenantContext()?.orgId ?? 'NO-CONTEXT';
   registry.definitions = [definition('advisor'), definition('judge')];
+  knowledge.calls = [];
+  knowledge.outcome = 'present';
+  knowledge.error = null;
+  knowledge.createsTag = null;
 });
 
 describe('reconcilePlatformAgents', () => {
@@ -618,6 +648,81 @@ describe('reconcilePlatformAgents', () => {
 
     expect(result.skipped).toBe('single-tenant-non-install-org');
     expect(fake.state.writes).toEqual([]);
+    expect(knowledge.calls).toEqual([]);
+  });
+
+  describe('the patterns knowledge (t-726)', () => {
+    it('writes the org’s copy in its own scope, before the tags are read, so its tag is granted on the same run', async () => {
+      mockEnv.TENANCY_MODE = 'multi';
+      fake.state.tags = []; // a new install: no tag until the first copy exists
+      knowledge.createsTag = { id: 'tag-patterns', slug: 'patterns' };
+      knowledge.outcome = 'created';
+
+      const result = await reconcilePlatformAgents(ORG_B);
+
+      expect(result.knowledge).toBe('created');
+      expect(knowledge.calls).toEqual([{ orgId: ORG_B, db: fake.db }]);
+      // Called after the tag lookup instead, the tag is missing on this run:
+      // no grants, and no marker.
+      expect(result.missing.knowledgeTags).toEqual([]);
+      expect(fake.state.tagGrants.filter((g) => g.orgId === ORG_B)).toHaveLength(2);
+      expect(marker(ORG_B)).toBeDefined();
+    });
+
+    it('writes through the client the caller passed', async () => {
+      const own = { ...fake.db };
+
+      await reconcilePlatformAgents('install', { db: own as never });
+
+      expect(knowledge.calls[0]?.db).toBe(own);
+    });
+
+    it('reconciles the agents anyway when the copy fails, and holds the marker back until it is written', async () => {
+      knowledge.error = new Error('chunk file unreadable');
+
+      const result = await reconcilePlatformAgents('install');
+
+      expect(result.knowledge).toBe('failed');
+      expect(result.created).toEqual(['advisor', 'judge']);
+      expect(marker()).toBeUndefined();
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringMatching(/Patterns knowledge not written/),
+        expect.objectContaining({ orgId: 'install', error: 'chunk file unreadable' })
+      );
+
+      knowledge.error = null;
+      const next = await reconcilePlatformAgentsIfStale('install');
+
+      expect(next.reconciled).toBe(true);
+      expect(next.result?.knowledge).toBe('present');
+      expect(marker()).toBeDefined();
+    });
+
+    it('treats a copy another run wrote first as a race, not an error', async () => {
+      knowledge.error = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      });
+
+      const result = await reconcilePlatformAgents('install');
+
+      expect(result.knowledge).toBe('failed');
+      expect(marker()).toBeUndefined();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringMatching(/written concurrently/),
+        expect.objectContaining({ orgId: 'install' })
+      );
+      expect(mockLogger.error).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a race is not an error
+    });
+
+    it('records the marker when the org holds an earlier copy: it is left, not retried', async () => {
+      knowledge.outcome = 'outdated';
+
+      const result = await reconcilePlatformAgents('install');
+
+      expect(result.knowledge).toBe('outdated');
+      expect(marker()).toBeDefined();
+    });
   });
 
   it('skips a declared capability or tag with no row yet, and says so', async () => {

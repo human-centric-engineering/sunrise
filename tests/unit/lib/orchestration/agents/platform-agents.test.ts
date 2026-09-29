@@ -22,6 +22,10 @@ vi.mock('@/lib/logging', () => ({ logger: mockLogger }));
 const mockInit = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/app/platform-agents', () => ({ initAppPlatformAgents: mockInit }));
 
+/** The patterns document's slug, which a new `chunks.json` changes (t-726). */
+const patternsKnowledge = vi.hoisted(() => ({ PATTERNS_DOCUMENT_SLUG: 'patterns-aaaaaaaa' }));
+vi.mock('@/lib/orchestration/knowledge/patterns-knowledge', () => patternsKnowledge);
+
 import {
   CORE_PLATFORM_AGENTS,
   PLATFORM_AGENT_BASELINE,
@@ -225,6 +229,18 @@ describe('platformAgentRegistryHash', () => {
     registerPlatformAgent(fork('late-arrival'));
 
     expect(platformAgentRegistryHash()).not.toBe(before);
+  });
+
+  it('moves when the patterns knowledge changes, so every org is reconciled for its copy', () => {
+    const before = platformAgentRegistryHash();
+    __resetPlatformAgentsForTests();
+    patternsKnowledge.PATTERNS_DOCUMENT_SLUG = 'patterns-bbbbbbbb';
+
+    try {
+      expect(platformAgentRegistryHash()).not.toBe(before);
+    } finally {
+      patternsKnowledge.PATTERNS_DOCUMENT_SLUG = 'patterns-aaaaaaaa';
+    }
   });
 
   it('does not depend on registration order', () => {
