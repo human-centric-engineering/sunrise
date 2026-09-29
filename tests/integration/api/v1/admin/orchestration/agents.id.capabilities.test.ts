@@ -802,7 +802,10 @@ describe('binding routes on a platform agent', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(prisma.aiAgentCapability.update).toHaveBeenCalledOnce();
+    // Cleared as Prisma.JsonNull, the attach route's explicit form.
+    expect(prisma.aiAgentCapability.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { customConfig: Prisma.JsonNull } })
+    );
   });
 
   it('PATCH accepts a rate limit sent beside an unchanged state and config', async () => {

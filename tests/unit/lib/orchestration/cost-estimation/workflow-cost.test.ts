@@ -590,6 +590,22 @@ describe('summariseShape', () => {
     expect(shape.workSteps[0].modelId).toBe('gpt-5');
   });
 
+  it("prices a platform slug's system instance only (§116 t-725)", async () => {
+    const def = makeDefinition(['agent_call']);
+    def.steps[0].config = { agentSlug: 'eval-case-generator' };
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([] as never);
+
+    await summariseShape(def, CHAT_MODEL.id);
+
+    expect(prisma.aiAgent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          NOT: { slug: { in: ['eval-case-generator'] }, isSystem: false },
+        }),
+      })
+    );
+  });
+
   it('falls back to chat default for agent_call when the agent has no bound model', async () => {
     const def = makeDefinition(['agent_call']);
     def.steps[0].config = { agentSlug: 'auditor' };

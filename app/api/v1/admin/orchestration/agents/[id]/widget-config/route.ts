@@ -19,6 +19,7 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { assertPlatformOwnedFieldsUnchanged } from '@/lib/orchestration/agents/platform-agent-guard';
 import { updateWidgetConfigSchema, resolveWidgetConfig } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import { jsonEquals } from '@/lib/utils/json-equal';
 
 type Params = { id: string };
 
@@ -61,11 +62,17 @@ export const PATCH = withAdminAuth<Params>(async (request, session, { params }) 
   // On a platform agent `widgetConfig` is whatever the field registry says it
   // is — platform-owned today, so the next reconcile would write it back and
   // the edit is refused rather than quietly undone (§116).
+  // Compared with the RESOLVED stored config, so a write that changes
+  // nothing is not refused (the stored value is often null, the baseline).
   assertPlatformOwnedFieldsUnchanged(
     agent,
-    { ...agent, grantedTagIds: [], grantedDocumentIds: [] },
+    { ...agent, widgetConfig: previous },
     { widgetConfig: merged }
   );
+
+  // Nothing to change: answer without writing, so a no-op save never turns a
+  // stored null (the baseline) into an explicit copy of the defaults.
+  if (jsonEquals(merged, previous)) return successResponse({ config: previous });
 
   const updated = await prisma.aiAgent.update({
     where: { id: agentId },

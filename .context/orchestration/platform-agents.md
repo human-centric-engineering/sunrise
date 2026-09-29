@@ -101,16 +101,24 @@ slug, in any org, including the install-only ones and any a fork registers.
 Create and rename refuse one with a 400 on `slug`; clone refuses a slug the
 caller chose and skips past a generated one; both importers skip the agent
 with a warning. An org that took a platform slug before this rule keeps its
-agent. The reconcile never adopts it, and every lookup of a platform agent
-by slug matches system rows only: the clean-up and `mcp-system` lookups, the
-patterns-tag grant, the quiz master behind saved quiz scores and the Learn
-page, and — through `platformSlugWhere()` — chat's agent load (which the
-judges and the case generator go through), the workflow `agent_call` and
-`chat_turn` steps, the consumer chat and invite-token routes, and — through
-`platformSlugsWhere()` for a list — the orchestrator's agents, the workflow
-validator's `agent_call` check, and the judge check when an evaluation run
-is created. Validation and runtime therefore agree. So such an org gets "not found"
-rather than its own agent run in the platform agent's place.
+agent. The reconcile never adopts it, and every lookup of an agent by a
+platform slug matches system rows only, so such an org gets "not found"
+rather than its own agent run in the platform agent's place:
+
+- the fixed lookups filter on `isSystem`: the clean-up and `mcp-system`
+  agents, the patterns-tag grant, and the quiz master behind saved quiz
+  scores and the Learn page;
+- a lookup by one slug spreads `platformSlugWhere(slug)`: chat's agent load
+  (which the judges and the case generator go through), the workflow
+  `agent_call` and `chat_turn` steps, the consumer and admin chat routes,
+  the invite-token check, and the judge checks when an evaluation run or an
+  experiment verdict is created;
+- a lookup by a list spreads `platformSlugsWhere(slugs)`: the orchestrator's
+  agents, the workflow validator's `agent_call` check, the workflow and
+  evaluation cost estimates, and the agent names on an execution's trace.
+
+Checks and estimates ahead of a run therefore resolve the same agent the run
+will.
 
 ## When the reconcile runs
 

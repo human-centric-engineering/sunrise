@@ -268,6 +268,16 @@ describe('POST /api/v1/admin/orchestration/chat/stream', () => {
     expect(streamChat).not.toHaveBeenCalled();
   });
 
+  it("rate-limits a platform slug's system instance, as streamChat will load it (§116 t-725)", async () => {
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);
+
+    await POST(createMockRequest({ ...validPayload, agentSlug: 'pattern-advisor' }));
+
+    expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { slug: 'pattern-advisor', isSystem: true } })
+    );
+  });
+
   it('returns 401 when not authenticated', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(null);
 

@@ -45,6 +45,7 @@ import { getDefaultModelForTaskOrNull } from '@/lib/orchestration/llm/settings-r
 import { JUDGE_MODEL } from '@/lib/orchestration/evaluations/judge-model';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import type { WorkflowDefinition } from '@/types/orchestration';
+import { platformSlugsWhere } from '@/lib/orchestration/agents/platform-agent-guard';
 
 /**
  * Step types that incur per-step LLM token cost. Supervisor is tracked
@@ -908,7 +909,8 @@ async function loadAgentModels(slugs: Set<string>): Promise<Map<string, string |
   if (slugs.size === 0) return new Map();
   try {
     const rows = await prisma.aiAgent.findMany({
-      where: { slug: { in: Array.from(slugs) } },
+      // Price the agents that will run: a platform slug is its system row.
+      where: { slug: { in: Array.from(slugs) }, ...platformSlugsWhere(Array.from(slugs)) },
       select: { slug: true, model: true },
     });
     const result = new Map<string, string | null>();

@@ -35,13 +35,22 @@ import { jsonEquals } from '@/lib/utils/json-equal';
 /** The two grant relations, compared as sets: their order means nothing. */
 const GRANT_FIELDS = new Set(['grantedTagIds', 'grantedDocumentIds']);
 
-/** The agent as stored, with its grants flattened to id lists. */
+/**
+ * The agent as stored, with its grants flattened to id lists. A caller that
+ * never writes grants may leave them out; the guard only compares fields the
+ * incoming write carries.
+ */
 export type PlatformOwnedCurrentValues = Record<string, unknown> & {
-  grantedTagIds: readonly string[];
-  grantedDocumentIds: readonly string[];
+  grantedTagIds?: readonly string[];
+  grantedDocumentIds?: readonly string[];
 };
 
-function sameIdSet(a: unknown, b: unknown): boolean {
+/**
+ * Whether two grant lists grant the same things: compared as sets, because
+ * the write path skips duplicates. The agent PATCH uses the same rule to
+ * decide whether grants changed, so the guard and versioning agree.
+ */
+export function sameGrantSet(a: unknown, b: unknown): boolean {
   if (!Array.isArray(a) || !Array.isArray(b)) return jsonEquals(a, b);
   // As sets: the write path skips duplicates, so [a, b, b] grants [a, b].
   const left = new Set(a);
@@ -63,7 +72,7 @@ export function changedPlatformOwnedFields(
     const next = incoming[field];
     if (next === undefined) return false;
     return GRANT_FIELDS.has(field)
-      ? !sameIdSet(next, current[field])
+      ? !sameGrantSet(next, current[field])
       : !jsonEquals(next, current[field]);
   });
 }

@@ -100,8 +100,8 @@ release process.
   lookups, the patterns-tag grant, the quiz master on the Learn page and in
   saved quiz scores, and every load by a platform slug in chat (the judges and
   case generator), in workflow `agent_call`, `chat_turn` and orchestrator
-  steps, in consumer chat, and in the workflow and evaluation-run validation
-  that checks those slugs, now match
+  steps, in consumer and admin chat, and in the validation and cost estimates
+  that check those slugs ahead of a run, now match
   only system agents, so that org
   gets "not found" instead of its own agent run in the platform's place.
 - **The agent form shows a platform agent's platform-owned fields read-only**

@@ -209,6 +209,28 @@ describe('PATCH /agents/:id/widget-config', () => {
     expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
   });
 
+  it('answers a save that changes nothing without writing, on any agent (§116 t-725)', async () => {
+    // A platform agent's stored widgetConfig is null (the baseline); sending
+    // the current defaults back changes nothing, so it is neither refused nor
+    // written (which would turn the null into an explicit copy).
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      id: AGENT_ID,
+      name: 'Pattern Advisor',
+      widgetConfig: null,
+      isSystem: true,
+    } as never);
+
+    const response = await PATCH(
+      makePatchRequest({ primaryColor: DEFAULT_WIDGET_CONFIG.primaryColor }),
+      makeParams()
+    );
+
+    expect(response.status).toBe(200);
+    expect(vi.mocked(prisma.aiAgent.update)).not.toHaveBeenCalled();
+    expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+  });
+
   it('returns 400 for invalid agent id on PATCH', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     const response = await PATCH(

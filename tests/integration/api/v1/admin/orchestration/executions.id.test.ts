@@ -39,6 +39,9 @@ vi.mock('@/lib/db/client', () => ({
     aiCostLog: {
       findMany: vi.fn(),
     },
+    aiAgent: {
+      findMany: vi.fn(),
+    },
   },
 }));
 
@@ -302,6 +305,34 @@ describe('GET /api/v1/admin/orchestration/executions/:id', () => {
       data: { currentRunningSteps: Array<{ stepId: string }> };
     }>(response);
     expect(data.data.currentRunningSteps.map((r) => r.stepId)).toEqual(['branch_a', 'branch_b']);
+  });
+
+  it('names the agents that ran: a platform slug resolves to its system row (§116 t-725)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({
+        version: {
+          snapshot: {
+            steps: [
+              { id: 'a', type: 'agent_call', config: { agentSlug: 'eval-judge-relevance' } },
+              { id: 'b', type: 'agent_call', config: { agentSlug: 'summarizer' } },
+            ],
+          },
+        },
+      }) as never
+    );
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([] as never);
+
+    await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+
+    expect(prisma.aiAgent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          slug: { in: ['eval-judge-relevance', 'summarizer'] },
+          NOT: { slug: { in: ['eval-judge-relevance'] }, isSystem: false },
+        },
+      })
+    );
   });
 
   it('projects metadata.slug onto a capability cost row, and omits it for LLM rows', async () => {

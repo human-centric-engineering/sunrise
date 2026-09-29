@@ -36,6 +36,7 @@ import {
   overlayAgentInfo,
   type AgentMeta,
 } from '@/lib/orchestration/trace/overlay-agents';
+import { platformSlugsWhere } from '@/lib/orchestration/agents/platform-agent-guard';
 
 // `executionTraceSchema` is `z.array(...).catch([])` — parsing always succeeds,
 // returning `[]` for malformed rows. Don't add a "trace corrupted" error path
@@ -111,7 +112,8 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
   const agentsBySlug = new Map<string, AgentMeta>();
   if (agentSlugs.length > 0) {
     const agents = await prisma.aiAgent.findMany({
-      where: { slug: { in: agentSlugs } },
+      // The agents that ran: a platform slug is its system row (§116).
+      where: { slug: { in: agentSlugs }, ...platformSlugsWhere(agentSlugs) },
       select: { id: true, slug: true, name: true },
     });
     for (const a of agents) {

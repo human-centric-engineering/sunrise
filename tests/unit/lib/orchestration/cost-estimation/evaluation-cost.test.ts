@@ -129,6 +129,29 @@ function mockPastRuns(
 }
 
 describe('estimateEvaluationRunCost — heuristic mode', () => {
+  it("prices a platform judge slug's system instance only (§116 t-725)", async () => {
+    mockSubjectAgent(SUBJECT_MODEL.id);
+    mockJudgeAgents([]);
+    mockDataset(10, 'hash-1');
+    mockPastRuns([]);
+
+    await estimateEvaluationRunCost({
+      agentId: 'agent-1',
+      userId: 'caller-id',
+      judgeAgentSlugs: ['eval-judge-relevance', 'my-judge'],
+      datasetId: 'ds-1',
+    });
+
+    expect(mockedPrisma.aiAgent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          slug: { in: ['eval-judge-relevance', 'my-judge'] },
+          NOT: { slug: { in: ['eval-judge-relevance'] }, isSystem: false },
+        },
+      })
+    );
+  });
+
   it('prices subject + every judge at its bound model when no past runs exist', async () => {
     mockSubjectAgent(SUBJECT_MODEL.id);
     mockJudgeAgents([

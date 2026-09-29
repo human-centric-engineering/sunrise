@@ -90,10 +90,10 @@ export const PATCH = withAdminAuth<RouteParams>(async (request, session, { param
 
   const body = await validateRequestBody(request, updateAgentCapabilitySchema);
 
-  // On a platform agent the binding's on/off state and config are the
-  // platform's; its rate limit is how fast the org lets it run, so that stays
-  // the org's (§116 t-725). Compared by value, so a dialog that re-sends an
-  // unchanged config alongside a new rate limit passes.
+  // On a platform agent the binding's on/off state is the platform's (the
+  // reconcile re-enables it); its config and rate limit are the org's, since
+  // the reconcile never writes them (§116 t-725). Compared by value, so a
+  // dialog that re-sends the unchanged state passes.
   const agent = await loadAgent(agentId);
   if (platformBindingsLocked(agent)) {
     const current = await prisma.aiAgentCapability.findUnique({
@@ -109,7 +109,11 @@ export const PATCH = withAdminAuth<RouteParams>(async (request, session, { param
   const data: Prisma.AiAgentCapabilityUpdateInput = {};
   if (body.isEnabled !== undefined) data.isEnabled = body.isEnabled;
   if (body.customConfig !== undefined) {
-    data.customConfig = body.customConfig as Prisma.InputJsonValue;
+    // null clears the config (the Configure dialog sends it for a blank box).
+    // Written as Prisma.JsonNull explicitly, as the attach route does; Prisma 7
+    // stores a literal null the same way (JSON null), measured on a real DB.
+    data.customConfig =
+      body.customConfig === null ? Prisma.JsonNull : (body.customConfig as Prisma.InputJsonValue);
   }
   if (body.customRateLimit !== undefined) data.customRateLimit = body.customRateLimit;
 

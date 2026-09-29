@@ -323,6 +323,23 @@ describe('POST /experiments/:id/verdicts — ownership + validation', () => {
     expect(res.status).toBe(400);
   });
 
+  it("checks a platform judge slug against the org's system instance only (§116 t-725)", async () => {
+    // As the grader will load it, so an org's own agent under the slug is
+    // refused here rather than accepted and then failing every case.
+    vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);
+
+    const res = await POST(
+      makeRequest({ ...defaultBody(), judgeAgentSlug: 'eval-judge-relevance' }),
+      ctx()
+    );
+
+    expect(res.status).toBe(400);
+    expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { slug: 'eval-judge-relevance', isSystem: true } })
+    );
+  });
+
   it('returns 400 when the named agent is not a judge', async () => {
     vi.mocked(prisma.aiExperiment.findFirst).mockResolvedValue(makeExperiment() as never);
     vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({

@@ -44,6 +44,7 @@ import {
   assertAgentSlugNotReserved,
   assertPlatformOwnedFieldsUnchanged,
   platformAgentEditPolicy,
+  sameGrantSet,
 } from '@/lib/orchestration/agents/platform-agent-guard';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import {
@@ -244,23 +245,13 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   );
 
   // Grant changes don't go through the `data` object (they're join-row writes),
-  // but they're versioned in the snapshot so callers can roll them back. Detect
-  // sorted-array equality to avoid spurious version bumps on no-op reorder.
-  function arraysEqualUnordered(a: string[], b: string[]): boolean {
-    if (a.length !== b.length) return false;
-    const sortedA = [...a].sort();
-    const sortedB = [...b].sort();
-    for (let i = 0; i < sortedA.length; i++) {
-      if (sortedA[i] !== sortedB[i]) return false;
-    }
-    return true;
-  }
+  // but they're versioned in the snapshot so callers can roll them back. Compare
+  // as sets — the guard's rule — so a reorder or a repeated id is not a change.
   const tagGrantsChanged =
-    body.grantedTagIds !== undefined &&
-    !arraysEqualUnordered(body.grantedTagIds, currentGrantedTagIds);
+    body.grantedTagIds !== undefined && !sameGrantSet(body.grantedTagIds, currentGrantedTagIds);
   const docGrantsChanged =
     body.grantedDocumentIds !== undefined &&
-    !arraysEqualUnordered(body.grantedDocumentIds, currentGrantedDocumentIds);
+    !sameGrantSet(body.grantedDocumentIds, currentGrantedDocumentIds);
   const grantsChanged = tagGrantsChanged || docGrantsChanged;
 
   // Captured inside the version-snapshot branch and surfaced in the

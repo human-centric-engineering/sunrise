@@ -435,6 +435,22 @@ describe('System agent protection', () => {
       );
     });
 
+    it('does not version a repeated grant id as a change: the guard and versioning agree', async () => {
+      // [a, a] grants exactly [a]: the guard lets it through, so the version
+      // logic must not then record "grantedTagIds changed".
+      const agent = makeCustomAgent({ grantedTags: [{ tagId: TAG_A }], grantedDocuments: [] });
+      mockFindUnique.mockResolvedValue(agent);
+      mockUpdate.mockResolvedValue(agent);
+
+      const response = await PATCH(
+        makePatchRequest({ grantedTagIds: [TAG_A, TAG_A] }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockVersionCreate).not.toHaveBeenCalled();
+    });
+
     it("leaves an org's own agent's fields unguarded", async () => {
       const agent = makeCustomAgent({ temperature: 0.7 });
       mockFindUnique.mockResolvedValue(agent);

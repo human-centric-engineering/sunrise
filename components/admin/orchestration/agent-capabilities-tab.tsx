@@ -77,8 +77,9 @@ export interface AgentCapabilitiesTabProps {
   agentId: string;
   /**
    * The agent is a platform agent whose bindings are the platform's (§116
-   * t-725): the API refuses attach, detach, the on/off switch and custom
-   * config, so they are shown read-only. The rate limit stays the org's.
+   * t-725): the API refuses attach, detach and the on/off switch, so they are
+   * hidden or disabled. Configure (custom config and rate limit) stays the
+   * org's: the reconcile never writes either.
    */
   bindingsLocked?: boolean;
 }

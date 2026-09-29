@@ -43,6 +43,7 @@ import {
   loadWorkflowShape,
   type WorkflowShape,
 } from '@/lib/orchestration/cost-estimation/workflow-cost';
+import { platformSlugsWhere } from '@/lib/orchestration/agents/platform-agent-guard';
 
 /** Heuristic per-case token shape — calibrated against Phase 1 judge prompts. */
 const HEURISTIC = {
@@ -398,7 +399,8 @@ async function loadJudgeShapes(slugs: string[], chatDefault: string): Promise<Ju
   if (slugs.length === 0) return [];
   try {
     const rows = await prisma.aiAgent.findMany({
-      where: { slug: { in: slugs } },
+      // Price the judges that will run: a platform slug is its system row.
+      where: { slug: { in: slugs }, ...platformSlugsWhere(slugs) },
       select: { slug: true, model: true },
     });
     const bySlug = new Map(rows.map((r) => [r.slug, r.model] as const));
