@@ -106,6 +106,16 @@ export interface PlatformAgentDefinition {
    */
   capabilities: readonly string[];
   /**
+   * Whose the binding rows are. `'platform'` (the default) makes
+   * `capabilities` authoritative. `'org'` leaves every binding row to the org:
+   * a reconcile creates, removes and re-enables none, and `capabilities` must
+   * be empty. For an agent with no tool set of its own — `mcp-system`
+   * dispatches whatever the MCP Tools page exposes, and under
+   * `CAPABILITY_BINDING_MODE=strict` an operator grants it tools by adding
+   * binding rows, which a platform-owned set would delete.
+   */
+  capabilityBindings?: 'platform' | 'org';
+  /**
    * The knowledge-tag slugs granted to the agent. Authoritative, like
    * `capabilities`; document grants are always empty on a platform agent.
    */
@@ -213,6 +223,11 @@ const appInit = createAppInitGate({
 export function registerPlatformAgent(definition: PlatformAgentDefinition): void {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(definition.slug)) {
     throw new Error(`Platform agent slug "${definition.slug}" must be lowercase kebab-case`);
+  }
+  if (definition.capabilityBindings === 'org' && definition.capabilities.length > 0) {
+    throw new Error(
+      `Platform agent "${definition.slug}" leaves its bindings to the org, so it cannot declare capabilities`
+    );
   }
   registry.set(definition.slug, definition);
 }

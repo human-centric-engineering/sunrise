@@ -23,7 +23,10 @@
  *    split is the agent field registry's (`platformAgent`). Provider, model,
  *    spend, rate and retention are set once, when the instance is created.
  *  - **Bindings and knowledge grants are set to the declared set** — added,
- *    re-enabled or removed. Document grants are always empty.
+ *    re-enabled or removed. Document grants are always empty. The one
+ *    exception is a definition whose bindings are the org's
+ *    (`capabilityBindings: 'org'`, `mcp-system`): its binding rows are left
+ *    exactly as they are.
  *  - **A version row is written when a versioned field changes**, holding
  *    the post-change config: chat pins a conversation's provenance to the
  *    agent's latest version, so a silent rewrite would attribute new
@@ -425,15 +428,21 @@ async function updateInstance(
   const tagsChanged = !sameSet(currentTagIds, desired.tagIds);
   const documentsChanged = currentDocumentIds.length > 0;
 
+  // Bindings the org owns are not this reconcile's to diff (see
+  // `capabilityBindings` on the definition).
+  const bindingsOwned = definition.capabilityBindings !== 'org';
+  const bindings = bindingsOwned ? existing.capabilities : [];
   const wantedCapabilities = new Set(desired.capabilityIds);
-  const staleBindingIds = existing.capabilities
+  const staleBindingIds = bindings
     .filter((b) => !wantedCapabilities.has(b.capabilityId))
     .map((b) => b.id);
-  const disabledBindingIds = existing.capabilities
+  const disabledBindingIds = bindings
     .filter((b) => wantedCapabilities.has(b.capabilityId) && !b.isEnabled)
     .map((b) => b.id);
-  const bound = new Set(existing.capabilities.map((b) => b.capabilityId));
-  const missingCapabilityIds = desired.capabilityIds.filter((id) => !bound.has(id));
+  const bound = new Set(bindings.map((b) => b.capabilityId));
+  const missingCapabilityIds = bindingsOwned
+    ? desired.capabilityIds.filter((id) => !bound.has(id))
+    : [];
   const bindingsChanged =
     staleBindingIds.length > 0 || disabledBindingIds.length > 0 || missingCapabilityIds.length > 0;
 

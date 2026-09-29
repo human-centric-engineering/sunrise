@@ -104,6 +104,14 @@ describe('the core roster', () => {
     expect(bySlug.get('cleanup-agent')!.capabilities).toHaveLength(14);
   });
 
+  it('leaves mcp-system’s bindings to the org, and only mcp-system’s', () => {
+    // Its tools are the MCP Tools page's; under CAPABILITY_BINDING_MODE=strict
+    // an operator grants them by adding binding rows the reconcile must keep.
+    expect(
+      CORE_PLATFORM_AGENTS.filter((d) => d.capabilityBindings === 'org').map((d) => d.slug)
+    ).toEqual(['mcp-system']);
+  });
+
   it('sets only code-owned fields in any definition', () => {
     // An org-tunable field in `agent` would be written back by every
     // reconcile, overriding the org's choice of provider or budget.
@@ -171,6 +179,16 @@ describe('the fork seam', () => {
 
   it('refuses a slug that is not lowercase kebab-case', () => {
     expect(() => registerPlatformAgent(fork('Intake Triage'))).toThrow(/kebab-case/);
+  });
+
+  it('refuses declared capabilities on an agent whose bindings are the org’s', () => {
+    expect(() =>
+      registerPlatformAgent({
+        ...fork('dispatcher'),
+        capabilities: ['search_knowledge_base'],
+        capabilityBindings: 'org',
+      })
+    ).toThrow(/cannot declare capabilities/);
   });
 });
 

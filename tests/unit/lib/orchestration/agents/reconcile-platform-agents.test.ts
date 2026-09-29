@@ -441,6 +441,29 @@ describe('reconcilePlatformAgents', () => {
     expect(mockInvalidateAccess).toHaveBeenCalledWith(row.id);
   });
 
+  it('leaves every binding row alone on an agent whose bindings are the org’s', async () => {
+    registry.definitions = [
+      definition('dispatcher', { capabilities: [], capabilityBindings: 'org' }),
+    ];
+    await reconcilePlatformAgents('install');
+    const row = agent('dispatcher')!;
+    // The operator's grants: one enabled, one switched off.
+    fake.state.bindings.push(
+      { id: 'granted', agentId: row.id, capabilityId: 'cap-search', isEnabled: true },
+      { id: 'revoked', agentId: row.id, capabilityId: 'cap-detail', isEnabled: false }
+    );
+    fake.state.writes = [];
+
+    const result = await reconcilePlatformAgents('install');
+
+    expect(result.unchanged).toEqual(['dispatcher']);
+    expect(fake.state.writes).toEqual([]);
+    expect(fake.state.bindings.filter((b) => b.agentId === row.id)).toEqual([
+      expect.objectContaining({ id: 'granted', isEnabled: true }),
+      expect.objectContaining({ id: 'revoked', isEnabled: false }),
+    ]);
+  });
+
   it('writes a version row for a code-owned change, and none for anything else', async () => {
     await reconcilePlatformAgents('install');
     const row = agent('advisor')!;

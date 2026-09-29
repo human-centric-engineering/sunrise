@@ -1,8 +1,11 @@
 /**
  * MCP System — the execution identity the MCP server dispatches external
- * clients' tool calls as. It never holds a conversation, and it has no
- * bindings of its own: the tools an MCP client may call are chosen on the MCP
- * Server → Tools page, not here.
+ * clients' tool calls as. It never holds a conversation, and it has no tool
+ * set of its own: the tools an MCP client may call are chosen on the MCP
+ * Server → Tools page. So its binding rows are the org's
+ * (`capabilityBindings: 'org'`): under `CAPABILITY_BINDING_MODE=strict` an
+ * operator grants it tools by adding rows, and a reconcile must not delete
+ * them.
  */
 import type { PlatformAgentDefinition } from '@/lib/orchestration/agents/platform-agents';
 
@@ -19,5 +22,6 @@ export const MCP_SYSTEM_AGENT: PlatformAgentDefinition = {
     maxTokens: 4096,
   },
   capabilities: [],
+  capabilityBindings: 'org',
   knowledgeTags: [],
 };
