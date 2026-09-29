@@ -53,6 +53,14 @@ function makeCtx({ owner = true, existingWorkflow = null as null | { id: string 
 
 beforeEach(() => vi.clearAllMocks());
 
+/** The upsert argument a capability seed passed, typed for the assertions. */
+interface CapabilityUpsert {
+  where: { slug: string };
+  update: Record<string, unknown>;
+}
+const upserts = (fn: { mock: { calls: unknown[][] } }): CapabilityUpsert[] =>
+  fn.mock.calls.map((c) => c[0] as CapabilityUpsert);
+
 describe('005-pattern-advisor', () => {
   it('upserts its three capabilities, re-applying only the code-owned fields, and nothing else', async () => {
     const { ctx, prisma, calls } = makeCtx();
@@ -62,13 +70,13 @@ describe('005-pattern-advisor', () => {
     // Only capability writes: a stand-in with no aiAgent delegate would have
     // thrown on any agent or binding write.
     expect(calls).toEqual(CAPABILITY_DEFINITIONS.map(() => 'aiCapability.upsert'));
-    expect(prisma.aiCapability.upsert.mock.calls.map((c) => c[0].where.slug)).toEqual([
+    expect(upserts(prisma.aiCapability.upsert).map((u) => u.where.slug)).toEqual([
       'search_knowledge_base',
       'get_pattern_detail',
       'estimate_workflow_cost',
     ]);
     // #545: presentation columns stay operator-owned on update.
-    expect(Object.keys(prisma.aiCapability.upsert.mock.calls[0][0].update).sort()).toEqual(
+    expect(Object.keys(upserts(prisma.aiCapability.upsert)[0].update).sort()).toEqual(
       ['executionHandler', 'executionType', 'functionDefinition', 'isSystem'].sort()
     );
   });
@@ -83,7 +91,7 @@ describe('010-model-auditor', () => {
     expect(prisma.user.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: serviceAccountWhere })
     );
-    expect(prisma.aiCapability.upsert.mock.calls.map((c) => c[0].where.slug)).toEqual([
+    expect(upserts(prisma.aiCapability.upsert).map((u) => u.where.slug)).toEqual([
       'apply_audit_changes',
       'add_provider_models',
       'deactivate_provider_models',

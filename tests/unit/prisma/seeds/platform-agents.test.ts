@@ -87,6 +87,18 @@ describe('021-platform-agents', () => {
     expect(logger.info).toHaveBeenCalledWith(expect.stringMatching(/org_b: 1 created/));
   });
 
+  it('logs a failure that is not an Error by its string form', async () => {
+    const { ctx, logger } = makeCtx(['install']);
+    mockReconcile.mockRejectedValueOnce('connection reset');
+
+    await platformAgentsSeed.run(ctx);
+
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), {
+      orgId: 'install',
+      error: 'connection reset',
+    });
+  });
+
   it('hashes every file a definition or the reconcile lives in', async () => {
     const { readdirSync } = await import('node:fs');
     const definitions = readdirSync('lib/orchestration/agents/platform-agent-definitions').map(
