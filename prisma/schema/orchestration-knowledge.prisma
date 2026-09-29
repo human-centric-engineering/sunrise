@@ -218,7 +218,7 @@ model AiKnowledgeDocumentPendingChange {
 // #1 above.
 model AiKnowledgeChunk {
   id                 String                       @id @default(cuid())
-  chunkKey           String // unique per org (§116 t-726) — @@unique([orgId, chunkKey]) below; the seeded patterns keys are fixed, and every org holds a copy
+  chunkKey           String // unique per org (§116 t-726) — @@unique([orgId, chunkKey]) below; the seeded patterns keys are fixed, and any org that loads a copy holds them
   documentId         String
   content            String                       @db.Text
   embedding          Unsupported("vector(1536)")?

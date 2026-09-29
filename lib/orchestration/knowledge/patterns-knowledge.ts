@@ -1,5 +1,5 @@
 /**
- * The platform's patterns knowledge: what each org's copy is (§116 t-726).
+ * The platform's patterns knowledge: what an org's copy of it is (§116 t-726).
  *
  * The pattern advisor and the quiz master search one document, "Agentic
  * Design Patterns", built from the committed

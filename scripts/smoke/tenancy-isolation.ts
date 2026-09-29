@@ -960,9 +960,9 @@ async function main(): Promise<void> {
 
     // The model is the org's to choose (org-tunable): point the four agents
     // these paths drive at the local model this smoke answers.
-    // Any of B's agents that chats will do as the subject; the pattern advisor
-    // was, until it became install-only (t-733).
-    const subjectSlug = 'eval-judge-correctness';
+    // A chat agent of B's as the subject: the pattern advisor was, until it
+    // became install-only (t-733). Evaluation runs refuse a judge.
+    const subjectSlug = 'cleanup-agent';
     const judgeSlug = 'eval-judge-relevance';
     await runAsOrg(b.orgId, () =>
       prisma.aiAgent.updateMany({
@@ -1207,6 +1207,7 @@ async function main(): Promise<void> {
     };
     const pendingB = await unembedded(b.orgId);
     const pendingA = await unembedded(a.orgId);
+    const pendingInstall = await unembedded(INSTALL_ORG_ID);
     const patternsEmbedB = await runAsOrg(b.orgId, () => embedChunks());
     check(
       pendingB === patterns.length && patternsEmbedB.processed === pendingB,
@@ -1215,8 +1216,12 @@ async function main(): Promise<void> {
     check(
       (await unembedded(b.orgId)) === 0 &&
         pendingA >= patterns.length &&
-        (await unembedded(a.orgId)) === pendingA,
-      `and none of A's (${pendingA})`
+        (await unembedded(a.orgId)) === pendingA &&
+        (await unembedded(INSTALL_ORG_ID)) === pendingInstall,
+      `and none of A's (${pendingA}) or the install org's (${pendingInstall})` +
+        // On a fresh database the install org's copy is unembedded; a rerun
+        // may find it embedded, which leaves that half nothing to catch.
+        (pendingInstall < patterns.length ? ' — install half vacuous: its copy is embedded' : '')
     );
 
     // B searches, with A's identical copy embedded beside B's, so the policy
@@ -1256,6 +1261,11 @@ async function main(): Promise<void> {
       select: { id: true },
     });
     if (!patternsTag) throw new Error('the patterns tag is missing — run the seed');
+    const searchCapability = await prisma.aiCapability.findUnique({
+      where: { slug: 'search_knowledge_base' },
+      select: { id: true },
+    });
+    if (!searchCapability) throw new Error('search_knowledge_base is not seeded — run the seed');
     await runAsOrg(b.orgId, async () => {
       await prisma.aiAgent.update({
         where: { id: b.agentId },
@@ -1263,6 +1273,17 @@ async function main(): Promise<void> {
       });
       await prisma.aiAgentKnowledgeTag.create({
         data: { agentId: b.agentId, tagId: patternsTag.id },
+      });
+      // Bound, as the advisor was, so this passes under
+      // CAPABILITY_BINDING_MODE=strict too.
+      // (The fixture may already hold it: its one binding is whichever
+      // capability comes first.)
+      await prisma.aiAgentCapability.upsert({
+        where: {
+          agentId_capabilityId: { agentId: b.agentId, capabilityId: searchCapability.id },
+        },
+        create: { agentId: b.agentId, capabilityId: searchCapability.id, isEnabled: true },
+        update: { isEnabled: true },
       });
     });
     invalidateAgentAccess(b.agentId);

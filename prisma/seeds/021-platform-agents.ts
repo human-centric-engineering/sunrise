@@ -65,7 +65,7 @@ const unit: SeedUnit = {
         `  ✓ ${orgId}: ${result.created.length} created, ${result.updated.length} updated, ` +
           `${result.unchanged.length} unchanged, ${result.deactivated.length} deactivated` +
           (result.refused.length > 0 ? `, ${result.refused.length} refused` : '') +
-          `; patterns knowledge ${result.knowledge ?? 'skipped'}`
+          (result.knowledge ? `; patterns knowledge ${result.knowledge}` : '')
       );
     }
   },

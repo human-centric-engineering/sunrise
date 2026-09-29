@@ -239,7 +239,7 @@ describe('platformAgentRegistryHash', () => {
     expect(platformAgentRegistryHash()).not.toBe(before);
   });
 
-  it('moves when the patterns knowledge changes, so every org is reconciled for its copy', () => {
+  it('moves when the patterns knowledge changes, so an org that should hold a copy is reconciled for it', () => {
     const before = platformAgentRegistryHash();
     __resetPlatformAgentsForTests();
     patternsKnowledge.PATTERNS_DOCUMENT_SLUG = 'patterns-bbbbbbbb';
