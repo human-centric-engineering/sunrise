@@ -279,6 +279,10 @@ describe('POST /api/v1/admin/orchestration/quiz-scores', () => {
       expect(data.data.id).toBe(SESSION_ID);
       expect(data.data.correct).toBe(8);
       expect(data.data.total).toBe(10);
+      // The org's platform quiz master, never its own agent holding the slug.
+      expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { slug: 'quiz-master', isSystem: true } })
+      );
     });
 
     it('creates the session with null agentId when quiz-master agent is not found', async () => {

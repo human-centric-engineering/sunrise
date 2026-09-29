@@ -75,6 +75,7 @@ import {
   setSpanAttributes,
   withSpan,
 } from '@/lib/orchestration/tracing';
+import { platformSlugWhere } from '@/lib/orchestration/agents/platform-agent-guard';
 
 const DEFAULT_MAX_TOOL_ITERATIONS = 5;
 const DEFAULT_MAX_TURNS = 3;
@@ -538,7 +539,8 @@ export async function executeAgentCall(
   // Load the target agent with its (optional) inheritance profile so the
   // system prompt resolves the same way as the chat handler.
   const agent = await prisma.aiAgent.findFirst({
-    where: { slug: agentSlug, isActive: true },
+    // A platform slug names the org's platform instance only (§116 t-725).
+    where: { slug: agentSlug, isActive: true, ...platformSlugWhere(agentSlug) },
     include: { profile: true },
   });
   if (!agent) {

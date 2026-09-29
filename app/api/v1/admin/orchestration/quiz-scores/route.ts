@@ -62,7 +62,8 @@ export const POST = withAdminAuth(async (request, session) => {
   const { correct, total } = await validateRequestBody(request, saveQuizScoreSchema);
 
   const agent = await prisma.aiAgent.findFirst({
-    where: { slug: QUIZ_MASTER_SLUG },
+    // The org's platform quiz master, never its own agent holding the slug.
+    where: { slug: QUIZ_MASTER_SLUG, isSystem: true },
     select: { id: true },
   });
 

@@ -54,6 +54,7 @@ import {
 } from '@/lib/orchestration/agents/resolve-effective-prompt';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
+import { platformSlugWhere } from '@/lib/orchestration/agents/platform-agent-guard';
 
 const DEFAULT_HISTORY_LIMIT = 20;
 const ROLES_TO_LOAD = ['user', 'assistant'] as const;
@@ -90,7 +91,8 @@ export async function executeChatTurn(
       select: { id: true, agentId: true },
     }),
     prisma.aiAgent.findFirst({
-      where: { slug: config.agentSlug },
+      // A platform slug names the org's platform instance only (§116 t-725).
+      where: { slug: config.agentSlug, ...platformSlugWhere(config.agentSlug) },
       include: {
         profile: true,
         versions: { orderBy: { version: 'desc' }, take: 1, select: { id: true } },

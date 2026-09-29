@@ -48,9 +48,12 @@ async function getAgentBySlug(slug: string): Promise<LearningTabsAgent | null> {
     const res = await serverFetch(url);
     if (!res.ok) return null;
     const body =
-      await parseApiResponse<Array<{ id: string; slug: string; enableVoiceInput?: boolean }>>(res);
+      await parseApiResponse<
+        Array<{ id: string; slug: string; isSystem: boolean; enableVoiceInput?: boolean }>
+      >(res);
     if (!body.success) return null;
-    const match = body.data.find((a) => a.slug === slug);
+    // The org's platform instance, never its own agent holding the slug.
+    const match = body.data.find((a) => a.slug === slug && a.isSystem);
     if (!match) return null;
     return {
       id: match.id,

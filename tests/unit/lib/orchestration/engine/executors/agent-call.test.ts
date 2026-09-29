@@ -227,6 +227,17 @@ describe('executeAgentCall', () => {
     });
   });
 
+  it("loads a platform slug's system instance only (§116 t-725)", async () => {
+    // An org's own agent that took a platform slug before it was reserved must
+    // not answer a workflow step in the platform agent's place.
+    await executeAgentCall(makeStep({ agentSlug: 'eval-judge-relevance' }), makeCtx());
+
+    expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith({
+      where: { slug: 'eval-judge-relevance', isActive: true, isSystem: true },
+      include: { profile: true },
+    });
+  });
+
   it('passes system instructions as first message', async () => {
     await executeAgentCall(makeStep(), makeCtx());
 

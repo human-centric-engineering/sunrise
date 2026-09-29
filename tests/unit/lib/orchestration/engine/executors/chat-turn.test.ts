@@ -286,6 +286,26 @@ describe('chat_turn — error paths', () => {
     });
   });
 
+  it("looks up a platform slug's system instance only, an ordinary slug any agent (§116 t-725)", async () => {
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+      id: 'conv_1',
+      agentId: 'agent_1',
+    } as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);
+
+    await expect(
+      executeChatTurn(makeStep({ agentSlug: 'quiz-master' }), makeCtx())
+    ).rejects.toMatchObject({ code: 'agent_not_found' });
+    await expect(executeChatTurn(makeStep(), makeCtx())).rejects.toMatchObject({
+      code: 'agent_not_found',
+    });
+
+    const wheres = vi
+      .mocked(prisma.aiAgent.findFirst)
+      .mock.calls.map(([args]) => (args as { where: Record<string, unknown> }).where);
+    expect(wheres).toEqual([{ slug: 'quiz-master', isSystem: true }, { slug: 'helpful-agent' }]);
+  });
+
   it('throws agent_not_found when the agentSlug does not resolve', async () => {
     vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
       id: 'conv_1',

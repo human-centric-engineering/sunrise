@@ -179,16 +179,28 @@ describe('LearnPage', () => {
         .mockResolvedValueOnce({
           success: true,
           data: [
-            { id: 'agent-advisor', slug: 'pattern-advisor', enableVoiceInput: true },
+            {
+              id: 'agent-advisor',
+              slug: 'pattern-advisor',
+              isSystem: true,
+              enableVoiceInput: true,
+            },
             // Substring match noise — `pattern-advisor-old` would be
             // returned by `?q=pattern-advisor`; the page must filter
             // for the exact slug.
-            { id: 'agent-old', slug: 'pattern-advisor-old', enableVoiceInput: false },
+            {
+              id: 'agent-old',
+              slug: 'pattern-advisor-old',
+              isSystem: true,
+              enableVoiceInput: false,
+            },
           ],
         } as never)
         .mockResolvedValueOnce({
           success: true,
-          data: [{ id: 'agent-quiz', slug: 'quiz-master', enableVoiceInput: false }],
+          data: [
+            { id: 'agent-quiz', slug: 'quiz-master', isSystem: true, enableVoiceInput: false },
+          ],
         } as never);
 
       render(await LearnPage({ searchParams: Promise.resolve({}) }));
@@ -220,7 +232,9 @@ describe('LearnPage', () => {
         // returns early. The quiz call still goes through.
         .mockResolvedValueOnce({
           success: true,
-          data: [{ id: 'agent-quiz', slug: 'quiz-master', enableVoiceInput: false }],
+          data: [
+            { id: 'agent-quiz', slug: 'quiz-master', isSystem: true, enableVoiceInput: false },
+          ],
         } as never);
 
       render(await LearnPage({ searchParams: Promise.resolve({}) }));
@@ -245,12 +259,19 @@ describe('LearnPage', () => {
           data: [
             // Substring matches like `pattern-advisor-archived`
             // but the exact `pattern-advisor` slug is not present.
-            { id: 'agent-old', slug: 'pattern-advisor-archived', enableVoiceInput: true },
+            {
+              id: 'agent-old',
+              slug: 'pattern-advisor-archived',
+              isSystem: true,
+              enableVoiceInput: true,
+            },
           ],
         } as never)
         .mockResolvedValueOnce({
           success: true,
-          data: [{ id: 'agent-quiz', slug: 'quiz-master', enableVoiceInput: false }],
+          data: [
+            { id: 'agent-quiz', slug: 'quiz-master', isSystem: true, enableVoiceInput: false },
+          ],
         } as never);
 
       render(await LearnPage({ searchParams: Promise.resolve({}) }));
@@ -268,7 +289,9 @@ describe('LearnPage', () => {
         .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
         .mockResolvedValueOnce({
           success: true,
-          data: [{ id: 'agent-quiz', slug: 'quiz-master', enableVoiceInput: false }],
+          data: [
+            { id: 'agent-quiz', slug: 'quiz-master', isSystem: true, enableVoiceInput: false },
+          ],
         } as never);
 
       render(await LearnPage({ searchParams: Promise.resolve({}) }));
@@ -282,6 +305,28 @@ describe('LearnPage', () => {
       expect(screen.getByTestId('learning-tabs')).toHaveAttribute('data-advisor-id', '');
     });
 
+    it("ignores an org's own agent holding a platform slug (§116 t-725)", async () => {
+      // An org that took `pattern-advisor` before the slug was reserved keeps
+      // that agent; the Learn tab must not wire it up as the Pattern Advisor.
+      vi.mocked(serverFetch).mockResolvedValue(okResponse());
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
+        .mockResolvedValueOnce({
+          success: true,
+          data: [{ id: 'own-advisor', slug: 'pattern-advisor', isSystem: false }],
+        } as never)
+        .mockResolvedValueOnce({
+          success: true,
+          data: [{ id: 'agent-quiz', slug: 'quiz-master', isSystem: true }],
+        } as never);
+
+      render(await LearnPage({ searchParams: Promise.resolve({}) }));
+
+      const tabs = screen.getByTestId('learning-tabs');
+      expect(tabs).toHaveAttribute('data-advisor-id', '');
+      expect(tabs).toHaveAttribute('data-quiz-id', 'agent-quiz');
+    });
+
     it('defaults enableVoiceInput to false when the API row omits the field', async () => {
       // Older versions of the agents list may not surface the
       // `enableVoiceInput` field. Treat absence as voice-off rather
@@ -291,11 +336,11 @@ describe('LearnPage', () => {
         .mockResolvedValueOnce({ success: true, data: PATTERNS } as never)
         .mockResolvedValueOnce({
           success: true,
-          data: [{ id: 'agent-advisor', slug: 'pattern-advisor' }],
+          data: [{ id: 'agent-advisor', slug: 'pattern-advisor', isSystem: true }],
         } as never)
         .mockResolvedValueOnce({
           success: true,
-          data: [{ id: 'agent-quiz', slug: 'quiz-master' }],
+          data: [{ id: 'agent-quiz', slug: 'quiz-master', isSystem: true }],
         } as never);
 
       render(await LearnPage({ searchParams: Promise.resolve({}) }));
