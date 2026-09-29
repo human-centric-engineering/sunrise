@@ -28,7 +28,13 @@
  *     zombie reaper, with a stale execution seeded in each org, reaps both
  *     and every lease event it writes carries that org — the assertion that
  *     fails on a `NULL`-org row, which is what a job run under the system
- *     scope would have produced.
+ *     scope would have produced;
+ *   - the platform agents (§116 t-724): an org made by `createOrg` has its
+ *     own fourteen, and none of the install org's two install-only ones,
+ *     with no step but its creation; in it the clean-up upload, an MCP tool
+ *     call, case generation and an evaluation run with a built-in judge all
+ *     run, against a local chat model the smoke answers itself, and every
+ *     row they produce carries that org.
  *
  * Run it against a THROWAWAY database, never the dev one — it creates two
  * orgs and enables nothing itself; the sequence around it is the CI job's
@@ -71,11 +77,23 @@ import { getCostBreakdown, getCostSummary } from '@/lib/orchestration/llm/cost-r
 import { signHookPayload } from '@/lib/orchestration/hooks/signing';
 import { POST as inboundPost } from '@/app/api/v1/inbound/[channel]/[slug]/route';
 import { PLATFORM_JOBS } from '@/lib/orchestration/maintenance/platform-jobs';
+import { createDocumentForCleanup } from '@/lib/orchestration/knowledge/document-manager';
+import { callMcpTool, clearMcpToolCache } from '@/lib/orchestration/mcp/tool-registry';
+import { generateCases } from '@/lib/orchestration/evaluations/synthesis/case-generator';
+import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
+import { hashDatasetCases } from '@/lib/orchestration/evaluations/datasets/hash';
+import { platformAgentsForOrg } from '@/lib/orchestration/agents/platform-agents';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const PREFIX = 'smoke-iso';
 const stamp = Date.now();
 const DIMENSIONS = 1536;
 const EMBEDDING_MODEL = 'nomic-embed-text';
+/** The local provider this smoke seeds, and answers itself: embeddings and chat. */
+const LOCAL_PROVIDER_SLUG = `${PREFIX}-embed-${stamp}`;
+const CHAT_MODEL = 'smoke-chat';
+/** What the fake judge scores every case — the number the run must carry back. */
+const JUDGE_SCORE = 0.8;
 
 async function dbReachable(): Promise<boolean> {
   try {
@@ -121,14 +139,86 @@ function fakeEmbedding(text: string): number[] {
 }
 
 /**
- * The embedder builds its own HTTP request to the provider's `/embeddings`.
- * Answer it locally, for the one local provider this smoke seeds, and leave
- * every other URL to the real fetch.
+ * What the local chat model answers, chosen by the system prompt it is sent:
+ * the case generator gets two cases, a judge gets a score, anything else a
+ * sentence. The platform agents' prompts are what is under test here, not a
+ * model, so a canned answer in the shape each one parses is enough.
+ */
+function fakeChatAnswer(system: string): string {
+  if (system.includes('test-case generator')) {
+    return JSON.stringify({
+      cases: [
+        { input: 'What is prompt chaining?', expectedOutput: 'Splitting a task into steps.' },
+        { input: 'When should I route?', expectedOutput: 'When inputs differ by kind.' },
+      ],
+    });
+  }
+  if (system.includes('Judge in an evaluation pipeline')) {
+    return JSON.stringify({
+      evaluation_steps: ['Step 1: restated', 'Step 2: focus', 'Step 3: match'],
+      score: JUDGE_SCORE,
+      reasoning: 'On topic.',
+    });
+  }
+  return 'Prompt chaining splits a task into a sequence of smaller steps.';
+}
+
+/** An OpenAI-compatible completion, streamed or not, carrying `text`. */
+function fakeChatResponse(text: string, stream: boolean): Response {
+  const base = { id: `${PREFIX}-chat`, created: 0, model: CHAT_MODEL };
+  const usage = { prompt_tokens: 20, completion_tokens: 10, total_tokens: 30 };
+  if (!stream) {
+    return Response.json({
+      ...base,
+      object: 'chat.completion',
+      choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
+      usage,
+    });
+  }
+  const chunk = (payload: object) => `data: ${JSON.stringify({ ...base, ...payload })}\n\n`;
+  const body =
+    chunk({
+      object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: null }],
+    }) +
+    chunk({
+      object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+    }) +
+    chunk({ object: 'chat.completion.chunk', choices: [], usage }) +
+    'data: [DONE]\n\n';
+  return new Response(body, { headers: { 'content-type': 'text/event-stream' } });
+}
+
+/**
+ * The embedder and the chat provider build their own HTTP requests. Answer
+ * `/embeddings` and `/chat/completions` locally, for the one local provider
+ * this smoke seeds, and leave every other URL to the real fetch.
+ *
+ * The one exception is email: the clean-up upload in [11] sends its "ready"
+ * email fire-and-forget, and a checkout whose `.env.local` holds a Resend key
+ * would really send it. Resend is answered here too, so the smoke never
+ * emails anyone.
  */
 function interceptEmbeddings(): () => void {
   const real = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.startsWith('https://api.resend.com/')) {
+      return Response.json({ id: `${PREFIX}-email` });
+    }
+    if (url.endsWith('/chat/completions') && url.startsWith('http://127.0.0.1:')) {
+      const raw = typeof init?.body === 'string' ? init.body : '{}';
+      const body = JSON.parse(raw) as {
+        stream?: boolean;
+        messages?: Array<{ role: string; content: unknown }>;
+      };
+      const system = (body.messages ?? [])
+        .filter((m) => m.role === 'system')
+        .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
+        .join('\n');
+      return fakeChatResponse(fakeChatAnswer(system), body.stream === true);
+    }
     if (url.endsWith('/embeddings') && url.startsWith('http://127.0.0.1:')) {
       // The embedder sends a JSON string body; anything else is not ours.
       const raw = typeof init?.body === 'string' ? init.body : '{}';
@@ -382,6 +472,10 @@ async function main(): Promise<void> {
 
   const restoreFetch = interceptEmbeddings();
   let fixtures: OrgFixture[] = [];
+  // Section [11] exposes one capability over MCP; the row is global, so it is
+  // put back as it was.
+  let mcpExposure: { isEnabled: boolean } | null = null;
+  let mcpExposureCapabilityId: string | null = null;
   const tagSlug = `${PREFIX}-tag-${stamp}`;
 
   try {
@@ -391,7 +485,7 @@ async function main(): Promise<void> {
     await prisma.aiProviderConfig.create({
       data: {
         name: `${PREFIX} local embeddings`,
-        slug: `${PREFIX}-embed-${stamp}`,
+        slug: LOCAL_PROVIDER_SLUG,
         providerType: 'openai-compatible',
         baseUrl: 'http://127.0.0.1:9',
         isLocal: true,
@@ -798,6 +892,212 @@ async function main(): Promise<void> {
     );
     check(getTenantContext() === null, 'the job left no context on the caller');
 
+    // ── Platform agents in an org made by createOrg (§116 t-724) ──────────
+    console.log('\n[11] platform agents: org B has its own, and they run there');
+    const everyOrg = platformAgentsForOrg(b.orgId).map((d) => d.slug);
+    const installOnly = platformAgentsForOrg(INSTALL_ORG_ID)
+      .map((d) => d.slug)
+      .filter((slug) => !everyOrg.includes(slug));
+    const platformRows = (orgId: string) =>
+      runAsOrg(orgId, () =>
+        prisma.aiAgent.findMany({
+          where: { isSystem: true },
+          select: { id: true, slug: true, orgId: true, isActive: true },
+        })
+      );
+    const inB = await platformRows(b.orgId);
+    const inA = await platformRows(a.orgId);
+    const inInstall = await platformRows(INSTALL_ORG_ID);
+    check(
+      everyOrg.length === 14 && installOnly.length === 2,
+      `the registry gives every org 14 and the install org 2 more (${everyOrg.length}/${installOnly.length})`
+    );
+    check(
+      inB.length === everyOrg.length && everyOrg.every((slug) => inB.some((r) => r.slug === slug)),
+      `B has every one of the ${everyOrg.length} with no step but createOrg (${inB.length} system agents)`
+    );
+    check(
+      inB.every((r) => r.orgId === b.orgId && r.isActive),
+      'each is an active row of B’s own'
+    );
+    check(
+      installOnly.every((slug) => !inB.some((r) => r.slug === slug)),
+      `B has none of the install-only agents (${installOnly.join(', ')})`
+    );
+    check(
+      installOnly.every((slug) => inInstall.some((r) => r.slug === slug)) &&
+        inInstall.length === everyOrg.length + installOnly.length,
+      `the install org still has all ${everyOrg.length + installOnly.length}`
+    );
+    check(
+      inA.length === everyOrg.length && !inA.some((r) => inB.some((x) => x.id === r.id)),
+      'A has its own instances — not one row shared with B'
+    );
+    const idOf = (slug: string) => inB.find((r) => r.slug === slug)?.id ?? 'missing';
+
+    // The model is the org's to choose (org-tunable): point the four agents
+    // these paths drive at the local model this smoke answers.
+    const subjectSlug = 'pattern-advisor';
+    const judgeSlug = 'eval-judge-relevance';
+    await runAsOrg(b.orgId, () =>
+      prisma.aiAgent.updateMany({
+        where: { slug: { in: [subjectSlug, judgeSlug, 'eval-case-generator', 'cleanup-agent'] } },
+        data: { provider: LOCAL_PROVIDER_SLUG, model: CHAT_MODEL },
+      })
+    );
+
+    // The clean-up upload: a document in `cleaning`, and a conversation with
+    // B's clean-up assistant.
+    const kickoff = await runAsOrg(b.orgId, () =>
+      createDocumentForCleanup(
+        'Some notes to clean.\n\nWith a second paragraph.',
+        `${PREFIX}-notes-${stamp}.md`,
+        b.ownerId
+      )
+    );
+    const cleanupConversation = await runAsSystem('smoke: cleanup conversation', () =>
+      prisma.aiConversation.findUnique({
+        where: { id: kickoff.conversationId },
+        select: { agentId: true, orgId: true },
+      })
+    );
+    check(
+      cleanupConversation?.agentId === idOf('cleanup-agent') &&
+        cleanupConversation.orgId === b.orgId &&
+        kickoff.document.orgId === b.orgId,
+      'the clean-up upload opened a conversation with B’s clean-up assistant, in B'
+    );
+
+    // An MCP tool call: dispatched as B's mcp-system. `McpExposedTool` is a
+    // global table, so the exposure is put back as it was on the way out.
+    const costCapability = await prisma.aiCapability.findUnique({
+      where: { slug: 'estimate_workflow_cost' },
+      select: { id: true },
+    });
+    if (!costCapability) throw new Error('estimate_workflow_cost is not seeded — run the seed');
+    mcpExposure = await prisma.mcpExposedTool.findUnique({
+      where: { capabilityId: costCapability.id },
+    });
+    await prisma.mcpExposedTool.upsert({
+      where: { capabilityId: costCapability.id },
+      create: { capabilityId: costCapability.id, isEnabled: true },
+      update: { isEnabled: true },
+    });
+    mcpExposureCapabilityId = costCapability.id;
+    clearMcpToolCache();
+    const mcpCall = await runAsOrg(b.orgId, () =>
+      callMcpTool(
+        'estimate_workflow_cost',
+        { description: 'Summarise then classify', estimated_steps: 2, model_tier: 'budget' },
+        { userId: b.ownerId }
+      )
+    );
+    const mcpText = mcpCall.content[0]?.type === 'text' ? mcpCall.content[0].text : '';
+    check(
+      mcpCall.isError !== true,
+      `an MCP tool call in B dispatched as B’s mcp-system (${mcpText.slice(0, 60)})`
+    );
+
+    // Case generation: B's generator proposes cases for B's subject agent.
+    const generated = await runAsOrg(b.orgId, () =>
+      generateCases({
+        agentId: idOf(subjectSlug),
+        userId: b.ownerId,
+        mode: 'description',
+        count: 2,
+        domainPrompt: 'An assistant that explains agentic design patterns to engineers.',
+      })
+    );
+    check(
+      generated.cases.length === 2,
+      `B's case generator proposed ${generated.cases.length} cases`
+    );
+
+    // An evaluation run scored by a built-in judge, drained by the worker.
+    const evalCases = [{ position: 0, input: 'What is prompt chaining?', expectedOutput: null }];
+    const evalRunId = await runAsOrg(b.orgId, async () => {
+      const dataset = await prisma.aiDataset.create({
+        data: {
+          userId: b.ownerId,
+          name: `${PREFIX} dataset`,
+          caseCount: 1,
+          contentHash: hashDatasetCases(evalCases),
+          source: 'manual',
+          cases: { create: evalCases.map((c) => ({ position: c.position, input: c.input })) },
+        },
+      });
+      const run = await prisma.aiEvaluationRun.create({
+        data: {
+          userId: b.ownerId,
+          name: `${PREFIX} run`,
+          subjectKind: 'agent',
+          agentId: idOf(subjectSlug),
+          datasetId: dataset.id,
+          datasetContentHash: dataset.contentHash,
+          metricConfigs: [{ slug: 'judge_agent', config: { agentSlug: judgeSlug } }],
+          status: 'queued',
+          progress: { casesTotal: 1, casesDone: 0, casesFailed: 0 },
+        },
+      });
+      return run.id;
+    });
+    const drained = await runAsOrg(b.orgId, () => processPendingEvaluationRuns());
+    const caseResults = await runAsSystem('smoke: eval case results', () =>
+      prisma.aiEvaluationCaseResult.findMany({
+        where: { runId: evalRunId },
+        select: { orgId: true, metricScores: true, errorCode: true },
+      })
+    );
+    // `metricScores` is JSON, keyed by the judge's slug for `judge_agent`; read
+    // the one number without asserting a shape on the rest.
+    const scoreOf = (scores: unknown): unknown => {
+      if (typeof scores !== 'object' || scores === null) return undefined;
+      const entry: unknown = Reflect.get(scores, judgeSlug);
+      return typeof entry === 'object' && entry !== null ? Reflect.get(entry, 'score') : undefined;
+    };
+    const judgeScore = scoreOf(caseResults[0]?.metricScores);
+    check(
+      drained.completed === 1 && caseResults.length === 1 && caseResults[0].errorCode === null,
+      `the worker completed B's run (completed ${drained.completed}, ${caseResults.length} result)`
+    );
+    check(judgeScore === JUDGE_SCORE, `B's ${judgeSlug} scored the case (${String(judgeScore)})`);
+
+    // Every row those paths produced carries B — and none names A's agents.
+    await new Promise((r) => setTimeout(r, 1000));
+    const bIds = inB.map((r) => r.id);
+    const aIds = inA.map((r) => r.id);
+    const produced = await runAsSystem('smoke: rows the platform agents produced', async () => ({
+      conversations: await prisma.aiConversation.findMany({
+        where: { agentId: { in: [...bIds, ...aIds] } },
+        select: { agentId: true, orgId: true },
+      }),
+      costLogs: await prisma.aiCostLog.findMany({
+        where: { agentId: { in: [...bIds, ...aIds] } },
+        select: { agentId: true, orgId: true },
+      }),
+    }));
+    const convAgents = new Set(produced.conversations.map((c) => c.agentId));
+    check(
+      ['cleanup-agent', 'eval-case-generator', subjectSlug, judgeSlug].every((slug) =>
+        convAgents.has(idOf(slug))
+      ),
+      `conversations exist for B's clean-up, generator, subject and judge (${produced.conversations.length})`
+    );
+    check(
+      produced.costLogs.length > 0,
+      `the model calls were costed (${produced.costLogs.length} cost rows)`
+    );
+    check(
+      [...produced.conversations, ...produced.costLogs].every(
+        (row) => row.orgId === b.orgId && row.agentId !== null && bIds.includes(row.agentId)
+      ),
+      'every conversation and cost row names one of B’s agents and carries B — none is A’s'
+    );
+    check(
+      caseResults.every((r) => r.orgId === b.orgId),
+      'the evaluation case result carries B'
+    );
+
     if (failures > 0) throw new Error(`${failures} check(s) failed`);
     console.log('\n✓ smoke:tenancy-isolation passed');
   } finally {
@@ -815,6 +1115,18 @@ async function main(): Promise<void> {
       await prisma.user.deleteMany({ where: { email: { startsWith: `${PREFIX}-` } } });
       await prisma.knowledgeTag.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
       await prisma.aiProviderConfig.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
+      if (mcpExposureCapabilityId) {
+        if (mcpExposure) {
+          await prisma.mcpExposedTool.update({
+            where: { capabilityId: mcpExposureCapabilityId },
+            data: { isEnabled: mcpExposure.isEnabled },
+          });
+        } else {
+          await prisma.mcpExposedTool.delete({
+            where: { capabilityId: mcpExposureCapabilityId },
+          });
+        }
+      }
     }).catch((err: unknown) => {
       console.error('cleanup failed — remove the smoke-iso rows by hand', err);
     });

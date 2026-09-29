@@ -476,7 +476,6 @@ describe('reconcilePlatformAgents', () => {
       slug: 'advisor',
       isSystem: true,
       deletedAt: null,
-      isActive: true,
       provider: '',
       model: '',
       ...PLATFORM_AGENT_BASELINE,
