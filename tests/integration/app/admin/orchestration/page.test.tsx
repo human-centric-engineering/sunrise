@@ -313,6 +313,25 @@ describe('OrchestrationDashboardPage (server component)', () => {
       expect(screen.getByTestId('dashboard-activity-feed')).toBeInTheDocument();
     });
 
+    it("counts only the org's own agents, not its platform agents (§116 t-725)", async () => {
+      await setupHappyPathMocks({
+        hasProvider: true,
+        hasAgent: true,
+        hasDefaultChatModel: true,
+      });
+
+      await renderPage();
+
+      const { serverFetch } = await import('@/lib/api/server-fetch');
+      const agentUrls = vi
+        .mocked(serverFetch)
+        .mock.calls.map(([url]) => String(url))
+        .filter((url) => url.includes('/orchestration/agents'));
+      expect(agentUrls).toEqual([
+        '/api/v1/admin/orchestration/agents?isSystem=false&page=1&limit=1',
+      ]);
+    });
+
     it('passes the recent week of trend data into the chart', async () => {
       // The page slices `trend.slice(-7)` to render the 7-day chart —
       // this exercises the success branch of getCostSummary.

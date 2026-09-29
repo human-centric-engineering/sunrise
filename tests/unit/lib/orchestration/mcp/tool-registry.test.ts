@@ -617,7 +617,7 @@ describe('callMcpTool', () => {
     await callMcpTool('search_knowledge', {}, { userId: 'user-1' });
 
     expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { slug: 'mcp-system' } })
+      expect.objectContaining({ where: { slug: 'mcp-system', isSystem: true } })
     );
   });
 });
@@ -664,7 +664,7 @@ describe('callMcpTool: scoped agent resolution', () => {
     await callMcpTool('search_knowledge', {}, { userId: 'user-1', scopedAgentId: null });
 
     expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { slug: 'mcp-system' } })
+      expect.objectContaining({ where: { slug: 'mcp-system', isSystem: true } })
     );
     expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
       'search_knowledge',

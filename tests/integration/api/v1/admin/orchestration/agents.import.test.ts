@@ -457,6 +457,54 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
     });
   });
 
+  describe('Reserved slugs (§116 t-725)', () => {
+    type ImportData = {
+      data: { imported: number; overwritten: number; skipped: number; warnings: string[] };
+    };
+
+    it('skips a new agent with a platform slug, with a warning, and imports the rest', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const tx = getTxMock();
+      tx.aiAgent.findFirst.mockResolvedValue(null);
+
+      const response = await POST(
+        makeRequest({
+          bundle: makeBundle([makeBundledAgent('quiz-master'), makeBundledAgent('new-agent')]),
+        })
+      );
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<ImportData>(response);
+      expect(data.data.imported).toBe(1);
+      expect(data.data.skipped).toBe(1);
+      expect(data.data.warnings).toEqual([
+        'Agent \'quiz-master\': skipped — The slug "quiz-master" is reserved for a platform agent',
+      ]);
+      expect(tx.aiAgent.create).toHaveBeenCalledOnce();
+      expect(tx.aiAgent.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ slug: 'new-agent' }) })
+      );
+    });
+
+    it("does not overwrite an org's own agent that took a platform slug before it was reserved", async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const tx = getTxMock();
+      tx.aiAgent.findFirst.mockResolvedValue(makeDbAgent(AGENT_ID, 'quiz-master'));
+
+      const response = await POST(
+        makeRequest({
+          bundle: makeBundle([makeBundledAgent('quiz-master')]),
+          conflictMode: 'overwrite',
+        })
+      );
+
+      const data = await parseJson<ImportData>(response);
+      expect(data.data.overwritten).toBe(0);
+      expect(data.data.skipped).toBe(1);
+      expect(tx.aiAgent.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Unknown capability slugs → warnings, not failures', () => {
     it('adds warning message for unknown slug and still completes import', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());

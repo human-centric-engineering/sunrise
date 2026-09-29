@@ -100,6 +100,20 @@ describe('ProviderModelsMatrix', () => {
     vi.resetAllMocks();
   });
 
+  // ── Model audit (install org only, §116 t-725) ────────────────────────────
+
+  it('hides "Audit Models" by default: only the install org has the audit workflow', () => {
+    render(<ProviderModelsMatrix initialModels={[makeModel()]} />);
+
+    expect(screen.queryByRole('button', { name: /audit models/i })).toBeNull();
+  });
+
+  it('shows "Audit Models" when the page says this is the install org', () => {
+    render(<ProviderModelsMatrix initialModels={[makeModel()]} canAuditModels />);
+
+    expect(screen.getByRole('button', { name: /audit models/i })).toBeInTheDocument();
+  });
+
   // ── Basic rendering ────────────────────────────────────────────────────────
 
   it('renders model name in table rows', () => {

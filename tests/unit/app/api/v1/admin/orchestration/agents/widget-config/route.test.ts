@@ -191,6 +191,24 @@ describe('PATCH /agents/:id/widget-config', () => {
     expect(body.data.config.sendLabel).toBe(DEFAULT_WIDGET_CONFIG.sendLabel);
   });
 
+  it('refuses a system agent: its widget config is the platform agent definition (§116 t-725)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      id: AGENT_ID,
+      name: 'Pattern Advisor',
+      widgetConfig: null,
+      isSystem: true,
+    } as never);
+
+    const response = await PATCH(makePatchRequest({ primaryColor: '#16a34a' }), makeParams());
+
+    expect(response.status).toBe(403);
+    const body = await parseJson<{ error: { message: string } }>(response);
+    expect(body.error.message).toContain('platform agent');
+    expect(vi.mocked(prisma.aiAgent.update)).not.toHaveBeenCalled();
+    expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+  });
+
   it('returns 400 for invalid agent id on PATCH', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     const response = await PATCH(

@@ -381,6 +381,23 @@ describe('StreamingChatHandler', () => {
     expect(prisma.aiMessage.create).not.toHaveBeenCalled();
   });
 
+  it("loads a platform slug's system instance only; an ordinary slug any agent (§116 t-725)", async () => {
+    // A judge or the case generator is reached by its platform slug. An org's
+    // own agent that took one before it was reserved must not answer as it.
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    await collect(streamChat({ ...baseRequest, agentSlug: 'eval-case-generator' }));
+    await collect(streamChat(baseRequest));
+
+    const wheres = (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mock.calls.map(
+      ([args]) => (args as { where: Record<string, unknown> }).where
+    );
+    expect(wheres).toEqual([
+      { slug: 'eval-case-generator', isActive: true, isSystem: true },
+      { slug: 'helper', isActive: true },
+    ]);
+  });
+
   // 2 -----------------------------------------------------------------------
   it('yields error event with budget_exceeded when budget check fails', async () => {
     (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({

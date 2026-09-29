@@ -209,7 +209,7 @@ describe('seedChunks', () => {
     expect(createCall.data.slug).toMatch(/^agentic-design-patterns-[0-9a-f]{8}$/);
 
     expect(prisma.aiAgent.findMany).toHaveBeenCalledWith({
-      where: { slug: { in: ['pattern-advisor', 'quiz-master'] } },
+      where: { slug: { in: ['pattern-advisor', 'quiz-master'] }, isSystem: true },
       select: { id: true, slug: true },
     });
     expect(prisma.aiAgentKnowledgeTag.upsert).toHaveBeenCalledTimes(2);

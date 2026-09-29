@@ -1889,6 +1889,17 @@ describe('createDocumentForCleanup', () => {
     );
   });
 
+  it("looks up only the org's platform clean-up agent, never its own agent holding the slug (§116 t-725)", async () => {
+    // Act
+    await createDocumentForCleanup(CONTENT, FILE_NAME, USER_ID);
+
+    // Assert: an org's own agent that took the slug before it was reserved is
+    // not the clean-up assistant.
+    expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { slug: 'cleanup-agent', isSystem: true } })
+    );
+  });
+
   it('returns document, conversationId, and redirectTo pointing at the cleanup page', async () => {
     // Act
     const result = await createDocumentForCleanup(CONTENT, FILE_NAME, USER_ID);

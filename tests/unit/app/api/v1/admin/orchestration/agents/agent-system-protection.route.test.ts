@@ -12,13 +12,17 @@
  * - PATCH allows isActive: false on non-system agents
  * - PATCH rejects systemInstructions changes on system agents with 403
  * - PATCH allows systemInstructions changes on non-system agents
+ * - PATCH refuses every platform-owned field of a system agent (§116 t-725),
+ *   re-enabling included, compared by value; org-tunable fields pass
+ * - PATCH refuses renaming an org's agent to a platform slug
+ * - GET returns the edit policy the form renders from
  *
  * @see app/api/v1/admin/orchestration/agents/[id]/route.ts
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { DELETE, PATCH } from '@/app/api/v1/admin/orchestration/agents/[id]/route';
+import { DELETE, GET, PATCH } from '@/app/api/v1/admin/orchestration/agents/[id]/route';
 import { mockAdminUser } from '@/tests/helpers/auth';
 
 // ─── Mock dependencies ────────────────────────────────────────────────────────
@@ -47,6 +51,9 @@ vi.mock('@/lib/db/client', () => {
       findFirst: (...args: unknown[]) => mockVersionFindFirst(...args),
       create: (...args: unknown[]) => mockVersionCreate(...args),
     },
+    // Grant rewrites — a PATCH that sends grant lists replaces the join rows.
+    aiAgentKnowledgeTag: { deleteMany: vi.fn(), createMany: vi.fn() },
+    aiAgentKnowledgeDocument: { deleteMany: vi.fn(), createMany: vi.fn() },
     $transaction: vi.fn(),
   };
   mock.$transaction.mockImplementation((fn: (tx: typeof mock) => Promise<unknown>) => fn(mock));
@@ -87,6 +94,8 @@ import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const AGENT_ID = 'cmjbv4i3x00003wsloputgwul';
+const TAG_A = 'cmjbv4i3x00003wsloputgta1';
+const TAG_B = 'cmjbv4i3x00003wsloputgtb2';
 
 function makeSystemAgent(overrides = {}) {
   return {
@@ -185,7 +194,8 @@ describe('System agent protection', () => {
 
       expect(response.status).toBe(403);
       const json = await response.json();
-      expect(json.error.message).toContain('System agents cannot be deactivated');
+      expect(json.error.message).toContain('platform agent');
+      expect(json.error.message).toContain('isActive');
       expect(mockUpdate).not.toHaveBeenCalled();
     });
 
@@ -208,7 +218,8 @@ describe('System agent protection', () => {
 
       expect(response.status).toBe(403);
       const json = await response.json();
-      expect(json.error.message).toContain('System agent slugs cannot be changed');
+      expect(json.error.message).toContain('platform agent');
+      expect(json.error.message).toContain('slug');
       expect(mockUpdate).not.toHaveBeenCalled();
     });
 
@@ -250,7 +261,8 @@ describe('System agent protection', () => {
 
       expect(response.status).toBe(403);
       const json = await response.json();
-      expect(json.error.message).toContain('System agent instructions cannot be modified');
+      expect(json.error.message).toContain('platform agent');
+      expect(json.error.message).toContain('systemInstructions');
       expect(mockUpdate).not.toHaveBeenCalled();
     });
 
@@ -278,6 +290,217 @@ describe('System agent protection', () => {
       );
 
       expect(response.status).toBe(200);
+    });
+  });
+
+  describe('PATCH — platform-owned fields (§116 t-725)', () => {
+    it('rejects re-enabling a deactivated system agent', async () => {
+      // A retired platform agent is switched off by every reconcile; turning
+      // it back on between reconciles is the same code-owned change.
+      mockFindUnique.mockResolvedValue(makeSystemAgent({ isActive: false }));
+
+      const response = await PATCH(makePatchRequest({ isActive: true }), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(403);
+      const json = await response.json();
+      expect(json.error.message).toContain('isActive');
+      expect(mockUpdate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['temperature', 0.1],
+      ['maxTokens', 99],
+      ['name', 'Renamed'],
+      ['persona', 'A pirate'],
+      ['inputGuardMode', 'block'],
+      ['knowledgeAccessMode', 'restricted'],
+    ])(
+      'rejects a change to %s, names it, and lists what the org can change',
+      async (field, value) => {
+        mockFindUnique.mockResolvedValue(
+          makeSystemAgent({
+            temperature: 0.7,
+            maxTokens: 4096,
+            persona: null,
+            inputGuardMode: null,
+            knowledgeAccessMode: 'full',
+          })
+        );
+
+        const response = await PATCH(makePatchRequest({ [field]: value }), makeParams(AGENT_ID));
+
+        expect(response.status).toBe(403);
+        const json = await response.json();
+        expect(json.error.code).toBe('FORBIDDEN');
+        expect(json.error.message).toContain(field);
+        expect(json.error.message).toContain('This org can change: model, provider');
+        expect(mockUpdate).not.toHaveBeenCalled();
+      }
+    );
+
+    it('rejects linking a system agent to a profile', async () => {
+      mockFindUnique.mockResolvedValue(makeSystemAgent({ profileId: null }));
+
+      const response = await PATCH(
+        makePatchRequest({ profileId: 'cmjbv4i3x00003wsloputgwum' }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.message).toContain('profileId');
+      expect(mockUpdate).not.toHaveBeenCalled();
+    });
+
+    it('rejects a different set of knowledge-tag grants', async () => {
+      mockFindUnique.mockResolvedValue(
+        makeSystemAgent({ grantedTags: [{ tagId: TAG_A }], grantedDocuments: [] })
+      );
+
+      const response = await PATCH(
+        makePatchRequest({ grantedTagIds: [TAG_A, TAG_B] }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.message).toContain('grantedTagIds');
+      expect(mockUpdate).not.toHaveBeenCalled();
+    });
+
+    it('accepts the same grants in another order — a set, not a list', async () => {
+      const agent = makeSystemAgent({
+        grantedTags: [{ tagId: TAG_A }, { tagId: TAG_B }],
+        grantedDocuments: [],
+      });
+      mockFindUnique.mockResolvedValue(agent);
+      mockUpdate.mockResolvedValue(agent);
+
+      const response = await PATCH(
+        makePatchRequest({ grantedTagIds: [TAG_B, TAG_A], grantedDocumentIds: [] }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+    });
+
+    it('accepts every org-tunable field and writes it', async () => {
+      const agent = makeSystemAgent({
+        fallbackProviders: [],
+        monthlyBudgetUsd: null,
+        maxCostPerTurnUsd: null,
+        rateLimitRpm: null,
+        retentionDays: null,
+      });
+      mockFindUnique.mockResolvedValue(agent);
+      mockUpdate.mockResolvedValue(agent);
+      const tuned = {
+        provider: 'openai',
+        model: 'gpt-5',
+        fallbackProviders: ['anthropic'],
+        monthlyBudgetUsd: 50,
+        maxCostPerTurnUsd: 0.5,
+        rateLimitRpm: 30,
+        retentionDays: 90,
+      };
+
+      const response = await PATCH(makePatchRequest(tuned), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(200);
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining(tuned) })
+      );
+    });
+
+    it('accepts a whole-agent echo that changes only the model', async () => {
+      // A client that PATCHes back everything it read is refused only for
+      // what it actually changed.
+      const agent = makeSystemAgent({ temperature: 0.7, maxTokens: 4096 });
+      mockFindUnique.mockResolvedValue(agent);
+      mockUpdate.mockResolvedValue({ ...agent, model: 'claude-opus-5-5' });
+      const {
+        id: _id,
+        deletedAt: _d,
+        createdBy: _c,
+        systemInstructionsHistory: _h,
+        ...echo
+      } = agent;
+
+      const response = await PATCH(
+        makePatchRequest({ ...echo, model: 'claude-opus-5-5' }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ model: 'claude-opus-5-5' }) })
+      );
+    });
+
+    it("leaves an org's own agent's fields unguarded", async () => {
+      const agent = makeCustomAgent({ temperature: 0.7 });
+      mockFindUnique.mockResolvedValue(agent);
+      mockUpdate.mockResolvedValue({ ...agent, temperature: 0.1 });
+
+      const response = await PATCH(makePatchRequest({ temperature: 0.1 }), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(200);
+    });
+  });
+
+  describe('PATCH — reserved slugs (§116 t-725)', () => {
+    it.each(['quiz-master', 'eval-judge-relevance', 'provider-model-auditor'])(
+      "rejects renaming an org's agent to the platform slug %s",
+      async (slug) => {
+        mockFindUnique.mockResolvedValue(makeCustomAgent());
+
+        const response = await PATCH(makePatchRequest({ slug }), makeParams(AGENT_ID));
+
+        expect(response.status).toBe(400);
+        const json = await response.json();
+        expect(json.error.code).toBe('VALIDATION_ERROR');
+        expect(json.error.details.slug[0]).toContain('reserved for a platform agent');
+        expect(mockUpdate).not.toHaveBeenCalled();
+      }
+    );
+  });
+
+  describe('GET — edit policy', () => {
+    function makeGetRequest(): NextRequest {
+      return {
+        method: 'GET',
+        headers: new Headers(),
+        url: `http://localhost:3000/api/v1/admin/orchestration/agents/${AGENT_ID}`,
+      } as unknown as NextRequest;
+    }
+
+    it('returns the locked and tunable fields for a system agent', async () => {
+      mockFindUnique.mockResolvedValue(makeSystemAgent());
+
+      const json = await (await GET(makeGetRequest(), makeParams(AGENT_ID))).json();
+
+      expect(json.data.platformAgent.lockedFields).toEqual(
+        expect.arrayContaining(['systemInstructions', 'temperature', 'isActive', 'grantedTagIds'])
+      );
+      expect(json.data.platformAgent.lockedFields).not.toContain('model');
+      expect(json.data.platformAgent.tunableFields).toEqual(
+        expect.arrayContaining(['model', 'provider', 'monthlyBudgetUsd', 'retentionDays'])
+      );
+      expect(json.data.platformAgent.bindingsLocked).toBe(true);
+    });
+
+    it("says mcp-system's bindings are the org's", async () => {
+      mockFindUnique.mockResolvedValue(makeSystemAgent({ slug: 'mcp-system' }));
+
+      const json = await (await GET(makeGetRequest(), makeParams(AGENT_ID))).json();
+
+      expect(json.data.platformAgent.bindingsLocked).toBe(false);
+    });
+
+    it("returns null for an org's own agent", async () => {
+      mockFindUnique.mockResolvedValue(makeCustomAgent());
+
+      const json = await (await GET(makeGetRequest(), makeParams(AGENT_ID))).json();
+
+      expect(json.data.platformAgent).toBeNull();
     });
   });
 

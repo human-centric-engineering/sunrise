@@ -480,6 +480,25 @@ describe('POST /api/v1/admin/orchestration/agents', () => {
     });
   });
 
+  describe('Reserved slugs (§116 t-725)', () => {
+    it.each(['quiz-master', 'mcp-system', 'provider-model-auditor'])(
+      'refuses to create an agent with the platform slug %s',
+      async (slug) => {
+        vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+        const response = await POST(makePostRequest({ ...VALID_AGENT, slug }));
+
+        expect(response.status).toBe(400);
+        const data = await parseJson<{ error: { code: string; details: { slug: string[] } } }>(
+          response
+        );
+        expect(data.error.code).toBe('VALIDATION_ERROR');
+        expect(data.error.details.slug[0]).toContain('reserved for a platform agent');
+        expect(prisma.aiAgent.create).not.toHaveBeenCalled();
+      }
+    );
+  });
+
   describe('Conflict errors', () => {
     it('returns 409 when slug already exists (P2002)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());

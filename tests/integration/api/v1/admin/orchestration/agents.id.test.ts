@@ -1266,20 +1266,40 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id — system agent protecti
     expect(data.error.code).toBe('FORBIDDEN');
   });
 
-  it('allows PATCH of non-protected fields on a system agent (e.g. description)', async () => {
-    // Arrange: system agent allows description changes
+  it('allows PATCH of an org-tunable field on a system agent (e.g. monthlyBudgetUsd)', async () => {
+    // Arrange: budget is how the agent runs in this org, so it stays the org's
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent({ isSystem: true }) as never);
     vi.mocked(prisma.aiAgent.update).mockResolvedValue(
-      makeAgent({ isSystem: true, description: 'Updated desc' }) as never
+      makeAgent({ isSystem: true, monthlyBudgetUsd: 25 }) as never
     );
+
+    const response = await PATCH(
+      makeRequest('PATCH', { monthlyBudgetUsd: 25 }),
+      makeParams(AGENT_ID)
+    );
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiAgent.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ monthlyBudgetUsd: 25 }) })
+    );
+  });
+
+  it('rejects a change to a platform-owned field on a system agent (e.g. description)', async () => {
+    // Arrange: description is what the agent IS — the reconcile writes it back
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent({ isSystem: true }) as never);
 
     const response = await PATCH(
       makeRequest('PATCH', { description: 'Updated desc' }),
       makeParams(AGENT_ID)
     );
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(403);
+    const data = await parseJson<{ error: { code: string; message: string } }>(response);
+    expect(data.error.code).toBe('FORBIDDEN');
+    expect(data.error.message).toContain('description');
+    expect(prisma.aiAgent.update).not.toHaveBeenCalled();
   });
 
   it('does not trigger slug-protection when slug is the same as current', async () => {

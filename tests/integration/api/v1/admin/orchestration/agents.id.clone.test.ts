@@ -17,7 +17,7 @@
  * - Empty body is tolerated (name/slug default to source-based values)
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/v1/admin/orchestration/agents/[id]/clone/route';
 import {
@@ -26,6 +26,10 @@ import {
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
 import { Prisma } from '@prisma/client';
+import {
+  __resetPlatformAgentsForTests,
+  registerPlatformAgent,
+} from '@/lib/orchestration/agents/platform-agents';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -429,6 +433,66 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       expect(raw).not.toContain(INTERNAL_MSG);
       expect(raw).not.toContain('db connection');
       expect(raw).not.toContain('exploded');
+    });
+  });
+
+  describe('Reserved slugs (§116 t-725)', () => {
+    afterEach(() => {
+      __resetPlatformAgentsForTests();
+    });
+
+    it('refuses a chosen slug that a platform agent holds', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeSourceAgent() as never);
+
+      const response = await POST(makePostRequest({ slug: 'cleanup-agent' }), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(400);
+      const data = await parseJson<{ error: { details: { slug: string[] } } }>(response);
+      expect(data.error.details.slug[0]).toContain('reserved for a platform agent');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('moves past a generated slug that a platform agent holds', async () => {
+      // A fork registered `<source>-copy` as a platform agent: the clone
+      // takes the next variant instead of squatting on it.
+      registerPlatformAgent({
+        slug: 'my-source-copy',
+        audience: 'every-org',
+        agent: {
+          name: 'Fork agent',
+          description: 'A fork agent',
+          systemInstructions: 'x',
+          temperature: 0.2,
+          maxTokens: 10,
+        },
+        capabilities: [],
+        knowledgeTags: [],
+      });
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+        ...makeSourceAgent(),
+        slug: 'my-source',
+      } as never);
+      const slugs: unknown[] = [];
+      vi.mocked(prisma.$transaction).mockImplementation(async (fn: (tx: never) => unknown) => {
+        const tx = {
+          aiAgentVersion: { create: vi.fn().mockResolvedValue({}) },
+          aiAgent: {
+            create: vi.fn((args: { data: Record<string, unknown> }) => {
+              slugs.push(args.data.slug);
+              return Promise.resolve({ ...makeClonedAgent(), slug: args.data.slug });
+            }),
+          },
+          aiAgentCapability: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+        };
+        return fn(tx as never);
+      });
+
+      const response = await POST(makePostRequest(), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(201);
+      expect(slugs).toEqual(['my-source-copy-2']);
     });
   });
 

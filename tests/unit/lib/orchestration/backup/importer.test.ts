@@ -634,6 +634,41 @@ describe('importOrchestrationConfig — system agent protection', () => {
     );
     expect(result.warnings[0]).toMatch(/system agents cannot be overwritten/i);
   });
+
+  it('skips a platform slug the org has no agent under: the reconcile creates it (§116 t-725)', async () => {
+    mockTx.aiAgent.findFirst.mockResolvedValue(null);
+
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, agents: [makeAgent({ slug: 'eval-judge-relevance' })] },
+    };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    expect(mockTx.aiAgent.create).not.toHaveBeenCalled();
+    expect(mockTx.aiAgentKnowledgeTag.createMany).not.toHaveBeenCalled();
+    expect(result.agents.created).toBe(0);
+    expect(result.warnings).toEqual([
+      'Agent \'eval-judge-relevance\' skipped — The slug "eval-judge-relevance" is reserved for a platform agent',
+    ]);
+  });
+
+  it("does not overwrite an org's own agent holding a platform slug", async () => {
+    mockTx.aiAgent.findFirst.mockResolvedValue({
+      id: 'own-1',
+      slug: 'quiz-master',
+      isSystem: false,
+    });
+
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, agents: [makeAgent({ slug: 'quiz-master' })] },
+    };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    expect(mockTx.aiAgent.update).not.toHaveBeenCalled();
+    expect(result.agents.updated).toBe(0);
+    expect(result.warnings[0]).toContain('reserved for a platform agent');
+  });
 });
 
 // ─── Grant resolution ─────────────────────────────────────────────────────────

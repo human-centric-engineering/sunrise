@@ -39,6 +39,7 @@ vi.mock('@/lib/db/client', () => ({
     aiAgent: { findUnique: vi.fn() },
     aiCapability: { findUnique: vi.fn() },
     aiAgentCapability: {
+      findUnique: vi.fn(),
       findMany: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
@@ -729,5 +730,170 @@ describe('${env:VAR} save-time warnings on capability binding routes', () => {
     const response = await POST(makeAttachRequest(body), makeAttachParams(AGENT_ID));
     const data = await parseJson<{ meta: { warnings: { missingEnvVars: string[] } } }>(response);
     expect(data.meta.warnings.missingEnvVars).toEqual(['SHARED_VAR']);
+  });
+});
+
+// ─── Platform agents (§116 t-725) ────────────────────────────────────────────
+//
+// A platform agent's binding set, on/off state and custom config are the
+// platform's (the reconcile writes the first two back), so the routes refuse
+// them; its per-binding rate limit is how fast the org lets it run, so that
+// stays writable. mcp-system's definition leaves its bindings to the org.
+
+describe('binding routes on a platform agent', () => {
+  function makePlatformAgent(slug = 'pattern-advisor') {
+    return { ...makeAgent(), slug, name: 'Pattern Advisor', isSystem: true };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(makeCapability() as never);
+  });
+
+  it('POST refuses to attach a capability', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makePlatformAgent() as never);
+
+    const response = await POST(makeAttachRequest(VALID_ATTACH_BODY), makeAttachParams(AGENT_ID));
+
+    expect(response.status).toBe(403);
+    const data = await parseJson<{ error: { message: string } }>(response);
+    expect(data.error.message).toContain('platform agent');
+    expect(prisma.aiAgentCapability.create).not.toHaveBeenCalled();
+    expect(capabilityDispatcher.clearCache).not.toHaveBeenCalled();
+  });
+
+  it("POST attaches to mcp-system, whose bindings are the org's", async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+      makePlatformAgent('mcp-system') as never
+    );
+    vi.mocked(prisma.aiAgentCapability.create).mockResolvedValue(makeLink());
+
+    const response = await POST(makeAttachRequest(VALID_ATTACH_BODY), makeAttachParams(AGENT_ID));
+
+    expect(response.status).toBe(201);
+    expect(prisma.aiAgentCapability.create).toHaveBeenCalledOnce();
+  });
+
+  it('PATCH refuses to switch a binding off', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makePlatformAgent() as never);
+    vi.mocked(prisma.aiAgentCapability.findUnique).mockResolvedValue(makeLink());
+
+    const response = await PATCH(
+      makeCapIdRequest('PATCH', { isEnabled: false }),
+      makeCapIdParams(AGENT_ID, CAPABILITY_ID)
+    );
+
+    expect(response.status).toBe(403);
+    const data = await parseJson<{ error: { message: string } }>(response);
+    expect(data.error.message).toContain('isEnabled');
+    expect(data.error.message).toContain('customRateLimit');
+    expect(prisma.aiAgentCapability.update).not.toHaveBeenCalled();
+  });
+
+  it('PATCH refuses a new custom config', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makePlatformAgent() as never);
+    vi.mocked(prisma.aiAgentCapability.findUnique).mockResolvedValue(makeLink());
+
+    const response = await PATCH(
+      makeCapIdRequest('PATCH', { customConfig: { forcedUrl: 'https://example.com' } }),
+      makeCapIdParams(AGENT_ID, CAPABILITY_ID)
+    );
+
+    expect(response.status).toBe(403);
+    expect((await parseJson<{ error: { message: string } }>(response)).error.message).toContain(
+      'customConfig'
+    );
+    expect(prisma.aiAgentCapability.update).not.toHaveBeenCalled();
+  });
+
+  it('PATCH accepts a rate limit sent beside an unchanged state and config', async () => {
+    // The config comes back from jsonb in another key order: still unchanged.
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makePlatformAgent() as never);
+    vi.mocked(prisma.aiAgentCapability.findUnique).mockResolvedValue(
+      makeLink({ customConfig: { b: 2, a: 1 } })
+    );
+    vi.mocked(prisma.aiAgentCapability.update).mockResolvedValue(makeLink({ customRateLimit: 5 }));
+
+    const response = await PATCH(
+      makeCapIdRequest('PATCH', {
+        isEnabled: true,
+        customConfig: { a: 1, b: 2 },
+        customRateLimit: 5,
+      }),
+      makeCapIdParams(AGENT_ID, CAPABILITY_ID)
+    );
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiAgentCapability.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ customRateLimit: 5 }) })
+    );
+  });
+
+  it('PATCH returns 404 on a platform agent when the binding does not exist', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makePlatformAgent() as never);
+    vi.mocked(prisma.aiAgentCapability.findUnique).mockResolvedValue(null);
+
+    const response = await PATCH(
+      makeCapIdRequest('PATCH', { customRateLimit: 5 }),
+      makeCapIdParams(AGENT_ID, CAPABILITY_ID)
+    );
+
+    expect(response.status).toBe(404);
+    expect(prisma.aiAgentCapability.update).not.toHaveBeenCalled();
+  });
+
+  it("PATCH switches mcp-system's binding off", async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+      makePlatformAgent('mcp-system') as never
+    );
+    vi.mocked(prisma.aiAgentCapability.update).mockResolvedValue(makeLink({ isEnabled: false }));
+
+    const response = await PATCH(
+      makeCapIdRequest('PATCH', { isEnabled: false }),
+      makeCapIdParams(AGENT_ID, CAPABILITY_ID)
+    );
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiAgentCapability.update).toHaveBeenCalledOnce();
+  });
+
+  it('PATCH returns 404 when the agent does not exist', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(null);
+
+    const response = await PATCH(
+      makeCapIdRequest('PATCH', { isEnabled: false }),
+      makeCapIdParams(AGENT_ID, CAPABILITY_ID)
+    );
+
+    expect(response.status).toBe(404);
+    expect(prisma.aiAgentCapability.update).not.toHaveBeenCalled();
+  });
+
+  it('DELETE refuses to detach a capability', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makePlatformAgent() as never);
+
+    const response = await DELETE(
+      makeCapIdRequest('DELETE'),
+      makeCapIdParams(AGENT_ID, CAPABILITY_ID)
+    );
+
+    expect(response.status).toBe(403);
+    expect(prisma.aiAgentCapability.delete).not.toHaveBeenCalled();
+  });
+
+  it('DELETE detaches from mcp-system', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+      makePlatformAgent('mcp-system') as never
+    );
+    vi.mocked(prisma.aiAgentCapability.delete).mockResolvedValue(makeLink());
+
+    const response = await DELETE(
+      makeCapIdRequest('DELETE'),
+      makeCapIdParams(AGENT_ID, CAPABILITY_ID)
+    );
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiAgentCapability.delete).toHaveBeenCalledOnce();
   });
 });

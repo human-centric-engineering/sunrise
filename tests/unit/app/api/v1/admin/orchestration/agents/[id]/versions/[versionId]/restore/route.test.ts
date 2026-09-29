@@ -196,12 +196,13 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
 
   // ── System agent protection ────────────────────────────────────────
 
-  it('restores a system agent but skips the protected fields (slug, systemInstructions, isActive)', async () => {
-    // System agents are restorable now (#330), but the fields the PATCH route
-    // guards as read-only must NOT be reverted by a restore — only the rest of
-    // the config is. A green-bar version would let the snapshot's slug/
-    // instructions/active state through; this proves they're held back while a
-    // non-protected field (model) IS restored.
+  it('restores only the org-tunable fields of a system agent (§116 t-725)', async () => {
+    // A system agent is a platform agent: the platform owns every field the
+    // registry marks 'code' (the PATCH route refuses a change to them, and the
+    // next reconcile writes them back), so a restore must bring back only what
+    // the org tunes. A green-bar version would let the snapshot's temperature
+    // or instructions through; this proves they are held back while the
+    // org's model, provider and budget ARE restored.
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
       makeAgent({
@@ -217,13 +218,19 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
           slug: 'sys-old',
           systemInstructions: 'old instructions',
           isActive: false,
-          model: 'claude-opus-4-8',
           temperature: 0.2,
+          persona: 'an old persona',
+          model: 'claude-opus-4-8',
           provider: 'anthropic',
+          monthlyBudgetUsd: 12,
+          grantedTagIds: ['cmjbv4i3x00003wsloputgta1'],
+          grantedDocumentIds: [],
         },
       })
     );
     const txAgentUpdate = vi.fn().mockResolvedValue(makeAgent({ isSystem: true }));
+    const tagDeleteMany = vi.fn();
+    const docDeleteMany = vi.fn();
     vi.mocked(prisma.$transaction).mockImplementation(async (callback) => {
       const tx = {
         aiAgent: { update: txAgentUpdate },
@@ -231,8 +238,8 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
           findFirst: vi.fn().mockResolvedValue({ version: 2 }),
           create: vi.fn().mockResolvedValue({}),
         },
-        aiAgentKnowledgeTag: { deleteMany: vi.fn(), createMany: vi.fn() },
-        aiAgentKnowledgeDocument: { deleteMany: vi.fn(), createMany: vi.fn() },
+        aiAgentKnowledgeTag: { deleteMany: tagDeleteMany, createMany: vi.fn() },
+        aiAgentKnowledgeDocument: { deleteMany: docDeleteMany, createMany: vi.fn() },
       };
       return callback(tx as never);
     });
@@ -245,14 +252,24 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
     expect(response.status).toBe(200);
     expect(prisma.$transaction).toHaveBeenCalled();
     const data = (txAgentUpdate.mock.calls[0][0] as { data: Record<string, unknown> }).data;
-    // Protected system fields are NOT reverted by the restore…
-    expect(data).not.toHaveProperty('slug');
-    expect(data).not.toHaveProperty('systemInstructions');
-    expect(data).not.toHaveProperty('systemInstructionsHistory');
-    expect(data).not.toHaveProperty('isActive');
-    // …but the rest of the config IS restored.
+    // Platform-owned fields are NOT reverted by the restore…
+    for (const field of [
+      'slug',
+      'systemInstructions',
+      'systemInstructionsHistory',
+      'isActive',
+      'temperature',
+      'persona',
+    ]) {
+      expect(data).not.toHaveProperty(field);
+    }
+    // …nor are the grants…
+    expect(tagDeleteMany).not.toHaveBeenCalled();
+    expect(docDeleteMany).not.toHaveBeenCalled();
+    // …but the org's own settings ARE restored.
     expect(data.model).toBe('claude-opus-4-8');
-    expect(data.temperature).toBe(0.2);
+    expect(data.provider).toBe('anthropic');
+    expect(data.monthlyBudgetUsd).toBe(12);
   });
 
   // ── Not found ──────────────────────────────────────────────────────

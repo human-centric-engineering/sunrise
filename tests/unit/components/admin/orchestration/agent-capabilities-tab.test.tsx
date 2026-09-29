@@ -810,4 +810,70 @@ describe('AgentCapabilitiesTab', () => {
       });
     });
   });
+
+  // ── Platform agent (§116 t-725) ───────────────────────────────────────────
+
+  describe('bindingsLocked', () => {
+    it('hides attach and detach, disables the switch, and says why', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      mockDefaultFetch(vi.mocked(apiClient.get));
+
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} bindingsLocked />);
+
+      await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
+      // Calculator is still listed as available — read-only, not hidden.
+      expect(screen.getByText('Calculator')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^attach$/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /detach/i })).toBeNull();
+      expect(screen.getByRole('switch', { name: /toggle web search/i })).toBeDisabled();
+      expect(screen.getByTestId('platform-bindings-note')).toHaveTextContent('set by the platform');
+    });
+
+    it('lets Configure set the rate limit, sending no custom config', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockImplementation((url: string) =>
+        Promise.resolve(
+          url.includes('/agents/')
+            ? [{ ...LINK_SEARCH, customConfig: { maxResults: 5 } }]
+            : [CAP_SEARCH, CAP_CALC]
+        )
+      );
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ success: true, data: {} }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+      const user = userEvent.setup();
+
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} bindingsLocked />);
+      await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /configure/i }));
+
+      expect(screen.getByRole('textbox', { name: /custom config/i })).toBeDisabled();
+      const rateLimitInput = screen.getByRole('spinbutton', { name: /custom rate limit/i });
+      await user.type(rateLimitInput, '12');
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      await waitFor(() => {
+        expect(fetchSpy).toHaveBeenCalledWith(
+          expect.stringContaining('/capabilities/cap-search'),
+          expect.objectContaining({ body: JSON.stringify({ customRateLimit: 12 }) })
+        );
+      });
+    });
+
+    it("keeps every control when the bindings are the org's", async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      mockDefaultFetch(vi.mocked(apiClient.get));
+
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} bindingsLocked={false} />);
+
+      await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
+      expect(screen.getByRole('button', { name: /^attach$/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /detach/i })).toBeInTheDocument();
+      expect(screen.getByRole('switch', { name: /toggle web search/i })).toBeEnabled();
+      expect(screen.queryByTestId('platform-bindings-note')).toBeNull();
+    });
+  });
 });
