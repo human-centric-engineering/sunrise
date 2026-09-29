@@ -4,12 +4,12 @@ DB-managed registry of LLM provider **models** with tier classification, capabil
 
 ## Dynamic system-agent resolution
 
-The 5 system-seeded agents (`pattern-advisor`, `quiz-master`, `mcp-system`, `provider-model-auditor`, `audit-report-writer`) ship with empty `provider`/`model` strings. At runtime, `lib/orchestration/llm/agent-resolver.ts` fills those bindings from:
+Sunrise's [platform agents](./platform-agents.md) (`pattern-advisor`, `quiz-master`, `mcp-system`, the evaluation judges and case generator, `provider-model-auditor`, `audit-report-writer`) are created with empty `provider`/`model` strings; the cleanup assistant alone is pinned at creation when a reachable tool-using model exists. Provider and model are the org's, so the reconcile never overwrites them. At runtime, `lib/orchestration/llm/agent-resolver.ts` fills those bindings from:
 
 1. The first active `AiProviderConfig` row whose `apiKeyEnvVar` is set in `process.env` (or whose row is `isLocal`).
 2. `AiOrchestrationSettings.defaultModels.chat` for the model id, falling through to `getDefaultModelForTask('chat')` and ultimately the registry's static fallback (`computeDefaultModelMap()` in `model-registry.ts`).
 
-The setup wizard writes `defaultModels.chat` and `.embeddings` based on the operator's chosen provider, so a fresh install picks up sensible defaults automatically once a provider is configured. Explicit `agent.provider`/`.model` always wins; the empty-string fallback is reserved for system seeds.
+The setup wizard writes `defaultModels.chat` and `.embeddings` based on the operator's chosen provider, so a fresh install picks up sensible defaults automatically once a provider is configured. Explicit `agent.provider`/`.model` always wins; the empty-string fallback is reserved for platform agents.
 
 This is the seam that makes Sunrise provider-agnostic on a fresh install. The 47-row matrix in `009-provider-models.ts` remains the **catalogue** that powers the recommender below.
 
@@ -206,7 +206,8 @@ The Provider Model Audit is an AI-powered workflow that evaluates model entries 
 | File                                                                    | Purpose                                                              |
 | ----------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | `prisma/seeds/data/templates/provider-model-audit.ts`                   | 19-step DAG template definition                                      |
-| `prisma/seeds/010-model-auditor.ts`                                     | Agent seed with capability bindings                                  |
+| `prisma/seeds/010-model-auditor.ts`                                     | Seeds the 3 audit capabilities and the workflow                      |
+| `lib/orchestration/agents/platform-agent-definitions/model-auditor.ts`  | Both agent definitions (install org only), with capability bindings  |
 | `lib/orchestration/capabilities/built-in/apply-audit-changes.ts`        | Capability that applies approved changes                             |
 | `lib/orchestration/capabilities/built-in/add-provider-models.ts`        | Capability that adds approved new models                             |
 | `lib/orchestration/capabilities/built-in/deactivate-provider-models.ts` | Capability that deactivates deprecated models                        |

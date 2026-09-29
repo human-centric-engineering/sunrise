@@ -1,6 +1,6 @@
 # Document Clean Up
 
-Interactive preprocessing for knowledge-base documents. Lives at `/admin/orchestration/knowledge/[id]/cleanup`, reached by ticking **Clean up before chunking** on the upload form. Powered by a seeded `cleanup-agent` and eleven cleanup capabilities.
+Interactive preprocessing for knowledge-base documents. Lives at `/admin/orchestration/knowledge/[id]/cleanup`, reached by ticking **Clean up before chunking** on the upload form. Powered by the `cleanup-agent` platform agent and eleven cleanup capabilities.
 
 ## When to use
 
@@ -35,37 +35,37 @@ PDFs go through the existing preview modal first (so coverage warnings are visib
 
 ## Cleanup Agent
 
-| Field                 | Value                                                                                                                                            |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `slug`                | `cleanup-agent`                                                                                                                                  |
-| `name`                | Document Clean Up Assistant                                                                                                                      |
-| `visibility`          | `internal`                                                                                                                                       |
-| `isSystem`            | `true` (seeded by `prisma/seeds/020-cleanup-agent.ts`)                                                                                           |
-| Default model         | **Pinned at seed time** to the strongest tool-using model the install can reach (see below); empty → resolved at runtime via `agent-resolver.ts` |
-| Temperature           | `0.2` — cleanup is procedural, not creative                                                                                                      |
-| `knowledgeAccessMode` | `restricted` — cleanup never searches the wider KB                                                                                               |
+| Field                 | Value                                                                                                                                                                                |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `slug`                | `cleanup-agent`                                                                                                                                                                      |
+| `name`                | Document Clean Up Assistant                                                                                                                                                          |
+| `visibility`          | `internal`                                                                                                                                                                           |
+| `isSystem`            | `true` — a [platform agent](../orchestration/platform-agents.md), defined in `lib/orchestration/agents/platform-agent-definitions/cleanup-agent.ts`; every org gets its own instance |
+| Default model         | **Pinned by the reconcile** to the strongest tool-using model the install can reach (see below); empty → resolved at runtime via `agent-resolver.ts`                                 |
+| Temperature           | `0.2` — cleanup is procedural, not creative                                                                                                                                          |
+| `knowledgeAccessMode` | `restricted` — cleanup never searches the wider KB                                                                                                                                   |
 
 **Why the model is pinned rather than inherited.** Cleanup is a tool-choice
 task: fourteen capabilities whose differences are subtle (`collapse_whitespace`
 vs `join_wrapped_lines`, `strip_lines_matching` vs `strip_matches`), and a weak
-model picks the wrong one and reports success. `pickPinnedBinding()` in the seed
-chooses among models that are `toolUse: 'strong'` on a provider the install can
+model picks the wrong one and reports success. `pickCleanupBinding()` in the
+definition chooses among models that are `toolUse: 'strong'` on a provider the install can
 actually reach — active, and with its `apiKeyEnvVar` set or marked local,
 mirroring `pickActiveProviderCandidates()` — preferring worker tier over
 thinking tier (a whole-document rewrite on a thinking-tier model costs far more
 and is no better at picking a regex), then deepest reasoning, then model id for
 a stable tie-break. Nothing reachable → both fields stay empty and the runtime
-resolver fills them, exactly as before. An admin's own choice is never
-overwritten: the fill only targets rows where **both** fields are still empty.
+resolver fills them, exactly as before. The pin is applied when the org's
+instance is created, and again on any later reconcile while **both** fields are
+still empty. An admin's own choice is never overwritten: provider and model
+belong to the org.
 
-The seeded system prompt tells the agent to read before it acts and verify
-after, states what each tool cannot do, prefers deterministic capabilities,
-covers the PDF / transcript / verbose-article / large-document flows, and
-reminds the admin to click **Mark cleaned** when satisfied. Admins can edit it
-in the standard agent admin UI. Re-seeding refreshes the prompt **only while
-`systemInstructionsHistory` is still empty** — that array is appended to on
-every admin save, so an untouched row still holds exactly what a previous seed
-wrote and can safely be brought up to date, while an edited one is left alone.
+The system prompt tells the agent to read before it acts and verify after,
+states what each tool cannot do, prefers deterministic capabilities, covers the
+PDF / transcript / verbose-article / large-document flows, and reminds the
+admin to click **Mark cleaned** when satisfied. The prompt is the platform's:
+every reconcile writes the definition's prompt back, so an admin's edit to it
+in the agent admin UI does not survive the next reconcile.
 
 ## Capabilities reference
 
@@ -188,8 +188,8 @@ The doc is over 100k tokens. Either run deterministic strips first then re-check
 **The cleanup email didn't arrive.**
 The send is fire-and-forget — failures log at `warn` level but don't surface in the UI. Check the server logs for "cleanup-ready email failed". The session is still usable from the KB list's **Cleaning** tab regardless.
 
-**Re-seed wiped my custom cleanup agent prompt.**
-It shouldn't — `prisma/seeds/020-cleanup-agent.ts` uses `update: { isSystem: true }` so re-seeding only sets the system flag. Edits to `systemInstructions`, `model`, `provider`, `temperature`, and capability bindings survive.
+**My edits to the cleanup agent's prompt were reverted.**
+Expected. The cleanup agent is a [platform agent](../orchestration/platform-agents.md): the platform owns what it is — `systemInstructions`, `temperature`, max tokens, knowledge access, the other non-cost fields, and the capability bindings (set to exactly the fourteen declared). Every reconcile (on `npm run db:seed`, on org creation, and from the `platformAgents` maintenance job after a deploy changes the definitions) writes those back, so an edit to any of them does not survive. The admin UI and API still accept the edit today; refusing it is a later task (t-725). What the org owns survives: `provider`, `model`, fallback providers, provider config, monthly budget, per-turn cost cap, rate limit and retention days are set once when the instance is created and never touched again. A fork that needs a different prompt replaces the definition by slug through `registerPlatformAgent()` in `lib/app/platform-agents.ts`.
 
 ## Inline editing
 
@@ -381,5 +381,5 @@ scrolling. Cleanup targets documents up to ~100k tokens, where an unbounded
 | Confirmation email helper                                                  | `lib/orchestration/knowledge/cleanup-email.ts`                                                                                                                                                                                                                                                 |
 | Email template                                                             | `emails/cleanup-ready.tsx`                                                                                                                                                                                                                                                                     |
 | Cleanup capabilities                                                       | `lib/orchestration/capabilities/built-in/document-cleanup/*.ts`                                                                                                                                                                                                                                |
-| Agent + capability seeds                                                   | `prisma/seeds/020-cleanup-agent.ts`, `prisma/seeds/019-cleanup-capabilities.ts`                                                                                                                                                                                                                |
+| Agent definition + capability seed                                         | `lib/orchestration/agents/platform-agent-definitions/cleanup-agent.ts`, `prisma/seeds/019-cleanup-capabilities.ts`                                                                                                                                                                             |
 | Tests                                                                      | `tests/unit/lib/orchestration/capabilities/built-in/document-cleanup/`, `tests/unit/lib/orchestration/knowledge/`, `tests/unit/components/admin/orchestration/knowledge/cleanup-view.test.tsx`, `tests/integration/api/v1/admin/orchestration/knowledge.documents.id.cleanup.finalise.test.ts` |

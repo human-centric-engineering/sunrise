@@ -13,8 +13,10 @@ call (one judge call for all three rubrics together); batch runs use
 the registry (one judge call per case × grader). See
 `.context/orchestration/evaluations.md` for the registry architecture.
 
-**Phase 3 update:** three new Ragas-style RAG-focused judges seeded by
-`prisma/seeds/018-rag-evaluation-judges.ts` complement the answer-
+**Phase 3 update:** three new Ragas-style RAG-focused judges, platform
+agents defined in
+`lib/orchestration/agents/platform-agent-definitions/rag-evaluation-judges.ts`,
+complement the answer-
 quality metrics above:
 
 | Slug                           | What it measures                                                                                                              |
@@ -24,7 +26,7 @@ quality metrics above:
 | `eval-judge-answer-similarity` | Semantic similarity of ANSWER vs. EXPECTED ANSWER overall (Ragas-style, model-graded — complements `correctness`).            |
 
 These are dispatched the same way as the Phase 1 judges — `judge_agent`
-grader, slug lookup at run time, no code changes beyond the seed.
+grader, slug lookup at run time, no code changes beyond the definition.
 
 This doc is the canonical spec. Cross-references:
 
@@ -200,8 +202,13 @@ is persisted to the metric row and shown to an operator:
 | `finishReason === 'length'`       | `judge response was cut off at the model's token limit after N output tokens — …` | Raise the judge's `maxTokens` |
 | Anything else that fails to parse | `judge response was not valid {score, reasoning} JSON`                            | Fix the judge's prompt        |
 
+On a built-in judge both fixes belong in its definition, not the agent form:
+`maxTokens` and the prompt are platform-owned, so an edit made in the form is
+written back by the next reconcile (see
+[`platform-agents.md`](./platform-agents.md)).
+
 Note why the adapter guards cannot help here, since it is the reason this needed
-its own fix: the seeded judges run at `maxTokens: 1000` and carry **no**
+its own fix: the built-in judges run at `maxTokens: 1000` and carry **no**
 `responseFormat`, and every adapter truncation guard keys on one. `runJudge` is
 the only place the distinction can be drawn.
 

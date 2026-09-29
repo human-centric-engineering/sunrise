@@ -62,8 +62,7 @@ release process.
   `db:seed` after merging, and on every reconcile after that, each
   platform agent's name, description, instructions, temperature, max tokens,
   knowledge settings, visibility, persona, guardrails and brand voice are
-  written back to the definition's. So are its capability bindings (stray
-  ones removed, disabled ones re-enabled) and its knowledge-tag grants
+  written back to the definition's. So are its capability bindings (stray ones removed, disabled ones re-enabled), except `mcp-system`'s, which stay the org's so strict-mode grants survive, and its knowledge-tag grants
   (document grants cleared). A version row records each change. **Provider,
   model, fallback providers, provider config, monthly budget, per-turn cap,
   rate limit and retention are the org's, and are never touched.** Before this, re-seeding overwrote the prompts (and descriptions) of the judges, the case generator and `mcp-system`, refreshed `cleanup-agent`'s prompt only while it had never been edited, and left the others alone. An install that customised a system agent's

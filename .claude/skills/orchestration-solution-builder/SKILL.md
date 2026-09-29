@@ -91,7 +91,7 @@ Default models per TaskType (`routing` / `chat` / `reasoning` / `embeddings` / `
 
 One agent per distinct role. Pick the model **by TaskType**, not by hardcoded name — that way solutions stay portable across the providers the operator has configured.
 
-> **Reserved flag — never set `isSystem: true` on app/fork rows.** `isSystem` marks a row as **Sunrise core machinery**: it becomes undeletable, undeactivatable, slug- and instruction-locked, and is excluded from config backup/export (the protections live on `AiAgent`, `AiCapability`, and `AiWorkflow`; `AiAgentProfile` carries the column too). It is **not** a "built-in look" badge. The agent **API** path is already safe — `createAgentSchema` has no `isSystem` field, so a `POST` can never set it. The **seed** path is the footgun: a core seed copied as a template silently elevates your agent. See [Persisting app agents](#persisting-app-agents-the-seed-path) before seeding.
+> **Reserved flag — never set `isSystem: true` on app/fork rows.** `isSystem` marks a row as **Sunrise core machinery**: it becomes undeletable, undeactivatable, slug- and instruction-locked, and is excluded from config backup/export (the protections live on `AiAgent`, `AiCapability`, and `AiWorkflow`; `AiAgentProfile` carries the column too). It is **not** a "built-in look" badge. The agent **API** path is already safe — `createAgentSchema` has no `isSystem` field, so a `POST` can never set it. The **seed** path is the footgun: `isSystem: true` copied from a core agent into your seed silently elevates your agent. See [Persisting app agents](#persisting-app-agents-the-seed-path) before seeding.
 
 | Role              | TaskType    | Temperature | Why                             |
 | ----------------- | ----------- | ----------- | ------------------------------- |
@@ -136,7 +136,9 @@ Agent updates are **versioned** — `PATCH /agents/:id` creates an `AiAgentVersi
 
 API-created agents are admin-editable rows, but they **don't exist on a fresh install** or survive a `db:reset`. An app/fork agent that must always be present (e.g. a questionnaire extractor your app dispatches in code) has to be **seeded**.
 
-**Do not copy a Sunrise core seed as your template.** The obvious examples — `prisma/seeds/010-model-auditor.ts`, `016-evaluation-judges.ts` — all set `isSystem: true` because they ARE core machinery; copying one verbatim silently elevates your app agent into the reserved class (see the callout above) while it masquerades as platform machinery. Start from the app-agent scaffold instead: [`templates/app-agent-seed.md`](templates/app-agent-seed.md).
+**Do not model your seed on a Sunrise core agent.** The obvious examples — `lib/orchestration/agents/platform-agent-definitions/model-auditor.ts`, `evaluation-judges.ts` — are platform agents, which the reconcile writes as `isSystem: true` rows because they ARE core machinery; carrying that flag into your seed silently elevates your app agent into the reserved class (see the callout above) while it masquerades as platform machinery. Start from the app-agent scaffold instead: [`templates/app-agent-seed.md`](templates/app-agent-seed.md).
+
+An ordinary app agent seeded once is the default. If the agent must instead exist **in every org**, maintained from code the way Sunrise's own are, register it as a platform agent: `registerPlatformAgent()` from `initAppPlatformAgents()` in `lib/app/platform-agents.ts`. The reconcile creates it in each org as a system agent and owns its non-cost fields (admin edits to them do not survive), while each org keeps provider, model and spend. See `.context/orchestration/platform-agents.md`.
 
 The rules:
 

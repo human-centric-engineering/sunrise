@@ -286,20 +286,21 @@ Models evolve quickly but don't need obsessive re-auditing. A reasonable cadence
 
 ### Components
 
-| Component                | File                                                                    |
-| ------------------------ | ----------------------------------------------------------------------- |
-| Trigger dialog           | `components/admin/orchestration/audit-models-dialog.tsx`                |
-| Inline progress panel    | `components/admin/orchestration/execution-progress-inline.tsx`          |
-| Cross-page peek banner   | `components/admin/orchestration/in-flight-execution-banner.tsx`         |
-| Banner host layout       | `app/admin/layout.tsx`                                                  |
-| Storage handoff contract | `lib/orchestration/in-flight-execution.ts`                              |
-| Approval-prompt helper   | `lib/orchestration/trace/approval-prompt.ts`                            |
-| Button in matrix         | `components/admin/orchestration/provider-models-matrix.tsx`             |
-| Workflow template        | `prisma/seeds/data/templates/provider-model-audit.ts`                   |
-| Apply changes cap        | `lib/orchestration/capabilities/built-in/apply-audit-changes.ts`        |
-| Add models cap           | `lib/orchestration/capabilities/built-in/add-provider-models.ts`        |
-| Deactivate cap           | `lib/orchestration/capabilities/built-in/deactivate-provider-models.ts` |
-| Agent seed               | `prisma/seeds/010-model-auditor.ts`                                     |
+| Component                            | File                                                                    |
+| ------------------------------------ | ----------------------------------------------------------------------- |
+| Trigger dialog                       | `components/admin/orchestration/audit-models-dialog.tsx`                |
+| Inline progress panel                | `components/admin/orchestration/execution-progress-inline.tsx`          |
+| Cross-page peek banner               | `components/admin/orchestration/in-flight-execution-banner.tsx`         |
+| Banner host layout                   | `app/admin/layout.tsx`                                                  |
+| Storage handoff contract             | `lib/orchestration/in-flight-execution.ts`                              |
+| Approval-prompt helper               | `lib/orchestration/trace/approval-prompt.ts`                            |
+| Button in matrix                     | `components/admin/orchestration/provider-models-matrix.tsx`             |
+| Workflow template                    | `prisma/seeds/data/templates/provider-model-audit.ts`                   |
+| Apply changes cap                    | `lib/orchestration/capabilities/built-in/apply-audit-changes.ts`        |
+| Add models cap                       | `lib/orchestration/capabilities/built-in/add-provider-models.ts`        |
+| Deactivate cap                       | `lib/orchestration/capabilities/built-in/deactivate-provider-models.ts` |
+| Capability + workflow seed           | `prisma/seeds/010-model-auditor.ts`                                     |
+| Agent definitions (install org only) | `lib/orchestration/agents/platform-agent-definitions/model-auditor.ts`  |
 
 ### Framework reference implementation
 

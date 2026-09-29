@@ -5,13 +5,23 @@ after `db:reset` — instead of being created ad-hoc through the admin API. Agen
 created via `POST /agents` are admin-editable rows but **do not** exist on a
 fresh deploy; a persistent app agent has to be seeded.
 
-**Do NOT copy a Sunrise _core_ seed** (`prisma/seeds/010-model-auditor.ts`,
-`016-evaluation-judges.ts`, …) as your starting point. Those set
-`isSystem: true` because they are platform machinery — copying one verbatim
-silently elevates your app agent into the **reserved** class (undeletable,
-undeactivatable, instruction-locked, excluded from backup/export) while it
-masquerades as core. `isSystem` is reserved for Sunrise core; **app rows keep it
-`false`**. Start from this scaffold instead.
+**Do NOT model your seed on a Sunrise _core_ agent** (the platform-agent
+definitions in `lib/orchestration/agents/platform-agent-definitions/` —
+`model-auditor.ts`, `evaluation-judges.ts`, …). Those are platform machinery:
+the reconcile writes each one as an `isSystem: true` row. Setting that flag on
+your seeded app agent silently elevates it into the **reserved** class
+(undeletable, undeactivatable, instruction-locked, excluded from backup/export)
+while it masquerades as core. **App rows you seed keep `isSystem: false`.**
+Start from this scaffold instead.
+
+If the agent should exist **in every org** and be maintained from code the way
+Sunrise's own are, register it as a platform agent instead of seeding it:
+`registerPlatformAgent()` from `initAppPlatformAgents()` in
+`lib/app/platform-agents.ts`. The reconcile then creates it in each org as a
+system agent and owns what it is (instructions, temperature, bindings and the
+other non-cost fields), so admin edits to those do not survive; the org keeps
+provider, model and spend. See `.context/orchestration/platform-agents.md`. An
+ordinary app agent seeded once, as below, remains the default.
 
 ## Placement
 

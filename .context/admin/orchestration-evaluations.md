@@ -2,7 +2,7 @@
 
 Admin surface for two complementary evaluation flows: **manual sessions** (a human chats with one agent and annotates each turn) and **dataset-driven batch runs** (the worker fires every case in a dataset at an agent or workflow, then a judge agent scores each response). Sessions landed in Phase 7; batch runs in Phase 1 of the eval-foundations work.
 
-> **Scope note.** Evaluation **sessions** are for auditing an _agent's chat turns_ (faithfulness, groundedness, relevance — see `.context/orchestration/evaluation-metrics.md`). For auditing a _workflow execution_, use the `supervisor` step type or the retroactive review endpoint. Batch **runs** are the larger story — see `.context/orchestration/evaluations.md` for the worker, the agent-as-judges architecture, the grader registry, and the dataset/result schema. Both flows now drive the same six seeded judge agents.
+> **Scope note.** Evaluation **sessions** are for auditing an _agent's chat turns_ (faithfulness, groundedness, relevance — see `.context/orchestration/evaluation-metrics.md`). For auditing a _workflow execution_, use the `supervisor` step type or the retroactive review endpoint. Batch **runs** are the larger story — see `.context/orchestration/evaluations.md` for the worker, the agent-as-judges architecture, the grader registry, and the dataset/result schema. Both flows now drive the same six built-in judge agents.
 
 **Pages**
 
@@ -54,12 +54,15 @@ this is the operator's quick map.
    only the experiment compare flow supplies. The compare-view verdict
    badge is Phase 3.5.
 
-4. **Ragas-style RAG judge agents.** Three new seeded
-   `kind='judge'` agents (`prisma/seeds/018-rag-evaluation-judges.ts`):
+4. **Ragas-style RAG judge agents.** Three new `kind='judge'`
+   platform agents
+   (`lib/orchestration/agents/platform-agent-definitions/rag-evaluation-judges.ts`):
    `eval-judge-context-precision`, `eval-judge-context-recall`, and
    `eval-judge-answer-similarity`. They use the same dispatch path as
    the existing six judges — `judge_agent` grader, slug lookup at
-   run-time, no code changes. Run `npm run db:seed` to install.
+   run-time, no code changes. Every org gets its own instance; run
+   `npm run db:seed` to reconcile existing orgs. See
+   [`platform-agents.md`](../orchestration/platform-agents.md).
 
 ## What landed in Phase 2
 
@@ -85,8 +88,8 @@ datasetContentHash)`.
    low-scoring prior cases). Preview via
    `POST /datasets/:id/generate-cases` (sub-capped at 10/min/user),
    commit accepted cases via `.../generate-cases/commit`. The
-   generator agent is `kind='generator'` (new kind, seeded by
-   `017-case-generator-agent`) — kept distinct from `kind='judge'` so
+   generator agent is `kind='generator'` (new kind, the
+   `eval-case-generator` platform agent) — kept distinct from `kind='judge'` so
    it doesn't pollute the judge picker.
 4. **Experiment compare view.** Dataset-driven experiments
    (`AiExperiment.datasetId` + `metricConfigs`, Phase 2.4 migration)

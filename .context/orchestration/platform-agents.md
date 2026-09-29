@@ -50,7 +50,12 @@ Every agent field declares its side (see
   retrieval, visibility, persona, guardrails, brand voice and every other
   behavioural field. It also covers the capability set (bound and enabled,
   exactly the declared list), the knowledge-tag grants (document grants are
-  always empty), and the active flag. Every reconcile writes these back: a
+  always empty), and the active flag. The one exception to the capability
+  set is `mcp-system`, which has no tools of its own: MCP clients call
+  whatever the MCP Tools page exposes. Its binding rows are the org's
+  (`capabilityBindings: 'org'`). Under `CAPABILITY_BINDING_MODE=strict` an
+  operator grants it tools by adding rows, and a reconcile never removes
+  them. Every reconcile writes these back: a
   definition's value where it has one, otherwise
   `PLATFORM_AGENT_BASELINE`, the schema default.
 - **The org owns how it runs there.** That covers provider, model, fallback
@@ -92,7 +97,8 @@ These are the properties the unit tests pin, one test each:
 - **Code-owned fields are written back; org-tunable ones never are.**
 - **Bindings and tag grants are set to the declared set.** Stray bindings are
   removed and disabled ones re-enabled; capability and tag rows that don't
-  exist yet are skipped with a warning.
+  exist yet are skipped with a warning. `mcp-system`'s bindings are left
+  exactly as the org has them.
 - **A version row when a versioned field changes**, holding the post-change
   config and summarised as `Platform definition: …`. The service account is
   its author, and it is the creator of every instance. A change to bindings

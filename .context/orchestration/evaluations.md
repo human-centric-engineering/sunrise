@@ -9,11 +9,15 @@ per-case results with heuristic + agent-judge scores.
 Every model-graded metric is an `AiAgent` row with `kind='judge'`,
 driven by the evaluation worker via `streamChat`. The 6 built-in
 metrics (correctness, relevance, coherence, faithfulness,
-groundedness, brand-voice) ship as seeded `isSystem=true` agents;
-admins can create custom judges in the agent form. This means:
+groundedness, brand-voice) ship as [platform agents](./platform-agents.md) —
+`isSystem=true`, one instance per org; admins can create custom judges
+in the agent form. This means:
 
 - Judge prompts (the **rubric**) are edited in the existing agent
-  form with version history, FieldHelp, and safety guardrails.
+  form with version history, FieldHelp, and safety guardrails. That
+  holds for a custom judge; a built-in judge's prompt, temperature and
+  max tokens are platform-owned, so an edit to them does not survive
+  the next reconcile. Its provider, model and budget are the org's.
 - Judges can have **knowledge attached** (e.g. a policy reviewer with
   the policy doc) and **capabilities bound** (e.g. an
   authoritative-answer lookup tool the LLM can call mid-judging).
@@ -201,8 +205,8 @@ changing nothing they can see.
 - `tool_was_called`, `citation_count_at_least`
 
 **Judge agents** (one `judge_agent` registry entry; per-judge slug
-picked via `config.agentSlug` at run time). Six answer-quality judges
-seeded by `prisma/seeds/016-evaluation-judges.ts`:
+picked via `config.agentSlug` at run time). Six answer-quality judges,
+defined in `lib/orchestration/agents/platform-agent-definitions/evaluation-judges.ts`:
 
 - `eval-judge-correctness` — semantic match against `expectedOutput`.
   The biggest current gap before this refactor: reference-required,
@@ -217,8 +221,8 @@ seeded by `prisma/seeds/016-evaluation-judges.ts`:
 - `eval-judge-brand-voice` — response matches the subject agent's
   `brandVoiceInstructions`. Pinned at queue time.
 
-Three Ragas-style retrieval-quality judges seeded by
-`prisma/seeds/018-rag-evaluation-judges.ts` (Phase 3):
+Three Ragas-style retrieval-quality judges, defined in
+`lib/orchestration/agents/platform-agent-definitions/rag-evaluation-judges.ts` (Phase 3):
 
 - `eval-judge-context-precision` — fraction of cited sources that are
   relevant to the question.
@@ -427,8 +431,8 @@ else's dataset, where it outlives the share and a revoke cannot reach it.
 
 ## Phase 2 — synthetic case generation
 
-A new `kind='generator'` `AiAgent` (`eval-case-generator`, seeded by
-`017-case-generator-agent`) writes proposed cases from one of two
+A new `kind='generator'` `AiAgent` (`eval-case-generator`, a platform
+agent defined in `platform-agent-definitions/case-generator.ts`) writes proposed cases from one of two
 seed sources. The agent kind is deliberately distinct from `'judge'`
 so the run-create form's judge picker (which filters
 `WHERE kind = 'judge'`) never accidentally surfaces the generator.
@@ -923,7 +927,8 @@ The description mode skips both seed loaders — no KB sampling, no
 prior-failure query — and assembles the prompt from just the
 domain text and anchor inputs. The eval-case-generator agent's
 system prompt picks up a one-paragraph addition covering the new
-seed shape on next `db:seed` run (no migration).
+seed shape on the next reconcile — `db:seed`, or the `platformAgents`
+maintenance job after a deploy (no migration).
 
 **New endpoints** (both `POST`, `withAdminAuth`):
 
@@ -1019,7 +1024,7 @@ block typing a slug we can't enumerate.
 | Preview endpoint    | `app/api/v1/admin/orchestration/evaluations/datasets/generate-from-description/route.ts`                              |
 | Commit endpoint     | `app/api/v1/admin/orchestration/evaluations/datasets/generate-from-description/commit/route.ts`                       |
 | Zod schemas         | `lib/validations/orchestration-evaluations.ts` (`generateFromDescription{Preview,Commit}Schema`)                      |
-| Seed prompt         | `prisma/seeds/017-case-generator-agent.ts`                                                                            |
+| Generator prompt    | `lib/orchestration/agents/platform-agent-definitions/case-generator.ts`                                               |
 | Per-case PATCH      | `app/api/v1/admin/orchestration/evaluations/datasets/[id]/cases/[position]/route.ts`                                  |
 | PATCH Zod schema    | `lib/validations/orchestration-evaluations.ts` (`patchDatasetCaseSchema`)                                             |
 | Edit dialog         | `components/admin/orchestration/evaluations-foundations/dataset-cases-table.tsx`                                      |
@@ -1038,7 +1043,7 @@ block typing a slug we can't enumerate.
 | judge_call step         | `lib/orchestration/engine/executors/judge-call.ts`                                                                                                   |
 | workflow_as_judge       | `lib/orchestration/evaluations/graders/model/workflow-as-judge.ts`                                                                                   |
 | pairwise_judge_agent    | `lib/orchestration/evaluations/graders/pairwise/judge-agent.ts`                                                                                      |
-| RAG judges seed         | `prisma/seeds/018-rag-evaluation-judges.ts`                                                                                                          |
+| RAG judge definitions   | `lib/orchestration/agents/platform-agent-definitions/rag-evaluation-judges.ts`                                                                       |
 | Dataset upload          | `lib/orchestration/evaluations/datasets/upload-handler.ts`                                                                                           |
 | CSV parser              | `lib/orchestration/evaluations/datasets/parsers/csv-parser.ts`                                                                                       |
 | JSONL parser            | `lib/orchestration/evaluations/datasets/parsers/jsonl-parser.ts`                                                                                     |
@@ -1046,7 +1051,7 @@ block typing a slug we can't enumerate.
 | Grader registry         | `lib/orchestration/evaluations/graders/registry.ts`                                                                                                  |
 | Grader types            | `lib/orchestration/evaluations/graders/types.ts`                                                                                                     |
 | judge_agent grader      | `lib/orchestration/evaluations/graders/model/judge-agent.ts`                                                                                         |
-| Judge agents seed       | `prisma/seeds/016-evaluation-judges.ts`                                                                                                              |
+| Judge agent definitions | `lib/orchestration/agents/platform-agent-definitions/evaluation-judges.ts`                                                                           |
 | drainStreamChat         | `lib/orchestration/evaluations/drain-stream-chat.ts`                                                                                                 |
 | Tick wiring             | `app/api/v1/admin/orchestration/maintenance/tick/route.ts`                                                                                           |
 | Cost estimator          | `lib/orchestration/cost-estimation/evaluation-cost.ts`                                                                                               |
@@ -1056,7 +1061,7 @@ block typing a slug we can't enumerate.
 | Capture route           | `app/api/v1/admin/orchestration/evaluations/datasets/[id]/capture/route.ts`                                                                          |
 | Synthesis seed-loader   | `lib/orchestration/evaluations/synthesis/seed-loader.ts`                                                                                             |
 | Case generator          | `lib/orchestration/evaluations/synthesis/case-generator.ts`                                                                                          |
-| Generator agent seed    | `prisma/seeds/017-case-generator-agent.ts`                                                                                                           |
+| Generator agent def     | `lib/orchestration/agents/platform-agent-definitions/case-generator.ts`                                                                              |
 | Synthesis preview route | `app/api/v1/admin/orchestration/evaluations/datasets/[id]/generate-cases/route.ts`                                                                   |
 | Synthesis commit route  | `app/api/v1/admin/orchestration/evaluations/datasets/[id]/generate-cases/commit/route.ts`                                                            |
 | Experiment run route    | `app/api/v1/admin/orchestration/experiments/[id]/run/route.ts`                                                                                       |
