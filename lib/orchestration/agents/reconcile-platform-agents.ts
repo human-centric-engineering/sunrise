@@ -35,7 +35,8 @@
  *    row it writes — the platform, not whichever admin triggered the run.
  *  - **An agent dropped from the registry is deactivated, never deleted.**
  *    Conversations, cost rows and evaluations point at it. Only slugs this
- *    reconcile itself placed in the org (the marker's `slugs`) are candidates,
+ *    reconcile itself placed in the org (the marker's `slugs`, which keeps a
+ *    retired agent for as long as its row exists) are candidates,
  *    so a fork's own seeded `isSystem` agent is never touched.
  *  - **It refuses to adopt an org's own agent.** A non-system row holding a
  *    platform slug is the org's; converting it would overwrite their prompt
@@ -300,21 +301,32 @@ export async function reconcilePlatformAgents(
 
     // Deactivate what this reconcile placed before and the registry no longer
     // has. Only `placedBefore`: an `isSystem` agent it never placed — a fork's
-    // own seeded one — is not its to switch off.
+    // own seeded one — is not its to switch off. A retired agent stays in the
+    // marker while its row does: it is still `isSystem`, so the org cannot
+    // delete it or switch it off itself, and dropping it from the marker would
+    // leave nobody able to — every later reconcile switches it off again.
+    const retired: string[] = [];
     for (const slug of placedBefore) {
       if (wanted.has(slug)) continue;
       const row = bySlug.get(slug);
-      if (!row || !row.isSystem || row.deletedAt !== null || !row.isActive) continue;
+      if (!row || !row.isSystem || row.deletedAt !== null) continue;
+      retired.push(slug);
+      if (!row.isActive) continue;
       await deactivateInstance(db, row, owner.id);
       result.deactivated.push(slug);
     }
 
     if (bindingsChanged) capabilityDispatcher.clearCache();
 
-    const marker: PlatformAgentsMarker = { hash, slugs: placed.sort() };
+    const marker: PlatformAgentsMarker = { hash, slugs: [...placed, ...retired].sort() };
     const markerChanged =
       !previous || previous.hash !== marker.hash || !sameSet(previous.slugs, marker.slugs);
-    if (complete && markerChanged) {
+    // A declared capability or tag with no row yet leaves the org short of its
+    // definition. Recording the current digest would stop the job from ever
+    // coming back for it, so the marker waits until nothing is missing.
+    const nothingMissing =
+      result.missing.capabilities.length === 0 && result.missing.knowledgeTags.length === 0;
+    if (complete && nothingMissing && markerChanged) {
       await writePlatformAgentsMarker(orgId, marker, db);
     }
 

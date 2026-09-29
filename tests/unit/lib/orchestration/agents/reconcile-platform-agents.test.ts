@@ -566,7 +566,25 @@ describe('reconcilePlatformAgents', () => {
       expect.anything(),
       expect.objectContaining({ changeSummary: 'Removed from the platform agent registry' }),
     ]);
-    expect(marker()!.slugs).toEqual(['advisor']);
+    // Still the platform's: kept in the marker while its row exists.
+    expect(marker()!.slugs).toEqual(['advisor', 'judge']);
+  });
+
+  it('switches a retired agent off again if it was turned back on', async () => {
+    await reconcilePlatformAgents('install');
+    registry.definitions = [definition('advisor')];
+    await reconcilePlatformAgents('install');
+    // An org admin re-enables it — the PATCH route allows isActive:true on a
+    // system agent — and a later release reconciles the org again.
+    agent('judge')!.isActive = true;
+    registry.definitions = [
+      definition('advisor', { agent: { ...definition('advisor').agent, temperature: 0.5 } }),
+    ];
+
+    const result = await reconcilePlatformAgents('install');
+
+    expect(result.deactivated).toEqual(['judge']);
+    expect(agent('judge')!.isActive).toBe(false);
   });
 
   it('reactivates an agent put back in the registry', async () => {
@@ -610,6 +628,20 @@ describe('reconcilePlatformAgents', () => {
     expect(result.missing).toEqual({ capabilities: [], knowledgeTags: ['patterns'] });
     expect(fake.state.tagGrants).toEqual([]);
     expect(mockLogger.warn).toHaveBeenCalled();
+  });
+
+  it('leaves the marker unwritten while anything declared is missing, and grants it once it exists', async () => {
+    fake.state.tags = [];
+    await reconcilePlatformAgents('install');
+    // No digest recorded: the job will come back for this org.
+    expect(marker()).toBeUndefined();
+
+    fake.state.tags = [{ id: 'tag-patterns', slug: 'patterns' }];
+    const outcome = await reconcilePlatformAgentsIfStale('install');
+
+    expect(outcome.reconciled).toBe(true);
+    expect(fake.state.tagGrants).toHaveLength(2);
+    expect(marker()).toBeDefined();
   });
 
   it('treats a create that lost a race as done, and leaves the marker for the next run', async () => {

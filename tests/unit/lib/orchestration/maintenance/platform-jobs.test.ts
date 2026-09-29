@@ -399,6 +399,15 @@ describe('runDuePlatformJobs — foundWork', () => {
       () =>
         vi.mocked(reconcilePlatformAgentsIfStale).mockResolvedValue({
           reconciled: true,
+          result: {
+            orgId: INSTALL_ORG_ID,
+            created: [],
+            updated: ['cleanup-agent'],
+            unchanged: [],
+            deactivated: [],
+            refused: [],
+            missing: { capabilities: [], knowledgeTags: [] },
+          },
         }),
     ],
     [
@@ -454,6 +463,27 @@ describe('runDuePlatformJobs — tenant scope (§108)', () => {
     // No fold at single: the log line keeps the shape it has always had.
     expect(summary.retention).toEqual({ ...RETENTION_IDLE, deleted: 2 });
     expect(summary.retention).not.toHaveProperty('orgs');
+  });
+
+  it('does not count a platform-agent reconcile that wrote nothing as work', async () => {
+    // An org held back by a missing capability is re-read every run; if that
+    // counted, the idle gate could never arm.
+    vi.mocked(reconcilePlatformAgentsIfStale).mockResolvedValue({
+      reconciled: true,
+      result: {
+        orgId: INSTALL_ORG_ID,
+        created: [],
+        updated: [],
+        unchanged: ['cleanup-agent'],
+        deactivated: [],
+        refused: [],
+        missing: { capabilities: ['rewrite_with_llm'], knowledgeTags: [] },
+      },
+    });
+
+    const { foundWork } = await runDuePlatformJobs(T0);
+
+    expect(foundWork).toBe(false);
   });
 
   it('reconciles the platform agents of the org each run is in', async () => {

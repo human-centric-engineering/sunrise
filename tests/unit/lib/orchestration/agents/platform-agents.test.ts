@@ -205,6 +205,14 @@ describe('platformAgentRegistryHash', () => {
     expect(platformAgentRegistryHash()).not.toBe(before);
   });
 
+  it('moves when a definition is registered after the digest was read', () => {
+    const before = platformAgentRegistryHash();
+
+    registerPlatformAgent(fork('late-arrival'));
+
+    expect(platformAgentRegistryHash()).not.toBe(before);
+  });
+
   it('does not depend on registration order', () => {
     mockInit.mockImplementation(() => {
       registerPlatformAgent(fork('a-one'));

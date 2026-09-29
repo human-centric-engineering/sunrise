@@ -218,7 +218,12 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     scope: 'per-org',
     intervalMs: 15 * MINUTE,
     run: () => reconcilePlatformAgentsIfStale(requireOrgId()),
-    foundWork: (r) => r.reconciled,
+    // A run that wrote nothing is not work: an org held back by a missing
+    // capability or tag is re-read every run until it appears, and counting
+    // that would keep the idle gate from ever arming.
+    foundWork: (r) =>
+      r.result !== undefined &&
+      r.result.created.length + r.result.updated.length + r.result.deactivated.length > 0,
   }),
 ];
 

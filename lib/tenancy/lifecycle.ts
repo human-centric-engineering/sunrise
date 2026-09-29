@@ -263,6 +263,10 @@ export async function createOrg(
  * up by the `platformAgents` maintenance job, which reconciles any org whose
  * marker is missing. Imported on use, so the org routes that import this
  * module do not load the orchestration layer to rename a member.
+ *
+ * It writes through the application client, not `createOrg`'s `db`: that
+ * parameter exists so the lifecycle's own tests can hand in a double, and
+ * every production caller passes nothing.
  */
 async function materialisePlatformAgents(orgId: string): Promise<void> {
   try {

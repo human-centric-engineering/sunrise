@@ -486,7 +486,7 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/agents/platform-agents.ts',
-    holders: ['registry', 'appInit'],
+    holders: ['registry', 'appInit', 'cachedHash'],
     posture: 'no-tenant-data',
     why: "Platform-agent definitions by slug, core and fork-registered, all from code; every org's instances of them are ordinary tenant rows the reconcile writes inside that org's scope (§116 t-724).",
   },

@@ -196,6 +196,13 @@ function coreRegistry(): Map<string, PlatformAgentDefinition> {
 const registry = coreRegistry();
 
 /**
+ * The digest of the registry as it stands after the fork's init. Nothing
+ * changes the registry after that but a later `registerPlatformAgent` call,
+ * which clears it; the maintenance job compares it once per org per run.
+ */
+let cachedHash: string | null = null;
+
+/**
  * A fork replacing a core slug changes an agent every org runs while changing
  * nothing an admin can see, so it is named in the log (the grader registry's
  * precedent).
@@ -230,6 +237,7 @@ export function registerPlatformAgent(definition: PlatformAgentDefinition): void
     );
   }
   registry.set(definition.slug, definition);
+  cachedHash = null;
 }
 
 /** Every registered platform agent, core and fork, in registration order. */
@@ -254,7 +262,13 @@ export function platformAgentsForOrg(orgId: string): readonly PlatformAgentDefin
  * a starting value, which a later change to it could not rewrite anyway.
  */
 export function platformAgentRegistryHash(): string {
-  const definitions = [...listPlatformAgents()]
+  const registered = listPlatformAgents();
+  cachedHash ??= computeRegistryHash(registered);
+  return cachedHash;
+}
+
+function computeRegistryHash(registered: readonly PlatformAgentDefinition[]): string {
+  const definitions = [...registered]
     .sort((a, b) => a.slug.localeCompare(b.slug))
     .map(({ defaultBinding, ...rest }) => ({ ...rest, defaultBinding: Boolean(defaultBinding) }));
   return createHash('sha256')
@@ -266,4 +280,5 @@ export function platformAgentRegistryHash(): string {
 export function __resetPlatformAgentsForTests(): void {
   restoreMap(registry, coreRegistry());
   appInit.reset();
+  cachedHash = null;
 }
