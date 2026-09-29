@@ -74,7 +74,7 @@ async function getBudgetAlerts(): Promise<BudgetAlert[] | null> {
 
 async function getPaginatedTotal(path: string): Promise<number | null> {
   try {
-    const res = await serverFetch(`${path}?page=1&limit=1`);
+    const res = await serverFetch(`${path}${path.includes('?') ? '&' : '?'}page=1&limit=1`);
     if (!res.ok) return null;
     const body = await parseApiResponse<unknown[]>(res);
     if (!body.success) return null;
@@ -252,7 +252,10 @@ export default async function OrchestrationDashboardPage() {
   ] = await Promise.all([
     getCostSummary(),
     getBudgetAlerts(),
-    getPaginatedTotal(API.ADMIN.ORCHESTRATION.AGENTS),
+    // The org's own agents: every org also has its platform agents (§116), so
+    // counting them would open a new org on "14 agents" (setup state excludes
+    // them the same way).
+    getPaginatedTotal(`${API.ADMIN.ORCHESTRATION.AGENTS}?isSystem=false`),
     getDashboardStats(),
     getModels(),
     getSetupState(),

@@ -9,6 +9,7 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { KNOWN_PROVIDERS, detectApiKeyEnvVar } from '@/lib/orchestration/llm/known-providers';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 export const metadata: Metadata = {
   title: 'Providers · AI Orchestration',
@@ -41,8 +42,30 @@ async function getModels(): Promise<ModelRow[]> {
   }
 }
 
+/**
+ * Whether this request acts for the install org. The provider audit runs the
+ * install org's own workflow and agents, which no other org has (they write
+ * the provider catalogue every org reads), so its button is shown there only.
+ * Any failure hides it: the button does nothing useful anywhere else.
+ */
+async function getIsInstallOrg(): Promise<boolean> {
+  try {
+    const res = await serverFetch(API.ORGS.LIST);
+    if (!res.ok) return false;
+    const body = await parseApiResponse<{ activeOrgId: string | null }>(res);
+    return body.success && body.data.activeOrgId === INSTALL_ORG_ID;
+  } catch (err) {
+    logger.error('providers page: active org fetch failed', err);
+    return false;
+  }
+}
+
 export default async function ProvidersListPage() {
-  const [providers, models] = await Promise.all([getProviders(), getModels()]);
+  const [providers, models, isInstallOrg] = await Promise.all([
+    getProviders(),
+    getModels(),
+    getIsInstallOrg(),
+  ]);
 
   // Server-side env scan. Hide the "Add provider" CTAs when no hosted
   // provider has a matching env var, since the resulting config row
@@ -94,6 +117,7 @@ export default async function ProvidersListPage() {
         initialProviders={providers}
         initialModels={models}
         hasAnyEnvKey={hasAnyEnvKey}
+        canAuditModels={isInstallOrg}
       />
     </div>
   );

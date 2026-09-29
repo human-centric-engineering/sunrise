@@ -181,6 +181,13 @@ export interface ModelRow {
 
 interface ProviderModelsMatrixProps {
   initialModels: ModelRow[];
+  /**
+   * Show "Audit Models". Only the install org has the audit workflow and its
+   * two agents (they write the provider catalogue every org reads, §116), so
+   * anywhere else the button would open a dialog that cannot run. Defaults to
+   * hidden.
+   */
+  canAuditModels?: boolean;
 }
 
 type SortKey =
@@ -297,6 +304,7 @@ function SortableHead({
 
 export function ProviderModelsMatrix({
   initialModels,
+  canAuditModels = false,
 }: ProviderModelsMatrixProps): React.ReactElement {
   const router = useRouter();
   const [providerFilter, setProviderFilter] = useState<string>('all');
@@ -665,17 +673,21 @@ export function ProviderModelsMatrix({
           <p className="text-muted-foreground text-sm">
             {filtered.length} model{filtered.length !== 1 ? 's' : ''}
           </p>
-          <Button variant="outline" onClick={() => setAuditOpen(true)}>
-            <ClipboardCheck className="mr-2 h-4 w-4" />
-            Audit Models
-          </Button>
-          <FieldHelp title="AI-Powered Model Audit">
-            Triggers the Provider Model Audit workflow — a real orchestration workflow execution via{' '}
-            <code>POST /workflows/:id/execute</code>. The audit evaluates your model entries for
-            accuracy, proposes changes, and pauses for your approval before applying them. This also
-            serves as a framework reference implementation, exercising 10 of 15 step types
-            end-to-end.
-          </FieldHelp>
+          {canAuditModels && (
+            <>
+              <Button variant="outline" onClick={() => setAuditOpen(true)}>
+                <ClipboardCheck className="mr-2 h-4 w-4" />
+                Audit Models
+              </Button>
+              <FieldHelp title="AI-Powered Model Audit">
+                Triggers the Provider Model Audit workflow — a real orchestration workflow execution
+                via <code>POST /workflows/:id/execute</code>. The audit evaluates your model entries
+                for accuracy, proposes changes, and pauses for your approval before applying them.
+                This also serves as a framework reference implementation, exercising 10 of 15 step
+                types end-to-end.
+              </FieldHelp>
+            </>
+          )}
           <Button onClick={() => setDiscoverOpen(true)}>
             <Sparkles className="mr-2 h-4 w-4" />
             Discover models
@@ -964,7 +976,9 @@ export function ProviderModelsMatrix({
       </div>
 
       {/* Audit dialog */}
-      <AuditModelsDialog open={auditOpen} onOpenChange={setAuditOpen} models={initialModels} />
+      {canAuditModels && (
+        <AuditModelsDialog open={auditOpen} onOpenChange={setAuditOpen} models={initialModels} />
+      )}
 
       {/* Discover dialog — replaces the legacy free-text "New Provider Model" form
           as the primary entry point. The legacy form stays mounted on

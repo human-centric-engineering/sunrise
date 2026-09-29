@@ -34,6 +34,8 @@ interface ProvidersTabsProps {
    * true so callers that haven't migrated keep the existing CTAs.
    */
   hasAnyEnvKey?: boolean;
+  /** Show the model audit (install org only); passed through to the matrix. */
+  canAuditModels?: boolean;
 }
 
 const ALLOWED_TABS = ['configuration', 'models'] as const;
@@ -43,6 +45,7 @@ export function ProvidersTabs({
   initialProviders,
   initialModels,
   hasAnyEnvKey = true,
+  canAuditModels = false,
 }: ProvidersTabsProps) {
   const { activeTab, setActiveTab } = useUrlTabs<ProvidersTab>({
     defaultTab: 'configuration',
@@ -61,7 +64,7 @@ export function ProvidersTabs({
       </TabsContent>
 
       <TabsContent value="models">
-        <ProviderModelsMatrix initialModels={initialModels} />
+        <ProviderModelsMatrix initialModels={initialModels} canAuditModels={canAuditModels} />
       </TabsContent>
     </Tabs>
   );
