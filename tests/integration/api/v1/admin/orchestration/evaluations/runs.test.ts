@@ -615,6 +615,41 @@ describe('POST /api/v1/admin/orchestration/evaluations/runs', () => {
     expect(data.error.message).toContain('missing-judge');
   });
 
+  it("resolves a platform judge slug to the org's system instance only (§116 t-725)", async () => {
+    // Validation must look the judge up the way the run will load it, or an
+    // org's own agent under a platform slug passes here and fails at run time.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({
+      id: DATASET_ID,
+      contentHash: 'h',
+      caseCount: 1,
+    } as never);
+    vi.mocked(prisma.aiDatasetCase.count).mockResolvedValue(0);
+    (
+      prisma.aiAgent.findUnique as unknown as {
+        mockImplementation: (fn: (args: unknown) => Promise<unknown>) => void;
+      }
+    ).mockImplementation(async (args: unknown) => {
+      const a = args as { where: { id?: string } };
+      return a.where.id === AGENT_ID
+        ? { id: AGENT_ID, kind: 'chat', brandVoiceInstructions: null }
+        : null;
+    });
+
+    const response = await POST(
+      makePostRequest(
+        validRunBody({
+          metricConfigs: [{ slug: 'judge_agent', config: { agentSlug: 'eval-judge-relevance' } }],
+        })
+      )
+    );
+
+    expect(response.status).toBe(400);
+    expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { slug: 'eval-judge-relevance', isSystem: true } })
+    );
+  });
+
   it('returns 400 when judge_agent slug points to a non-judge agent', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiDataset.findFirst).mockResolvedValue({

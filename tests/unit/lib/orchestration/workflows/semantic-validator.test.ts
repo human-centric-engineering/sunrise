@@ -232,6 +232,22 @@ describe('semanticValidateWorkflow', () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it('resolves a platform slug the way agent_call will: system rows only (§116 t-725)', async () => {
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
+
+    await semanticValidateWorkflow(
+      makeDef([agentStep('s1', 'eval-case-generator'), agentStep('s2', 'my-agent')])
+    );
+
+    expect(prisma.aiAgent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          NOT: { slug: { in: ['eval-case-generator'] }, isSystem: false },
+        }),
+      })
+    );
+  });
+
   it('batches multiple agent_call steps with the same slug into one DB query', async () => {
     // Arrange — two steps reference the same agent; DB query should fire only once.
     vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([{ slug: 'shared-agent' }] as never);

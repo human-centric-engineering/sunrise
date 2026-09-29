@@ -44,7 +44,9 @@ async function getPatterns(): Promise<PatternSummary[]> {
  */
 async function getAgentBySlug(slug: string): Promise<LearningTabsAgent | null> {
   try {
-    const url = `${API.ADMIN.ORCHESTRATION.AGENTS}?q=${encodeURIComponent(slug)}&limit=10`;
+    // System rows only: the list sorts them last, so a page of an org's own
+    // similarly-named agents could otherwise push the platform instance off it.
+    const url = `${API.ADMIN.ORCHESTRATION.AGENTS}?q=${encodeURIComponent(slug)}&isSystem=true&limit=10`;
     const res = await serverFetch(url);
     if (!res.ok) return null;
     const body =

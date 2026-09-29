@@ -20,6 +20,7 @@ import { prisma } from '@/lib/db/client';
 import { modelRegistry } from '@/lib/orchestration/llm';
 import { logger } from '@/lib/logging';
 import type { WorkflowDefinition } from '@/types/orchestration';
+import { platformSlugsWhere } from '@/lib/orchestration/agents/platform-agent-guard';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -136,6 +137,8 @@ export async function semanticValidateWorkflow(
             where: {
               slug: { in: [...agentSteps.keys()] },
               isActive: true,
+              // As agent_call resolves them: a platform slug is its system row.
+              ...platformSlugsWhere([...agentSteps.keys()]),
             },
             select: { slug: true },
           })

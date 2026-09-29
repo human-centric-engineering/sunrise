@@ -134,6 +134,25 @@ describe('executeOrchestrator', () => {
     setupDefaultMocks();
   });
 
+  it("offers the planner a platform slug's system instance only (§116 t-725)", async () => {
+    vi.mocked(runLlmCall).mockResolvedValueOnce(
+      makePlannerResponse({ finalAnswer: 'done', reasoning: 'ok' })
+    );
+
+    await executeOrchestrator(
+      makeStep({ availableAgentSlugs: ['researcher', 'pattern-advisor'] }),
+      makeCtx()
+    );
+
+    expect(prisma.aiAgent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          NOT: { slug: { in: ['pattern-advisor'] }, isSystem: false },
+        }),
+      })
+    );
+  });
+
   it('happy path: single round with final answer', async () => {
     vi.mocked(runLlmCall).mockResolvedValueOnce(
       makePlannerResponse({

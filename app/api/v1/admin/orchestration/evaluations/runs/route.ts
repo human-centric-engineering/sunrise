@@ -28,6 +28,7 @@ import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
 // Side-effect import — register every grader at module load so the
 // preflight has a populated registry.
 import '@/lib/orchestration/evaluations/graders';
+import { platformSlugWhere } from '@/lib/orchestration/agents/platform-agent-guard';
 
 export const GET = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
@@ -199,7 +200,8 @@ export const POST = withAdminAuth(async (request, session) => {
 
       const cfg = parsed.data as { agentSlug: string; subjectBrandVoice?: string };
       const judgeAgent = await prisma.aiAgent.findFirst({
-        where: { slug: cfg.agentSlug },
+        // As the judge will be loaded at run time: a platform slug is its system row.
+        where: { slug: cfg.agentSlug, ...platformSlugWhere(cfg.agentSlug) },
         select: { kind: true, isActive: true },
       });
       if (!judgeAgent) {

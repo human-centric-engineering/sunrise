@@ -348,6 +348,22 @@ describe('POST /api/v1/chat/stream', () => {
       expect(streamChat).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
 
+    it('looks a platform slug up among system agents only (§116 t-725)', async () => {
+      // As the chat handler will load it: an org's own agent under a platform
+      // slug is not found here rather than passing and failing mid-stream.
+      vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);
+      const request = createMockRequest({ ...validPayload, agentSlug: 'pattern-advisor' });
+
+      const response = await POST(request);
+
+      expect(response.status).toBe(404);
+      expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ slug: 'pattern-advisor', isSystem: true }),
+        })
+      );
+    });
+
     it('should return 404 when agent has visibility="internal"', async () => {
       // Arrange: query returns null because visibility filter excludes internal agents
       vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(null);

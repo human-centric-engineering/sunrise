@@ -121,6 +121,19 @@ describe('POST /api/v1/chat/agents/:slug/validate-token', () => {
     expect(prisma.aiAgentInviteToken.findFirst).not.toHaveBeenCalled();
   });
 
+  it('looks a platform slug up among system agents only (§116 t-725)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValueOnce(null);
+
+    await POST(makeRequest({ inviteToken: 'tok123' }), {
+      params: Promise.resolve({ slug: 'quiz-master' }),
+    });
+
+    expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { slug: 'quiz-master', isActive: true, isSystem: true } })
+    );
+  });
+
   it('returns valid for active token', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
     vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue({

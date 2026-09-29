@@ -35,6 +35,7 @@ import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { runLlmCall, interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { executeAgentCall } from '@/lib/orchestration/engine/executors/agent-call';
+import { platformSlugsWhere } from '@/lib/orchestration/agents/platform-agent-guard';
 
 const DEFAULT_MAX_ROUNDS = 3;
 const DEFAULT_MAX_DELEGATIONS_PER_ROUND = 5;
@@ -258,6 +259,8 @@ export async function executeOrchestrator(
     where: {
       slug: { in: config.availableAgentSlugs },
       isActive: true,
+      // A platform slug names the org's platform instance only (§116 t-725).
+      ...platformSlugsWhere(config.availableAgentSlugs),
     },
     select: { slug: true, name: true, description: true },
   });

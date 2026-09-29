@@ -37,6 +37,7 @@ import { getRequestId, getVisitorId } from '@/lib/logging/context';
 import { prisma } from '@/lib/db/client';
 import { NotFoundError, ForbiddenError } from '@/lib/api/errors';
 import { validateImageMagicBytes, validatePdfMagicBytes } from '@/lib/storage/image';
+import { platformSlugWhere } from '@/lib/orchestration/agents/platform-agent-guard';
 
 /**
  * What the caller is told for each refusal. `not-found` and `wrong-org` share
@@ -67,6 +68,8 @@ export const POST = withAuth(
         slug: body.agentSlug,
         isActive: true,
         visibility: { in: ['public', 'invite_only'] },
+        // As the chat handler loads it: a platform slug is its system row.
+        ...platformSlugWhere(body.agentSlug),
       },
       select: { id: true, slug: true, visibility: true, rateLimitRpm: true },
     });

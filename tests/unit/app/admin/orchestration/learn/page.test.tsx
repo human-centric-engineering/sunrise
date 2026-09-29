@@ -305,6 +305,21 @@ describe('LearnPage', () => {
       expect(screen.getByTestId('learning-tabs')).toHaveAttribute('data-advisor-id', '');
     });
 
+    it('asks the list API for system agents only (§116 t-725)', async () => {
+      // The list sorts system rows last, so filtering client-side after a
+      // 10-row page could lose the platform instance behind the org's own
+      // similarly-named agents.
+      vi.mocked(serverFetch).mockResolvedValue(okResponse());
+      vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] } as never);
+
+      render(await LearnPage({ searchParams: Promise.resolve({}) }));
+
+      const urls = vi.mocked(serverFetch).mock.calls.map(([url]) => String(url));
+      const agentUrls = urls.filter((url) => url.includes('/orchestration/agents?'));
+      expect(agentUrls).toHaveLength(2);
+      for (const url of agentUrls) expect(url).toContain('isSystem=true');
+    });
+
     it("ignores an org's own agent holding a platform slug (§116 t-725)", async () => {
       // An org that took `pattern-advisor` before the slug was reserved keeps
       // that agent; the Learn tab must not wire it up as the Pattern Advisor.

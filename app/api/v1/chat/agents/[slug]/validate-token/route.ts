@@ -17,6 +17,7 @@ import { ValidationError } from '@/lib/api/errors';
 import { chatLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { resolveInviteToken, type InviteTokenRefusal } from '@/lib/orchestration/invite-tokens';
+import { platformSlugWhere } from '@/lib/orchestration/agents/platform-agent-guard';
 
 const bodySchema = z.object({
   inviteToken: z.string().min(1, 'Invite token is required'),
@@ -46,7 +47,8 @@ export const POST = withAuth<{ slug: string }>(
     }
 
     const agent = await prisma.aiAgent.findFirst({
-      where: { slug, isActive: true },
+      // As the chat handler loads it: a platform slug is its system row.
+      where: { slug, isActive: true, ...platformSlugWhere(slug) },
       select: { id: true, visibility: true },
     });
 
