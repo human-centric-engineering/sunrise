@@ -15,7 +15,8 @@
  *    written — no update, no version row, no `updatedAt` churn — and the
  *    org's marker is rewritten only when it changed.
  *  - **Safe on empty.** An empty registry creates nothing and deactivates
- *    nothing it did not place.
+ *    nothing — not even what it placed before, since only a fault can empty
+ *    it (a fork cannot remove a core agent).
  *  - **Upserts by `(orgId, slug)`**, inside the org's own scope, so every row
  *    it creates is stamped with that org and nothing else is visible to it.
  *  - **Code-owned fields are overwritten; org-tunable ones never are.** The
@@ -255,6 +256,18 @@ export async function reconcilePlatformAgents(
       bindingsChanged ||= outcome.bindingsChanged;
       if (outcome.accessChanged) invalidateAgentAccess(existing.id);
       (outcome.changed ? result.updated : result.unchanged).push(definition.slug);
+    }
+
+    // An empty registry beside a non-empty marker is a fault, not a removal:
+    // a fork can add or replace a platform agent but not remove one, so the
+    // list can only come back empty from a broken import. Deactivating on it
+    // would switch off every platform agent in every org at once.
+    if (definitions.length === 0 && placedBefore.length > 0) {
+      log.error('Platform agent registry resolved empty — nothing deactivated, marker kept', {
+        orgId,
+        placedBefore,
+      });
+      return result;
     }
 
     // Deactivate what this reconcile placed before and the registry no longer
