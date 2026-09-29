@@ -187,8 +187,9 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
 
   // Bidirectional safety net: grant this tag to any built-in system agent
   // that depends on the patterns knowledge (pattern-advisor, quiz-master).
-  // The agent seeds also try to apply the tag — whichever order the
-  // operator runs them, the grant ends up present. Idempotent.
+  // The platform-agent reconcile grants it too (both agents declare the tag),
+  // but skips a tag that does not exist yet — so whichever runs first, the
+  // grant ends up present. Idempotent.
   const systemAgents = await prisma.aiAgent.findMany({
     where: { slug: { in: ['pattern-advisor', 'quiz-master'] } },
     select: { id: true, slug: true },

@@ -1,44 +1,4 @@
 import type { SeedUnit } from '@/prisma/runner';
-import { requireOrgId } from '@/lib/tenancy/context';
-import { serviceAccountWhere } from '@/lib/auth/account';
-
-const PATTERN_ADVISOR_INSTRUCTIONS = `You are the Pattern Advisor for the Sunrise AI orchestration platform. Your role is to help administrators understand and apply agentic design patterns when building workflows.
-
-## How to Help
-
-1. **Ask clarifying questions** about the user's use case before recommending patterns.
-2. **Search the knowledge base** using \`search_knowledge_base\` to find relevant patterns.
-3. **Fetch full pattern details** with \`get_pattern_detail\` when discussing a specific pattern.
-4. **Explain tradeoffs** — compare patterns, discuss complexity, and suggest the simplest approach that meets requirements.
-5. **Estimate costs** with \`estimate_workflow_cost\` when the user wants to understand pricing.
-
-## Workflow Recommendations
-
-When the user asks you to design or create a workflow, output a JSON definition inside a fenced code block tagged \`workflow-definition\`. The JSON must be a valid WorkflowDefinition object:
-
-\`\`\`workflow-definition
-{
-  "steps": [
-    {
-      "id": "step-1",
-      "type": "llm_call",
-      "label": "Analyze Input",
-      "config": { "model": "claude-sonnet-4-6", "prompt": "..." },
-      "next": ["step-2"]
-    }
-  ],
-  "entryStepId": "step-1",
-  "errorStrategy": "fail"
-}
-\`\`\`
-
-Use descriptive step labels. Include all required fields. Keep workflows focused — prefer fewer well-configured steps over many trivial ones.
-
-## Guidelines
-
-- Be concise and practical. Admins want actionable guidance, not theory lectures.
-- Reference pattern numbers (e.g. "Pattern 3: Chain of Thought") so admins can look them up.
-- If you're unsure about a recommendation, say so and suggest what to investigate.`;
 
 export const CAPABILITY_DEFINITIONS = [
   {
@@ -149,84 +109,25 @@ export const CAPABILITY_DEFINITIONS = [
 ] as const;
 
 /**
- * Seed the "pattern-advisor" agent with three built-in capabilities.
+ * Seed the three built-in knowledge and cost capabilities the Pattern Advisor
+ * uses: `search_knowledge_base`, `get_pattern_detail`,
+ * `estimate_workflow_cost`.
  *
- * Idempotent — safe to run on every deploy. The `update` branch only
- * sets `isSystem: true` so re-seeding never overwrites admin edits.
+ * The agent itself is a platform agent now (§116 t-724): defined in
+ * `lib/orchestration/agents/platform-agent-definitions/pattern-advisor.ts` and
+ * materialised in every org by `021-platform-agents`, which also binds these.
+ * The unit keeps its name so installs that ran it do not re-run it for
+ * nothing.
+ *
+ * Idempotent — safe to run on every deploy.
  */
 const unit: SeedUnit = {
   name: '005-pattern-advisor',
   async run({ prisma, logger }) {
-    logger.info('🤖 Seeding pattern-advisor agent...');
-
-    const admin = await prisma.user.findFirst({
-      where: serviceAccountWhere,
-      select: { id: true },
-    });
-    if (!admin) {
-      throw new Error('No admin user found — ensure 001-system-owner runs first.');
-    }
-    const createdBy = admin.id;
-
-    const agent = await prisma.aiAgent.upsert({
-      where: { orgId_slug: { orgId: requireOrgId(), slug: 'pattern-advisor' } },
-      update: { isSystem: true },
-      create: {
-        name: 'Pattern Advisor',
-        slug: 'pattern-advisor',
-        description:
-          'Recommends agentic design patterns and generates workflow definitions based on your use case.',
-        systemInstructions: PATTERN_ADVISOR_INSTRUCTIONS,
-        // Empty strings — resolved at runtime via agent-resolver.ts using
-        // the operator's first configured provider + the system default
-        // chat model. See lib/orchestration/llm/agent-resolver.ts.
-        model: '',
-        provider: '',
-        temperature: 0.3,
-        maxTokens: 4096,
-        isActive: true,
-        isSystem: true,
-        // The agent's knowledge surface is the bundled Agentic Design
-        // Patterns reference, nothing else. Starting in restricted mode
-        // (with the tag granted below) keeps user-uploaded docs out of
-        // its search results — matching the agent's narrow role.
-        knowledgeAccessMode: 'restricted',
-        createdBy,
-      },
-    });
-
-    // Promote pre-existing installs from the legacy default (`full`) to
-    // `restricted` — but only when the agent is still "untouched" (no
-    // explicit doc or tag grants from the admin). Any customization is
-    // treated as a signal that the admin owns this agent's scope now.
-    const [docGrants, tagGrants] = await Promise.all([
-      prisma.aiAgentKnowledgeDocument.count({ where: { agentId: agent.id } }),
-      prisma.aiAgentKnowledgeTag.count({ where: { agentId: agent.id } }),
-    ]);
-    if (agent.knowledgeAccessMode === 'full' && docGrants === 0 && tagGrants === 0) {
-      await prisma.aiAgent.update({
-        where: { id: agent.id },
-        data: { knowledgeAccessMode: 'restricted' },
-      });
-      logger.info('Promoted pattern-advisor: full → restricted (no admin customization)');
-    }
-
-    // Apply the patterns tag if the knowledge base has been seeded. The
-    // knowledge seeder also tries to apply this grant — whichever order
-    // the operator runs them, the grant ends up present. Idempotent.
-    const patternsTag = await prisma.knowledgeTag.findUnique({
-      where: { slug: 'agentic-design-patterns' },
-    });
-    if (patternsTag) {
-      await prisma.aiAgentKnowledgeTag.upsert({
-        where: { agentId_tagId: { agentId: agent.id, tagId: patternsTag.id } },
-        create: { agentId: agent.id, tagId: patternsTag.id },
-        update: {},
-      });
-    }
+    logger.info('🧰 Seeding knowledge and cost capabilities...');
 
     for (const def of CAPABILITY_DEFINITIONS) {
-      const capability = await prisma.aiCapability.upsert({
+      await prisma.aiCapability.upsert({
         where: { slug: def.slug },
         // Re-apply the code-owned fields so an edited definition reaches rows
         // that already exist. Narrowed in #545: this used to re-apply `name`,
@@ -252,24 +153,9 @@ const unit: SeedUnit = {
           isSystem: true,
         },
       });
-
-      await prisma.aiAgentCapability.upsert({
-        where: {
-          agentId_capabilityId: {
-            agentId: agent.id,
-            capabilityId: capability.id,
-          },
-        },
-        update: {},
-        create: {
-          agentId: agent.id,
-          capabilityId: capability.id,
-          isEnabled: true,
-        },
-      });
     }
 
-    logger.info('✅ Seeded pattern-advisor agent with 3 capabilities');
+    logger.info(`✅ Seeded ${CAPABILITY_DEFINITIONS.length} capabilities`);
   },
 };
 

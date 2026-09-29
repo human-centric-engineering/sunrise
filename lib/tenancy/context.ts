@@ -307,10 +307,11 @@ export async function forEachOrg(fn: (orgId: string) => Promise<void>): Promise<
  * suspended org is skipped, and that must mean the same thing everywhere.
  *
  * `Org` is a system model with no policy, so this read answers every org
- * whatever scope the caller is in.
+ * whatever scope the caller is in. `db` is for a caller holding its own
+ * client — the seed runner connects as the owner.
  */
-export async function listActiveOrgIds(): Promise<string[]> {
-  const orgs = await prisma.org.findMany({
+export async function listActiveOrgIds(db: Pick<typeof prisma, 'org'> = prisma): Promise<string[]> {
+  const orgs = await db.org.findMany({
     where: { status: 'ACTIVE' },
     select: { id: true },
     orderBy: { createdAt: 'asc' },

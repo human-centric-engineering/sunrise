@@ -2,73 +2,8 @@ import { PROVIDER_MODEL_AUDIT_TEMPLATE } from '@/prisma/seeds/data/templates/pro
 import { Prisma } from '@prisma/client';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import type { SeedUnit } from '@/prisma/runner';
-import { requireOrgId } from '@/lib/tenancy/context';
 import { CAPABILITIES } from '@/lib/orchestration/model-audit/enums';
 import { serviceAccountWhere } from '@/lib/auth/account';
-
-const MODEL_AUDITOR_INSTRUCTIONS = `You are the Provider Model Auditor for the Sunrise AI orchestration platform. Your role is to evaluate provider model entries for accuracy and freshness, proposing corrections where data is stale or incorrect.
-
-## Evaluation Criteria
-
-For each model entry, assess:
-
-1. **Tier role** — capability classification (what the model is FOR):
-   - thinking: deep reasoning, complex analysis
-   - worker: general-purpose chat/completion
-   - infrastructure: routing, classification, fast tasks
-   - control_plane: orchestration, planning
-   - embedding: vector embeddings only
-
-2. **Deployment profiles** — deployment locus (WHERE the model runs); array of one or more:
-   - hosted: vendor-managed API (default)
-   - sovereign: runs on the operator's own infrastructure (Ollama, vLLM, self-hosted)
-   A model can carry both if it's available either way. These are ORTHOGONAL to tier role.
-
-3. **Reasoning depth** — Does it match the model's actual capabilities?
-4. **Latency** — Based on known provider performance characteristics
-5. **Cost efficiency** — Relative to other models in the same tier
-6. **Context length** — Current window size classification
-7. **Tool use** — Actual function-calling capability level
-8. **Best role** — One-line summary of optimal use case
-
-For embedding models, also evaluate dimensions, quality rating, and schema compatibility.
-
-## Output Format
-
-Always respond with structured JSON when asked to analyse models. Use the ModelAuditResult format with specific, evidence-based reasons for every proposed change.
-
-## Guidelines
-
-- Only propose changes you are confident about. Use "low" confidence for uncertain assessments.
-- Be specific in your reasoning — cite model capabilities, provider documentation, or known benchmarks.
-- Never fabricate benchmark numbers. If unsure, say so.
-- Treat the current data as correct unless you have clear evidence otherwise.`;
-
-const REPORT_WRITER_INSTRUCTIONS = `You are the Audit Report Writer for the Sunrise AI orchestration platform. Your role is to synthesise structured audit data into clear, human-readable executive reports.
-
-## Report Structure
-
-Every report you produce should follow this structure:
-
-1. **Executive Summary** — One paragraph overview: what was audited, how many models were reviewed, and the key outcomes (changes made, new models added, deactivations).
-
-2. **Changes Applied** — List each field change grouped by provider, including model name, field, old value, new value, and the reason. Use a table format where possible.
-
-3. **New Models Added** — List each newly registered model with its name, provider, tier role, key capabilities, and best role.
-
-4. **Models Deactivated** — List each deactivated model with the provider and reason for deactivation.
-
-5. **Quality Assessment** — Summarise the audit quality scores (accuracy, completeness, specificity, confidence calibration, consistency). Note any areas that scored below threshold.
-
-6. **Recommendations** — Actionable follow-up items: models needing manual review, providers with many changes (suggesting rapid evolution), fields with low-confidence changes that an admin should verify.
-
-## Guidelines
-
-- Be specific — always cite model names, provider slugs, and field values.
-- Keep the tone professional and concise. Admins reading this report are technical.
-- If a section has no items (e.g. no deactivations), say so briefly rather than omitting the section.
-- Format numbers and counts clearly. If zero changes were applied, state that explicitly.
-- Do not editorialize or speculate beyond what the data shows.`;
 
 export const APPLY_AUDIT_CHANGES_DEFINITION = {
   slug: 'apply_audit_changes',
@@ -333,19 +268,22 @@ export const DEACTIVATE_PROVIDER_MODELS_DEFINITION = {
 } as const;
 
 /**
- * Seed the "provider-model-auditor" agent with the apply_audit_changes,
- * add_provider_models, and deactivate_provider_models capabilities.
- * Also binds the existing estimate_workflow_cost capability.
+ * Seed the provider-model audit's capabilities (`apply_audit_changes`,
+ * `add_provider_models`, `deactivate_provider_models`) and its system
+ * workflow.
+ *
+ * The two agents the workflow runs — `provider-model-auditor` and
+ * `audit-report-writer` — are platform agents now (§116 t-724), defined in
+ * `lib/orchestration/agents/platform-agent-definitions/model-auditor.ts` and
+ * materialised in the install org only by `021-platform-agents`, which also
+ * owns their bindings. The workflow stays the install org's: it writes the
+ * provider-model catalogue every org reads.
  *
  * Idempotent — safe to run on every deploy. The audit template is in
  * `hashInputs` so any edit to the template file invalidates the unit's
- * content hash and forces a re-run. The unit treats the set of declared
- * built-in bindings as authoritative: any binding for this agent NOT in
- * the expected set is unwound on re-seed (used to be, e.g., the
- * `search_knowledge_base` binding — removed once the audit workflow no
- * longer needed it, since the agent isn't grounded in any KB content).
+ * content hash and forces a re-run.
  *
- * The `aiWorkflow.upsert` rewrites `workflowDefinition`, `metadata`,
+ * The `aiWorkflow` write rewrites `workflowDefinition`, `metadata`,
  * `name`, `description`, and `patternsUsed` on every re-seed because
  * the audit workflow is a SYSTEM workflow (framework-managed). Admin
  * edits to system workflows are not preserved — admins should clone
@@ -357,7 +295,7 @@ const unit: SeedUnit = {
   name: '010-model-auditor',
   hashInputs: ['data/templates/provider-model-audit.ts'],
   async run({ prisma, logger }) {
-    logger.info('🔍 Seeding provider-model-auditor agent...');
+    logger.info('🔍 Seeding provider-model audit capabilities and workflow...');
 
     const admin = await prisma.user.findFirst({
       where: serviceAccountWhere,
@@ -368,36 +306,9 @@ const unit: SeedUnit = {
     }
     const createdBy = admin.id;
 
-    // 1. Create the agent
-    const agent = await prisma.aiAgent.upsert({
-      where: { orgId_slug: { orgId: requireOrgId(), slug: 'provider-model-auditor' } },
-      update: { isSystem: true },
-      create: {
-        name: 'Provider Model Auditor',
-        slug: 'provider-model-auditor',
-        description:
-          'Evaluates provider model entries for accuracy and freshness. Proposes changes for admin review via the audit workflow.',
-        systemInstructions: MODEL_AUDITOR_INSTRUCTIONS,
-        // Empty strings — resolved at runtime via agent-resolver.ts.
-        model: '',
-        provider: '',
-        temperature: 0.2,
-        // Reasoning models (gpt-5, o-series) split this cap between
-        // reasoning_tokens and visible output; the audit workflow
-        // asks for verbose structured JSON over ~30 models, so 4096
-        // gets entirely consumed by reasoning and visible content
-        // comes back empty. 16384 leaves comfortable headroom.
-        maxTokens: 16384,
-        monthlyBudgetUsd: 25,
-        isActive: true,
-        isSystem: true,
-        createdBy,
-      },
-    });
-
-    // 2. Upsert the apply_audit_changes capability
+    // 1. Upsert the apply_audit_changes capability
     const def = APPLY_AUDIT_CHANGES_DEFINITION;
-    const auditCap = await prisma.aiCapability.upsert({
+    await prisma.aiCapability.upsert({
       where: { slug: def.slug },
       // Code-owned fields are re-applied so an edited definition reaches rows
       // that already exist; `name` / `description` / `category` / `isActive`
@@ -421,9 +332,9 @@ const unit: SeedUnit = {
       },
     });
 
-    // 3. Upsert the add_provider_models capability
+    // 2. Upsert the add_provider_models capability
     const addDef = ADD_PROVIDER_MODELS_DEFINITION;
-    const addCap = await prisma.aiCapability.upsert({
+    await prisma.aiCapability.upsert({
       where: { slug: addDef.slug },
       // Code-owned fields are re-applied so an edited definition reaches rows
       // that already exist; `name` / `description` / `category` / `isActive`
@@ -447,9 +358,9 @@ const unit: SeedUnit = {
       },
     });
 
-    // 4. Upsert the deactivate_provider_models capability
+    // 3. Upsert the deactivate_provider_models capability
     const deactDef = DEACTIVATE_PROVIDER_MODELS_DEFINITION;
-    const deactCap = await prisma.aiCapability.upsert({
+    await prisma.aiCapability.upsert({
       where: { slug: deactDef.slug },
       // Code-owned fields are re-applied so an edited definition reaches rows
       // that already exist; `name` / `description` / `category` / `isActive`
@@ -473,103 +384,7 @@ const unit: SeedUnit = {
       },
     });
 
-    // 5. Bind all audit capabilities to the agent
-    for (const cap of [auditCap, addCap, deactCap]) {
-      await prisma.aiAgentCapability.upsert({
-        where: {
-          agentId_capabilityId: {
-            agentId: agent.id,
-            capabilityId: cap.id,
-          },
-        },
-        update: {},
-        create: {
-          agentId: agent.id,
-          capabilityId: cap.id,
-          isEnabled: true,
-        },
-      });
-    }
-
-    // 6. Bind existing built-in capabilities (estimate_workflow_cost).
-    // search_knowledge_base was previously bound but removed — the auditor
-    // has no KB content to ground in, and the unused tool was inflating
-    // agent-call wall-clock by giving gpt-5 a tool decision it shouldn't
-    // have been making in the first place.
-    const builtInSlugs = ['estimate_workflow_cost'];
-    for (const slug of builtInSlugs) {
-      const cap = await prisma.aiCapability.findUnique({ where: { slug } });
-      if (!cap) {
-        logger.warn(`Built-in capability ${slug} not found — skipping binding`);
-        continue;
-      }
-      await prisma.aiAgentCapability.upsert({
-        where: {
-          agentId_capabilityId: {
-            agentId: agent.id,
-            capabilityId: cap.id,
-          },
-        },
-        update: {},
-        create: {
-          agentId: agent.id,
-          capabilityId: cap.id,
-          isEnabled: true,
-        },
-      });
-    }
-
-    // 6b. Unbind any capability NOT in the expected set. Makes the seed
-    // authoritative for this agent's tool list — re-running the seed
-    // after removing a slug from `expectedSlugs` below also removes the
-    // binding row. Without this step the prior `search_knowledge_base`
-    // binding would persist on dev databases that pre-date this change.
-    const expectedSlugs = new Set<string>([
-      auditCap.slug,
-      addCap.slug,
-      deactCap.slug,
-      ...builtInSlugs,
-    ]);
-    const currentBindings = await prisma.aiAgentCapability.findMany({
-      where: { agentId: agent.id },
-      select: { id: true, capability: { select: { slug: true } } },
-    });
-    const stale = currentBindings.filter((b) => !expectedSlugs.has(b.capability.slug));
-    if (stale.length > 0) {
-      await prisma.aiAgentCapability.deleteMany({
-        where: { id: { in: stale.map((b) => b.id) } },
-      });
-      logger.info(
-        `Unbound ${stale.length} stale capability binding(s) from provider-model-auditor`,
-        { slugs: stale.map((b) => b.capability.slug) }
-      );
-    }
-
-    // 7. Create the audit-report-writer agent (no capabilities — pure synthesis)
-    await prisma.aiAgent.upsert({
-      where: { orgId_slug: { orgId: requireOrgId(), slug: 'audit-report-writer' } },
-      update: { isSystem: true },
-      create: {
-        name: 'Audit Report Writer',
-        slug: 'audit-report-writer',
-        description:
-          'Synthesises provider model audit results into a consolidated human-readable report with recommendations.',
-        systemInstructions: REPORT_WRITER_INSTRUCTIONS,
-        // Empty strings — resolved at runtime via agent-resolver.ts.
-        model: '',
-        provider: '',
-        temperature: 0.3,
-        // Long consolidated markdown report over many audit outputs;
-        // shares the reasoning-model headroom rationale with
-        // provider-model-auditor above.
-        maxTokens: 16384,
-        isActive: true,
-        isSystem: true,
-        createdBy,
-      },
-    });
-
-    // 8. Upsert the Provider Model Audit workflow as a system workflow.
+    // 4. Upsert the Provider Model Audit workflow as a system workflow.
     // System workflows are framework-managed: every re-seed rewrites the
     // definition + metadata to track the code. Admin edits are not
     // preserved — clone the workflow to customise.
@@ -639,9 +454,7 @@ const unit: SeedUnit = {
       }
     });
 
-    logger.info(
-      '✅ Seeded provider-model-auditor + audit-report-writer agents with 4 capabilities + system workflow'
-    );
+    logger.info('✅ Seeded 3 provider-model audit capabilities + system workflow');
   },
 };
 

@@ -1,10 +1,13 @@
 import { Prisma } from '@prisma/client';
 import type { SeedUnit } from '@/prisma/runner';
-import { requireOrgId } from '@/lib/tenancy/context';
-import { serviceAccountWhere } from '@/lib/auth/account';
 
 /**
- * Seed the MCP server: global config singleton + mcp-system agent.
+ * Seed the MCP server: the global config singleton and the default exposed
+ * resources.
+ *
+ * The `mcp-system` agent — the identity MCP tool calls dispatch as — is a
+ * platform agent now (§116 t-724), materialised in every org by
+ * `021-platform-agents`.
  *
  * Idempotent — safe to run on every deploy. Re-seeding never
  * overwrites admin edits (update branch is minimal).
@@ -12,7 +15,7 @@ import { serviceAccountWhere } from '@/lib/auth/account';
 const unit: SeedUnit = {
   name: '008-mcp-server',
   async run({ prisma, logger }) {
-    logger.info('🔌 Seeding MCP server config and system agent...');
+    logger.info('🔌 Seeding MCP server config...');
 
     // 1. Global config singleton (disabled by default)
     await prisma.mcpServerConfig.upsert({
@@ -28,45 +31,7 @@ const unit: SeedUnit = {
       },
     });
 
-    // 2. System agent for MCP tool dispatch
-    const admin = await prisma.user.findFirst({
-      where: serviceAccountWhere,
-      select: { id: true },
-    });
-    if (!admin) {
-      throw new Error('No admin user found — ensure 001-system-owner runs first.');
-    }
-
-    await prisma.aiAgent.upsert({
-      where: { orgId_slug: { orgId: requireOrgId(), slug: 'mcp-system' } },
-      update: {
-        isSystem: true,
-        description:
-          'System agent — do not edit. Used internally by the MCP server as the execution identity when external AI clients (Claude Desktop, Cursor, etc.) call tools. To expose capabilities to MCP clients, use the MCP Server → Tools page instead of assigning capabilities here.',
-        systemInstructions:
-          'You are the MCP system agent. You dispatch tool calls on behalf of external MCP clients. This agent never participates in LLM conversations — it exists solely as the execution identity for capability pipeline dispatch.',
-      },
-      create: {
-        name: 'MCP System',
-        slug: 'mcp-system',
-        description:
-          'System agent — do not edit. Used internally by the MCP server as the execution identity when external AI clients (Claude Desktop, Cursor, etc.) call tools. To expose capabilities to MCP clients, use the MCP Server → Tools page instead of assigning capabilities here.',
-        systemInstructions:
-          'You are the MCP system agent. You dispatch tool calls on behalf of external MCP clients. This agent never participates in LLM conversations — it exists solely as the execution identity for capability pipeline dispatch.',
-        // Empty strings — resolved at runtime via agent-resolver.ts.
-        // The MCP system agent never opens a chat turn directly, but
-        // capability dispatch still requires the binding to resolve.
-        model: '',
-        provider: '',
-        temperature: 0,
-        maxTokens: 4096,
-        isActive: true,
-        isSystem: true,
-        createdBy: admin.id,
-      },
-    });
-
-    // 3. Default resources (disabled by default)
+    // 2. Default resources (disabled by default)
     const defaultResources = [
       {
         uri: 'sunrise://knowledge/search',
@@ -103,7 +68,7 @@ const unit: SeedUnit = {
       });
     }
 
-    logger.info('✅ Seeded MCP server config, system agent, and 3 default resources');
+    logger.info('✅ Seeded MCP server config and 3 default resources');
   },
 };
 

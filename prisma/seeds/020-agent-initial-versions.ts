@@ -12,8 +12,11 @@
  * This unit closes that gap idempotently: it finds every agent with zero version
  * rows and captures its CURRENT config (the best available proxy for "original")
  * as `v1`. Agents that already have history are skipped, so re-running is a
- * no-op. Runs after the agent-seeding units (005, 006, 010, 016–018) so the
- * agents exist by the time it scans.
+ * no-op.
+ *
+ * A backfill for installs that predate create-time versioning. The platform
+ * agents no longer need it: `021-platform-agents` writes their `v1` when it
+ * creates them (§116 t-724), so on a fresh database this finds nothing to do.
  */
 
 import type { SeedUnit } from '@/prisma/runner';

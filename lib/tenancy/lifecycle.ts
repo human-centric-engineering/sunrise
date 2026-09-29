@@ -225,6 +225,9 @@ async function requireSlugFree(slug: string, exceptOrgId: string | null, db: Lif
  * given. The pre-check on the slug gives a clean 409; a race past it
  * surfaces as Prisma's P2002, which `handleAPIError` already turns into a
  * 400 rather than a 500.
+ *
+ * Once the org is committed it gets its own instances of the platform agents
+ * (§116 t-724) — see {@link materialisePlatformAgents}.
  */
 export async function createOrg(
   input: { slug: string; name: string; ownerUserId?: string },
@@ -247,7 +250,31 @@ export async function createOrg(
   });
 
   logger.info('Org created', { orgId: org.id, slug: org.slug, ownerUserId: owner?.id ?? null });
+  await materialisePlatformAgents(org.id);
   return org;
+}
+
+/**
+ * Give a newly created org its platform agents: the judges, the clean-up
+ * assistant, the MCP identity and the rest (`reconcile-platform-agents.ts`).
+ *
+ * After the commit, so the org exists for the reconcile's own scope, and
+ * never fatal: the org is created either way, and a failure here is caught
+ * up by the `platformAgents` maintenance job, which reconciles any org whose
+ * marker is missing. Imported on use, so the org routes that import this
+ * module do not load the orchestration layer to rename a member.
+ */
+async function materialisePlatformAgents(orgId: string): Promise<void> {
+  try {
+    const { reconcilePlatformAgents } =
+      await import('@/lib/orchestration/agents/reconcile-platform-agents');
+    await reconcilePlatformAgents(orgId);
+  } catch (err) {
+    logger.error('Platform agents not materialised for the new org; the maintenance job retries', {
+      orgId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**

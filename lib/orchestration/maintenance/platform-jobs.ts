@@ -51,6 +51,8 @@ import {
   enforceSystemRetentionPolicies,
 } from '@/lib/orchestration/retention';
 import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
+import { reconcilePlatformAgentsIfStale } from '@/lib/orchestration/agents/reconcile-platform-agents';
+import { requireOrgId } from '@/lib/tenancy/context';
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -128,6 +130,12 @@ function job<T>(spec: {
  * | `pendingExecutionRecovery`| 2 min    | per-org | its own stale-pending threshold is 2 min                            |
  * | `evaluationRuns`          | every    | per-org | the worker drives one time-slice per tick, so cadence is throughput |
  * | `auditLogRetention`       | 1 hour   | system  | the two audit tables have no org; once, not once per org            |
+ * | `platformAgents`          | 15 min   | per-org | catches up an org whose platform agents are behind the running code |
+ *
+ * `platformAgents` does real work only after a deploy changes the platform
+ * agents' definitions, or when an org's creation-time reconcile failed; every
+ * other run is one `Org` read per org. Fifteen minutes bounds how long a new
+ * org can be without its judges and clean-up assistant after such a failure.
  */
 export const PLATFORM_JOBS: readonly PlatformJob[] = [
   job({
@@ -204,6 +212,13 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     scope: { system: 'auditLogRetention: prune the admin and MCP audit logs (system tables)' },
     run: () => enforceSystemRetentionPolicies(),
     foundWork: (r) => r.auditLogsDeleted > 0 || r.mcpAuditLogsDeleted > 0,
+  }),
+  job({
+    name: 'platformAgents',
+    scope: 'per-org',
+    intervalMs: 15 * MINUTE,
+    run: () => reconcilePlatformAgentsIfStale(requireOrgId()),
+    foundWork: (r) => r.reconciled,
   }),
 ];
 
