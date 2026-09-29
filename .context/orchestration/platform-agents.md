@@ -84,8 +84,10 @@ the org's own scope itself, and it has three callers:
 3. **The `platformAgents` maintenance job**, every 15 minutes, per org. It
    compares the org's stored digest with the running registry's and
    reconciles only an org that is behind: after a deploy changed a
-   definition, or after a creation-time reconcile failed. Otherwise it is
-   one `Org` read per org.
+   definition, or after a creation-time reconcile failed. An org whose
+   definitions name a capability or tag that has no row yet is reconciled
+   on every run, with a warning, until the row exists. Otherwise it is one
+   `Org` read per org.
 
 ## What a reconcile does, and refuses to do
 

@@ -49,7 +49,8 @@ release process.
 - **A `platformAgents` background task on the maintenance tick** (§116 t-724),
   appended to the `backgroundTasks` list the tick route returns. Every 15
   minutes, per org, it reconciles an org whose platform agents are behind
-  the running code. Otherwise it is one `Org` read per org. It records its
+  the running code, or still missing a capability or tag its agents declare.
+  Otherwise it is one `Org` read per org. It records its
   progress in a new platform-owned `Org.settings.platformAgents` key, beside
   `retention`. Every other key in `settings` is preserved.
 - **`listActiveOrgIds(db?)`** takes an optional client (§116 t-724), for a

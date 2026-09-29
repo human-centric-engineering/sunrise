@@ -667,6 +667,50 @@ describe('reconcilePlatformAgents', () => {
     }
   });
 
+  it('treats an update or deactivation that lost a version-number race as done', async () => {
+    await reconcilePlatformAgents('install');
+    agent('advisor')!.temperature = 0.9; // needs an update, with a version row
+    registry.definitions = [definition('advisor')]; // and judge needs deactivating
+    const realCreate = fake.db.aiAgentVersion.create;
+    // Another run numbered the same version first, for both agents.
+    fake.db.aiAgentVersion.create = async () => {
+      throw new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      });
+    };
+    const before = marker();
+    try {
+      const result = await reconcilePlatformAgents('install');
+
+      expect(result.updated).toEqual([]);
+      expect(result.deactivated).toEqual([]);
+      expect(result.unchanged).toEqual(['advisor']);
+      // Left for the next run to record.
+      expect(marker()).toEqual(before);
+    } finally {
+      fake.db.aiAgentVersion.create = realCreate;
+    }
+  });
+
+  it('keeps a legacy agent’s active config as v1 before recording its removal', async () => {
+    await reconcilePlatformAgents('install');
+    const judgeId = agent('judge')!.id;
+    // A legacy row with no history (the old seed order left cleanup-agent so).
+    fake.state.versions = fake.state.versions.filter((v) => v.agentId !== judgeId);
+    registry.definitions = [definition('advisor')];
+
+    await reconcilePlatformAgents('install');
+
+    const versions = fake.state.versions.filter((v) => v.agentId === judgeId);
+    expect(versions.map((v) => [v.version, v.changeSummary])).toEqual([
+      [1, 'Initial configuration'],
+      [2, 'Removed from the platform agent registry'],
+    ]);
+    expect(versions[0].snapshot).toMatchObject({ isActive: true });
+    expect(versions[1].snapshot).toMatchObject({ isActive: false });
+  });
+
   it('still fails on any other create error', async () => {
     fake.state.failOn = 'aiAgent.create';
 

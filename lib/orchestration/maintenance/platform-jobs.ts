@@ -133,9 +133,11 @@ function job<T>(spec: {
  * | `platformAgents`          | 15 min   | per-org | catches up an org whose platform agents are behind the running code |
  *
  * `platformAgents` does real work only after a deploy changes the platform
- * agents' definitions, or when an org's creation-time reconcile failed; every
- * other run is one `Org` read per org. Fifteen minutes bounds how long a new
- * org can be without its judges and clean-up assistant after such a failure.
+ * agents' definitions, or when an org's creation-time reconcile failed. An
+ * org whose definitions name a capability or tag with no row yet is
+ * reconciled (reads, and a warning) on every run until the row exists;
+ * every other run is one `Org` read per org. Fifteen minutes bounds how long
+ * a new org can be without its judges and clean-up assistant after a failure.
  */
 export const PLATFORM_JOBS: readonly PlatformJob[] = [
   job({

@@ -71,13 +71,20 @@ describe('021-platform-agents', () => {
     expect(logger.info).toHaveBeenCalledWith(expect.stringMatching(/install: .*, 1 refused$/));
   });
 
-  it('lets a reconcile failure fail the seed run', async () => {
-    // The runner records the unit as applied only when run() resolves, so a
-    // swallowed failure would stop it re-running on the next seed.
-    const { ctx } = makeCtx(['install']);
-    mockReconcile.mockRejectedValue(new Error('boom'));
+  it('logs one org’s failure and carries on with the rest', async () => {
+    // Not a failed deploy: the failed org's marker is unwritten, so the
+    // maintenance job reconciles it again, as it does after createOrg.
+    const { ctx, logger } = makeCtx(['install', 'org_b']);
+    mockReconcile.mockRejectedValueOnce(new Error('boom'));
 
-    await expect(platformAgentsSeed.run(ctx)).rejects.toThrow('boom');
+    await expect(platformAgentsSeed.run(ctx)).resolves.toBeUndefined();
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringMatching(/install: platform agents not reconciled/),
+      { orgId: 'install', error: 'boom' }
+    );
+    expect(mockReconcile).toHaveBeenCalledTimes(2);
+    expect(logger.info).toHaveBeenCalledWith(expect.stringMatching(/org_b: 1 created/));
   });
 
   it('hashes every file a definition or the reconcile lives in', async () => {

@@ -181,6 +181,20 @@ describe('the fork seam', () => {
     expect(() => registerPlatformAgent(fork('Intake Triage'))).toThrow(/kebab-case/);
   });
 
+  it('refuses a definition that repeats a capability or tag slug', () => {
+    // The repeat would meet a unique key inside the create transaction, which
+    // the reconcile reads as a concurrent run and retries for ever.
+    expect(() => registerPlatformAgent({ ...fork('dup'), capabilities: ['a', 'a'] })).toThrow(
+      /repeats a slug in capabilities/
+    );
+    expect(() => registerPlatformAgent({ ...fork('dup'), knowledgeTags: ['t', 't'] })).toThrow(
+      /repeats a slug in knowledgeTags/
+    );
+    for (const definition of CORE_PLATFORM_AGENTS) {
+      expect(() => registerPlatformAgent(definition), definition.slug).not.toThrow();
+    }
+  });
+
   it('refuses declared capabilities on an agent whose bindings are the org’s', () => {
     expect(() =>
       registerPlatformAgent({

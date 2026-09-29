@@ -167,7 +167,7 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 | `pendingExecutionRecovery` | 2 min      | per-org | its own stale-pending threshold is 2 min                            |
 | `evaluationRuns`           | every tick | per-org | the worker drives one time-slice per tick, so cadence is throughput |
 | `auditLogRetention`        | 1 hour     | system  | the two audit tables have no org column — once, not once per org    |
-| `platformAgents`           | 15 min     | per-org | catches up an org behind the running code; otherwise one `Org` read |
+| `platformAgents`           | 15 min     | per-org | catches up an org behind the running code or missing a declared row |
 
 **Tick duration grows with the org count, and the overlap guard does not.**
 `forEachOrg` is sequential, so at `multi` a per-org task costs roughly its

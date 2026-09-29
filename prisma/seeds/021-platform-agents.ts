@@ -42,7 +42,19 @@ const unit: SeedUnit = {
   async run({ prisma, logger }) {
     logger.info('🤖 Reconciling platform agents in every org...');
     for (const orgId of await listActiveOrgIds(prisma)) {
-      const result = await reconcilePlatformAgents(orgId, { db: prisma, log: logger });
+      // One org's failure does not stop the rest, nor fail the deploy: its
+      // marker is left unwritten, so the platformAgents maintenance job
+      // reconciles it again — the same answer `createOrg` gives.
+      let result: Awaited<ReturnType<typeof reconcilePlatformAgents>>;
+      try {
+        result = await reconcilePlatformAgents(orgId, { db: prisma, log: logger });
+      } catch (err) {
+        logger.error(`  ✗ ${orgId}: platform agents not reconciled; the maintenance job retries`, {
+          orgId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        continue;
+      }
       logger.info(
         `  ✓ ${orgId}: ${result.created.length} created, ${result.updated.length} updated, ` +
           `${result.unchanged.length} unchanged, ${result.deactivated.length} deactivated` +

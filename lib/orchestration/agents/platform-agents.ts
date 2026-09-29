@@ -231,6 +231,16 @@ export function registerPlatformAgent(definition: PlatformAgentDefinition): void
   if (!/^[a-z0-9][a-z0-9-]*$/.test(definition.slug)) {
     throw new Error(`Platform agent slug "${definition.slug}" must be lowercase kebab-case`);
   }
+  for (const [list, values] of [
+    ['capabilities', definition.capabilities],
+    ['knowledgeTags', definition.knowledgeTags],
+  ] as const) {
+    // A repeat would meet the binding or grant's unique key inside the create
+    // transaction, which the reconcile would take for a concurrent run.
+    if (new Set(values).size !== values.length) {
+      throw new Error(`Platform agent "${definition.slug}" repeats a slug in ${list}`);
+    }
+  }
   if (definition.capabilityBindings === 'org' && definition.capabilities.length > 0) {
     throw new Error(
       `Platform agent "${definition.slug}" leaves its bindings to the org, so it cannot declare capabilities`

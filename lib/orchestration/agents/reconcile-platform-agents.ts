@@ -277,11 +277,26 @@ export async function reconcilePlatformAgents(
 
       placed.push(definition.slug);
 
-      const outcome = await updateInstance(db, definition, existing, {
-        ownerId: owner.id,
-        capabilityIds: desiredCapabilityIds,
-        tagIds: desiredTagIds,
-      });
+      let outcome: Awaited<ReturnType<typeof updateInstance>>;
+      try {
+        outcome = await updateInstance(db, definition, existing, {
+          ownerId: owner.id,
+          capabilityIds: desiredCapabilityIds,
+          tagIds: desiredTagIds,
+        });
+      } catch (err) {
+        // The same race on an existing agent: two runs number the same
+        // version, and the second insert meets `(agentId, version)`. Its
+        // whole transaction rolled back; the winner wrote the same change.
+        if (!isUniqueViolation(err)) throw err;
+        complete = false;
+        log.info('Platform agent updated concurrently — left to the next run', {
+          orgId,
+          slug: definition.slug,
+        });
+        result.unchanged.push(definition.slug);
+        continue;
+      }
       bindingsChanged ||= outcome.bindingsChanged;
       if (outcome.accessChanged) invalidateAgentAccess(existing.id);
       (outcome.changed ? result.updated : result.unchanged).push(definition.slug);
@@ -312,7 +327,14 @@ export async function reconcilePlatformAgents(
       if (!row || !row.isSystem || row.deletedAt !== null) continue;
       retired.push(slug);
       if (!row.isActive) continue;
-      await deactivateInstance(db, row, owner.id);
+      try {
+        await deactivateInstance(db, row, owner.id);
+      } catch (err) {
+        if (!isUniqueViolation(err)) throw err;
+        complete = false;
+        log.info('Platform agent deactivated concurrently — left to the next run', { orgId, slug });
+        continue;
+      }
       result.deactivated.push(slug);
     }
 
@@ -561,18 +583,32 @@ async function deactivateInstance(
   row: ExistingAgent,
   ownerId: string
 ): Promise<void> {
+  const grants = {
+    grantedTagIds: row.grantedTags.map((g) => g.tagId),
+    grantedDocumentIds: row.grantedDocuments.map((g) => g.documentId),
+  };
   await db.$transaction(async (tx) => {
+    // As in `updateInstance`: an agent with no history keeps its active,
+    // pre-removal config as v1, so a restore can still bring it back.
+    let version = await nextAgentVersionNumber(tx, row.id);
+    if (version === 1) {
+      await tx.aiAgentVersion.create({
+        data: {
+          agentId: row.id,
+          version: 1,
+          snapshot: asSnapshotJson(buildAgentSnapshot(row, grants)),
+          changeSummary: INITIAL_VERSION_SUMMARY,
+          createdBy: ownerId,
+        },
+      });
+      version = 2;
+    }
     const updated = await tx.aiAgent.update({ where: { id: row.id }, data: { isActive: false } });
     await tx.aiAgentVersion.create({
       data: {
         agentId: row.id,
-        version: await nextAgentVersionNumber(tx, row.id),
-        snapshot: asSnapshotJson(
-          buildAgentSnapshot(updated, {
-            grantedTagIds: row.grantedTags.map((g) => g.tagId),
-            grantedDocumentIds: row.grantedDocuments.map((g) => g.documentId),
-          })
-        ),
+        version,
+        snapshot: asSnapshotJson(buildAgentSnapshot(updated, grants)),
         changeSummary: 'Removed from the platform agent registry',
         createdBy: ownerId,
       },
