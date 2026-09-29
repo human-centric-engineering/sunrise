@@ -46,7 +46,7 @@ Fields: `name`, `slug`, `description`, `isActive`, `visibility`.
 
 Select with three options: `internal` (default), `public`, `invite_only`. Controls who can access the agent via the consumer chat API. Placed after the Active toggle.
 
-**Slug auto-generation:** In create mode, typing into `name` auto-fills `slug` via `toSlug()` (lowercase, hyphenate, strip non-`[a-z0-9-]`). The moment the user types into the slug input, a local `slugTouched` flag turns off auto-gen. In edit mode, slug auto-generation is disabled (`slugTouched = true` on mount), but the field remains editable. System agent slugs are protected server-side — the PATCH handler rejects slug changes when `isSystem` is true. Both the form and the duplicate dialog validate slugs client-side with `slugSchema` (lowercase alphanumeric with single hyphens).
+**Slug auto-generation:** In create mode, typing into `name` auto-fills `slug` via `toSlug()` (lowercase, hyphenate, strip non-`[a-z0-9-]`). The moment the user types into the slug input, a local `slugTouched` flag turns off auto-gen. In edit mode, slug auto-generation is disabled (`slugTouched = true` on mount), but the field remains editable. On a system agent the slug is read-only, with the rest of the General tab (see [Platform agents](#platform-agents)). Both the form and the duplicate dialog validate slugs client-side with `slugSchema` (lowercase alphanumeric with single hyphens).
 
 ### Help copy
 
@@ -83,7 +83,17 @@ Hydrated from `GET /models`, filtered to the selected provider. Options are labe
 
 ### Dynamic resolution: empty provider/model
 
-Sunrise's platform agents (pattern-advisor, quiz-master, mcp-system, the judges and case generator, provider-model-auditor, audit-report-writer — see [`platform-agents.md`](../orchestration/platform-agents.md)) are created with **empty `provider`/`model` strings**; the cleanup assistant alone is pinned at creation when a reachable tool-using model exists. At runtime, `lib/orchestration/llm/agent-resolver.ts` fills the binding from the operator's first active provider plus the system default-chat model in `AiOrchestrationSettings.defaultModels.chat`. The agent form's Zod schema still requires non-empty strings on user-driven creates — this contract applies only to platform agents, which the reconcile (`lib/orchestration/agents/reconcile-platform-agents.ts`) writes directly, bypassing Zod. Provider and model are the org's: the reconcile sets them once, at creation, and never overwrites them. The platform-owned fields (instructions, temperature, bindings and the other non-cost fields) are written back by every reconcile, so an admin's edit to them on a system agent does not survive — the API does not yet refuse such edits (t-725). See `.context/admin/setup-wizard.md` for how the wizard populates the system default-chat model.
+Sunrise's platform agents (pattern-advisor, quiz-master, mcp-system, the judges and case generator, provider-model-auditor, audit-report-writer — see [`platform-agents.md`](../orchestration/platform-agents.md)) are created with **empty `provider`/`model` strings**; the cleanup assistant alone is pinned at creation when a reachable tool-using model exists. At runtime, `lib/orchestration/llm/agent-resolver.ts` fills the binding from the operator's first active provider plus the system default-chat model in `AiOrchestrationSettings.defaultModels.chat`. The agent form's Zod schema still requires non-empty strings on user-driven creates — this contract applies only to platform agents, which the reconcile (`lib/orchestration/agents/reconcile-platform-agents.ts`) writes directly, bypassing Zod. Provider and model are the org's: the reconcile sets them once, at creation, and never overwrites them. The platform-owned fields (instructions, temperature, bindings and the other non-cost fields) are written back by every reconcile, so the API refuses an edit to them on a system agent and the form shows them read-only (see [Platform agents](#platform-agents)).
+
+### Platform agents
+
+On a system agent, `GET /agents/:id` returns `platformAgent: { lockedFields, tunableFields, bindingsLocked }`, the split the API enforces (`lib/orchestration/agents/platform-agent-guard.ts`). The form reads it three ways:
+
+- **Locked groups.** Each group of controls whose fields are all locked is wrapped in a disabled `fieldset` (`PlatformLockedGroup`): the General tab's name, slug, description, profile, active and visibility; the Model tab's temperature, max tokens and reasoning effort, and its inputs, history and guard modes; and the whole Instructions tab. Radix's slider is not a native control, so temperature is disabled explicitly. Retention, provider, model, fallbacks, budget, per-turn cap and rate limit stay editable. A group is locked only when every field in it is, so moving a field across the registry's line unlocks its group without a form change.
+- **The payload.** A save drops every locked field, so a field the admin never touched cannot be refused.
+- **The banner.** It says the platform sets what the agent is and updates it with each release, and names what this org can change, from `tunableFields`. On `mcp-system` it adds that the org chooses which capabilities it may use.
+
+The Capabilities tab takes `bindingsLocked`: Attach and Detach are hidden, the switch is disabled, and Configure disables the custom-config editor and sends only the rate limit. See `.context/admin/setup-wizard.md` for how the wizard populates the system default-chat model.
 
 ### Temperature slider
 
@@ -342,7 +352,7 @@ Displays the `AiAgentVersion` timeline — **point-in-time** snapshots, each hol
 
 ### Restore
 
-All rows except the latest version show a **Restore** button (restoring the newest is a no-op — it already equals live). Clicking opens an `AlertDialog` confirming the action. Restoring calls `POST agentVersionRestore(id, versionId)`, which reproduces the agent as it was at that version: it applies the snapshot's config, pushes the pre-restore `systemInstructions` onto `systemInstructionsHistory`, reconnects the knowledge grants + `knowledgeAccessMode` (then invalidates the access cache), and writes a _new_ version recording the action. **System agents are restorable**, but `slug` / `systemInstructions` / `isActive` are left untouched (the same fields the form guards). The restore dialog clears any previous error on close. After restore, the parent form re-fetches the agent and calls `reset()` to update all fields.
+All rows except the latest version show a **Restore** button (restoring the newest is a no-op — it already equals live). Clicking opens an `AlertDialog` confirming the action. Restoring calls `POST agentVersionRestore(id, versionId)`, which reproduces the agent as it was at that version: it applies the snapshot's config, pushes the pre-restore `systemInstructions` onto `systemInstructionsHistory`, reconnects the knowledge grants + `knowledgeAccessMode` (then invalidates the access cache), and writes a _new_ version recording the action. **System agents are restorable**, but only their org-tunable fields are applied; the platform-owned fields and the grants are left untouched (the same fields the form shows read-only). The restore dialog clears any previous error on close. After restore, the parent form re-fetches the agent and calls `reset()` to update all fields.
 
 ### API endpoints
 
@@ -393,7 +403,7 @@ await apiClient.patch<AiAgent>(API.ADMIN.ORCHESTRATION.agentById(agent.id), { bo
 reset(data); // clears dirty state
 ```
 
-Every PATCH to `systemInstructions` auto-snapshots the previous value onto `AiAgent.systemInstructionsHistory` server-side (see `admin-api.md`). Version restore also pushes the pre-restore instructions onto history, keeping the JSONB trail in sync with the `AiAgentVersion` table. The version snapshot and agent update run inside a single `prisma.$transaction` so an update failure doesn't leave orphaned version entries. System agent slugs are protected from mutation — the PATCH handler rejects slug changes when `isSystem` is true.
+Every PATCH to `systemInstructions` auto-snapshots the previous value onto `AiAgent.systemInstructionsHistory` server-side (see `admin-api.md`). Version restore also pushes the pre-restore instructions onto history, keeping the JSONB trail in sync with the `AiAgentVersion` table. The version snapshot and agent update run inside a single `prisma.$transaction` so an update failure doesn't leave orphaned version entries. On a system agent, the PATCH handler refuses a change to any platform-owned field, slug and instructions included.
 
 **Dirty state scope:** The form's `isDirty` tracking (via react-hook-form) only covers the main form fields on Tabs 1–3 (Identity, Model, Instructions). Tabs 4–8 (Capabilities, Invite tokens, Versions, Test, Embed) perform mutations directly via `apiClient` calls and save immediately — they don't mark the form as dirty. The `beforeunload` unsaved-changes warning only fires for unsaved Tab 1–3 changes.
 

@@ -55,6 +55,11 @@ release process.
   `retention`. Every other key in `settings` is preserved.
 - **`listActiveOrgIds(db?)`** takes an optional client (§116 t-724), for a
   caller holding its own connection, such as the seed runner.
+- **`GET /admin/orchestration/agents/:id` returns `platformAgent`** (§116
+  t-725): `{ lockedFields, tunableFields, bindingsLocked }` on a system agent,
+  `null` on an org's own. It is the split the API enforces, and the agent form
+  renders from it. **`getPlatformAgent(slug)`** in `platform-agents.ts` reads
+  the registry by slug.
 
 ### Changed
 
@@ -68,8 +73,37 @@ release process.
   model, fallback providers, provider config, monthly budget, per-turn cap,
   rate limit and retention are the org's, and are never touched.** Before this, re-seeding overwrote the prompts (and descriptions) of the judges, the case generator and `mcp-system`, refreshed `cleanup-agent`'s prompt only while it had never been edited, and left the others alone. An install that customised a system agent's
   prompt should recreate it as its own agent (clone it) before upgrading.
-  Refusing these edits at the API is a later §116 task. Until then, the form
-  still accepts them.
+  The API now refuses these edits (§116 t-725, below).
+- **The admin API refuses an edit to what the platform owns on its agents**
+  (§116 t-725). On a system agent, `PATCH /agents/:id` returns 403 for a
+  change to any field the agent field registry marks `platformAgent: 'code'`,
+  naming the fields. That widens the old three (slug, instructions,
+  deactivation) to every behavioural field, the profile link and the grants,
+  and `isActive: true` is now refused too, so a retired agent stays off. A
+  field sent unchanged passes, so a client echoing the whole agent back is
+  refused only for what it changed. The org's fields (provider, model,
+  fallbacks, provider config, budget, per-turn cap, rate limit, retention)
+  stay writable. The binding routes refuse attach, detach and a change to a
+  binding's `isEnabled` or `customConfig` (its `customRateLimit` stays
+  writable; `mcp-system`'s bindings stay the org's). `PATCH
+  /agents/:id/widget-config` refuses a system agent. Version restore applies
+  only the org's fields and leaves the grants. **A client that edited a
+  system agent's prompt or settings through the API now gets a 403** where it
+  used to get a 200 that the next reconcile undid.
+- **Platform slugs are reserved** (§116 t-725). Creating or renaming an agent
+  to a registered platform slug (a Sunrise one, install-only included, or one
+  a fork registers) returns 400 on `slug`. Clone refuses one the caller chose
+  and skips past a generated one, and `POST /agents/import` and the config
+  restore skip such an agent with a warning. An org that already has an agent
+  of its own under such a slug keeps it, but the clean-up and `mcp-system`
+  lookups, the patterns-tag grant, and chat's agent load for a platform slug
+  (the judges and case generator) now match only system agents, so that org
+  gets "not found" instead of its own agent run in the platform's place.
+- **The agent form shows a platform agent's platform-owned fields read-only**
+  and never sends them (§116 t-725). Its banner says what the org can change.
+  The capabilities tab keeps only the rate limit editable, except on
+  `mcp-system`. **"Audit Models" shows in the install org only**, and the
+  dashboard's agent count excludes system agents.
 - **Seeds `005-pattern-advisor`, `008-mcp-server` and `010-model-auditor` no
   longer create agents** (§116 t-724). They still seed the pattern and cost
   capabilities, the MCP server config and resources, and the audit
@@ -84,6 +118,10 @@ release process.
   `lib/orchestration/agents/platform-agent-definitions/`. A fork that edited
   one of these files will see a modify/delete conflict. Carry the edit into a
   replacement registered from `lib/app/platform-agents.ts` instead.
+- **`SYSTEM_AGENT_PROTECTED_FIELDS`** from `agent-field-registry.ts` (§116
+  t-725). The three fields it named are now three of many:
+  `platformAgentFieldNames('code')` is the list the API and version restore
+  hold a system agent to.
 
 ## [0.13.0] — 2026-09-24
 

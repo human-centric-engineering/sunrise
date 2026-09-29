@@ -261,7 +261,7 @@ Powered by `recommendModels()` in `lib/orchestration/llm/provider-selector.ts`.
 
 ## Model Audit Workflow
 
-The matrix toolbar includes an **Audit Models** button that triggers the Provider Model Audit workflow — an AI-powered evaluation of model entries for accuracy and freshness.
+The matrix toolbar includes an **Audit Models** button that triggers the Provider Model Audit workflow — an AI-powered evaluation of model entries for accuracy and freshness. It appears in the install org only: the workflow and its two agents are the install org's (they write the provider catalogue every org reads), so the providers page asks `GET /api/v1/orgs` for the active org and passes `canAuditModels` to the matrix.
 
 ### What it does
 

@@ -153,15 +153,20 @@ All `updateAgentSchema` fields are optional and applied conditionally. The **onl
 
 ### System agent protection
 
-Agents seeded by the platform (e.g. `pattern-advisor`, `quiz-master`) have `isSystem: true`. System agents:
+Sunrise's [platform agents](./platform-agents.md) (e.g. `pattern-advisor`, `quiz-master`, the judges) are `isSystem: true` rows, one instance per org, and every reconcile writes their platform-owned fields back. So the API refuses a change to those fields rather than accept it and have it undone (`lib/orchestration/agents/platform-agent-guard.ts`, §116 t-725). The split is the agent field registry's `platformAgent` flag. System agents:
 
 - **Cannot be deleted** — `DELETE` returns 403 `ForbiddenError('System agents cannot be deleted')`.
-- **Cannot be deactivated** — `PATCH { isActive: false }` returns 403 `ForbiddenError('System agents cannot be deactivated')`.
-- **Cannot have their `systemInstructions`, `slug`, or `isActive` changed** — `PATCH` rejects each with a 403 `ForbiddenError` (`'System agent instructions cannot be modified'` / `'System agent slugs cannot be changed'` / `'System agents cannot be deactivated'`), preserving rollback consistency and the internal slug contract.
-- **Can otherwise be edited** — `PATCH` with any other field (model, temperature, guard modes, `runtimePromptManaged`, etc.) succeeds and versions normally.
-- **Can be version-restored, with the protected fields skipped** — `POST /versions/:versionId/restore` applies the snapshot but leaves `slug`, `systemInstructions`, and `isActive` at their current values (the same set guarded above), so a restore can't bypass the read-only guarantees (see [Agent version restore](#agent-version-restore)).
+- **Cannot have a platform-owned field changed** — `PATCH` returns 403 naming every such field it would change, and listing what the org can change. That covers `slug`, `systemInstructions`, `isActive` (in both directions: a retired agent stays off), `profileId`, the knowledge grants and every other behavioural field. Values are compared, not keys: a field sent unchanged passes (JSON by value, grants as sets), so a client echoing the whole agent back is refused only for what it actually changed.
+- **Can have the org's fields changed** — `provider`, `model`, `fallbackProviders`, `providerConfig`, `monthlyBudgetUsd`, `maxCostPerTurnUsd`, `rateLimitRpm`, `retentionDays` succeed and version normally.
+- **Have locked bindings** — the binding routes return 403 for attach, detach, and a change to a binding's `isEnabled` or `customConfig`; `customRateLimit` stays writable. `mcp-system`'s definition leaves its bindings to the org (`capabilityBindings: 'org'`), so every binding route accepts them there.
+- **Have a locked widget config** — `PATCH /agents/:id/widget-config` returns 403.
+- **Can be version-restored, org fields only** — `POST /versions/:versionId/restore` applies the snapshot's org-tunable fields and leaves the platform-owned fields and the grants at their current values (see [Agent version restore](#agent-version-restore)).
 
-The `isSystem` flag is set during seeding and is not exposed as a writable field on create/update schemas.
+`GET /agents/:id` carries the same split for the form: `platformAgent: { lockedFields, tunableFields, bindingsLocked }` on a system agent, `null` otherwise.
+
+**Reserved slugs.** Creating an agent, or renaming one, to a registered platform slug returns 400 `VALIDATION_ERROR` with `details.slug`. Clone refuses such a slug when the caller chose it, and skips past it when it generated it. `POST /agents/import` and the config restore skip such an agent with a warning.
+
+The `isSystem` flag is set only by the platform-agent reconcile and is not exposed as a writable field on create/update schemas.
 
 ### Delete agent
 
@@ -284,7 +289,7 @@ Restores an agent to a previous version snapshot. Loads the `AiAgentVersion.snap
 
 **Fields re-applied on restore** are the registry's versioned scalar set (`versionedScalarFieldNames()` — the single source of truth, so a new versioned field is restored automatically), **plus the knowledge grants** (`grantedTagIds` / `grantedDocumentIds`, reconnected from the snapshot; ids whose tag/document was deleted since are dropped so a stale id can't FK-fail the restore) and **`knowledgeAccessMode`** (restored together with the grants, followed by an access-resolver cache invalidation). `systemInstructions` is restored with the same history-push the PATCH route uses.
 
-**System agents (`isSystem: true`) are restorable**, but the fields the PATCH route guards as read-only are **skipped** — `slug`, `systemInstructions`, and `isActive` keep their current values; everything else in the snapshot is applied. Non-system agents restore the full config.
+**System agents (`isSystem: true`) are restorable**, but only their org-tunable fields are applied — provider, model, fallbacks, provider config, budget, per-turn cap, rate limit and retention. Every platform-owned field keeps its current value, and the knowledge grants are left as they are: the PATCH route refuses those same fields, and the next reconcile would write them back anyway. Non-system agents restore the full config.
 
 **Response (200):**
 

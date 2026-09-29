@@ -38,18 +38,18 @@ Landing page for the AI Orchestration admin area. Thin async server component th
 
 Every fetch is **null-safe**. A failing API renders an empty state, never throws.
 
-| Component              | Endpoint                                                 | Notes                                       |
-| ---------------------- | -------------------------------------------------------- | ------------------------------------------- |
-| Agents stat card       | `GET /admin/orchestration/agents?page=1&limit=1`         | `getPaginatedTotal()` extracts `meta.total` |
-| Today's spend card     | `GET /admin/orchestration/costs/summary`                 | `getCostSummary()` → `totals.today`         |
-| Today's requests card  | `GET /admin/orchestration/observability/dashboard-stats` | `getDashboardStats()` → `todayRequests`     |
-| Error rate card        | `GET /admin/orchestration/observability/dashboard-stats` | `getDashboardStats()` → `errorRate`         |
-| Budget alerts banner   | `GET /admin/orchestration/costs/alerts`                  | `getBudgetAlerts()`                         |
-| 7-day spend trend      | `GET /admin/orchestration/costs/summary`                 | `getCostSummary()` → `trend.slice(-7)`      |
-| Top capabilities       | `GET /admin/orchestration/observability/dashboard-stats` | `getDashboardStats()` → `topCapabilities`   |
-| Activity feed (convos) | `GET /admin/orchestration/conversations?limit=10`        | `getActivityFeed()`                         |
-| Activity feed (execs)  | `GET /admin/orchestration/executions?limit=10`           | `getActivityFeed()` (501 stub → empty list) |
-| Activity feed (errors) | `GET /admin/orchestration/observability/dashboard-stats` | `getDashboardStats()` → `recentErrors`      |
+| Component              | Endpoint                                                        | Notes                                                                                                                                                 |
+| ---------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agents stat card       | `GET /admin/orchestration/agents?isSystem=false&page=1&limit=1` | `getPaginatedTotal()` extracts `meta.total`; the org's own agents only, as setup state counts them, so a new org does not open on its platform agents |
+| Today's spend card     | `GET /admin/orchestration/costs/summary`                        | `getCostSummary()` → `totals.today`                                                                                                                   |
+| Today's requests card  | `GET /admin/orchestration/observability/dashboard-stats`        | `getDashboardStats()` → `todayRequests`                                                                                                               |
+| Error rate card        | `GET /admin/orchestration/observability/dashboard-stats`        | `getDashboardStats()` → `errorRate`                                                                                                                   |
+| Budget alerts banner   | `GET /admin/orchestration/costs/alerts`                         | `getBudgetAlerts()`                                                                                                                                   |
+| 7-day spend trend      | `GET /admin/orchestration/costs/summary`                        | `getCostSummary()` → `trend.slice(-7)`                                                                                                                |
+| Top capabilities       | `GET /admin/orchestration/observability/dashboard-stats`        | `getDashboardStats()` → `topCapabilities`                                                                                                             |
+| Activity feed (convos) | `GET /admin/orchestration/conversations?limit=10`               | `getActivityFeed()`                                                                                                                                   |
+| Activity feed (execs)  | `GET /admin/orchestration/executions?limit=10`                  | `getActivityFeed()` (501 stub → empty list)                                                                                                           |
+| Activity feed (errors) | `GET /admin/orchestration/observability/dashboard-stats`        | `getDashboardStats()` → `recentErrors`                                                                                                                |
 
 All calls go through `serverFetch()` + `parseApiResponse()` — never raw `fetch`. Cookie forwarding is automatic.
 

@@ -66,9 +66,44 @@ Every agent field declares its side (see
   tool-using model the org can reach while provider and model are both
   still empty.
 
-An admin can still edit a platform-owned field through the agent form and
-API today, and the next reconcile reverts it. Refusing that edit at the API
-is the next task on §116.
+## What an org's admin can change
+
+The API refuses what a reconcile would put back, so an edit is never
+accepted and then quietly undone
+(`lib/orchestration/agents/platform-agent-guard.ts`). On a system agent:
+
+- **`PATCH /agents/:id`** returns 403 for a change to any platform-owned
+  field, and names the fields. `isActive` is one of them, in both
+  directions: a retired agent stays off. Values are compared, not keys, so
+  a client that sends the whole agent back with only the model changed
+  goes through. The org's fields (provider, model, fallbacks, provider
+  config, budget, per-turn cap, rate limit, retention) are always writable.
+- **The binding routes** refuse attach, detach, and a change to a
+  binding's `isEnabled` or `customConfig`. A binding's `customRateLimit` is
+  how fast the org lets the agent run, so it stays writable. `mcp-system`'s
+  bindings are the org's, and every binding route accepts them.
+- **`PATCH /agents/:id/widget-config`** is refused outright; a platform
+  agent's widget config is the platform's.
+- **Version restore** brings back only the org's fields and leaves the
+  grants as they are.
+- **Delete, bulk actions and the instructions revert** refuse system agents,
+  as they always have. **Clone** is allowed: the copy is the org's own agent.
+
+`GET /agents/:id` returns the same split as `platformAgent: { lockedFields,
+tunableFields, bindingsLocked }` (`null` on an org's own agent). The agent
+form disables the locked controls from it, never sends them, and its banner
+names what the org can change.
+
+**Reserved slugs.** No agent an org makes may take a registered platform
+slug, in any org, including the install-only ones and any a fork registers.
+Create and rename refuse one with a 400 on `slug`; clone refuses a slug the
+caller chose and skips past a generated one; both importers skip the agent
+with a warning. An org that took a platform slug before this rule keeps its
+agent. The reconcile never adopts it, and every lookup of a platform agent
+by slug matches system rows only: the clean-up and `mcp-system` lookups, the
+patterns-tag grant, and chat's agent load for a platform slug, which the
+judges and the case generator go through. So such an org gets "not found"
+rather than its own agent run in the platform agent's place.
 
 ## When the reconcile runs
 

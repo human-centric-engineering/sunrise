@@ -32,6 +32,8 @@ Every core field declares `platformAgent: 'code' | 'org'`: who decides its value
 - **`'code'`** is what the agent _is_: its name, prompt, temperature, knowledge settings, guardrails, and the rest. Every reconcile writes the definition's value back, or the platform baseline's where the definition says nothing.
 - **`'org'`** is how it _runs_ in one org. That covers `provider`, `model`, `fallbackProviders`, `providerConfig`, `monthlyBudgetUsd`, `maxCostPerTurnUsd`, `rateLimitRpm` and `retentionDays` (ruling on §116, 2026-09-29). These are set once when the instance is created and never touched by a reconcile, so an org's choice of model or budget survives every release.
 
+The API holds the same line: on a system agent it refuses a change to any `'code'` field and accepts the `'org'` ones (`lib/orchestration/agents/platform-agent-guard.ts`), and the agent form shows the `'code'` ones read-only.
+
 The org-tunable list is pinned in `agent-field-registry.test.ts`: moving a field across the line changes what every org may edit on every platform agent. A fork's own field may leave `platformAgent` out, and the platform agents' reconcile then ignores it.
 
 ### What derives vs what's parity-tested
