@@ -14,12 +14,14 @@ import { listActiveOrgIds } from '@/lib/tenancy/context';
  * fresh install and an upgraded one end in the same state.
  *
  * Last among the agent-related units on purpose: the capabilities the agents
- * bind to are seeded by 005, 010, 011–014 and 019, and the patterns tag by
- * 007. A capability or tag with no row yet is skipped with a warning, not an
- * error.
+ * bind to are seeded by 005, 010, 011–014 and 019. A capability with no row
+ * yet is skipped with a warning, not an error. The reconcile also gives each
+ * org its own copy of the patterns knowledge (t-726), and with it the tag the
+ * pattern advisor and quiz master are granted.
  *
  * `hashInputs` names every file a definition or the reconcile's behaviour
- * lives in, so editing one re-runs this unit on the next seed. The
+ * lives in, the patterns knowledge included, so editing one re-runs this unit
+ * on the next seed. The
  * maintenance job would catch the change anyway (it compares each org's
  * stored registry digest); this makes a deploy that seeds apply it at once.
  */
@@ -38,6 +40,9 @@ const unit: SeedUnit = {
     '../../lib/orchestration/agents/platform-agent-definitions/quiz-master.ts',
     '../../lib/orchestration/agents/platform-agent-definitions/rag-evaluation-judges.ts',
     '../../lib/app/platform-agents.ts',
+    '../../lib/orchestration/knowledge/seeder.ts',
+    '../../lib/orchestration/knowledge/patterns-knowledge.ts',
+    './data/chunks/chunks.json',
   ],
   async run({ prisma, logger }) {
     logger.info('🤖 Reconciling platform agents in every org...');
@@ -58,7 +63,8 @@ const unit: SeedUnit = {
       logger.info(
         `  ✓ ${orgId}: ${result.created.length} created, ${result.updated.length} updated, ` +
           `${result.unchanged.length} unchanged, ${result.deactivated.length} deactivated` +
-          (result.refused.length > 0 ? `, ${result.refused.length} refused` : '')
+          (result.refused.length > 0 ? `, ${result.refused.length} refused` : '') +
+          `; patterns knowledge ${result.knowledge ?? 'skipped'}`
       );
     }
   },

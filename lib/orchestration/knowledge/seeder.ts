@@ -1,23 +1,34 @@
 /**
  * Knowledge Base Seeder
  *
- * Two-phase seeder for the knowledge base:
+ * Two phases for the platform's patterns knowledge (`patterns-knowledge.ts`):
  *
- * Phase 1 — seedChunks(): inserts chunks from chunks.json with embedding=null
- * and creates the document with status='ready'. No external dependency.
+ * Phase 1 — materialisePatternsKnowledge(): writes the calling org's copy of
+ * the document and its chunks, with embedding=null and status='ready'. No
+ * external dependency. The platform-agent reconcile runs it in every org
+ * (§116 t-726); seedChunks() runs it for the org a seed or an admin is in.
  *
- * Phase 2 — embedChunks(): finds all chunks where embedding IS NULL, batches
- * them through the configured embedding provider, and writes vectors back.
+ * Phase 2 — embedChunks(): finds the org's chunks where embedding IS NULL,
+ * batches them through the configured embedding provider, and writes vectors
+ * back.
  */
 
+import { createHash } from 'crypto';
 import { readFile } from 'fs/promises';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
+import type { TenancyClient } from '@/lib/db/tenancy-extension';
 import { serviceAccountWhere } from '@/lib/auth/account';
-import { logger } from '@/lib/logging';
-import { DEFAULT_KNOWLEDGE_BASE_ID } from '@/lib/orchestration/knowledge/document-manager';
+import { logger, type Logger } from '@/lib/logging';
+import { getOrCreateDefaultKnowledgeBase } from '@/lib/orchestration/knowledge/document-manager';
 import { buildDocumentSlugBase } from '@/lib/orchestration/knowledge/document-slug';
 import { embedBatch } from '@/lib/orchestration/knowledge/embedder';
+import {
+  PATTERNS_DOCUMENT_FILE_NAME,
+  PATTERNS_DOCUMENT_NAME,
+  PATTERNS_TAG_SLUG,
+} from '@/lib/orchestration/knowledge/patterns-knowledge';
+import { requireOrgId } from '@/lib/tenancy/context';
 
 /** Shape of a chunk entry in the pre-parsed chunks.json */
 const seedChunkMetadataSchema = z.object({
@@ -44,167 +55,225 @@ export const seedChunkSchema = z.object({
 
 export type SeedChunk = z.infer<typeof seedChunkSchema>;
 
-const DOCUMENT_NAME = 'Agentic Design Patterns';
-const DOCUMENT_FILE_NAME = 'agentic-design-patterns.md';
+/**
+ * Validate parsed chunk-file content. `source` names where it came from in
+ * the error, e.g. the file path.
+ */
+export function parseSeedChunks(parsed: unknown, source: string): SeedChunk[] {
+  const result = z.array(seedChunkSchema).safeParse(parsed);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    const path = issue?.path.join('.') ?? '<root>';
+    throw new Error(
+      `Invalid chunks.json at ${source}: ${issue?.message ?? 'validation failed'} (at ${path})`
+    );
+  }
+  return result.data;
+}
 
 /**
- * Phase 1 — Seed chunks into the knowledge base (no embeddings).
+ * The committed `chunks.json`, from the bundle rather than the file system:
+ * the reconcile that calls this runs in the app (org creation, the
+ * maintenance job) as well as in the seed, and a module import is the one
+ * path every bundler and runtime is sure to carry. Loaded on first call, so
+ * nothing that merely imports this module pays for it.
+ */
+export async function loadPatternsChunks(): Promise<SeedChunk[]> {
+  const bundled: { default: unknown } = await import('@/prisma/seeds/data/chunks/chunks.json');
+  return parseSeedChunks(bundled.default, 'prisma/seeds/data/chunks/chunks.json');
+}
+
+/** How an org's copy stood. */
+export type PatternsKnowledgeOutcome =
+  /** The org had no copy, and now has this one. */
+  | 'created'
+  /** The org already holds this version. */
+  | 'present'
+  /**
+   * The org holds a copy of an earlier `chunks.json`, which is left as it is:
+   * replacing it would drop the org's embeddings. The seeder has never
+   * refreshed a copy.
+   */
+  | 'outdated';
+
+export interface MaterialiseOptions {
+  /** The client to write through. The seed passes its own (owner DSN). */
+  db?: TenancyClient;
+  log?: Logger;
+}
+
+/**
+ * Phase 1 — give the calling org its copy of the patterns knowledge (no
+ * embeddings).
  *
- * Creates one `AiKnowledgeDocument` named "Agentic Design Patterns" containing
- * every chunk in chunks.json (patterns + reference material). One managed
- * `KnowledgeTag` (`agentic-design-patterns`) is applied to the document via
- * the doc↔tag join, so agents in restricted-knowledge mode that hold this
- * tag can search the bundled patterns.
+ * Writes one `AiKnowledgeDocument` named "Agentic Design Patterns" into the
+ * org's own default knowledge base, with every chunk (patterns and reference
+ * material), and links it to the managed `agentic-design-patterns` tag. The
+ * tag is global; the agents that search the document hold it, and the
+ * platform-agent reconcile grants it. A tag, not a document grant, because
+ * the document is per org and the tag is not.
  *
  * History: an earlier iteration split this into one-doc-per-pattern and
  * lifted every `chunk.category` into a separate tag. That fragmented the
  * KB list into 22 rows and produced 10+ redundant tags pointing at the same
  * doc, so it was reverted — one doc, one tag.
  *
- * Idempotent: skips if the document already exists with chunks. Failed
- * seed attempts are cleaned up and re-seeded.
+ * **Idempotent by slug.** The slug is the document's per-org key and carries
+ * its content hash, so an org that holds this version is left alone. An
+ * earlier version is left alone too (`'outdated'`). A copy left `failed` by an
+ * old, non-transactional seed is removed and written again. Document, chunks
+ * and tag link are one transaction, so a failure leaves no partial copy.
+ *
+ * Runs in the caller's org scope; every row it writes is stamped with it.
+ */
+export async function materialisePatternsKnowledge(
+  chunks: readonly SeedChunk[],
+  options: MaterialiseOptions = {}
+): Promise<{ outcome: PatternsKnowledgeOutcome; documentId: string }> {
+  const db = options.db ?? prisma;
+  const log = options.log ?? logger;
+  const orgId = requireOrgId();
+
+  const fileHash = createHash('sha256')
+    .update(chunks.map((c) => c.content).join(''))
+    .digest('hex');
+  // The same helper as uploads, so every environment keys this document
+  // identically and grants on it round-trip.
+  const slug = buildDocumentSlugBase(PATTERNS_DOCUMENT_NAME, fileHash);
+
+  // This version by its key, and any earlier one: only the platform writes
+  // `scope: 'system'`.
+  const copies = await db.aiKnowledgeDocument.findMany({
+    where: {
+      orgId,
+      OR: [{ slug }, { scope: 'system', name: PATTERNS_DOCUMENT_NAME }],
+    },
+    select: { id: true, slug: true, status: true },
+  });
+
+  const failed = copies.filter((c) => c.status === 'failed').map((c) => c.id);
+  if (failed.length > 0) {
+    log.info('Removing a failed copy of the patterns knowledge', { orgId, documentIds: failed });
+    // Chunks and tag links cascade with the document.
+    await db.aiKnowledgeDocument.deleteMany({ where: { id: { in: failed } } });
+  }
+  const held = copies.filter((c) => c.status !== 'failed');
+  const current = held.find((c) => c.slug === slug);
+  if (current) return { outcome: 'present', documentId: current.id };
+  if (held.length > 0) {
+    log.warn('An earlier copy of the patterns knowledge is left in place', {
+      orgId,
+      documentId: held[0].id,
+      heldSlug: held[0].slug,
+      currentSlug: slug,
+    });
+    return { outcome: 'outdated', documentId: held[0].id };
+  }
+
+  // The service account owns platform content; any user is the fallback on
+  // an install that has not seeded one yet.
+  const owner =
+    (await db.user.findFirst({ where: serviceAccountWhere, select: { id: true } })) ??
+    (await db.user.findFirst({ select: { id: true } }));
+  if (!owner) {
+    throw new Error('No users found in database. Create a user first, then re-run the seeder.');
+  }
+
+  const knowledgeBaseId = await getOrCreateDefaultKnowledgeBase(db);
+  const tag = await db.knowledgeTag.upsert({
+    where: { slug: PATTERNS_TAG_SLUG },
+    create: {
+      slug: PATTERNS_TAG_SLUG,
+      name: PATTERNS_DOCUMENT_NAME,
+      description:
+        'Built-in reference: the 21 agentic design patterns and supporting material. Grant this tag to any agent that should be able to consult the patterns playbook.',
+    },
+    update: {},
+  });
+
+  const documentId = await db.$transaction(
+    async (tx) => {
+      const document = await tx.aiKnowledgeDocument.create({
+        data: {
+          slug,
+          name: PATTERNS_DOCUMENT_NAME,
+          fileName: PATTERNS_DOCUMENT_FILE_NAME,
+          fileHash,
+          scope: 'system',
+          status: 'ready',
+          uploadedBy: owner.id,
+          chunkCount: chunks.length,
+          knowledgeBaseId,
+        },
+      });
+
+      // Raw INSERTs are the one create shape the tenancy chokepoint cannot
+      // stamp: the chunk's org is its document's, read in the same statement (§107).
+      for (const chunk of chunks) {
+        await tx.$executeRawUnsafe(
+          `INSERT INTO ai_knowledge_chunk (
+            id, "chunkKey", "documentId", content,
+            "chunkType", "patternNumber", "patternName",
+            section, keywords, "estimatedTokens", metadata, "orgId"
+          ) VALUES (
+            gen_random_uuid()::text, $1, $2, $3,
+            $4, $5, $6, $7, $8, $9, $10::jsonb,
+            (SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)
+          )`,
+          chunk.id,
+          document.id,
+          chunk.content,
+          chunk.metadata.type,
+          chunk.metadata.pattern_number ?? null,
+          chunk.metadata.pattern_name ?? null,
+          chunk.metadata.section_title ?? chunk.metadata.section ?? null,
+          chunk.metadata.keywords ?? null,
+          chunk.estimated_tokens,
+          JSON.stringify({
+            complexity: chunk.metadata.complexity ?? null,
+            relatedPatterns: chunk.metadata.related_patterns ?? null,
+            patternId: chunk.metadata.pattern_id ?? null,
+            source: chunk.metadata.source ?? null,
+          })
+        );
+      }
+
+      await tx.aiKnowledgeDocumentTag.create({
+        data: { documentId: document.id, tagId: tag.id },
+      });
+      return document.id;
+    },
+    // 191 single-row inserts: past the 5 s default on a remote database.
+    { timeout: 60_000 }
+  );
+
+  log.info('Patterns knowledge written (chunks only, no embeddings)', {
+    orgId,
+    documentId,
+    chunkCount: chunks.length,
+  });
+  return { outcome: 'created', documentId };
+}
+
+/**
+ * Seed the patterns knowledge into the org this runs in, from a chunk file:
+ * the `007-knowledge-chunks` seed unit (the install org) and
+ * `POST /knowledge/seed` (the admin's org). See
+ * {@link materialisePatternsKnowledge}.
  *
  * @param chunksJsonPath - Absolute path to the chunks.json file
  */
 export async function seedChunks(chunksJsonPath: string): Promise<void> {
   logger.info('Starting knowledge base seed (chunks only)', { chunksJsonPath });
 
-  const existing = await prisma.aiKnowledgeDocument.findFirst({
-    where: { name: DOCUMENT_NAME },
-  });
-
-  if (existing) {
-    if (existing.status === 'failed') {
-      logger.info('Removing previously failed seed document', { documentId: existing.id });
-      await prisma.aiKnowledgeChunk.deleteMany({ where: { documentId: existing.id } });
-      await prisma.aiKnowledgeDocument.delete({ where: { id: existing.id } });
-    } else {
-      logger.info('Knowledge base already seeded, skipping', { documentId: existing.id });
-      return;
-    }
-  }
-
   const raw = await readFile(chunksJsonPath, 'utf-8');
-  const parsed: unknown = JSON.parse(raw);
-  const result = z.array(seedChunkSchema).safeParse(parsed);
-  if (!result.success) {
-    const issue = result.error.issues[0];
-    const path = issue?.path.join('.') ?? '<root>';
-    throw new Error(
-      `Invalid chunks.json at ${chunksJsonPath}: ${issue?.message ?? 'validation failed'} (at ${path})`
-    );
-  }
-  const chunks = result.data;
-
+  const chunks = parseSeedChunks(JSON.parse(raw), chunksJsonPath);
   logger.info('Loaded chunks from file', { count: chunks.length });
 
-  // Prefer the SERVICE config-owner so seeded KB docs are owned by the stable
-  // system principal; fall back to any user if it isn't present yet.
-  const systemOwner = await prisma.user.findFirst({
-    where: serviceAccountWhere,
-    select: { id: true },
-  });
-  const firstUser = await prisma.user.findFirst({
-    select: { id: true },
-  });
-  const uploaderId = systemOwner?.id ?? firstUser?.id;
-
-  if (!uploaderId) {
-    throw new Error('No users found in database. Create a user first, then re-run the seeder.');
-  }
-
-  const { createHash } = await import('crypto');
-  const contentForHash = chunks.map((c) => c.content).join('');
-  const fileHash = createHash('sha256').update(contentForHash).digest('hex');
-
-  // Deterministic slug from the committed-content fileHash, so a freshly-seeded
-  // environment and a migrated-then-backfilled one key this document identically
-  // (lets grants on the patterns doc round-trip — same helper as uploads).
-  const document = await prisma.aiKnowledgeDocument.create({
-    data: {
-      slug: buildDocumentSlugBase(DOCUMENT_NAME, fileHash),
-      name: DOCUMENT_NAME,
-      fileName: DOCUMENT_FILE_NAME,
-      fileHash,
-      scope: 'system',
-      status: 'ready',
-      uploadedBy: uploaderId,
-      chunkCount: chunks.length,
-      knowledgeBaseId: DEFAULT_KNOWLEDGE_BASE_ID,
-    },
-  });
-
-  // Raw INSERTs are the one create shape the tenancy chokepoint cannot stamp:
-  // the chunk's org is its document's, read in the same statement (§107).
-  for (const chunk of chunks) {
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO ai_knowledge_chunk (
-        id, "chunkKey", "documentId", content,
-        "chunkType", "patternNumber", "patternName",
-        section, keywords, "estimatedTokens", metadata, "orgId"
-      ) VALUES (
-        gen_random_uuid()::text, $1, $2, $3,
-        $4, $5, $6, $7, $8, $9, $10::jsonb,
-        (SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)
-      )`,
-      chunk.id,
-      document.id,
-      chunk.content,
-      chunk.metadata.type,
-      chunk.metadata.pattern_number ?? null,
-      chunk.metadata.pattern_name ?? null,
-      chunk.metadata.section_title ?? chunk.metadata.section ?? null,
-      chunk.metadata.keywords ?? null,
-      chunk.estimated_tokens,
-      JSON.stringify({
-        complexity: chunk.metadata.complexity ?? null,
-        relatedPatterns: chunk.metadata.related_patterns ?? null,
-        patternId: chunk.metadata.pattern_id ?? null,
-        source: chunk.metadata.source ?? null,
-      })
-    );
-  }
-
-  // Apply a single tag for the seeded patterns. We deliberately don't lift
-  // every chunk.category into a separate tag — that gave us 10 redundant
-  // tags all pointing at the same doc, which was the operator complaint
-  // that drove the revert. One tag, one doc.
-  const seedTag = await prisma.knowledgeTag.upsert({
-    where: { slug: 'agentic-design-patterns' },
-    create: {
-      slug: 'agentic-design-patterns',
-      name: 'Agentic Design Patterns',
-      description:
-        'Built-in reference: the 21 agentic design patterns and supporting material. Grant this tag to any agent that should be able to consult the patterns playbook.',
-    },
-    update: {},
-  });
-  await prisma.aiKnowledgeDocumentTag.upsert({
-    where: { documentId_tagId: { documentId: document.id, tagId: seedTag.id } },
-    create: { documentId: document.id, tagId: seedTag.id },
-    update: {},
-  });
-
-  // Bidirectional safety net: grant this tag to any built-in system agent
-  // that depends on the patterns knowledge (pattern-advisor, quiz-master).
-  // The platform-agent reconcile grants it too (both agents declare the tag),
-  // but skips a tag that does not exist yet — so whichever runs first, the
-  // grant ends up present. Idempotent.
-  const systemAgents = await prisma.aiAgent.findMany({
-    where: { slug: { in: ['pattern-advisor', 'quiz-master'] }, isSystem: true },
-    select: { id: true, slug: true },
-  });
-  for (const agent of systemAgents) {
-    await prisma.aiAgentKnowledgeTag.upsert({
-      where: { agentId_tagId: { agentId: agent.id, tagId: seedTag.id } },
-      create: { agentId: agent.id, tagId: seedTag.id },
-      update: {},
-    });
-  }
-  if (systemAgents.length > 0) {
-    logger.info('Granted patterns tag to system agents', {
-      slugs: systemAgents.map((a) => a.slug),
-    });
+  const { outcome, documentId } = await materialisePatternsKnowledge(chunks);
+  if (outcome !== 'created') {
+    logger.info('Knowledge base already seeded, skipping', { documentId, outcome });
+    return;
   }
 
   // Record the seed timestamp on the settings singleton (upsert to handle
@@ -216,9 +285,9 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
   });
 
   logger.info('Knowledge base seeded successfully (chunks only, no embeddings)', {
-    documentId: document.id,
+    documentId,
     chunkCount: chunks.length,
-    tag: 'agentic-design-patterns',
+    tag: PATTERNS_TAG_SLUG,
   });
 }
 
@@ -228,6 +297,12 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
  * Finds every chunk where embedding IS NULL, batches them through the
  * configured embedding provider, and writes vectors back. Can be called
  * repeatedly — only processes chunks that still need embeddings.
+ *
+ * The calling org's chunks only: at `multi` the chokepoint runs each query,
+ * the raw ones included, under the org's `app.current_org`, so the policies
+ * hide every other org's rows. That is what embeds a new org's copy of the
+ * patterns knowledge (`POST /knowledge/embed` from that org). With no
+ * embedding provider it throws, as it always has.
  *
  * @returns Summary of what was processed
  */

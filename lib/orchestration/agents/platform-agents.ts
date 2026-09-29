@@ -43,6 +43,7 @@ import type {
   PlatformAgentOrgTunableField,
 } from '@/lib/orchestration/agents/agent-field-registry';
 import type { TenancyClient } from '@/lib/db/tenancy-extension';
+import { PATTERNS_DOCUMENT_SLUG } from '@/lib/orchestration/knowledge/patterns-knowledge';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { CASE_GENERATOR_AGENT } from '@/lib/orchestration/agents/platform-agent-definitions/case-generator';
 import { CLEANUP_AGENT } from '@/lib/orchestration/agents/platform-agent-definitions/cleanup-agent';
@@ -274,9 +275,10 @@ export function platformAgentsForOrg(orgId: string): readonly PlatformAgentDefin
 }
 
 /**
- * A digest of everything a reconcile writes from: every definition and the
- * baseline. An org whose stored digest differs is behind the running code and
- * is reconciled by the maintenance job.
+ * A digest of everything a reconcile writes from: every definition, the
+ * baseline, and the version of the patterns knowledge each org gets a copy of
+ * (its document slug carries the content hash). An org whose stored digest
+ * differs is behind the running code and is reconciled by the maintenance job.
  *
  * `defaultBinding` is a function, so only its presence is hashed — it decides
  * a starting value, which a later change to it could not rewrite anyway.
@@ -292,7 +294,13 @@ function computeRegistryHash(registered: readonly PlatformAgentDefinition[]): st
     .sort((a, b) => a.slug.localeCompare(b.slug))
     .map(({ defaultBinding, ...rest }) => ({ ...rest, defaultBinding: Boolean(defaultBinding) }));
   return createHash('sha256')
-    .update(JSON.stringify({ baseline: PLATFORM_AGENT_BASELINE, definitions }))
+    .update(
+      JSON.stringify({
+        baseline: PLATFORM_AGENT_BASELINE,
+        definitions,
+        patternsKnowledge: PATTERNS_DOCUMENT_SLUG,
+      })
+    )
     .digest('hex');
 }
 

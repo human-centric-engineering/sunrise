@@ -10,6 +10,7 @@ import { createHash } from 'crypto';
 import { extname } from 'path';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
+import type { TenancyClient } from '@/lib/db/tenancy-extension';
 import { executeTransaction } from '@/lib/db/utils';
 import { logger } from '@/lib/logging';
 import {
@@ -61,15 +62,17 @@ const DEFAULT_KNOWLEDGE_BASE_SLUG = 'default';
  * rather than crashing on a duplicate-key error.
  *
  * Only the install org's default carries the fixed id `kb_default` — the
- * seed's row and the id the system-document seeder writes into. Every other
- * org's default is created on its first upload with a generated id: an id
- * is global, and two orgs cannot share one. The one-default-per-org rule is
- * the partial unique `idx_ai_knowledge_base_single_default` (see the
- * schema's drift warning).
+ * seed's row. Every other org's default is created with a generated id, when
+ * the platform-agent reconcile writes its copy of the patterns knowledge
+ * (§116 t-726) or on its first upload: an id is global, and two orgs cannot
+ * share one. The one-default-per-org rule is the partial unique
+ * `idx_ai_knowledge_base_single_default` (see the schema's drift warning).
+ *
+ * `db` is the client to write through: the seed passes its own (owner DSN).
  */
-export async function getOrCreateDefaultKnowledgeBase(): Promise<string> {
+export async function getOrCreateDefaultKnowledgeBase(db: TenancyClient = prisma): Promise<string> {
   const orgId = requireOrgId();
-  const kb = await prisma.aiKnowledgeBase.upsert({
+  const kb = await db.aiKnowledgeBase.upsert({
     where: { orgId_slug: { orgId, slug: DEFAULT_KNOWLEDGE_BASE_SLUG } },
     update: {},
     create: {

@@ -43,6 +43,11 @@
  *    and lock them out of it. It is logged and skipped.
  *  - **Install-only agents go only into the install org**, and **at `single`
  *    only the install org is reconciled** — the one org there is.
+ *  - **The org gets its own copy of the patterns knowledge** (t-726), before
+ *    the agents, since writing it creates the tag two of them are granted.
+ *    A copy the org already holds is left alone. A failure there is logged
+ *    and does not stop the agents; the marker then waits, so the next run
+ *    tries again.
  *
  * Tenancy posture: runs inside `runAsOrg(orgId)`; writes nothing global.
  */
@@ -69,6 +74,11 @@ import {
 } from '@/lib/orchestration/agents/platform-agents';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
+import {
+  loadPatternsChunks,
+  materialisePatternsKnowledge,
+  type PatternsKnowledgeOutcome,
+} from '@/lib/orchestration/knowledge/seeder';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant, runAsOrg } from '@/lib/tenancy/context';
 import {
@@ -95,6 +105,8 @@ export interface PlatformAgentReconcileResult {
   refused: Array<{ slug: string; reason: PlatformAgentRefusal }>;
   /** Declared capability or tag slugs with no row yet — skipped, not fatal. */
   missing: { capabilities: string[]; knowledgeTags: string[] };
+  /** How the org's copy of the patterns knowledge stood; `'failed'` when it could not be written. */
+  knowledge?: PatternsKnowledgeOutcome | 'failed';
 }
 
 export interface ReconcileOptions {
@@ -173,6 +185,10 @@ export async function reconcilePlatformAgents(
     if (!owner) {
       throw new Error('No service account found — ensure 001-system-owner has run.');
     }
+
+    // First: writing the copy creates the tag the knowledge agents declare,
+    // so a new org's grants land on this run rather than the next.
+    result.knowledge = await reconcilePatternsKnowledge(db, log, orgId);
 
     const wanted = new Set(definitions.map((d) => d.slug));
     const placedBefore = previous?.slugs ?? [];
@@ -347,17 +363,21 @@ export async function reconcilePlatformAgents(
     // definition. Recording the current digest would stop the job from ever
     // coming back for it, so the marker waits until nothing is missing.
     const nothingMissing =
-      result.missing.capabilities.length === 0 && result.missing.knowledgeTags.length === 0;
+      result.missing.capabilities.length === 0 &&
+      result.missing.knowledgeTags.length === 0 &&
+      result.knowledge !== 'failed';
     if (complete && nothingMissing && markerChanged) {
       await writePlatformAgentsMarker(orgId, marker, db);
     }
 
     if (
       result.created.length + result.updated.length + result.deactivated.length > 0 ||
-      result.refused.length > 0
+      result.refused.length > 0 ||
+      result.knowledge === 'created'
     ) {
       log.info('Platform agents reconciled', {
         orgId,
+        knowledge: result.knowledge,
         created: result.created,
         updated: result.updated,
         deactivated: result.deactivated,
@@ -381,6 +401,34 @@ export async function reconcilePlatformAgentsIfStale(
   const marker = await loadPlatformAgentsMarker(orgId, options.db ?? defaultDb);
   if (marker?.hash === platformAgentRegistryHash()) return { reconciled: false };
   return { reconciled: true, result: await reconcilePlatformAgents(orgId, options) };
+}
+
+/**
+ * Write the org's copy of the patterns knowledge if it has none. Never throws:
+ * the agents matter more than the knowledge (the judges, the clean-up
+ * assistant), so they are reconciled either way, and `'failed'` holds the
+ * marker back for the next run.
+ */
+async function reconcilePatternsKnowledge(
+  db: TenancyClient,
+  log: Logger,
+  orgId: string
+): Promise<PatternsKnowledgeOutcome | 'failed'> {
+  try {
+    const { outcome } = await materialisePatternsKnowledge(await loadPatternsChunks(), { db, log });
+    return outcome;
+  } catch (err) {
+    if (isUniqueViolation(err)) {
+      // A concurrent run wrote the copy first: the document's per-org slug key.
+      log.info('Patterns knowledge written concurrently — left to the next run', { orgId });
+    } else {
+      log.error('Patterns knowledge not written — the next run retries', {
+        orgId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    return 'failed';
+  }
 }
 
 interface DesiredSets {
