@@ -66,6 +66,7 @@ vi.mock('@/components/ui/multi-select', () => ({
     options,
     placeholder,
     loadOptions,
+    disabled,
     'aria-label': _ariaLabel,
   }: {
     id?: string;
@@ -74,6 +75,7 @@ vi.mock('@/components/ui/multi-select', () => ({
     options?: Array<{ value: string; label: string }>;
     placeholder?: string;
     loadOptions?: (q: string) => Promise<Array<{ value: string; label: string }>>;
+    disabled?: boolean;
     'aria-label'?: string;
   }) => {
     function handleLoad(): void {
@@ -88,7 +90,7 @@ vi.mock('@/components/ui/multi-select', () => ({
       });
     }
     return (
-      <div data-testid={id ?? 'multi-select'}>
+      <div data-testid={id ?? 'multi-select'} data-disabled={disabled ? 'true' : undefined}>
         <span data-testid={`${id}-placeholder`}>{placeholder}</span>
         {(options ?? []).map((o) => (
           <button
@@ -624,6 +626,33 @@ describe('KnowledgeAccessSection', () => {
       await user.click(screen.getByTestId('opt-tag-a'));
 
       expect(onTagsChange).toHaveBeenCalledWith(expect.arrayContaining(['tag-a']));
+    });
+  });
+
+  // ── Read-only (a platform agent's grants, §116 t-725) ─────────────────────
+
+  describe('disabled', () => {
+    it('disables the mode and both grant pickers but keeps the help usable', async () => {
+      await act(async () => {
+        render(<KnowledgeAccessSection {...makeProps({ mode: 'restricted' })} disabled />);
+      });
+
+      expect(screen.getByLabelText(/full access/i)).toBeDisabled();
+      expect(screen.getByLabelText(/restricted/i)).toBeDisabled();
+      expect(screen.getByTestId('knowledge-tags')).toHaveAttribute('data-disabled', 'true');
+      expect(screen.getByTestId('knowledge-documents')).toHaveAttribute('data-disabled', 'true');
+      for (const help of screen.getAllByRole('button', { name: /more information/i })) {
+        expect(help).toBeEnabled();
+      }
+    });
+
+    it('leaves everything enabled by default', async () => {
+      await act(async () => {
+        render(<KnowledgeAccessSection {...makeProps({ mode: 'restricted' })} />);
+      });
+
+      expect(screen.getByLabelText(/full access/i)).toBeEnabled();
+      expect(screen.getByTestId('knowledge-tags')).not.toHaveAttribute('data-disabled');
     });
   });
 });

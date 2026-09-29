@@ -83,4 +83,11 @@ describe('ReasoningEffortSelect component', () => {
 
     expect(onChange).toHaveBeenCalledExactlyOnceWith('high');
   });
+
+  it('shows the value read-only when disabled, with its help still usable', () => {
+    render(<ReasoningEffortSelect id="rfx-select" value="high" onChange={vi.fn()} disabled />);
+
+    expect(screen.getByRole('combobox', { name: /reasoning effort/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /more information/i })).toBeEnabled();
+  });
 });

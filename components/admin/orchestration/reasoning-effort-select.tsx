@@ -75,6 +75,8 @@ export interface ReasoningEffortSelectProps {
    * `agent_call` override case).
    */
   help?: React.ReactNode;
+  /** Read-only: the value is shown but cannot be changed (the help still opens). */
+  disabled?: boolean;
 }
 
 const DEFAULT_HELP: React.ReactNode = (
@@ -109,13 +111,18 @@ export function ReasoningEffortSelect({
   onChange,
   label = 'Reasoning effort',
   help = DEFAULT_HELP,
+  disabled = false,
 }: ReasoningEffortSelectProps) {
   return (
     <div className="grid gap-2">
       <Label htmlFor={id}>
         {label} <FieldHelp title="How much the model thinks before answering">{help}</FieldHelp>
       </Label>
-      <Select value={value} onValueChange={(v) => onChange(v as ReasoningEffortFormValue)}>
+      <Select
+        value={value}
+        onValueChange={(v) => onChange(v as ReasoningEffortFormValue)}
+        disabled={disabled}
+      >
         <SelectTrigger id={id}>
           <SelectValue />
         </SelectTrigger>

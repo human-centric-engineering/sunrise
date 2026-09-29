@@ -151,17 +151,35 @@ describe('AgentForm — platform agent', () => {
     }
   });
 
-  it('names what the org can change in its banner, from the API', () => {
+  it('names what the org can change in its banner, as prose, from the API', () => {
     renderForm(makeAgent());
 
     const banner = screen.getByTestId('platform-agent-banner');
     expect(banner).toHaveTextContent('This is a platform agent');
     expect(banner).toHaveTextContent('knowledge and capabilities');
-    for (const label of ['Model', 'Provider', 'Monthly budget (USD)', 'Retention (days)']) {
-      expect(banner).toHaveTextContent(label);
-    }
+    expect(banner).toHaveTextContent(
+      'Here, this org sets its provider, model, fallback providers, monthly budget, per-turn cost cap, rate limit and how long its conversations are kept.'
+    );
+    // providerConfig is tunable through the API but has no control on this form.
+    expect(banner).not.toHaveTextContent(/provider config/i);
     // The old banner promised instruction editing the API refuses.
     expect(banner).not.toHaveTextContent(/editing instructions/i);
+  });
+
+  it('builds the banner from the API list, not a copy of it', () => {
+    renderForm(
+      makeAgent({
+        platformAgent: {
+          lockedFields: platformAgentFieldNames('code'),
+          tunableFields: ['model', 'retentionDays'],
+          bindingsLocked: true,
+        },
+      })
+    );
+
+    expect(screen.getByTestId('platform-agent-banner')).toHaveTextContent(
+      'this org sets its model and how long its conversations are kept.'
+    );
   });
 
   it("says mcp-system's capabilities are the org's when its bindings are", () => {
@@ -205,16 +223,17 @@ describe('AgentForm — platform agent', () => {
     expect(body).toHaveProperty('systemInstructions');
   });
 
-  it('marks exactly the locked groups', () => {
-    const { container } = renderForm(makeAgent());
+  it("keeps a locked field's help usable", async () => {
+    // A disabled fieldset would disable the <FieldHelp> button with the
+    // field; each control is disabled on its own so the help still opens.
+    const user = userEvent.setup();
+    renderForm(makeAgent());
 
-    const general = container.querySelectorAll('[data-platform-locked]');
-    expect(general.length).toBeGreaterThan(0);
-    // Retention sits outside every locked group.
-    const retention = screen.getByRole('spinbutton', { name: /retention/i });
-    expect(retention.closest('[data-platform-locked]')).toBeNull();
-    expect(
-      within(general[0] as HTMLElement).getByRole('textbox', { name: /^name/i })
-    ).toBeDisabled();
+    const nameLabel = screen.getByText('Name', { selector: 'label' });
+    const help = within(nameLabel).getByRole('button', { name: /more information/i });
+    expect(help).toBeEnabled();
+    await user.click(help);
+
+    expect(await screen.findByText('Agent name')).toBeInTheDocument();
   });
 });

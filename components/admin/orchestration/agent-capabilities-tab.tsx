@@ -284,7 +284,7 @@ export function AgentCapabilitiesTab({
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className={bindingsLocked ? 'grid gap-4' : 'grid gap-4 md:grid-cols-2'}>
         {/* Attached */}
         <section className="rounded-md border">
           <header className="border-b px-3 py-2 text-sm font-medium">Attached</header>
@@ -338,62 +338,62 @@ export function AgentCapabilitiesTab({
           )}
         </section>
 
-        {/* Available */}
-        <section className="rounded-md border">
-          <header className="space-y-2 border-b px-3 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-sm font-medium">Available</span>
-              <span className="text-muted-foreground text-xs">
-                {filteredAvailable.length} of {available.length}
-              </span>
-            </div>
-            {available.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="relative min-w-0 flex-1">
-                  <Search className="text-muted-foreground absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2" />
-                  <Input
-                    value={availableSearch}
-                    onChange={(e) => setAvailableSearch(e.target.value)}
-                    placeholder="Search name, slug, description…"
-                    className="h-8 pl-8 text-xs"
-                    aria-label="Search available capabilities"
-                  />
-                </div>
-                {availableCategories.length > 1 && (
-                  <Select value={availableCategory} onValueChange={setAvailableCategory}>
-                    <SelectTrigger
-                      className="h-8 w-[140px] text-xs"
-                      aria-label="Filter by category"
-                    >
-                      <SelectValue placeholder="Category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL_CATEGORIES}>All categories</SelectItem>
-                      {availableCategories.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {c}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
+        {/* Available — nothing here can be attached when the platform owns the bindings. */}
+        {!bindingsLocked && (
+          <section className="rounded-md border">
+            <header className="space-y-2 border-b px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium">Available</span>
+                <span className="text-muted-foreground text-xs">
+                  {filteredAvailable.length} of {available.length}
+                </span>
               </div>
-            )}
-          </header>
-          {filteredAvailable.length > 0 ? (
-            <ul className="divide-y">
-              {filteredAvailable.map((cap) => (
-                <li key={cap.id} className="flex items-center justify-between gap-2 p-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{cap.name}</p>
-                    <p className="text-muted-foreground truncate font-mono text-xs">{cap.slug}</p>
-                    {cap.description && (
-                      <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
-                        {cap.description}
-                      </p>
-                    )}
+              {available.length > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative min-w-0 flex-1">
+                    <Search className="text-muted-foreground absolute top-1/2 left-2.5 h-3.5 w-3.5 -translate-y-1/2" />
+                    <Input
+                      value={availableSearch}
+                      onChange={(e) => setAvailableSearch(e.target.value)}
+                      placeholder="Search name, slug, description…"
+                      className="h-8 pl-8 text-xs"
+                      aria-label="Search available capabilities"
+                    />
                   </div>
-                  {!bindingsLocked && (
+                  {availableCategories.length > 1 && (
+                    <Select value={availableCategory} onValueChange={setAvailableCategory}>
+                      <SelectTrigger
+                        className="h-8 w-[140px] text-xs"
+                        aria-label="Filter by category"
+                      >
+                        <SelectValue placeholder="Category" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={ALL_CATEGORIES}>All categories</SelectItem>
+                        {availableCategories.map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </div>
+              )}
+            </header>
+            {filteredAvailable.length > 0 ? (
+              <ul className="divide-y">
+                {filteredAvailable.map((cap) => (
+                  <li key={cap.id} className="flex items-center justify-between gap-2 p-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{cap.name}</p>
+                      <p className="text-muted-foreground truncate font-mono text-xs">{cap.slug}</p>
+                      {cap.description && (
+                        <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
+                          {cap.description}
+                        </p>
+                      )}
+                    </div>
                     <Button
                       type="button"
                       variant="outline"
@@ -402,18 +402,18 @@ export function AgentCapabilitiesTab({
                     >
                       Attach
                     </Button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-muted-foreground p-3 text-sm">
-              {available.length === 0
-                ? 'Every capability is already attached.'
-                : 'No capabilities match the current search or category.'}
-            </p>
-          )}
-        </section>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-muted-foreground p-3 text-sm">
+                {available.length === 0
+                  ? 'Every capability is already attached.'
+                  : 'No capabilities match the current search or category.'}
+              </p>
+            )}
+          </section>
+        )}
       </div>
 
       <ConfigureDialog

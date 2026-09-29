@@ -814,15 +814,16 @@ describe('AgentCapabilitiesTab', () => {
   // ── Platform agent (§116 t-725) ───────────────────────────────────────────
 
   describe('bindingsLocked', () => {
-    it('hides attach and detach, disables the switch, and says why', async () => {
+    it('drops the Available column and detach, disables the switch, and says why', async () => {
       const { apiClient } = await import('@/lib/api/client');
       mockDefaultFetch(vi.mocked(apiClient.get));
 
       render(<AgentCapabilitiesTab agentId={AGENT_ID} bindingsLocked />);
 
       await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
-      // Calculator is still listed as available — read-only, not hidden.
-      expect(screen.getByText('Calculator')).toBeInTheDocument();
+      // Nothing can be attached, so the Available column is not offered.
+      expect(screen.queryByText('Calculator')).toBeNull();
+      expect(textInsideHeader('Available')).toBeUndefined();
       expect(screen.queryByRole('button', { name: /^attach$/i })).toBeNull();
       expect(screen.queryByRole('button', { name: /detach/i })).toBeNull();
       expect(screen.getByRole('switch', { name: /toggle web search/i })).toBeDisabled();

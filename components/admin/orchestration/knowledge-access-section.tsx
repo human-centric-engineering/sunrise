@@ -73,6 +73,12 @@ export interface KnowledgeAccessSectionProps {
    * is applied.
    */
   agentId?: string;
+  /**
+   * Read-only: the mode and grants are shown but cannot be changed — a
+   * platform agent's are the platform's (§116). Unlike the capability gate
+   * below, the field help stays usable.
+   */
+  disabled?: boolean;
 }
 
 export function KnowledgeAccessSection({
@@ -83,6 +89,7 @@ export function KnowledgeAccessSection({
   onTagsChange,
   onDocumentsChange,
   agentId,
+  disabled = false,
 }: KnowledgeAccessSectionProps): React.ReactElement {
   // RHF can hand back `undefined` on the first render before the schema
   // defaults settle; coerce up front so the MultiSelect never sees a
@@ -247,6 +254,7 @@ export function KnowledgeAccessSection({
               value="full"
               checked={mode === 'full'}
               onChange={() => onModeChange('full')}
+              disabled={disabled}
               className="mt-0.5"
             />
             <label htmlFor="knowledge-access-mode-full" className="text-sm">
@@ -264,6 +272,7 @@ export function KnowledgeAccessSection({
               value="restricted"
               checked={mode === 'restricted'}
               onChange={() => onModeChange('restricted')}
+              disabled={disabled}
               className="mt-0.5"
             />
             <label htmlFor="knowledge-access-mode-restricted" className="text-sm">
@@ -299,7 +308,7 @@ export function KnowledgeAccessSection({
                 value={tagIds}
                 onChange={onTagsChange}
                 options={tagOptions}
-                disabled={gated}
+                disabled={gated || disabled}
                 placeholder="No tags granted"
                 emptyText="No tags exist yet — create some under Knowledge → Tags."
               />
@@ -319,7 +328,7 @@ export function KnowledgeAccessSection({
                 onChange={onDocumentsChange}
                 loadOptions={loadDocumentOptions}
                 selectedLabels={selectedDocLabels}
-                disabled={gated}
+                disabled={gated || disabled}
                 placeholder="No documents granted"
                 emptyText="No matching documents."
               />
