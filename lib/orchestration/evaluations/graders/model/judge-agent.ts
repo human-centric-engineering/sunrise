@@ -13,8 +13,9 @@
  * models without code changes, attach knowledge documents to specialist
  * judges, see judge spend on the per-agent costs page, etc.
  *
- * The 6 built-in judges live as seeded `isSystem=true` agents (see
- * `prisma/seeds/016-evaluation-judges.ts`). Custom judges are any
+ * The built-in judges are platform agents — defined in
+ * `lib/orchestration/agents/platform-agent-definitions/` and materialised
+ * as `isSystem=true` rows in every org (§116). Custom judges are any
  * `kind='judge'` agent the operator creates via the agent form.
  *
  * The prompt assembly + JSON parsing lives in

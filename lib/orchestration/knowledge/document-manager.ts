@@ -106,7 +106,7 @@ async function getCleanupAgentId(): Promise<string> {
   });
   if (!agent) {
     throw new Error(
-      `Cleanup agent "${CLEANUP_AGENT_SLUG}" not found — run \`npm run db:seed\` (seed 020-cleanup-agent).`
+      `Cleanup agent "${CLEANUP_AGENT_SLUG}" not found in this org — run \`npm run db:seed\` (seed 021-platform-agents), or wait for the platformAgents maintenance job.`
     );
   }
   return agent.id;

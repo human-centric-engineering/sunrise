@@ -21,8 +21,8 @@ import '@/lib/orchestration/evaluations/graders/heuristic/tool-was-called';
 import '@/lib/orchestration/evaluations/graders/heuristic/citation-count-at-least';
 
 // Model graders — `judge_agent` drives any AiAgent with `kind='judge'`
-// (the 6 built-in judges live as seeded agents in
-// prisma/seeds/016-evaluation-judges.ts; admins can create custom
+// (the built-in judges are platform agents, defined in
+// lib/orchestration/agents/platform-agent-definitions/; admins can create custom
 // judges via the agent form). `workflow_as_judge` drives an entire
 // workflow as a judge — Phase 3.
 import '@/lib/orchestration/evaluations/graders/model/judge-agent';

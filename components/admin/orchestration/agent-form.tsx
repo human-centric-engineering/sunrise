@@ -79,8 +79,8 @@ const agentFormSchema = z
     // Set at create time only (via ?kind= query param); not editable on
     // existing agents. 'chat' or 'judge'.
     // `AiAgent.kind` is a free `String` column, not an enum —
-    // `prisma/seeds/017-case-generator-agent.ts` seeds `kind: 'generator'` and
-    // that seed runs on every install (seeds are discovered by filename), so
+    // the `eval-case-generator` platform agent is `kind: 'generator'` and
+    // every org gets an instance of it (§116), so
     // one agent in a stock database is of a kind the old
     // `z.enum(['chat','judge'])` could not represent. The list returns every
     // kind when unfiltered, so an admin could open it and get a form that
