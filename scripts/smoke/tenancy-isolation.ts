@@ -34,7 +34,12 @@
  *     with no step but its creation; in it the clean-up upload, an MCP tool
  *     call, case generation and an evaluation run with a built-in judge all
  *     run, against a local chat model the smoke answers itself, and every
- *     row they produce carries that org.
+ *     row they produce carries that org;
+ *   - the patterns knowledge (§116 t-726): that org also has its own copy of
+ *     the patterns document, in its own knowledge base, holding the same
+ *     chunk keys as every other org's copy. Its embed run embeds its copy and
+ *     nobody else's, and its quiz master's search, with another org's
+ *     identical copy embedded beside it, reads only chunks that carry its org.
  *
  * Run it against a THROWAWAY database, never the dev one — it creates two
  * orgs and enables nothing itself; the sequence around it is the CI job's
@@ -53,6 +58,7 @@
  */
 import '@/prisma/load-env';
 import { NextRequest } from 'next/server';
+import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import {
   forEachOrg,
@@ -83,6 +89,13 @@ import { generateCases } from '@/lib/orchestration/evaluations/synthesis/case-ge
 import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
 import { hashDatasetCases } from '@/lib/orchestration/evaluations/datasets/hash';
 import { platformAgentsForOrg } from '@/lib/orchestration/agents/platform-agents';
+import { embedChunks, loadPatternsChunks } from '@/lib/orchestration/knowledge/seeder';
+import {
+  PATTERNS_DOCUMENT_SLUG,
+  PATTERNS_TAG_SLUG,
+} from '@/lib/orchestration/knowledge/patterns-knowledge';
+import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
+import { registerBuiltInCapabilities } from '@/lib/orchestration/capabilities/registry';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const PREFIX = 'smoke-iso';
@@ -1096,6 +1109,131 @@ async function main(): Promise<void> {
     check(
       caseResults.every((r) => r.orgId === b.orgId),
       'the evaluation case result carries B'
+    );
+
+    // ── The patterns knowledge in an org made by createOrg (§116 t-726) ───
+    console.log('\n[12] patterns knowledge: B has its own copy, and B’s quiz searches it');
+    const patterns = await loadPatternsChunks();
+    const copyIn = (orgId: string) =>
+      runAsOrg(orgId, () =>
+        prisma.aiKnowledgeDocument.findMany({
+          where: { scope: 'system' },
+          select: {
+            id: true,
+            slug: true,
+            orgId: true,
+            knowledgeBaseId: true,
+            tags: { select: { orgId: true, tag: { select: { slug: true } } } },
+          },
+        })
+      );
+    const copiesB = await copyIn(b.orgId);
+    const copyB = copiesB[0];
+    check(
+      copiesB.length === 1 && copyB.slug === PATTERNS_DOCUMENT_SLUG && copyB.orgId === b.orgId,
+      `B holds one copy of the patterns document, its own, with no step but createOrg (${copiesB.length})`
+    );
+    check(copyB?.knowledgeBaseId === b.kbId, 'in B’s own default knowledge base');
+    check(
+      copyB?.tags.some((t) => t.tag.slug === PATTERNS_TAG_SLUG && t.orgId === b.orgId) === true,
+      'tagged in B'
+    );
+    const copyA = (await copyIn(a.orgId))[0];
+    check(
+      copyA !== undefined && copyA.id !== copyB?.id && copyA.orgId === a.orgId,
+      'A holds a copy of its own — not B’s row'
+    );
+    const chunksB = await runAsSystem('smoke: B’s patterns chunks', () =>
+      prisma.aiKnowledgeChunk.findMany({
+        where: { documentId: copyB?.id ?? 'missing' },
+        select: { orgId: true },
+      })
+    );
+    check(
+      chunksB.length === patterns.length && chunksB.every((c) => c.orgId === b.orgId),
+      `B's copy has all ${patterns.length} chunks, each carrying B (${chunksB.length})`
+    );
+    const sameKey = await runAsSystem('smoke: one patterns chunk key', () =>
+      prisma.aiKnowledgeChunk.findMany({
+        where: { chunkKey: patterns[0].id },
+        select: { orgId: true },
+      })
+    );
+    const keyOrgs = new Set(sameKey.map((c) => c.orgId));
+    check(
+      [INSTALL_ORG_ID, a.orgId, b.orgId].every((orgId) => keyOrgs.has(orgId)) &&
+        keyOrgs.size === sameKey.length,
+      `the chunk key \`${patterns[0].id}\` is held once in each of ${keyOrgs.size} orgs (unique per org)`
+    );
+    const quizId = idOf('quiz-master');
+    const quizGrants = await runAsOrg(b.orgId, () =>
+      prisma.aiAgentKnowledgeTag.findMany({
+        where: { agentId: quizId },
+        select: { tag: { select: { slug: true } } },
+      })
+    );
+    check(
+      quizGrants.some((g) => g.tag.slug === PATTERNS_TAG_SLUG),
+      'B’s quiz master holds the patterns tag'
+    );
+
+    // The embed path, run in B: B's copy, and nobody else's.
+    const unembedded = async (orgId: string): Promise<number> => {
+      const rows = await runAsOrg(
+        orgId,
+        () =>
+          prisma.$queryRaw<Array<{ n: number }>>`
+          SELECT count(*)::int AS n FROM ai_knowledge_chunk WHERE embedding IS NULL`
+      );
+      return rows[0]?.n ?? -1;
+    };
+    const pendingB = await unembedded(b.orgId);
+    const pendingA = await unembedded(a.orgId);
+    const pendingInstall = await unembedded(INSTALL_ORG_ID);
+    const patternsEmbedB = await runAsOrg(b.orgId, () => embedChunks());
+    check(
+      pendingB === patterns.length && patternsEmbedB.processed === pendingB,
+      `B's embed run embedded B's ${pendingB} unembedded chunks (${patternsEmbedB.processed})`
+    );
+    check(
+      (await unembedded(b.orgId)) === 0 &&
+        pendingA >= patterns.length &&
+        (await unembedded(a.orgId)) === pendingA &&
+        (await unembedded(INSTALL_ORG_ID)) === pendingInstall,
+      `and none of A's (${pendingA}) or the install org's (${pendingInstall})`
+    );
+
+    // B's quiz master searches, with A's identical copy embedded beside B's,
+    // so the policy is all that keeps A's chunks out: the search itself
+    // passes every system-scope document through. The fake embedding keys on
+    // a text's opening, so a query opening like a chunk scores 1 against it.
+    await runAsOrg(a.orgId, () => embedChunks());
+    registerBuiltInCapabilities();
+    const quizSearch = await runAsOrg(b.orgId, () =>
+      capabilityDispatcher.dispatch(
+        'search_knowledge_base',
+        { query: patterns[0].content.slice(0, 200) },
+        { userId: b.ownerId, agentId: quizId }
+      )
+    );
+    const found = z
+      .object({ results: z.array(z.object({ chunkId: z.string() })) })
+      .safeParse(quizSearch.data);
+    const readIds = found.success ? found.data.results.map((r) => r.chunkId) : [];
+    const read = await runAsSystem('smoke: chunks B’s quiz read', () =>
+      prisma.aiKnowledgeChunk.findMany({
+        where: { id: { in: readIds } },
+        select: { orgId: true, documentId: true },
+      })
+    );
+    check(
+      quizSearch.success && readIds.length > 0 && read.length === readIds.length,
+      `B's quiz master's search retrieved ${readIds.length} chunks` +
+        (quizSearch.success ? '' : ` (${quizSearch.error?.message ?? 'failed'})`)
+    );
+    check(
+      read.every((c) => c.orgId === b.orgId && c.documentId === copyB?.id),
+      'every chunk it read is from B’s own copy and carries B — none is A’s'
     );
 
     if (failures > 0) throw new Error(`${failures} check(s) failed`);
