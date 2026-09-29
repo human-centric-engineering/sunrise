@@ -14,10 +14,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AGENT_FIELDS,
+  CORE_AGENT_FIELDS,
   fieldLabels,
   fieldOrder,
   fieldToTab,
   getAgentField,
+  platformAgentFieldNames,
   snapshotFieldNames,
   versionedFieldNames,
   versionedScalarFieldNames,
@@ -301,5 +303,40 @@ describe('agent-field-registry — parity with the export/import surfaces', () =
       if (EXPORT_OMITTED.has(field)) continue;
       expect(backupKeys.has(field)).toBe(true);
     }
+  });
+});
+
+describe('ownership on a platform agent (§116 t-724)', () => {
+  it('lets an org tune exactly the fields the ruling names — how the agent runs', () => {
+    // Ruling on §116, 2026-09-29: provider, model, fallbacks, budget, per-turn
+    // cap, rate limit, retention. `providerConfig` rides with the provider.
+    // A field moving across this line changes what every org may edit on
+    // every platform agent, so it is pinned rather than derived.
+    expect(platformAgentFieldNames('org').sort()).toEqual(
+      [
+        'fallbackProviders',
+        'maxCostPerTurnUsd',
+        'model',
+        'monthlyBudgetUsd',
+        'provider',
+        'providerConfig',
+        'rateLimitRpm',
+        'retentionDays',
+      ].sort()
+    );
+  });
+
+  it('gives every core field a side, and the grants to the platform', () => {
+    for (const field of CORE_AGENT_FIELDS) {
+      expect(['code', 'org'], field.name).toContain(field.platformAgent);
+    }
+    expect(platformAgentFieldNames('code')).toEqual(
+      expect.arrayContaining([
+        'systemInstructions',
+        'isActive',
+        'grantedTagIds',
+        'grantedDocumentIds',
+      ])
+    );
   });
 });

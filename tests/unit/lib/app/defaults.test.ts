@@ -81,6 +81,11 @@ import {
   __resetGraderRegistryForTests,
 } from '@/lib/orchestration/evaluations/graders/registry';
 import {
+  CORE_PLATFORM_AGENTS,
+  listPlatformAgents,
+  __resetPlatformAgentsForTests,
+} from '@/lib/orchestration/agents/platform-agents';
+import {
   ACCOUNT_SURFACES,
   getRegisteredAccountSections,
   __resetAccountSectionRegistryForTests,
@@ -317,6 +322,19 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       expect(listAppMcpResourceTypes()).toEqual([]);
       // Core's own scheme, and nothing else.
       expect(listAllowedMcpResourceUriSchemes()).toEqual(['sunrise']);
+    },
+  },
+  {
+    seam: 'lib/app/platform-agents.ts',
+    risk: 'a stray definition would be materialised as an agent in every org on every install \u2014 and, on a slug core already uses, would replace the prompt of an agent every org runs',
+    assert: () => {
+      __resetPlatformAgentsForTests();
+      // The read triggers the lazy init, so this exercises the REAL file:
+      // exactly core's definitions, the same objects, in the same order.
+      expect(listPlatformAgents()).toEqual(CORE_PLATFORM_AGENTS);
+      listPlatformAgents().forEach((definition, i) =>
+        expect(definition).toBe(CORE_PLATFORM_AGENTS[i])
+      );
     },
   },
   {

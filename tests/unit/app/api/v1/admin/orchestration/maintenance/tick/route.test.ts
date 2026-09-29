@@ -80,6 +80,10 @@ vi.mock('@/lib/orchestration/evaluations/run-worker', () => ({
   processPendingEvaluationRuns: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
+  reconcilePlatformAgentsIfStale: vi.fn().mockResolvedValue({ reconciled: false }),
+}));
+
 // The fork seam (#469). Left unmocked, the real empty registry always resolves
 // `undefined`, so neither the "a fork registered jobs" nor the rejection arm of
 // the summary ever ran. Mocked with the same default so existing tests see no
@@ -295,6 +299,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       'pendingExecutionRecovery',
       'evaluationRuns',
       'auditLogRetention',
+      'platformAgents',
     ]);
     expect(typeof body.data.durationMs).toBe('number');
     expect(body.data.durationMs).toBeGreaterThanOrEqual(0);
@@ -313,6 +318,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(body.data).not.toHaveProperty('pendingExecutionRecovery');
     expect(body.data).not.toHaveProperty('evaluationRuns');
     expect(body.data).not.toHaveProperty('auditLogRetention');
+    expect(body.data).not.toHaveProperty('platformAgents');
   });
 
   it('still invokes all seven maintenance tasks (six in background)', async () => {
@@ -411,8 +417,9 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     expect(response.status).toBe(202);
     expect(body.data.schedules).toEqual({ error: 'schedules DB down' });
     // Background tasks still kick off even when schedules fail
-    // (9 tasks: evaluationRuns added in Phase 1, auditLogRetention split out in §108).
-    expect(body.data.backgroundTasks).toHaveLength(9);
+    // (10 tasks: evaluationRuns added in Phase 1, auditLogRetention split out in
+    // §108, platformAgents added in §116).
+    expect(body.data.backgroundTasks).toHaveLength(10);
   });
 
   it('returns a readable schedules.error when processDueSchedules rejects a non-Error', async () => {

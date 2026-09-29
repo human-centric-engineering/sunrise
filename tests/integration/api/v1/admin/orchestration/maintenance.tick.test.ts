@@ -89,6 +89,10 @@ vi.mock('@/lib/orchestration/evaluations/run-worker', () => ({
   processPendingEvaluationRuns: vi.fn(),
 }));
 
+vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
+  reconcilePlatformAgentsIfStale: vi.fn().mockResolvedValue({ reconciled: false }),
+}));
+
 // ─── Imports ─────────────────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
@@ -219,6 +223,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       'pendingExecutionRecovery',
       'evaluationRuns',
       'auditLogRetention',
+      'platformAgents',
     ]);
     expect(body.data.durationMs).toEqual(expect.any(Number));
   });

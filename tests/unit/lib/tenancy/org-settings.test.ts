@@ -32,10 +32,14 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 import {
+  ORG_PLATFORM_AGENTS_KEY,
   ORG_RETENTION_KEY,
   applyRetentionPatch,
   loadOrgRetention,
+  loadPlatformAgentsMarker,
   readOrgRetention,
+  readPlatformAgentsMarker,
+  writePlatformAgentsMarker,
 } from '@/lib/tenancy/org-settings';
 
 const ORG_A = 'cmorg00000000000000000orga';
@@ -209,6 +213,83 @@ describe('applyRetentionPatch', () => {
     // Nothing the platform writes produces this; a hand-edit can.
     expect(applyRetentionPatch('nonsense', { webhookRetentionDays: 7 })).toEqual({
       retention: { webhookRetentionDays: 7 },
+    });
+  });
+});
+
+describe('the platform-agents marker (§116 t-724)', () => {
+  const marker = { hash: 'abc123', slugs: ['cleanup-agent', 'mcp-system'] };
+
+  it('reads a well-formed marker and nothing else', () => {
+    expect(ORG_PLATFORM_AGENTS_KEY).toBe('platformAgents');
+    expect(readPlatformAgentsMarker({ platformAgents: marker })).toEqual(marker);
+    // Anything unreadable means "never reconciled", so the job reconciles the
+    // org and nothing is deactivated on a list it cannot trust.
+    expect(readPlatformAgentsMarker(null)).toBeNull();
+    expect(readPlatformAgentsMarker({ retention: {} })).toBeNull();
+    expect(readPlatformAgentsMarker({ platformAgents: { hash: '', slugs: [] } })).toBeNull();
+    expect(readPlatformAgentsMarker({ platformAgents: { hash: 'x', slugs: 'all' } })).toBeNull();
+    expect(readPlatformAgentsMarker(['platformAgents'])).toBeNull();
+  });
+
+  it('loads one org’s marker, or null for an org that does not exist', async () => {
+    mockFindUnique.mockResolvedValueOnce({ settings: { platformAgents: marker } });
+    expect(await loadPlatformAgentsMarker('org_a')).toEqual(marker);
+    expect(mockFindUnique).toHaveBeenCalledWith({
+      where: { id: 'org_a' },
+      select: { settings: true },
+    });
+
+    mockFindUnique.mockResolvedValueOnce(null);
+    expect(await loadPlatformAgentsMarker('gone')).toBeNull();
+  });
+
+  it('writes the marker in a serializable transaction, keeping every other key', async () => {
+    const tx = {
+      org: {
+        findUnique: vi.fn().mockResolvedValue({
+          settings: { retention: { webhookRetentionDays: 7 }, branding: { logo: 'x' } },
+        }),
+        update: vi.fn(),
+      },
+    };
+    const $transaction = vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx));
+
+    await writePlatformAgentsMarker('org_a', marker, { $transaction } as never);
+
+    expect($transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    });
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: 'org_a' },
+      data: {
+        settings: {
+          retention: { webhookRetentionDays: 7 },
+          branding: { logo: 'x' },
+          platformAgents: marker,
+        },
+      },
+    });
+  });
+
+  it('writes nothing for an org that is gone', async () => {
+    const tx = { org: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn() } };
+    const $transaction = vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx));
+
+    await writePlatformAgentsMarker('gone', marker, { $transaction } as never);
+
+    expect(tx.org.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — no row, so no write at all
+  });
+
+  it('keeps the retention slice’s own writes from dropping the marker', () => {
+    // The other direction: an admin's retention PATCH merges into a column
+    // that now carries the marker.
+    expect(applyRetentionPatch({ platformAgents: marker }, { webhookRetentionDays: 7 })).toEqual({
+      platformAgents: marker,
+      retention: { webhookRetentionDays: 7 },
+    });
+    expect(applyRetentionPatch({ platformAgents: marker, retention: {} }, null)).toEqual({
+      platformAgents: marker,
     });
   });
 });

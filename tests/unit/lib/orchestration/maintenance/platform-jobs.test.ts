@@ -45,6 +45,9 @@ vi.mock('@/lib/orchestration/retention', () => ({
 vi.mock('@/lib/orchestration/evaluations/run-worker', () => ({
   processPendingEvaluationRuns: vi.fn(),
 }));
+vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
+  reconcilePlatformAgentsIfStale: vi.fn(),
+}));
 
 import { logger } from '@/lib/logging';
 import {
@@ -60,6 +63,7 @@ import {
   enforceSystemRetentionPolicies,
 } from '@/lib/orchestration/retention';
 import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
+import { reconcilePlatformAgentsIfStale } from '@/lib/orchestration/agents/reconcile-platform-agents';
 import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 import {
   PLATFORM_JOBS,
@@ -82,6 +86,7 @@ const PER_ORG_TASKS = [
   enforceRetentionPolicies,
   processPendingExecutions,
   processPendingEvaluationRuns,
+  reconcilePlatformAgentsIfStale,
 ];
 
 const ALL_TASKS = [...PER_ORG_TASKS, enforceSystemRetentionPolicies];
@@ -142,6 +147,7 @@ function mockIdleTasks(): void {
     cancelled: 0,
   });
   vi.mocked(enforceSystemRetentionPolicies).mockResolvedValue(SYSTEM_RETENTION_IDLE);
+  vi.mocked(reconcilePlatformAgentsIfStale).mockResolvedValue({ reconciled: false });
 }
 
 beforeEach(() => {
@@ -166,6 +172,7 @@ describe('PLATFORM_JOB_NAMES', () => {
       'pendingExecutionRecovery',
       'evaluationRuns',
       'auditLogRetention',
+      'platformAgents',
     ]);
   });
 
@@ -186,6 +193,7 @@ describe('PLATFORM_JOB_NAMES', () => {
       ['pendingExecutionRecovery', 'per-org'],
       ['evaluationRuns', 'per-org'],
       ['auditLogRetention', { system: expect.stringContaining('audit') }],
+      ['platformAgents', 'per-org'],
     ]);
   });
 
@@ -259,9 +267,11 @@ describe('runDuePlatformJobs', () => {
     expect(reapZombieExecutions).toHaveBeenCalledTimes(1);
     expect(backfillMissingEmbeddings).not.toHaveBeenCalled();
 
-    // 15 min: the embedding backfill joins.
+    // 15 min: the embedding backfill and the platform-agent catch-up join.
+    expect(reconcilePlatformAgentsIfStale).not.toHaveBeenCalled();
     await runDuePlatformJobs(T0 + 15 * MINUTE);
     expect(backfillMissingEmbeddings).toHaveBeenCalledTimes(1);
+    expect(reconcilePlatformAgentsIfStale).toHaveBeenCalledTimes(1);
     expect(enforceRetentionPolicies).not.toHaveBeenCalled();
 
     // 1 hour: retention finally runs — 24×/day instead of 1,440×.
@@ -385,6 +395,13 @@ describe('runDuePlatformJobs — foundWork', () => {
           .mockResolvedValue({ recovered: 1, failed: 0, errors: [] }),
     ],
     [
+      'platformAgents — an org was behind the running code',
+      () =>
+        vi.mocked(reconcilePlatformAgentsIfStale).mockResolvedValue({
+          reconciled: true,
+        }),
+    ],
+    [
       'evaluationRuns — a claimed run needs the next time-slice',
       () =>
         vi.mocked(processPendingEvaluationRuns).mockResolvedValue({
@@ -437,6 +454,17 @@ describe('runDuePlatformJobs — tenant scope (§108)', () => {
     // No fold at single: the log line keeps the shape it has always had.
     expect(summary.retention).toEqual({ ...RETENTION_IDLE, deleted: 2 });
     expect(summary.retention).not.toHaveProperty('orgs');
+  });
+
+  it('reconciles the platform agents of the org each run is in', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    orgs(ORG_A, ORG_B);
+
+    await runDuePlatformJobs(T0);
+
+    // The org comes from the job's own scope, not from a parameter the job
+    // could get wrong.
+    expect(vi.mocked(reconcilePlatformAgentsIfStale).mock.calls).toEqual([[ORG_A], [ORG_B]]);
   });
 
   it('runs the audit-table prune under the system scope, not inside any org', async () => {

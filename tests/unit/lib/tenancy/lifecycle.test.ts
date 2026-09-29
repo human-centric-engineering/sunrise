@@ -40,6 +40,11 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+const mockReconcile = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
+  reconcilePlatformAgents: mockReconcile,
+}));
+
 import {
   addMember,
   changeMemberRole,
@@ -51,6 +56,7 @@ import {
   updateOrg,
 } from '@/lib/tenancy/lifecycle';
 import { APIError } from '@/lib/api/errors';
+import { logger } from '@/lib/logging';
 
 const ORG = 'cmorg000000000000000other';
 const OWNER = 'cmjbv4i3x00003wsloputgwul';
@@ -89,6 +95,7 @@ async function refusal(fn: () => Promise<unknown>): Promise<OrgLifecycleError> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockReconcile.mockReset().mockResolvedValue({});
   // The transaction client IS the double, so writes inside are visible.
   db.$transaction.mockImplementation((fn: (tx: typeof db) => Promise<unknown>) => fn(db));
   mockRevoke.mockResolvedValue(0);
@@ -121,6 +128,41 @@ describe('createOrg', () => {
     });
   });
 
+  it('gives the committed org its platform agents', async () => {
+    db.org.findUnique.mockResolvedValue(null);
+    db.org.create.mockResolvedValue(orgRow());
+    let committed = false;
+    db.$transaction.mockImplementationOnce(async (fn: (tx: typeof db) => Promise<unknown>) => {
+      const result = await fn(db);
+      committed = true;
+      return result;
+    });
+    mockReconcile.mockImplementation(async () => {
+      // After the commit: the reconcile enters the org's own scope, and an
+      // org still inside an open transaction is not visible to it.
+      expect(committed).toBe(true);
+      return {};
+    });
+
+    await createOrg({ slug: 'other', name: 'Other Org' });
+
+    expect(mockReconcile).toHaveBeenCalledWith(ORG);
+  });
+
+  it('still creates the org when the reconcile fails, and says so', async () => {
+    db.org.findUnique.mockResolvedValue(null);
+    db.org.create.mockResolvedValue(orgRow());
+    mockReconcile.mockRejectedValue(new Error('provider table locked'));
+
+    const org = await createOrg({ slug: 'other', name: 'Other Org' });
+
+    expect(org.id).toBe(ORG);
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.stringMatching(/Platform agents not materialised/),
+      { orgId: ORG, error: 'provider table locked' }
+    );
+  });
+
   it('creates an owner-less org when no owner is named', async () => {
     db.org.findUnique.mockResolvedValue(null);
     db.org.create.mockResolvedValue(orgRow());
@@ -138,6 +180,7 @@ describe('createOrg', () => {
 
     expect(error.code).toBe('SLUG_TAKEN');
     expect(db.org.create).not.toHaveBeenCalled();
+    expect(mockReconcile).not.toHaveBeenCalled();
   });
 
   it('refuses a missing owner, and the SERVICE account, without creating the org', async () => {
