@@ -1,8 +1,9 @@
 /**
  * Tests: the capability seeds that used to create agents too (§116 t-724).
  *
- * `005-pattern-advisor` and `010-model-auditor` created the pattern advisor,
- * the provider auditor and the report writer as well as their capabilities.
+ * `005-pattern-advisor`, `008-mcp-server` and `010-model-auditor` created the
+ * pattern advisor, the MCP identity, the provider auditor and the report
+ * writer as well as their capabilities and config.
  * The agents are platform agents now (`021-platform-agents`); these units
  * seed only what is still theirs, and the contract pinned here is that they
  * write no agent and no binding, while still re-applying each capability's
@@ -19,6 +20,7 @@ vi.mock('@/lib/orchestration/workflows/version-service', () => ({
 
 import patternAdvisorSeed, { CAPABILITY_DEFINITIONS } from '@/prisma/seeds/005-pattern-advisor';
 import modelAuditorSeed from '@/prisma/seeds/010-model-auditor';
+import mcpServerSeed from '@/prisma/seeds/008-mcp-server';
 import { serviceAccountWhere } from '@/lib/auth/account';
 
 function makeCtx({ owner = true, existingWorkflow = null as null | { id: string } } = {}) {
@@ -118,5 +120,36 @@ describe('010-model-auditor', () => {
     const { ctx } = makeCtx({ owner: false });
 
     await expect(modelAuditorSeed.run(ctx)).rejects.toThrow(/001-system-owner/);
+  });
+});
+
+describe('008-mcp-server', () => {
+  it('seeds the disabled server config and the three default resources, and no agent', async () => {
+    const configUpsert = vi.fn().mockResolvedValue({});
+    const resourceUpsert = vi.fn().mockResolvedValue({});
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+    // No aiAgent delegate: an agent write would throw.
+    const ctx = {
+      prisma: {
+        mcpServerConfig: { upsert: configUpsert },
+        mcpExposedResource: { upsert: resourceUpsert },
+      },
+      logger,
+    } as unknown as SeedContext;
+
+    await mcpServerSeed.run(ctx);
+
+    expect(configUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { slug: 'global' },
+        update: {},
+        create: expect.objectContaining({ isEnabled: false }),
+      })
+    );
+    expect(resourceUpsert.mock.calls.map((c) => c[0].where.uri)).toEqual([
+      'sunrise://knowledge/search',
+      'sunrise://agents',
+      'sunrise://workflows',
+    ]);
   });
 });
