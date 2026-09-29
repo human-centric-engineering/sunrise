@@ -1,7 +1,7 @@
 /**
  * Fork init gates — run a fork's `initApp*` seam once, all-or-nothing.
  *
- * Twelve of the fourteen `initApp*` seams are reached the same way: a core
+ * Thirteen of the fifteen `initApp*` seams are reached the same way: a core
  * registry runs the fork's init lazily, before its first read, so a fork can
  * accumulate registrations at module-import time without a startup hook. Of the
  * eleven that existed when this module was written, ten had hand-written a

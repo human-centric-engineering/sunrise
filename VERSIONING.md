@@ -118,6 +118,7 @@ covered by the version contract.
   - `lib/app/knowledge-access-contributors.ts` → `initAppKnowledgeAccessContributors()` — knowledge document access
   - `lib/app/llm-providers.ts` → `registerAppProviderEligibility()` — provider-eligibility seam (primitive: `registerProviderEligibility()`, resolved through `lib/orchestration/llm/provider-eligibility.ts`)
   - `lib/app/mcp-resources.ts` → `initAppMcpResources()` — MCP resource-type registry
+  - `lib/app/platform-agents.ts` → `initAppPlatformAgents()` — platform agents every org gets an instance of (primitive: `registerPlatformAgent()` in `lib/orchestration/agents/platform-agents.ts`)
   - `lib/app/protected-nav.ts` → `protectedNavItems` — authenticated-area nav
   - `lib/app/protected-routes.ts` → `appProtectedRoutes` — extra route prefixes the proxy protects
   - `lib/app/public-nav.ts` → `publicNavItems` / `footerNavItems` / `footerLegalItems` — public nav and footer
