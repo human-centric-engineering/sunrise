@@ -371,4 +371,25 @@ describe('EmbedConfigPanel', () => {
       `<script src="${APP_URL}/api/v1/embed/widget.js" data-token="secret-abc123"></script>`
     );
   });
+
+  // ── Platform agent (§116 t-725) ───────────────────────────────────────────
+
+  it('replaces the appearance editor with a note when it is locked, keeping tokens', async () => {
+    mockGet.mockResolvedValue([]);
+    render(<EmbedConfigPanel agentId={AGENT_ID} appUrl={APP_URL} appearanceLocked />);
+
+    expect(screen.getByTestId('widget-appearance-locked')).toHaveTextContent('set by the platform');
+    expect(screen.queryByText('Appearance & copy')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText(/no embed tokens yet/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows the appearance editor by default', async () => {
+    mockGet.mockResolvedValue([]);
+    render(<EmbedConfigPanel agentId={AGENT_ID} appUrl={APP_URL} />);
+
+    expect(await screen.findByText('Appearance & copy')).toBeInTheDocument();
+    expect(screen.queryByTestId('widget-appearance-locked')).toBeNull();
+  });
 });

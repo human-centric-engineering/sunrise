@@ -864,6 +864,40 @@ describe('AgentCapabilitiesTab', () => {
       });
     });
 
+    it('clears a rate-limit override when the field is left blank', async () => {
+      // "Leave blank to inherit" must send null: on a locked binding the rate
+      // limit is the only thing the org may change, so an empty body would be
+      // refused and the override could never be removed.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockImplementation((url: string) =>
+        Promise.resolve(
+          url.includes('/agents/')
+            ? [{ ...LINK_SEARCH, customRateLimit: 30 }]
+            : [CAP_SEARCH, CAP_CALC]
+        )
+      );
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ success: true, data: {} }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+      const user = userEvent.setup();
+
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} bindingsLocked />);
+      await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /configure/i }));
+      await user.clear(screen.getByRole('spinbutton', { name: /custom rate limit/i }));
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      await waitFor(() => {
+        expect(fetchSpy).toHaveBeenCalledWith(
+          expect.stringContaining('/capabilities/cap-search'),
+          expect.objectContaining({ body: JSON.stringify({ customRateLimit: null }) })
+        );
+      });
+    });
+
     it("keeps every control when the bindings are the org's", async () => {
       const { apiClient } = await import('@/lib/api/client');
       mockDefaultFetch(vi.mocked(apiClient.get));

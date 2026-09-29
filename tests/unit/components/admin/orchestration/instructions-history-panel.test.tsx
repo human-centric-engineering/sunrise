@@ -206,6 +206,20 @@ describe('InstructionsHistoryPanel', () => {
   // ── Revert ────────────────────────────────────────────────────────────────
 
   describe('revert flow', () => {
+    it('offers history and diffs but no Revert when read-only (§116 t-725)', async () => {
+      // A platform agent's instructions are the platform's; the revert route
+      // refuses system agents, so the panel must not offer the action.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue(TWO_VERSIONS);
+      const user = userEvent.setup();
+
+      render(<InstructionsHistoryPanel agentId={AGENT_ID} readOnly />);
+      await user.click(screen.getByRole('button', { name: /version history/i }));
+
+      await waitFor(() => expect(screen.getAllByRole('button', { name: /diff/i })).toHaveLength(2));
+      expect(screen.queryByRole('button', { name: /revert/i })).toBeNull();
+    });
+
     it('opens revert AlertDialog on Revert click', async () => {
       // Arrange
       const { apiClient } = await import('@/lib/api/client');

@@ -61,9 +61,18 @@ export interface InstructionsHistoryPanelProps {
   agentId: string;
   /** Called after a successful revert so the parent form can re-fetch. */
   onReverted?: () => void;
+  /**
+   * History and diffs only, no Revert: the instructions are the platform's on
+   * a platform agent (§116), and the revert route refuses system agents.
+   */
+  readOnly?: boolean;
 }
 
-export function InstructionsHistoryPanel({ agentId, onReverted }: InstructionsHistoryPanelProps) {
+export function InstructionsHistoryPanel({
+  agentId,
+  onReverted,
+  readOnly = false,
+}: InstructionsHistoryPanelProps) {
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<HistoryResponse | null>(null);
@@ -181,15 +190,17 @@ export function InstructionsHistoryPanel({ agentId, onReverted }: InstructionsHi
                         <GitCompare className="mr-1 h-3 w-3" />
                         Diff
                       </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setRevertTarget({ entry, versionIndex })}
-                      >
-                        <RotateCcw className="mr-1 h-3 w-3" />
-                        Revert
-                      </Button>
+                      {!readOnly && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setRevertTarget({ entry, versionIndex })}
+                        >
+                          <RotateCcw className="mr-1 h-3 w-3" />
+                          Revert
+                        </Button>
+                      )}
                     </div>
                   </li>
                 );

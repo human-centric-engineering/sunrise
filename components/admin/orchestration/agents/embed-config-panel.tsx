@@ -37,9 +37,19 @@ interface EmbedToken {
 interface EmbedConfigPanelProps {
   agentId: string;
   appUrl: string;
+  /**
+   * The widget appearance is the platform's on a platform agent (§116): the
+   * API refuses a change to it, so the editor is replaced by a note. Tokens
+   * stay the org's.
+   */
+  appearanceLocked?: boolean;
 }
 
-export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): React.ReactElement {
+export function EmbedConfigPanel({
+  agentId,
+  appUrl,
+  appearanceLocked = false,
+}: EmbedConfigPanelProps): React.ReactElement {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-1.5">
@@ -80,7 +90,17 @@ export function EmbedConfigPanel({ agentId, appUrl }: EmbedConfigPanelProps): Re
           </p>
         </FieldHelp>
       </div>
-      <WidgetAppearanceSection agentId={agentId} />
+      {appearanceLocked ? (
+        <p
+          data-testid="widget-appearance-locked"
+          className="text-muted-foreground rounded-md border px-3 py-2 text-sm"
+        >
+          This platform agent&apos;s widget appearance is set by the platform, so it cannot be
+          changed here.
+        </p>
+      ) : (
+        <WidgetAppearanceSection agentId={agentId} />
+      )}
       <TokensCard agentId={agentId} appUrl={appUrl} />
     </div>
   );

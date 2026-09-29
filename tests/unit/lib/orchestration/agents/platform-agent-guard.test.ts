@@ -20,12 +20,14 @@ import { ForbiddenError, ValidationError } from '@/lib/api/errors';
 import { platformAgentFieldNames } from '@/lib/orchestration/agents/agent-field-registry';
 import {
   assertAgentSlugNotReserved,
+  assertBindingFieldsUnchanged,
   assertBindingsEditable,
   assertPlatformOwnedFieldsUnchanged,
   changedPlatformOwnedFields,
   isReservedAgentSlug,
   platformAgentEditPolicy,
   platformBindingsLocked,
+  platformSlugWhere,
   type PlatformOwnedCurrentValues,
 } from '@/lib/orchestration/agents/platform-agent-guard';
 import {
@@ -241,5 +243,38 @@ describe('reserved slugs', () => {
       slug: ['The slug "quiz-master" is reserved for a platform agent'],
     });
     expect(() => assertAgentSlugNotReserved('quiz-master-2')).not.toThrow();
+  });
+});
+
+describe('binding fields', () => {
+  const binding = { isEnabled: true, customConfig: { b: 2, a: 1 } };
+
+  it('refuses a change to isEnabled or customConfig, naming them', () => {
+    expect(() =>
+      assertBindingFieldsUnchanged({ name: 'Judge' }, binding, { isEnabled: false })
+    ).toThrow(/isEnabled on its capabilities is set by the platform/);
+    expect(() =>
+      assertBindingFieldsUnchanged({ name: 'Judge' }, binding, {
+        isEnabled: false,
+        customConfig: { a: 9 },
+      })
+    ).toThrow(/isEnabled and customConfig on its capabilities are set by the platform/);
+  });
+
+  it('accepts unchanged values (config by value) and anything it does not own', () => {
+    expect(() =>
+      assertBindingFieldsUnchanged({ name: 'Judge' }, binding, {
+        isEnabled: true,
+        customConfig: { a: 1, b: 2 },
+      })
+    ).not.toThrow();
+    expect(() => assertBindingFieldsUnchanged({ name: 'Judge' }, binding, {})).not.toThrow();
+  });
+});
+
+describe('platformSlugWhere', () => {
+  it('constrains a platform slug to system rows and leaves any other slug alone', () => {
+    expect(platformSlugWhere('eval-case-generator')).toEqual({ isSystem: true });
+    expect(platformSlugWhere('my-agent')).toEqual({});
   });
 });

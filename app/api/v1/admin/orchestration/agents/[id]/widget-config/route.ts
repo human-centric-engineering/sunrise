@@ -14,8 +14,9 @@ import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
-import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { assertPlatformOwnedFieldsUnchanged } from '@/lib/orchestration/agents/platform-agent-guard';
 import { updateWidgetConfigSchema, resolveWidgetConfig } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 
@@ -54,16 +55,17 @@ export const PATCH = withAdminAuth<Params>(async (request, session, { params }) 
     select: { id: true, name: true, widgetConfig: true, isSystem: true },
   });
   if (!agent) throw new NotFoundError('Agent not found');
-  // `widgetConfig` is platform-owned on a platform agent: the next reconcile
-  // writes it back, so an edit is refused rather than quietly undone (§116).
-  if (agent.isSystem) {
-    throw new ForbiddenError(
-      `"${agent.name}" is a platform agent, so its widget config is set by the platform and cannot be changed here.`
-    );
-  }
-
   const previous = resolveWidgetConfig(agent.widgetConfig);
   const merged = { ...previous, ...body };
+
+  // On a platform agent `widgetConfig` is whatever the field registry says it
+  // is — platform-owned today, so the next reconcile would write it back and
+  // the edit is refused rather than quietly undone (§116).
+  assertPlatformOwnedFieldsUnchanged(
+    agent,
+    { ...agent, grantedTagIds: [], grantedDocumentIds: [] },
+    { widgetConfig: merged }
+  );
 
   const updated = await prisma.aiAgent.update({
     where: { id: agentId },

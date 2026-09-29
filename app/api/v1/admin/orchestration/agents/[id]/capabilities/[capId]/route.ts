@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
+import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
@@ -28,10 +28,10 @@ import { updateAgentCapabilitySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
+  assertBindingFieldsUnchanged,
   assertBindingsEditable,
   platformBindingsLocked,
 } from '@/lib/orchestration/agents/platform-agent-guard';
-import { jsonEquals } from '@/lib/utils/json-equal';
 
 /**
  * Narrow shape used by `collectMissingEnvVars`. See the matching
@@ -103,19 +103,7 @@ export const PATCH = withAdminAuth<RouteParams>(async (request, session, { param
     if (!current) {
       throw new NotFoundError(`Capability ${capabilityId} is not attached to agent ${agentId}`);
     }
-    const changed = [
-      body.isEnabled !== undefined && body.isEnabled !== current.isEnabled ? 'isEnabled' : null,
-      body.customConfig !== undefined && !jsonEquals(body.customConfig, current.customConfig)
-        ? 'customConfig'
-        : null,
-    ].filter((field): field is string => field !== null);
-    if (changed.length > 0) {
-      throw new ForbiddenError(
-        `"${agent.name}" is a platform agent, so ${changed.join(' and ')} on its capabilities ${
-          changed.length === 1 ? 'is' : 'are'
-        } set by the platform and cannot be changed here. This org can change customRateLimit.`
-      );
-    }
+    assertBindingFieldsUnchanged(agent, current, body);
   }
 
   const data: Prisma.AiAgentCapabilityUpdateInput = {};

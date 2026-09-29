@@ -96,13 +96,18 @@ release process.
   and skips past a generated one, and `POST /agents/import` and the config
   restore skip such an agent with a warning. An org that already has an agent
   of its own under such a slug keeps it, but the clean-up and `mcp-system`
-  lookups, the patterns-tag grant, and chat's agent load for a platform slug
-  (the judges and case generator) now match only system agents, so that org
+  lookups, the patterns-tag grant, the quiz master on the Learn page and in
+  saved quiz scores, and every load by a platform slug in chat (the judges and
+  case generator) and in workflow `agent_call` and `chat_turn` steps now match
+  only system agents, so that org
   gets "not found" instead of its own agent run in the platform's place.
 - **The agent form shows a platform agent's platform-owned fields read-only**
   and never sends them (§116 t-725). Its banner says what the org can change.
   The capabilities tab keeps only the rate limit editable, except on
-  `mcp-system`. **"Audit Models" shows in the install org only**, and the
+  `mcp-system`; the embed tab keeps its tokens but not the widget appearance,
+  and the instructions history drops Revert. Clearing a binding's rate limit
+  in Configure now removes the override (it used to leave it in place).
+  **"Audit Models" shows in the install org only**, and the
   dashboard's agent count excludes system agents.
 - **Seeds `005-pattern-advisor`, `008-mcp-server` and `010-model-auditor` no
   longer create agents** (§116 t-724). They still seed the pattern and cost

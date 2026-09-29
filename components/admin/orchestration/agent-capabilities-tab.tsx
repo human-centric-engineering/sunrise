@@ -484,11 +484,10 @@ function ConfigureDialog({
           return;
         }
       }
-      const customRateLimit = rateLimit.trim() === '' ? undefined : Number(rateLimit);
-      if (
-        customRateLimit !== undefined &&
-        (!Number.isFinite(customRateLimit) || customRateLimit < 1)
-      ) {
+      // Blank means "inherit the capability's limit", so it clears an
+      // override (null) rather than leaving it untouched.
+      const customRateLimit = rateLimit.trim() === '' ? null : Number(rateLimit);
+      if (customRateLimit !== null && (!Number.isFinite(customRateLimit) || customRateLimit < 1)) {
         setError('Rate limit must be a positive number.');
         setSaving(false);
         return;

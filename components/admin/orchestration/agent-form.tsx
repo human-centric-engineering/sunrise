@@ -2089,6 +2089,7 @@ export function AgentForm({
           {isEdit && agent && (
             <InstructionsHistoryPanel
               agentId={agent.id}
+              readOnly={locked('systemInstructions')}
               onReverted={() => {
                 // Revert mutates the server-side instructions; re-pull the
                 // fresh agent into the form so the textarea reflects reality.
@@ -2273,7 +2274,11 @@ export function AgentForm({
         {/* ================= TAB 8 — EMBED ================= */}
         <TabsContent value="embed" className="pt-4">
           {isEdit && agent ? (
-            <EmbedConfigPanel agentId={agent.id} appUrl={process.env.NEXT_PUBLIC_APP_URL ?? ''} />
+            <EmbedConfigPanel
+              agentId={agent.id}
+              appUrl={process.env.NEXT_PUBLIC_APP_URL ?? ''}
+              appearanceLocked={locked('widgetConfig')}
+            />
           ) : (
             <div className="text-muted-foreground space-y-2 rounded-md border p-6 text-sm leading-relaxed">
               <p>

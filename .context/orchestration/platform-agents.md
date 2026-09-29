@@ -101,8 +101,10 @@ caller chose and skips past a generated one; both importers skip the agent
 with a warning. An org that took a platform slug before this rule keeps its
 agent. The reconcile never adopts it, and every lookup of a platform agent
 by slug matches system rows only: the clean-up and `mcp-system` lookups, the
-patterns-tag grant, and chat's agent load for a platform slug, which the
-judges and the case generator go through. So such an org gets "not found"
+patterns-tag grant, the quiz master behind saved quiz scores and the Learn
+page, and — through `platformSlugWhere()` — chat's agent load (which the
+judges and the case generator go through) and the workflow `agent_call` and
+`chat_turn` steps. So such an org gets "not found"
 rather than its own agent run in the platform agent's place.
 
 ## When the reconcile runs

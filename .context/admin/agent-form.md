@@ -93,7 +93,7 @@ On a system agent, `GET /agents/:id` returns `platformAgent: { lockedFields, tun
 - **The payload.** A save drops every locked field, so a field the admin never touched cannot be refused.
 - **The banner.** It says the platform sets what the agent is and updates it with each release, then names, as prose built from `tunableFields`, what this org sets here: "its provider, model, fallback providers, monthly budget, per-turn cost cap, rate limit and how long its conversations are kept". `providerConfig` has no control on this form, so the banner leaves it out. On `mcp-system` it adds "which capabilities it may use".
 
-The Capabilities tab takes `bindingsLocked`: the Available column and Detach are hidden (Attached takes the full width), the switch is disabled, and Configure disables the custom-config editor and sends only the rate limit.
+The Capabilities tab takes `bindingsLocked`: the Available column and Detach are hidden (Attached takes the full width), the switch is disabled, and Configure disables the custom-config editor and sends only the rate limit. A blank rate limit sends `null`, which clears the override ("leave blank to inherit"). The Embed tab passes `appearanceLocked` to `EmbedConfigPanel`, which shows a note in place of the widget-appearance editor and keeps the embed tokens; the instructions history takes `readOnly` and offers diffs but no Revert (the revert route refuses system agents).
 
 ### Temperature slider
 

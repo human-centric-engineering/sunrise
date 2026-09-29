@@ -7,7 +7,8 @@
  * (`reconcile-platform-agents.ts`). So an edit to one of those fields is
  * accepted, audited as a success, and then quietly undone. Refusing it is the
  * honest answer, and every write path consults this module to do so: the agent
- * PATCH, the binding routes, the widget config and version restore.
+ * PATCH, the binding routes and the widget config. (Version restore reads the
+ * same registry split directly: it skips fields rather than refusing them.)
  *
  * **The split is the field registry's**, not a list here: a field declared
  * `platformAgent: 'code'` is the platform's, `'org'` is the org's (provider,
@@ -95,6 +96,43 @@ export function platformBindingsLocked(agent: { isSystem: boolean; slug: string 
   return getPlatformAgent(agent.slug)?.capabilityBindings !== 'org';
 }
 
+/**
+ * The binding columns the platform owns on a platform-bound agent: which
+ * capabilities are on (the reconcile writes `isEnabled` back) and how each is
+ * configured. `customRateLimit` is not here — how fast the org lets the agent
+ * run is the org's, as `rateLimitRpm` is on the agent itself.
+ */
+export const PLATFORM_OWNED_BINDING_FIELDS = ['isEnabled', 'customConfig'] as const;
+
+/** The platform-owned binding fields an incoming write would actually change. */
+export function changedPlatformOwnedBindingFields(
+  current: { isEnabled: boolean; customConfig: unknown },
+  incoming: { isEnabled?: boolean; customConfig?: unknown }
+): string[] {
+  return PLATFORM_OWNED_BINDING_FIELDS.filter((field) => {
+    const next = incoming[field];
+    return next !== undefined && !jsonEquals(next, current[field]);
+  });
+}
+
+/**
+ * Refuse a change to a platform-owned binding field. Call only for an agent
+ * whose bindings are locked ({@link platformBindingsLocked}).
+ */
+export function assertBindingFieldsUnchanged(
+  agent: { name: string },
+  current: { isEnabled: boolean; customConfig: unknown },
+  incoming: { isEnabled?: boolean; customConfig?: unknown }
+): void {
+  const changed = changedPlatformOwnedBindingFields(current, incoming);
+  if (changed.length === 0) return;
+  throw new ForbiddenError(
+    `"${agent.name}" is a platform agent, so ${changed.join(' and ')} on its capabilities ${
+      changed.length === 1 ? 'is' : 'are'
+    } set by the platform and cannot be changed here. This org can change customRateLimit.`
+  );
+}
+
 /** Refuse a binding change on a system agent whose bindings are the platform's. */
 export function assertBindingsEditable(agent: {
   isSystem: boolean;
@@ -140,6 +178,16 @@ export function isReservedAgentSlug(slug: string): boolean {
 /** The message a refused slug carries, shared by the routes and importers. */
 export function reservedAgentSlugMessage(slug: string): string {
   return `The slug "${slug}" is reserved for a platform agent`;
+}
+
+/**
+ * A `where` fragment for finding an agent by slug. A platform slug names the
+ * org's platform instance only, so an org's own agent that took the slug
+ * before it was reserved is not found in its place; any other slug is
+ * unconstrained.
+ */
+export function platformSlugWhere(slug: string): { isSystem?: true } {
+  return isReservedAgentSlug(slug) ? { isSystem: true } : {};
 }
 
 /** Refuse a reserved slug as a validation error on the `slug` field. */
