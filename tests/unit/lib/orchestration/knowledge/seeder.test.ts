@@ -533,13 +533,34 @@ describe('seedChunks', () => {
 // --- Phase 2: embedChunks ---
 
 describe('embedChunks', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockEnv.TENANCY_MODE = 'multi';
+  });
+
+  it('names the calling org in both queries — RLS is not there on every connection', async () => {
+    db.aiKnowledgeChunk.count.mockResolvedValue(0);
+    db.$queryRawUnsafe.mockResolvedValue([]);
+
+    await inOrgB(() => embedChunks());
+
+    expect(db.aiKnowledgeChunk.count).toHaveBeenCalledWith({ where: { orgId: ORG_B } });
+    const [sql, orgParam] = db.$queryRawUnsafe.mock.calls[0];
+    expect(String(sql)).toContain('AND "orgId" = $1');
+    expect(orgParam).toBe(ORG_B);
+  });
+
+  it('refuses to run outside an org rather than embed every org’s chunks', async () => {
+    await expect(embedChunks()).rejects.toThrow();
+
+    expect(db.$queryRawUnsafe).not.toHaveBeenCalled();
+  });
 
   it('returns immediately when all chunks are already embedded', async () => {
     db.aiKnowledgeChunk.count.mockResolvedValue(10);
     db.$queryRawUnsafe.mockResolvedValue([]);
 
-    const result = await embedChunks();
+    const result = await inOrgB(() => embedChunks());
 
     expect(result).toEqual({ processed: 0, total: 10, alreadyEmbedded: 10 });
     expect(embedBatch).not.toHaveBeenCalled();
@@ -561,7 +582,7 @@ describe('embedChunks', () => {
     );
     db.$executeRawUnsafe.mockResolvedValue(1);
 
-    const result = await embedChunks();
+    const result = await inOrgB(() => embedChunks());
 
     expect(result).toEqual({ processed: 2, total: 5, alreadyEmbedded: 3 });
     expect(String(db.$queryRawUnsafe.mock.calls[0][0])).toContain('WHERE embedding IS NULL');
@@ -591,6 +612,6 @@ describe('embedChunks', () => {
     db.$queryRawUnsafe.mockResolvedValue([{ id: 'c1', content: 'text' }]);
     vi.mocked(embedBatch).mockRejectedValue(new Error('Provider unavailable'));
 
-    await expect(embedChunks()).rejects.toThrow('Provider unavailable');
+    await expect(inOrgB(() => embedChunks())).rejects.toThrow('Provider unavailable');
   });
 });

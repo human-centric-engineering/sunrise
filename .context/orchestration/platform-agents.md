@@ -246,3 +246,7 @@ its own instance.
 
 - The built-in workflow templates are still install-org rows. This is an
   open task on §116.
+- An org admin's console still lists the Learn page, whose advisor, quiz and
+  pattern explorer find nothing outside the install org, and the MCP patterns
+  resource answers "not found" to another org's key. The console split (§111)
+  decides what an org admin sees.

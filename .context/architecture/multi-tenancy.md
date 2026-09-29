@@ -79,8 +79,9 @@ says which piece each feature lands):
   its own instance of each of Sunrise's tenant-facing agents, so a new org's
   clean-up upload, MCP calls, judges and case generator work with no manual
   step. The Pattern Advisor, Quiz Master and their patterns knowledge (the
-  Learn page) stay the install org's: they help the install's app admins, and
-  §111 hides that page from org admins. See
+  Learn page) stay the install org's: they help the install's app admins.
+  Until §111 hides that page from org admins, it is listed in their console
+  and finds nothing there. See
   [platform agents](../orchestration/platform-agents.md). One piece is still
   open: the built-in workflow templates are still install-org rows.
 - **Some process-global state is shared across orgs on purpose.** RLS cannot

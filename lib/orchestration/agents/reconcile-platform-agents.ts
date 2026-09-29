@@ -70,6 +70,7 @@ import {
 } from '@/lib/orchestration/agents/agent-versioning';
 import {
   PLATFORM_AGENT_BASELINE,
+  getPlatformAgent,
   platformAgentRegistryHash,
   platformAgentsForOrg,
   type PlatformAgentDefinition,
@@ -352,8 +353,13 @@ export async function reconcilePlatformAgents(
       if (!row || !row.isSystem || row.deletedAt !== null) continue;
       retired.push(slug);
       if (!row.isActive) continue;
+      // Still registered means it was narrowed out of this org's audience
+      // (t-733's install-only pair), not removed; the version row says which.
+      const summary = getPlatformAgent(slug)
+        ? 'No longer one of this org’s platform agents (its audience changed)'
+        : 'Removed from the platform agent registry';
       try {
-        await deactivateInstance(db, row, owner.id);
+        await deactivateInstance(db, row, owner.id, summary);
       } catch (err) {
         if (!isUniqueViolation(err)) throw err;
         complete = false;
@@ -635,7 +641,8 @@ async function updateInstance(
 async function deactivateInstance(
   db: TenancyClient,
   row: ExistingAgent,
-  ownerId: string
+  ownerId: string,
+  changeSummary: string
 ): Promise<void> {
   const grants = {
     grantedTagIds: row.grantedTags.map((g) => g.tagId),
@@ -663,7 +670,7 @@ async function deactivateInstance(
         agentId: row.id,
         version,
         snapshot: asSnapshotJson(buildAgentSnapshot(updated, grants)),
-        changeSummary: 'Removed from the platform agent registry',
+        changeSummary,
         createdBy: ownerId,
       },
     });

@@ -87,7 +87,7 @@ beforeEach(() => {
 });
 
 describe('the core roster', () => {
-  it('is the sixteen agents the seeds used to write, fourteen for every org', () => {
+  it('is the sixteen agents the seeds used to write, twelve for every org', () => {
     expect(CORE_PLATFORM_AGENTS.map((d) => d.slug).sort()).toEqual(
       [...EVERY_ORG, ...INSTALL_ONLY].sort()
     );
@@ -96,7 +96,7 @@ describe('the core roster', () => {
     ).toEqual(INSTALL_ONLY);
   });
 
-  it('gives the install org all sixteen and any other org the fourteen', () => {
+  it('gives the install org all sixteen and any other org the twelve', () => {
     expect(platformAgentsForOrg('install')).toHaveLength(16);
     expect(
       platformAgentsForOrg('cmorg-other')

@@ -50,6 +50,10 @@ vi.mock('@/lib/orchestration/agents/platform-agents', async (importOriginal) => 
       registry.definitions === null
         ? actual.platformAgentsForOrg(orgId)
         : registry.definitions.filter((d) => d.audience === 'every-org' || orgId === 'install'),
+    getPlatformAgent: (slug: string) =>
+      registry.definitions === null
+        ? actual.getPlatformAgent(slug)
+        : registry.definitions.find((d) => d.slug === slug),
     platformAgentRegistryHash: () =>
       registry.definitions === null
         ? actual.platformAgentRegistryHash()
@@ -644,6 +648,10 @@ describe('reconcilePlatformAgents', () => {
     expect(result.deactivated).toEqual(['advisor']);
     expect(agent('advisor', ORG_B)).toBe(placed); // same row, still there
     expect(placed.isActive).toBe(false);
+    // Still registered, so its history says why honestly: not "removed".
+    expect(fake.state.versions.filter((v) => v.agentId === placed.id).at(-1)?.changeSummary).toBe(
+      'No longer one of this org’s platform agents (its audience changed)'
+    );
     expect(agent('judge', ORG_B)?.isActive).toBe(true);
     // Kept in the marker, so every later reconcile keeps it switched off.
     expect(marker(ORG_B)?.slugs).toEqual(['advisor', 'judge']);

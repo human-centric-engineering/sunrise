@@ -39,7 +39,8 @@
  *     an org made by `createOrg` gets no copy. Loaded by hand into two orgs,
  *     each copy lands in that org's own knowledge base holding the same chunk
  *     keys as the install org's; one org's embed run embeds its copy and
- *     nobody else's, and its search, with the other org's identical copy
+ *     nobody else's, and its search — plain, and as a restricted agent's
+ *     `search_knowledge_base` tool call — with the other org's identical copy
  *     embedded beside it, reads only chunks that carry its org.
  *
  * Run it against a THROWAWAY database, never the dev one — it creates two
@@ -59,6 +60,7 @@
  */
 import '@/prisma/load-env';
 import { NextRequest } from 'next/server';
+import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import {
   forEachOrg,
@@ -89,6 +91,8 @@ import { generateCases } from '@/lib/orchestration/evaluations/synthesis/case-ge
 import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
 import { hashDatasetCases } from '@/lib/orchestration/evaluations/datasets/hash';
 import { platformAgentsForOrg } from '@/lib/orchestration/agents/platform-agents';
+import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
+import { registerBuiltInCapabilities } from '@/lib/orchestration/capabilities/registry';
 import {
   embedChunks,
   loadPatternsChunks,
@@ -1232,6 +1236,52 @@ async function main(): Promise<void> {
     check(
       read.every((c) => c.orgId === b.orgId && c.documentId === copyB?.id),
       'every chunk it read is from B’s own copy and carries B — none is A’s'
+    );
+
+    // The same through an agent's tool call, in restricted mode: B's own
+    // agent, granted the patterns tag, runs `search_knowledge_base` the way
+    // the advisor did — its grants resolved, and system-scope documents
+    // passed through, in B.
+    const patternsTag = await prisma.knowledgeTag.findUnique({
+      where: { slug: PATTERNS_TAG_SLUG },
+      select: { id: true },
+    });
+    if (!patternsTag) throw new Error('the patterns tag is missing — run the seed');
+    await runAsOrg(b.orgId, async () => {
+      await prisma.aiAgent.update({
+        where: { id: b.agentId },
+        data: { knowledgeAccessMode: 'restricted' },
+      });
+      await prisma.aiAgentKnowledgeTag.create({
+        data: { agentId: b.agentId, tagId: patternsTag.id },
+      });
+    });
+    registerBuiltInCapabilities();
+    const toolSearch = await runAsOrg(b.orgId, () =>
+      capabilityDispatcher.dispatch(
+        'search_knowledge_base',
+        { query: patterns[0].content.slice(0, 200) },
+        { userId: b.ownerId, agentId: b.agentId }
+      )
+    );
+    const toolFound = z
+      .object({ results: z.array(z.object({ chunkId: z.string() })) })
+      .safeParse(toolSearch.data);
+    const toolIds = toolFound.success ? toolFound.data.results.map((r) => r.chunkId) : [];
+    const toolRead = await runAsSystem('smoke: chunks B’s agent read', () =>
+      prisma.aiKnowledgeChunk.findMany({
+        where: { id: { in: toolIds } },
+        select: { orgId: true, documentId: true },
+      })
+    );
+    check(
+      toolSearch.success && toolIds.length > 0 && toolRead.length === toolIds.length,
+      `B's restricted agent's search_knowledge_base retrieved ${toolIds.length} chunks` +
+        (toolSearch.success ? '' : ` (${toolSearch.error?.message ?? 'failed'})`)
+    );
+    check(
+      toolRead.every((c) => c.orgId === b.orgId && c.documentId === copyB?.id),
+      'every chunk the tool read is from B’s own copy — none is A’s'
     );
 
     if (failures > 0) throw new Error(`${failures} check(s) failed`);

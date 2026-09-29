@@ -304,11 +304,10 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
  * configured embedding provider, and writes vectors back. Can be called
  * repeatedly — only processes chunks that still need embeddings.
  *
- * The calling org's chunks only: at `multi` the chokepoint runs each query,
- * the raw ones included, under the org's `app.current_org`, so the policies
- * hide every other org's rows. That is what embeds a new org's copy of the
- * patterns knowledge (`POST /knowledge/embed` from that org). With no
- * embedding provider it throws, as it always has.
+ * The calling org's chunks only, named in the query: at `multi` the policies
+ * would hide every other org's rows too, but a connection they do not apply
+ * to (the owner DSN, any install at `single`) would otherwise read them all.
+ * With no embedding provider it throws, as it always has.
  *
  * @returns Summary of what was processed
  */
@@ -317,10 +316,14 @@ export async function embedChunks(): Promise<{
   total: number;
   alreadyEmbedded: number;
 }> {
-  const total = await prisma.aiKnowledgeChunk.count();
+  // The org by name, not only by policy: the owner DSN a seed or script may
+  // run under, and `single`, have no RLS to confine the raw SQL.
+  const orgId = requireOrgId();
+  const total = await prisma.aiKnowledgeChunk.count({ where: { orgId } });
 
   const pending = await prisma.$queryRawUnsafe<Array<{ id: string; content: string }>>(
-    `SELECT id, content FROM ai_knowledge_chunk WHERE embedding IS NULL ORDER BY id`
+    `SELECT id, content FROM ai_knowledge_chunk WHERE embedding IS NULL AND "orgId" = $1 ORDER BY id`,
+    orgId
   );
 
   if (pending.length === 0) {

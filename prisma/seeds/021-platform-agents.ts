@@ -15,9 +15,10 @@ import { listActiveOrgIds } from '@/lib/tenancy/context';
  *
  * Last among the agent-related units on purpose: the capabilities the agents
  * bind to are seeded by 005, 010, 011–014 and 019. A capability with no row
- * yet is skipped with a warning, not an error. The reconcile also gives each
- * org its own copy of the patterns knowledge (t-726), and with it the tag the
- * pattern advisor and quiz master are granted.
+ * yet is skipped with a warning, not an error. The reconcile also writes the
+ * patterns knowledge, and with it the tag the pattern advisor and quiz master
+ * are granted, into an org one of whose agents declares that tag (t-726): the
+ * install org, in core (t-733).
  *
  * `hashInputs` names every file a definition or the reconcile's behaviour
  * lives in, the patterns knowledge included, so editing one re-runs this unit
