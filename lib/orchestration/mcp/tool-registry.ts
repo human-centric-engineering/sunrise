@@ -155,8 +155,10 @@ async function getMcpSystemAgentId(): Promise<string | null> {
   const cached = mcpSystemAgentIdByOrg.get(orgId);
   if (cached) return cached;
 
+  // `isSystem`: an org's own agent holding the slug from before it was
+  // reserved (§116 t-725) is not the MCP identity.
   const agent = await prisma.aiAgent.findFirst({
-    where: { slug: MCP_SYSTEM_AGENT_SLUG },
+    where: { slug: MCP_SYSTEM_AGENT_SLUG, isSystem: true },
     select: { id: true },
   });
 

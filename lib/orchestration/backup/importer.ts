@@ -16,6 +16,10 @@ import { backupSchema } from '@/lib/orchestration/backup/schema';
 // re-exports the dispatcher and the built-in registry, none of which a config
 // restore needs pulled into its module graph.
 import { changedSeedOwnedFields } from '@/lib/orchestration/capabilities/seed-owned';
+import {
+  isReservedAgentSlug,
+  reservedAgentSlugMessage,
+} from '@/lib/orchestration/agents/platform-agent-guard';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
@@ -97,13 +101,21 @@ export async function importOrchestrationConfig(
     // Import agents by slug upsert
     for (const agent of parsed.data.agents) {
       const existing = await tx.aiAgent.findFirst({ where: { slug: agent.slug } });
+      if (existing?.isSystem) {
+        result.warnings.push(
+          `System agent '${agent.slug}' skipped — system agents cannot be overwritten by backup import`
+        );
+        continue;
+      }
+      // A platform agent's slug is never an org's own agent's (§116 t-725):
+      // the reconcile creates this org's instance, not the backup.
+      if (isReservedAgentSlug(agent.slug)) {
+        result.warnings.push(
+          `Agent '${agent.slug}' skipped — ${reservedAgentSlugMessage(agent.slug)}`
+        );
+        continue;
+      }
       if (existing) {
-        if (existing.isSystem) {
-          result.warnings.push(
-            `System agent '${agent.slug}' skipped — system agents cannot be overwritten by backup import`
-          );
-          continue;
-        }
         await tx.aiAgent.update({
           where: { id: existing.id },
           data: {

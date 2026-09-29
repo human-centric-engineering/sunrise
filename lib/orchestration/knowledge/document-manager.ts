@@ -100,8 +100,10 @@ const CLEANUP_AGENT_SLUG = 'cleanup-agent';
 const CLEANUP_REDIRECT = (id: string): string => `/admin/orchestration/knowledge/${id}/cleanup`;
 
 async function getCleanupAgentId(): Promise<string> {
+  // `isSystem`: an org's own agent that took the slug before it was reserved
+  // (§116 t-725) is not the clean-up assistant, and must not be run as one.
   const agent = await prisma.aiAgent.findFirst({
-    where: { slug: CLEANUP_AGENT_SLUG },
+    where: { slug: CLEANUP_AGENT_SLUG, isSystem: true },
     select: { id: true },
   });
   if (!agent) {

@@ -191,7 +191,7 @@ export async function seedChunks(chunksJsonPath: string): Promise<void> {
   // but skips a tag that does not exist yet — so whichever runs first, the
   // grant ends up present. Idempotent.
   const systemAgents = await prisma.aiAgent.findMany({
-    where: { slug: { in: ['pattern-advisor', 'quiz-master'] } },
+    where: { slug: { in: ['pattern-advisor', 'quiz-master'] }, isSystem: true },
     select: { id: true, slug: true },
   });
   for (const agent of systemAgents) {

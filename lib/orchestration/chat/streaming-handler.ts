@@ -78,6 +78,7 @@ import {
   type GuardFloors,
 } from '@/lib/orchestration/chat/guard-floor';
 import { emitGuardEvent, type GuardEventContext } from '@/lib/orchestration/chat/guard-events';
+import { isReservedAgentSlug } from '@/lib/orchestration/agents/platform-agent-guard';
 import { buildMessagesAndBreakdown } from '@/lib/orchestration/chat/message-builder';
 import { estimateTokens } from '@/lib/orchestration/chat/token-estimator';
 import {
@@ -2703,8 +2704,12 @@ export class StreamingChatHandler {
   }
 
   private async loadAgent(slug: string): Promise<AgentWithProfile> {
+    // A platform slug (a judge, the case generator, the clean-up assistant)
+    // names the org's platform instance only. An org's own agent that took
+    // the slug before it was reserved (§116 t-725) is refused as not found
+    // rather than run in the platform agent's place.
     const agent = await prisma.aiAgent.findFirst({
-      where: { slug, isActive: true },
+      where: { slug, isActive: true, ...(isReservedAgentSlug(slug) ? { isSystem: true } : {}) },
       include: { profile: true },
     });
     if (!agent) {
