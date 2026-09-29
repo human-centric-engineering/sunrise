@@ -29,6 +29,7 @@ import { findUnsetEnvVarReferences } from '@/lib/orchestration/env-template';
 import { attachAgentCapabilitySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { assertBindingsEditable } from '@/lib/orchestration/agents/platform-agent-guard';
 
 /**
  * Narrow shape used by `collectMissingEnvVars` to extract the only two
@@ -85,6 +86,10 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   const agent = await prisma.aiAgent.findUnique({ where: { id: agentId } });
   if (!agent) throw new NotFoundError(`Agent ${agentId} not found`);
+
+  // A platform agent's bindings are the platform's unless its definition
+  // leaves them to the org, as mcp-system's does (§116 t-725).
+  assertBindingsEditable(agent);
 
   const body = await validateRequestBody(request, attachAgentCapabilitySchema);
 

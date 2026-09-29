@@ -18,6 +18,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { createAgentSchema, listAgentsQuerySchema } from '@/lib/validations/orchestration';
 import { getMonthToDateGlobalSpend } from '@/lib/orchestration/llm/cost-tracker';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { assertAgentSlugNotReserved } from '@/lib/orchestration/agents/platform-agent-guard';
 import {
   INITIAL_VERSION_SUMMARY,
   asSnapshotJson,
@@ -158,6 +159,9 @@ export const POST = withAdminAuth(async (request, session) => {
 
   const log = await getRouteLogger(request);
   const body = await validateRequestBody(request, createAgentSchema);
+
+  // A platform agent's slug is never an org's own agent's (§116 t-725).
+  assertAgentSlugNotReserved(body.slug);
 
   try {
     // Create the agent and its explicit `v1` ("Initial configuration") in one

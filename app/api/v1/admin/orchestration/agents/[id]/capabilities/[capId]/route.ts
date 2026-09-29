@@ -18,7 +18,7 @@ import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
@@ -27,6 +27,11 @@ import { findUnsetEnvVarReferences } from '@/lib/orchestration/env-template';
 import { updateAgentCapabilitySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import {
+  assertBindingsEditable,
+  platformBindingsLocked,
+} from '@/lib/orchestration/agents/platform-agent-guard';
+import { jsonEquals } from '@/lib/utils/json-equal';
 
 /**
  * Narrow shape used by `collectMissingEnvVars`. See the matching
@@ -65,6 +70,18 @@ function parseIds(raw: RouteParams): { agentId: string; capabilityId: string } {
   return { agentId: agentIdParse.data as string, capabilityId: capIdParse.data as string };
 }
 
+/** The agent a binding belongs to, as far as the platform-agent guard reads it. */
+async function loadAgent(
+  agentId: string
+): Promise<{ isSystem: boolean; slug: string; name: string }> {
+  const agent = await prisma.aiAgent.findUnique({
+    where: { id: agentId },
+    select: { isSystem: true, slug: true, name: true },
+  });
+  if (!agent) throw new NotFoundError(`Agent ${agentId} not found`);
+  return agent;
+}
+
 export const PATCH = withAdminAuth<RouteParams>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
 
@@ -72,6 +89,34 @@ export const PATCH = withAdminAuth<RouteParams>(async (request, session, { param
   const { agentId, capabilityId } = parseIds(await params);
 
   const body = await validateRequestBody(request, updateAgentCapabilitySchema);
+
+  // On a platform agent the binding's on/off state and config are the
+  // platform's; its rate limit is how fast the org lets it run, so that stays
+  // the org's (§116 t-725). Compared by value, so a dialog that re-sends an
+  // unchanged config alongside a new rate limit passes.
+  const agent = await loadAgent(agentId);
+  if (platformBindingsLocked(agent)) {
+    const current = await prisma.aiAgentCapability.findUnique({
+      where: { agentId_capabilityId: { agentId, capabilityId } },
+      select: { isEnabled: true, customConfig: true },
+    });
+    if (!current) {
+      throw new NotFoundError(`Capability ${capabilityId} is not attached to agent ${agentId}`);
+    }
+    const changed = [
+      body.isEnabled !== undefined && body.isEnabled !== current.isEnabled ? 'isEnabled' : null,
+      body.customConfig !== undefined && !jsonEquals(body.customConfig, current.customConfig)
+        ? 'customConfig'
+        : null,
+    ].filter((field): field is string => field !== null);
+    if (changed.length > 0) {
+      throw new ForbiddenError(
+        `"${agent.name}" is a platform agent, so ${changed.join(' and ')} on its capabilities ${
+          changed.length === 1 ? 'is' : 'are'
+        } set by the platform and cannot be changed here. This org can change customRateLimit.`
+      );
+    }
+  }
 
   const data: Prisma.AiAgentCapabilityUpdateInput = {};
   if (body.isEnabled !== undefined) data.isEnabled = body.isEnabled;
@@ -120,6 +165,8 @@ export const DELETE = withAdminAuth<RouteParams>(async (request, session, { para
 
   const log = await getRouteLogger(request);
   const { agentId, capabilityId } = parseIds(await params);
+
+  assertBindingsEditable(await loadAgent(agentId));
 
   try {
     await prisma.aiAgentCapability.delete({

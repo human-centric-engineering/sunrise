@@ -3,6 +3,7 @@
  *
  * GET   /api/v1/admin/orchestration/agents/:id/widget-config — read resolved config
  * PATCH /api/v1/admin/orchestration/agents/:id/widget-config — update partial config
+ *   (refused with 403 on a system agent: the platform owns its widget config)
  *
  * Authentication: Admin role required.
  */
@@ -13,7 +14,7 @@ import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { updateWidgetConfigSchema, resolveWidgetConfig } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
@@ -50,9 +51,16 @@ export const PATCH = withAdminAuth<Params>(async (request, session, { params }) 
 
   const agent = await prisma.aiAgent.findUnique({
     where: { id: agentId },
-    select: { id: true, name: true, widgetConfig: true },
+    select: { id: true, name: true, widgetConfig: true, isSystem: true },
   });
   if (!agent) throw new NotFoundError('Agent not found');
+  // `widgetConfig` is platform-owned on a platform agent: the next reconcile
+  // writes it back, so an edit is refused rather than quietly undone (§116).
+  if (agent.isSystem) {
+    throw new ForbiddenError(
+      `"${agent.name}" is a platform agent, so its widget config is set by the platform and cannot be changed here.`
+    );
+  }
 
   const previous = resolveWidgetConfig(agent.widgetConfig);
   const merged = { ...previous, ...body };

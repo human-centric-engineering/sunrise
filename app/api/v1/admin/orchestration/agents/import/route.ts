@@ -38,6 +38,10 @@ import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
 import { importAgentsSchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import {
+  isReservedAgentSlug,
+  reservedAgentSlugMessage,
+} from '@/lib/orchestration/agents/platform-agent-guard';
 import { ValidationError } from '@/lib/api/errors';
 
 type ImportResults = {
@@ -124,6 +128,16 @@ export const POST = withAdminAuth(async (request, session) => {
 
       if (existing && existing.isSystem) {
         results.warnings.push(`Agent '${bundled.slug}': skipped — cannot overwrite system agent`);
+        results.skipped += 1;
+        continue;
+      }
+
+      // A platform agent's slug is never an org's own agent's (§116 t-725):
+      // neither a new one nor an overwrite of one that predates the rule.
+      if (isReservedAgentSlug(bundled.slug)) {
+        results.warnings.push(
+          `Agent '${bundled.slug}': skipped — ${reservedAgentSlugMessage(bundled.slug)}`
+        );
         results.skipped += 1;
         continue;
       }

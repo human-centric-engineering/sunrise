@@ -5,7 +5,8 @@
  *
  * Restores an agent to a previous version snapshot. Applies the
  * snapshot fields to the agent and creates a new version entry
- * recording the restore action.
+ * recording the restore action. On a system agent only the org-tunable
+ * fields are restored; the platform's are left as they are.
  *
  * Authentication: Admin role required.
  */
@@ -27,8 +28,8 @@ import {
   type SystemInstructionsHistoryEntry,
 } from '@/lib/validations/orchestration';
 import {
-  SYSTEM_AGENT_PROTECTED_FIELDS,
   getAgentField,
+  platformAgentFieldNames,
   versionedScalarFieldNames,
 } from '@/lib/orchestration/agents/agent-field-registry';
 import {
@@ -98,14 +99,15 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     const snapshot = parsed.data;
     const snapshotRecord = snapshot as Record<string, unknown>;
 
-    // System agents are restorable, but the same fields the PATCH route guards
-    // as read-only stay untouched: a restore must not revert a system agent's
-    // slug, systemInstructions, or active state to an arbitrary snapshot — that
-    // would defeat the platform's read-only guarantees. Every other versioned
-    // field (model, guard modes, persona, knowledge config, grants) is restored.
-    // Non-system agents restore the full config.
+    // A system agent is a platform agent (§116): the platform owns every field
+    // the registry marks `platformAgent: 'code'` — the PATCH route refuses a
+    // change to them, and the next reconcile would write them back anyway. So
+    // a restore brings back only what the org tunes (provider, model and its
+    // fallbacks and config, budget, per-turn cap, rate limit, retention) and
+    // leaves the rest, grants included, as the platform set it. Non-system
+    // agents restore the full config.
     const skip = agent.isSystem
-      ? new Set<string>(SYSTEM_AGENT_PROTECTED_FIELDS)
+      ? new Set<string>(platformAgentFieldNames('code'))
       : new Set<string>();
 
     const updateData: Record<string, unknown> = {};
@@ -164,12 +166,14 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     const currentTagIds = (agent.grantedTags ?? []).map((g) => g.tagId);
     const currentDocumentIds = (agent.grantedDocuments ?? []).map((g) => g.documentId);
 
-    const snapshotTagIds = Array.isArray(snapshotRecord.grantedTagIds)
-      ? snapshotRecord.grantedTagIds.filter((v): v is string => typeof v === 'string')
-      : undefined;
-    const snapshotDocumentIds = Array.isArray(snapshotRecord.grantedDocumentIds)
-      ? snapshotRecord.grantedDocumentIds.filter((v): v is string => typeof v === 'string')
-      : undefined;
+    const snapshotTagIds =
+      !skip.has('grantedTagIds') && Array.isArray(snapshotRecord.grantedTagIds)
+        ? snapshotRecord.grantedTagIds.filter((v): v is string => typeof v === 'string')
+        : undefined;
+    const snapshotDocumentIds =
+      !skip.has('grantedDocumentIds') && Array.isArray(snapshotRecord.grantedDocumentIds)
+        ? snapshotRecord.grantedDocumentIds.filter((v): v is string => typeof v === 'string')
+        : undefined;
 
     let resolvedTagIds = currentTagIds;
     if (snapshotTagIds !== undefined) {
@@ -215,8 +219,8 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
 
     // Apply the restore + the post-restore version in one transaction. The new
     // version snapshots the RESULTING (post-restore) config — point-in-time, so
-    // it equals the target version's config except for any protected system
-    // fields left at their current values. The pre-restore state is already the
+    // it equals the target version's config except for a system agent's
+    // platform-owned fields, left at their current values. The pre-restore state is already the
     // agent's newest version (newest-row-equals-live), so it needs no separate
     // snapshot.
     const { updated, nextVersion } = await prisma.$transaction(async (tx) => {

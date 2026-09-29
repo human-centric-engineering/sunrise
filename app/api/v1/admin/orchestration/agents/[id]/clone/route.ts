@@ -22,6 +22,10 @@ import { getClientIP } from '@/lib/security/ip';
 import { cloneAgentBodySchema } from '@/lib/validations/orchestration';
 import { cloneCopiedScalarFields } from '@/lib/orchestration/agents/agent-field-registry';
 import {
+  assertAgentSlugNotReserved,
+  isReservedAgentSlug,
+} from '@/lib/orchestration/agents/platform-agent-guard';
+import {
   INITIAL_VERSION_SUMMARY,
   asSnapshotJson,
   buildAgentSnapshot,
@@ -73,6 +77,9 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   // (set explicitly below), so it's a safe copy with no special privileges.
 
   const name = body.name ?? `${source.name} (Copy)`;
+  // A slug the caller chose is refused outright if a platform agent holds it;
+  // a generated one just moves on to its next variant (§116 t-725).
+  if (body.slug !== undefined) assertAgentSlugNotReserved(body.slug);
   const baseSlug = body.slug ?? `${source.slug}-copy`;
 
   // Attempt slug with collision retry
@@ -81,6 +88,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   for (let attempt = 0; attempt < MAX_SLUG_ATTEMPTS; attempt++) {
     const slug = attempt === 0 ? baseSlug : `${baseSlug}-${attempt + 1}`;
+    if (isReservedAgentSlug(slug)) continue;
 
     try {
       newAgent = await prisma.$transaction(async (tx) => {

@@ -40,6 +40,11 @@ import {
   buildAgentSnapshot,
   nextAgentVersionNumber,
 } from '@/lib/orchestration/agents/agent-versioning';
+import {
+  assertAgentSlugNotReserved,
+  assertPlatformOwnedFieldsUnchanged,
+  platformAgentEditPolicy,
+} from '@/lib/orchestration/agents/platform-agent-guard';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import {
   systemInstructionsHistorySchema,
@@ -99,6 +104,9 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
     ...rest,
     grantedTagIds: (grantedTags ?? []).map((g) => g.tagId),
     grantedDocumentIds: (grantedDocuments ?? []).map((g) => g.documentId),
+    // What PATCH and the binding routes refuse on a system agent, so the form
+    // shows exactly those controls read-only. `null` for an org's own agent.
+    platformAgent: platformAgentEditPolicy(agent),
   };
 
   log.info('Agent fetched', { agentId: id });
@@ -128,29 +136,24 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
   const body = await validateRequestBody(request, updateAgentSchema);
 
-  // System-agent read-only guards. These three fields are the
-  // SYSTEM_AGENT_PROTECTED_FIELDS set (lib/orchestration/agents/agent-field-registry.ts) —
-  // the version-restore route skips the same set. Keep both in step: a new
-  // protected field is added to the constant AND guarded here (the messages are
-  // field-specific, so the guards aren't a generic loop).
+  // A system agent is a platform agent (§116): every field the platform owns
+  // is written back by the next reconcile, so a change to one is refused here
+  // rather than accepted and quietly undone. Compared by value, so a client
+  // echoing the whole agent back is refused only for what it actually changed.
+  // The org-tunable fields (provider, model, spend, rate, retention) pass.
+  assertPlatformOwnedFieldsUnchanged(
+    current,
+    {
+      ...current,
+      grantedTagIds: currentGrantedTagIds,
+      grantedDocumentIds: currentGrantedDocumentIds,
+    },
+    body
+  );
 
-  // System agents cannot be deactivated via PATCH (equivalent to deletion).
-  if (current.isSystem && body.isActive === false) {
-    throw new ForbiddenError('System agents cannot be deactivated');
-  }
-
-  // System agent slugs are used internally — prevent mutation.
-  if (current.isSystem && body.slug !== undefined && body.slug !== current.slug) {
-    throw new ForbiddenError('System agent slugs cannot be changed');
-  }
-
-  // System agent instructions are read-only to preserve rollback consistency.
-  if (
-    current.isSystem &&
-    body.systemInstructions !== undefined &&
-    body.systemInstructions !== current.systemInstructions
-  ) {
-    throw new ForbiddenError('System agent instructions cannot be modified');
+  // No agent of the org's may take a platform agent's slug.
+  if (body.slug !== undefined && body.slug !== current.slug) {
+    assertAgentSlugNotReserved(body.slug);
   }
 
   // Build the update payload. Only include fields the caller actually sent.
