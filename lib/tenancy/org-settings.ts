@@ -1,11 +1,14 @@
 /**
- * `Org.settings` — the platform's own slice of it (§108 t-713).
+ * `Org.settings` — the platform's own slices of it (§108 t-713, §116 t-724).
  *
  * The column has existed since §106 and nothing read or wrote it. This module
  * is the whole of what the platform keeps there: a `retention` slice naming
- * the windows an org wants instead of the global ones. Everything else in that
- * JSON belongs to whoever put it there — a fork's own org-level config — and
- * the write path below preserves it rather than replacing the object.
+ * the windows an org wants instead of the global ones, and a `platformAgents`
+ * marker recording which platform-agent definitions the org was last
+ * reconciled against (see {@link readPlatformAgentsMarker}). Everything else
+ * in that JSON belongs to whoever put it there — a fork's own org-level
+ * config — and both write paths below preserve it rather than replacing the
+ * object.
  *
  * **Validate on read, and degrade to inherit — one key at a time.** The
  * column is admin-written JSON, so a stored value is not trusted on the way
@@ -37,6 +40,7 @@
  */
 
 import { Prisma, type PrismaClient } from '@prisma/client';
+import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { logger as defaultLogger, type Logger } from '@/lib/logging';
 import {
@@ -165,6 +169,74 @@ export function applyRetentionPatch(
 
   if (Object.keys(base).length === 0) return Prisma.DbNull;
   return base as Prisma.InputJsonObject;
+}
+
+/** The key the platform-agent reconcile owns inside `Org.settings`. */
+export const ORG_PLATFORM_AGENTS_KEY = 'platformAgents';
+
+const platformAgentsMarkerSchema = z.object({
+  hash: z.string().min(1),
+  slugs: z.array(z.string()),
+});
+
+/**
+ * What the platform-agent reconcile last wrote into an org (§116 t-724).
+ *
+ * `hash` is the registry digest it reconciled against, so the maintenance job
+ * can tell an org that is behind the running code without reading its agents.
+ * `slugs` are the platform agents it materialised there, and they are what
+ * lets a later reconcile deactivate an agent the registry dropped while
+ * leaving every other `isSystem` agent — a fork's own seeded one — alone.
+ */
+export type PlatformAgentsMarker = z.infer<typeof platformAgentsMarkerSchema>;
+
+/**
+ * Read the marker out of an org's `settings`. Anything unreadable is `null`,
+ * which means "never reconciled": the job reconciles the org, and nothing is
+ * deactivated because nothing is known to have been placed.
+ */
+export function readPlatformAgentsMarker(settings: unknown): PlatformAgentsMarker | null {
+  if (!isJsonObject(settings)) return null;
+  const parsed = platformAgentsMarkerSchema.safeParse(settings[ORG_PLATFORM_AGENTS_KEY]);
+  return parsed.success ? parsed.data : null;
+}
+
+/** One org's marker. `Org` is a system model, so no tenant scope is needed. */
+export async function loadPlatformAgentsMarker(
+  orgId: string,
+  db: Pick<PrismaClient, 'org'> = prisma
+): Promise<PlatformAgentsMarker | null> {
+  const org = await db.org.findUnique({ where: { id: orgId }, select: { settings: true } });
+  return org ? readPlatformAgentsMarker(org.settings) : null;
+}
+
+/**
+ * Store the marker, preserving every other key in `settings`.
+ *
+ * A read-modify-write in a SERIALIZABLE transaction — the same answer, for the
+ * same reason, as `updateOrg`'s retention patch: two writers each reading the
+ * object before the other wrote would drop one slice. A clash fails the later
+ * writer rather than losing either; the reconcile is re-run by the next
+ * maintenance tick.
+ */
+export async function writePlatformAgentsMarker(
+  orgId: string,
+  marker: PlatformAgentsMarker,
+  db: Pick<PrismaClient, '$transaction'> = prisma
+): Promise<void> {
+  await db.$transaction(
+    async (tx) => {
+      const row = await tx.org.findUnique({ where: { id: orgId }, select: { settings: true } });
+      if (!row) return;
+      const base: Record<string, unknown> = isJsonObject(row.settings) ? { ...row.settings } : {};
+      base[ORG_PLATFORM_AGENTS_KEY] = marker;
+      await tx.org.update({
+        where: { id: orgId },
+        data: { settings: base as Prisma.InputJsonObject },
+      });
+    },
+    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+  );
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {
