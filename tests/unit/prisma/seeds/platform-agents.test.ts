@@ -56,6 +56,21 @@ describe('021-platform-agents', () => {
     ]);
   });
 
+  it('reports an org whose own agent held a platform slug', async () => {
+    const { ctx, logger } = makeCtx(['install']);
+    mockReconcile.mockResolvedValue({
+      created: [],
+      updated: [],
+      unchanged: ['a'],
+      deactivated: [],
+      refused: [{ slug: 'quiz-master', reason: 'tenant-agent' }],
+    });
+
+    await platformAgentsSeed.run(ctx);
+
+    expect(logger.info).toHaveBeenCalledWith(expect.stringMatching(/install: .*, 1 refused$/));
+  });
+
   it('lets a reconcile failure fail the seed run', async () => {
     // The runner records the unit as applied only when run() resolves, so a
     // swallowed failure would stop it re-running on the next seed.

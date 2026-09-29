@@ -100,6 +100,33 @@ describe('pickCleanupBinding', () => {
     expect(await pickCleanupBinding(client)).toEqual({ provider: 'ollama', model: 'llama3' });
   });
 
+  it('breaks a tier tie by reasoning depth, and ranks an unknown tier or depth last', async () => {
+    const { client } = db(
+      [providerRow('openai', 'OPENAI_API_KEY')],
+      [
+        modelRow('openai', 'a-unknown-tier', 'mystery', 'very_high'),
+        modelRow('openai', 'b-worker-unknown-depth', 'worker', 'mystery'),
+        modelRow('openai', 'c-worker-medium', 'worker', 'medium'),
+        modelRow('openai', 'd-control', 'control_plane', 'very_high'),
+      ]
+    );
+
+    // Worker tier first; within it, a known depth beats an unknown one.
+    expect(await pickCleanupBinding(client)).toEqual({
+      provider: 'openai',
+      model: 'c-worker-medium',
+    });
+  });
+
+  it('prefers a control-plane model to one of an unknown tier', async () => {
+    const { client } = db(
+      [providerRow('openai', 'OPENAI_API_KEY')],
+      [modelRow('openai', 'a-unknown', 'mystery'), modelRow('openai', 'z-control', 'control_plane')]
+    );
+
+    expect(await pickCleanupBinding(client)).toEqual({ provider: 'openai', model: 'z-control' });
+  });
+
   it('returns null when no reachable model is tool-capable', async () => {
     const { client } = db([providerRow('openai', 'OPENAI_API_KEY')], []);
 
