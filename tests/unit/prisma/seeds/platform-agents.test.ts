@@ -64,11 +64,32 @@ describe('021-platform-agents', () => {
       unchanged: ['a'],
       deactivated: [],
       refused: [{ slug: 'quiz-master', reason: 'tenant-agent' }],
+      knowledge: 'present',
     });
 
     await platformAgentsSeed.run(ctx);
 
-    expect(logger.info).toHaveBeenCalledWith(expect.stringMatching(/install: .*, 1 refused$/));
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringMatching(/install: .*, 1 refused; patterns knowledge present$/)
+    );
+  });
+
+  it('reports how the org’s copy of the patterns knowledge stood (t-726)', async () => {
+    const { ctx, logger } = makeCtx(['install']);
+    mockReconcile.mockResolvedValue({
+      created: [],
+      updated: [],
+      unchanged: ['a'],
+      deactivated: [],
+      refused: [],
+      knowledge: 'failed',
+    });
+
+    await platformAgentsSeed.run(ctx);
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.stringMatching(/install: .* deactivated; patterns knowledge failed$/)
+    );
   });
 
   it('logs one org’s failure and carries on with the rest', async () => {
