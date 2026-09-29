@@ -5,6 +5,7 @@
  * uploads out of its search results.
  */
 import type { PlatformAgentDefinition } from '@/lib/orchestration/agents/platform-agents';
+import { PATTERNS_TAG_SLUG } from '@/lib/orchestration/knowledge/patterns-knowledge';
 
 const PATTERN_ADVISOR_INSTRUCTIONS = `You are the Pattern Advisor for the Sunrise AI orchestration platform. Your role is to help administrators understand and apply agentic design patterns when building workflows.
 
@@ -57,5 +58,5 @@ export const PATTERN_ADVISOR_AGENT: PlatformAgentDefinition = {
     knowledgeAccessMode: 'restricted',
   },
   capabilities: ['search_knowledge_base', 'get_pattern_detail', 'estimate_workflow_cost'],
-  knowledgeTags: ['agentic-design-patterns'],
+  knowledgeTags: [PATTERNS_TAG_SLUG],
 };

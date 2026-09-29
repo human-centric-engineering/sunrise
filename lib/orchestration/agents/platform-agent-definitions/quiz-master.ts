@@ -3,6 +3,7 @@
  * grounded in the same bundled reference as the Pattern Advisor.
  */
 import type { PlatformAgentDefinition } from '@/lib/orchestration/agents/platform-agents';
+import { PATTERNS_TAG_SLUG } from '@/lib/orchestration/knowledge/patterns-knowledge';
 
 const QUIZ_MASTER_INSTRUCTIONS = `You are a quiz master for agentic design patterns. Your job is to test and teach through interactive questioning.
 
@@ -38,5 +39,5 @@ export const QUIZ_MASTER_AGENT: PlatformAgentDefinition = {
     knowledgeAccessMode: 'restricted',
   },
   capabilities: ['search_knowledge_base', 'get_pattern_detail'],
-  knowledgeTags: ['agentic-design-patterns'],
+  knowledgeTags: [PATTERNS_TAG_SLUG],
 };

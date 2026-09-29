@@ -142,7 +142,7 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
   },
   {
     file: 'lib/orchestration/knowledge/seeder.ts',
-    calls: 3,
+    calls: 2,
     why: 'embedding backfill batches',
   },
   {

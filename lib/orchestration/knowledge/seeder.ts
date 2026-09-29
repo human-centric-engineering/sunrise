@@ -120,9 +120,12 @@ export interface MaterialiseOptions {
  *
  * **Idempotent by slug.** The slug is the document's per-org key and carries
  * its content hash, so an org that holds this version is left alone. An
- * earlier version is left alone too (`'outdated'`). A copy left `failed` by an
- * old, non-transactional seed is removed and written again. Document, chunks
- * and tag link are one transaction, so a failure leaves no partial copy.
+ * earlier version is left alone too (`'outdated'`): any `scope: 'system'`
+ * document, whatever an admin renamed it to, since only this seeder writes
+ * that scope and every copy holds the same fixed chunk keys. A copy left
+ * `failed` by an old, non-transactional seed is removed and written again.
+ * Document, chunks and tag link are one transaction, so a failure leaves no
+ * partial copy.
  *
  * Runs in the caller's org scope; every row it writes is stamped with it.
  */
@@ -141,14 +144,13 @@ export async function materialisePatternsKnowledge(
   // identically and grants on it round-trip.
   const slug = buildDocumentSlugBase(PATTERNS_DOCUMENT_NAME, fileHash);
 
-  // This version by its key, and any earlier one: only the platform writes
-  // `scope: 'system'`.
+  // This version by its key, and any earlier one by its scope, which only
+  // the platform writes: not by name, which an admin can change. An earlier
+  // copy missed here would meet this one's chunk keys on every run.
   const copies = await db.aiKnowledgeDocument.findMany({
-    where: {
-      orgId,
-      OR: [{ slug }, { scope: 'system', name: PATTERNS_DOCUMENT_NAME }],
-    },
+    where: { orgId, OR: [{ slug }, { scope: 'system' }] },
     select: { id: true, slug: true, status: true },
+    orderBy: { createdAt: 'asc' },
   });
 
   const failed = copies.filter((c) => c.status === 'failed').map((c) => c.id);
@@ -207,44 +209,35 @@ export async function materialisePatternsKnowledge(
         },
       });
 
-      // Raw INSERTs are the one create shape the tenancy chokepoint cannot
-      // stamp: the chunk's org is its document's, read in the same statement (§107).
-      for (const chunk of chunks) {
-        await tx.$executeRawUnsafe(
-          `INSERT INTO ai_knowledge_chunk (
-            id, "chunkKey", "documentId", content,
-            "chunkType", "patternNumber", "patternName",
-            section, keywords, "estimatedTokens", metadata, "orgId"
-          ) VALUES (
-            gen_random_uuid()::text, $1, $2, $3,
-            $4, $5, $6, $7, $8, $9, $10::jsonb,
-            (SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)
-          )`,
-          chunk.id,
-          document.id,
-          chunk.content,
-          chunk.metadata.type,
-          chunk.metadata.pattern_number ?? null,
-          chunk.metadata.pattern_name ?? null,
-          chunk.metadata.section_title ?? chunk.metadata.section ?? null,
-          chunk.metadata.keywords ?? null,
-          chunk.estimated_tokens,
-          JSON.stringify({
+      // One statement, stamped with the org by the chokepoint. No embedding
+      // is written, so nothing here needs the raw `::vector` INSERT uploads use.
+      await tx.aiKnowledgeChunk.createMany({
+        data: chunks.map((chunk) => ({
+          chunkKey: chunk.id,
+          documentId: document.id,
+          content: chunk.content,
+          chunkType: chunk.metadata.type,
+          patternNumber: chunk.metadata.pattern_number ?? null,
+          patternName: chunk.metadata.pattern_name ?? null,
+          section: chunk.metadata.section_title ?? chunk.metadata.section ?? null,
+          keywords: chunk.metadata.keywords ?? null,
+          estimatedTokens: chunk.estimated_tokens,
+          metadata: {
             complexity: chunk.metadata.complexity ?? null,
             relatedPatterns: chunk.metadata.related_patterns ?? null,
             patternId: chunk.metadata.pattern_id ?? null,
             source: chunk.metadata.source ?? null,
-          })
-        );
-      }
+          },
+        })),
+      });
 
       await tx.aiKnowledgeDocumentTag.create({
         data: { documentId: document.id, tagId: tag.id },
       });
       return document.id;
     },
-    // 191 single-row inserts: past the 5 s default on a remote database.
-    { timeout: 60_000 }
+    // Past the 5 s default for a 191-row insert on a slow remote database.
+    { timeout: 30_000 }
   );
 
   log.info('Patterns knowledge written (chunks only, no embeddings)', {

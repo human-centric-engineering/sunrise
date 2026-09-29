@@ -6,7 +6,7 @@
  * - Idempotent by slug; an earlier version is left in place; a failed copy is replaced
  * - Document, chunks and tag link in one transaction, through the caller's client
  * - Uploader: service account, then any user, else a descriptive error
- * - Chunk INSERT shape (no embedding column; org read from the document)
+ * - Chunks written in one createMany, stamped by the chokepoint, with no embedding
  *
  * loadPatternsChunks / PATTERNS_DOCUMENT_SLUG:
  * - The bundled chunk file parses, and the constant is the slug it produces
@@ -47,6 +47,7 @@ function makeClient() {
     },
     aiKnowledgeChunk: {
       count: vi.fn(),
+      createMany: vi.fn(),
     },
     knowledgeTag: {
       upsert: vi.fn(),
@@ -170,7 +171,7 @@ function armFirstCopy(client: Client): Client {
   client.knowledgeTag.upsert.mockResolvedValue({ id: 'tag-patterns', slug: PATTERNS_TAG_SLUG });
   client.$transaction.mockImplementation(async (fn: (t: Client) => Promise<unknown>) => fn(tx));
   tx.aiKnowledgeDocument.create.mockResolvedValue({ id: 'doc-b' });
-  tx.$executeRawUnsafe.mockResolvedValue(1);
+  tx.aiKnowledgeChunk.createMany.mockResolvedValue({ count: 1 });
   tx.aiKnowledgeDocumentTag.create.mockResolvedValue({});
   vi.mocked(getOrCreateDefaultKnowledgeBase).mockResolvedValue('kb-org-b');
   return tx;
@@ -214,18 +215,18 @@ describe('materialisePatternsKnowledge', () => {
     expect(embedBatch).not.toHaveBeenCalled();
   });
 
-  it('looks for the org’s copy by its slug, and for any earlier one the platform wrote', async () => {
+  it('looks for the org’s copy by its slug, and for any earlier one by the scope only the platform writes', async () => {
     const chunks = [makeSeedChunk()];
     armFirstCopy(db);
 
     await inOrgB(() => materialisePatternsKnowledge(chunks));
 
+    // Not by name: an admin can rename a copy, and an earlier copy missed
+    // here would meet this one's fixed chunk keys on every run.
     expect(db.aiKnowledgeDocument.findMany).toHaveBeenCalledWith({
-      where: {
-        orgId: ORG_B,
-        OR: [{ slug: slugFor(chunks) }, { scope: 'system', name: PATTERNS_DOCUMENT_NAME }],
-      },
+      where: { orgId: ORG_B, OR: [{ slug: slugFor(chunks) }, { scope: 'system' }] },
       select: { id: true, slug: true, status: true },
+      orderBy: { createdAt: 'asc' },
     });
   });
 
@@ -287,11 +288,13 @@ describe('materialisePatternsKnowledge', () => {
     await inOrgB(() => materialisePatternsKnowledge(chunks));
 
     expect(db.$transaction).toHaveBeenCalledTimes(1);
-    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 60_000 });
-    expect(tx.$executeRawUnsafe).toHaveBeenCalledTimes(2);
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), { timeout: 30_000 });
+    // One statement for every chunk, not one per chunk.
+    expect(tx.aiKnowledgeChunk.createMany).toHaveBeenCalledTimes(1);
+    expect(tx.aiKnowledgeChunk.createMany.mock.calls[0][0].data).toHaveLength(2);
     // Nothing written on the outer client, where a failure would strand it.
     expect(db.aiKnowledgeDocument.create).not.toHaveBeenCalled();
-    expect(db.$executeRawUnsafe).not.toHaveBeenCalled();
+    expect(db.aiKnowledgeChunk.createMany).not.toHaveBeenCalled();
     expect(db.aiKnowledgeDocumentTag.create).not.toHaveBeenCalled();
   });
 
@@ -342,36 +345,32 @@ describe('materialisePatternsKnowledge', () => {
     expect(db.$transaction).not.toHaveBeenCalled();
   });
 
-  it('inserts chunks without the embedding column, taking the org from the document', async () => {
+  it('writes each chunk under its fixed key with no embedding, leaving the org to the chokepoint', async () => {
     const chunk = makeSeedChunk();
     const tx = armFirstCopy(db);
 
     await inOrgB(() => materialisePatternsKnowledge([chunk]));
 
-    const call = tx.$executeRawUnsafe.mock.calls[0];
-    const sql = String(call[0]);
-    expect(sql).not.toContain('embedding');
-    expect(sql).not.toContain('::vector');
-    expect(sql).toContain('(SELECT "orgId" FROM ai_knowledge_document WHERE id = $2)');
-    // Positional params: [sql, $1=chunkKey, $2=docId, $3=content,
-    //   $4=chunkType, $5=patternNumber, $6=patternName,
-    //   $7=section, $8=keywords, $9=estimatedTokens, $10=metadata]
-    expect(call.slice(1, 10)).toEqual([
-      chunk.id,
-      'doc-b',
-      chunk.content,
-      chunk.metadata.type,
-      chunk.metadata.pattern_number,
-      chunk.metadata.pattern_name,
-      chunk.metadata.section_title,
-      chunk.metadata.keywords,
-      chunk.estimated_tokens,
-    ]);
-    expect(JSON.parse(String(call[10]))).toEqual({
-      complexity: 'medium',
-      relatedPatterns: ['pattern-2'],
-      patternId: 'tp-001',
-      source: 'handbook',
+    expect(tx.aiKnowledgeChunk.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          chunkKey: chunk.id,
+          documentId: 'doc-b',
+          content: chunk.content,
+          chunkType: chunk.metadata.type,
+          patternNumber: chunk.metadata.pattern_number,
+          patternName: chunk.metadata.pattern_name,
+          section: chunk.metadata.section_title,
+          keywords: chunk.metadata.keywords,
+          estimatedTokens: chunk.estimated_tokens,
+          metadata: {
+            complexity: 'medium',
+            relatedPatterns: ['pattern-2'],
+            patternId: 'tp-001',
+            source: 'handbook',
+          },
+        },
+      ],
     });
   });
 
@@ -387,8 +386,12 @@ describe('materialisePatternsKnowledge', () => {
 
     await inOrgB(() => materialisePatternsKnowledge([minimal]));
 
-    const call = tx.$executeRawUnsafe.mock.calls[0];
-    expect(call.slice(5, 9)).toEqual([null, null, null, null]);
+    expect(tx.aiKnowledgeChunk.createMany.mock.calls[0][0].data[0]).toMatchObject({
+      patternNumber: null,
+      patternName: null,
+      section: null,
+      keywords: null,
+    });
   });
 });
 

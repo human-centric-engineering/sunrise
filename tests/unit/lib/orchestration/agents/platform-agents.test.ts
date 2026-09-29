@@ -23,7 +23,10 @@ const mockInit = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/app/platform-agents', () => ({ initAppPlatformAgents: mockInit }));
 
 /** The patterns document's slug, which a new `chunks.json` changes (t-726). */
-const patternsKnowledge = vi.hoisted(() => ({ PATTERNS_DOCUMENT_SLUG: 'patterns-aaaaaaaa' }));
+const patternsKnowledge = vi.hoisted(() => ({
+  PATTERNS_DOCUMENT_SLUG: 'patterns-aaaaaaaa',
+  PATTERNS_TAG_SLUG: 'agentic-design-patterns',
+}));
 vi.mock('@/lib/orchestration/knowledge/patterns-knowledge', () => patternsKnowledge);
 
 import {
