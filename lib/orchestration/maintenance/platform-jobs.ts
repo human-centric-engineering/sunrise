@@ -222,10 +222,12 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
     run: () => reconcilePlatformAgentsIfStale(requireOrgId()),
     // A run that wrote nothing is not work: an org held back by a missing
     // capability or tag is re-read every run until it appears, and counting
-    // that would keep the idle gate from ever arming.
+    // that would keep the idle gate from ever arming. Writing an org's copy of
+    // the patterns knowledge is work — after a deploy it may be all a run did.
     foundWork: (r) =>
       r.result !== undefined &&
-      r.result.created.length + r.result.updated.length + r.result.deactivated.length > 0,
+      (r.result.created.length + r.result.updated.length + r.result.deactivated.length > 0 ||
+        r.result.knowledge === 'created'),
   }),
 ];
 

@@ -74,6 +74,7 @@ import {
 } from '@/lib/orchestration/agents/platform-agents';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
+import { PATTERNS_DOCUMENT_SLUG } from '@/lib/orchestration/knowledge/patterns-knowledge';
 import {
   loadPatternsChunks,
   materialisePatternsKnowledge,
@@ -418,8 +419,16 @@ async function reconcilePatternsKnowledge(
     const { outcome } = await materialisePatternsKnowledge(await loadPatternsChunks(), { db, log });
     return outcome;
   } catch (err) {
-    if (isUniqueViolation(err)) {
-      // A concurrent run wrote the copy first: the document's per-org slug key.
+    // A concurrent run that wrote the copy first meets the document's per-org
+    // slug key. Other unique violations (a chunk key held by another document,
+    // a second default knowledge base) repeat on every run, so a violation is
+    // taken for a race only when the copy is there to show for it.
+    const raced =
+      isUniqueViolation(err) &&
+      (await db.aiKnowledgeDocument
+        .findFirst({ where: { orgId, slug: PATTERNS_DOCUMENT_SLUG }, select: { id: true } })
+        .catch(() => null)) !== null;
+    if (raced) {
       log.info('Patterns knowledge written concurrently — left to the next run', { orgId });
     } else {
       log.error('Patterns knowledge not written — the next run retries', {

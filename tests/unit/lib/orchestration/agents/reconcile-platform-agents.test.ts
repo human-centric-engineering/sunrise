@@ -76,6 +76,7 @@ const fake = vi.hoisted(() => {
     /** Every mutating call, in order: `model.method`. */
     writes: [] as string[],
     failOn: null as string | null,
+    patternsCopyHeld: false,
     orgOf: () => 'install' as string,
   };
   const id = (p: string) => `${p}-${++state.seq}`;
@@ -212,6 +213,10 @@ const fake = vi.hoisted(() => {
         return row;
       },
     },
+    /** The org's copy of the patterns knowledge, as a race's re-read finds it. */
+    aiKnowledgeDocument: {
+      findFirst: async () => (state.patternsCopyHeld ? { id: 'doc-patterns' } : null),
+    },
     aiProviderConfig: { findMany: async () => state.providers },
     aiProviderModel: { findMany: async () => state.models },
     $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
@@ -313,6 +318,7 @@ beforeEach(() => {
   s.models = [];
   s.writes = [];
   s.failOn = null;
+  s.patternsCopyHeld = false;
   // The org the data layer would stamp: whatever the REAL context holds.
   s.orgOf = () => getTenantContext()?.orgId ?? 'NO-CONTEXT';
   registry.definitions = [definition('advisor'), definition('judge')];
@@ -703,6 +709,7 @@ describe('reconcilePlatformAgents', () => {
         code: 'P2002',
         clientVersion: 'test',
       });
+      fake.state.patternsCopyHeld = true; // the other run's copy is there
 
       const result = await reconcilePlatformAgents('install');
 
@@ -713,6 +720,26 @@ describe('reconcilePlatformAgents', () => {
         expect.objectContaining({ orgId: 'install' })
       );
       expect(mockLogger.error).not.toHaveBeenCalled(); // test-review:accept no_arg_called — a race is not an error
+    });
+
+    it('logs a unique violation with no copy to show for it as an error: it repeats every run', async () => {
+      // E.g. another document of the org's holds the fixed chunk keys.
+      knowledge.error = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      });
+
+      const result = await reconcilePlatformAgents('install');
+
+      expect(result.knowledge).toBe('failed');
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringMatching(/Patterns knowledge not written/),
+        expect.objectContaining({ orgId: 'install' })
+      );
+      expect(mockLogger.info).not.toHaveBeenCalledWith(
+        expect.stringMatching(/written concurrently/),
+        expect.anything()
+      );
     });
 
     it('records the marker when the org holds an earlier copy: it is left, not retried', async () => {

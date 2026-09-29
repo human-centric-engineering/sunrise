@@ -411,6 +411,23 @@ describe('runDuePlatformJobs — foundWork', () => {
         }),
     ],
     [
+      'platformAgents — an org got its copy of the patterns knowledge and nothing else',
+      () =>
+        vi.mocked(reconcilePlatformAgentsIfStale).mockResolvedValue({
+          reconciled: true,
+          result: {
+            orgId: INSTALL_ORG_ID,
+            created: [],
+            updated: [],
+            unchanged: ['cleanup-agent'],
+            deactivated: [],
+            refused: [],
+            missing: { capabilities: [], knowledgeTags: [] },
+            knowledge: 'created',
+          },
+        }),
+    ],
+    [
       'evaluationRuns — a claimed run needs the next time-slice',
       () =>
         vi.mocked(processPendingEvaluationRuns).mockResolvedValue({
