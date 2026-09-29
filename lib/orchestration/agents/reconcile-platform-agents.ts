@@ -353,11 +353,14 @@ export async function reconcilePlatformAgents(
       if (!row || !row.isSystem || row.deletedAt !== null) continue;
       retired.push(slug);
       if (!row.isActive) continue;
-      // Still registered means it was narrowed out of this org's audience
-      // (t-733's install-only pair), not removed; the version row says which.
-      const summary = getPlatformAgent(slug)
-        ? 'No longer one of this org’s platform agents (its audience changed)'
-        : 'Removed from the platform agent registry';
+      // Removed from the registry, or still in it but no longer for this org
+      // (t-733's install-only pair): the version row says which.
+      const definition = getPlatformAgent(slug);
+      const summary = !definition
+        ? 'Removed from the platform agent registry'
+        : definition.audience === 'install-only'
+          ? 'Now the install org’s only, so switched off here'
+          : 'No longer one of this org’s platform agents';
       try {
         await deactivateInstance(db, row, owner.id, summary);
       } catch (err) {

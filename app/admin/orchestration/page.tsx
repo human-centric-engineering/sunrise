@@ -253,7 +253,7 @@ export default async function OrchestrationDashboardPage() {
     getCostSummary(),
     getBudgetAlerts(),
     // The org's own agents: every org also has its platform agents (§116), so
-    // counting them would open a new org on "14 agents" (setup state excludes
+    // counting them would open a new org on "12 agents" (setup state excludes
     // them the same way).
     getPaginatedTotal(`${API.ADMIN.ORCHESTRATION.AGENTS}?isSystem=false`),
     getDashboardStats(),

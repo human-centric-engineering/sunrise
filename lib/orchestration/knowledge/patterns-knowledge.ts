@@ -3,10 +3,11 @@
  *
  * The pattern advisor and the quiz master search one document, "Agentic
  * Design Patterns", built from the committed
- * `prisma/seeds/data/chunks/chunks.json`. Every org holds its own copy, which
- * the platform-agent reconcile materialises beside the agents
- * (`materialisePatternsKnowledge` in `seeder.ts`); it is then ordinary tenant
- * knowledge.
+ * `prisma/seeds/data/chunks/chunks.json`. A copy belongs to one org. The
+ * platform-agent reconcile writes one into an org one of whose agents declares
+ * the patterns tag, which in core is the install org alone (t-733), with
+ * `materialisePatternsKnowledge` in `seeder.ts`. It is then ordinary knowledge
+ * of that org's.
  *
  * Constants only, so the platform-agent registry can fold the document's
  * identity into its digest without loading the chunk file.

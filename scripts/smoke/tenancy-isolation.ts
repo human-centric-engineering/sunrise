@@ -92,6 +92,10 @@ import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/ru
 import { hashDatasetCases } from '@/lib/orchestration/evaluations/datasets/hash';
 import { platformAgentsForOrg } from '@/lib/orchestration/agents/platform-agents';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities/dispatcher';
+import {
+  invalidateAgentAccess,
+  resolveAgentDocumentAccess,
+} from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { registerBuiltInCapabilities } from '@/lib/orchestration/capabilities/registry';
 import {
   embedChunks,
@@ -1219,29 +1223,34 @@ async function main(): Promise<void> {
     // is all that keeps A's chunks out. The fake embedding keys on a text's
     // opening, so a query opening like a chunk scores 1 against it.
     await runAsOrg(a.orgId, () => embedChunks());
-    const found = await runAsOrg(b.orgId, () =>
-      searchKnowledge(patterns[0].content.slice(0, 200), undefined, 10, 1)
-    );
-    const readIds = found.map((r) => r.chunk.id);
-    const read = await runAsSystem('smoke: chunks B’s search read', () =>
-      prisma.aiKnowledgeChunk.findMany({
-        where: { id: { in: readIds } },
-        select: { orgId: true, documentId: true },
-      })
-    );
-    check(
-      readIds.length > 0 && read.length === readIds.length,
-      `B's search retrieved ${readIds.length} chunks`
-    );
-    check(
-      read.every((c) => c.orgId === b.orgId && c.documentId === copyB?.id),
-      'every chunk it read is from B’s own copy and carries B — none is A’s'
+    const query = patterns[0].content.slice(0, 200);
+    /** Two checks on chunks `who` read: some, and every one from B's own copy. */
+    const onlyBsCopy = async (who: string, ids: string[], ok = true): Promise<void> => {
+      const read = await runAsSystem(`smoke: chunks ${who} read`, () =>
+        prisma.aiKnowledgeChunk.findMany({
+          where: { id: { in: ids } },
+          select: { orgId: true, documentId: true },
+        })
+      );
+      check(
+        ok && ids.length > 0 && read.length === ids.length,
+        `${who} retrieved ${ids.length} chunks`
+      );
+      check(
+        read.every((c) => c.orgId === b.orgId && c.documentId === copyB?.id),
+        `every chunk ${who} read is from B’s own copy and carries B — none is A’s`
+      );
+    };
+    const found = await runAsOrg(b.orgId, () => searchKnowledge(query, undefined, 10, 1));
+    await onlyBsCopy(
+      'B’s search',
+      found.map((r) => r.chunk.id)
     );
 
-    // The same through an agent's tool call, in restricted mode: B's own
-    // agent, granted the patterns tag, runs `search_knowledge_base` the way
-    // the advisor did — its grants resolved, and system-scope documents
-    // passed through, in B.
+    // Through an agent in restricted mode: B's own agent, granted the patterns
+    // tag. Its access resolves the tag to documents in B (checked directly:
+    // the search below would pass system-scope documents through either way),
+    // and `search_knowledge_base` runs the way the advisor's did.
     const patternsTag = await prisma.knowledgeTag.findUnique({
       where: { slug: PATTERNS_TAG_SLUG },
       select: { id: true },
@@ -1256,32 +1265,33 @@ async function main(): Promise<void> {
         data: { agentId: b.agentId, tagId: patternsTag.id },
       });
     });
+    invalidateAgentAccess(b.agentId);
+    const access = await runAsOrg(b.orgId, () => resolveAgentDocumentAccess(b.agentId));
+    check(
+      access.mode === 'restricted' &&
+        copyB !== undefined &&
+        access.documentIds.includes(copyB.id) &&
+        !access.documentIds.includes(copyA?.id ?? 'none'),
+      'the tag grant resolves, in B, to B’s copy and not A’s'
+    );
     registerBuiltInCapabilities();
     const toolSearch = await runAsOrg(b.orgId, () =>
       capabilityDispatcher.dispatch(
         'search_knowledge_base',
-        { query: patterns[0].content.slice(0, 200) },
-        { userId: b.ownerId, agentId: b.agentId }
+        { query },
+        {
+          userId: b.ownerId,
+          agentId: b.agentId,
+        }
       )
     );
     const toolFound = z
       .object({ results: z.array(z.object({ chunkId: z.string() })) })
       .safeParse(toolSearch.data);
-    const toolIds = toolFound.success ? toolFound.data.results.map((r) => r.chunkId) : [];
-    const toolRead = await runAsSystem('smoke: chunks B’s agent read', () =>
-      prisma.aiKnowledgeChunk.findMany({
-        where: { id: { in: toolIds } },
-        select: { orgId: true, documentId: true },
-      })
-    );
-    check(
-      toolSearch.success && toolIds.length > 0 && toolRead.length === toolIds.length,
-      `B's restricted agent's search_knowledge_base retrieved ${toolIds.length} chunks` +
-        (toolSearch.success ? '' : ` (${toolSearch.error?.message ?? 'failed'})`)
-    );
-    check(
-      toolRead.every((c) => c.orgId === b.orgId && c.documentId === copyB?.id),
-      'every chunk the tool read is from B’s own copy — none is A’s'
+    await onlyBsCopy(
+      `B’s restricted agent’s search_knowledge_base${toolSearch.success ? '' : ` (${toolSearch.error?.message ?? 'failed'})`}`,
+      toolFound.success ? toolFound.data.results.map((r) => r.chunkId) : [],
+      toolSearch.success
     );
 
     if (failures > 0) throw new Error(`${failures} check(s) failed`);

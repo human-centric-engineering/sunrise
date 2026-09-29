@@ -650,7 +650,7 @@ describe('reconcilePlatformAgents', () => {
     expect(placed.isActive).toBe(false);
     // Still registered, so its history says why honestly: not "removed".
     expect(fake.state.versions.filter((v) => v.agentId === placed.id).at(-1)?.changeSummary).toBe(
-      'No longer one of this org’s platform agents (its audience changed)'
+      'Now the install org’s only, so switched off here'
     );
     expect(agent('judge', ORG_B)?.isActive).toBe(true);
     // Kept in the marker, so every later reconcile keeps it switched off.

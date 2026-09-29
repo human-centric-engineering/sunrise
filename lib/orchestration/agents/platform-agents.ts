@@ -276,8 +276,10 @@ export function platformAgentsForOrg(orgId: string): readonly PlatformAgentDefin
 
 /**
  * A digest of everything a reconcile writes from: every definition, the
- * baseline, and the version of the patterns knowledge each org gets a copy of
- * (its document slug carries the content hash). An org whose stored digest
+ * baseline, and the version of the patterns knowledge the reconcile writes
+ * where an agent declares its tag (its document slug carries the content
+ * hash). One digest for every org, so a knowledge edit reconciles an org that
+ * holds no copy too; that run writes nothing. An org whose stored digest
  * differs is behind the running code and is reconciled by the maintenance job.
  *
  * `defaultBinding` is a function, so only its presence is hashed — it decides

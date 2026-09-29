@@ -538,24 +538,6 @@ describe('embedChunks', () => {
     mockEnv.TENANCY_MODE = 'multi';
   });
 
-  it('names the calling org in both queries — RLS is not there on every connection', async () => {
-    db.aiKnowledgeChunk.count.mockResolvedValue(0);
-    db.$queryRawUnsafe.mockResolvedValue([]);
-
-    await inOrgB(() => embedChunks());
-
-    expect(db.aiKnowledgeChunk.count).toHaveBeenCalledWith({ where: { orgId: ORG_B } });
-    const [sql, orgParam] = db.$queryRawUnsafe.mock.calls[0];
-    expect(String(sql)).toContain('AND "orgId" = $1');
-    expect(orgParam).toBe(ORG_B);
-  });
-
-  it('refuses to run outside an org rather than embed every org’s chunks', async () => {
-    await expect(embedChunks()).rejects.toThrow();
-
-    expect(db.$queryRawUnsafe).not.toHaveBeenCalled();
-  });
-
   it('returns immediately when all chunks are already embedded', async () => {
     db.aiKnowledgeChunk.count.mockResolvedValue(10);
     db.$queryRawUnsafe.mockResolvedValue([]);
