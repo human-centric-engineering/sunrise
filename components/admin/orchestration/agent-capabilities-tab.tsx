@@ -274,7 +274,7 @@ export function AgentCapabilitiesTab({
         >
           This platform agent&apos;s capabilities are set by the platform and updated with each
           release, so they cannot be attached, detached or switched here. You can still set a
-          per-agent rate limit under <strong>Configure</strong>.
+          per-agent config and rate limit under <strong>Configure</strong>.
         </p>
       )}
 
@@ -429,7 +429,6 @@ export function AgentCapabilitiesTab({
           void fetchAll();
         }}
         agentId={agentId}
-        configLocked={bindingsLocked}
       />
     </div>
   );
@@ -440,17 +439,9 @@ interface ConfigureDialogProps {
   agentId: string;
   onOpenChange: (open: boolean) => void;
   onSaved: (opts?: { keepDialogOpen?: boolean }) => void;
-  /** Custom config is the platform's on this agent; only the rate limit is sent. */
-  configLocked?: boolean;
 }
 
-function ConfigureDialog({
-  link,
-  agentId,
-  onOpenChange,
-  onSaved,
-  configLocked = false,
-}: ConfigureDialogProps) {
+function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDialogProps) {
   const [configText, setConfigText] = useState('');
   const [rateLimit, setRateLimit] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
@@ -474,8 +465,10 @@ function ConfigureDialog({
     setSaving(true);
     setError(null);
     try {
-      let customConfig: unknown = undefined;
-      if (!configLocked && configText.trim()) {
+      // Blank clears the config (null), as a blank rate limit clears the
+      // override below.
+      let customConfig: unknown = null;
+      if (configText.trim()) {
         try {
           customConfig = JSON.parse(configText);
         } catch {
@@ -579,7 +572,6 @@ function ConfigureDialog({
               }}
               className="font-mono text-xs"
               placeholder="{}"
-              disabled={configLocked}
             />
           </div>
           <div className="grid gap-2">

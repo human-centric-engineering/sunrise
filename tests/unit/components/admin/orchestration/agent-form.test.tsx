@@ -393,8 +393,12 @@ describe('AgentForm — function coverage gaps', () => {
     });
 
     it('isActive switch is disabled for system agent in edit mode', () => {
-      // Arrange: system agent cannot be deactivated
-      const systemAgent = makeAgent({ isSystem: true });
+      // Arrange: system agent cannot be deactivated. The form learns that from
+      // the edit policy GET /agents/:id returns with every system agent.
+      const systemAgent = {
+        ...makeAgent({ isSystem: true }),
+        platformAgent: { lockedFields: ['isActive'], tunableFields: [], bindingsLocked: true },
+      };
       render(
         <AgentForm
           mode="edit"

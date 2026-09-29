@@ -98,7 +98,7 @@ export const PATCH = withAdminAuth<RouteParams>(async (request, session, { param
   if (platformBindingsLocked(agent)) {
     const current = await prisma.aiAgentCapability.findUnique({
       where: { agentId_capabilityId: { agentId, capabilityId } },
-      select: { isEnabled: true, customConfig: true },
+      select: { isEnabled: true },
     });
     if (!current) {
       throw new NotFoundError(`Capability ${capabilityId} is not attached to agent ${agentId}`);

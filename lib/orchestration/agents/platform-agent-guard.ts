@@ -43,9 +43,10 @@ export type PlatformOwnedCurrentValues = Record<string, unknown> & {
 
 function sameIdSet(a: unknown, b: unknown): boolean {
   if (!Array.isArray(a) || !Array.isArray(b)) return jsonEquals(a, b);
-  if (a.length !== b.length) return false;
+  // As sets: the write path skips duplicates, so [a, b, b] grants [a, b].
   const left = new Set(a);
-  return b.every((id) => left.has(id));
+  const right = new Set(b);
+  return left.size === right.size && [...right].every((id) => left.has(id));
 }
 
 /**
@@ -97,17 +98,19 @@ export function platformBindingsLocked(agent: { isSystem: boolean; slug: string 
 }
 
 /**
- * The binding columns the platform owns on a platform-bound agent: which
- * capabilities are on (the reconcile writes `isEnabled` back) and how each is
- * configured. `customRateLimit` is not here — how fast the org lets the agent
- * run is the org's, as `rateLimitRpm` is on the agent itself.
+ * The binding columns the platform owns on a platform-bound agent: only
+ * `isEnabled`, which the reconcile writes back (it re-enables every declared
+ * binding). The binding set itself is guarded by {@link assertBindingsEditable}.
+ * `customConfig` and `customRateLimit` are the org's: the reconcile never
+ * writes them, so locking them would freeze whatever they hold with no way to
+ * change or clear it.
  */
-export const PLATFORM_OWNED_BINDING_FIELDS = ['isEnabled', 'customConfig'] as const;
+export const PLATFORM_OWNED_BINDING_FIELDS = ['isEnabled'] as const;
 
 /** The platform-owned binding fields an incoming write would actually change. */
 export function changedPlatformOwnedBindingFields(
-  current: { isEnabled: boolean; customConfig: unknown },
-  incoming: { isEnabled?: boolean; customConfig?: unknown }
+  current: { isEnabled: boolean },
+  incoming: { isEnabled?: boolean }
 ): string[] {
   return PLATFORM_OWNED_BINDING_FIELDS.filter((field) => {
     const next = incoming[field];
@@ -121,15 +124,15 @@ export function changedPlatformOwnedBindingFields(
  */
 export function assertBindingFieldsUnchanged(
   agent: { name: string },
-  current: { isEnabled: boolean; customConfig: unknown },
-  incoming: { isEnabled?: boolean; customConfig?: unknown }
+  current: { isEnabled: boolean },
+  incoming: { isEnabled?: boolean }
 ): void {
   const changed = changedPlatformOwnedBindingFields(current, incoming);
   if (changed.length === 0) return;
   throw new ForbiddenError(
     `"${agent.name}" is a platform agent, so ${changed.join(' and ')} on its capabilities ${
       changed.length === 1 ? 'is' : 'are'
-    } set by the platform and cannot be changed here. This org can change customRateLimit.`
+    } set by the platform and cannot be changed here. This org can change customConfig and customRateLimit.`
   );
 }
 
@@ -188,6 +191,17 @@ export function reservedAgentSlugMessage(slug: string): string {
  */
 export function platformSlugWhere(slug: string): { isSystem?: true } {
   return isReservedAgentSlug(slug) ? { isSystem: true } : {};
+}
+
+/**
+ * The same rule for a lookup by a list of slugs: an org's own agent under
+ * any platform slug in the list is excluded, every other match is kept.
+ */
+export function platformSlugsWhere(slugs: readonly string[]): {
+  NOT?: { slug: { in: string[] }; isSystem: false };
+} {
+  const reserved = slugs.filter(isReservedAgentSlug);
+  return reserved.length > 0 ? { NOT: { slug: { in: reserved }, isSystem: false } } : {};
 }
 
 /** Refuse a reserved slug as a validation error on the `slug` field. */

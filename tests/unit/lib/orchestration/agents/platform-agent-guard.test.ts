@@ -28,6 +28,7 @@ import {
   platformAgentEditPolicy,
   platformBindingsLocked,
   platformSlugWhere,
+  platformSlugsWhere,
   type PlatformOwnedCurrentValues,
 } from '@/lib/orchestration/agents/platform-agent-guard';
 import {
@@ -92,6 +93,10 @@ describe('changedPlatformOwnedFields', () => {
     expect(changedPlatformOwnedFields(current(), { grantedTagIds: ['tag-a', 'tag-c'] })).toEqual([
       'grantedTagIds',
     ]);
+    // A repeated id grants nothing new: the write path skips duplicates.
+    expect(
+      changedPlatformOwnedFields(current(), { grantedTagIds: ['tag-a', 'tag-b', 'tag-b'] })
+    ).toEqual([]);
     // topicBoundaries is a list the prompt reads in order, so a reorder counts.
     expect(changedPlatformOwnedFields(current(), { topicBoundaries: ['y', 'x'] })).toEqual([
       'topicBoundaries',
@@ -247,27 +252,21 @@ describe('reserved slugs', () => {
 });
 
 describe('binding fields', () => {
-  const binding = { isEnabled: true, customConfig: { b: 2, a: 1 } };
+  const binding = { isEnabled: true };
 
-  it('refuses a change to isEnabled or customConfig, naming them', () => {
+  it('refuses switching a binding on or off, naming the field', () => {
     expect(() =>
       assertBindingFieldsUnchanged({ name: 'Judge' }, binding, { isEnabled: false })
     ).toThrow(/isEnabled on its capabilities is set by the platform/);
-    expect(() =>
-      assertBindingFieldsUnchanged({ name: 'Judge' }, binding, {
-        isEnabled: false,
-        customConfig: { a: 9 },
-      })
-    ).toThrow(/isEnabled and customConfig on its capabilities are set by the platform/);
   });
 
-  it('accepts unchanged values (config by value) and anything it does not own', () => {
-    expect(() =>
-      assertBindingFieldsUnchanged({ name: 'Judge' }, binding, {
-        isEnabled: true,
-        customConfig: { a: 1, b: 2 },
-      })
-    ).not.toThrow();
+  it('leaves custom config and rate limit to the org: the reconcile never writes them', () => {
+    const body: Record<string, unknown> = {
+      isEnabled: true,
+      customConfig: { forcedUrl: 'https://x.test' },
+      customRateLimit: 5,
+    };
+    expect(() => assertBindingFieldsUnchanged({ name: 'Judge' }, binding, body)).not.toThrow();
     expect(() => assertBindingFieldsUnchanged({ name: 'Judge' }, binding, {})).not.toThrow();
   });
 });
@@ -276,5 +275,17 @@ describe('platformSlugWhere', () => {
   it('constrains a platform slug to system rows and leaves any other slug alone', () => {
     expect(platformSlugWhere('eval-case-generator')).toEqual({ isSystem: true });
     expect(platformSlugWhere('my-agent')).toEqual({});
+  });
+});
+
+describe('platformSlugsWhere', () => {
+  it("excludes an org's own agent under any platform slug in the list", () => {
+    expect(platformSlugsWhere(['summarizer', 'quiz-master', 'cleanup-agent'])).toEqual({
+      NOT: { slug: { in: ['quiz-master', 'cleanup-agent'] }, isSystem: false },
+    });
+  });
+
+  it('adds nothing when no slug is a platform slug', () => {
+    expect(platformSlugsWhere(['summarizer', 'triage'])).toEqual({});
   });
 });

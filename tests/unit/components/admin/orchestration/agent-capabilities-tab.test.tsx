@@ -830,7 +830,7 @@ describe('AgentCapabilitiesTab', () => {
       expect(screen.getByTestId('platform-bindings-note')).toHaveTextContent('set by the platform');
     });
 
-    it('lets Configure set the rate limit, sending no custom config', async () => {
+    it('lets Configure set the rate limit and re-send the config', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockImplementation((url: string) =>
         Promise.resolve(
@@ -851,7 +851,8 @@ describe('AgentCapabilitiesTab', () => {
       await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
       await user.click(screen.getByRole('button', { name: /configure/i }));
 
-      expect(screen.getByRole('textbox', { name: /custom config/i })).toBeDisabled();
+      // The config is the org's: the reconcile never writes it.
+      expect(screen.getByRole('textbox', { name: /custom config/i })).toBeEnabled();
       const rateLimitInput = screen.getByRole('spinbutton', { name: /custom rate limit/i });
       await user.type(rateLimitInput, '12');
       await user.click(screen.getByRole('button', { name: /^save$/i }));
@@ -859,15 +860,16 @@ describe('AgentCapabilitiesTab', () => {
       await waitFor(() => {
         expect(fetchSpy).toHaveBeenCalledWith(
           expect.stringContaining('/capabilities/cap-search'),
-          expect.objectContaining({ body: JSON.stringify({ customRateLimit: 12 }) })
+          expect.objectContaining({
+            body: JSON.stringify({ customConfig: { maxResults: 5 }, customRateLimit: 12 }),
+          })
         );
       });
     });
 
     it('clears a rate-limit override when the field is left blank', async () => {
-      // "Leave blank to inherit" must send null: on a locked binding the rate
-      // limit is the only thing the org may change, so an empty body would be
-      // refused and the override could never be removed.
+      // "Leave blank to inherit" must send null, or the override could never
+      // be removed; a blank config clears the config the same way.
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockImplementation((url: string) =>
         Promise.resolve(
@@ -893,7 +895,9 @@ describe('AgentCapabilitiesTab', () => {
       await waitFor(() => {
         expect(fetchSpy).toHaveBeenCalledWith(
           expect.stringContaining('/capabilities/cap-search'),
-          expect.objectContaining({ body: JSON.stringify({ customRateLimit: null }) })
+          expect.objectContaining({
+            body: JSON.stringify({ customConfig: null, customRateLimit: null }),
+          })
         );
       });
     });

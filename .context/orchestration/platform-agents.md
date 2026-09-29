@@ -78,9 +78,11 @@ accepted and then quietly undone
   a client that sends the whole agent back with only the model changed
   goes through. The org's fields (provider, model, fallbacks, provider
   config, budget, per-turn cap, rate limit, retention) are always writable.
-- **The binding routes** refuse attach, detach, and a change to a
-  binding's `isEnabled` or `customConfig`. A binding's `customRateLimit` is
-  how fast the org lets the agent run, so it stays writable. `mcp-system`'s
+- **The binding routes** refuse attach, detach, and switching a binding on
+  or off (`isEnabled`): the reconcile writes both the set and the state back.
+  A binding's `customConfig` and `customRateLimit` stay writable, because
+  the reconcile never writes them — locking them would freeze whatever they
+  hold with no way to change or clear it. `mcp-system`'s
   bindings are the org's, and every binding route accepts them.
 - **`PATCH /agents/:id/widget-config`** is refused outright; a platform
   agent's widget config is the platform's.
@@ -103,8 +105,11 @@ agent. The reconcile never adopts it, and every lookup of a platform agent
 by slug matches system rows only: the clean-up and `mcp-system` lookups, the
 patterns-tag grant, the quiz master behind saved quiz scores and the Learn
 page, and — through `platformSlugWhere()` — chat's agent load (which the
-judges and the case generator go through) and the workflow `agent_call` and
-`chat_turn` steps. So such an org gets "not found"
+judges and the case generator go through), the workflow `agent_call` and
+`chat_turn` steps, the consumer chat and invite-token routes, and — through
+`platformSlugsWhere()` for a list — the orchestrator's agents, the workflow
+validator's `agent_call` check, and the judge check when an evaluation run
+is created. Validation and runtime therefore agree. So such an org gets "not found"
 rather than its own agent run in the platform agent's place.
 
 ## When the reconcile runs

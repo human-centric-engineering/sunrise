@@ -987,7 +987,7 @@ export function AgentForm({
               id="isActive"
               checked={currentIsActive}
               onCheckedChange={(v) => setValue('isActive', v)}
-              disabled={locked('isActive') || (isEdit && agent?.isSystem)}
+              disabled={locked('isActive')}
             />
           </div>
 

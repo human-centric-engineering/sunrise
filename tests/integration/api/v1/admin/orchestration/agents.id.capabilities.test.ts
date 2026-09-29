@@ -735,10 +735,10 @@ describe('${env:VAR} save-time warnings on capability binding routes', () => {
 
 // ─── Platform agents (§116 t-725) ────────────────────────────────────────────
 //
-// A platform agent's binding set, on/off state and custom config are the
-// platform's (the reconcile writes the first two back), so the routes refuse
-// them; its per-binding rate limit is how fast the org lets it run, so that
-// stays writable. mcp-system's definition leaves its bindings to the org.
+// A platform agent's binding set and on/off state are the platform's (the
+// reconcile writes both back), so the routes refuse them; a binding's custom
+// config and rate limit are never written by the reconcile, so they stay the
+// org's. mcp-system's definition leaves its bindings to the org.
 
 describe('binding routes on a platform agent', () => {
   function makePlatformAgent(slug = 'pattern-advisor') {
@@ -791,20 +791,18 @@ describe('binding routes on a platform agent', () => {
     expect(prisma.aiAgentCapability.update).not.toHaveBeenCalled();
   });
 
-  it('PATCH refuses a new custom config', async () => {
+  it("PATCH accepts a custom config: it is the org's, the reconcile never writes it", async () => {
     vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makePlatformAgent() as never);
     vi.mocked(prisma.aiAgentCapability.findUnique).mockResolvedValue(makeLink());
+    vi.mocked(prisma.aiAgentCapability.update).mockResolvedValue(makeLink());
 
     const response = await PATCH(
-      makeCapIdRequest('PATCH', { customConfig: { forcedUrl: 'https://example.com' } }),
+      makeCapIdRequest('PATCH', { customConfig: null }),
       makeCapIdParams(AGENT_ID, CAPABILITY_ID)
     );
 
-    expect(response.status).toBe(403);
-    expect((await parseJson<{ error: { message: string } }>(response)).error.message).toContain(
-      'customConfig'
-    );
-    expect(prisma.aiAgentCapability.update).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(prisma.aiAgentCapability.update).toHaveBeenCalledOnce();
   });
 
   it('PATCH accepts a rate limit sent beside an unchanged state and config', async () => {

@@ -83,9 +83,10 @@ release process.
   field sent unchanged passes, so a client echoing the whole agent back is
   refused only for what it changed. The org's fields (provider, model,
   fallbacks, provider config, budget, per-turn cap, rate limit, retention)
-  stay writable. The binding routes refuse attach, detach and a change to a
-  binding's `isEnabled` or `customConfig` (its `customRateLimit` stays
-  writable; `mcp-system`'s bindings stay the org's). `PATCH
+  stay writable. The binding routes refuse attach, detach and switching a
+  binding on or off (its `customConfig` and `customRateLimit` stay writable,
+  since the reconcile never writes them; `mcp-system`'s bindings stay the
+  org's). `PATCH
   /agents/:id/widget-config` refuses a system agent. Version restore applies
   only the org's fields and leaves the grants. **A client that edited a
   system agent's prompt or settings through the API now gets a 403** where it
@@ -98,15 +99,18 @@ release process.
   of its own under such a slug keeps it, but the clean-up and `mcp-system`
   lookups, the patterns-tag grant, the quiz master on the Learn page and in
   saved quiz scores, and every load by a platform slug in chat (the judges and
-  case generator) and in workflow `agent_call` and `chat_turn` steps now match
+  case generator), in workflow `agent_call`, `chat_turn` and orchestrator
+  steps, in consumer chat, and in the workflow and evaluation-run validation
+  that checks those slugs, now match
   only system agents, so that org
   gets "not found" instead of its own agent run in the platform's place.
 - **The agent form shows a platform agent's platform-owned fields read-only**
   and never sends them (§116 t-725). Its banner says what the org can change.
-  The capabilities tab keeps only the rate limit editable, except on
-  `mcp-system`; the embed tab keeps its tokens but not the widget appearance,
-  and the instructions history drops Revert. Clearing a binding's rate limit
-  in Configure now removes the override (it used to leave it in place).
+  The capabilities tab keeps Configure (custom config and rate limit) but not
+  attach, detach or the switch, except on `mcp-system`; the embed tab keeps
+  its tokens but not the widget appearance, and the instructions history
+  drops Revert. Leaving the config or rate limit blank in Configure now
+  clears it (a blank used to leave the old value in place).
   **"Audit Models" shows in the install org only**, and the
   dashboard's agent count excludes system agents.
 - **Seeds `005-pattern-advisor`, `008-mcp-server` and `010-model-auditor` no
