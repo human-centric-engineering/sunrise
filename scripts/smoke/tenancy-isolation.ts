@@ -41,7 +41,11 @@
  *     keys as the install org's; one org's embed run embeds its copy and
  *     nobody else's, and its search — plain, and as a restricted agent's
  *     `search_knowledge_base` tool call — with the other org's identical copy
- *     embedded beside it, reads only chunks that carry its org.
+ *     embedded beside it, reads only chunks that carry its org;
+ *   - the built-in workflow templates (§116 t-727): an org made by
+ *     `createOrg` lists all twelve, served from code; one org's custom
+ *     template is not in another's list; and a workflow created from a
+ *     built-in, with its first version, carries the creating org.
  *
  * Run it against a THROWAWAY database, never the dev one — it creates two
  * orgs and enables nothing itself; the sequence around it is the CI job's
@@ -78,6 +82,9 @@ import {
   generateApiKey as generateMcpKey,
 } from '@/lib/orchestration/mcp/auth';
 import { getOrCreateDefaultKnowledgeBase } from '@/lib/orchestration/knowledge/document-manager';
+import { listWorkflowTemplates } from '@/lib/orchestration/workflows/template-catalogue';
+import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
+import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
 import { searchKnowledge } from '@/lib/orchestration/knowledge/search';
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
 import { searchConversationEmbeddings } from '@/lib/orchestration/chat/conversation-semantic-search';
@@ -1314,6 +1321,78 @@ async function main(): Promise<void> {
       toolFound.success ? toolFound.data.results.map((r) => r.chunkId) : [],
       toolSearch.success
     );
+
+    // ── The built-in workflow templates: served from code (§116 t-727) ────
+    console.log('\n[13] workflow templates: every org has the built-ins; its own stay its own');
+    const builtinSlugs = BUILTIN_WORKFLOW_TEMPLATES.map((t) => t.slug);
+    const catalogueIn = (orgId: string) => runAsOrg(orgId, () => listWorkflowTemplates());
+    const customTemplateSlug = `${PREFIX}-tpl-a-${stamp}`;
+    await runAsOrg(a.orgId, () =>
+      prisma.aiWorkflow.create({
+        data: {
+          name: `${PREFIX} template a`,
+          slug: customTemplateSlug,
+          description: 'smoke fixture',
+          isTemplate: true,
+          templateSource: 'custom',
+        },
+      })
+    );
+    const catalogueB = await catalogueIn(b.orgId);
+    const catalogueA = await catalogueIn(a.orgId);
+    const builtinsB = catalogueB.filter((e) => e.source === 'builtin');
+    check(
+      builtinsB.length === 12 &&
+        builtinsB.map((e) => e.slug).join() === builtinSlugs.join() &&
+        builtinsB.every((e) => e.source === 'builtin' && e.workflowDefinition.steps.length > 0),
+      `B, made by createOrg, lists all ${builtinSlugs.length} built-ins with their definitions (${builtinsB.length})`
+    );
+    check(
+      catalogueA.some((e) => e.source === 'custom' && e.slug === customTemplateSlug),
+      'A lists its own custom template'
+    );
+    check(
+      !catalogueB.some((e) => e.slug === customTemplateSlug),
+      'B does not list A’s custom template'
+    );
+    // "Use template" loads the definition onto the canvas; saving it is the
+    // ordinary create path: the row and its v1 in one transaction.
+    const picked = builtinsB[0];
+    const fromTemplateSlug = `${PREFIX}-from-tpl-b-${stamp}`;
+    const fromTemplate = await runAsOrg(b.orgId, () =>
+      prisma.$transaction(async (tx) => {
+        const created = await tx.aiWorkflow.create({
+          data: {
+            name: picked.name,
+            slug: fromTemplateSlug,
+            description: picked.description,
+            patternsUsed: picked.patternsUsed,
+            createdBy: b.ownerId,
+          },
+        });
+        const version = await createInitialVersion({
+          tx,
+          workflowId: created.id,
+          definition: picked.workflowDefinition,
+          userId: b.ownerId,
+        });
+        return { workflow: created, version };
+      })
+    );
+    const versionRow = await runAsOrg(b.orgId, () =>
+      prisma.aiWorkflowVersion.findUnique({
+        where: { id: fromTemplate.version.id },
+        select: { orgId: true },
+      })
+    );
+    check(
+      fromTemplate.workflow.orgId === b.orgId && versionRow?.orgId === b.orgId,
+      `a workflow B creates from ${picked.slug} is B’s, and so is its version`
+    );
+    const seenFromA = await runAsOrg(a.orgId, () =>
+      prisma.aiWorkflow.findMany({ where: { slug: fromTemplateSlug }, select: { id: true } })
+    );
+    check(seenFromA.length === 0, 'A cannot see it');
 
     if (failures > 0) throw new Error(`${failures} check(s) failed`);
     console.log('\n✓ smoke:tenancy-isolation passed');
