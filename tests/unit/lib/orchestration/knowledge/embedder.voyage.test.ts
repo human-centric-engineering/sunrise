@@ -1,19 +1,25 @@
 /**
  * Embedder — Voyage AI Integration Tests
  *
- * Focused tests for the Voyage AI-specific changes to the embedder:
+ * Focused tests for the Voyage-specific behaviour of the embedder:
  *   - resolveProvider() prefers Voyage over local and openai-compatible providers
- *   - callEmbeddingApi() adds input_type and output_dimension for Voyage providers
- *   - callEmbeddingApi() does NOT add Voyage-specific params for non-Voyage providers
- *   - embedText() and embedBatch() accept and pass the optional inputType param
+ *   - the Voyage arm always asks embedMany for `dimensions` (1536) and model voyage-3
+ *   - non-Voyage arms do not get a `dimensions` they would reject
+ *   - embedText() and embedBatch() forward the optional inputType to embedMany
+ *
+ * How Voyage turns those options into `input_type` / `output_dimension`, and
+ * what it defaults `input_type` to, is the provider's job and is tested in
+ * `tests/unit/lib/orchestration/llm/voyage.test.ts`.
  *
  * These tests augment (but do not duplicate) the main embedder.test.ts suite.
  *
  * @see lib/orchestration/knowledge/embedder.ts
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db/client';
+import type { LlmProvider } from '@/lib/orchestration/llm/provider';
+import type { EmbedManyOptions, EmbedManyResult } from '@/lib/orchestration/llm/types';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -43,35 +49,41 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
-// Mock global fetch before SUT import
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  getProvider: vi.fn(),
+  isApiKeyEnvVarSet: vi.fn(),
+}));
 
 // ---------------------------------------------------------------------------
 // Import SUT after mocks
 // ---------------------------------------------------------------------------
 
 const { embedText, embedBatch } = await import('@/lib/orchestration/knowledge/embedder');
+const { getProvider } = await import('@/lib/orchestration/llm/provider-manager');
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+type EmbedManyFn = (texts: string[], options: EmbedManyOptions) => Promise<EmbedManyResult>;
+
 /** A simple 1536-dim zero vector */
 const zeroVec = new Array(1536).fill(0);
 
-/** Build a minimal valid fetch response */
-function makeFetchResponse(
-  data: Array<{ embedding: number[]; index: number }>,
-  ok = true,
-  status = 200
+/** Install a fake provider whose `embedMany` is the returned mock. */
+function installEmbedMany(
+  impl: EmbedManyFn = async (texts) => ({
+    embeddings: texts.map(() => zeroVec),
+    inputTokens: 3,
+  })
 ) {
-  return {
-    ok,
-    status,
-    json: vi.fn().mockResolvedValue({ data }),
-    text: vi.fn().mockResolvedValue(JSON.stringify({ error: 'bad request' })),
-  };
+  const embedMany = vi.fn(impl);
+  vi.mocked(getProvider).mockResolvedValue({
+    name: 'fake',
+    isLocal: false,
+    embedMany,
+  } as unknown as LlmProvider);
+  return embedMany;
 }
 
 /** A minimal AiProviderConfig stub */
@@ -79,6 +91,7 @@ function makeProvider(overrides: Record<string, unknown> = {}) {
   return {
     id: 'prov-1',
     name: 'Test Provider',
+    slug: 'test-provider',
     providerType: 'openai-compatible',
     baseUrl: 'https://api.example.com/v1',
     apiKeyEnvVar: null,
@@ -100,6 +113,7 @@ function makeVoyageProvider(overrides: Record<string, unknown> = {}) {
   return makeProvider({
     id: 'voyage-1',
     name: 'Voyage AI',
+    slug: 'voyage',
     providerType: 'voyage',
     baseUrl: 'https://api.voyageai.com/v1',
     apiKeyEnvVar: 'VOYAGE_API_KEY',
@@ -108,267 +122,147 @@ function makeVoyageProvider(overrides: Record<string, unknown> = {}) {
   });
 }
 
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
+});
+
 // ---------------------------------------------------------------------------
 // resolveProvider() — Voyage preference
 // ---------------------------------------------------------------------------
 
 describe('resolveProvider() Voyage preference (via embedText)', () => {
-  let savedEnv: NodeJS.ProcessEnv;
-
-  beforeEach(() => {
-    vi.resetAllMocks();
-    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
-    savedEnv = process.env;
-    process.env = { ...savedEnv };
-    process.env['VOYAGE_API_KEY'] = 'voy-test-key';
-  });
-
-  afterEach(() => {
-    process.env = savedEnv;
-  });
-
   it('should prefer Voyage provider over a local provider', async () => {
-    // Arrange: Voyage + local both active
-    const voyageProvider = makeVoyageProvider();
-    const localProvider = makeProvider({
-      id: 'local-1',
-      providerType: 'openai-compatible',
-      baseUrl: 'http://ollama.local/v1',
-      isLocal: true,
-      apiKeyEnvVar: null,
-    });
-
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      voyageProvider,
-      localProvider,
+      makeVoyageProvider(),
+      makeProvider({ id: 'local-1', slug: 'ollama', isLocal: true }),
     ] as never);
+    const embedMany = installEmbedMany();
 
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    // Act
     await embedText('hello');
 
-    // Assert: Voyage URL used, not local
-    const [calledUrl] = mockFetch.mock.calls[0] as [string, ...unknown[]];
-    expect(calledUrl).toBe('https://api.voyageai.com/v1/embeddings');
+    expect(getProvider).toHaveBeenCalledTimes(1);
+    expect(getProvider).toHaveBeenCalledWith('voyage');
+    expect(embedMany.mock.calls[0][1]).toMatchObject({ model: 'voyage-3' });
   });
 
-  it('should prefer Voyage provider over an openai-compatible cloud provider', async () => {
-    // Arrange
-    const voyageProvider = makeVoyageProvider();
-    const openaiProvider = makeProvider({
-      id: 'openai-1',
-      providerType: 'openai-compatible',
-      baseUrl: 'https://api.openai.com/v1',
-      apiKeyEnvVar: 'OPENAI_API_KEY',
-      isLocal: false,
-    });
-
+  it('should prefer Voyage provider over an openai-compatible cloud provider, whichever sorts first', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      openaiProvider,
-      voyageProvider,
+      makeProvider({ id: 'openai-1', slug: 'openai', apiKeyEnvVar: 'OPENAI_API_KEY' }),
+      makeVoyageProvider(),
     ] as never);
+    const embedMany = installEmbedMany();
 
-    process.env['OPENAI_API_KEY'] = 'sk-openai';
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    // Act
     await embedText('hello');
 
-    // Assert: Voyage URL wins
-    const [calledUrl] = mockFetch.mock.calls[0] as [string, ...unknown[]];
-    expect(calledUrl).toBe('https://api.voyageai.com/v1/embeddings');
+    expect(getProvider).toHaveBeenCalledWith('voyage');
+    expect(embedMany.mock.calls[0][1]).toMatchObject({ model: 'voyage-3' });
   });
 
   it('should use voyage-3 model when Voyage provider is selected', async () => {
-    // Arrange
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeVoyageProvider()] as never);
+    const embedMany = installEmbedMany();
 
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+    const result = await embedText('test');
 
-    // Act
-    await embedText('test');
-
-    // Assert
-    const [, init] = mockFetch.mock.calls[0] as [string, { body: string }];
-    const body = JSON.parse(init.body) as { model: string };
-    expect(body.model).toBe('voyage-3');
+    expect(embedMany).toHaveBeenCalledWith(['test'], { model: 'voyage-3', dimensions: 1536 });
+    expect(result.model).toBe('voyage-3');
   });
 
-  it('should use the baseUrl from the Voyage provider config when available', async () => {
-    // Arrange: custom base URL
-    const voyageProvider = makeVoyageProvider({
-      baseUrl: 'https://custom.voyageai.com/v1',
-    });
-
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([voyageProvider] as never);
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    // Act
-    await embedText('hello');
-
-    // Assert
-    const [calledUrl] = mockFetch.mock.calls[0] as [string, ...unknown[]];
-    expect(calledUrl).toBe('https://custom.voyageai.com/v1/embeddings');
-  });
-
-  it('should fall back to the default Voyage base URL when baseUrl is null', async () => {
-    // Arrange: Voyage provider without an explicit baseUrl
-    const voyageProvider = makeVoyageProvider({ baseUrl: null });
-
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([voyageProvider] as never);
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    // Act
-    await embedText('hello');
-
-    // Assert: falls back to default Voyage URL
-    const [calledUrl] = mockFetch.mock.calls[0] as [string, ...unknown[]];
-    expect(calledUrl).toBe('https://api.voyageai.com/v1/embeddings');
-  });
-
-  it('should resolve the API key from the Voyage apiKeyEnvVar env variable', async () => {
-    // Arrange
+  it('should select a Voyage row that has no baseUrl, by slug', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      makeVoyageProvider({ apiKeyEnvVar: 'VOYAGE_API_KEY' }),
+      makeVoyageProvider({ slug: 'voyage-default', baseUrl: null }),
     ] as never);
+    const embedMany = installEmbedMany();
 
-    process.env['VOYAGE_API_KEY'] = 'voy-secret-key';
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+    await embedText('hello');
 
-    // Act
-    await embedText('test');
+    // The embedder no longer knows a URL at all: the slug is the whole handoff.
+    expect(getProvider).toHaveBeenCalledWith('voyage-default');
+    expect(embedMany).toHaveBeenCalledTimes(1);
+  });
 
-    // Assert: auth header uses the resolved key
-    const [, init] = mockFetch.mock.calls[0] as [string, { headers: Record<string, string> }];
-    expect(init.headers['Authorization']).toBe('Bearer voy-secret-key');
+  it('should hand the embedder row to the provider manager by its slug, not its name', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      makeVoyageProvider({ name: 'Voyage AI (EU)', slug: 'voyage-eu' }),
+    ] as never);
+    installEmbedMany();
+
+    await embedText('hello');
+
+    expect(getProvider).toHaveBeenCalledWith('voyage-eu');
+    expect(getProvider).not.toHaveBeenCalledWith('Voyage AI (EU)');
   });
 });
 
 // ---------------------------------------------------------------------------
-// callEmbeddingApi() — Voyage-specific body params
+// embedMany options — Voyage vs non-Voyage
 // ---------------------------------------------------------------------------
 
-describe('callEmbeddingApi() Voyage-specific parameters (via embedText)', () => {
-  let savedEnv: NodeJS.ProcessEnv;
-
-  beforeEach(() => {
-    vi.resetAllMocks();
-    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
-    savedEnv = process.env;
-    process.env = { ...savedEnv };
-    process.env['VOYAGE_API_KEY'] = 'voy-key';
-  });
-
-  afterEach(() => {
-    process.env = savedEnv;
-  });
-
-  it('should include input_type in the request body for Voyage providers', async () => {
-    // Arrange
+describe('embedMany options by provider type (via embedText)', () => {
+  it('should always request dimensions 1536 from a Voyage provider', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeVoyageProvider()] as never);
+    const embedMany = installEmbedMany();
 
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    // Act
     await embedText('test');
 
-    // Assert
-    const [, init] = mockFetch.mock.calls[0] as [string, { body: string }];
-    const body = JSON.parse(init.body) as Record<string, unknown>;
-    expect(body).toHaveProperty('input_type');
+    // Must match the pgvector column width.
+    expect(embedMany.mock.calls[0][1]).toMatchObject({ model: 'voyage-3', dimensions: 1536 });
   });
 
-  it('should default input_type to "document" for Voyage when inputType is not supplied', async () => {
-    // Arrange
+  it('should not set inputType for Voyage when the caller supplied none', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeVoyageProvider()] as never);
+    const embedMany = installEmbedMany();
 
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    // Act: no inputType argument
     await embedText('document content');
 
-    // Assert
-    const [, init] = mockFetch.mock.calls[0] as [string, { body: string }];
-    const body = JSON.parse(init.body) as { input_type: string };
-    expect(body.input_type).toBe('document');
+    // The "document" default is the provider's to apply; the embedder stays silent.
+    expect(embedMany).toHaveBeenCalledTimes(1);
+    expect(embedMany.mock.calls[0][1]).toEqual({ model: 'voyage-3', dimensions: 1536 });
+    expect(embedMany.mock.calls[0][1]).not.toHaveProperty('inputType');
   });
 
   it('should pass inputType "query" to Voyage when specified', async () => {
-    // Arrange
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeVoyageProvider()] as never);
+    const embedMany = installEmbedMany();
 
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    // Act
     await embedText('search query', 'query');
 
-    // Assert
-    const [, init] = mockFetch.mock.calls[0] as [string, { body: string }];
-    const body = JSON.parse(init.body) as { input_type: string };
-    expect(body.input_type).toBe('query');
+    expect(embedMany).toHaveBeenCalledWith(['search query'], {
+      model: 'voyage-3',
+      dimensions: 1536,
+      inputType: 'query',
+    });
   });
 
-  it('should include output_dimension: 1536 in the request body for Voyage providers', async () => {
-    // Arrange
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeVoyageProvider()] as never);
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    // Act
-    await embedText('test');
-
-    // Assert: must match the pgvector column width
-    const [, init] = mockFetch.mock.calls[0] as [string, { body: string }];
-    const body = JSON.parse(init.body) as { output_dimension: number };
-    expect(body.output_dimension).toBe(1536);
-  });
-
-  it('should NOT include input_type for non-Voyage openai-compatible providers', async () => {
-    // Arrange: standard OpenAI-compatible provider, not Voyage
+  it('should request dimensions from a plain openai-compatible provider on the default text-embedding-3 model', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      makeProvider({
-        providerType: 'openai-compatible',
-        baseUrl: 'https://api.openai.com/v1',
-        isLocal: false,
-      }),
+      makeProvider({ slug: 'openai-like' }),
     ] as never);
+    const embedMany = installEmbedMany();
 
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    // Act
     await embedText('test');
 
-    // Assert: no Voyage-specific fields
-    const [, init] = mockFetch.mock.calls[0] as [string, { body: string }];
-    const body = JSON.parse(init.body) as Record<string, unknown>;
-    expect(body).not.toHaveProperty('input_type');
-    expect(body).not.toHaveProperty('output_dimension');
+    // text-embedding-3-small IS schema compatible, so width is sent (and no Voyage-only inputType).
+    expect(getProvider).toHaveBeenCalledWith('openai-like');
+    expect(embedMany.mock.calls[0][1]).toEqual({
+      model: 'text-embedding-3-small',
+      dimensions: 1536,
+    });
   });
 
-  it('should NOT include output_dimension for local Ollama providers', async () => {
-    // Arrange
+  it('should not send dimensions to a local Ollama provider', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      makeProvider({
-        providerType: 'openai-compatible',
-        baseUrl: 'http://localhost:11434/v1',
-        isLocal: true,
-        apiKeyEnvVar: null,
-      }),
+      makeProvider({ slug: 'ollama', baseUrl: 'http://localhost:11434/v1', isLocal: true }),
     ] as never);
+    const embedMany = installEmbedMany();
 
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    // Act
     await embedText('test');
 
-    // Assert
-    const [, init] = mockFetch.mock.calls[0] as [string, { body: string }];
-    const body = JSON.parse(init.body) as Record<string, unknown>;
-    expect(body).not.toHaveProperty('input_type');
-    expect(body).not.toHaveProperty('output_dimension');
+    expect(getProvider).toHaveBeenCalledWith('ollama');
+    expect(embedMany).toHaveBeenCalledTimes(1);
+    expect(embedMany.mock.calls[0][1]).toEqual({ model: 'nomic-embed-text' });
+    expect(embedMany.mock.calls[0][1]).not.toHaveProperty('dimensions');
   });
 });
 
@@ -377,47 +271,28 @@ describe('callEmbeddingApi() Voyage-specific parameters (via embedText)', () => 
 // ---------------------------------------------------------------------------
 
 describe('embedText() inputType parameter', () => {
-  let savedEnv: NodeJS.ProcessEnv;
-
-  beforeEach(() => {
-    vi.resetAllMocks();
-    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
-    savedEnv = process.env;
-    process.env = { ...savedEnv };
-    process.env['VOYAGE_API_KEY'] = 'voy-key';
-  });
-
-  afterEach(() => {
-    process.env = savedEnv;
-  });
-
-  it('should accept an optional inputType parameter and pass it to the API for Voyage', async () => {
-    // Arrange
+  it('should accept an optional inputType parameter and pass it to embedMany for Voyage', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeVoyageProvider()] as never);
+    const embedMany = installEmbedMany();
 
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    // Act: call embedText with explicit inputType
     await embedText('a document to index', 'document');
 
-    // Assert
-    const [, init] = mockFetch.mock.calls[0] as [string, { body: string }];
-    const body = JSON.parse(init.body) as { input_type: string };
-    expect(body.input_type).toBe('document');
+    expect(embedMany.mock.calls[0][1]).toEqual({
+      model: 'voyage-3',
+      dimensions: 1536,
+      inputType: 'document',
+    });
   });
 
   it('should return a single embedding vector when called with inputType', async () => {
-    // Arrange
     const expectedVector = [0.1, 0.2, 0.3];
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeVoyageProvider()] as never);
+    installEmbedMany(async () => ({ embeddings: [expectedVector], inputTokens: 2 }));
 
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: expectedVector, index: 0 }]));
-
-    // Act
     const result = await embedText('test', 'query');
 
-    // Assert — embedText returns { embedding, model, provider, ... }
     expect(result.embedding).toEqual(expectedVector);
+    expect(result.provider).toBe('voyage');
   });
 });
 
@@ -426,90 +301,71 @@ describe('embedText() inputType parameter', () => {
 // ---------------------------------------------------------------------------
 
 describe('embedBatch() inputType parameter', () => {
-  let savedEnv: NodeJS.ProcessEnv;
-
-  beforeEach(() => {
-    vi.resetAllMocks();
-    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
-    savedEnv = process.env;
-    process.env = { ...savedEnv };
-    process.env['VOYAGE_API_KEY'] = 'voy-key';
-  });
-
-  afterEach(() => {
-    process.env = savedEnv;
-  });
-
   it('should accept an optional inputType parameter and pass it through for Voyage', async () => {
-    // Arrange
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeVoyageProvider()] as never);
+    const embedMany = installEmbedMany();
 
-    mockFetch.mockResolvedValue(
-      makeFetchResponse([
-        { embedding: [0.1, 0.2], index: 0 },
-        { embedding: [0.3, 0.4], index: 1 },
-      ])
-    );
-
-    // Act
     await embedBatch(['text one', 'text two'], 10, 'query');
 
-    // Assert: Voyage params present and inputType forwarded
-    const [, init] = mockFetch.mock.calls[0] as [string, { body: string }];
-    const body = JSON.parse(init.body) as Record<string, unknown>;
-    expect(body['input_type']).toBe('query');
-    expect(body['output_dimension']).toBe(1536);
+    expect(embedMany).toHaveBeenCalledTimes(1);
+    expect(embedMany).toHaveBeenCalledWith(['text one', 'text two'], {
+      model: 'voyage-3',
+      dimensions: 1536,
+      inputType: 'query',
+    });
   });
 
   it('should return embeddings for all texts in batch when inputType is provided', async () => {
-    // Arrange
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeVoyageProvider()] as never);
-
     const vec1 = [1, 2, 3];
     const vec2 = [4, 5, 6];
+    installEmbedMany(async () => ({ embeddings: [vec1, vec2], inputTokens: 4 }));
 
-    mockFetch.mockResolvedValue(
-      makeFetchResponse([
-        { embedding: vec1, index: 0 },
-        { embedding: vec2, index: 1 },
-      ])
-    );
-
-    // Act
     const results = await embedBatch(['first', 'second'], 10, 'document');
 
-    // Assert
-    expect(results.embeddings).toHaveLength(2);
-    expect(results.embeddings[0]).toEqual(vec1);
-    expect(results.embeddings[1]).toEqual(vec2);
+    expect(results.embeddings).toEqual([vec1, vec2]);
     expect(results.provenance.provider).toBe('voyage');
     expect(results.provenance.model).toBe('voyage-3');
+    expect(results.provenance.dimensions).toBe(1536);
   });
 
-  it('should not include Voyage params in batch calls for non-Voyage providers', async () => {
-    // Arrange: plain OpenAI-compatible provider
+  it('should forward inputType on every chunk of a multi-batch run', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+        makeVoyageProvider(),
+      ] as never);
+      const embedMany = installEmbedMany();
+
+      const promise = embedBatch(['a', 'b', 'c'], 2, 'document');
+      await vi.advanceTimersByTimeAsync(500);
+      await promise;
+
+      expect(embedMany.mock.calls.map((c) => c[0])).toEqual([['a', 'b'], ['c']]);
+      expect(embedMany.mock.calls.map((c) => c[1])).toEqual([
+        { model: 'voyage-3', dimensions: 1536, inputType: 'document' },
+        { model: 'voyage-3', dimensions: 1536, inputType: 'document' },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('should forward inputType to a non-Voyage provider too, leaving the provider to decide what to do with it', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      makeProvider({
-        providerType: 'openai-compatible',
-        baseUrl: 'https://api.openai.com/v1',
-        isLocal: false,
-      }),
+      makeProvider({ slug: 'openai-like' }),
     ] as never);
+    const embedMany = installEmbedMany();
 
-    mockFetch.mockResolvedValue(
-      makeFetchResponse([
-        { embedding: [0.1, 0.2], index: 0 },
-        { embedding: [0.3, 0.4], index: 1 },
-      ])
-    );
-
-    // Act: passing inputType but provider is not Voyage
     await embedBatch(['a', 'b'], 10, 'query');
 
-    // Assert: no Voyage-specific fields in request body
-    const [, init] = mockFetch.mock.calls[0] as [string, { body: string }];
-    const body = JSON.parse(init.body) as Record<string, unknown>;
-    expect(body).not.toHaveProperty('input_type');
-    expect(body).not.toHaveProperty('output_dimension');
+    // Dropping `input_type` for a host that rejects it is the openai-compatible
+    // provider's job now; the embedder does not gate it on provider type.
+    expect(getProvider).toHaveBeenCalledWith('openai-like');
+    expect(embedMany).toHaveBeenCalledWith(['a', 'b'], {
+      model: 'text-embedding-3-small',
+      dimensions: 1536,
+      inputType: 'query',
+    });
   });
 });

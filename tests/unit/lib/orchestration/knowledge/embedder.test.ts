@@ -1,12 +1,18 @@
 /**
  * Embedder Unit Tests
  *
- * Tests for text embedding service: provider resolution, API calls,
- * batching, rate limiting, and response ordering.
+ * The embedder CHOOSES a provider row and a model, then reaches the vendor
+ * through the provider manager's `embedMany` (t-740). These tests pin the
+ * choice and the call: which slug `getProvider` is asked for, and exactly what
+ * `embedMany` is given. HTTP mechanics (URL, auth header, SSRF, redirects,
+ * error bodies, usage parsing, index ordering) belong to the providers and are
+ * tested in `tests/unit/lib/orchestration/llm/{voyage,openai-compatible}.test.ts`.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { prisma } from '@/lib/db/client';
+import type { LlmProvider } from '@/lib/orchestration/llm/provider';
+import type { EmbedManyOptions, EmbedManyResult } from '@/lib/orchestration/llm/types';
 
 // --- Mocks ---
 
@@ -44,36 +50,56 @@ vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
   ),
 }));
 
-// Mock global fetch before importing the SUT so the module picks it up
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+// The embedder's only route to a vendor. `getProvider` hands back a fake whose
+// `embedMany` each test controls; `isApiKeyEnvVarSet` drives the retired
+// bare-key message.
+vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  getProvider: vi.fn(),
+  isApiKeyEnvVarSet: vi.fn(),
+}));
 
 // Import SUT after mocks are in place
 const { embedText, embedBatch, getActiveEmbeddingModelSummary } =
   await import('@/lib/orchestration/knowledge/embedder');
+const { getProvider, isApiKeyEnvVarSet } = await import('@/lib/orchestration/llm/provider-manager');
+const { logger } = await import('@/lib/logging');
+const { NoProviderConfiguredError } = await import('@/lib/orchestration/llm/agent-resolver');
 
-// Helper: build a minimal fetch response
-function makeFetchResponse(
-  data: Array<{ embedding: number[]; index: number }>,
-  ok = true,
-  status = 200
-) {
-  return {
-    ok,
-    status,
-    json: vi.fn().mockResolvedValue({ data }),
-    text: vi.fn().mockResolvedValue(JSON.stringify({ error: 'bad request' })),
-  };
-}
+// --- Fakes ---
+
+type EmbedManyFn = (texts: string[], options: EmbedManyOptions) => Promise<EmbedManyResult>;
 
 // A simple 1536-dim zero vector
 const zeroVec = new Array(1536).fill(0);
+
+/** One zero vector per input text, with a fixed reported token count. */
+const echoEmbedMany = (): EmbedManyFn =>
+  vi.fn(async (texts: string[]) => ({
+    embeddings: texts.map(() => zeroVec),
+    inputTokens: 7,
+  }));
+
+/**
+ * Build the fake provider `getProvider` returns. The one cast lives here: the
+ * fake carries only the members the embedder touches.
+ */
+function fakeProvider(embedMany: EmbedManyFn | undefined): LlmProvider {
+  return { name: 'fake', isLocal: false, embedMany } as unknown as LlmProvider;
+}
+
+/** Point `getProvider` at a fake whose `embedMany` is the returned mock. */
+function installEmbedMany(impl: EmbedManyFn = echoEmbedMany()) {
+  const embedMany = vi.fn(impl);
+  vi.mocked(getProvider).mockResolvedValue(fakeProvider(embedMany));
+  return embedMany;
+}
 
 // A minimal AiProviderConfig stub
 function makeProvider(overrides: Record<string, unknown> = {}) {
   return {
     id: 'prov-1',
     name: 'Test Provider',
+    slug: 'test-provider',
     providerType: 'openai-compatible',
     baseUrl: 'https://local.test/v1',
     apiKeyEnvVar: null,
@@ -91,532 +117,370 @@ function makeProvider(overrides: Record<string, unknown> = {}) {
 }
 
 describe('resolveProvider (via embedText)', () => {
-  let savedEnv: NodeJS.ProcessEnv;
-
   beforeEach(() => {
     vi.resetAllMocks();
     // Default: no operator-picked active embedding model. Tests that
     // exercise the active-model path override this explicitly.
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
-    savedEnv = process.env;
-    process.env = { ...savedEnv };
-  });
-
-  afterEach(() => {
-    process.env = savedEnv;
   });
 
   it('should prefer a local provider when one is present alongside openai-compatible', async () => {
-    const localProvider = makeProvider({
-      id: 'local-1',
-      isLocal: true,
-      providerType: 'openai-compatible',
-      baseUrl: 'http://ollama.local/v1',
-      apiKeyEnvVar: null,
-    });
-    const remoteProvider = makeProvider({
-      id: 'remote-1',
-      isLocal: false,
-      providerType: 'openai-compatible',
-      baseUrl: 'https://remote.test/v1',
-      apiKeyEnvVar: 'REMOTE_KEY',
-    });
-
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      localProvider,
-      remoteProvider,
+      makeProvider({ id: 'remote-1', slug: 'remote', isLocal: false }),
+      makeProvider({ id: 'local-1', slug: 'ollama', isLocal: true }),
     ] as never);
-
-    process.env['REMOTE_KEY'] = 'sk-remote';
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+    const embedMany = installEmbedMany();
 
     await embedText('hello');
 
-    // Should call local baseUrl, not remote
-    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [
-      string,
-      { body: string; headers: Record<string, string> },
-    ];
-
-    expect(calledUrl).toBe('http://ollama.local/v1/embeddings');
-
-    const body = JSON.parse(calledOptions.body) as { model: string };
-    // Local model should be nomic-embed-text
-    expect(body.model).toBe('nomic-embed-text');
-    // No auth header when apiKeyEnvVar is null
-    expect(calledOptions.headers['Authorization']).toBeUndefined();
+    // The local row wins even though the remote row sorts first.
+    expect(getProvider).toHaveBeenCalledTimes(1);
+    expect(getProvider).toHaveBeenCalledWith('ollama');
+    // Local model is nomic-embed-text, and a fixed-width model is not asked for `dimensions`.
+    expect(embedMany).toHaveBeenCalledTimes(1);
+    expect(embedMany).toHaveBeenCalledWith(['hello'], { model: 'nomic-embed-text' });
   });
 
   it('should fall back to first openai-compatible provider when no local provider', async () => {
-    const remoteProvider = makeProvider({
-      id: 'remote-1',
-      isLocal: false,
-      providerType: 'openai-compatible',
-      baseUrl: 'https://remote.test/v1',
-      apiKeyEnvVar: 'REMOTE_API_KEY',
-    });
-
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([remoteProvider] as never);
-
-    process.env['REMOTE_API_KEY'] = 'sk-remote-abc';
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      makeProvider({ id: 'remote-1', slug: 'remote', isLocal: false }),
+    ] as never);
+    const embedMany = installEmbedMany();
 
     await embedText('hello');
 
-    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [
-      string,
-      { body: string; headers: Record<string, string> },
-    ];
-
-    expect(calledUrl).toBe('https://remote.test/v1/embeddings');
-    expect(calledOptions.headers['Authorization']).toBe('Bearer sk-remote-abc');
-
-    const body = JSON.parse(calledOptions.body) as { model: string };
-    expect(body.model).toBe('text-embedding-3-small');
+    expect(getProvider).toHaveBeenCalledWith('remote');
+    // settings model, and `dimensions` because text-embedding-3-* accepts it
+    expect(embedMany).toHaveBeenCalledWith(['hello'], {
+      model: 'text-embedding-3-small',
+      dimensions: 1536,
+    });
   });
 
-  it('should use voyage provider with null apiKey when apiKeyEnvVar is not set', async () => {
-    const voyageProvider = makeProvider({
-      id: 'voyage-1',
-      providerType: 'voyage',
-      baseUrl: 'https://api.voyageai.com/v1',
-      apiKeyEnvVar: null,
-      isLocal: false,
-    });
-
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([voyageProvider] as never);
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+  it('should pick a voyage row by type alone, with no baseUrl needed', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      makeProvider({ id: 'voyage-1', slug: 'voyage', providerType: 'voyage', baseUrl: null }),
+    ] as never);
+    const embedMany = installEmbedMany();
 
     await embedText('hello');
 
-    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [
-      string,
-      { body: string; headers: Record<string, string> },
-    ];
-
-    expect(calledUrl).toBe('https://api.voyageai.com/v1/embeddings');
-    // No Authorization header when apiKeyEnvVar is null
-    expect(calledOptions.headers['Authorization']).toBeUndefined();
-    // Voyage-specific body params present
-    const body = JSON.parse(calledOptions.body) as { model: string; input_type: string };
-    expect(body.model).toBe('voyage-3');
-    expect(body.input_type).toBe('document');
+    expect(getProvider).toHaveBeenCalledWith('voyage');
+    expect(embedMany).toHaveBeenCalledWith(['hello'], { model: 'voyage-3', dimensions: 1536 });
   });
 
-  it('should read apiKey from env when voyage provider has apiKeyEnvVar set', async () => {
-    const voyageProvider = makeProvider({
-      id: 'voyage-2',
-      providerType: 'voyage',
-      baseUrl: 'https://api.voyageai.com/v1',
-      apiKeyEnvVar: 'VOYAGE_API_KEY',
-      isLocal: false,
-    });
-
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([voyageProvider] as never);
-
-    process.env['VOYAGE_API_KEY'] = 'voyage-key-123';
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+  it('should skip an openai-compatible row with no baseUrl and take the next one', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      makeProvider({ id: 'no-url', slug: 'no-url', baseUrl: null }),
+      makeProvider({ id: 'has-url', slug: 'has-url' }),
+    ] as never);
+    const embedMany = installEmbedMany();
 
     await embedText('hello');
 
-    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [
-      string,
-      { headers: Record<string, string> },
-    ];
-
-    expect(calledUrl).toBe('https://api.voyageai.com/v1/embeddings');
-    expect(calledOptions.headers['Authorization']).toBe('Bearer voyage-key-123');
+    expect(getProvider).toHaveBeenCalledWith('has-url');
+    expect(embedMany).toHaveBeenCalledTimes(1);
   });
 
-  it('should read apiKey from env when local provider has apiKeyEnvVar set', async () => {
-    const localProvider = makeProvider({
-      id: 'local-2',
-      isLocal: true,
-      providerType: 'openai-compatible',
-      baseUrl: 'http://ollama.local/v1',
-      apiKeyEnvVar: 'LOCAL_KEY',
-    });
-
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([localProvider] as never);
-
-    process.env['LOCAL_KEY'] = 'local-secret-456';
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+  it('should not send dimensions to an openai-compatible host for a non text-embedding-3 model', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      makeProvider({ slug: 'together' }),
+    ] as never);
+    const { getDefaultModelForTask } = await import('@/lib/orchestration/llm/settings-resolver');
+    vi.mocked(getDefaultModelForTask).mockResolvedValue('bge-large-en');
+    const embedMany = installEmbedMany();
 
     await embedText('hello');
 
-    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [
-      string,
-      { headers: Record<string, string> },
-    ];
-
-    expect(calledUrl).toBe('http://ollama.local/v1/embeddings');
-    expect(calledOptions.headers['Authorization']).toBe('Bearer local-secret-456');
+    // Paired with proof the path ran: the configured model reached embedMany.
+    expect(embedMany).toHaveBeenCalledTimes(1);
+    expect(embedMany).toHaveBeenCalledWith(['hello'], { model: 'bge-large-en' });
+    expect(embedMany.mock.calls[0][1]).not.toHaveProperty('dimensions');
   });
 
-  it('should read apiKey from env when openai-compatible provider has apiKeyEnvVar set', async () => {
-    const openaiCompatProvider = makeProvider({
-      id: 'oai-compat-2',
-      providerType: 'openai-compatible',
-      baseUrl: 'https://proxy.example.com/v1',
-      apiKeyEnvVar: 'CUSTOM_OAI_KEY',
-      isLocal: false,
-    });
-
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([openaiCompatProvider] as never);
-
-    process.env['CUSTOM_OAI_KEY'] = 'custom-oai-789';
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    await embedText('hello');
-
-    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [
-      string,
-      { headers: Record<string, string> },
-    ];
-
-    expect(calledUrl).toBe('https://proxy.example.com/v1/embeddings');
-    expect(calledOptions.headers['Authorization']).toBe('Bearer custom-oai-789');
-  });
-
-  it('should use openai-compatible provider with null apiKey when apiKeyEnvVar is not set', async () => {
-    const openaiCompatProvider = makeProvider({
-      id: 'oai-compat-1',
-      providerType: 'openai-compatible',
-      baseUrl: 'https://proxy.example.com/v1',
-      apiKeyEnvVar: null,
-      isLocal: false,
-    });
-
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([openaiCompatProvider] as never);
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    await embedText('hello');
-
-    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [
-      string,
-      { headers: Record<string, string> },
-    ];
-
-    expect(calledUrl).toBe('https://proxy.example.com/v1/embeddings');
-    expect(calledOptions.headers['Authorization']).toBeUndefined();
-  });
-
-  it('should fall back to OpenAI direct when no providers are configured', async () => {
+  it('should throw a NoProviderConfiguredError that says the key alone no longer enables embeddings when only OPENAI_API_KEY is set', async () => {
+    // The retired bare-key arm: no provider row, but the env key is present.
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
 
-    process.env['OPENAI_API_KEY'] = 'sk-openai-direct';
+    const err = await embedText('hello').catch((e: unknown) => e);
 
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    await embedText('hello');
-
-    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [
-      string,
-      { body: string; headers: Record<string, string> },
-    ];
-
-    expect(calledUrl).toBe('https://api.openai.com/v1/embeddings');
-    expect(calledOptions.headers['Authorization']).toBe('Bearer sk-openai-direct');
-
-    const body = JSON.parse(calledOptions.body) as { model: string };
-    expect(body.model).toBe('text-embedding-3-small');
+    expect(err).toBeInstanceOf(NoProviderConfiguredError);
+    expect((err as Error).message).toMatch(/OPENAI_API_KEY is set/);
+    expect((err as Error).message).toMatch(/key alone no longer enables embeddings/);
+    // It asked about exactly the OpenAI key, and never went near a vendor.
+    expect(isApiKeyEnvVarSet).toHaveBeenCalledWith('OPENAI_API_KEY');
+    expect(getProvider).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('key alone no longer enables embeddings'),
+      {}
+    );
   });
 
-  it('throws "No embedding provider configured" when no providers exist and OPENAI_API_KEY is unset', async () => {
-    // Source resolveProvider() throws explicitly when both branches
-    // fail — no DB row AND no env fallback. Without this test the
-    // throw message could be silently changed (e.g. typed
-    // ProviderError with a different string) and the suite would
-    // stay green because the OpenAI-direct test always sets the env.
+  it('throws the plain "No embedding provider configured" when there is no row and no key', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
-    delete process.env['OPENAI_API_KEY'];
+    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(false);
 
-    await expect(embedText('hello')).rejects.toThrow(/No embedding provider configured/i);
+    const err = await embedText('hello').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(NoProviderConfiguredError);
+    expect((err as Error).message).toMatch(/No embedding provider configured/);
+    // The plain message must not claim a key is present, and must not warn.
+    expect((err as Error).message).not.toMatch(/OPENAI_API_KEY/);
+    expect(isApiKeyEnvVarSet).toHaveBeenCalledWith('OPENAI_API_KEY');
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(getProvider).not.toHaveBeenCalled();
   });
 });
 
 describe('embedText', () => {
-  let savedEnv: NodeJS.ProcessEnv;
-
   beforeEach(() => {
     vi.resetAllMocks();
     // Default: no operator-picked active embedding model. Tests that
     // exercise the active-model path override this explicitly.
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
-    savedEnv = process.env;
-    process.env = { ...savedEnv };
   });
 
-  afterEach(() => {
-    process.env = savedEnv;
-  });
-
-  it('should call POST {baseUrl}/embeddings with trailing slash trimmed', async () => {
+  it('should send the text and model to embedMany, and return the vector with provenance', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      makeProvider({ baseUrl: 'https://api.example.com/v1/' }),
+      makeProvider({ slug: 'together', isLocal: false }),
     ] as never);
+    const vec = [0.25, 0.5, 0.75];
+    const embedMany = installEmbedMany(async () => ({ embeddings: [vec], inputTokens: 11 }));
 
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+    const result = await embedText('my test text');
 
-    await embedText('test input');
-
-    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [string, { method: string }];
-
-    expect(calledUrl).toBe('https://api.example.com/v1/embeddings');
-    expect(calledOptions.method).toBe('POST');
+    expect(getProvider).toHaveBeenCalledWith('together');
+    expect(embedMany).toHaveBeenCalledWith(['my test text'], {
+      model: 'text-embedding-3-small',
+      dimensions: 1536,
+    });
+    expect(result).toMatchObject({
+      embedding: vec,
+      model: 'text-embedding-3-small',
+      provider: 'openai-compatible',
+      dimensions: 1536,
+      inputTokens: 11,
+    });
   });
 
-  it('should include Authorization header when apiKey is present', async () => {
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      makeProvider({ apiKeyEnvVar: 'MY_KEY' }),
-    ] as never);
-
-    process.env['MY_KEY'] = 'sk-my-key';
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    await embedText('test');
-
-    const [, calledOptions] = mockFetch.mock.calls[0] as [
-      string,
-      { headers: Record<string, string> },
-    ];
-
-    expect(calledOptions.headers['Authorization']).toBe('Bearer sk-my-key');
-  });
-
-  it('should omit Authorization header when apiKey is null', async () => {
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      makeProvider({ apiKeyEnvVar: null }),
-    ] as never);
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    await embedText('test');
-
-    const [, calledOptions] = mockFetch.mock.calls[0] as [
-      string,
-      { headers: Record<string, string> },
-    ];
-
-    expect(calledOptions.headers['Authorization']).toBeUndefined();
-  });
-
-  it('should include model and input in request body', async () => {
+  it('should send dimensions for non-local text-embedding-3-small', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       makeProvider({ isLocal: false }),
     ] as never);
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
-
-    await embedText('my test text');
-
-    const [, calledOptions] = mockFetch.mock.calls[0] as [string, { body: string }];
-    const body = JSON.parse(calledOptions.body) as { model: string; input: string };
-
-    expect(body.model).toBe('text-embedding-3-small');
-    expect(body.input).toBe('my test text');
-  });
-
-  it('should include dimensions for non-local text-embedding-3-small', async () => {
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      makeProvider({ isLocal: false }),
-    ] as never);
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+    const embedMany = installEmbedMany();
 
     await embedText('test');
 
-    const [, calledOptions] = mockFetch.mock.calls[0] as [string, { body: string }];
-    const body = JSON.parse(calledOptions.body) as { dimensions?: number };
-
-    expect(body.dimensions).toBe(1536);
+    expect(embedMany.mock.calls[0][1]).toEqual({
+      model: 'text-embedding-3-small',
+      dimensions: 1536,
+    });
   });
 
   it('should omit dimensions for local providers', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       makeProvider({ isLocal: true }),
     ] as never);
-
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+    const embedMany = installEmbedMany();
 
     await embedText('test');
 
-    const [, calledOptions] = mockFetch.mock.calls[0] as [string, { body: string }];
-    const body = JSON.parse(calledOptions.body) as { dimensions?: number };
-
-    expect(body.dimensions).toBeUndefined();
+    // Paired with proof the local path ran: the local model was requested.
+    expect(embedMany).toHaveBeenCalledTimes(1);
+    expect(embedMany.mock.calls[0][1]).toEqual({ model: 'nomic-embed-text' });
+    expect(embedMany.mock.calls[0][1]).not.toHaveProperty('dimensions');
   });
 
-  it('should reject with error containing HTTP status and body when response is not ok', async () => {
+  it('should forward inputType to embedMany when given, and omit it when not', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+    const embedMany = installEmbedMany();
 
-    const errorResponse = {
-      ok: false,
-      status: 429,
-      text: vi.fn().mockResolvedValue('Rate limit exceeded'),
-      json: vi.fn(),
-    };
-    mockFetch.mockResolvedValue(errorResponse);
+    await embedText('a query', 'query');
+    await embedText('a document');
 
-    await expect(embedText('test')).rejects.toThrow(
-      'Embedding API error (429): Rate limit exceeded'
+    expect(embedMany.mock.calls[0][1]).toMatchObject({ inputType: 'query' });
+    expect(embedMany.mock.calls[1][1]).toEqual({
+      model: 'text-embedding-3-small',
+      dimensions: 1536,
+    });
+    expect(embedMany.mock.calls[1][1]).not.toHaveProperty('inputType');
+  });
+
+  it('should estimate tokens as ceil(chars / 4) when the provider reports none', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+    installEmbedMany(async (texts) => ({ embeddings: texts.map(() => zeroVec) }));
+
+    // 10 chars -> ceil(10 / 4) = 3
+    const result = await embedText('0123456789');
+
+    expect(result.inputTokens).toBe(3);
+  });
+
+  it('should keep a reported zero token count rather than estimating', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+    installEmbedMany(async (texts) => ({ embeddings: texts.map(() => zeroVec), inputTokens: 0 }));
+
+    // Zero is a real count; only `undefined` means "unknown".
+    const result = await embedText('0123456789');
+
+    expect(result.inputTokens).toBe(0);
+  });
+
+  it('should reject with code embedding_unsupported when the provider has no embedMany', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      makeProvider({ slug: 'legacy-class' }),
+    ] as never);
+    vi.mocked(getProvider).mockResolvedValue(fakeProvider(undefined));
+
+    const err = await embedText('test').catch((e: unknown) => e);
+
+    expect(err).toMatchObject({ code: 'embedding_unsupported', retriable: false });
+    expect((err as Error).message).toContain('"legacy-class"');
+    expect((err as Error).message).toContain('embedMany');
+  });
+
+  it('should reject when embedMany returns a different number of vectors than texts', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+    installEmbedMany(async () => ({ embeddings: [zeroVec, zeroVec], inputTokens: 1 }));
+
+    await expect(embedText('one text')).rejects.toThrow(
+      'Embedding API returned 2 embeddings for 1 texts'
     );
   });
 
-  it('should use raw response text when error body is not valid JSON', async () => {
+  it('should propagate an embedMany failure to the caller', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+    installEmbedMany(async () => {
+      throw new Error('vendor said no');
+    });
 
-    mockFetch.mockResolvedValue(new Response('upstream crashed', { status: 502 }));
-
-    await expect(embedText('test')).rejects.toThrow('Embedding API error (502): upstream crashed');
-  });
-
-  it('should re-sort response data by index to maintain input order', async () => {
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
-
-    const vecA = [1, 2, 3];
-    const vecB = [4, 5, 6];
-
-    // Return index 1 before index 0 — shuffled
-    mockFetch.mockResolvedValue(
-      makeFetchResponse([
-        { embedding: vecB, index: 1 },
-        { embedding: vecA, index: 0 },
-      ])
-    );
-
-    // embedText returns { embedding, … } where embedding is results[0]
-    // — the first after sorting by index.
-    const result = await embedText('test');
-
-    expect(result.embedding).toEqual(vecA);
+    await expect(embedText('test')).rejects.toThrow('vendor said no');
   });
 });
 
 describe('embedBatch', () => {
-  let savedEnv: NodeJS.ProcessEnv;
-
   beforeEach(() => {
     vi.resetAllMocks();
     // Default: no operator-picked active embedding model. Tests that
     // exercise the active-model path override this explicitly.
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
-    savedEnv = process.env;
-    process.env = { ...savedEnv };
   });
 
   afterEach(() => {
-    process.env = savedEnv;
+    vi.useRealTimers();
   });
 
-  it('should return an empty array and make no fetch calls for empty input', async () => {
+  it('should return an empty array and make no provider calls for empty input', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+    const embedMany = installEmbedMany();
 
     const result = await embedBatch([]);
 
     expect(result.embeddings).toEqual([]);
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(embedMany).not.toHaveBeenCalled();
+    // Provenance is still resolved, which proves the resolver ran before the no-op loop.
+    expect(result.provenance.model).toBe('text-embedding-3-small');
   });
 
   it('should split 250 texts into 3 batches of 100/100/50 with default batch size', async () => {
+    vi.useFakeTimers();
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
-
-    // Each fetch call returns embeddings for a full batch
-    mockFetch.mockImplementation((_url: string, options: { body: string }) => {
-      const body = JSON.parse(options.body) as { input: string[] };
-      const batchSize = body.input.length;
-      const data = Array.from({ length: batchSize }, (_, i) => ({
-        embedding: new Array(1536).fill(i),
-        index: i,
-      }));
-      return Promise.resolve(makeFetchResponse(data));
-    });
+    // Tag each vector with the text it came from so order across batches is checkable.
+    const embedMany = installEmbedMany(async (texts) => ({
+      embeddings: texts.map((t) => [Number(t.split('-')[1])]),
+      inputTokens: texts.length,
+    }));
 
     const texts = Array.from({ length: 250 }, (_, i) => `text-${i}`);
-    const result = await embedBatch(texts);
+    const promise = embedBatch(texts);
+    await vi.advanceTimersByTimeAsync(1000);
+    const result = await promise;
 
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(embedMany).toHaveBeenCalledTimes(3);
+    expect(embedMany.mock.calls.map((c) => c[0].length)).toEqual([100, 100, 50]);
+    expect(embedMany.mock.calls[1][0][0]).toBe('text-100');
+    expect(embedMany.mock.calls[2][0][0]).toBe('text-200');
     expect(result.embeddings).toHaveLength(250);
-
-    // Verify batch sizes from the call bodies
-    const calls = mockFetch.mock.calls as Array<[string, { body: string }]>;
-    const batchSizes = calls.map(
-      (c) => (JSON.parse(c[1].body) as { input: string[] }).input.length
-    );
-    expect(batchSizes).toEqual([100, 100, 50]);
+    expect(result.embeddings[0]).toEqual([0]);
+    expect(result.embeddings[249]).toEqual([249]);
   });
 
   it('should pause 200ms between batches but not after the last batch', async () => {
     vi.useFakeTimers();
-
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+    const embedMany = installEmbedMany();
 
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
+    // batchSize=1 gives 3 batches -> 2 delays
+    const promise = embedBatch(['t0', 't1', 't2'], 1);
 
-    const texts = Array.from({ length: 3 }, (_, i) => `t${i}`);
-
-    // embedBatch with batchSize=1 gives 3 batches → 2 delays
-    const promise = embedBatch(texts, 1);
-
-    // Advance past first inter-batch delay
+    await vi.advanceTimersByTimeAsync(0);
+    expect(embedMany).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(199);
+    expect(embedMany).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(embedMany).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(200);
-    // Advance past second inter-batch delay
-    await vi.advanceTimersByTimeAsync(200);
-
+    // The third call is the last; nothing further is scheduled after it.
     const result = await promise;
 
+    expect(embedMany).toHaveBeenCalledTimes(3);
     expect(result.embeddings).toHaveLength(3);
-    // fetch called 3 times
-    expect(mockFetch).toHaveBeenCalledTimes(3);
-
-    vi.useRealTimers();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('should preserve input order when fetch returns shuffled index values', async () => {
+  it('should concatenate batch results in input order and report provenance', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
-
     const vec0 = [10, 20];
     const vec1 = [30, 40];
     const vec2 = [50, 60];
-
-    // Single batch of 3, returned in reverse index order
-    mockFetch.mockResolvedValue(
-      makeFetchResponse([
-        { embedding: vec2, index: 2 },
-        { embedding: vec0, index: 0 },
-        { embedding: vec1, index: 1 },
-      ])
-    );
+    const byText: Record<string, number[]> = { a: vec0, b: vec1, c: vec2 };
+    installEmbedMany(async (texts) => ({ embeddings: texts.map((t) => byText[t]) }));
 
     const result = await embedBatch(['a', 'b', 'c'], 10);
 
-    expect(result.embeddings[0]).toEqual(vec0);
-    expect(result.embeddings[1]).toEqual(vec1);
-    expect(result.embeddings[2]).toEqual(vec2);
+    expect(result.embeddings).toEqual([vec0, vec1, vec2]);
     expect(result.provenance.model).toBe('text-embedding-3-small');
     expect(result.provenance.provider).toBe('openai-compatible');
+    expect(result.provenance.dimensions).toBe(1536);
     expect(result.provenance.embeddedAt).toBeInstanceOf(Date);
   });
 
-  it('should reject when a mid-batch fetch call fails', async () => {
+  it('should reject when a mid-batch embedMany call fails', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+    vi.useFakeTimers();
 
     // First batch succeeds, second rejects
-    mockFetch
-      .mockResolvedValueOnce(makeFetchResponse([{ embedding: zeroVec, index: 0 }]))
+    const embedMany = installEmbedMany();
+    embedMany
+      .mockResolvedValueOnce({ embeddings: [zeroVec], inputTokens: 1 })
       .mockRejectedValueOnce(new Error('Network error on batch 2'));
 
-    const texts = Array.from({ length: 2 }, (_, i) => `text-${i}`);
+    const assertion = expect(embedBatch(['text-0', 'text-1'], 1)).rejects.toThrow(
+      'Network error on batch 2'
+    );
+    await vi.advanceTimersByTimeAsync(200);
+    await assertion;
 
-    await expect(embedBatch(texts, 1)).rejects.toThrow('Network error on batch 2');
+    expect(embedMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('should reject when one batch returns the wrong number of vectors', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
+    installEmbedMany(async () => ({ embeddings: [zeroVec], inputTokens: 1 }));
+
+    await expect(embedBatch(['a', 'b', 'c'], 10)).rejects.toThrow(
+      'Embedding API returned 1 embeddings for 3 texts'
+    );
+  });
+
+  it('should reject with code embedding_unsupported when the provider has no embedMany', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      makeProvider({ slug: 'legacy-class' }),
+    ] as never);
+    vi.mocked(getProvider).mockResolvedValue(fakeProvider(undefined));
+
+    await expect(embedBatch(['a'])).rejects.toMatchObject({ code: 'embedding_unsupported' });
   });
 });
 
@@ -633,15 +497,6 @@ function makeModelRow(overrides: Record<string, unknown> = {}) {
     providerSlug: 'openai',
     schemaCompatible: true,
     ...overrides,
-  };
-}
-
-// Helper: build a minimal AiProviderConfig stub that includes the `slug` field
-// required by resolveActiveEmbeddingConfig.
-function makeActiveProvider(overrides: Record<string, unknown> = {}) {
-  return {
-    ...makeProvider(overrides),
-    slug: (overrides['slug'] as string | undefined) ?? 'openai',
   };
 }
 
@@ -780,17 +635,14 @@ describe('getActiveEmbeddingModelSummary', () => {
 // ---------------------------------------------------------------------------
 
 describe('resolveActiveEmbeddingConfig (via embedText)', () => {
-  let savedEnv: NodeJS.ProcessEnv;
-
   beforeEach(() => {
     vi.resetAllMocks();
-    savedEnv = process.env;
-    process.env = { ...savedEnv };
     // Default fallback chain: one openai-compatible provider so tests that
     // verify "falls back to provider-priority" get a determinate result.
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       makeProvider({
         id: 'fallback-1',
+        slug: 'fallback',
         providerType: 'openai-compatible',
         baseUrl: 'https://fallback.example.com/v1',
         apiKeyEnvVar: null,
@@ -800,127 +652,128 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(null);
     vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
-    mockFetch.mockResolvedValue(makeFetchResponse([{ embedding: zeroVec, index: 0 }]));
   });
 
-  afterEach(() => {
-    process.env = savedEnv;
-  });
+  /** Assert the chain's default row served the call, and embedMany ran with the chain's model. */
+  function expectFellBackToChain(embedMany: ReturnType<typeof installEmbedMany>) {
+    expect(getProvider).toHaveBeenCalledTimes(1);
+    expect(getProvider).toHaveBeenCalledWith('fallback');
+    expect(embedMany).toHaveBeenCalledWith(['hello'], {
+      model: 'text-embedding-3-small',
+      dimensions: 1536,
+    });
+  }
 
   it('falls through to provider-priority when activeEmbeddingModelId is null', async () => {
     // Arrange: settings row explicitly returns null activeEmbeddingModelId
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
       activeEmbeddingModelId: null,
     } as never);
+    const embedMany = installEmbedMany();
 
     // Act
     await embedText('hello');
 
     // Assert: provider-priority path hit the fallback openai-compatible provider
-    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
-    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+    expectFellBackToChain(embedMany);
+    expect(prisma.aiProviderModel.findUnique).not.toHaveBeenCalled();
   });
 
   it('falls back with a warn log when the picked model is inactive', async () => {
-    // Arrange: settings points at a model that is inactive
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
       activeEmbeddingModelId: 'inactive-model',
     } as never);
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
       makeModelRow({ isActive: false }) as never
     );
+    const embedMany = installEmbedMany();
 
-    // Act
     await embedText('hello');
 
-    // Assert (1): warn fired with the expected key phrase
-    const { logger } = await import('@/lib/logging');
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
       expect.stringContaining('missing or inactive'),
       expect.objectContaining({ activeEmbeddingModelId: 'inactive-model' })
     );
+    expectFellBackToChain(embedMany);
+  });
 
-    // Assert (2): provider-priority fallback was used, not the active-model URL
-    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
-    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+  it('falls back with a warn log when the picked model is missing', async () => {
+    // The "missing or inactive" gate is one `if`; this is its other half.
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'deleted-model',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(null);
+    const embedMany = installEmbedMany();
+
+    await embedText('hello');
+
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('missing or inactive'),
+      expect.objectContaining({ activeEmbeddingModelId: 'deleted-model' })
+    );
+    expectFellBackToChain(embedMany);
   });
 
   it("falls back with a warn log when the picked model lacks the 'embedding' capability", async () => {
-    // Arrange: settings points at a chat-only model
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
       activeEmbeddingModelId: 'chat-only-model',
     } as never);
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
       makeModelRow({ capabilities: ['chat'] }) as never
     );
+    const embedMany = installEmbedMany();
 
-    // Act
     await embedText('hello');
 
-    // Assert (1): warn fired with the capability-related key phrase
-    const { logger } = await import('@/lib/logging');
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
       expect.stringContaining('embedding capability'),
       expect.objectContaining({ activeEmbeddingModelId: 'chat-only-model' })
     );
-
-    // Assert (2): fell back to provider-priority
-    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
-    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+    expectFellBackToChain(embedMany);
   });
 
   it('falls back with a warn log when the picked model has no dimensions', async () => {
-    // Arrange: valid model but dimensions is null
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
       activeEmbeddingModelId: 'dim-less-model',
     } as never);
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
       makeModelRow({ dimensions: null }) as never
     );
+    const embedMany = installEmbedMany();
 
-    // Act
     await embedText('hello');
 
-    // Assert (1): warn includes "no dimensions"
-    const { logger } = await import('@/lib/logging');
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
       expect.stringContaining('no dimensions'),
       expect.objectContaining({ activeEmbeddingModelId: 'dim-less-model' })
     );
-
-    // Assert (2): fell back to provider-priority
-    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
-    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+    expectFellBackToChain(embedMany);
   });
 
   it('falls back with a warn log when no matching AiProviderConfig exists for the active model', async () => {
-    // Arrange: valid model but no matching provider config
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
       activeEmbeddingModelId: 'valid-model',
     } as never);
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
       makeModelRow({ providerSlug: 'missing-provider' }) as never
     );
-    // findFirst returns null — no active provider config with that slug
     vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
+    const embedMany = installEmbedMany();
 
-    // Act
     await embedText('hello');
 
-    // Assert (1): warn includes "no matching active provider"
-    const { logger } = await import('@/lib/logging');
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
       expect.stringContaining('no matching active provider'),
       expect.objectContaining({ providerSlug: 'missing-provider' })
     );
-
-    // Assert (2): fell back to provider-priority
-    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
-    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+    // The lookup was for the pinned model's provider slug, active rows only.
+    expect(prisma.aiProviderConfig.findFirst).toHaveBeenCalledWith({
+      where: { slug: 'missing-provider', isActive: true },
+    });
+    expectFellBackToChain(embedMany);
   });
 
   it('falls back with a warn log when provider has no baseUrl and is not Voyage', async () => {
-    // Arrange: valid model + provider config, but baseUrl is null and type is not voyage
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
       activeEmbeddingModelId: 'valid-model',
     } as never);
@@ -928,31 +781,26 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
       makeModelRow({ providerSlug: 'custom-provider' }) as never
     );
     vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
-      makeActiveProvider({
+      makeProvider({
         slug: 'custom-provider',
         providerType: 'openai-compatible',
         baseUrl: null,
-        apiKeyEnvVar: null,
       }) as never
     );
+    const embedMany = installEmbedMany();
 
-    // Act
     await embedText('hello');
 
-    // Assert (1): warn includes "no baseUrl"
-    const { logger } = await import('@/lib/logging');
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
       expect.stringContaining('no baseUrl'),
       expect.objectContaining({ providerSlug: 'custom-provider' })
     );
-
-    // Assert (2): fell back to provider-priority
-    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
-    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+    // The pinned slug was never fetched; the chain's row served the call.
+    expect(getProvider).not.toHaveBeenCalledWith('custom-provider');
+    expectFellBackToChain(embedMany);
   });
 
-  it('active-model path: sends dimensions param (schemaCompatible: true) and uses registry model', async () => {
-    // Arrange: fully valid active model — schemaCompatible true → dimensions in body
+  it('active-model path: sends dimensions (schemaCompatible: true) and uses the registry model', async () => {
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
       activeEmbeddingModelId: 'active-model-1',
     } as never);
@@ -965,32 +813,28 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
       }) as never
     );
     vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
-      makeActiveProvider({
+      makeProvider({
         slug: 'openai-custom',
         providerType: 'openai-compatible',
         baseUrl: 'https://active.example.com/v1',
-        apiKeyEnvVar: 'ACTIVE_KEY',
       }) as never
     );
-    process.env['ACTIVE_KEY'] = 'sk-active-key';
+    const embedMany = installEmbedMany();
 
-    // Act
-    await embedText('hello');
+    const result = await embedText('hello');
 
-    // Assert: active-model URL was called (not the fallback provider)
-    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [string, { body: string }];
-    expect(calledUrl).toBe('https://active.example.com/v1/embeddings');
-
-    // Assert: model from the registry row, not the legacy default
-    const body = JSON.parse(calledOptions.body) as { model: string; dimensions?: number };
-    expect(body.model).toBe('text-embedding-3-large');
-
-    // Assert: dimensions is sent because schemaCompatible is true
-    expect(body.dimensions).toBe(3072);
+    // The pinned row was used, not the fallback row.
+    expect(getProvider).toHaveBeenCalledTimes(1);
+    expect(getProvider).toHaveBeenCalledWith('openai-custom');
+    // Model and width come from the registry row, and dimensions are sent.
+    expect(embedMany).toHaveBeenCalledWith(['hello'], {
+      model: 'text-embedding-3-large',
+      dimensions: 3072,
+    });
+    expect(result).toMatchObject({ model: 'text-embedding-3-large', dimensions: 3072 });
   });
 
-  it('active-model path: omits dimensions param when schemaCompatible is false', async () => {
-    // Arrange: fixed-dim local model — schemaCompatible false → no dimensions in body
+  it('active-model path: omits dimensions when schemaCompatible is false', async () => {
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
       activeEmbeddingModelId: 'local-active-model',
     } as never);
@@ -1003,61 +847,50 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
       }) as never
     );
     vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
-      makeActiveProvider({
+      makeProvider({
         slug: 'local-ollama',
         providerType: 'openai-compatible',
         baseUrl: 'http://ollama.local/v1',
         isLocal: true,
-        apiKeyEnvVar: null,
       }) as never
     );
+    const embedMany = installEmbedMany();
 
-    // Act
-    await embedText('hello');
+    const result = await embedText('hello');
 
-    // Assert: active-model URL was called
-    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [string, { body: string }];
-    expect(calledUrl).toBe('http://ollama.local/v1/embeddings');
-
-    // Assert: model from registry row
-    const body = JSON.parse(calledOptions.body) as { model: string; dimensions?: number };
-    expect(body.model).toBe('nomic-embed-text');
-
-    // Assert: dimensions NOT sent for fixed-dim model (schemaCompatible: false)
-    expect(body.dimensions).toBeUndefined();
+    expect(getProvider).toHaveBeenCalledWith('local-ollama');
+    // The registry model reached embedMany (the path ran) and no width was requested.
+    expect(embedMany).toHaveBeenCalledTimes(1);
+    expect(embedMany.mock.calls[0][1]).toEqual({ model: 'nomic-embed-text' });
+    expect(embedMany.mock.calls[0][1]).not.toHaveProperty('dimensions');
+    // The recorded width is still the registry's, even though it was not sent.
+    expect(result.dimensions).toBe(768);
   });
 
   it('falls back gracefully when AiOrchestrationSettings.findFirst rejects (catch path)', async () => {
-    // Arrange: findFirst throws — the .catch(() => null) guard should suppress it
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockRejectedValue(
       new Error('DB connection lost')
     );
+    const embedMany = installEmbedMany();
 
-    // Act: should not throw; falls back to provider-priority
     await embedText('hello');
 
-    // Assert: provider-priority fallback was used
-    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
-    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+    expectFellBackToChain(embedMany);
   });
 
   it('falls back gracefully when AiProviderModel.findUnique rejects inside resolveActiveEmbeddingConfig', async () => {
-    // Arrange: settings has an activeEmbeddingModelId but model lookup throws
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
       activeEmbeddingModelId: 'model-db-error',
     } as never);
     vi.mocked(prisma.aiProviderModel.findUnique).mockRejectedValue(new Error('timeout'));
+    const embedMany = installEmbedMany();
 
-    // Act: should not throw; the .catch(() => null) guard returns null → warn + fallback
     await embedText('hello');
 
-    // Assert: provider-priority fallback was used
-    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
-    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+    expectFellBackToChain(embedMany);
   });
 
   it('falls back gracefully when AiProviderConfig.findFirst rejects inside resolveActiveEmbeddingConfig', async () => {
-    // Arrange: model resolves fine but provider config lookup throws
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
       activeEmbeddingModelId: 'config-db-error',
     } as never);
@@ -1067,17 +900,14 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
     vi.mocked(prisma.aiProviderConfig.findFirst).mockRejectedValue(
       new Error('provider config DB error')
     );
+    const embedMany = installEmbedMany();
 
-    // Act: should not throw; the .catch(() => null) guard returns null → warn + fallback
     await embedText('hello');
 
-    // Assert: provider-priority fallback was used
-    const [calledUrl] = mockFetch.mock.calls[0] as [string, unknown];
-    expect(calledUrl).toBe('https://fallback.example.com/v1/embeddings');
+    expectFellBackToChain(embedMany);
   });
 
-  it('active Voyage model: sends output_dimension and input_type in body', async () => {
-    // Arrange: operator has picked a Voyage model via the admin picker
+  it('active Voyage model: sends dimensions and inputType to embedMany, never the vendor field names', async () => {
     vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
       activeEmbeddingModelId: 'voyage-active',
     } as never);
@@ -1086,100 +916,47 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
         modelId: 'voyage-3-large',
         dimensions: 1024,
         providerSlug: 'voyage-custom',
-        schemaCompatible: true,
+        // Voyage always takes a dimension, whatever the flag says.
+        schemaCompatible: false,
       }) as never
     );
     vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
-      makeActiveProvider({
+      makeProvider({
         slug: 'voyage-custom',
         providerType: 'voyage',
-        baseUrl: null, // null → Voyage gets its canonical URL
-        apiKeyEnvVar: 'VOYAGE_KEY',
+        baseUrl: null, // null baseUrl is fine for Voyage
       }) as never
     );
-    process.env['VOYAGE_KEY'] = 'voyage-secret-789';
+    const embedMany = installEmbedMany();
 
-    // Act
-    await embedText('hello', 'query');
+    const result = await embedText('hello', 'query');
 
-    // Assert: Voyage canonical URL used (baseUrl was null)
-    const [calledUrl, calledOptions] = mockFetch.mock.calls[0] as [string, { body: string }];
-    expect(calledUrl).toBe('https://api.voyageai.com/v1/embeddings');
-
-    // Assert: Voyage-specific body params — output_dimension and input_type
-    const body = JSON.parse(calledOptions.body) as {
-      model: string;
-      output_dimension?: number;
-      input_type?: string;
-      dimensions?: number;
-    };
-    expect(body.model).toBe('voyage-3-large');
-    expect(body.output_dimension).toBe(1024);
-    expect(body.input_type).toBe('query');
-    // OpenAI-style `dimensions` must NOT be sent to Voyage
-    expect(body.dimensions).toBeUndefined();
-  });
-});
-
-describe('outbound safety at the point of use (#635)', () => {
-  // The same fixture every other describe in this file uses. Without it the
-  // active-model lookup is unmocked and the legacy provider path is never
-  // reached — which is exactly how the first version of these tests passed
-  // while asserting nothing.
-  let savedEnv: NodeJS.ProcessEnv;
-
-  beforeEach(() => {
-    vi.resetAllMocks();
-    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
-    savedEnv = process.env;
-    process.env = { ...savedEnv };
+    expect(getProvider).toHaveBeenCalledWith('voyage-custom');
+    expect(embedMany).toHaveBeenCalledWith(['hello'], {
+      model: 'voyage-3-large',
+      dimensions: 1024,
+      inputType: 'query',
+    });
+    // Provenance records the provider TYPE, not the slug.
+    expect(result.provider).toBe('voyage');
   });
 
-  afterEach(() => {
-    process.env = savedEnv;
-  });
-
-  it('refuses an unsafe baseUrl before any request leaves', async () => {
-    // Nothing on this path runs `checkSafeProviderUrl` otherwise: the config is
-    // read straight from Prisma, and the Zod refine at create/update is
-    // bypassed by seeds, imports and direct DB writes — the same reason
-    // `provider-manager.ts` re-checks at its own point of use. Without this,
-    // the ingestion path POSTs uploaded document text to hop 1 whatever it is.
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      makeProvider({
-        id: 'evil-1',
-        isLocal: false,
-        providerType: 'openai-compatible',
-        baseUrl: 'http://169.254.169.254/latest',
-        apiKeyEnvVar: 'REMOTE_KEY',
-      }),
-    ] as never);
-    process.env['REMOTE_KEY'] = 'sk-remote';
-
-    await expect(embedText('hello')).rejects.toThrow(/unsafe/i);
-    // The redirect refusal covers hops 2+; this asserts hop 1 never happened.
-    expect(mockFetch).not.toHaveBeenCalled();
-  });
-
-  it('names a refused redirect rather than reporting a bare "fetch failed"', async () => {
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      makeProvider({
-        id: 'remote-1',
-        isLocal: false,
-        providerType: 'openai-compatible',
-        baseUrl: 'https://remote.test/v1',
-        apiKeyEnvVar: 'REMOTE_KEY',
-      }),
-    ] as never);
-    process.env['REMOTE_KEY'] = 'sk-remote';
-
-    // undici's shape for a refused redirect: bare message, reason on `cause`.
-    mockFetch.mockRejectedValue(
-      Object.assign(new TypeError('fetch failed'), { cause: new Error('unexpected redirect') })
+  it('active-model path: a null schemaCompatible on a non-Voyage row sends no dimensions', async () => {
+    vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue({
+      activeEmbeddingModelId: 'unflagged',
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModelRow({ providerSlug: 'plain-host', schemaCompatible: null }) as never
     );
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
+      makeProvider({ slug: 'plain-host' }) as never
+    );
+    const embedMany = installEmbedMany();
 
-    // Otherwise a provider that started redirecting is indistinguishable from
-    // one that is down, and the fix — re-point the baseUrl — is invisible.
-    await expect(embedText('hello')).rejects.toThrow('fetch failed: unexpected redirect');
+    await embedText('hello');
+
+    expect(getProvider).toHaveBeenCalledWith('plain-host');
+    expect(embedMany).toHaveBeenCalledTimes(1);
+    expect(embedMany.mock.calls[0][1]).toEqual({ model: 'text-embedding-3-small' });
   });
 });

@@ -10,8 +10,10 @@
  * @see lib/orchestration/knowledge/embedder.ts
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { prisma } from '@/lib/db/client';
+import type { LlmProvider } from '@/lib/orchestration/llm/provider';
+import type { EmbedManyOptions, EmbedManyResult } from '@/lib/orchestration/llm/types';
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -34,13 +36,17 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   logCost: vi.fn(async () => undefined),
 }));
 
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  getProvider: vi.fn(),
+  isApiKeyEnvVarSet: vi.fn(),
+}));
 
 const { registerProviderEligibility, resetProviderEligibility } =
   await import('@/lib/orchestration/llm/provider-eligibility');
 const { logger } = await import('@/lib/logging');
-const { embedText, resolveEmbeddingAvailability, UNCONFIGURED_OPENAI_SLUG } =
+const { getProvider, isApiKeyEnvVarSet } = await import('@/lib/orchestration/llm/provider-manager');
+const { NoProviderConfiguredError } = await import('@/lib/orchestration/llm/agent-resolver');
+const { embedText, resolveEmbeddingAvailability } =
   await import('@/lib/orchestration/knowledge/embedder');
 
 function row(overrides: Record<string, unknown>) {
@@ -57,29 +63,28 @@ function row(overrides: Record<string, unknown>) {
   };
 }
 
-function okResponse() {
-  return {
-    ok: true,
-    status: 200,
-    json: async () => ({ data: [{ embedding: [0.1], index: 0 }], usage: { total_tokens: 1 } }),
-    text: async () => '',
-  };
+type EmbedManyFn = (texts: string[], options: EmbedManyOptions) => Promise<EmbedManyResult>;
+
+/** Point `getProvider` at a fake whose `embedMany` is the returned mock. */
+function installEmbedMany() {
+  const impl: EmbedManyFn = async (texts) => ({
+    embeddings: texts.map(() => [0.1]),
+    inputTokens: 1,
+  });
+  const embedMany = vi.fn(impl);
+  vi.mocked(getProvider).mockResolvedValue({
+    name: 'fake',
+    isLocal: false,
+    embedMany,
+  } as unknown as LlmProvider);
+  return embedMany;
 }
 
-/** The URL the embedder actually posted to — the only honest witness here. */
-function fetchedHost(): string {
-  const [url] = mockFetch.mock.calls[0] as [string];
-  return new URL(url).host;
+/** The slug the embedder asked the provider manager for — the only honest witness here. */
+function fetchedSlug(): string {
+  expect(getProvider).toHaveBeenCalledTimes(1);
+  return vi.mocked(getProvider).mock.calls[0][0];
 }
-
-const originalOpenAiKey = process.env['OPENAI_API_KEY'];
-
-afterAll(() => {
-  // `process.env` is shared across files in a vitest worker, so a test file
-  // that deletes a var leaks it to every file that runs after it.
-  if (originalOpenAiKey === undefined) delete process.env['OPENAI_API_KEY'];
-  else process.env['OPENAI_API_KEY'] = originalOpenAiKey;
-});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -88,13 +93,12 @@ beforeEach(() => {
   // baseline or the pin test below leaks into every test declared after it.
   vi.mocked(prisma.aiOrchestrationSettings.findFirst).mockResolvedValue(null);
   vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(null);
-  mockFetch.mockResolvedValue(okResponse());
-  delete process.env['OPENAI_API_KEY'];
+  installEmbedMany();
+  vi.mocked(isApiKeyEnvVarSet).mockReturnValue(false);
 });
 
 afterEach(() => {
   resetProviderEligibility();
-  delete process.env['OPENAI_API_KEY'];
 });
 
 describe('the fallback chain consults the eligibility seam', () => {
@@ -105,6 +109,7 @@ describe('the fallback chain consults the eligibility seam', () => {
       row({ slug: 'ollama', isLocal: true, baseUrl: 'http://localhost:11434/v1' }),
     ] as never);
     registerProviderEligibility((candidates) => candidates.filter((c) => c !== 'voyage'));
+    const embedMany = installEmbedMany();
 
     // Act
     await embedText('hello');
@@ -112,7 +117,8 @@ describe('the fallback chain consults the eligibility seam', () => {
     // Assert: skipping and trying the next is the audio loop's shape — a fork
     // that permits a local embedder but not Voyage gets the local embedder,
     // not a failure.
-    expect(fetchedHost()).toBe('localhost:11434');
+    expect(fetchedSlug()).toBe('ollama');
+    expect(embedMany).toHaveBeenCalledWith(['hello'], { model: 'nomic-embed-text' });
   });
 
   it('passes source:primary and task:embeddings, so an existing fork rule already covers it', async () => {
@@ -135,31 +141,24 @@ describe('the fallback chain consults the eligibility seam', () => {
     });
   });
 
-  it('gives the bare-OPENAI_API_KEY arm a slug a rule can deny', async () => {
-    // Arrange: no provider rows at all — the unconfigured escape hatch.
+  it('has no bare-OPENAI_API_KEY arm for a rule to reach: a key with no rows fails, and the rule is never consulted', async () => {
+    // Arrange: no provider rows, the key is set, and a permissive rule. The
+    // bare arm used to have a slug (`env:openai`) so a rule could deny it; it
+    // is gone (t-740), so there is nothing to deny.
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
-    process.env['OPENAI_API_KEY'] = 'sk-test';
-    registerProviderEligibility((candidates) =>
-      candidates.filter((c) => c !== UNCONFIGURED_OPENAI_SLUG)
-    );
-
-    // Act + Assert: before it had a name, no rule could reach this arm at all
-    // and an org's documents went to api.openai.com regardless.
-    await expect(embedText('hello')).rejects.toThrow(/No permitted embedding provider/);
-    expect(mockFetch).not.toHaveBeenCalled();
-  });
-
-  it('still uses the bare arm when the rule permits it', async () => {
-    // Arrange: the control for the test above — same setup, permissive rule.
-    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
-    process.env['OPENAI_API_KEY'] = 'sk-test';
-    registerProviderEligibility((candidates) => candidates);
+    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+    const resolver = vi.fn((candidates: readonly string[]) => candidates);
+    registerProviderEligibility(resolver);
 
     // Act
-    await embedText('hello');
+    const err = await embedText('hello').catch((e: unknown) => e);
 
-    // Assert: the escape hatch stays; it just stopped being anonymous.
-    expect(fetchedHost()).toBe('api.openai.com');
+    // Assert: the terminal error is the not-configured one (NOT "not permitted"),
+    // it names the retired behaviour, and no vendor or rule was touched.
+    expect(err).toBeInstanceOf(NoProviderConfiguredError);
+    expect((err as Error).message).toMatch(/key alone no longer enables embeddings/);
+    expect(resolver).not.toHaveBeenCalled();
+    expect(getProvider).not.toHaveBeenCalled();
   });
 
   it('leaves the operator pin unfiltered', async () => {
@@ -180,13 +179,18 @@ describe('the fallback chain consults the eligibility seam', () => {
       row({ slug: 'together' }) as never
     );
     registerProviderEligibility(() => []);
+    const embedMany = installEmbedMany();
 
     // Act
     await embedText('hello');
 
     // Assert: same line as an explicit `agent.provider` — silently rerouting a
     // recorded operator decision is a worse failure than the one prevented.
-    expect(fetchedHost()).toBe('api.example.com');
+    expect(fetchedSlug()).toBe('together');
+    expect(embedMany).toHaveBeenCalledWith(['hello'], {
+      model: 'text-embedding-3-small',
+      dimensions: 1536,
+    });
   });
 });
 
@@ -199,6 +203,7 @@ describe('a refusal skips the row, not the category', () => {
       row({ slug: 'voyage-eu', providerType: 'voyage', baseUrl: 'https://eu.voyage.test/v1' }),
     ] as never);
     registerProviderEligibility((candidates) => candidates.filter((c) => c !== 'voyage-us'));
+    const embedMany = installEmbedMany();
 
     // Act
     await embedText('hello');
@@ -207,7 +212,8 @@ describe('a refusal skips the row, not the category', () => {
     // abandoned Voyage entirely and this threw — with an approved, active
     // Voyage row sitting right there. The audio loop this is modelled on
     // iterates every matrix row; now so does this.
-    expect(fetchedHost()).toBe('eu.voyage.test');
+    expect(fetchedSlug()).toBe('voyage-eu');
+    expect(embedMany).toHaveBeenCalledWith(['hello'], { model: 'voyage-3', dimensions: 1536 });
   });
 
   it('does not record a refusal for a row that was unusable anyway', async () => {
@@ -230,7 +236,7 @@ describe('resolveEmbeddingAvailability', () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       row({ slug: 'together' }),
     ] as never);
-    process.env['OPENAI_API_KEY'] = 'sk-test';
+    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
     registerProviderEligibility(() => []);
 
     // Act + Assert: the admin UI gates "Generate Embeddings" on this, so a
@@ -247,6 +253,16 @@ describe('resolveEmbeddingAvailability', () => {
 
     // Act + Assert
     await expect(resolveEmbeddingAvailability()).resolves.toBe('ok');
+  });
+
+  it('reports none_configured when only the OPENAI_API_KEY is set and there are no rows', async () => {
+    // Arrange: the state the retired bare-key arm used to turn into 'ok'.
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
+    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+
+    // Act + Assert: the operator needs to add a provider row, not to ask about a rule.
+    await expect(resolveEmbeddingAvailability()).resolves.toBe('none_configured');
+    expect(getProvider).not.toHaveBeenCalled();
   });
 });
 

@@ -18,6 +18,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { LlmProvider } from '@/lib/orchestration/llm/provider';
+import type { EmbedManyOptions, EmbedManyResult } from '@/lib/orchestration/llm/types';
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -47,25 +49,33 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
   })),
 }));
 
-const mockFetch = vi.fn();
-global.fetch = mockFetch;
+vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
+  getProvider: vi.fn(),
+  isApiKeyEnvVarSet: vi.fn(),
+}));
 
 const { prisma } = await import('@/lib/db/client');
 const { logCost } = await import('@/lib/orchestration/llm/cost-tracker');
+const { getProvider } = await import('@/lib/orchestration/llm/provider-manager');
 const { embedText, embedBatch } = await import('@/lib/orchestration/knowledge/embedder');
 
 const mockLogCost = vi.mocked(logCost);
 
-/** One OpenAI-shaped embedding response per input. */
-function embeddingResponse(count: number): Response {
-  return {
-    ok: true,
-    status: 200,
-    json: async () => ({
-      data: Array.from({ length: count }, (_, index) => ({ embedding: [0.1, 0.2], index })),
-      usage: { prompt_tokens: 12 },
-    }),
-  } as unknown as Response;
+type EmbedManyFn = (texts: string[], options: EmbedManyOptions) => Promise<EmbedManyResult>;
+
+/** A provider whose `embedMany` returns one vector per text and reports 12 input tokens per call. */
+function installEmbedMany() {
+  const impl: EmbedManyFn = async (texts) => ({
+    embeddings: texts.map(() => [0.1, 0.2]),
+    inputTokens: 12,
+  });
+  const embedMany = vi.fn(impl);
+  vi.mocked(getProvider).mockResolvedValue({
+    name: 'fake',
+    isLocal: false,
+    embedMany,
+  } as unknown as LlmProvider);
+  return embedMany;
 }
 
 beforeEach(() => {
@@ -82,8 +92,7 @@ beforeEach(() => {
       config: { embeddingModel: 'text-embedding-3-small', embeddingDimensions: 2 },
     },
   ] as never);
-  process.env.OPENAI_API_KEY = 'sk-test';
-  mockFetch.mockResolvedValue(embeddingResponse(1));
+  installEmbedMany();
 });
 
 /** The single `logCost` params object, or a clear failure if there wasn't one. */
@@ -142,10 +151,41 @@ describe('embedText cost attribution', () => {
   });
 });
 
+describe('embedText cost row provenance', () => {
+  it('records the provider TYPE (not the slug), the model, and the reported token count', async () => {
+    await embedText('a query');
+
+    // The row's slug is 'openai'; the cost row must say 'openai-compatible'.
+    expect(costParams()).toMatchObject({
+      provider: 'openai-compatible',
+      model: 'text-embedding-3-small',
+      inputTokens: 12,
+      outputTokens: 0,
+      operation: 'embedding',
+      isLocal: false,
+    });
+  });
+
+  it('estimates ceil(chars / 4) input tokens when the provider reports none', async () => {
+    const embedMany = vi.fn<EmbedManyFn>(async (texts) => ({
+      embeddings: texts.map(() => [0.1, 0.2]),
+    }));
+    vi.mocked(getProvider).mockResolvedValue({
+      name: 'fake',
+      isLocal: false,
+      embedMany,
+    } as unknown as LlmProvider);
+
+    const result = await embedText('0123456789'); // 10 chars -> 3
+
+    expect(embedMany).toHaveBeenCalledTimes(1);
+    expect(costParams()).toMatchObject({ inputTokens: 3 });
+    expect(result.inputTokens).toBe(3);
+  });
+});
+
 describe('embedBatch cost attribution', () => {
   it('writes the attribution onto the batch roll-up row', async () => {
-    mockFetch.mockResolvedValue(embeddingResponse(2));
-
     await embedBatch(['one', 'two'], undefined, 'document', {
       metadata: { kind: 'knowledge_ingest', documentId: 'doc-1' },
     });
@@ -156,11 +196,31 @@ describe('embedBatch cost attribution', () => {
     });
   });
 
+  it('writes ONE rolled-up row whose tokens sum every chunk', async () => {
+    vi.useFakeTimers();
+    try {
+      const embedMany = installEmbedMany();
+
+      const promise = embedBatch(['a', 'b', 'c'], 1, 'document');
+      await vi.advanceTimersByTimeAsync(1000);
+      await promise;
+
+      // Three chunks of one text, 12 reported tokens each, a single cost row.
+      expect(embedMany).toHaveBeenCalledTimes(3);
+      expect(mockLogCost).toHaveBeenCalledTimes(1);
+      expect(costParams()).toMatchObject({
+        provider: 'openai-compatible',
+        model: 'text-embedding-3-small',
+        inputTokens: 36,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('omits the foreign-key columns on an ingestion batch', async () => {
     // Deliberate: there is no agent or conversation behind a document upload.
     // The metadata is what makes the row attributable at all.
-    mockFetch.mockResolvedValue(embeddingResponse(2));
-
     await embedBatch(['one', 'two'], undefined, 'document', {
       metadata: { kind: 'knowledge_ingest', documentId: 'doc-1' },
     });
