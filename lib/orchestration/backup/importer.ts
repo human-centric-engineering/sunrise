@@ -20,7 +20,10 @@ import {
   isReservedAgentSlug,
   reservedAgentSlugMessage,
 } from '@/lib/orchestration/agents/platform-agent-guard';
-import { isBuiltinTemplateSlug } from '@/lib/orchestration/workflows/template-catalogue';
+import {
+  isBuiltinTemplateSlug,
+  isSystemWorkflowSlug,
+} from '@/lib/orchestration/workflows/template-catalogue';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
@@ -359,6 +362,18 @@ export async function importOrchestrationConfig(
     // new published version (update path: published draft promoted to vN+1)
     // or the initial v1 (create path).
     for (const wf of parsed.data.workflows) {
+      // A system workflow is the seed's, as a platform agent is, so it is
+      // recognised by slug before anything else: a bundle exported before
+      // t-729 carries the provider-model audit, and on a target where that row
+      // is absent (or another org's, at `multi`) the row check further down
+      // cannot see it. Checked before the definition parse so an old,
+      // now-invalid definition reports this reason rather than a corrupt one.
+      if (isSystemWorkflowSlug(wf.slug)) {
+        result.warnings.push(
+          `System workflow '${wf.slug}' skipped — system workflows cannot be overwritten by backup import`
+        );
+        continue;
+      }
       const defParsed = workflowDefinitionSchema.safeParse(wf.workflowDefinition);
       if (!defParsed.success) {
         result.warnings.push(`Workflow '${wf.slug}' skipped — definition failed validation`);
@@ -376,10 +391,10 @@ export async function importOrchestrationConfig(
         continue;
       }
       const existing = await tx.aiWorkflow.findUnique({ where: { slug: wf.slug } });
-      // A system workflow is the seed's, as a system agent is. Versioning over
-      // it would republish whatever definition an older bundle carried, and
-      // the update below would also write `isActive` / `isTemplate`, which
-      // PATCH refuses for a system workflow.
+      // The row flag catches a system workflow the slug list does not know (a
+      // fork's own seed). Versioning over one would republish whatever
+      // definition the bundle carried, and the update below could deactivate
+      // it or change its template status — both of which PATCH refuses.
       if (existing?.isSystem) {
         result.warnings.push(
           `System workflow '${wf.slug}' skipped — system workflows cannot be overwritten by backup import`

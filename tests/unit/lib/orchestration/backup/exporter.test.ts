@@ -477,7 +477,7 @@ describe('exportOrchestrationConfig', () => {
     const capCall = mockFindMany.mock.calls[1][0] as { where?: { isSystem?: boolean } };
     expect(capCall?.where?.isSystem).toBe(false);
   });
-  it('leaves out template rows holding a built-in slug, and nothing else (§116 t-727)', async () => {
+  it('leaves out system workflows and template rows holding a built-in slug, and nothing else (§116 t-727, t-729)', async () => {
     mockFindMany
       .mockResolvedValueOnce([]) // agents
       .mockResolvedValueOnce([]) // capabilities
@@ -488,10 +488,11 @@ describe('exportOrchestrationConfig', () => {
 
     await exportOrchestrationConfig();
 
-    // Third findMany call is for workflows. Only a TEMPLATE row with a
-    // built-in slug is left out: that is a seed-era copy of a template served
-    // from code. The same slug on an ordinary workflow (a retired row an
-    // install switched back on) is live config and must be backed up.
+    // Third findMany call is for workflows. Two kinds are left out: a system
+    // workflow (the seed's, as system agents and capabilities are — t-729),
+    // and a TEMPLATE row with a built-in slug, a seed-era copy of a template
+    // served from code. The same slug on an ordinary workflow (a retired row
+    // an install switched back on) is live config and must be backed up.
     const wfCall = mockFindMany.mock.calls[2][0] as {
       where?: { isSystem?: boolean; NOT?: { isTemplate?: boolean; slug?: { in?: string[] } } };
     };
@@ -502,23 +503,5 @@ describe('exportOrchestrationConfig', () => {
     expect([...(wfCall?.where?.NOT?.slug?.in ?? [])].sort()).toEqual(
       BUILTIN_WORKFLOW_TEMPLATES.map((t) => t.slug).sort()
     );
-  });
-
-  it('queries workflows with isSystem: false, as agents and capabilities are (t-729)', async () => {
-    // The provider-model audit is a system workflow the seed owns. Exporting
-    // it put it in every bundle, so a restore could publish an old definition
-    // over the one the seed maintains.
-    mockFindMany
-      .mockResolvedValueOnce([]) // agents
-      .mockResolvedValueOnce([]) // capabilities
-      .mockResolvedValueOnce([]) // workflows
-      .mockResolvedValueOnce([]); // webhooks
-    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
-    mockFindUnique.mockResolvedValue(null);
-
-    await exportOrchestrationConfig();
-
-    const wfCall = mockFindMany.mock.calls[2][0] as { where?: { isSystem?: boolean } };
-    expect(wfCall?.where?.isSystem).toBe(false);
   });
 });

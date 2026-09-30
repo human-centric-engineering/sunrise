@@ -219,9 +219,13 @@ release process.
   exported in every bundle and versioned over on import, so restoring an older
   bundle republished its stale definition and could deactivate the workflow,
   which PATCH refuses. The export now leaves system workflows out, as it does
-  system agents and capabilities, and the import skips an existing one with a
-  warning. A bundle exported before this fix still carries the row; importing
-  it now reports the skip.
+  system agents and capabilities. The import skips one by slug, using the new
+  `SYSTEM_WORKFLOW_SLUGS` / `isSystemWorkflowSlug()` in
+  `lib/orchestration/workflows/template-catalogue.ts`, or by an existing row's
+  `isSystem` flag, and reports the skip. A bundle exported before this fix
+  still carries the audit workflow; importing it reports the skip whether or
+  not the target has that row. A fork's own seeded system workflow is covered
+  by the row flag wherever the target has the row.
 
 ## [0.13.0] — 2026-09-24
 

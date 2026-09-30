@@ -19,6 +19,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
+import { PROVIDER_MODEL_AUDIT_TEMPLATE } from '@/prisma/seeds/data/templates/provider-model-audit';
 import type { WorkflowDefinition, WorkflowTemplateMetadata } from '@/types/orchestration';
 
 /** Where a catalogue entry comes from. */
@@ -63,6 +64,27 @@ export const BUILTIN_TEMPLATE_SLUGS: ReadonlySet<string> = new Set(
 /** True when `slug` belongs to a built-in template. */
 export function isBuiltinTemplateSlug(slug: string): boolean {
   return BUILTIN_TEMPLATE_SLUGS.has(slug);
+}
+
+/**
+ * The slugs of Sunrise's system workflows: rows a seed owns (`isSystem: true`)
+ * and republishes on every re-seed. Today that is the provider-model audit,
+ * seeded by `prisma/seeds/010-model-auditor.ts`.
+ *
+ * Known by slug in code for the same reason platform agents are
+ * (`isReservedAgentSlug`): a consumer that only reads the row's `isSystem`
+ * flag is blind whenever the row is absent or, at `multi`, belongs to
+ * another org. The backup importer is one. A seed that adds a system
+ * workflow adds its slug here; the `isSystem` flag still covers any this
+ * list misses wherever the row is visible.
+ */
+export const SYSTEM_WORKFLOW_SLUGS: ReadonlySet<string> = new Set([
+  PROVIDER_MODEL_AUDIT_TEMPLATE.slug,
+]);
+
+/** True when `slug` belongs to a Sunrise system workflow. */
+export function isSystemWorkflowSlug(slug: string): boolean {
+  return SYSTEM_WORKFLOW_SLUGS.has(slug);
 }
 
 /** The built-in templates, in their code order. */
