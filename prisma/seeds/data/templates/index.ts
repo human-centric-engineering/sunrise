@@ -1,14 +1,17 @@
 /**
- * Built-in workflow templates — seed data.
+ * Built-in workflow templates.
  *
- * Consumed by `prisma/seeds/004-builtin-templates.ts` which upserts each
- * template as an `AiWorkflow` row with `isTemplate: true`. The UI reads
- * templates via the workflows API, not from this module.
+ * Served from code by `lib/orchestration/workflows/template-catalogue.ts`,
+ * through `GET /api/v1/admin/orchestration/workflows/templates`, to every
+ * org. They are not database rows: the seed that once mirrored them into the
+ * install org is retired (§116 t-727). The UI reads them through that API,
+ * not from this module.
  *
  * Adding a new template: create a new file, import it here, and append it
- * to `BUILTIN_WORKFLOW_TEMPLATES`. The seed is idempotent and the unit
- * test in `tests/unit/lib/orchestration/workflows/templates/index.test.ts`
- * will flag invalid DAGs on save.
+ * to `BUILTIN_WORKFLOW_TEMPLATES`. The next deploy serves it; nothing is
+ * seeded. The unit test in
+ * `tests/unit/lib/orchestration/workflows/templates/index.test.ts` will flag
+ * invalid DAGs on save.
  */
 
 import { AUTONOMOUS_RESEARCH_TEMPLATE } from '@/prisma/seeds/data/templates/autonomous-research';

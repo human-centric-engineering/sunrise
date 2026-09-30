@@ -20,6 +20,7 @@ import {
   isReservedAgentSlug,
   reservedAgentSlugMessage,
 } from '@/lib/orchestration/agents/platform-agent-guard';
+import { isBuiltinTemplateSlug } from '@/lib/orchestration/workflows/template-catalogue';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 
@@ -361,6 +362,14 @@ export async function importOrchestrationConfig(
       const defParsed = workflowDefinitionSchema.safeParse(wf.workflowDefinition);
       if (!defParsed.success) {
         result.warnings.push(`Workflow '${wf.slug}' skipped — definition failed validation`);
+        continue;
+      }
+      // A built-in template is served from code (§116 t-727). Importing it
+      // would bring back a retired seed row, or collide with another org's.
+      if (isBuiltinTemplateSlug(wf.slug)) {
+        result.warnings.push(
+          `Workflow '${wf.slug}' skipped — built-in templates are served from code, not restored from a backup`
+        );
         continue;
       }
       const existing = await tx.aiWorkflow.findUnique({ where: { slug: wf.slug } });

@@ -8,6 +8,7 @@
 
 import { prisma } from '@/lib/db/client';
 import type { BackupPayload } from '@/lib/orchestration/backup/schema';
+import { BUILTIN_TEMPLATE_SLUGS } from '@/lib/orchestration/workflows/template-catalogue';
 
 export async function exportOrchestrationConfig(): Promise<BackupPayload> {
   const [agents, capabilities, workflows, webhooks, knowledgeTags, settings] = await Promise.all([
@@ -78,7 +79,10 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         isActive: true,
       },
     }),
+    // The built-in templates are served from code, not backed up. A row
+    // holding a built-in slug is a retired seed row (§116 t-727).
     prisma.aiWorkflow.findMany({
+      where: { slug: { notIn: [...BUILTIN_TEMPLATE_SLUGS] } },
       select: {
         name: true,
         slug: true,

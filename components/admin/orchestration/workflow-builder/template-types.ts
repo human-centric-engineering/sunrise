@@ -1,10 +1,10 @@
 /**
  * UI-facing template types.
  *
- * `TemplateItem` is the shape components work with — derived from
- * `AiWorkflow` rows returned by the workflows API. The `metadata`
- * JSON column holds `WorkflowTemplateMetadata` (flowSummary, useCases,
- * patterns) populated by the 004 seed unit.
+ * `TemplateItem` is the shape components work with — derived from the
+ * entries `GET /workflows/templates` returns: the built-in templates,
+ * served from code, and the org's own template rows. `metadata` holds
+ * `WorkflowTemplateMetadata` (flowSummary, useCases, patterns).
  */
 
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
@@ -19,8 +19,36 @@ export const templateMetadataSchema = z.object({
 });
 
 /**
- * A template item for the builder UI. Mapped from an `AiWorkflow` row
- * where `isTemplate === true`.
+ * The response of `GET /workflows/templates`, flattened to the shape the
+ * builder's `initialTemplates` prop takes. Every entry is a template, so
+ * `isTemplate` is always true. `workflowDefinition` and `metadata` stay
+ * `unknown` here; `toTemplateItem` validates them.
+ */
+export const templateCatalogueSchema = z.array(
+  z
+    .object({
+      source: z.enum(['builtin', 'custom']),
+      slug: z.string(),
+      name: z.string(),
+      description: z.string(),
+      workflowDefinition: z.unknown(),
+      patternsUsed: z.array(z.number()),
+      metadata: z.unknown(),
+    })
+    .transform((entry) => ({
+      slug: entry.slug,
+      name: entry.name,
+      description: entry.description,
+      workflowDefinition: entry.workflowDefinition,
+      patternsUsed: entry.patternsUsed,
+      isTemplate: true,
+      metadata: entry.metadata,
+    }))
+);
+
+/**
+ * A template item for the builder UI, mapped from one entry of
+ * `templateCatalogueSchema`.
  */
 export interface TemplateItem {
   slug: string;
@@ -33,11 +61,11 @@ export interface TemplateItem {
 }
 
 /**
- * Map an `AiWorkflow` row (from the API) to a `TemplateItem`.
+ * Map a template entry (from the API) to a `TemplateItem`.
  *
- * The `workflowDefinition` and `metadata` columns are typed as `Json`
- * in Prisma, so they arrive as `unknown`. This function narrows them
- * to the expected shapes.
+ * A custom template's `workflowDefinition` and `metadata` come from `Json`
+ * columns, so they arrive as `unknown`. This function narrows them to the
+ * expected shapes.
  */
 export function toTemplateItem(workflow: {
   slug: string;

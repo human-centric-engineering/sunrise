@@ -8,39 +8,11 @@ import type {
   AgentOption,
   CapabilityOption,
 } from '@/components/admin/orchestration/workflow-builder/block-editors';
+import { templateCatalogueSchema } from '@/components/admin/orchestration/workflow-builder/template-types';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
-import { z } from 'zod';
-
-/**
- * Templates fetched from the workflows list endpoint now carry their
- * definition inside `publishedVersion.snapshot` rather than a top-level
- * `workflowDefinition` column. The schema flattens that back to the shape
- * the builder expects.
- */
-const templateItemSchema = z
-  .object({
-    slug: z.string(),
-    name: z.string(),
-    description: z.string(),
-    publishedVersion: z.object({ snapshot: z.unknown() }).nullable(),
-    patternsUsed: z.array(z.number()),
-    isTemplate: z.boolean(),
-    metadata: z.unknown(),
-  })
-  .transform((row) => ({
-    slug: row.slug,
-    name: row.name,
-    description: row.description,
-    workflowDefinition: row.publishedVersion?.snapshot,
-    patternsUsed: row.patternsUsed,
-    isTemplate: row.isTemplate,
-    metadata: row.metadata,
-  }));
-
-const templateListSchema = z.array(templateItemSchema);
 
 export const metadata: Metadata = {
   title: 'New workflow · AI Orchestration',
@@ -77,12 +49,18 @@ async function getAgents(): Promise<AgentOption[]> {
 
 async function getTemplates(): Promise<WorkflowBuilderProps['initialTemplates']> {
   try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.WORKFLOWS}?isTemplate=true&limit=100`);
+    const res = await serverFetch(API.ADMIN.ORCHESTRATION.WORKFLOW_TEMPLATES);
     if (!res.ok) return [];
     const body = await parseApiResponse<unknown[]>(res);
     if (!body.success) return [];
-    const result = templateListSchema.safeParse(body.data);
-    return result.success ? result.data : [];
+    const result = templateCatalogueSchema.safeParse(body.data);
+    if (!result.success) {
+      logger.warn('new workflow page: templates response did not parse', {
+        issues: result.error.issues,
+      });
+      return [];
+    }
+    return result.data;
   } catch (err) {
     logger.error('new workflow page: templates fetch failed', err);
     return [];

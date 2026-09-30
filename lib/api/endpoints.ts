@@ -140,6 +140,7 @@ export const API = {
       providerHealth: (id: string): string => `/api/v1/admin/orchestration/providers/${id}/health`,
       MODELS: '/api/v1/admin/orchestration/models',
       WORKFLOWS: '/api/v1/admin/orchestration/workflows',
+      WORKFLOW_TEMPLATES: '/api/v1/admin/orchestration/workflows/templates',
       workflowById: (id: string): string => `/api/v1/admin/orchestration/workflows/${id}`,
       workflowSchedules: (id: string): string =>
         `/api/v1/admin/orchestration/workflows/${id}/schedules`,
