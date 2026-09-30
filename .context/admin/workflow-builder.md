@@ -2,7 +2,7 @@
 
 Visual editor for `AiWorkflow` definitions. Drag pattern blocks from a left-hand palette onto a React Flow canvas, connect handles to build a DAG, click a block to edit it in the right-hand panel. Landed in Phase 5 Session 5.1a; Session 5.1b added per-step config editors, live validation, and the save flow.
 
-**Status:** Canvas + palette + custom nodes + per-step config editors + live validation with red-ring errors + save flow (create via details dialog, edit via direct PATCH) + **11 built-in templates** loadable from the toolbar + **live execution panel** backed by the orchestration engine (Session 5.2). The Execute button is enabled in edit mode and streams events into a sliding side panel. **Phase 5 additions:** step time estimates in palette, Copy JSON toolbar button, per-step error strategy overrides, execution cancellation, workflow definition version history.
+**Status:** Canvas + palette + custom nodes + per-step config editors + live validation with red-ring errors + save flow (create via details dialog, edit via direct PATCH) + **12 built-in templates** loadable from the toolbar + **live execution panel** backed by the orchestration engine (Session 5.2). The Execute button is enabled in edit mode and streams events into a sliding side panel. **Phase 5 additions:** step time estimates in palette, Copy JSON toolbar button, per-step error strategy overrides, execution cancellation, workflow definition version history.
 
 **Core files:**
 
@@ -371,27 +371,28 @@ Save errors render as an inline red alert above the canvas (`role="alert"` + `Al
 
 ## Templates
 
-11 built-in composition recipes are seeded into the database via `prisma/seeds/004-builtin-templates.ts` and served to the UI through the existing workflows API (`GET /api/v1/admin/orchestration/workflows?isTemplate=true`). The builder pages prefetch templates server-side and pass them as `initialTemplates` props — the same pattern used for capabilities.
+12 built-in composition recipes live in code (`BUILTIN_WORKFLOW_TEMPLATES`) and are served to every org, alongside that org's own templates, by `GET /api/v1/admin/orchestration/workflows/templates` (`lib/orchestration/workflows/template-catalogue.ts`). They are not database rows (§116 t-727). The builder pages prefetch the catalogue server-side, parse it with `templateCatalogueSchema` (`template-types.ts`), and pass it as `initialTemplates` props — the same pattern used for capabilities. Picking a template loads its definition onto the canvas; saving creates the org's own workflow.
 
-**Seed data** (all under `prisma/seeds/data/templates/`):
+**Definitions** (all under `prisma/seeds/data/templates/`; the directory name is historical, nothing is seeded from it):
 
 Patterns column mirrors each template's `patterns[]` array — see `types/orchestration.ts` (`KNOWN_PATTERNS`) for the canonical 21 and `.context/orchestration/patterns-and-steps.md` for the layered model.
 
-| File                          | Template                                         | Patterns                                                                                                         |
-| ----------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `types.ts`                    | `WorkflowTemplate` shape                         | —                                                                                                                |
-| `customer-support.ts`         | Customer Support                                 | Routing (2), Tool Use (5), HITL (13), RAG (14), Guardrails (18)                                                  |
-| `content-pipeline.ts`         | Content Pipeline                                 | Prompt Chaining (1), Parallelisation (3), Reflection (4), Planning (6)                                           |
-| `saas-backend.ts`             | SaaS Backend                                     | Prompt Chaining (1), Routing (2), Tool Use (5), Resource-Aware Optimisation (16)                                 |
-| `research-agent.ts`           | Research Agent                                   | Parallelisation (3), Reflection (4), Planning (6), Multi-Agent (7), RAG (14)                                     |
-| `conversational-learning.ts`  | Conversational Learning                          | Prompt Chaining (1), Tool Use (5), Memory (8), Learning & Adaptation (9), Evaluation & Monitoring (19)           |
-| `code-review.ts`              | Code Review Agent                                | Prompt Chaining (1), Parallelisation (3), Reflection (4), Guardrails (18), Evaluation & Monitoring (19)          |
-| `data-pipeline.ts`            | Data Pipeline + Quality Gate                     | Parallelisation (3), Tool Use (5), Inter-Agent Communication (15), Guardrails (18), Evaluation & Monitoring (19) |
-| `outreach-safety.ts`          | Multi-Channel Outreach                           | Routing (2), HITL (13), Inter-Agent Communication (15), Guardrails (18), Evaluation & Monitoring (19)            |
-| `autonomous-research.ts`      | Autonomous Research                              | Multi-Agent Collaboration (7), RAG (14), Guardrails (18), Evaluation (19)                                        |
-| `cited-knowledge-advisor.ts`  | Cited Knowledge Advisor                          | Tool Use (5), HITL (13), RAG (14), Guardrails (18)                                                               |
-| `scheduled-source-monitor.ts` | Scheduled Source Monitor                         | Routing (2), Goal Setting & Monitoring (11), Evaluation & Monitoring (19)                                        |
-| `index.ts`                    | `BUILTIN_WORKFLOW_TEMPLATES` barrel + re-exports | —                                                                                                                |
+| File                              | Template                                         | Patterns                                                                                                         |
+| --------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `types.ts`                        | `WorkflowTemplate` shape                         | —                                                                                                                |
+| `customer-support.ts`             | Customer Support                                 | Routing (2), Tool Use (5), HITL (13), RAG (14), Guardrails (18)                                                  |
+| `content-pipeline.ts`             | Content Pipeline                                 | Prompt Chaining (1), Parallelisation (3), Reflection (4), Planning (6)                                           |
+| `saas-backend.ts`                 | SaaS Backend                                     | Prompt Chaining (1), Routing (2), Tool Use (5), Resource-Aware Optimisation (16)                                 |
+| `research-agent.ts`               | Research Agent                                   | Parallelisation (3), Reflection (4), Planning (6), Multi-Agent (7), RAG (14)                                     |
+| `conversational-learning.ts`      | Conversational Learning                          | Prompt Chaining (1), Tool Use (5), Memory (8), Learning & Adaptation (9), Evaluation & Monitoring (19)           |
+| `code-review.ts`                  | Code Review Agent                                | Prompt Chaining (1), Parallelisation (3), Reflection (4), Guardrails (18), Evaluation & Monitoring (19)          |
+| `data-pipeline.ts`                | Data Pipeline + Quality Gate                     | Parallelisation (3), Tool Use (5), Inter-Agent Communication (15), Guardrails (18), Evaluation & Monitoring (19) |
+| `outreach-safety.ts`              | Multi-Channel Outreach                           | Routing (2), HITL (13), Inter-Agent Communication (15), Guardrails (18), Evaluation & Monitoring (19)            |
+| `autonomous-research.ts`          | Autonomous Research                              | Multi-Agent Collaboration (7), RAG (14), Guardrails (18), Evaluation (19)                                        |
+| `cited-knowledge-advisor.ts`      | Cited Knowledge Advisor                          | Tool Use (5), HITL (13), RAG (14), Guardrails (18)                                                               |
+| `scheduled-source-monitor.ts`     | Scheduled Source Monitor                         | Routing (2), Goal Setting & Monitoring (11), Evaluation & Monitoring (19)                                        |
+| `inbound-conversation-handler.ts` | Inbound Conversation Handler                     | Tool Use (5), Memory Management (8)                                                                              |
+| `index.ts`                        | `BUILTIN_WORKFLOW_TEMPLATES` barrel + re-exports | —                                                                                                                |
 
 **Template shape** (seed-side `WorkflowTemplate` in `types/orchestration.ts`):
 
@@ -425,9 +426,9 @@ Each recipe has 3–6 step types with realistic (non-stub) config. Every `tool_c
 
 Templates can only be loaded on a new workflow. In edit mode the shell passes `templatesDisabled={true}` and the toolbar renders every dropdown item with `disabled` plus a hint (`"Templates can only be loaded on a new workflow."`) — loading a template into an existing workflow would clobber the admin's definition and there is no undo.
 
-### DB rows for the list page
+### Retired rows
 
-`prisma/seeds/004-builtin-templates.ts` loops `BUILTIN_WORKFLOW_TEMPLATES` and upserts each as an `AiWorkflow` row with `isTemplate: true`, `isActive: true`, `patternsUsed`, `metadata: { flowSummary, useCases, patterns }`, and `createdBy: adminUser.id`. The `hashInputs` array lists all template source files so edits trigger re-seeding. Re-running `npm run db:seed` is safe — metadata is always overwritten (template-intrinsic, not admin-editable), but admin edits to other fields are preserved. The builder's dropdown depends on the API serving these rows.
+Until §116 t-727 a seed (`004-builtin-templates`) mirrored each built-in into an install-org `AiWorkflow` row with `isTemplate: true`. That seed is gone, and migration `20260930120000_retire_builtin_template_rows` soft-deletes the rows it wrote: each is switched off (`isActive: false`) and stops being a template (`isTemplate: false`), and the row, its versions and its executions are kept. On an upgraded install they appear in the workflows list as inactive ordinary workflows. One an install was running directly (a schedule, a trigger, a `run_workflow` binding) can be switched back on there, and it runs as before; or recreate it with **Use template** and move its schedule or trigger over. The catalogue ignores any row holding a built-in slug, so a switched-on row never appears twice, and backup export and import skip built-in slugs.
 
 ## Layout persistence
 
@@ -457,7 +458,7 @@ Session 5.1a + 5.1b + 5.1c **ship:**
 - Per-step config editors for all fifteen step types (5.1b).
 - Live debounced validation combining the backend validator + three FE-only extra checks, with red-ring error rendering and an aria-live summary panel (5.1b).
 - Save flow: create via `WorkflowDetailsDialog` → POST → redirect; edit via direct PATCH → refresh (5.1b).
-- 11 built-in templates loadable from the toolbar dropdown (served via API), with a description dialog that warns before replacing a non-empty canvas and is disabled in edit mode (5.1c).
+- 12 built-in templates loadable from the toolbar dropdown (served from code via API), with a description dialog that warns before replacing a non-empty canvas and is disabled in edit mode (5.1c).
 
 **Deferred:**
 

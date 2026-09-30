@@ -142,6 +142,44 @@ release process.
   longer create agents** (§116 t-724). They still seed the pattern and cost
   capabilities, the MCP server config and resources, and the audit
   capabilities and workflow. Their content changed, so each re-runs once.
+- **The built-in workflow templates are served from code, to every org**
+  (§116 t-727). `GET /api/v1/admin/orchestration/workflows/templates` now
+  returns `BUILTIN_WORKFLOW_TEMPLATES` from code, then the calling org's own
+  template rows (`lib/orchestration/workflows/template-catalogue.ts`), and
+  the new-workflow and edit pages read their "Use template" list from it.
+  At `multi` every org's builder now offers all twelve. **The endpoint's
+  response changed:** each entry is `{ source: 'builtin' | 'custom', slug,
+  name, description, workflowDefinition, patternsUsed, metadata }`; it is no
+  longer paginated (at most 100 of the org's own), and the `category` filter
+  is gone (`source` stays).
+- **The seeded built-in template rows are retired on upgrade** (§116 t-727).
+  Migration `20260930120000_retire_builtin_template_rows` switches each of
+  the twelve `tpl-*` rows off and clears its template flag, keeping the row,
+  its versions and its executions. **Check each deployed database first**:
+  anything wired to one of those rows stops when it is switched off (a
+  schedule is skipped, and a run waiting on approval fails when approved).
+  This query lists what is wired to each:
+
+  ```sql
+  SELECT w.slug, w."isActive",
+    (SELECT count(*) FROM ai_workflow_schedule s WHERE s."workflowId" = w.id) AS schedules,
+    (SELECT count(*) FROM ai_workflow_trigger t WHERE t."workflowId" = w.id) AS triggers,
+    (SELECT count(*) FROM ai_workflow_execution e WHERE e."workflowId" = w.id
+       AND e.status IN ('pending', 'running', 'paused_for_approval')) AS open_runs,
+    (SELECT count(*) FROM ai_agent_capability c
+       WHERE c."customConfig" -> 'allowedWorkflowSlugs' ? w.slug) AS run_workflow_bindings
+  FROM ai_workflow w
+  WHERE w.slug LIKE 'tpl-%' AND w.slug <> 'tpl-provider-model-audit'
+  ORDER BY w.slug;
+  ```
+
+  Also look for code or external callers naming a `tpl-*` slug, such as a
+  seed creating a schedule, or a caller of
+  `/api/v1/webhooks/trigger/tpl-…`. For a row that is in use, either switch
+  it back on from the workflows list (it keeps its slug, schedules and
+  triggers, and runs as an ordinary workflow), or recreate it with **Use
+  template** and move its schedule or trigger over. Backup export and import
+  now skip built-in slugs, so an old backup cannot bring a row back.
 
 ### Removed
 
@@ -152,6 +190,11 @@ release process.
   `lib/orchestration/agents/platform-agent-definitions/`. A fork that edited
   one of these files will see a modify/delete conflict. Carry the edit into a
   replacement registered from `lib/app/platform-agents.ts` instead.
+- **The seed units `004-builtin-templates` and `005-backfill-step-descriptions`**
+  (§116 t-727). The built-in templates are no longer rows, so nothing mirrors
+  them. A fork that added a template to `BUILTIN_WORKFLOW_TEMPLATES` gets it
+  served with no change. A fork that edited either seed will see a
+  modify/delete conflict; there is nothing to carry over.
 - **`SYSTEM_AGENT_PROTECTED_FIELDS`** from `agent-field-registry.ts` (§116
   t-725). The three fields it named are now three of many:
   `platformAgentFieldNames('code')` is the list the API and version restore

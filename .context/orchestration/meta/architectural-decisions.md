@@ -589,7 +589,7 @@ This section covers how an agent actually executes — the structure of a workfl
 
 **What is it?** Building a workflow from a blank canvas is intimidating. New admins want a starting point — "give me a customer-support pattern," "give me a content-review pipeline." A _template_ is a pre-built workflow they can clone and adapt. A _dry-run mode_ lets them execute the workflow with mocked LLM and tool calls so they can verify the flow without spending budget.
 
-**What we chose:** Workflows and templates share one table (`AiWorkflow`). Built-in templates are workflows with `isTemplate: true, templateSource: 'builtin'` (currently 11 of them, covering routing, RAG, content review, escalation, scheduled summaries, and other common patterns). Custom user-created templates use `templateSource: 'custom'`. The list endpoint supports filtering by source and category. Every workflow exposes a dry-run endpoint that walks the DAG with stubbed step outputs so the admin can see the path, the parallelism, and the conditional branches without paying for it.
+**What we chose:** Workflows and templates share one table (`AiWorkflow`). Custom templates an admin saves are workflows with `isTemplate: true` (`templateSource: 'custom'` when made by "Save as template"). The 12 built-in templates (routing, RAG, content review, escalation, scheduled summaries, inbound replies and other common patterns) are code, served beside the org's own by the templates endpoint, which filters by source. **Revised in §116 t-727:** built-ins were once seeded as install-org rows, which no other org could read and which could not be copied per org (the slug is unique across the install); serving them from code gives every org the same set, and the seeded rows are retired. Every workflow exposes a dry-run endpoint that walks the DAG with stubbed step outputs so the admin can see the path, the parallelism, and the conditional branches without paying for it.
 
 **Alternatives**
 
@@ -606,7 +606,7 @@ This section covers how an agent actually executes — the structure of a workfl
 - Custom templates let an organisation curate its own pattern library without code changes.
 - Dry-run lets a workflow author iterate cheaply — the path is verified before any LLM call is made for real.
 
-**Where it lives:** `lib/orchestration/workflows/` (validator, semantic checker, template scanner), `app/api/v1/admin/orchestration/workflows/templates/` (list endpoint), `app/api/v1/admin/orchestration/workflows/[id]/dry-run/` (dry-run endpoint), `.context/orchestration/workflows.md`.
+**Where it lives:** `lib/orchestration/workflows/` (validator, semantic checker, template scanner), `lib/orchestration/workflows/template-catalogue.ts` and `app/api/v1/admin/orchestration/workflows/templates/` (the catalogue and its endpoint), `app/api/v1/admin/orchestration/workflows/[id]/dry-run/` (dry-run endpoint), `.context/orchestration/workflows.md`.
 
 ### 3.10 Workflow-step provenance via `output.sources` lift
 
