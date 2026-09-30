@@ -68,10 +68,12 @@ is on:
   evaluation judges, the case generator and the clean-up agent), made when
   the org is created and kept current by a reconcile on each release, so a
   new org's MCP calls, evaluations, case generation and clean-up upload work
-  with no manual step. They are defined in code: an org tunes only how they
-  run (provider, model, spend, rate limit, retention), and the API refuses
-  the rest. The workflow builder offers every org the built-in templates,
-  served from code. See
+  with no manual step. They are defined in code: an org tunes how they run
+  (provider, model, spend, rate limit, retention, and each capability
+  binding's config and rate limit), and the API refuses edits to what the
+  platform owns. `mcp-system`'s tools are the exception: which ones it may
+  use is the org's choice. The workflow builder offers every org the
+  built-in templates, served from code. See
   [platform agents](../orchestration/platform-agents.md).
 - **The data subject is per org.** `eraseUser` / `exportUserData` act inside
   the org the request entered: a person with memberships in several orgs is
