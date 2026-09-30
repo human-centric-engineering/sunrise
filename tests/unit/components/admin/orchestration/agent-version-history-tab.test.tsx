@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { AgentVersionHistoryTab } from '@/components/admin/orchestration/agent-version-history-tab';
@@ -181,6 +181,83 @@ describe('AgentVersionHistoryTab', () => {
 
     expect(screen.getByText('Restore to version 2?')).toBeInTheDocument();
     expect(screen.getByText(/revert the agent's configuration/)).toBeInTheDocument();
+  });
+
+  describe('on a platform agent (§116 t-732)', () => {
+    async function openRestoreDialog(props: { platformTunableFields?: string[] | null }) {
+      const user = userEvent.setup();
+      render(<AgentVersionHistoryTab agentId={AGENT_ID} {...props} />);
+      await waitFor(() => {
+        expect(screen.getByText('v2')).toBeInTheDocument();
+      });
+      await user.click(screen.getAllByRole('button', { name: /restore/i })[0]);
+      return screen.getByRole('alertdialog');
+    }
+
+    it("says a restore brings back only this org's settings, naming them from the edit policy", async () => {
+      const dialog = await openRestoreDialog({
+        platformTunableFields: [
+          'provider',
+          'model',
+          'fallbackProviders',
+          'providerConfig',
+          'monthlyBudgetUsd',
+          'maxCostPerTurnUsd',
+          'rateLimitRpm',
+          'retentionDays',
+        ],
+      });
+
+      expect(dialog).toHaveTextContent(
+        "a restore brings back only this org's settings from version 2: its provider, model, fallback providers, provider configuration, monthly budget, per-turn cost cap, rate limit and how long its conversations are kept."
+      );
+      expect(dialog).toHaveTextContent(
+        'Its instructions, knowledge and other settings stay as the platform sets them.'
+      );
+      // The old wording promised the instructions back, which the API refuses.
+      expect(dialog).not.toHaveTextContent(/revert the agent's configuration/);
+    });
+
+    it('builds the list from the prop, not a copy of it', async () => {
+      const dialog = await openRestoreDialog({ platformTunableFields: ['model', 'retentionDays'] });
+
+      expect(dialog).toHaveTextContent(
+        'its model and how long its conversations are kept. Its instructions'
+      );
+      expect(dialog).not.toHaveTextContent(/monthly budget/);
+    });
+
+    it('titles the Restore button for what it does', async () => {
+      render(<AgentVersionHistoryTab agentId={AGENT_ID} platformTunableFields={['model']} />);
+      await waitFor(() => {
+        expect(screen.getByText('v2')).toBeInTheDocument();
+      });
+
+      expect(screen.getAllByRole('button', { name: /restore/i })[0]).toHaveAttribute(
+        'title',
+        "Restore this org's settings from version 2"
+      );
+    });
+
+    it("leaves the dialog unchanged on an org's own agent", async () => {
+      for (const props of [{}, { platformTunableFields: null }]) {
+        const user = userEvent.setup();
+        render(<AgentVersionHistoryTab agentId={AGENT_ID} {...props} />);
+        await waitFor(() => {
+          expect(screen.getByText('v2')).toBeInTheDocument();
+        });
+        const restoreV2 = screen.getAllByRole('button', { name: /restore/i })[0];
+        expect(restoreV2).toHaveAttribute('title', 'Restore agent to version 2');
+
+        await user.click(restoreV2);
+        const dialog = screen.getByRole('alertdialog');
+        expect(dialog).toHaveTextContent(
+          "This will revert the agent's configuration (model, instructions, settings) to the state captured in version 2."
+        );
+        expect(dialog).not.toHaveTextContent(/platform agent/);
+        cleanup();
+      }
+    });
   });
 
   it('calls restore endpoint and invokes onRestored callback', async () => {

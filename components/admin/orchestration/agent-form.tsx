@@ -52,6 +52,7 @@ import { InstructionsHistoryPanel } from '@/components/admin/orchestration/instr
 import { AgentCapabilitiesTab } from '@/components/admin/orchestration/agent-capabilities-tab';
 import { AgentInviteTokensTab } from '@/components/admin/orchestration/agent-invite-tokens-tab';
 import { AgentVersionHistoryTab } from '@/components/admin/orchestration/agent-version-history-tab';
+import { describeTunableFields } from '@/components/admin/orchestration/platform-agent-fields';
 import { AgentTestCard } from '@/components/admin/orchestration/agent-test-card';
 import { EmbedConfigPanel } from '@/components/admin/orchestration/agents/embed-config-panel';
 import { KnowledgeAccessSection } from '@/components/admin/orchestration/knowledge-access-section';
@@ -228,37 +229,6 @@ export interface AgentFormProps {
    * omitted, the profile selector is hidden (agent behaves as today).
    */
   profiles?: AgentProfileSummary[];
-}
-
-/**
- * How the banner names the fields an org tunes on a platform agent, in the
- * order an admin meets them on the form. `providerConfig` has no control
- * here (it is set through the API), so the banner — which says what can be
- * changed *here* — leaves it out. An org-tunable field a fork adds falls back
- * to its registry label.
- */
-const TUNABLE_FIELD_PHRASES: Record<string, string | null> = {
-  provider: 'provider',
-  model: 'model',
-  fallbackProviders: 'fallback providers',
-  monthlyBudgetUsd: 'monthly budget',
-  maxCostPerTurnUsd: 'per-turn cost cap',
-  rateLimitRpm: 'rate limit',
-  retentionDays: 'how long its conversations are kept',
-  providerConfig: null,
-};
-
-/** "provider, model, … and how long its conversations are kept", from the API's list. */
-function describeTunableFields(fields: string[], capabilitiesToo: boolean): string {
-  const known = Object.keys(TUNABLE_FIELD_PHRASES).filter((field) => fields.includes(field));
-  const forkFields = fields.filter((field) => !(field in TUNABLE_FIELD_PHRASES));
-  const phrases = [
-    ...known.map((field) => TUNABLE_FIELD_PHRASES[field]),
-    ...forkFields.map((field) => (fieldLabels()[field] ?? field).toLowerCase()),
-    ...(capabilitiesToo ? ['which capabilities it may use'] : []),
-  ].filter((phrase): phrase is string => phrase !== null);
-  if (phrases.length <= 1) return phrases.join('');
-  return `${phrases.slice(0, -1).join(', ')} and ${phrases[phrases.length - 1]}`;
 }
 
 function toSlug(value: string): string {
@@ -801,10 +771,9 @@ export function AgentForm({
             {platformAgent?.bindingsLocked === false ? '' : ' and capabilities'} — and updates it
             with each release, so those are read-only here and it cannot be deleted. Here, this org
             sets its{' '}
-            {describeTunableFields(
-              platformAgent?.tunableFields ?? [],
-              platformAgent?.bindingsLocked === false
-            )}
+            {describeTunableFields(platformAgent?.tunableFields ?? [], {
+              capabilitiesToo: platformAgent?.bindingsLocked === false,
+            })}
             .
           </span>
         </div>
@@ -2153,6 +2122,7 @@ export function AgentForm({
           {isEdit && agent ? (
             <AgentVersionHistoryTab
               agentId={agent.id}
+              platformTunableFields={platformAgent?.tunableFields ?? null}
               onRestored={() => {
                 // Re-pull the fresh agent into the form after a version restore.
                 void (async () => {

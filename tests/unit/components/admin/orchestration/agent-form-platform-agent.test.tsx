@@ -228,6 +228,58 @@ describe('AgentForm — platform agent', () => {
     expect(body).toHaveProperty('systemInstructions');
   });
 
+  describe('the Versions tab restore dialog (§116 t-732)', () => {
+    const VERSIONS = [
+      {
+        id: 'v-2',
+        version: 2,
+        changeSummary: 'Reconciled',
+        createdBy: 'system',
+        createdAt: '2026-09-29T10:00:00Z',
+      },
+      {
+        id: 'v-1',
+        version: 1,
+        changeSummary: null,
+        createdBy: 'system',
+        createdAt: '2026-09-28T10:00:00Z',
+      },
+    ];
+
+    async function openRestore(agent: AgentWithGrants) {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockImplementation((url: string) =>
+        Promise.resolve(url.includes('/versions') ? VERSIONS : [])
+      );
+      const user = userEvent.setup();
+      renderForm(agent);
+      await user.click(screen.getByRole('tab', { name: /versions/i }));
+      await waitFor(() => expect(screen.getByText('v1')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /^restore$/i }));
+      return screen.getByRole('alertdialog');
+    }
+
+    it("names the org's settings from the edit policy the API returned", async () => {
+      const dialog = await openRestore(makeAgent());
+
+      // The same list the API enforces (`platformAgentFieldNames('org')`),
+      // including the provider configuration the form has no control for.
+      expect(dialog).toHaveTextContent(
+        "only this org's settings from version 1: its provider, model, fallback providers, provider configuration, monthly budget, per-turn cost cap, rate limit and how long its conversations are kept."
+      );
+      expect(dialog).not.toHaveTextContent(/revert the agent's configuration/);
+    });
+
+    it("keeps the full-restore wording on an org's own agent", async () => {
+      const dialog = await openRestore(
+        makeAgent({ isSystem: false, slug: 'mine', platformAgent: null })
+      );
+
+      expect(dialog).toHaveTextContent("This will revert the agent's configuration");
+      expect(dialog).not.toHaveTextContent(/platform agent/);
+    });
+  });
+
   it("keeps a locked field's help usable", async () => {
     // A disabled fieldset would disable the <FieldHelp> button with the
     // field; each control is disabled on its own so the help still opens.

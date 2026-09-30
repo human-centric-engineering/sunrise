@@ -24,6 +24,12 @@
  * extra fetch. Restore is offered on every row except the newest (idx 0)
  * — restoring the newest is a no-op since it already equals live.
  *
+ * On a platform agent (§116) a restore brings back only the fields this org
+ * tunes; the platform's own, and the knowledge grants, stay as the platform
+ * set them (the restore route skips them). `platformTunableFields` is that
+ * list, from the edit policy `GET /agents/:id` returns, and the confirm
+ * dialog names it rather than promising the whole version back.
+ *
  * Lazy-fetches the version list on mount. Per-version snapshots are pulled
  * on demand when a row is expanded and cached, so the same blob serves as
  * "After" for row i and "Before" for row i-1 (its newer neighbour).
@@ -49,6 +55,7 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { cn } from '@/lib/utils';
+import { describeTunableFields } from '@/components/admin/orchestration/platform-agent-fields';
 import {
   diffAgentSnapshots,
   formatSnapshotValue,
@@ -86,6 +93,12 @@ export interface AgentVersionHistoryTabProps {
   agentId: string;
   /** Called after a successful restore so the parent form can refresh. */
   onRestored?: () => void;
+  /**
+   * On a platform agent, the fields this org tunes: all a restore brings
+   * back (`platformAgent.tunableFields` from `GET /agents/:id`). `null` or
+   * absent for an org's own agent, where a restore brings back everything.
+   */
+  platformTunableFields?: readonly string[] | null;
 }
 
 function formatDate(iso: string): string {
@@ -156,7 +169,12 @@ function DiffTable({ changes }: { changes: FieldChange[] }) {
   );
 }
 
-export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHistoryTabProps) {
+export function AgentVersionHistoryTab({
+  agentId,
+  onRestored,
+  platformTunableFields,
+}: AgentVersionHistoryTabProps) {
+  const isPlatformAgent = platformTunableFields != null;
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -389,7 +407,11 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
                         size="sm"
                         className="shrink-0"
                         onClick={() => setRestoreTarget(v)}
-                        title={`Restore agent to version ${v.version}`}
+                        title={
+                          isPlatformAgent
+                            ? `Restore this org's settings from version ${v.version}`
+                            : `Restore agent to version ${v.version}`
+                        }
                       >
                         <RotateCcw className="mr-1 h-3.5 w-3.5" />
                         Restore
@@ -431,9 +453,22 @@ export function AgentVersionHistoryTab({ agentId, onRestored }: AgentVersionHist
           <AlertDialogHeader>
             <AlertDialogTitle>Restore to version {restoreTarget?.version}?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will revert the agent&apos;s configuration (model, instructions, settings) to the
-              state captured in version {restoreTarget?.version}. A new version entry will be
-              created to record this action. Conversations and cost history are not affected.
+              {isPlatformAgent ? (
+                <>
+                  This is a platform agent, so a restore brings back only this org&apos;s settings
+                  from version {restoreTarget?.version}: its{' '}
+                  {describeTunableFields(platformTunableFields, { includeProviderConfig: true })}.
+                  Its instructions, knowledge and other settings stay as the platform sets them. A
+                  new version entry will be created to record this action. Conversations and cost
+                  history are not affected.
+                </>
+              ) : (
+                <>
+                  This will revert the agent&apos;s configuration (model, instructions, settings) to
+                  the state captured in version {restoreTarget?.version}. A new version entry will
+                  be created to record this action. Conversations and cost history are not affected.
+                </>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           {restoreError && (
