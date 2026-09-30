@@ -48,6 +48,7 @@ import { getModel } from '@/lib/orchestration/llm/model-registry';
 import {
   DEFAULT_MAX_RETRIES,
   DEFAULT_TIMEOUT_MS,
+  EMBEDDING_BATCH_TIMEOUT_MS,
   LOCAL_TIMEOUT_MS,
   ProviderError,
   buildRequestOptions,
@@ -489,8 +490,13 @@ export class OpenAiCompatibleProvider implements LlmProvider {
    * SDK asks for base64 and decodes it into a `Float32Array`, not a
    * `number[]`: `JSON.stringify` then writes an object, not an array, and any
    * caller building a pgvector literal from it breaks quietly. Asking for
-   * floats also matches what the knowledge embedder sent before it moved
-   * here, which sent no `encoding_format` and got the server default.
+   * floats gets the same RESULT the knowledge embedder got before it moved
+   * here (plain float arrays). It is not the same request: that embedder sent
+   * no `encoding_format` at all, which the SDK does not allow — it always
+   * sends one, and `float` is the spec's own value.
+   *
+   * The timeout is at least `EMBEDDING_BATCH_TIMEOUT_MS`, not the chat
+   * timeout: a 100-chunk batch on a CPU-bound local model can outlast 60s.
    *
    * `dimensions` is sent only when the caller passes one: some hosts reject it
    * for models with a fixed native width (see `EmbedManyOptions`).
@@ -500,12 +506,15 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     try {
       raw = await withRetry(
         () =>
-          this.client.embeddings.create({
-            model: options.model,
-            input: texts,
-            encoding_format: 'float',
-            ...(options.dimensions !== undefined ? { dimensions: options.dimensions } : {}),
-          }),
+          this.client.embeddings.create(
+            {
+              model: options.model,
+              input: texts,
+              encoding_format: 'float',
+              ...(options.dimensions !== undefined ? { dimensions: options.dimensions } : {}),
+            },
+            { timeout: Math.max(this.timeoutMs, EMBEDDING_BATCH_TIMEOUT_MS) }
+          ),
         {
           maxRetries: this.maxRetries,
           isLocal: this.isLocal,
@@ -858,17 +867,22 @@ function safeParseJson(raw: string): Record<string, unknown> {
  * `status` included.
  */
 function describeConnectionFailure(err: unknown): unknown {
-  if (!(err instanceof Error) || !(err.cause instanceof Error)) return err;
+  if (!(err instanceof Error)) return err;
   // Rewrapping would drop `status`, which decides retry and the error code.
   if ('status' in err && err.status !== undefined) return err;
-  // The depth varies — `withRetry` adds a `ProviderError` layer on top of the
-  // SDK's — so walk to the innermost error that still has an `Error` cause
-  // (undici's `fetch failed`) and let `describeFetchFailure` read its leaf,
-  // which also handles the AggregateError a multi-address host produces.
-  let parentOfLeaf: Error = err;
-  while (parentOfLeaf.cause instanceof Error && parentOfLeaf.cause.cause instanceof Error) {
-    parentOfLeaf = parentOfLeaf.cause;
+  // Only undici's own signature gets rewritten: a `TypeError('fetch failed')`
+  // somewhere in the chain, carrying the reason on its `cause`. The depth
+  // varies (`withRetry` adds a `ProviderError` above the SDK's error), so walk
+  // to it. Anything else — an SDK timeout, an abort — passes through as is:
+  // describing a non-network error by its own `cause` repeats the message.
+  let node: unknown = err;
+  while (node instanceof Error) {
+    if (node instanceof TypeError && node.message === 'fetch failed') {
+      return Object.assign(new Error(`${err.message} ${describeFetchFailure(node)}`), {
+        cause: err,
+      });
+    }
+    node = node.cause;
   }
-  const described = `${err.message} ${describeFetchFailure(parentOfLeaf)}`;
-  return Object.assign(new Error(described), { cause: err });
+  return err;
 }

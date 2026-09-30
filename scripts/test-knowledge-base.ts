@@ -5,7 +5,8 @@
  *
  * Requires:
  * - A running PostgreSQL with the sunrise database
- * - For search: an embedding provider (OPENAI_API_KEY or Ollama running)
+ * - For search: an embedding provider row (OpenAI, Voyage, or a local one such as
+ *   Ollama). OPENAI_API_KEY alone is not enough since t-740: add OpenAI as a provider.
  * - For seed-only mode: no embedding provider needed (inserts without embeddings)
  */
 
@@ -186,7 +187,10 @@ async function testVectorSearch(): Promise<void> {
 
   if (embeddingCount === 0) {
     console.log('  No embeddings found. To test vector search:');
-    console.log('  1. Set OPENAI_API_KEY in .env.local, OR');
+    console.log(
+      '  1. Add an embedding provider row (OpenAI, Voyage) on the admin Providers page —'
+    );
+    console.log('     with OPENAI_API_KEY in .env.local, the page detects it and adds OpenAI, OR');
     console.log('  2. Run Ollama locally (ollama serve && ollama pull nomic-embed-text)');
     console.log('  3. Configure an AiProviderConfig for the embedding provider');
     console.log('  Then run: npx tsx scripts/test-knowledge-base.ts --search-only');

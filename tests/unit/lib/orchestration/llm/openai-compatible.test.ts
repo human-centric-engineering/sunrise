@@ -1319,6 +1319,35 @@ describe('embedMany', () => {
     ).rejects.toMatchObject({ message: 'Connection error. fetch failed: unexpected redirect' });
   });
 
+  it('passes a non-network error through untouched: a timeout is not re-described by its own cause', async () => {
+    // An SDK timeout has no undici cause. withRetry wraps it in a
+    // ProviderError, so a rewrap keyed on "has a cause" would describe the
+    // error by itself: "Request timed out. Request timed out.: Request timed out."
+    embeddingsCreateMock.mockRejectedValue(new Error('Request timed out.'));
+
+    await expect(
+      makeProvider({ maxRetries: 0 }).embedMany(['x'], { model: 'm' })
+    ).rejects.toMatchObject({ message: 'Request timed out.' });
+  });
+
+  it('gives a batch at least five minutes, not the 60s chat timeout of a local host', async () => {
+    // A 100-chunk batch on a CPU-bound local model can outlast 60s; the
+    // embedder set no timeout at all before it moved here.
+    embeddingsCreateMock.mockResolvedValue({ data: [{ embedding: [1], index: 0 }] });
+
+    await makeLocalProvider().embedMany(['x'], { model: 'nomic-embed-text' });
+
+    expect(embeddingsCreateMock.mock.calls[0]?.[1]).toEqual({ timeout: 300_000 });
+  });
+
+  it("keeps a row's own longer timeout", async () => {
+    embeddingsCreateMock.mockResolvedValue({ data: [{ embedding: [1], index: 0 }] });
+
+    await makeProvider({ timeoutMs: 600_000 }).embedMany(['x'], { model: 'm' });
+
+    expect(embeddingsCreateMock.mock.calls[0]?.[1]).toEqual({ timeout: 600_000 });
+  });
+
   it('refuses a body that is not an embeddings list, e.g. an undecoded base64 string', async () => {
     embeddingsCreateMock.mockResolvedValue({ data: [{ embedding: 'AAAA', index: 0 }] });
 

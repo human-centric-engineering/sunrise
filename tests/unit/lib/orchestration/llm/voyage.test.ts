@@ -576,6 +576,15 @@ describe('VoyageProvider.embedMany()', () => {
     expect(sentBody()).toMatchObject({ input_type: 'document', output_dimension: 1536 });
   });
 
+  it('gives a batch at least five minutes, not the 120s default', async () => {
+    mockFetchWithTimeout.mockResolvedValue(batchResponse({ data: [{ embedding: [1], index: 0 }] }));
+    const provider = new VoyageProvider(VALID_CONFIG);
+
+    await provider.embedMany(['a'], { model: 'voyage-3' });
+
+    expect(mockFetchWithTimeout.mock.calls[0][2]).toBe(300_000);
+  });
+
   it("posts to the row's configured baseUrl, which embed() never honoured", async () => {
     // The knowledge embedder honoured a Voyage row's baseUrl (a proxy or a
     // regional endpoint); embedMany replaced it, so it must keep doing so.

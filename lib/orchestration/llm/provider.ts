@@ -56,6 +56,17 @@ export const DEFAULT_TIMEOUT_MS = 120_000;
 export const LOCAL_TIMEOUT_MS = 60_000;
 
 /**
+ * Floor on an `embedMany` request's timeout (t-740).
+ *
+ * A knowledge batch is up to 100 chunks, and a local model on CPU (Ollama's
+ * nomic-embed-text, with a cold model load) can take well over the 60s chat
+ * timeout for one. The knowledge embedder set no timeout at all before it
+ * moved behind the provider manager, so a chat-sized timeout would fail
+ * uploads that used to work. A row's own longer `timeoutMs` still wins.
+ */
+export const EMBEDDING_BATCH_TIMEOUT_MS = 300_000;
+
+/**
  * Default maximum retries on transient failures (after the initial
  * attempt). 2 retries → 3 total attempts. Matches the OpenAI and
  * Anthropic SDK defaults. With the longer per-attempt timeout above,

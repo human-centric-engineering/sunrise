@@ -768,7 +768,10 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
     // manager (t-740); without it here, that check would have been lost in the
     // move. Absent `baseUrl` means Voyage's own fixed host, and nothing to check.
     if (config.baseUrl) {
-      const urlCheck = checkSafeProviderUrl(config.baseUrl, { allowLoopback: false });
+      // `isLocal` decides loopback, the same rule as the openai-compatible
+      // branch and what the embedder's own check used: a Voyage row marked
+      // local (a caching proxy on this host) is the operator's stated intent.
+      const urlCheck = checkSafeProviderUrl(config.baseUrl, { allowLoopback: config.isLocal });
       if (!urlCheck.ok) {
         logger.error('Provider baseUrl rejected by SSRF guard at build time', {
           provider: config.slug,

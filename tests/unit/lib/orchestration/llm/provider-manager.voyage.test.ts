@@ -163,6 +163,22 @@ describe('buildProviderFromConfig() — voyage providerType', () => {
     await expect(getProvider('voyage')).rejects.toMatchObject({ code: 'unsafe_base_url' });
   });
 
+  it("allows a loopback baseUrl only when the row is marked isLocal — the embedder's old rule", async () => {
+    // Parity with the check the embedder ran itself, and with the
+    // openai-compatible branch: `isLocal` is the operator saying "this is on
+    // my host" (a caching proxy). Unmarked, loopback stays refused.
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
+      makeRow({ baseUrl: 'http://127.0.0.1:8080/v1', isLocal: true }) as never
+    );
+    await expect(getProvider('voyage')).resolves.toBeInstanceOf(VoyageProvider);
+
+    clearCache();
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
+      makeRow({ baseUrl: 'http://127.0.0.1:8080/v1', isLocal: false }) as never
+    );
+    await expect(getProvider('voyage')).rejects.toMatchObject({ code: 'unsafe_base_url' });
+  });
+
   it('builds a Voyage provider with no baseUrl without consulting the guard: the host is fixed', async () => {
     vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
       makeRow({ baseUrl: null }) as never

@@ -21,6 +21,7 @@ import { logger } from '@/lib/logging';
 import {
   DEFAULT_MAX_RETRIES,
   DEFAULT_TIMEOUT_MS,
+  EMBEDDING_BATCH_TIMEOUT_MS,
   ProviderError,
   fetchWithTimeout,
   withRetry,
@@ -215,7 +216,7 @@ export class VoyageProvider implements LlmProvider {
               output_dimension: options.dimensions ?? TARGET_DIMENSIONS,
             }),
           },
-          this.timeoutMs
+          Math.max(this.timeoutMs, EMBEDDING_BATCH_TIMEOUT_MS)
         );
 
         if (!response.ok) {
