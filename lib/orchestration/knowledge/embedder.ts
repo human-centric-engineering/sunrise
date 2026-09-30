@@ -410,7 +410,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   // and not know why a working setup stopped. Say what changed and the fix.
   if (isApiKeyEnvVarSet('OPENAI_API_KEY')) {
     logger.warn(
-      'OPENAI_API_KEY is set but no embedding provider row exists. The key alone no longer ' +
+      'OPENAI_API_KEY is set but no usable embedding provider row was found. The key alone no longer ' +
         'enables embeddings: add OpenAI as a provider (the Providers page detects the key).',
       {}
     );

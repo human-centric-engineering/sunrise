@@ -578,7 +578,7 @@ describe('VoyageProvider.embedMany()', () => {
     expect(sentBody()).toEqual({ model: 'voyage-3', input: ['a'], input_type: 'document' });
   });
 
-  it('gives a batch at least five minutes, and a single text the row timeout', async () => {
+  it('gives ingestion at least five minutes, and a search query the row timeout', async () => {
     mockFetchWithTimeout.mockResolvedValue(
       batchResponse({
         data: [
@@ -591,7 +591,7 @@ describe('VoyageProvider.embedMany()', () => {
 
     await provider.embedMany(['a', 'b'], { model: 'voyage-3' });
     mockFetchWithTimeout.mockResolvedValue(batchResponse({ data: [{ embedding: [1], index: 0 }] }));
-    await provider.embedMany(['query'], { model: 'voyage-3' });
+    await provider.embedMany(['query'], { model: 'voyage-3', inputType: 'query' });
 
     expect(mockFetchWithTimeout.mock.calls[0][2]).toBe(300_000);
     expect(mockFetchWithTimeout.mock.calls[1][2]).toBe(120_000);

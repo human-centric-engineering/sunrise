@@ -219,7 +219,7 @@ export class VoyageProvider implements LlmProvider {
               ...(options.dimensions !== undefined ? { output_dimension: options.dimensions } : {}),
             }),
           },
-          embeddingTimeoutMs(this.timeoutMs, texts.length)
+          embeddingTimeoutMs(this.timeoutMs, options.inputType)
         );
 
         if (!response.ok) {

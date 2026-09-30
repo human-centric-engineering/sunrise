@@ -1347,13 +1347,17 @@ describe('embedMany', () => {
     expect(embeddingsCreateMock.mock.calls[0]?.[1]).toEqual({ timeout: 300_000 });
   });
 
-  it("keeps the row's own timeout for a single text: a query inside a chat turn", async () => {
-    // A stalled host must not hold a chat turn for five minutes per attempt.
+  it("keeps the row's own timeout for a search query, but not for a one-chunk document", async () => {
+    // A stalled host must not hold a chat turn for five minutes per attempt,
+    // but a one-chunk document is still ingestion on a possibly-cold model.
     embeddingsCreateMock.mockResolvedValue({ data: [{ embedding: [1], index: 0 }] });
+    const provider = makeLocalProvider();
 
-    await makeLocalProvider().embedMany(['query'], { model: 'nomic-embed-text' });
+    await provider.embedMany(['query'], { model: 'nomic-embed-text', inputType: 'query' });
+    await provider.embedMany(['only chunk'], { model: 'nomic-embed-text' });
 
     expect(embeddingsCreateMock.mock.calls[0]?.[1]).toEqual({ timeout: 60_000 });
+    expect(embeddingsCreateMock.mock.calls[1]?.[1]).toEqual({ timeout: 300_000 });
   });
 
   it('refuses a body that is not an embeddings list, e.g. an undecoded base64 string', async () => {

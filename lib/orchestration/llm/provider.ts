@@ -64,18 +64,22 @@ export const LOCAL_TIMEOUT_MS = 60_000;
  * moved behind the provider manager, so a chat-sized timeout would fail
  * uploads that used to work.
  *
- * Batches only: a single text (a search query, embedded inside a chat turn)
- * keeps the row's own timeout, so a stalled host cannot hold a turn for five
- * minutes per attempt. See {@link embeddingTimeoutMs}.
+ * Not for a search query (`inputType: 'query'`, embedded inside a chat turn):
+ * that keeps the row's own timeout, so a stalled host cannot hold a turn for
+ * five minutes per attempt. Keyed on purpose, not on text count: a one-chunk
+ * document is still ingestion. See {@link embeddingTimeoutMs}.
  */
 export const EMBEDDING_BATCH_TIMEOUT_MS = 300_000;
 
 /**
- * The timeout for one `embedMany` request: the row's own for a single text,
- * and at least {@link EMBEDDING_BATCH_TIMEOUT_MS} for a batch.
+ * The timeout for one `embedMany` request: the row's own for a search query,
+ * and at least {@link EMBEDDING_BATCH_TIMEOUT_MS} for anything else.
  */
-export function embeddingTimeoutMs(rowTimeoutMs: number, textCount: number): number {
-  return textCount > 1 ? Math.max(rowTimeoutMs, EMBEDDING_BATCH_TIMEOUT_MS) : rowTimeoutMs;
+export function embeddingTimeoutMs(
+  rowTimeoutMs: number,
+  inputType: 'document' | 'query' | undefined
+): number {
+  return inputType === 'query' ? rowTimeoutMs : Math.max(rowTimeoutMs, EMBEDDING_BATCH_TIMEOUT_MS);
 }
 
 /**

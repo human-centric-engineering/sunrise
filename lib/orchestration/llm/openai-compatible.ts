@@ -497,7 +497,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
    *
    * A batch's timeout is at least `EMBEDDING_BATCH_TIMEOUT_MS`, not the chat
    * timeout: a 100-chunk batch on a CPU-bound local model can outlast 60s. A
-   * single text (a query inside a chat turn) keeps the row's own timeout.
+   * search query (`inputType: 'query'`) keeps the row's own timeout.
    *
    * `dimensions` is sent only when the caller passes one: some hosts reject it
    * for models with a fixed native width (see `EmbedManyOptions`).
@@ -514,7 +514,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
               encoding_format: 'float',
               ...(options.dimensions !== undefined ? { dimensions: options.dimensions } : {}),
             },
-            { timeout: embeddingTimeoutMs(this.timeoutMs, texts.length) }
+            { timeout: embeddingTimeoutMs(this.timeoutMs, options.inputType) }
           ),
         {
           maxRetries: this.maxRetries,
