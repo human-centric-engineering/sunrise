@@ -567,22 +567,34 @@ describe('VoyageProvider.embedMany()', () => {
     });
   });
 
-  it('defaults input_type to document and output_dimension to the pgvector width', async () => {
+  it('defaults input_type to document, and sends output_dimension only when asked', async () => {
+    // The embedMany contract: a dimension is sent only when the caller passes
+    // one. A fixed-width Voyage model can reject output_dimension.
     mockFetchWithTimeout.mockResolvedValue(batchResponse({ data: [{ embedding: [1], index: 0 }] }));
     const provider = new VoyageProvider(VALID_CONFIG);
 
     await provider.embedMany(['a'], { model: 'voyage-3' });
 
-    expect(sentBody()).toMatchObject({ input_type: 'document', output_dimension: 1536 });
+    expect(sentBody()).toEqual({ model: 'voyage-3', input: ['a'], input_type: 'document' });
   });
 
-  it('gives a batch at least five minutes, not the 120s default', async () => {
-    mockFetchWithTimeout.mockResolvedValue(batchResponse({ data: [{ embedding: [1], index: 0 }] }));
+  it('gives a batch at least five minutes, and a single text the row timeout', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      batchResponse({
+        data: [
+          { embedding: [1], index: 0 },
+          { embedding: [2], index: 1 },
+        ],
+      })
+    );
     const provider = new VoyageProvider(VALID_CONFIG);
 
-    await provider.embedMany(['a'], { model: 'voyage-3' });
+    await provider.embedMany(['a', 'b'], { model: 'voyage-3' });
+    mockFetchWithTimeout.mockResolvedValue(batchResponse({ data: [{ embedding: [1], index: 0 }] }));
+    await provider.embedMany(['query'], { model: 'voyage-3' });
 
     expect(mockFetchWithTimeout.mock.calls[0][2]).toBe(300_000);
+    expect(mockFetchWithTimeout.mock.calls[1][2]).toBe(120_000);
   });
 
   it("posts to the row's configured baseUrl, which embed() never honoured", async () => {

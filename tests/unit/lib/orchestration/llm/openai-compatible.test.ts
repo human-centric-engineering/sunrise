@@ -1335,17 +1335,25 @@ describe('embedMany', () => {
     // embedder set no timeout at all before it moved here.
     embeddingsCreateMock.mockResolvedValue({ data: [{ embedding: [1], index: 0 }] });
 
-    await makeLocalProvider().embedMany(['x'], { model: 'nomic-embed-text' });
+    embeddingsCreateMock.mockResolvedValue({
+      data: [
+        { embedding: [1], index: 0 },
+        { embedding: [2], index: 1 },
+      ],
+    });
+
+    await makeLocalProvider().embedMany(['x', 'y'], { model: 'nomic-embed-text' });
 
     expect(embeddingsCreateMock.mock.calls[0]?.[1]).toEqual({ timeout: 300_000 });
   });
 
-  it("keeps a row's own longer timeout", async () => {
+  it("keeps the row's own timeout for a single text: a query inside a chat turn", async () => {
+    // A stalled host must not hold a chat turn for five minutes per attempt.
     embeddingsCreateMock.mockResolvedValue({ data: [{ embedding: [1], index: 0 }] });
 
-    await makeProvider({ timeoutMs: 600_000 }).embedMany(['x'], { model: 'm' });
+    await makeLocalProvider().embedMany(['query'], { model: 'nomic-embed-text' });
 
-    expect(embeddingsCreateMock.mock.calls[0]?.[1]).toEqual({ timeout: 600_000 });
+    expect(embeddingsCreateMock.mock.calls[0]?.[1]).toEqual({ timeout: 60_000 });
   });
 
   it('refuses a body that is not an embeddings list, e.g. an undecoded base64 string', async () => {

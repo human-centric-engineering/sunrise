@@ -21,7 +21,7 @@ import { logger } from '@/lib/logging';
 import {
   DEFAULT_MAX_RETRIES,
   DEFAULT_TIMEOUT_MS,
-  EMBEDDING_BATCH_TIMEOUT_MS,
+  embeddingTimeoutMs,
   ProviderError,
   fetchWithTimeout,
   withRetry,
@@ -191,10 +191,10 @@ export class VoyageProvider implements LlmProvider {
   /**
    * Embed a batch through Voyage's embeddings API (t-740).
    *
-   * Always sends `input_type` (default `document`) and `output_dimension`
-   * (the caller's, else the pgvector width) — what the knowledge embedder sent
-   * before it moved behind the provider manager. Redirects are refused by
-   * `fetchWithTimeout`.
+   * Always sends `input_type` (default `document`), and `output_dimension`
+   * only when the caller passes `dimensions` — the knowledge embedder always
+   * does for Voyage, so it sends what it sent before the move. Redirects are
+   * refused by `fetchWithTimeout`.
    */
   async embedMany(texts: string[], options: EmbedManyOptions): Promise<EmbedManyResult> {
     const inputType = options.inputType ?? 'document';
@@ -213,10 +213,13 @@ export class VoyageProvider implements LlmProvider {
               model: options.model,
               input: texts,
               input_type: inputType,
-              output_dimension: options.dimensions ?? TARGET_DIMENSIONS,
+              // Only when asked, per the embedMany contract: a fixed-width
+              // Voyage model can reject it. The knowledge embedder always
+              // asks for Voyage, so its requests are unchanged.
+              ...(options.dimensions !== undefined ? { output_dimension: options.dimensions } : {}),
             }),
           },
-          Math.max(this.timeoutMs, EMBEDDING_BATCH_TIMEOUT_MS)
+          embeddingTimeoutMs(this.timeoutMs, texts.length)
         );
 
         if (!response.ok) {

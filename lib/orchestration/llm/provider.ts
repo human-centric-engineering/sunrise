@@ -56,15 +56,27 @@ export const DEFAULT_TIMEOUT_MS = 120_000;
 export const LOCAL_TIMEOUT_MS = 60_000;
 
 /**
- * Floor on an `embedMany` request's timeout (t-740).
+ * Floor on an `embedMany` BATCH request's timeout (t-740).
  *
  * A knowledge batch is up to 100 chunks, and a local model on CPU (Ollama's
  * nomic-embed-text, with a cold model load) can take well over the 60s chat
  * timeout for one. The knowledge embedder set no timeout at all before it
  * moved behind the provider manager, so a chat-sized timeout would fail
- * uploads that used to work. A row's own longer `timeoutMs` still wins.
+ * uploads that used to work.
+ *
+ * Batches only: a single text (a search query, embedded inside a chat turn)
+ * keeps the row's own timeout, so a stalled host cannot hold a turn for five
+ * minutes per attempt. See {@link embeddingTimeoutMs}.
  */
 export const EMBEDDING_BATCH_TIMEOUT_MS = 300_000;
+
+/**
+ * The timeout for one `embedMany` request: the row's own for a single text,
+ * and at least {@link EMBEDDING_BATCH_TIMEOUT_MS} for a batch.
+ */
+export function embeddingTimeoutMs(rowTimeoutMs: number, textCount: number): number {
+  return textCount > 1 ? Math.max(rowTimeoutMs, EMBEDDING_BATCH_TIMEOUT_MS) : rowTimeoutMs;
+}
 
 /**
  * Default maximum retries on transient failures (after the initial

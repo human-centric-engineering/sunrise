@@ -48,7 +48,7 @@ import { getModel } from '@/lib/orchestration/llm/model-registry';
 import {
   DEFAULT_MAX_RETRIES,
   DEFAULT_TIMEOUT_MS,
-  EMBEDDING_BATCH_TIMEOUT_MS,
+  embeddingTimeoutMs,
   LOCAL_TIMEOUT_MS,
   ProviderError,
   buildRequestOptions,
@@ -495,8 +495,9 @@ export class OpenAiCompatibleProvider implements LlmProvider {
    * no `encoding_format` at all, which the SDK does not allow — it always
    * sends one, and `float` is the spec's own value.
    *
-   * The timeout is at least `EMBEDDING_BATCH_TIMEOUT_MS`, not the chat
-   * timeout: a 100-chunk batch on a CPU-bound local model can outlast 60s.
+   * A batch's timeout is at least `EMBEDDING_BATCH_TIMEOUT_MS`, not the chat
+   * timeout: a 100-chunk batch on a CPU-bound local model can outlast 60s. A
+   * single text (a query inside a chat turn) keeps the row's own timeout.
    *
    * `dimensions` is sent only when the caller passes one: some hosts reject it
    * for models with a fixed native width (see `EmbedManyOptions`).
@@ -513,7 +514,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
               encoding_format: 'float',
               ...(options.dimensions !== undefined ? { dimensions: options.dimensions } : {}),
             },
-            { timeout: Math.max(this.timeoutMs, EMBEDDING_BATCH_TIMEOUT_MS) }
+            { timeout: embeddingTimeoutMs(this.timeoutMs, texts.length) }
           ),
         {
           maxRetries: this.maxRetries,
@@ -876,7 +877,8 @@ function describeConnectionFailure(err: unknown): unknown {
   // to it. Anything else — an SDK timeout, an abort — passes through as is:
   // describing a non-network error by its own `cause` repeats the message.
   let node: unknown = err;
-  while (node instanceof Error) {
+  // Bounded: a cyclic `cause` chain must not spin the event loop.
+  for (let depth = 0; depth < 10 && node instanceof Error; depth++) {
     if (node instanceof TypeError && node.message === 'fetch failed') {
       return Object.assign(new Error(`${err.message} ${describeFetchFailure(node)}`), {
         cause: err,

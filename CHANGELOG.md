@@ -211,7 +211,24 @@ release process.
   text is posted there by `VoyageProvider.embedMany`, which honours the row's
   `baseUrl` as the knowledge embedder did; the embedder used to run this check
   itself. A Voyage row whose `baseUrl` fails the guard now fails to build with
-  `unsafe_base_url`.
+  `unsafe_base_url`. As for OpenAI-compatible rows, loopback is allowed only
+  when the row is marked Local.
+- **Knowledge embedding now goes through the provider manager's build rules**
+  (t-740), with three consequences for existing installs:
+  - **Keyless remote endpoints.** An OpenAI-compatible embedding row that is
+    not marked Local and has no API key used to embed, because the embedder
+    sent no `Authorization` header. The manager requires a key for a
+    non-local row, as it always has for chat, so that row now fails with
+    `missing_api_key`. For a keyless self-hosted server (TEI, vLLM), mark the
+    row Local, which also costs it at $0. For a hosted one, set its API key.
+  - **Timeouts.** A batch of more than one text gets at least 5 minutes
+    (`EMBEDDING_BATCH_TIMEOUT_MS`), where the old embedder set none. A single
+    text, such as a search query inside a chat turn, keeps the row's own
+    timeout.
+  - **Test model.** The admin **Test model** action for an embedding model
+    (`POST /api/v1/admin/orchestration/providers/[id]/test-model`) now calls
+    `embedMany` with the model under test. It used to call `embed`, which
+    ignored that model and, on Voyage, the row's `baseUrl`.
 
 ### Deprecated
 

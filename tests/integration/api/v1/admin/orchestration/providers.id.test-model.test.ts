@@ -122,6 +122,7 @@ function makeMockProvider(
     chat: ReturnType<typeof vi.fn>;
     chatStream: ReturnType<typeof vi.fn>;
     embed: ReturnType<typeof vi.fn>;
+    embedMany: ReturnType<typeof vi.fn>;
     listModels: ReturnType<typeof vi.fn>;
     testConnection: ReturnType<typeof vi.fn>;
     transcribe: ReturnType<typeof vi.fn>;
@@ -294,6 +295,27 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       expect(data.data.capability).toBe('embedding');
       expect(embedMock).toHaveBeenCalledTimes(1);
       expect(chatMock).not.toHaveBeenCalled();
+    });
+
+    it('tests an embedding model through embedMany with that model, as ingestion does (t-740)', async () => {
+      // The deprecated embed() ignores the model under test (and, on Voyage,
+      // the row's baseUrl), so the button could pass while ingestion failed.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
+      const embedMock = vi.fn();
+      const embedManyMock = vi.fn().mockResolvedValue({ embeddings: [[0.1]] });
+      vi.mocked(getProvider).mockResolvedValue(
+        makeMockProvider({ embed: embedMock, embedMany: embedManyMock }) as never
+      );
+
+      const response = await POST(
+        makeRequest({ model: 'text-embedding-3-large', capability: 'embedding' }),
+        makeParams()
+      );
+
+      expect(response.status).toBe(200);
+      expect(embedManyMock).toHaveBeenCalledWith(['hello'], { model: 'text-embedding-3-large' });
+      expect(embedMock).not.toHaveBeenCalled();
     });
 
     it('refuses unsupported capabilities without invoking the SDK', async () => {
