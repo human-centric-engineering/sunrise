@@ -63,6 +63,16 @@ is on:
   have no org); a tick fired from an admin's session sweeps every org, not
   the admin's ([`tenancy/context.md` → Background work](../tenancy/context.md#who-enters-it--the-read-rule),
   [`scheduling.md`](../orchestration/scheduling.md#unified-maintenance-tick-admin-auth-required-preferred)).
+- **Sunrise's own agents and templates in every org** — each org gets its
+  own instance of the platform's tenant-facing agents (`mcp-system`, the
+  evaluation judges, the case generator and the clean-up agent), made when
+  the org is created and kept current by a reconcile on each release, so a
+  new org's MCP calls, evaluations, case generation and clean-up upload work
+  with no manual step. They are defined in code: an org tunes only how they
+  run (provider, model, spend, rate limit, retention), and the API refuses
+  the rest. The workflow builder offers every org the built-in templates,
+  served from code. See
+  [platform agents](../orchestration/platform-agents.md).
 - **The data subject is per org.** `eraseUser` / `exportUserData` act inside
   the org the request entered: a person with memberships in several orgs is
   erased from, and exported from, the org that asked — the tenant is the
@@ -75,15 +85,11 @@ own it have not shipped (the Multi-tenancy phase on the Hub; the design
 record's [target architecture](./multi-tenancy-design.md#target-architecture)
 says which piece each feature lands):
 
-- **The Learn page is the install org's alone (§116).** Every org gets its
-  own instance of each of Sunrise's tenant-facing agents, so a new org's
-  clean-up upload, MCP calls, judges and case generator work with no manual
-  step, and every org's workflow builder offers the built-in templates,
-  served from code. The Pattern Advisor, Quiz Master and their patterns
-  knowledge (the Learn page) stay the install org's: they help the install's
-  app admins. Until §111 hides that page from org admins, it is listed in
-  their console and finds nothing there. See
-  [platform agents](../orchestration/platform-agents.md).
+- **The Learn page is the install org's alone, and org admins still see it.** The
+  Pattern Advisor, the Quiz Master and their patterns knowledge help the
+  install's app admins build their app, so they exist only in the install
+  org. Until the console split (§111) hides that page from org admins, it is
+  listed in their console and finds nothing there.
 - **Some process-global state is shared across orgs on purpose.** RLS cannot
   see a Node heap, so every module-level holder in `lib/` is declared in
   [`lib/tenancy/process-state.ts`](../../lib/tenancy/process-state.ts) with
