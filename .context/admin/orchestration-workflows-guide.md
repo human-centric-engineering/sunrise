@@ -148,7 +148,7 @@ Variables read from a frozen snapshot of `ExecutionContext`, so any step that co
 
 ## Built-in Templates
 
-Eleven templates ship in `prisma/seeds/data/templates/`. They are loaded into the workflow builder's "Use template" dropdown and seeded as `AiWorkflow` rows with `isTemplate: true`.
+The built-in templates are code, in `prisma/seeds/data/templates/` (`BUILTIN_WORKFLOW_TEMPLATES`). Every org's workflow builder lists them in its "Use template" dropdown, beside the org's own templates; they are not database rows (§116 t-727).
 
 ### `tpl-customer-support` — Customer Support
 
@@ -226,9 +226,9 @@ Showcases scheduled / asynchronous workflow execution. Targets "watch a thing, a
 
 **In the workflow builder UI:** Click the "Use template" dropdown in the toolbar, select a template, and the canvas populates with the full DAG.
 
-**Via the API:** Templates are seeded as `AiWorkflow` rows. Fetch them with `GET /api/v1/admin/orchestration/workflows` and use their `workflowDefinition` as a starting point.
+**Via the API:** `GET /api/v1/admin/orchestration/workflows/templates` returns the built-ins, then the org's own templates (`?source=builtin` or `?source=custom` for one kind). Each entry carries its `workflowDefinition`; create a workflow from it with `POST /api/v1/admin/orchestration/workflows`.
 
-**Adding a new template:** Create a new file in `prisma/seeds/data/templates/`, export a `WorkflowTemplate` object, import it in `templates/index.ts`, and append it to `BUILTIN_WORKFLOW_TEMPLATES`. The seed is idempotent and the unit test will flag invalid DAGs.
+**Adding a new template:** Create a new file in `prisma/seeds/data/templates/`, export a `WorkflowTemplate` object, import it in `templates/index.ts`, and append it to `BUILTIN_WORKFLOW_TEMPLATES`. The next deploy serves it to every org; nothing is seeded. The unit test will flag invalid DAGs.
 
 ## Validation
 
