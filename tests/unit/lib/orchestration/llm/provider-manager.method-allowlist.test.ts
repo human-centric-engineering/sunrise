@@ -60,6 +60,10 @@ function makeProbe(overrides: Partial<Record<string, unknown>> = {}): {
       record();
       return [0];
     }),
+    embedMany: vi.fn(async () => {
+      record();
+      return { embeddings: [[0]] };
+    }),
     listModels: vi.fn(async () => []),
     testConnection: vi.fn(async () => ({ ok: true, models: [] })),
     transcribe: vi.fn(async () => {
@@ -102,6 +106,9 @@ describe('the Proxy counts every classified vendor call', () => {
   it.each([
     ['chat', (p: LlmProvider) => p.chat([], { model: 'm' })],
     ['embed', (p: LlmProvider) => p.embed('x')],
+    // Knowledge embedding's route to a vendor since t-740: it must be counted,
+    // and a gate on this Proxy must see it.
+    ['embedMany', (p: LlmProvider) => p.embedMany!(['x'], { model: 'm' })],
     ['transcribe', (p: LlmProvider) => p.transcribe!(new Uint8Array(), { model: 'm' })],
   ])('counts %s', async (_name, call) => {
     // Arrange
@@ -113,6 +120,18 @@ describe('the Proxy counts every classified vendor call', () => {
 
     // Assert
     expect(seen).toEqual([1]);
+  });
+
+  it('reads an unimplemented optional method as undefined rather than refusing it', async () => {
+    // A provider without embedMany (Anthropic has no embeddings API) must look
+    // like one without it, so the embedder can say "this provider cannot
+    // embed" — not throw unclassified_provider_method at the feature check.
+    const { provider } = makeProbe({ embedMany: undefined });
+    registerProviderInstance('probe', provider);
+
+    const resolved = await getProvider('probe');
+
+    expect(resolved.embedMany).toBeUndefined();
   });
 
   it('does not count the admin-metadata methods', async () => {

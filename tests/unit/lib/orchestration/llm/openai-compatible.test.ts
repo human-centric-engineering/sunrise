@@ -1231,6 +1231,104 @@ describe('embed', () => {
 });
 
 // ---------------------------------------------------------------------------
+// embedMany() — the knowledge embedder's call (t-740)
+// ---------------------------------------------------------------------------
+
+describe('embedMany', () => {
+  function sentParams(): Record<string, unknown> {
+    return embeddingsCreateMock.mock.calls[0]?.[0] as Record<string, unknown>;
+  }
+
+  it("asks for floats explicitly: the SDK's base64 default decodes to a Float32Array", async () => {
+    // Left unset, the SDK requests base64 and hands back Float32Array vectors,
+    // which JSON.stringify writes as an object — a quiet break for any caller
+    // building a pgvector literal.
+    embeddingsCreateMock.mockResolvedValue({ data: [{ embedding: [0.5], index: 0 }] });
+
+    await makeProvider().embedMany(['a', 'b'], { model: 'text-embedding-3-small' });
+
+    expect(sentParams()).toEqual({
+      model: 'text-embedding-3-small',
+      input: ['a', 'b'],
+      encoding_format: 'float',
+    });
+  });
+
+  it('sends dimensions only when the caller passes one', async () => {
+    embeddingsCreateMock.mockResolvedValue({ data: [{ embedding: [0.5], index: 0 }] });
+
+    await makeProvider().embedMany(['a'], { model: 'text-embedding-3-large', dimensions: 1536 });
+
+    expect(sentParams()).toMatchObject({ dimensions: 1536 });
+  });
+
+  it('returns vectors in input order with prompt_tokens as the count', async () => {
+    embeddingsCreateMock.mockResolvedValue({
+      data: [
+        { embedding: [2], index: 1 },
+        { embedding: [1], index: 0 },
+      ],
+      usage: { prompt_tokens: 9, total_tokens: 12 },
+    });
+
+    const result = await makeProvider().embedMany(['x', 'y'], { model: 'm' });
+
+    expect(result).toEqual({ embeddings: [[1], [2]], inputTokens: 9 });
+  });
+
+  it('falls back to total_tokens, and leaves the count absent when a host reports none', async () => {
+    embeddingsCreateMock.mockResolvedValueOnce({
+      data: [{ embedding: [1], index: 0 }],
+      usage: { total_tokens: 4 },
+    });
+    embeddingsCreateMock.mockResolvedValueOnce({ data: [{ embedding: [1], index: 0 }] });
+    const provider = makeProvider();
+
+    expect(await provider.embedMany(['x'], { model: 'm' })).toEqual({
+      embeddings: [[1]],
+      inputTokens: 4,
+    });
+    const noUsage = await provider.embedMany(['x'], { model: 'm' });
+    expect('inputTokens' in noUsage).toBe(false);
+  });
+
+  it('keeps status on an HTTP error', async () => {
+    embeddingsCreateMock.mockRejectedValue(
+      Object.assign(new Error('401 Incorrect API key'), { status: 401 })
+    );
+
+    await expect(makeProvider().embedMany(['x'], { model: 'm' })).rejects.toMatchObject({
+      message: '401 Incorrect API key',
+      status: 401,
+      code: 'http_401',
+    });
+  });
+
+  it("names a refused redirect instead of the SDK's bare 'Connection error.'", async () => {
+    // What the SDK throws when undici refuses a redirect: the reason is two
+    // causes down. Before the move, the embedder unwrapped it itself.
+    const undici = Object.assign(new TypeError('fetch failed'), {
+      cause: new Error('unexpected redirect'),
+    });
+    embeddingsCreateMock.mockRejectedValue(
+      Object.assign(new Error('Connection error.'), { cause: undici })
+    );
+
+    await expect(
+      makeProvider({ maxRetries: 0 }).embedMany(['x'], { model: 'm' })
+    ).rejects.toMatchObject({ message: 'Connection error. fetch failed: unexpected redirect' });
+  });
+
+  it('refuses a body that is not an embeddings list, e.g. an undecoded base64 string', async () => {
+    embeddingsCreateMock.mockResolvedValue({ data: [{ embedding: 'AAAA', index: 0 }] });
+
+    await expect(makeProvider().embedMany(['x'], { model: 'm' })).rejects.toMatchObject({
+      code: 'invalid_response',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Mapping helpers (exercised indirectly via chat / chatStream)
 // ---------------------------------------------------------------------------
 

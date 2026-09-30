@@ -527,3 +527,126 @@ describe('VoyageProvider delegation', () => {
     expect(result).toBe(mockResult);
   });
 });
+
+// ---------------------------------------------------------------------------
+// embedMany() — the knowledge embedder's call (t-740)
+// ---------------------------------------------------------------------------
+
+describe('VoyageProvider.embedMany()', () => {
+  beforeEach(() => {
+    mockFetchWithTimeout.mockReset();
+  });
+
+  function batchResponse(body: unknown) {
+    return makeMockResponse({ ok: true, status: 200, body });
+  }
+
+  function sentBody(): Record<string, unknown> {
+    const init = mockFetchWithTimeout.mock.calls[0][1] as RequestInit;
+    return JSON.parse(init.body as string) as Record<string, unknown>;
+  }
+
+  it('posts the batch with the caller model, input_type and output_dimension', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      batchResponse({ data: [{ embedding: [1], index: 0 }], usage: { total_tokens: 7 } })
+    );
+    const provider = new VoyageProvider(VALID_CONFIG);
+
+    await provider.embedMany(['a'], {
+      model: 'voyage-3-lite',
+      dimensions: 512,
+      inputType: 'query',
+    });
+
+    expect(mockFetchWithTimeout.mock.calls[0][0]).toBe('https://api.voyageai.com/v1/embeddings');
+    expect(sentBody()).toEqual({
+      model: 'voyage-3-lite',
+      input: ['a'],
+      input_type: 'query',
+      output_dimension: 512,
+    });
+  });
+
+  it('defaults input_type to document and output_dimension to the pgvector width', async () => {
+    mockFetchWithTimeout.mockResolvedValue(batchResponse({ data: [{ embedding: [1], index: 0 }] }));
+    const provider = new VoyageProvider(VALID_CONFIG);
+
+    await provider.embedMany(['a'], { model: 'voyage-3' });
+
+    expect(sentBody()).toMatchObject({ input_type: 'document', output_dimension: 1536 });
+  });
+
+  it("posts to the row's configured baseUrl, which embed() never honoured", async () => {
+    // The knowledge embedder honoured a Voyage row's baseUrl (a proxy or a
+    // regional endpoint); embedMany replaced it, so it must keep doing so.
+    mockFetchWithTimeout.mockResolvedValue(batchResponse({ data: [{ embedding: [1], index: 0 }] }));
+    const provider = new VoyageProvider({
+      ...VALID_CONFIG,
+      baseUrl: 'https://voyage.example.eu/v1/',
+    });
+
+    await provider.embedMany(['a'], { model: 'voyage-3' });
+
+    expect(mockFetchWithTimeout.mock.calls[0][0]).toBe('https://voyage.example.eu/v1/embeddings');
+  });
+
+  it('returns vectors in input order and the reported token count', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      batchResponse({
+        data: [
+          { embedding: [2, 2], index: 1 },
+          { embedding: [1, 1], index: 0 },
+        ],
+        usage: { total_tokens: 11 },
+      })
+    );
+    const provider = new VoyageProvider(VALID_CONFIG);
+
+    const result = await provider.embedMany(['first', 'second'], { model: 'voyage-3' });
+
+    expect(result).toEqual({
+      embeddings: [
+        [1, 1],
+        [2, 2],
+      ],
+      inputTokens: 11,
+    });
+  });
+
+  it('leaves inputTokens absent when Voyage reports no usage — unknown, not zero', async () => {
+    mockFetchWithTimeout.mockResolvedValue(batchResponse({ data: [{ embedding: [1], index: 0 }] }));
+    const provider = new VoyageProvider(VALID_CONFIG);
+
+    const result = await provider.embedMany(['a'], { model: 'voyage-3' });
+
+    expect(result).toEqual({ embeddings: [[1]] });
+    expect('inputTokens' in result).toBe(false);
+  });
+
+  it('throws a ProviderError carrying the status and Voyage detail on an HTTP error', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      makeMockResponse({ ok: false, status: 401, text: JSON.stringify({ detail: 'bad key' }) })
+    );
+    const provider = new VoyageProvider(VALID_CONFIG);
+
+    const err = await provider.embedMany(['a'], { model: 'voyage-3' }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ProviderError);
+    expect(err).toMatchObject({
+      message: 'Voyage embed failed (401): bad key',
+      status: 401,
+      retriable: false,
+    });
+  });
+
+  it('refuses a response body that is not an embeddings list', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      batchResponse({ data: [{ embedding: 'AAAA', index: 0 }] })
+    );
+    const provider = new VoyageProvider(VALID_CONFIG);
+
+    await expect(provider.embedMany(['a'], { model: 'voyage-3' })).rejects.toMatchObject({
+      code: 'invalid_response',
+    });
+  });
+});

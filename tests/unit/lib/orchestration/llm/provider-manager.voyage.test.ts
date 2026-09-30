@@ -152,6 +152,25 @@ describe('buildProviderFromConfig() — voyage providerType', () => {
     expect(provider).toBeInstanceOf(VoyageProvider);
   });
 
+  it('refuses to build a Voyage provider whose configured baseUrl fails the SSRF guard (t-740)', async () => {
+    // Knowledge text is posted to this URL by embedMany. The embedder checked
+    // it at point of use before it moved behind the manager; the check has to
+    // survive the move. Cloud metadata is the canonical target.
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
+      makeRow({ baseUrl: 'http://169.254.169.254/latest' }) as never
+    );
+
+    await expect(getProvider('voyage')).rejects.toMatchObject({ code: 'unsafe_base_url' });
+  });
+
+  it('builds a Voyage provider with no baseUrl without consulting the guard: the host is fixed', async () => {
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(
+      makeRow({ baseUrl: null }) as never
+    );
+
+    await expect(getProvider('voyage')).resolves.toBeInstanceOf(VoyageProvider);
+  });
+
   it('should remain isLocal: false for Voyage providers', async () => {
     // Arrange
     vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeRow() as never);

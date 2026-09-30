@@ -16,6 +16,7 @@
  * Platform-agnostic: no Next.js imports.
  */
 
+import { z } from 'zod';
 import { logger } from '@/lib/logging';
 import {
   DEFAULT_MAX_RETRIES,
@@ -28,6 +29,8 @@ import {
 } from '@/lib/orchestration/llm/provider';
 import { OpenAiCompatibleProvider } from '@/lib/orchestration/llm/openai-compatible';
 import type {
+  EmbedManyOptions,
+  EmbedManyResult,
   EmbedOptions,
   LlmMessage,
   LlmOptions,
@@ -49,11 +52,29 @@ const DEFAULT_EMBEDDING_MODEL = 'voyage-3';
  */
 const TARGET_DIMENSIONS = 1536;
 
+/**
+ * The embeddings response, as far as `embedMany` reads it. Validated rather
+ * than cast: this is a vendor's body, and a proxy in front of Voyage (a
+ * configured `baseUrl`) can return anything.
+ */
+const voyageEmbeddingsResponseSchema = z.object({
+  data: z.array(z.object({ embedding: z.array(z.number()), index: z.number() })),
+  usage: z.object({ total_tokens: z.number().optional() }).optional(),
+});
+
 export class VoyageProvider implements LlmProvider {
   public readonly name: string;
   public readonly isLocal: boolean = false;
 
   private readonly apiKey: string;
+  /**
+   * Where `embedMany` posts. The row's `baseUrl` when set (a proxy or a
+   * regional endpoint), else Voyage's own host. `embed` has always used the
+   * fixed host; the knowledge embedder honoured the row, and `embedMany` is
+   * what replaced it, so it keeps that behaviour. The provider manager
+   * SSRF-checks a configured `baseUrl` before this class is built.
+   */
+  private readonly embedBaseUrl: string;
   private readonly inner: OpenAiCompatibleProvider;
   private readonly embeddingModel: string;
   private readonly timeoutMs: number;
@@ -69,6 +90,7 @@ export class VoyageProvider implements LlmProvider {
 
     this.name = config.name;
     this.apiKey = config.apiKey;
+    this.embedBaseUrl = (config.baseUrl ?? VOYAGE_BASE_URL).replace(/\/+$/, '');
     this.embeddingModel = DEFAULT_EMBEDDING_MODEL;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES;
@@ -165,11 +187,88 @@ export class VoyageProvider implements LlmProvider {
     );
   }
 
+  /**
+   * Embed a batch through Voyage's embeddings API (t-740).
+   *
+   * Always sends `input_type` (default `document`) and `output_dimension`
+   * (the caller's, else the pgvector width) — what the knowledge embedder sent
+   * before it moved behind the provider manager. Redirects are refused by
+   * `fetchWithTimeout`.
+   */
+  async embedMany(texts: string[], options: EmbedManyOptions): Promise<EmbedManyResult> {
+    const inputType = options.inputType ?? 'document';
+
+    return withRetry(
+      async () => {
+        const response = await fetchWithTimeout(
+          `${this.embedBaseUrl}/embeddings`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${this.apiKey}`,
+            },
+            body: JSON.stringify({
+              model: options.model,
+              input: texts,
+              input_type: inputType,
+              output_dimension: options.dimensions ?? TARGET_DIMENSIONS,
+            }),
+          },
+          this.timeoutMs
+        );
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          let message = errorText;
+          const parsed = z.object({ detail: z.string() }).safeParse(safeJsonParse(errorText));
+          if (parsed.success) message = parsed.data.detail;
+          throw new ProviderError(`Voyage embed failed (${response.status}): ${message}`, {
+            code: `http_${response.status}`,
+            status: response.status,
+            retriable: response.status === 429 || response.status >= 500,
+          });
+        }
+
+        const parsed = voyageEmbeddingsResponseSchema.safeParse(await response.json());
+        if (!parsed.success) {
+          throw new ProviderError('Voyage embeddings response did not match the expected shape', {
+            code: 'invalid_response',
+            retriable: false,
+          });
+        }
+
+        return {
+          embeddings: [...parsed.data.data]
+            .sort((a, b) => a.index - b.index)
+            .map((d) => d.embedding),
+          ...(parsed.data.usage?.total_tokens !== undefined
+            ? { inputTokens: parsed.data.usage.total_tokens }
+            : {}),
+        };
+      },
+      {
+        maxRetries: this.maxRetries,
+        isLocal: false,
+        operation: 'voyage.embeddings.batch',
+      }
+    );
+  }
+
   listModels(): Promise<ModelInfo[]> {
     return this.inner.listModels();
   }
 
   testConnection(): Promise<ProviderTestResult> {
     return this.inner.testConnection();
+  }
+}
+
+/** `JSON.parse` that answers `undefined` for a non-JSON body instead of throwing. */
+function safeJsonParse(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
   }
 }

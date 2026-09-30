@@ -13,6 +13,8 @@
 import { logger } from '@/lib/logging';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import type {
+  EmbedManyOptions,
+  EmbedManyResult,
   EmbedOptions,
   LlmMessage,
   LlmOptions,
@@ -100,8 +102,31 @@ export interface LlmProvider {
   /** Stream a chat completion as `StreamChunk`s. */
   chatStream(messages: LlmMessage[], options: LlmOptions): AsyncIterable<StreamChunk>;
 
-  /** Generate an embedding vector for a single text. */
+  /**
+   * Generate an embedding vector for a single text.
+   *
+   * @deprecated Use {@link embedMany}. This cannot say which model or
+   * dimension to use, or report usage, so knowledge ingestion never called
+   * it. Kept for fork provider classes and the admin test-model route;
+   * removed at the next MAJOR.
+   */
   embed(text: string, options?: EmbedOptions): Promise<number[]>;
+
+  /**
+   * Embed a batch of texts with a caller-chosen model and dimension.
+   *
+   * This is how knowledge ingestion and search reach an embedding vendor
+   * (t-740). They go through the provider manager like every other vendor
+   * call, so the in-flight Proxy counts them and a call-time gate can see
+   * them. Optional so a provider class written against the older contract
+   * still compiles; a provider without it cannot be used for knowledge
+   * embedding, and the embedder says so rather than falling back to
+   * {@link embed}, which could return vectors of the wrong width.
+   *
+   * Must return plain `number[]` vectors in input order, send `dimensions`
+   * only when `options.dimensions` is set, and refuse redirects.
+   */
+  embedMany?(texts: string[], options: EmbedManyOptions): Promise<EmbedManyResult>;
 
   /**
    * Discover the models this provider can serve.
@@ -349,15 +374,15 @@ export async function fetchWithTimeout(
   try {
     // Refuse redirects (#635). Measured rather than taken from the issue, which
     // said "every LLM completion goes through here": it does not. Completions
-    // use the `openai` SDK client in `openai-compatible.ts`. The two production
-    // callers are `model-registry.ts` (OpenRouter's model list) and
-    // `voyage.ts` (embedding input), and BOTH pass a hardcoded host today — so
-    // nothing here is currently operator-controlled.
+    // use the `openai` SDK client in `openai-compatible.ts`. The production
+    // callers are `model-registry.ts` (OpenRouter's model list, a fixed host)
+    // and `voyage.ts`. Voyage's `embedMany` posts knowledge text to the row's
+    // configured `baseUrl` when one is set (t-740), so this IS
+    // operator-controlled now; the provider manager SSRF-checks that URL at
+    // build time, and this refusal covers every hop after the first.
     //
-    // It is set anyway because this is an exported, generic wrapper: it is the
-    // seam a fork or a future caller reuses with a configured host, and a
+    // It would be set anyway because this is an exported, generic wrapper: a
     // wrapper that silently follows is exactly the shape #534's sweep missed.
-    // Cheaper to fix the default than to re-audit each new caller.
     //
     // After the spread, not before: no caller passes `redirect` today, and one
     // that wants to follow should use `fetchRevalidatingRedirects` rather than

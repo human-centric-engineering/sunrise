@@ -166,6 +166,7 @@ type ProviderMethodName = {
 const METHOD_DISPOSITION: Record<ProviderMethodName, MethodDisposition> = {
   chat: 'track',
   embed: 'track',
+  embedMany: 'track',
   transcribe: 'track',
   chatStream: 'trackStream',
   transcribeStream: 'trackStream',
@@ -759,6 +760,25 @@ function buildProviderFromConfig(config: AiProviderConfig): LlmProvider {
         `Provider "${config.slug}" requires env var "${config.apiKeyEnvVar ?? '<unset>'}" to be set`,
         { code: 'missing_api_key', retriable: false }
       );
+    }
+    // A configured `baseUrl` is where knowledge text is posted
+    // (`VoyageProvider.embedMany`) and where chat would go, so it gets the
+    // same point-of-use check as the openai-compatible branch below. The
+    // knowledge embedder ran this check itself before it moved behind the
+    // manager (t-740); without it here, that check would have been lost in the
+    // move. Absent `baseUrl` means Voyage's own fixed host, and nothing to check.
+    if (config.baseUrl) {
+      const urlCheck = checkSafeProviderUrl(config.baseUrl, { allowLoopback: false });
+      if (!urlCheck.ok) {
+        logger.error('Provider baseUrl rejected by SSRF guard at build time', {
+          provider: config.slug,
+          reason: urlCheck.reason,
+        });
+        throw new ProviderError(
+          `Provider "${config.slug}" has an unsafe baseUrl (${urlCheck.reason ?? 'blocked'})`,
+          { code: 'unsafe_base_url', retriable: false }
+        );
+      }
     }
     return new VoyageProvider({
       name: config.name,

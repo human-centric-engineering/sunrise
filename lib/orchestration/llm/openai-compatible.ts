@@ -37,7 +37,9 @@ import type {
   ChatCompletionToolChoiceOption,
 } from 'openai/resources/chat/completions/completions';
 
+import { z } from 'zod';
 import { logger } from '@/lib/logging';
+import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import {
   deriveParamProfile,
   supportedReasoningEfforts,
@@ -57,6 +59,8 @@ import {
 } from '@/lib/orchestration/llm/provider';
 import type {
   ContentPart,
+  EmbedManyOptions,
+  EmbedManyResult,
   LlmFinishReason,
   LlmMessage,
   LlmOptions,
@@ -71,6 +75,19 @@ import type {
 } from '@/lib/orchestration/llm/types';
 import { getTextContent } from '@/lib/orchestration/llm/types';
 import { isCompleteJson } from '@/lib/orchestration/llm/json-completeness';
+
+/**
+ * The embeddings response, as far as `embedMany` reads it. Validated rather
+ * than trusted from the SDK's types: an OpenAI-compatible host is anything an
+ * operator pointed a `baseUrl` at, and some (Ollama, older self-hosted
+ * servers) omit `usage` entirely.
+ */
+const embeddingsResponseSchema = z.object({
+  data: z.array(z.object({ embedding: z.array(z.number()), index: z.number() })),
+  usage: z
+    .object({ prompt_tokens: z.number().optional(), total_tokens: z.number().optional() })
+    .optional(),
+});
 
 /** Sentinel API key for local servers that require *something* in the header. */
 const LOCAL_API_KEY_SENTINEL = 'not-needed';
@@ -465,6 +482,58 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     }
   }
 
+  /**
+   * Embed a batch through the host's `/embeddings` endpoint (t-740).
+   *
+   * **`encoding_format: 'float'` is load-bearing.** Left unset, the `openai`
+   * SDK asks for base64 and decodes it into a `Float32Array`, not a
+   * `number[]`: `JSON.stringify` then writes an object, not an array, and any
+   * caller building a pgvector literal from it breaks quietly. Asking for
+   * floats also matches what the knowledge embedder sent before it moved
+   * here, which sent no `encoding_format` and got the server default.
+   *
+   * `dimensions` is sent only when the caller passes one: some hosts reject it
+   * for models with a fixed native width (see `EmbedManyOptions`).
+   */
+  async embedMany(texts: string[], options: EmbedManyOptions): Promise<EmbedManyResult> {
+    let raw: unknown;
+    try {
+      raw = await withRetry(
+        () =>
+          this.client.embeddings.create({
+            model: options.model,
+            input: texts,
+            encoding_format: 'float',
+            ...(options.dimensions !== undefined ? { dimensions: options.dimensions } : {}),
+          }),
+        {
+          maxRetries: this.maxRetries,
+          isLocal: this.isLocal,
+          operation: 'openai.embeddings.create.batch',
+        }
+      );
+    } catch (err) {
+      throw toProviderError(
+        describeConnectionFailure(err),
+        'OpenAI-compatible embed request failed'
+      );
+    }
+
+    const parsed = embeddingsResponseSchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ProviderError('Embeddings response did not match the expected shape', {
+        code: 'invalid_response',
+        retriable: false,
+      });
+    }
+
+    const inputTokens = parsed.data.usage?.prompt_tokens ?? parsed.data.usage?.total_tokens;
+    return {
+      embeddings: [...parsed.data.data].sort((a, b) => a.index - b.index).map((d) => d.embedding),
+      ...(inputTokens !== undefined ? { inputTokens } : {}),
+    };
+  }
+
   async transcribe(
     audio: Blob | Buffer | ArrayBuffer | Uint8Array,
     options: TranscribeOptions
@@ -775,4 +844,31 @@ function safeParseJson(raw: string): Record<string, unknown> {
     logger.warn('Failed to parse OpenAI tool_call arguments', { length: raw.length });
     return {};
   }
+}
+
+/**
+ * Put the network-layer reason on a failed SDK request's message.
+ *
+ * The `openai` SDK reports a refused redirect, a DNS miss and a connection
+ * reset alike as `Connection error.`, with undici's `TypeError: fetch failed`
+ * on `cause` and the real reason one level further down. `toProviderError`
+ * keeps only `err.message`, so without this an operator whose embedding host
+ * started redirecting reads "Connection error." and cannot tell it from an
+ * outage. An HTTP error has no such `cause` and passes through untouched,
+ * `status` included.
+ */
+function describeConnectionFailure(err: unknown): unknown {
+  if (!(err instanceof Error) || !(err.cause instanceof Error)) return err;
+  // Rewrapping would drop `status`, which decides retry and the error code.
+  if ('status' in err && err.status !== undefined) return err;
+  // The depth varies — `withRetry` adds a `ProviderError` layer on top of the
+  // SDK's — so walk to the innermost error that still has an `Error` cause
+  // (undici's `fetch failed`) and let `describeFetchFailure` read its leaf,
+  // which also handles the AggregateError a multi-address host produces.
+  let parentOfLeaf: Error = err;
+  while (parentOfLeaf.cause instanceof Error && parentOfLeaf.cause.cause instanceof Error) {
+    parentOfLeaf = parentOfLeaf.cause;
+  }
+  const described = `${err.message} ${describeFetchFailure(parentOfLeaf)}`;
+  return Object.assign(new Error(described), { cause: err });
 }
