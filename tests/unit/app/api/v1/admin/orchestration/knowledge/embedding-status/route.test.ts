@@ -110,7 +110,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
     expect(body.data.hasActiveProvider).toBe(true);
   });
 
-  it('reports hasActiveProvider true when only OPENAI_API_KEY is set', async () => {
+  it('reports no provider when only OPENAI_API_KEY is set — the bare key no longer embeds (t-740)', async () => {
     vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([] as never);
     const originalEnv = process.env['OPENAI_API_KEY'];
@@ -119,7 +119,8 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
     try {
       const res = await GET(makeRequest());
       const body = await res.json();
-      expect(body.data.hasActiveProvider).toBe(true);
+      expect(body.data.hasActiveProvider).toBe(false);
+      expect(body.data.providerState).toBe('none_configured');
     } finally {
       if (originalEnv === undefined) {
         delete process.env['OPENAI_API_KEY'];

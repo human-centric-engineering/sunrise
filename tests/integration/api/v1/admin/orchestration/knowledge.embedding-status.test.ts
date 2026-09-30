@@ -173,7 +173,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
       expect(body.data.hasActiveProvider).toBe(true);
     });
 
-    it('returns hasActiveProvider: true via OPENAI_API_KEY env fallback when no provider row', async () => {
+    it('returns hasActiveProvider: false for OPENAI_API_KEY with no provider row — the bare key no longer embeds (t-740)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiKnowledgeChunk.count).mockResolvedValue(0);
       vi.mocked(prisma.$queryRaw).mockResolvedValue([{ count: 0n }] as never);
@@ -181,11 +181,16 @@ describe('GET /api/v1/admin/orchestration/knowledge/embedding-status', () => {
       process.env['OPENAI_API_KEY'] = 'sk-test';
 
       const response = await GET(makeRequest());
-      const body = await parseJson<{ success: boolean; data: StatusResponseData }>(response);
+      const body = await parseJson<{
+        success: boolean;
+        data: StatusResponseData & { providerState?: string };
+      }>(response);
 
+      // The key alone used to count as a provider. Since t-740 it does not, so
+      // the banner must send the admin to add a provider row, not report "ok".
       expect(response.status).toBe(200);
-      // test-review:accept tobe_true — structural boolean assertion on API response field
-      expect(body.data.hasActiveProvider).toBe(true);
+      expect(body.data.hasActiveProvider).toBe(false);
+      expect(body.data.providerState).toBe('none_configured');
     });
 
     it('returns hasActiveProvider: false when no provider row and no env key', async () => {
