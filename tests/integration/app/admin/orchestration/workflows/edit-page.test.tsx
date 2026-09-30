@@ -272,8 +272,8 @@ describe('EditWorkflowPage (server component)', () => {
   it('hydrates getAgents() and getTemplates() when those endpoints return data', async () => {
     // Exercises two inline transform functions that the other tests don't
     // cover: (1) the agent-row mapper inside `getAgents` and (2) the
-    // templateItemSchema's `.transform()` that flattens publishedVersion.snapshot
-    // back to a top-level workflowDefinition. Both fire only when the
+    // templateCatalogueSchema's `.transform()` that maps a catalogue entry to
+    // the builder's template shape. Both fire only when the
     // upstream lists are non-empty.
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
@@ -296,15 +296,14 @@ describe('EditWorkflowPage (server component)', () => {
       .mockResolvedValueOnce({
         success: true,
         data: [
-          // Exercises the `templateItemSchema.transform` callback that
-          // flattens publishedVersion.snapshot to workflowDefinition.
+          // Exercises the `templateCatalogueSchema.transform` callback.
           {
+            source: 'custom',
             slug: 'tpl-1',
             name: 'Template One',
             description: 'first',
-            publishedVersion: { snapshot: TWO_STEP_DEFINITION },
+            workflowDefinition: TWO_STEP_DEFINITION,
             patternsUsed: [],
-            isTemplate: true,
             metadata: null,
           },
         ],
@@ -315,7 +314,11 @@ describe('EditWorkflowPage (server component)', () => {
 
     render(await EditWorkflowPage({ params: Promise.resolve({ id: 'wf-1' }) }));
 
-    // The page renders without throwing — the inline transforms ran successfully.
-    expect(screen.getByTestId('builder-toolbar')).toBeInTheDocument();
+    // The catalogue entry reached the builder: it is listed in the Use
+    // template menu (disabled, since templates load only on a new workflow).
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /use template/i }));
+    const item = await screen.findByRole('menuitem', { name: /template one/i, hidden: true });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
   });
 });

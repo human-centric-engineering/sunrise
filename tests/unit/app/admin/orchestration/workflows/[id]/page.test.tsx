@@ -7,7 +7,7 @@
  * - getWorkflow: res.ok false → null, body.success false → null, throw → null
  * - getCapabilities: res.ok false → [], body.success false → [], throw → []
  * - getAgents: res.ok false → [], body.success false → [], throw → []
- * - getTemplates: res.ok false → [], body.success false → [], schema fail → [], throw → []
+ * - getTemplates: res.ok false → [], body.success false → [], schema fail → [] (logged), throw → []
  * - workflow === null → notFound() called
  * - workflow found → builder rendered in edit mode, WorkflowSchedulesTab rendered
  * - No auth-redirect test: per gotcha #21, auth guard lives in the admin layout.
@@ -255,10 +255,10 @@ describe('EditWorkflowPage', () => {
   // ── getTemplates Zod parse-failure branch ─────────────────────────────────
 
   describe('getTemplates schema parse failure', () => {
-    it('passes empty templates when API returns success but data fails templateListSchema', async () => {
+    it('logs and passes empty templates when the response fails templateCatalogueSchema', async () => {
       // Arrange: workflow + capabilities + agents all succeed; templates body.data passes
-      // body.success=true but contains objects that do not satisfy templateItemSchema
-      // (missing required fields like slug, name, description, etc.).
+      // body.success=true but contains objects that do not satisfy the catalogue entry
+      // shape (missing required fields like source, slug, name, etc.).
       const workflow = createMockWorkflow();
       vi.mocked(serverFetch).mockResolvedValue(okResponse());
       vi.mocked(parseApiResponse)
@@ -267,14 +267,18 @@ describe('EditWorkflowPage', () => {
         .mockResolvedValueOnce({ success: true, data: [] } as never) // agents
         .mockResolvedValueOnce({
           success: true,
-          data: [{ not: 'a-template' }], // fails templateItemSchema — missing slug, name, etc.
+          data: [{ not: 'a-template' }], // fails templateCatalogueSchema
         } as never); // templates
       const params = Promise.resolve({ id: 'wf-123' });
 
       // Act
       render(await EditWorkflowPage({ params }));
 
-      // Assert: templateListSchema.safeParse fails → templates=[]; builder receives 0 templates
+      // Assert: the parse failure is logged, and the builder receives 0 templates
+      expect(logger.warn).toHaveBeenCalledWith(
+        'edit workflow page: templates response did not parse',
+        expect.objectContaining({ issues: expect.any(Array) })
+      );
       const builder = screen.getByTestId('workflow-builder');
       expect(builder).toHaveAttribute('data-templates-count', '0');
     });
@@ -293,6 +297,17 @@ describe('EditWorkflowPage', () => {
 
       // Assert: the correct endpoint was called
       expect(serverFetch).toHaveBeenCalledWith(API.ADMIN.ORCHESTRATION.workflowById('wf-abc'));
+    });
+
+    it('reads templates from the templates catalogue endpoint', async () => {
+      vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+
+      await expect(EditWorkflowPage({ params: Promise.resolve({ id: 'wf-abc' }) })).rejects.toThrow(
+        'NEXT_NOT_FOUND'
+      );
+
+      expect(serverFetch).toHaveBeenCalledWith(API.ADMIN.ORCHESTRATION.WORKFLOW_TEMPLATES);
+      expect(serverFetch).not.toHaveBeenCalledWith(expect.stringContaining('isTemplate=true'));
     });
   });
 });

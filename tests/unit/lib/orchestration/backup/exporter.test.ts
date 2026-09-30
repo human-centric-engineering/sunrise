@@ -28,6 +28,7 @@ vi.mock('@/lib/db/client', () => ({
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { exportOrchestrationConfig } from '@/lib/orchestration/backup/exporter';
+import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -475,5 +476,23 @@ describe('exportOrchestrationConfig', () => {
     // Second findMany call is for capabilities
     const capCall = mockFindMany.mock.calls[1][0] as { where?: { isSystem?: boolean } };
     expect(capCall?.where?.isSystem).toBe(false);
+  });
+  it('leaves out rows holding a built-in template slug (§116 t-727)', async () => {
+    mockFindMany
+      .mockResolvedValueOnce([]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue(null);
+
+    await exportOrchestrationConfig();
+
+    // Third findMany call is for workflows. The built-ins are served from
+    // code; a row holding one of their slugs is a retired seed row.
+    const wfCall = mockFindMany.mock.calls[2][0] as { where?: { slug?: { notIn?: string[] } } };
+    expect([...(wfCall?.where?.slug?.notIn ?? [])].sort()).toEqual(
+      BUILTIN_WORKFLOW_TEMPLATES.map((t) => t.slug).sort()
+    );
   });
 });

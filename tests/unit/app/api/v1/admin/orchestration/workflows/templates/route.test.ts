@@ -1,7 +1,7 @@
 /**
  * Tests: Workflow Templates List & Save-as-Template
  *
- * GET  /api/v1/admin/orchestration/workflows/templates
+ * GET  /api/v1/admin/orchestration/workflows/templates — built-ins from code + the org's own
  * POST /api/v1/admin/orchestration/workflows/:id/save-as-template
  */
 
@@ -60,6 +60,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
+import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
 import { GET as ListTemplates } from '@/app/api/v1/admin/orchestration/workflows/templates/route';
 import { POST as SaveAsTemplate } from '@/app/api/v1/admin/orchestration/workflows/[id]/save-as-template/route';
 
@@ -147,54 +148,132 @@ beforeEach(() => {
 });
 
 describe('GET /workflows/templates', () => {
+  type Entry = {
+    source: 'builtin' | 'custom';
+    slug: string;
+    name: string;
+    description: string;
+    workflowDefinition: unknown;
+    patternsUsed: number[];
+    metadata: unknown;
+  };
+
+  function customRow(overrides: Record<string, unknown> = {}) {
+    return {
+      slug: 'my-template',
+      name: 'My Template',
+      description: 'An org template',
+      patternsUsed: [3],
+      metadata: { flowSummary: 'x' },
+      publishedVersion: { snapshot: { steps: [], entryStepId: 's1', errorStrategy: 'fail' } },
+      ...overrides,
+    };
+  }
+
   it('returns 401 when unauthenticated', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
     const response = await ListTemplates(makeListRequest());
     expect(response.status).toBe(401);
   });
 
-  it('returns paginated templates', async () => {
+  it("serves every built-in from code, in code order, before the org's own", async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([
-      makeTemplate(),
-      makeTemplate({ id: 'id2', name: 'Custom', templateSource: 'custom' }),
-    ] as never);
-    vi.mocked(prisma.aiWorkflow.count).mockResolvedValue(2);
+    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([customRow()] as never);
 
     const response = await ListTemplates(makeListRequest());
     expect(response.status).toBe(200);
+    const { data } = await parseJson<{ data: Entry[] }>(response);
 
-    const data = await parseJson<{ data: unknown[]; meta: { total: number } }>(response);
-    expect(data.data).toHaveLength(2);
-    expect(data.meta.total).toBe(2);
+    const builtins = data.filter((e) => e.source === 'builtin');
+    expect(builtins.map((e) => e.slug)).toEqual(BUILTIN_WORKFLOW_TEMPLATES.map((t) => t.slug));
+    expect(builtins).toHaveLength(12);
+    // The entry is the code definition, not a row: its DAG and metadata are
+    // the template's own.
+    const first = BUILTIN_WORKFLOW_TEMPLATES[0];
+    expect(builtins[0]).toEqual({
+      source: 'builtin',
+      slug: first.slug,
+      name: first.name,
+      description: first.shortDescription,
+      workflowDefinition: JSON.parse(JSON.stringify(first.workflowDefinition)),
+      patternsUsed: first.patterns.map((p) => p.number),
+      metadata: JSON.parse(
+        JSON.stringify({
+          flowSummary: first.flowSummary,
+          useCases: first.useCases,
+          patterns: first.patterns,
+        })
+      ),
+    });
+    expect(data.at(-1)).toMatchObject({ source: 'custom', slug: 'my-template' });
+    expect(data).toHaveLength(13);
   });
 
-  it('filters by source when provided', async () => {
+  it("reads the org's own templates through the tenant client, leaving out built-in slugs", async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.aiWorkflow.count).mockResolvedValue(0);
-
-    await ListTemplates(makeListRequest({ source: 'custom' }));
-
-    expect(vi.mocked(prisma.aiWorkflow.findMany)).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ templateSource: 'custom' }),
-      })
-    );
-  });
-
-  it('filters templates by isTemplate: true', async () => {
-    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.aiWorkflow.count).mockResolvedValue(0);
 
     await ListTemplates(makeListRequest());
 
-    expect(vi.mocked(prisma.aiWorkflow.findMany)).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ isTemplate: true }),
-      })
+    // `prisma` here is the chokepoint client, which confines the read to the
+    // caller's org at multi (the tenancy smoke proves that against Postgres).
+    // The route adds no org filter and no system scope of its own.
+    expect(prisma.aiWorkflow.findMany).toHaveBeenCalledTimes(1);
+    const args = vi.mocked(prisma.aiWorkflow.findMany).mock.calls[0][0] as {
+      where: { isTemplate: boolean; slug: { notIn: string[] }; orgId?: unknown };
+      take: number;
+    };
+    expect(args.where.isTemplate).toBe(true);
+    // A retired seed row an admin switched back on must not appear twice.
+    expect([...args.where.slug.notIn].sort()).toEqual(
+      BUILTIN_WORKFLOW_TEMPLATES.map((t) => t.slug).sort()
     );
+    expect(args.where).not.toHaveProperty('orgId');
+    expect(args.take).toBe(100);
+  });
+
+  it('maps a custom row to its published snapshot, or null without one', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([
+      customRow(),
+      customRow({ slug: 'unpublished', name: 'Unpublished', publishedVersion: null }),
+    ] as never);
+
+    const response = await ListTemplates(makeListRequest({ source: 'custom' }));
+    const { data } = await parseJson<{ data: Entry[] }>(response);
+
+    expect(data).toEqual([
+      {
+        source: 'custom',
+        slug: 'my-template',
+        name: 'My Template',
+        description: 'An org template',
+        workflowDefinition: { steps: [], entryStepId: 's1', errorStrategy: 'fail' },
+        patternsUsed: [3],
+        metadata: { flowSummary: 'x' },
+      },
+      expect.objectContaining({ slug: 'unpublished', workflowDefinition: null }),
+    ]);
+  });
+
+  it('source=builtin serves the built-ins without touching the database', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await ListTemplates(makeListRequest({ source: 'builtin' }));
+    const { data } = await parseJson<{ data: Entry[] }>(response);
+
+    expect(data).toHaveLength(12);
+    expect(data.every((e) => e.source === 'builtin')).toBe(true);
+    expect(prisma.aiWorkflow.findMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown source with 400', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await ListTemplates(makeListRequest({ source: 'everything' }));
+
+    expect(response.status).toBe(400);
+    expect(prisma.aiWorkflow.findMany).not.toHaveBeenCalled();
   });
 });
 

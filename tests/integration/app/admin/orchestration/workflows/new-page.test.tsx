@@ -128,16 +128,14 @@ const TEMPLATE_DEFINITION = {
   ],
 };
 
-// The templates list endpoint now returns the snapshot inside the
-// `publishedVersion` relation; the page's templateItemSchema flattens it back
-// to the legacy `workflowDefinition` field for the builder.
+// One entry of `GET /workflows/templates`: a built-in, served from code.
 const MOCK_TEMPLATE = {
+  source: 'builtin',
   slug: 'tpl-customer-support',
   name: 'Customer Support',
   description: 'Multi-channel support automation',
-  publishedVersion: { snapshot: TEMPLATE_DEFINITION },
+  workflowDefinition: TEMPLATE_DEFINITION,
   patternsUsed: [1, 2],
-  isTemplate: true,
   metadata: {
     flowSummary: 'A flow',
     useCases: [{ title: 'Triage', scenario: 'Route tickets' }],

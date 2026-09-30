@@ -9,7 +9,7 @@
  * Branch coverage targets:
  * - getCapabilities: res.ok false → [], body.success false → [], throw → []
  * - getAgents: res.ok false → [], body.success false → [], throw → []
- * - getTemplates: res.ok false → [], body.success false → [], schema fail → [], throw → []
+ * - getTemplates: res.ok false → [], body.success false → [], schema fail → [] (logged), throw → []
  * - searchParams.definition: valid JSON → pre-populated builder; invalid JSON → empty builder
  * - searchParams.definition: valid JSON but bad schema → empty builder
  * - No auth-redirect test: per gotcha #21, auth guard lives in the admin layout, not this page.
@@ -262,25 +262,63 @@ describe('NewWorkflowPage', () => {
       expect(builder).toHaveAttribute('data-templates-count', '0');
     });
 
-    it('passes empty templates when API returns success but data fails templateListSchema', async () => {
+    it('logs and passes empty templates when the response fails templateCatalogueSchema', async () => {
       // Arrange: fetch succeeds; body.success=true but data items are missing required
-      // templateItemSchema fields (slug, name, description, etc.) — safeParse returns failure
+      // catalogue entry fields (source, slug, name, etc.) — safeParse returns failure
       vi.mocked(serverFetch).mockResolvedValue(okResponse());
       vi.mocked(parseApiResponse)
         .mockResolvedValueOnce({ success: false } as never) // capabilities → []
         .mockResolvedValueOnce({ success: false } as never) // agents → []
         .mockResolvedValueOnce({
           success: true,
-          data: [{ not: 'a-template' }], // fails templateItemSchema
+          data: [{ not: 'a-template' }], // fails templateCatalogueSchema
         } as never); // templates
       const searchParams = Promise.resolve({});
 
       // Act
       render(await NewWorkflowPage({ searchParams }));
 
-      // Assert: templateListSchema.safeParse fails → [] forwarded to builder
+      // Assert: the parse failure is logged, not swallowed, and [] reaches the builder
+      expect(logger.warn).toHaveBeenCalledWith(
+        'new workflow page: templates response did not parse',
+        expect.objectContaining({ issues: expect.any(Array) })
+      );
       const builder = screen.getByTestId('workflow-builder');
       expect(builder).toHaveAttribute('data-templates-count', '0');
+    });
+
+    it('forwards each catalogue entry to the builder as a template', async () => {
+      vi.mocked(serverFetch).mockResolvedValue(okResponse());
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: false } as never) // capabilities → []
+        .mockResolvedValueOnce({ success: false } as never) // agents → []
+        .mockResolvedValueOnce({
+          success: true,
+          data: [
+            {
+              source: 'builtin',
+              slug: 'tpl-a',
+              name: 'A',
+              description: 'a',
+              workflowDefinition: { steps: [], entryStepId: 's1', errorStrategy: 'fail' },
+              patternsUsed: [1],
+              metadata: null,
+            },
+            {
+              source: 'custom',
+              slug: 'mine',
+              name: 'Mine',
+              description: 'm',
+              workflowDefinition: null,
+              patternsUsed: [],
+              metadata: null,
+            },
+          ],
+        } as never); // templates
+
+      render(await NewWorkflowPage({ searchParams: Promise.resolve({}) }));
+
+      expect(screen.getByTestId('workflow-builder')).toHaveAttribute('data-templates-count', '2');
     });
   });
 
@@ -357,15 +395,15 @@ describe('NewWorkflowPage', () => {
       );
     });
 
-    it('calls the templates endpoint with isTemplate=true and limit=100', async () => {
+    it('reads templates from the templates catalogue endpoint', async () => {
       vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
       const searchParams = Promise.resolve({});
 
       await NewWorkflowPage({ searchParams });
 
-      expect(serverFetch).toHaveBeenCalledWith(
-        `${API.ADMIN.ORCHESTRATION.WORKFLOWS}?isTemplate=true&limit=100`
-      );
+      expect(serverFetch).toHaveBeenCalledWith(API.ADMIN.ORCHESTRATION.WORKFLOW_TEMPLATES);
+      // Not the old template rows: the built-ins are no longer rows.
+      expect(serverFetch).not.toHaveBeenCalledWith(expect.stringContaining('isTemplate=true'));
     });
   });
 });
