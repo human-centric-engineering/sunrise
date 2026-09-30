@@ -1325,7 +1325,8 @@ async function main(): Promise<void> {
     // ── The built-in workflow templates: served from code (§116 t-727) ────
     console.log('\n[13] workflow templates: every org has the built-ins; its own stay its own');
     const builtinSlugs = BUILTIN_WORKFLOW_TEMPLATES.map((t) => t.slug);
-    const catalogueIn = (orgId: string) => runAsOrg(orgId, () => listWorkflowTemplates());
+    const catalogueIn = async (orgId: string) =>
+      (await runAsOrg(orgId, () => listWorkflowTemplates())).templates;
     const customTemplateSlug = `${PREFIX}-tpl-a-${stamp}`;
     await runAsOrg(a.orgId, () =>
       prisma.aiWorkflow.create({
@@ -1354,8 +1355,10 @@ async function main(): Promise<void> {
       !catalogueB.some((e) => e.slug === customTemplateSlug),
       'B does not list A’s custom template'
     );
-    // "Use template" loads the definition onto the canvas; saving it is the
-    // ordinary create path: the row and its v1 in one transaction.
+    // "Use template" loads the definition onto the canvas; saving it makes
+    // the writes the create route makes (the row, then its v1 through
+    // `createInitialVersion`, in one transaction), here through Prisma
+    // directly rather than the route.
     const picked = builtinsB[0];
     const fromTemplateSlug = `${PREFIX}-from-tpl-b-${stamp}`;
     const fromTemplate = await runAsOrg(b.orgId, () =>

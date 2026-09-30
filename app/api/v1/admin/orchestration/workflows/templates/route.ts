@@ -5,8 +5,8 @@
  *   - The built-in templates, served from code, then the calling org's own
  *     template rows (`lib/orchestration/workflows/template-catalogue.ts`).
  *   - Optional `source` filter: "builtin" | "custom".
- *   - Not paginated: twelve built-ins, and at most `MAX_CUSTOM_TEMPLATES`
- *     of the org's own.
+ *   - Not paginated: the built-ins, and at most `MAX_CUSTOM_TEMPLATES` of
+ *     the org's own. `meta.customTruncated` is true when the cap cut them.
  *
  * Authentication: Admin role required.
  */
@@ -24,6 +24,6 @@ const querySchema = z.object({
 
 export const GET = withAdminAuth(async (request) => {
   const { source } = validateQueryParams(new URL(request.url).searchParams, querySchema);
-  const templates = await listWorkflowTemplates(source);
-  return successResponse(templates);
+  const { templates, customTruncated } = await listWorkflowTemplates(source);
+  return successResponse(templates, { customTruncated });
 });

@@ -82,15 +82,23 @@ export function listBuiltinTemplates(): BuiltinTemplateEntry[] {
   }));
 }
 
+/** The org's own templates, and whether the cap cut the list short. */
+export interface CustomTemplateList {
+  entries: CustomTemplateEntry[];
+  truncated: boolean;
+}
+
 /**
  * The calling org's own templates, by name, capped at
- * `MAX_CUSTOM_TEMPLATES`. Must run inside the caller's tenant context.
+ * `MAX_CUSTOM_TEMPLATES`. Reads one row past the cap, so a list the cap cut
+ * short says so rather than passing for the whole. Must run inside the
+ * caller's tenant context.
  */
-export async function listCustomTemplates(): Promise<CustomTemplateEntry[]> {
+export async function listCustomTemplates(): Promise<CustomTemplateList> {
   const rows = await prisma.aiWorkflow.findMany({
     where: { isTemplate: true, slug: { notIn: [...BUILTIN_TEMPLATE_SLUGS] } },
     orderBy: { name: 'asc' },
-    take: MAX_CUSTOM_TEMPLATES,
+    take: MAX_CUSTOM_TEMPLATES + 1,
     select: {
       slug: true,
       name: true,
@@ -100,8 +108,8 @@ export async function listCustomTemplates(): Promise<CustomTemplateEntry[]> {
       publishedVersion: { select: { snapshot: true } },
     },
   });
-  return rows.map((row) => ({
-    source: 'custom',
+  const entries = rows.slice(0, MAX_CUSTOM_TEMPLATES).map((row) => ({
+    source: 'custom' as const,
     slug: row.slug,
     name: row.name,
     description: row.description,
@@ -109,6 +117,13 @@ export async function listCustomTemplates(): Promise<CustomTemplateEntry[]> {
     patternsUsed: row.patternsUsed,
     metadata: row.metadata,
   }));
+  return { entries, truncated: rows.length > MAX_CUSTOM_TEMPLATES };
+}
+
+/** The catalogue, and whether the org's own templates were cut short. */
+export interface WorkflowTemplateCatalogue {
+  templates: WorkflowTemplateEntry[];
+  customTruncated: boolean;
 }
 
 /**
@@ -117,8 +132,9 @@ export async function listCustomTemplates(): Promise<CustomTemplateEntry[]> {
  */
 export async function listWorkflowTemplates(
   source?: WorkflowTemplateSource
-): Promise<WorkflowTemplateEntry[]> {
+): Promise<WorkflowTemplateCatalogue> {
   const builtin = source === 'custom' ? [] : listBuiltinTemplates();
-  const custom = source === 'builtin' ? [] : await listCustomTemplates();
-  return [...builtin, ...custom];
+  const custom =
+    source === 'builtin' ? { entries: [], truncated: false } : await listCustomTemplates();
+  return { templates: [...builtin, ...custom.entries], customTruncated: custom.truncated };
 }

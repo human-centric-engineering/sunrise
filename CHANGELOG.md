@@ -150,7 +150,8 @@ release process.
   At `multi` every org's builder now offers all twelve. **The endpoint's
   response changed:** each entry is `{ source: 'builtin' | 'custom', slug,
   name, description, workflowDefinition, patternsUsed, metadata }`; it is no
-  longer paginated (at most 100 of the org's own), and the `category` filter
+  longer paginated (at most 100 of the org's own, with `meta.customTruncated`
+  true when that cap cut the list), and the `category` filter
   is gone. `source` stays, but a value other than `builtin` or `custom` is
   now a 400 rather than ignored.
 - **The seeded built-in template rows are retired on upgrade** (§116 t-727).

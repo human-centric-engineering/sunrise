@@ -229,7 +229,8 @@ describe('GET /workflows/templates', () => {
       BUILTIN_WORKFLOW_TEMPLATES.map((t) => t.slug).sort()
     );
     expect(args.where).not.toHaveProperty('orgId');
-    expect(args.take).toBe(100);
+    // One past the cap, so a list the cap cuts short can say so.
+    expect(args.take).toBe(101);
   });
 
   it('maps a custom row to its published snapshot, or null without one', async () => {
@@ -254,6 +255,29 @@ describe('GET /workflows/templates', () => {
       },
       expect.objectContaining({ slug: 'unpublished', workflowDefinition: null }),
     ]);
+  });
+
+  it("returns at most 100 of the org's own and flags a list the cap cut short", async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const rows = Array.from({ length: 101 }, (_, i) =>
+      customRow({ slug: `own-${String(i).padStart(3, '0')}`, name: `Own ${i}` })
+    );
+    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue(rows as never);
+
+    const response = await ListTemplates(makeListRequest({ source: 'custom' }));
+    const body = await parseJson<{ data: Entry[]; meta: { customTruncated: boolean } }>(response);
+
+    expect(body.data).toHaveLength(100);
+    expect(body.data.at(-1)?.slug).toBe('own-099');
+    expect(body.meta.customTruncated).toBe(true);
+
+    // Exactly at the cap is the whole list, not a truncated one.
+    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue(rows.slice(0, 100) as never);
+    const whole = await parseJson<{ data: Entry[]; meta: { customTruncated: boolean } }>(
+      await ListTemplates(makeListRequest({ source: 'custom' }))
+    );
+    expect(whole.data).toHaveLength(100);
+    expect(whole.meta.customTruncated).toBe(false);
   });
 
   it('source=builtin serves the built-ins without touching the database', async () => {
