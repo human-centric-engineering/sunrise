@@ -241,6 +241,12 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
     reason: 'reads the LLM source files to assert none of them persists a structured completion.',
   },
   {
+    path: 'tests/unit/prisma/seeds/system-workflow-slugs.test.ts',
+    reason:
+      'reads `prisma/seeds/` off disk to pin which units write `isSystem` workflows against ' +
+      '`SYSTEM_WORKFLOW_SLUGS`. Nothing imports a seed file, so a new seed never selects it.',
+  },
+  {
     path: 'tests/unit/prisma/seeds/provider-models.capabilities.test.ts',
     reason: 'reads `prisma/seeds/009-provider-models.ts` as text to check every row declares caps.',
   },

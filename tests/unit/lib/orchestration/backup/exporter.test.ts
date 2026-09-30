@@ -489,15 +489,22 @@ describe('exportOrchestrationConfig', () => {
     await exportOrchestrationConfig();
 
     // Third findMany call is for workflows. Two kinds are left out: a system
-    // workflow (the seed's, as system agents and capabilities are — t-729),
+    // workflow, by its flag or its reserved slug (the seed's, as system agents
+    // and capabilities are; the importer refuses the slug, so a bundle must
+    // not carry it — t-729),
     // and a TEMPLATE row with a built-in slug, a seed-era copy of a template
     // served from code. The same slug on an ordinary workflow (a retired row
     // an install switched back on) is live config and must be backed up.
     const wfCall = mockFindMany.mock.calls[2][0] as {
-      where?: { isSystem?: boolean; NOT?: { isTemplate?: boolean; slug?: { in?: string[] } } };
+      where?: {
+        isSystem?: boolean;
+        slug?: { notIn?: string[] };
+        NOT?: { isTemplate?: boolean; slug?: { in?: string[] } };
+      };
     };
     expect(wfCall?.where).toEqual({
       isSystem: false,
+      slug: { notIn: ['tpl-provider-model-audit'] },
       NOT: { isTemplate: true, slug: { in: expect.any(Array) } },
     });
     expect([...(wfCall?.where?.NOT?.slug?.in ?? [])].sort()).toEqual(

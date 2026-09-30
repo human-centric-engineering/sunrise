@@ -8,7 +8,10 @@
 
 import { prisma } from '@/lib/db/client';
 import type { BackupPayload } from '@/lib/orchestration/backup/schema';
-import { BUILTIN_TEMPLATE_SLUGS } from '@/lib/orchestration/workflows/template-catalogue';
+import {
+  BUILTIN_TEMPLATE_SLUGS,
+  SYSTEM_WORKFLOW_SLUGS,
+} from '@/lib/orchestration/workflows/template-catalogue';
 
 export async function exportOrchestrationConfig(): Promise<BackupPayload> {
   const [agents, capabilities, workflows, webhooks, knowledgeTags, settings] = await Promise.all([
@@ -84,11 +87,14 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
     // one. A row with that slug that is an ordinary workflow (a retired row
     // an install switched back on, or one an admin converted) is theirs, and
     // is backed up like any other. A system workflow (the provider-model
-    // audit) is the seed's, as system agents and capabilities are: it is
-    // re-created by the seed, and the importer refuses to overwrite one.
+    // audit) is the seed's, as system agents and capabilities are, and is
+    // left out by its flag AND by its reserved slug: the importer refuses
+    // that slug whatever the row type, so a row holding it could never be
+    // restored, and a bundle must not carry what it cannot restore.
     prisma.aiWorkflow.findMany({
       where: {
         isSystem: false,
+        slug: { notIn: [...SYSTEM_WORKFLOW_SLUGS] },
         NOT: { isTemplate: true, slug: { in: [...BUILTIN_TEMPLATE_SLUGS] } },
       },
       select: {

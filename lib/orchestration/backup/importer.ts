@@ -366,17 +366,11 @@ export async function importOrchestrationConfig(
       // recognised by slug before anything else: a bundle exported before
       // t-729 carries the provider-model audit, and on a target where that row
       // is absent (or another org's, at `multi`) the row check further down
-      // cannot see it. Checked before the definition parse so an old,
-      // now-invalid definition reports this reason rather than a corrupt one.
+      // cannot see it.
       if (isSystemWorkflowSlug(wf.slug)) {
         result.warnings.push(
           `System workflow '${wf.slug}' skipped — system workflows cannot be overwritten by backup import`
         );
-        continue;
-      }
-      const defParsed = workflowDefinitionSchema.safeParse(wf.workflowDefinition);
-      if (!defParsed.success) {
-        result.warnings.push(`Workflow '${wf.slug}' skipped — definition failed validation`);
         continue;
       }
       // A built-in template is served from code (§116 t-727). A backup taken
@@ -399,6 +393,13 @@ export async function importOrchestrationConfig(
         result.warnings.push(
           `System workflow '${wf.slug}' skipped — system workflows cannot be overwritten by backup import`
         );
+        continue;
+      }
+      // Parsed only after both system checks, so a skipped row never reports a
+      // definition problem as its reason.
+      const defParsed = workflowDefinitionSchema.safeParse(wf.workflowDefinition);
+      if (!defParsed.success) {
+        result.warnings.push(`Workflow '${wf.slug}' skipped — definition failed validation`);
         continue;
       }
       if (existing) {

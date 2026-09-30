@@ -225,7 +225,17 @@ release process.
   `isSystem` flag, and reports the skip. A bundle exported before this fix
   still carries the audit workflow; importing it reports the skip whether or
   not the target has that row. A fork's own seeded system workflow is covered
-  by the row flag wherever the target has the row.
+  by the row flag wherever the target has the row. The export leaves out the
+  same two, so a bundle no longer carries a row the import would refuse.
+  **Cost:** an admin's own edits to a system workflow are no longer in the
+  backup, so a restore to a fresh install brings back the seed's version.
+  **If you restored an older bundle before this fix**, check that the
+  provider-model audit workflow is active and is not marked as a template,
+  since that restore could have changed either. PATCH accepts `isActive: true`,
+  so an inactive one can be re-activated through the API. It refuses any
+  template-status change on a system workflow, and the seed resets that only when
+  `010-model-auditor` itself changes, so a wrongly-set flag needs a direct
+  database update.
 
 ## [0.13.0] — 2026-09-24
 
