@@ -1355,9 +1355,13 @@ describe('embedMany', () => {
 
     await provider.embedMany(['query'], { model: 'nomic-embed-text', inputType: 'query' });
     await provider.embedMany(['only chunk'], { model: 'nomic-embed-text' });
+    // An explicit 'document' is ingestion too (the per-message embedder
+    // passes it): the floor, not the row timeout.
+    await provider.embedMany(['one message'], { model: 'nomic-embed-text', inputType: 'document' });
 
     expect(embeddingsCreateMock.mock.calls[0]?.[1]).toEqual({ timeout: 60_000 });
     expect(embeddingsCreateMock.mock.calls[1]?.[1]).toEqual({ timeout: 300_000 });
+    expect(embeddingsCreateMock.mock.calls[2]?.[1]).toEqual({ timeout: 300_000 });
   });
 
   it('refuses a body that is not an embeddings list, e.g. an undecoded base64 string', async () => {
