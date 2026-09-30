@@ -189,22 +189,22 @@ If no `budgetLimitUsd` is set, the check is skipped.
 
 Start from these rather than building from scratch:
 
-| Template                       | Patterns                                        |
-| ------------------------------ | ----------------------------------------------- |
-| `tpl-customer-support`         | Routing, RAG, Tool Use, HITL, Guardrails        |
-| `tpl-content-pipeline`         | Planning, Chaining, Reflection, Parallelisation |
-| `tpl-saas-backend`             | Routing, Tool Use, Approval Gates               |
-| `tpl-research-agent`           | Planning, RAG, Parallelisation, Multi-Agent     |
-| `tpl-conversational-learning`  | RAG, Adaptive Questioning                       |
-| `tpl-data-pipeline`            | Parallel Processing, Quality Gates              |
-| `tpl-outreach-safety`          | Guardrails, Human Approval, Evaluation          |
-| `tpl-code-review`              | Parallel Analysis, Quality Scoring              |
-| `tpl-autonomous-research`      | Orchestrator, Dynamic Delegation                |
-| `tpl-cited-knowledge-advisor`  | RAG, Citation Hygiene, Output Guard             |
-| `tpl-scheduled-source-monitor` | Scheduled Triggers, RAG, Notification           |
-| `tpl-provider-model-audit`     | Tool Use, Approval, Audit-Driven Config Update  |
+| Template                           | Patterns                                        |
+| ---------------------------------- | ----------------------------------------------- |
+| `tpl-customer-support`             | Routing, RAG, Tool Use, HITL, Guardrails        |
+| `tpl-content-pipeline`             | Planning, Chaining, Reflection, Parallelisation |
+| `tpl-saas-backend`                 | Routing, Tool Use, Approval Gates               |
+| `tpl-research-agent`               | Planning, RAG, Parallelisation, Multi-Agent     |
+| `tpl-conversational-learning`      | RAG, Adaptive Questioning                       |
+| `tpl-data-pipeline`                | Parallel Processing, Quality Gates              |
+| `tpl-outreach-safety`              | Guardrails, Human Approval, Evaluation          |
+| `tpl-code-review`                  | Parallel Analysis, Quality Scoring              |
+| `tpl-autonomous-research`          | Orchestrator, Dynamic Delegation                |
+| `tpl-cited-knowledge-advisor`      | RAG, Citation Hygiene, Output Guard             |
+| `tpl-scheduled-source-monitor`     | Scheduled Triggers, RAG, Notification           |
+| `tpl-inbound-conversation-handler` | Tool Use, Memory                                |
 
-Templates are in `prisma/seeds/data/templates/`. Fetch via API: `GET /api/v1/admin/orchestration/workflows`.
+Templates are code, in `prisma/seeds/data/templates/` (`BUILTIN_WORKFLOW_TEMPLATES`), not database rows. Fetch them, with the org's own templates, via `GET /api/v1/admin/orchestration/workflows/templates`. (`tpl-provider-model-audit` in the same directory is the install org's system workflow, not a template.)
 
 ## Validation
 

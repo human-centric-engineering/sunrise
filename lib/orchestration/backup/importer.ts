@@ -364,9 +364,12 @@ export async function importOrchestrationConfig(
         result.warnings.push(`Workflow '${wf.slug}' skipped — definition failed validation`);
         continue;
       }
-      // A built-in template is served from code (§116 t-727). Importing it
-      // would bring back a retired seed row, or collide with another org's.
-      if (isBuiltinTemplateSlug(wf.slug)) {
+      // A built-in template is served from code (§116 t-727). A backup taken
+      // before the upgrade carries the seed-era template row; importing it
+      // would bring that row back as a template. An ordinary workflow holding
+      // the slug (one an install switched back on or converted) imports as
+      // any other.
+      if (wf.isTemplate && isBuiltinTemplateSlug(wf.slug)) {
         result.warnings.push(
           `Workflow '${wf.slug}' skipped — built-in templates are served from code, not restored from a backup`
         );

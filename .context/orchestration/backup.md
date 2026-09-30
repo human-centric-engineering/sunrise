@@ -86,7 +86,7 @@ Response 200:
 - Validates body against `backupSchema` (Zod) — 400 `VALIDATION_ERROR` on mismatch
 - Runs in a **single Prisma transaction** — partial failure rolls back everything
 - Agents, capabilities, workflows: **upserted by slug** (create or update)
-- Built-in workflow templates are code, not configuration (§116 t-727): the export leaves out any row holding a built-in slug (`tpl-customer-support` and the rest), and the import skips one with a warning, so an old backup cannot bring back a retired seed row
+- Built-in workflow templates are code, not configuration (§116 t-727): a template row holding a built-in slug (`tpl-customer-support` and the rest) is a seed-era copy of one, so the export leaves it out and the import skips it with a warning, and a backup taken before the upgrade cannot bring it back. The same slug on an ordinary workflow (a retired row an install switched back on) is backed up and restored like any other
 - Knowledge-tag grants reconnect by `KnowledgeTag.slug`; knowledge-document grants reconnect by `AiKnowledgeDocument.slug` (v3) or `fileHash` (v2 fallback). A reference missing in the target environment is **warn-skipped** (the grant is dropped, the rest of the agent imports) — the backup importer is deliberately lenient, unlike the agent bundle import which fails the whole import. See `.context/orchestration/knowledge.md` for the slug key.
 - Webhooks: **created only** if no identical URL already exists; otherwise skipped with a warning
 - Settings: **fully replaced** with backup values if present

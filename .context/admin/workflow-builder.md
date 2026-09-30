@@ -410,7 +410,7 @@ interface WorkflowTemplate {
 
 **UI-side type** (`TemplateItem` in `components/.../template-types.ts`):
 
-The `toTemplateItem()` mapper converts an `AiWorkflow` API response into a `TemplateItem`, Zod-parsing `workflowDefinition` and `metadata` JSON columns. The `metadata` column stores `WorkflowTemplateMetadata` (`flowSummary`, `useCases`, `patterns`) populated by the 004 seed unit.
+The `toTemplateItem()` mapper converts a catalogue entry (from `GET /workflows/templates`) into a `TemplateItem`, Zod-parsing `workflowDefinition` and `metadata`. `metadata` is `WorkflowTemplateMetadata` (`flowSummary`, `useCases`, `patterns`): built from the code definition for a built-in, and read from the row's `metadata` column for an org's own template.
 
 Each recipe has 3–6 step types with realistic (non-stub) config. Every `tool_call` references one of the built-in capability slugs: `search_knowledge_base`, `get_pattern_detail`, `estimate_workflow_cost`, `escalate_to_human`. Every `llm_call` has a non-empty prompt. Every `route` has ≥2 branches and all parallel branches reconverge — each template passes both `validateWorkflow()` and `runExtraChecks()` out of the box.
 
@@ -428,7 +428,7 @@ Templates can only be loaded on a new workflow. In edit mode the shell passes `t
 
 ### Retired rows
 
-Until §116 t-727 a seed (`004-builtin-templates`) mirrored each built-in into an install-org `AiWorkflow` row with `isTemplate: true`. That seed is gone, and migration `20260930120000_retire_builtin_template_rows` soft-deletes the rows it wrote: each is switched off (`isActive: false`) and stops being a template (`isTemplate: false`), and the row, its versions and its executions are kept. On an upgraded install they appear in the workflows list as inactive ordinary workflows. One an install was running directly (a schedule, a trigger, a `run_workflow` binding) can be switched back on there, and it runs as before; or recreate it with **Use template** and move its schedule or trigger over. The catalogue ignores any row holding a built-in slug, so a switched-on row never appears twice, and backup export and import skip built-in slugs.
+Until §116 t-727 a seed (`004-builtin-templates`) mirrored each built-in into an install-org `AiWorkflow` row with `isTemplate: true`. That seed is gone, and migration `20260930120000_retire_builtin_template_rows` soft-deletes the rows it wrote: each is switched off (`isActive: false`) and stops being a template (`isTemplate: false`), and the row, its versions and its executions are kept. On an upgraded install they appear in the workflows list as inactive ordinary workflows. One an install was running directly (a schedule, a trigger, a `run_workflow` binding) can be switched back on there, and it runs as before; or recreate it with **Use template** and move its schedule or trigger over. The catalogue ignores any row holding a built-in slug, so no row ever lists beside the code version. Backup export and import skip a built-in slug only while it is carried as a template; a row switched back on is an ordinary workflow and is backed up as one. A fork that added its own templates retires their old rows with a migration of its own; this one names the twelve core slugs.
 
 ## Layout persistence
 

@@ -79,10 +79,13 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         isActive: true,
       },
     }),
-    // The built-in templates are served from code, not backed up. A row
-    // holding a built-in slug is a retired seed row (§116 t-727).
+    // The built-in templates are served from code, not backed up (§116
+    // t-727): a TEMPLATE row holding a built-in slug is a seed-era copy of
+    // one. A row with that slug that is an ordinary workflow (a retired row
+    // an install switched back on, or one an admin converted) is theirs, and
+    // is backed up like any other.
     prisma.aiWorkflow.findMany({
-      where: { slug: { notIn: [...BUILTIN_TEMPLATE_SLUGS] } },
+      where: { NOT: { isTemplate: true, slug: { in: [...BUILTIN_TEMPLATE_SLUGS] } } },
       select: {
         name: true,
         slug: true,

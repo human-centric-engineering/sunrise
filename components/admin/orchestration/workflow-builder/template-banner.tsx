@@ -2,10 +2,10 @@
 
 /**
  * TemplateBanner — displayed at the top of the workflow builder when
- * the workflow being edited was created from a built-in template.
+ * the workflow being edited is a template row with template metadata.
  *
- * Reads template metadata (patterns, flow summary, use cases) from
- * the `AiWorkflow.metadata` JSON column, populated by the 004 seed.
+ * Reads that metadata (patterns, flow summary, use cases) from the
+ * `AiWorkflow.metadata` JSON column.
  */
 
 import { BookOpen, ChevronDown, ChevronUp, DollarSign } from 'lucide-react';

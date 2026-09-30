@@ -151,7 +151,8 @@ release process.
   response changed:** each entry is `{ source: 'builtin' | 'custom', slug,
   name, description, workflowDefinition, patternsUsed, metadata }`; it is no
   longer paginated (at most 100 of the org's own), and the `category` filter
-  is gone (`source` stays).
+  is gone. `source` stays, but a value other than `builtin` or `custom` is
+  now a 400 rather than ignored.
 - **The seeded built-in template rows are retired on upgrade** (§116 t-727).
   Migration `20260930120000_retire_builtin_template_rows` switches each of
   the twelve `tpl-*` rows off and clears its template flag, keeping the row,
@@ -179,7 +180,16 @@ release process.
   it back on from the workflows list (it keeps its slug, schedules and
   triggers, and runs as an ordinary workflow), or recreate it with **Use
   template** and move its schedule or trigger over. Backup export and import
-  now skip built-in slugs, so an old backup cannot bring a row back.
+  now skip a built-in slug carried as a template, so a backup taken before
+  the upgrade cannot bring a seeded row back; a row switched back on is an
+  ordinary workflow and is backed up as one.
+
+  **A fork that added its own templates** to `BUILTIN_WORKFLOW_TEMPLATES`
+  also had seed 004 write them as rows, and this migration names only the
+  twelve core slugs. Add a migration of your own with the same `UPDATE` for
+  your slugs; until then those rows stay active templates, hidden from the
+  "Use template" list (the code version is served instead) but listed on
+  the workflows page.
 
 ### Removed
 
@@ -192,8 +202,9 @@ release process.
   replacement registered from `lib/app/platform-agents.ts` instead.
 - **The seed units `004-builtin-templates` and `005-backfill-step-descriptions`**
   (§116 t-727). The built-in templates are no longer rows, so nothing mirrors
-  them. A fork that added a template to `BUILTIN_WORKFLOW_TEMPLATES` gets it
-  served with no change. A fork that edited either seed will see a
+  them. A fork that added a template to `BUILTIN_WORKFLOW_TEMPLATES` has it
+  served from code with no change, but its old row needs retiring (see the
+  migration entry above). A fork that edited either seed will see a
   modify/delete conflict; there is nothing to carry over.
 - **`SYSTEM_AGENT_PROTECTED_FIELDS`** from `agent-field-registry.ts` (§116
   t-725). The three fields it named are now three of many:

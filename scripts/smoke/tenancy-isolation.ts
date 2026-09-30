@@ -1342,8 +1342,7 @@ async function main(): Promise<void> {
     const catalogueA = await catalogueIn(a.orgId);
     const builtinsB = catalogueB.filter((e) => e.source === 'builtin');
     check(
-      builtinsB.length === 12 &&
-        builtinsB.map((e) => e.slug).join() === builtinSlugs.join() &&
+      builtinsB.map((e) => e.slug).join() === builtinSlugs.join() &&
         builtinsB.every((e) => e.source === 'builtin' && e.workflowDefinition.steps.length > 0),
       `B, made by createOrg, lists all ${builtinSlugs.length} built-ins with their definitions (${builtinsB.length})`
     );
