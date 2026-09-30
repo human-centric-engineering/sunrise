@@ -636,6 +636,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "The installed tracer, the no-op until a fork sets one; a span's attributes come from the call, not from here.",
   },
   {
+    file: 'lib/orchestration/workflows/template-catalogue.ts',
+    holders: ['BUILTIN_TEMPLATE_SLUGS'],
+    posture: 'no-tenant-data',
+    why: 'The built-in template slugs, built once at load from the code list: a lookup table, not a cache.',
+  },
+  {
     file: 'lib/privacy/erasure-hooks.ts',
     holders: ['hooks'],
     posture: 'no-tenant-data',
