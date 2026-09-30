@@ -493,13 +493,32 @@ describe('exportOrchestrationConfig', () => {
     // from code. The same slug on an ordinary workflow (a retired row an
     // install switched back on) is live config and must be backed up.
     const wfCall = mockFindMany.mock.calls[2][0] as {
-      where?: { NOT?: { isTemplate?: boolean; slug?: { in?: string[] } } };
+      where?: { isSystem?: boolean; NOT?: { isTemplate?: boolean; slug?: { in?: string[] } } };
     };
     expect(wfCall?.where).toEqual({
+      isSystem: false,
       NOT: { isTemplate: true, slug: { in: expect.any(Array) } },
     });
     expect([...(wfCall?.where?.NOT?.slug?.in ?? [])].sort()).toEqual(
       BUILTIN_WORKFLOW_TEMPLATES.map((t) => t.slug).sort()
     );
+  });
+
+  it('queries workflows with isSystem: false, as agents and capabilities are (t-729)', async () => {
+    // The provider-model audit is a system workflow the seed owns. Exporting
+    // it put it in every bundle, so a restore could publish an old definition
+    // over the one the seed maintains.
+    mockFindMany
+      .mockResolvedValueOnce([]) // agents
+      .mockResolvedValueOnce([]) // capabilities
+      .mockResolvedValueOnce([]) // workflows
+      .mockResolvedValueOnce([]); // webhooks
+    mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+    mockFindUnique.mockResolvedValue(null);
+
+    await exportOrchestrationConfig();
+
+    const wfCall = mockFindMany.mock.calls[2][0] as { where?: { isSystem?: boolean } };
+    expect(wfCall?.where?.isSystem).toBe(false);
   });
 });

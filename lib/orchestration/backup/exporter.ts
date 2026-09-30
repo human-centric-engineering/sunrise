@@ -83,9 +83,14 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
     // t-727): a TEMPLATE row holding a built-in slug is a seed-era copy of
     // one. A row with that slug that is an ordinary workflow (a retired row
     // an install switched back on, or one an admin converted) is theirs, and
-    // is backed up like any other.
+    // is backed up like any other. A system workflow (the provider-model
+    // audit) is the seed's, as system agents and capabilities are: it is
+    // re-created by the seed, and the importer refuses to overwrite one.
     prisma.aiWorkflow.findMany({
-      where: { NOT: { isTemplate: true, slug: { in: [...BUILTIN_TEMPLATE_SLUGS] } } },
+      where: {
+        isSystem: false,
+        NOT: { isTemplate: true, slug: { in: [...BUILTIN_TEMPLATE_SLUGS] } },
+      },
       select: {
         name: true,
         slug: true,

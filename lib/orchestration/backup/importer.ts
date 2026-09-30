@@ -376,6 +376,16 @@ export async function importOrchestrationConfig(
         continue;
       }
       const existing = await tx.aiWorkflow.findUnique({ where: { slug: wf.slug } });
+      // A system workflow is the seed's, as a system agent is. Versioning over
+      // it would republish whatever definition an older bundle carried, and
+      // the update below would also write `isActive` / `isTemplate`, which
+      // PATCH refuses for a system workflow.
+      if (existing?.isSystem) {
+        result.warnings.push(
+          `System workflow '${wf.slug}' skipped — system workflows cannot be overwritten by backup import`
+        );
+        continue;
+      }
       if (existing) {
         // Promote the imported snapshot to a new version on the existing workflow.
         const lastVersion = await tx.aiWorkflowVersion.findFirst({

@@ -558,6 +558,50 @@ describe('importOrchestrationConfig', () => {
     expect(result.workflows).toEqual({ created: 1, updated: 0 });
     expect(result.warnings).toEqual([]);
   });
+
+  it('skips an existing system workflow instead of versioning over it, and imports the rest (t-729)', async () => {
+    // The provider-model audit is seeded `isSystem: true, isTemplate: false`,
+    // so the built-in-template skip above does not reach it. An older bundle
+    // would otherwise publish its stale definition over the seed's and write
+    // the bundle's isActive / isTemplate, which PATCH refuses for this row.
+    mockTx.aiWorkflow.findUnique
+      .mockResolvedValueOnce({ id: 'wf-sys', slug: 'tpl-provider-model-audit', isSystem: true })
+      .mockResolvedValueOnce(null);
+    mockTx.aiWorkflow.create.mockResolvedValue({ id: 'wf-new' });
+    mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-1', version: 1 });
+
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        workflows: [
+          makeWorkflow({ slug: 'tpl-provider-model-audit', isActive: false }),
+          makeWorkflow(),
+        ],
+      },
+    };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    // Nothing is written to the system row: no new version, no field update.
+    // (`createInitialVersion` does call `aiWorkflow.update` for the NEW row,
+    // to set its publishedVersionId — so assert on the target, not the count.)
+    expect(mockTx.aiWorkflow.update).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'wf-sys' } })
+    );
+    expect(mockTx.aiWorkflowVersion.findFirst).not.toHaveBeenCalled();
+    expect(mockTx.aiWorkflowVersion.create).not.toHaveBeenCalledWith({
+      data: expect.objectContaining({ workflowId: 'wf-sys' }),
+    });
+    // The ordinary workflow still restores — one create, one initial version.
+    expect(mockTx.aiWorkflow.create).toHaveBeenCalledTimes(1);
+    expect(mockTx.aiWorkflow.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ slug: 'onboarding-flow' }),
+    });
+    expect(result.workflows).toEqual({ created: 1, updated: 0 });
+    expect(result.warnings).toEqual([
+      "System workflow 'tpl-provider-model-audit' skipped — system workflows cannot be overwritten by backup import",
+    ]);
+  });
 });
 
 // ─── Knowledge tag import ────────────────────────────────────────────────────
