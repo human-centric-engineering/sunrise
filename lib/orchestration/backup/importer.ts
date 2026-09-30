@@ -37,6 +37,11 @@ export interface ImportResult {
   warnings: string[];
 }
 
+/** The warning for a system workflow the import refused, by slug or by row flag. */
+function systemWorkflowSkipped(slug: string): string {
+  return `System workflow '${slug}' skipped — system workflows cannot be overwritten by backup import`;
+}
+
 export async function importOrchestrationConfig(
   raw: unknown,
   userId: string
@@ -368,9 +373,7 @@ export async function importOrchestrationConfig(
       // is absent (or another org's, at `multi`) the row check further down
       // cannot see it.
       if (isSystemWorkflowSlug(wf.slug)) {
-        result.warnings.push(
-          `System workflow '${wf.slug}' skipped — system workflows cannot be overwritten by backup import`
-        );
+        result.warnings.push(systemWorkflowSkipped(wf.slug));
         continue;
       }
       // A built-in template is served from code (§116 t-727). A backup taken
@@ -390,9 +393,7 @@ export async function importOrchestrationConfig(
       // definition the bundle carried, and the update below could deactivate
       // it or change its template status — both of which PATCH refuses.
       if (existing?.isSystem) {
-        result.warnings.push(
-          `System workflow '${wf.slug}' skipped — system workflows cannot be overwritten by backup import`
-        );
+        result.warnings.push(systemWorkflowSkipped(wf.slug));
         continue;
       }
       // Parsed only after both system checks, so a skipped row never reports a

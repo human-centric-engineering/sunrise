@@ -9,6 +9,11 @@
  * connects a new seed to this rule; this test reads `prisma/seeds/` off disk
  * and pins which units write `isSystem: true` workflows.
  *
+ * What it does not see, so a green run is not a proof: a unit that writes a
+ * system workflow through a helper, or sets `isSystem` from a variable; and a
+ * second system workflow written by a unit already listed here. It pins
+ * files, not slugs.
+ *
  * If this fails because you added a seed that writes a system workflow: add
  * its slug to `SYSTEM_WORKFLOW_SLUGS` in
  * `lib/orchestration/workflows/template-catalogue.ts`, then add the unit here.
@@ -43,7 +48,9 @@ function seedUnits(dir: string): string[] {
 
 /** True when a unit writes AiWorkflow rows and sets `isSystem: true` somewhere. */
 function writesSystemWorkflow(source: string): boolean {
-  return /\.aiWorkflow\.(create|update|upsert)\b/.test(source) && /isSystem:\s*true/.test(source);
+  return (
+    /\.aiWorkflow\.(create|update|upsert)(Many)?\b/.test(source) && /isSystem:\s*true/.test(source)
+  );
 }
 
 describe('seeds that write system workflows', () => {
