@@ -89,7 +89,8 @@ accepted and then quietly undone
 - **`PATCH /agents/:id/widget-config`** is refused outright; a platform
   agent's widget config is the platform's.
 - **Version restore** brings back only the org's fields and leaves the
-  grants as they are.
+  grants as they are. The Versions tab's confirm dialog says so and names
+  the fields.
 - **Delete, bulk actions and the instructions revert** refuse system agents,
   as they always have. **Clone** is allowed: the copy is the org's own agent.
 
