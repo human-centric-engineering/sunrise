@@ -2,11 +2,11 @@
  * Text Embedding Service
  *
  * Generates vector embeddings for text using configured LLM providers.
- * Supports OpenAI-compatible APIs (OpenAI, Together, Ollama) with
- * automatic provider detection from AiProviderConfig.
+ * Chooses the provider and model here (the operator's pick, else a preference
+ * chain over `AiProviderConfig` rows), then reaches the vendor through the
+ * provider manager's `embedMany`, like every other core vendor call (t-740).
  */
 
-import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
@@ -17,8 +17,8 @@ import {
   NoEligibleProviderError,
   NoProviderConfiguredError,
 } from '@/lib/orchestration/llm/agent-resolver';
-import { checkSafeProviderUrl } from '@/lib/security/safe-url';
-import { describeFetchFailure } from '@/lib/errors/fetch-error';
+import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import { ProviderError } from '@/lib/orchestration/llm/provider';
 
 /**
  * Static fallback embedding model. Only used when neither
@@ -29,23 +29,6 @@ import { describeFetchFailure } from '@/lib/errors/fetch-error';
 const DEFAULT_MODEL = 'text-embedding-3-small';
 const FALLBACK_DIMENSIONS = 1536;
 const DEFAULT_BATCH_SIZE = 100;
-
-/**
- * The slug the unconfigured OpenAI arm answers to.
- *
- * That arm reaches `api.openai.com` off a bare `OPENAI_API_KEY` with no
- * `AiProviderConfig` row behind it, so until now it had no name — and a
- * provider with no name cannot be permitted or denied by a rule that works on
- * names. It kept an install embedding out of the box, and it did so as the one
- * destination no policy could see.
- *
- * The verdict is that the escape hatch stays and stops being anonymous: a
- * reserved slug is enough to make it addressable, and the colon guarantees it
- * can never collide with a real row (`AiProviderConfig.slug` is validated
- * against `^[a-z0-9]+(?:-[a-z0-9]+)*$`). A fork denying it gets the refusal it
- * asked for rather than a silent call to OpenAI.
- */
-export const UNCONFIGURED_OPENAI_SLUG = 'env:openai';
 
 /** Rate limit: pause between batches (ms) */
 const BATCH_DELAY_MS = 200;
@@ -64,20 +47,30 @@ export interface EmbeddingProvenance {
   embeddedAt: Date;
 }
 
+/**
+ * What the resolver chose: which provider row, which model, and how to ask.
+ *
+ * No URL and no key: the provider manager builds the client from the row,
+ * with the same SSRF check, key resolution and redirect refusal as every
+ * other vendor call. This used to carry both, because the embedder built its
+ * own request.
+ */
 interface EmbeddingProvider {
-  baseUrl: string;
-  apiKey: string | null;
+  /** The `AiProviderConfig.slug` to fetch from the provider manager. */
+  slug: string;
   model: string;
-  /** Output dimension of `model`. Recorded as provenance and (if `schemaCompatible`) requested via the `dimensions` API parameter. */
+  /** Output dimension of `model`. Recorded as provenance, and requested when `sendDimensions`. */
   dimensions: number;
   /**
-   * True when `model` accepts the OpenAI-style `dimensions` parameter
-   * (text-embedding-3-*, voyage-3, …) and so can be coerced to a non-
-   * native dim. False for fixed-dim models like nomic-embed-text. Drives
-   * whether `callEmbeddingApi` sends `dimensions` to non-Voyage hosts.
+   * Whether to ask the vendor for `dimensions`. True for Voyage (it always
+   * takes `output_dimension`) and for a model that accepts the OpenAI-style
+   * `dimensions` parameter (text-embedding-3-*, or a row flagged
+   * `schemaCompatible`). False for fixed-width models like nomic-embed-text,
+   * which some hosts reject the parameter for.
    */
-  schemaCompatible: boolean;
+  sendDimensions: boolean;
   isLocal: boolean;
+  /** Recorded on cost rows and provenance, as before t-740 — not the slug. */
   providerType: string;
 }
 
@@ -205,18 +198,10 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
     return null;
   }
 
-  const apiKey = providerConfig.apiKeyEnvVar
-    ? (process.env[providerConfig.apiKeyEnvVar] ?? null)
-    : null;
-
   // Voyage uses its own canonical base URL when none is set; everyone
   // else needs an explicit `baseUrl`. Bail to fallback if a non-Voyage
-  // provider is missing it.
-  const baseUrl =
-    providerConfig.baseUrl ??
-    (providerConfig.providerType === 'voyage' ? 'https://api.voyageai.com/v1' : null);
-
-  if (!baseUrl) {
+  // provider is missing it — the provider manager would refuse to build it.
+  if (!providerConfig.baseUrl && providerConfig.providerType !== 'voyage') {
     logger.warn('Active embedding provider has no baseUrl configured; falling back', {
       activeEmbeddingModelId: modelId,
       providerSlug: model.providerSlug,
@@ -225,11 +210,10 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
   }
 
   return {
-    baseUrl,
-    apiKey,
+    slug: providerConfig.slug,
     model: model.modelId,
     dimensions: model.dimensions,
-    schemaCompatible: model.schemaCompatible ?? false,
+    sendDimensions: providerConfig.providerType === 'voyage' || (model.schemaCompatible ?? false),
     isLocal: providerConfig.isLocal,
     providerType: providerConfig.providerType,
   };
@@ -285,7 +269,7 @@ async function permittedForEmbedding(
  *   1. `AiOrchestrationSettings.activeEmbeddingModelId` — the explicit
  *      operator pick, with dim and model coming from `AiProviderModel`.
  *   2. The legacy provider-priority chain: Voyage → local → OpenAI-
- *      compatible → OPENAI_API_KEY direct. Used until the operator
+ *      compatible, over active provider rows. Used until the operator
  *      picks a model, and as a safety net if the picked model becomes
  *      invalid (deactivated, dim cleared, provider config removed).
  *
@@ -304,13 +288,15 @@ async function permittedForEmbedding(
  * moves an install from the unfiltered line to the filtered one silently,
  * which is why the drop-through is logged.
  *
- * This does NOT put the embedder inside the provider-manager waist. It still
- * builds its own HTTP request and is not counted by the in-flight Proxy,
- * because `LlmProvider.embed` takes one string and no model or dimension —
- * batching, `dimensions` / `output_dimension` and per-call model selection
- * would all have to go onto that contract first. That port belongs with the
- * call-time gate (`f-mt-external`); what ships here is the policy half, which
- * does not need it.
+ * **It chooses; it does not call.** The chosen row is fetched from the provider
+ * manager and called through `LlmProvider.embedMany` (t-740), so embedding goes
+ * through the same Proxy, key resolution and SSRF check as chat.
+ *
+ * **There is no longer a bare `OPENAI_API_KEY` arm** (t-740). It sent documents
+ * to OpenAI with no provider row an admin could see, and dated from before
+ * provider rows and env-key detection existed. An install that relied on it
+ * adds OpenAI as a provider (the Providers page detects the key), which the
+ * OpenAI-compatible arm then picks with the same model and width.
  */
 async function resolveProvider(): Promise<EmbeddingProvider> {
   const active = await resolveActiveEmbeddingConfig();
@@ -346,19 +332,15 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   for (const voyageProvider of providers) {
     if (voyageProvider.providerType !== 'voyage') continue;
     if (!(await permittedForEmbedding(voyageProvider.slug, refusals, seen))) continue;
-    const apiKey = voyageProvider.apiKeyEnvVar
-      ? (process.env[voyageProvider.apiKeyEnvVar] ?? null)
-      : null;
     logger.debug('Embedding provider resolved by the fallback chain', {
       arm: 'voyage',
       providerSlug: voyageProvider.slug,
     });
     return {
-      baseUrl: voyageProvider.baseUrl ?? 'https://api.voyageai.com/v1',
-      apiKey,
+      slug: voyageProvider.slug,
       model: 'voyage-3',
       dimensions: FALLBACK_DIMENSIONS,
-      schemaCompatible: true, // voyage-3 supports `output_dimension`
+      sendDimensions: true, // voyage-3 supports `output_dimension`
       isLocal: false,
       providerType: 'voyage',
     };
@@ -366,7 +348,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
 
   // Prefer a local provider for embeddings (cheaper/faster). Local
   // models (nomic-embed-text) produce a fixed native dim and ignore
-  // `dimensions`; `schemaCompatible: false` keeps us from sending it.
+  // `dimensions`; `sendDimensions: false` keeps us from sending it.
   for (const localProvider of providers) {
     // Shape first, policy second: a row with no `baseUrl` is unusable whatever
     // the rule says, and consulting the rule for it would record a refusal that
@@ -378,11 +360,10 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
       providerSlug: localProvider.slug,
     });
     return {
-      baseUrl: localProvider.baseUrl,
-      apiKey: localProvider.apiKeyEnvVar ? (process.env[localProvider.apiKeyEnvVar] ?? null) : null,
+      slug: localProvider.slug,
       model: 'nomic-embed-text',
       dimensions: FALLBACK_DIMENSIONS,
-      schemaCompatible: false,
+      sendDimensions: false,
       isLocal: true,
       providerType: localProvider.providerType,
     };
@@ -396,40 +377,16 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
     if (openaiCompatible.providerType !== 'openai-compatible' || !openaiCompatible.baseUrl)
       continue;
     if (!(await permittedForEmbedding(openaiCompatible.slug, refusals, seen))) continue;
-    const apiKey = openaiCompatible.apiKeyEnvVar
-      ? (process.env[openaiCompatible.apiKeyEnvVar] ?? null)
-      : null;
     const model = settingsModel || DEFAULT_MODEL;
     logger.debug('Embedding provider resolved by the fallback chain', {
       arm: 'openai-compatible',
       providerSlug: openaiCompatible.slug,
     });
     return {
-      baseUrl: openaiCompatible.baseUrl,
-      apiKey,
+      slug: openaiCompatible.slug,
       model,
       dimensions: FALLBACK_DIMENSIONS,
-      schemaCompatible: isOpenAiSchemaCompatibleModel(model),
-      isLocal: false,
-      providerType: 'openai-compatible',
-    };
-  }
-
-  // Default: OpenAI API directly, off a bare env var with no provider row.
-  // See UNCONFIGURED_OPENAI_SLUG for why this arm has a name at all.
-  const openaiKey = process.env['OPENAI_API_KEY'] ?? null;
-  if (openaiKey && (await permittedForEmbedding(UNCONFIGURED_OPENAI_SLUG, refusals, seen))) {
-    const model = settingsModel || DEFAULT_MODEL;
-    logger.debug('Embedding provider resolved by the fallback chain', {
-      arm: 'unconfigured-openai',
-      providerSlug: UNCONFIGURED_OPENAI_SLUG,
-    });
-    return {
-      baseUrl: 'https://api.openai.com/v1',
-      apiKey: openaiKey,
-      model,
-      dimensions: FALLBACK_DIMENSIONS,
-      schemaCompatible: isOpenAiSchemaCompatibleModel(model),
+      sendDimensions: isOpenAiSchemaCompatibleModel(model),
       isLocal: false,
       providerType: 'openai-compatible',
     };
@@ -448,9 +405,24 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
         '(lib/app/llm-providers.ts).'
     );
   }
+  // The bare-key arm is gone (t-740). An install that relied on it has the key
+  // set and no row, and would otherwise read the plain "nothing configured"
+  // and not know why a working setup stopped. Say what changed and the fix.
+  if (isApiKeyEnvVarSet('OPENAI_API_KEY')) {
+    logger.warn(
+      'OPENAI_API_KEY is set but no embedding provider row exists. The key alone no longer ' +
+        'enables embeddings: add OpenAI as a provider (the Providers page detects the key).',
+      {}
+    );
+    throw new NoProviderConfiguredError(
+      'No embedding provider configured. OPENAI_API_KEY is set, but the key alone no longer ' +
+        'enables embeddings: add OpenAI as a provider in the admin settings (the Providers ' +
+        'page detects the key).'
+    );
+  }
   throw new NoProviderConfiguredError(
-    'No embedding provider configured. Set the OPENAI_API_KEY environment variable ' +
-      'or configure an embedding provider in the admin settings.'
+    'No embedding provider configured. Add an embedding provider (OpenAI, Voyage or a local ' +
+      'one) in the admin settings.'
   );
 }
 
@@ -527,121 +499,44 @@ function isOpenAiSchemaCompatibleModel(model: string): boolean {
 }
 
 /**
- * Call an OpenAI-compatible embeddings endpoint.
+ * Embed a batch through the chosen provider row (t-740).
+ *
+ * Reaches the vendor via the provider manager, so the call is built from the
+ * row with the same key resolution, SSRF check and redirect refusal as chat,
+ * and is counted by the in-flight Proxy. A provider class without `embedMany`
+ * (Anthropic, or a fork class written against the older contract) cannot do
+ * knowledge embedding, and that is an error, not a fall back to the
+ * single-text `embed`, which could return vectors of the wrong width.
  */
-async function callEmbeddingApi(
+async function callEmbeddingProvider(
   provider: EmbeddingProvider,
-  input: string | string[],
+  texts: string[],
   inputType?: 'document' | 'query'
 ): Promise<{ embeddings: number[][]; inputTokens: number }> {
-  // Point-of-use SSRF re-check, mirroring `provider-manager.ts` (#635).
-  // Nothing on THIS path ran one: `resolveProvider` reads `AiProviderConfig`
-  // straight from Prisma, and the only other guard is the Zod refine at
-  // create/update — which seeds, imports and direct DB writes bypass, exactly
-  // as provider-manager's own comment says. So hop 1 was unvalidated here, and
-  // the redirect refusal below only ever covered hops 2+.
-  //
-  // An earlier version of the comment below asserted this check already
-  // happened. It did not; that claim is what surfaced the gap.
-  const urlCheck = checkSafeProviderUrl(provider.baseUrl, { allowLoopback: provider.isLocal });
-  if (!urlCheck.ok) {
-    logger.error('Embedding provider baseUrl rejected by SSRF guard at point of use', {
-      providerType: provider.providerType,
-      reason: urlCheck.reason,
-    });
-    throw new Error(`Embedding provider baseUrl is unsafe (${urlCheck.reason ?? 'blocked'})`);
+  const llm = await getProvider(provider.slug);
+  if (!llm.embedMany) {
+    throw new ProviderError(
+      `Provider "${provider.slug}" cannot be used for knowledge embedding: it does not ` +
+        'implement embedMany.',
+      { code: 'embedding_unsupported', retriable: false }
+    );
   }
 
-  const url = `${provider.baseUrl.replace(/\/+$/, '')}/embeddings`;
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-
-  if (provider.apiKey) {
-    headers['Authorization'] = `Bearer ${provider.apiKey}`;
-  }
-
-  const body: Record<string, unknown> = {
+  const result = await llm.embedMany(texts, {
     model: provider.model,
-    input,
-  };
-
-  // Voyage uses its own param name (`output_dimension`) and always
-  // accepts an `input_type`. Drive both from the resolved provider.
-  if (provider.providerType === 'voyage') {
-    body['input_type'] = inputType ?? 'document';
-    body['output_dimension'] = provider.dimensions;
-  } else if (provider.schemaCompatible) {
-    // OpenAI-style `dimensions` parameter — only safe for models
-    // explicitly flagged schema-compatible (text-embedding-3-* and
-    // anything an operator has registered as such). Sending it to a
-    // model that doesn't support it errors on some hosts.
-    body['dimensions'] = provider.dimensions;
-  }
-
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-      // Refuse redirects (#635). `url` is built from the embedding provider's
-      // admin-set `baseUrl`, and the check above validates only that first hop.
-      // This is the ingestion path, so the body is whatever document the operator
-      // uploaded; a followed redirect would post that text to a host nothing
-      // validated.
-      redirect: 'error',
-    });
-  } catch (err) {
-    // undici renders a refused redirect, a DNS miss and a connection reset
-    // alike as a bare `TypeError: fetch failed`, with the reason on `cause`.
-    // Ingestion failures surface to the operator through this message, so
-    // without unwrapping, a provider that started redirecting is
-    // indistinguishable from one that is down — and the fix (re-point the
-    // baseUrl) is invisible. Same reasoning as the webhook test route.
-    throw new Error(`Embedding API request failed: ${describeFetchFailure(err)}`);
-  }
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    let message = errorText;
-    try {
-      // The embedding provider's error envelope isn't part of our
-      // contract — different vendors shape it differently. Validate
-      // structurally with Zod so a malformed JSON or unexpected shape
-      // falls back to the raw text rather than throwing in the parse
-      // branch.
-      const errorResponseSchema = z.object({
-        error: z.object({ message: z.string().optional() }).partial().optional(),
-      });
-      const parsed = errorResponseSchema.safeParse(JSON.parse(errorText));
-      if (parsed.success && parsed.data.error?.message) {
-        message = parsed.data.error.message;
-      }
-    } catch {
-      // JSON.parse threw — vendor returned non-JSON. Use raw text as-is.
-    }
-    throw new Error(`Embedding API error (${response.status}): ${message}`);
-  }
-
-  const embeddingResponseSchema = z.object({
-    data: z.array(z.object({ embedding: z.array(z.number()), index: z.number() })),
-    // `usage.prompt_tokens` is reported by OpenAI / Voyage; Ollama and
-    // some self-hosted providers omit it. Parse defensively so the
-    // happy path doesn't fail when usage is absent.
-    usage: z
-      .object({
-        prompt_tokens: z.number().optional(),
-        total_tokens: z.number().optional(),
-      })
-      .optional(),
+    ...(provider.sendDimensions ? { dimensions: provider.dimensions } : {}),
+    ...(inputType ? { inputType } : {}),
   });
-  const result = embeddingResponseSchema.parse(await response.json());
 
-  const inputTokens =
-    result.usage?.prompt_tokens ?? result.usage?.total_tokens ?? estimateEmbeddingTokens(input);
+  if (result.embeddings.length !== texts.length) {
+    throw new Error(
+      `Embedding API returned ${result.embeddings.length} embeddings for ${texts.length} texts`
+    );
+  }
 
   return {
-    embeddings: result.data.sort((a, b) => a.index - b.index).map((d) => d.embedding),
-    inputTokens,
+    embeddings: result.embeddings,
+    inputTokens: result.inputTokens ?? estimateEmbeddingTokens(texts),
   };
 }
 
@@ -744,7 +639,7 @@ export async function embedText(
     textLength: text.length,
   });
 
-  const { embeddings, inputTokens } = await callEmbeddingApi(provider, text, inputType);
+  const { embeddings, inputTokens } = await callEmbeddingProvider(provider, [text], inputType);
   const cost = calculateEmbeddingCost(provider.model, inputTokens);
 
   // Best-effort cost log. Embeddings should never fail a caller because
@@ -825,12 +720,7 @@ export async function embedBatch(
       batchSize: batch.length,
     });
 
-    const { embeddings, inputTokens } = await callEmbeddingApi(provider, batch, inputType);
-    if (embeddings.length !== batch.length) {
-      throw new Error(
-        `Embedding API returned ${embeddings.length} embeddings for ${batch.length} texts`
-      );
-    }
+    const { embeddings, inputTokens } = await callEmbeddingProvider(provider, batch, inputType);
     allEmbeddings.push(...embeddings);
     totalInputTokens += inputTokens;
 
