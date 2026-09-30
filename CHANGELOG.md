@@ -212,6 +212,17 @@ release process.
   `platformAgentFieldNames('code')` is the list the API and version restore
   hold a system agent to.
 
+### Fixed
+
+- **Backup import no longer overwrites a system workflow** (t-729). The
+  provider-model audit (`tpl-provider-model-audit`, `isSystem: true`) was
+  exported in every bundle and versioned over on import, so restoring an older
+  bundle republished its stale definition and could deactivate the workflow,
+  which PATCH refuses. The export now leaves system workflows out, as it does
+  system agents and capabilities, and the import skips an existing one with a
+  warning. A bundle exported before this fix still carries the row; importing
+  it now reports the skip.
+
 ## [0.13.0] — 2026-09-24
 
 > **Alpha release.** Nineteenth tagged Sunrise release. **MINOR bump**. It
