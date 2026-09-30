@@ -43,9 +43,10 @@ export function describeTunableFields(
     (field) => fields.includes(field) && (includeProviderConfig || field !== 'providerConfig')
   );
   const forkFields = fields.filter((field) => !(field in TUNABLE_FIELD_PHRASES));
+  const labels = forkFields.length > 0 ? fieldLabels() : {};
   const phrases = [
     ...known.map((field) => TUNABLE_FIELD_PHRASES[field]),
-    ...forkFields.map((field) => (fieldLabels()[field] ?? field).toLowerCase()),
+    ...forkFields.map((field) => (labels[field] ?? field).toLowerCase()),
     ...(capabilitiesToo ? ['which capabilities it may use'] : []),
   ];
   if (phrases.length <= 1) return phrases.join('');

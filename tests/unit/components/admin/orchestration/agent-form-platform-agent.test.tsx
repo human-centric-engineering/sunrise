@@ -16,7 +16,7 @@
  * @see components/admin/orchestration/agent-form.tsx
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
@@ -229,6 +229,13 @@ describe('AgentForm — platform agent', () => {
   });
 
   describe('the Versions tab restore dialog (§116 t-732)', () => {
+    // `openRestore` routes `apiClient.get`; `clearAllMocks` in the outer
+    // `beforeEach` keeps implementations, so reset it for the tests after.
+    afterEach(async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockReset();
+    });
+
     const VERSIONS = [
       {
         id: 'v-2',

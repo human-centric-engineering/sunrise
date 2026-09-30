@@ -24,11 +24,13 @@
  * extra fetch. Restore is offered on every row except the newest (idx 0)
  * — restoring the newest is a no-op since it already equals live.
  *
- * On a platform agent (§116) a restore brings back only the fields this org
- * tunes; the platform's own, and the knowledge grants, stay as the platform
- * set them (the restore route skips them). `platformTunableFields` is that
- * list, from the edit policy `GET /agents/:id` returns, and the confirm
- * dialog names it rather than promising the whole version back.
+ * On a platform agent (§116) a restore leaves the platform-owned fields and
+ * the knowledge grants as they are (the restore route skips them) and brings
+ * back the rest. The confirm dialog names the fields this org tunes, from the
+ * edit policy `GET /agents/:id` returns (`platformTunableFields`), rather than
+ * promising the whole version back. In core that is exactly what the route
+ * writes; a versioned field a fork adds without declaring an owner is
+ * restored too but not named, as the form's banner does not name it either.
  *
  * Lazy-fetches the version list on mount. Per-version snapshots are pulled
  * on demand when a row is expanded and cached, so the same blob serves as
@@ -458,9 +460,9 @@ export function AgentVersionHistoryTab({
                   This is a platform agent, so a restore brings back only this org&apos;s settings
                   from version {restoreTarget?.version}: its{' '}
                   {describeTunableFields(platformTunableFields, { includeProviderConfig: true })}.
-                  Its instructions, knowledge and other settings stay as the platform sets them. A
-                  new version entry will be created to record this action. Conversations and cost
-                  history are not affected.
+                  Its instructions, knowledge and the other settings the platform owns are left as
+                  they are. A new version entry will be created to record this action. Conversations
+                  and cost history are not affected.
                 </>
               ) : (
                 <>

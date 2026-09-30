@@ -211,8 +211,11 @@ describe('AgentVersionHistoryTab', () => {
       expect(dialog).toHaveTextContent(
         "a restore brings back only this org's settings from version 2: its provider, model, fallback providers, provider configuration, monthly budget, per-turn cost cap, rate limit and how long its conversations are kept."
       );
+      // Says only what is true of everything outside the list: the platform's
+      // own settings are untouched. Not "set by the platform" — capabilities
+      // can be the org's, and a fork's unowned field is restored.
       expect(dialog).toHaveTextContent(
-        'Its instructions, knowledge and other settings stay as the platform sets them.'
+        'Its instructions, knowledge and the other settings the platform owns are left as they are.'
       );
       // The old wording promised the instructions back, which the API refuses.
       expect(dialog).not.toHaveTextContent(/revert the agent's configuration/);
