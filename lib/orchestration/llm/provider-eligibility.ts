@@ -54,9 +54,9 @@
  *    unreachable;
  *  - the **embedding fallback chain** (`knowledge/embedder.ts`), walked whenever
  *    the operator's `activeEmbeddingModelId` pin is absent or no longer
- *    resolves — including its final arm, which reaches OpenAI off a bare
- *    `OPENAI_API_KEY` with no provider row and answers to the reserved slug
- *    `env:openai` so a rule has something to name.
+ *    resolves. Every arm is a provider row with a real slug: the bare
+ *    `OPENAI_API_KEY` arm and its reserved `env:openai` slug were retired in
+ *    t-740, so a rule naming `env:openai` now matches nothing.
  *
  * The last five are a SECOND chokepoint. They do not pass through
  * `resolveAgentProviderAndModel` at all — they read the model registry, or the

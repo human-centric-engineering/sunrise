@@ -56,7 +56,12 @@ interface LlmProvider {
 
   chat(messages: LlmMessage[], options: LlmOptions): Promise<LlmResponse>;
   chatStream(messages: LlmMessage[], options: LlmOptions): AsyncIterable<StreamChunk>;
+  /** @deprecated — use embedMany. Removed at the next MAJOR. */
   embed(text: string): Promise<number[]>;
+  // Optional — the knowledge embedder's call (t-740). Caller picks the model and
+  // whether to request a dimension; returns plain number[] vectors in input
+  // order, and inputTokens only when the vendor reported it.
+  embedMany?(texts: string[], options: EmbedManyOptions): Promise<EmbedManyResult>;
   listModels(): Promise<ModelInfo[]>;
   testConnection(): Promise<{ ok: boolean; models: string[]; error?: string }>;
 
@@ -292,21 +297,26 @@ run per call.
 
 ### What bypasses the Provider Manager
 
-Two routes reach a vendor without a manager-built, Proxy-wrapped instance.
-Neither is a defect on its own; both surprise people:
+One route reaches a vendor without a manager-built, Proxy-wrapped instance. It
+is not a defect on its own, but it surprises people:
 
-| Route                   | What it skips                                                                                                                                                                                                                             |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Direct construction     | `AnthropicProvider` and `OpenAiCompatibleProvider` are exported from `@/lib/orchestration/llm` and listed under Public Surface, so any caller — a fork especially — can `new` one and skip the manager, the cache and the Proxy entirely. |
-| `knowledge/embedder.ts` | Resolves its own destination from `AiProviderConfig` rows and runs its own `fetch`. Never calls `getProvider`, so it is not counted. Its provider _choices_ are filtered by the eligibility seam (below); its _calls_ are not proxied.    |
+| Route               | What it skips                                                                                                                                                                                                                             |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Direct construction | `AnthropicProvider` and `OpenAiCompatibleProvider` are exported from `@/lib/orchestration/llm` and listed under Public Surface, so any caller — a fork especially — can `new` one and skip the manager, the cache and the Proxy entirely. |
+
+The knowledge embedder used to be a second route: it built its own request from
+`AiProviderConfig` rows and called `fetch` itself. Since t-740 it chooses the
+row and model and then calls `getProvider(slug).embedMany(…)`, so embedding is
+counted by the Proxy like chat. See _The embedder chooses; the provider manager
+calls_ below.
 
 `fetchWithTimeout` (`llm/provider.ts`) is a shared helper rather than a bypass —
 `model-registry.ts` uses it to GET OpenRouter's public model list, which reaches
 no vendor with anyone's data.
 
 If you are adding anything cross-cutting to LLM calls — metering, tracing, a
-policy check — these two are what stops "wrap the Proxy" from being sufficient
-on its own.
+policy check — direct construction is what stops "wrap the Proxy" from being
+sufficient on its own, and only for code that constructs a provider itself.
 
 ### What the outbound-egress guarantee covers, and what it does not
 
@@ -665,7 +675,7 @@ all of it.
 | A review request's own `modelOverride`, or `EVALUATION_JUDGE_MODEL` / `EVALUATION_DEFAULT_MODEL`                                                      | the same line, first two arms — `JUDGE_MODEL` in `evaluations/judge-model.ts` falls back to `EVALUATION_DEFAULT_MODEL`, so setting either takes this row | **No** — both are an operator's recorded choice.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Audio transcription's matrix fallback, when no default is pinned or the pinned row is unreachable                                                     | `tryAudioRow(row, 'matrix_fallback')` in `provider-manager.ts`                                                                                           | **Yes** — `source: 'primary'`, `task: 'audio'`. A barred row is skipped like any other unusable row and the loop tries the next; if none is permitted, `getAudioProvider()` returns `null` and speech-to-text is unavailable.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | An operator's pinned audio default                                                                                                                    | `tryAudioRow(row, 'operator_default')` in `provider-manager.ts`                                                                                          | **No** — pinned in Settings → Default models.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Knowledge embedding, whenever `resolveActiveEmbeddingConfig()` returns `null` — no pin, **or** a pin that no longer resolves                          | the Voyage → local → openai-compatible → bare `OPENAI_API_KEY` chain in `knowledge/embedder.ts`                                                          | **Yes** — `source: 'primary'`, `task: 'embeddings'`. A refused arm is skipped and the chain tries the next, the audio loop's shape. The bare-`OPENAI_API_KEY` arm answers to the reserved slug `env:openai` (`UNCONFIGURED_OPENAI_SLUG`) so a rule can name it; before that it was the one destination no policy could see. If everything available is refused the call fails with a message distinct from "nothing is configured". **Still outside the Proxy** — see _The embedder is filtered but not proxied_ below.                                                                                                                                                                       |
+| Knowledge embedding, whenever `resolveActiveEmbeddingConfig()` returns `null` — no pin, **or** a pin that no longer resolves                          | the Voyage → local → openai-compatible chain in `knowledge/embedder.ts`                                                                                  | **Yes** — `source: 'primary'`, `task: 'embeddings'`. A refused arm is skipped and the chain tries the next, the audio loop's shape. Every arm is a provider row: the bare-`OPENAI_API_KEY` arm and its `env:openai` slug were retired in t-740. If everything available is refused the call fails with a message distinct from "nothing is configured". The call itself goes through the Proxy — see _The embedder chooses; the provider manager calls_ below.                                                                                                                                                                                                                                |
 | An operator's pinned `activeEmbeddingModelId`, **while it still resolves**                                                                            | `resolveActiveEmbeddingConfig()` in `knowledge/embedder.ts`                                                                                              | **No** — an operator's recorded choice. But the pin is not sticky: it drops through to the gap row above on **five** conditions — the model is missing or inactive, lacks the `embedding` capability, has no `dimensions`, has no active `AiProviderConfig`, or is non-Voyage with no `baseUrl`. Each of those five drop-throughs is logged at `warn` inside `resolveActiveEmbeddingConfig`, which is where the transition happens and is visible at production's default `INFO` level. The arm the chain then lands on is `debug` — per-call provenance, fired once per search query and once per chat message on any unpinned install, so it is not the place to carry a transition signal. |
 | `provider.testConnection()` / `provider.listModels()`                                                                                                 | admin provider routes                                                                                                                                    | **No** — they do reach the vendor, and a gate on `chat`/`embed`/`transcribe` would silently not cover them. Out of scope because every caller is an admin acting on providers they configured — but note `providers/test-bulk` pings **every** configured row rather than one an admin named, so the justification is "operator-initiated", not "operator-named".                                                                                                                                                                                                                                                                                                                             |
 | `provider.transcribeStream()`                                                                                                                         | `streamTranscription` in `llm/transcribe-stream.ts` — which has **no production caller**; both voice routes call `provider.transcribe()`                 | **Not a provider _choice_ at all** — by the time it is called the provider is resolved, so there is nothing here for the eligibility seam to filter. It is now `trackStream` in the disposition map, so it is counted and interceptable like `chatStream`. An earlier version of this row said it was "from the voice path" and carried user audio today: it does not.                                                                                                                                                                                                                                                                                                                        |
@@ -722,30 +732,33 @@ than routing them somewhere unapproved. Agents that name their provider
 explicitly keep working and merely lose their fallbacks. See
 [multi-tenancy design → Q15](../architecture/multi-tenancy-design.md).
 
-#### The embedder is filtered but not proxied
+#### The embedder chooses; the provider manager calls
 
-The embedding chain is the one covered row that is **not** inside the provider
-manager. It resolves its own destination and runs its own `fetch`, so the
-eligibility seam constrains _which provider it chooses_ while the in-flight
-Proxy never sees the call: nothing counts it, and a future call-time gate hung
-off the Proxy would not cover it either. Its SSRF re-check and redirect refusal
-are its own, at the point of use.
+Until t-740 the embedding chain was the one covered row **outside** the
+provider manager: it built its own request and called `fetch`, so the
+eligibility seam constrained _which provider it chose_ while the in-flight Proxy
+never saw the call. `LlmProvider.embed` could not express what ingestion needs —
+a batch, a per-call model, a dimension, and usage for cost logging — which is
+why it bypassed the contract.
 
-**That split is deliberate, and here is the cost of closing it.**
-`LlmProvider.embed` takes one string and returns one vector — no batch, no model
-argument, no dimension. The embedder needs all three: it posts up to 100 inputs
-per request, selects the model per call, and sends `dimensions` /
-`output_dimension` for the models that accept them. Bringing it inside means
-widening the `LlmProvider` contract first, which is a larger and more
-consequential change than this row — every provider implements `embed`, and the
-contract is published surface for forks.
+Now `knowledge/embedder.ts` resolves `{ slug, model, dimensions, sendDimensions }`
+and calls `getProvider(slug).embedMany(texts, { model, dimensions?, inputType? })`.
+What that moves where:
 
-So the port belongs with the call-time gate (`f-mt-external`), which needs it
-anyway, and the policy half — the part that does not need the contract change —
-ships here. Stated the other way round, so the limit is not read as larger than
-it is: **an org's documents and search queries still leave through a path the
-Proxy cannot observe. What changed is that the destination is now one the org's
-rule got to approve.**
+- **Key resolution, SSRF check, redirect refusal** — the provider manager and the
+  provider classes, the same as chat. The manager now also SSRF-checks a
+  configured Voyage `baseUrl`, which the embedder used to check itself.
+- **Which model, and whether to ask for a dimension** — still the embedder,
+  because it knows the install's vector width and `schemaCompatible`.
+- **A provider without `embedMany`** (Anthropic; a fork class written against the
+  older contract) cannot do knowledge embedding. The embedder fails with
+  `embedding_unsupported` rather than falling back to `embed`, which could return
+  vectors of the wrong width.
+- **Cost rows and provenance** still record `providerType`, not the slug.
+
+The call is now counted by the Proxy and visible to anything hung off it. The
+limit that remains is the one in _What bypasses the Provider Manager_: code that
+constructs a provider itself.
 
 ## Anti-Patterns
 
