@@ -199,6 +199,46 @@ describe('GET /api/v1/admin/orchestration/agents', () => {
       expect(data.data[0]).toHaveProperty('_budget');
     });
 
+    it('marks each agent with the providers its org is no longer approved for (§120 t-745)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const agents = [
+        makeAgent({ provider: 'openai', fallbackProviders: ['anthropic', 'voyage'] }),
+        makeAgent({ id: 'cmjbv4i3x00003wsloputgwu2', slug: 'agent-2', fallbackProviders: [] }),
+      ];
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue(agents as never);
+      vi.mocked(prisma.aiAgent.count).mockResolvedValue(2);
+      vi.mocked(prisma.aiCostLog.groupBy).mockResolvedValue([] as never);
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+      mockUnapprovedProviders.mockImplementationOnce(async (slugs) =>
+        slugs.filter((slug) => slug === 'openai' || slug === 'voyage')
+      );
+
+      const response = await GET(makeGetRequest());
+
+      const data = await parseJson<{ data: Array<{ _unapprovedProviders: unknown }> }>(response);
+      expect(data.data.map((agent) => agent._unapprovedProviders)).toEqual([
+        ['openai', 'voyage'],
+        [],
+      ]);
+      // One policy question for the page, not one per agent.
+      expect(mockUnapprovedProviders).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports _unapprovedProviders as null, and still lists, when the policy cannot be read', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([makeAgent()] as never);
+      vi.mocked(prisma.aiAgent.count).mockResolvedValue(1);
+      vi.mocked(prisma.aiCostLog.groupBy).mockResolvedValue([] as never);
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(null);
+      mockUnapprovedProviders.mockRejectedValueOnce(new Error('connection reset'));
+
+      const response = await GET(makeGetRequest());
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{ data: Array<{ _unapprovedProviders: unknown }> }>(response);
+      expect(data.data[0]._unapprovedProviders).toBeNull();
+    });
+
     it('returns empty array when no agents exist', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);

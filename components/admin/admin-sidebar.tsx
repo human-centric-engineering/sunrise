@@ -12,6 +12,7 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard,
+  Building2,
   Users,
   FileText,
   ToggleRight,
@@ -79,6 +80,12 @@ const coreNavSections: NavSection[] = [
         label: 'Users',
         icon: Users,
         description: 'Manage user accounts',
+      },
+      {
+        href: '/admin/orgs',
+        label: 'Organisations',
+        icon: Building2,
+        description: 'Organisations and their approved providers',
       },
       {
         href: '/admin/features',

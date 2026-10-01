@@ -24,6 +24,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
@@ -609,6 +610,25 @@ export function AgentsTable({ initialAgents, initialMeta }: AgentsTableProps) {
             <>
               <span className="text-muted-foreground">{agent.provider} /</span> {agent.model}
             </>
+          )}
+          {agent._unapprovedProviders && agent._unapprovedProviders.length > 0 && (
+            <Tip
+              label={`This organisation is not approved to use ${agent._unapprovedProviders
+                .map((slug) => `"${slug}"`)
+                .join(', ')}, so ${
+                agent._unapprovedProviders.includes(agent.provider)
+                  ? 'every call this agent makes is refused'
+                  : 'failover to the named providers is refused'
+              }. A platform admin grants providers under Management → Organisations.`}
+            >
+              <Badge
+                variant="outline"
+                className="ml-1.5 gap-1 border-amber-500/60 px-1.5 py-0 text-[10px] font-medium text-amber-700 dark:text-amber-400"
+              >
+                <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                Not approved
+              </Badge>
+            </Tip>
           )}
         </TableCell>
         <TableCell className="text-right tabular-nums">

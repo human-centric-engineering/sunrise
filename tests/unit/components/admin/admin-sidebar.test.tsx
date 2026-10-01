@@ -87,6 +87,15 @@ describe('AdminSidebar', () => {
     }
   });
 
+  it('lists Organisations under Management, active on an org page (§120 t-745)', () => {
+    pathnameMock.mockReturnValue('/admin/orgs/cmorg00000000000000grant');
+    render(<AdminSidebar />);
+
+    const link = screen.getByRole('link', { name: /^organisations$/i });
+    expect(link).toHaveAttribute('href', '/admin/orgs');
+    expect(link).toHaveAttribute('aria-current', 'page');
+  });
+
   it('highlights the Agents item when on a nested agents route', () => {
     pathnameMock.mockReturnValue('/admin/orchestration/agents/abc123');
     render(<AdminSidebar />);

@@ -209,6 +209,33 @@ describe('AgentsTable', () => {
     });
   });
 
+  // ── Stranded by the org provider policy (§120 t-745) ───────────────────────
+
+  describe('provider approval', () => {
+    it('marks an agent whose org is no longer approved for a provider it names', () => {
+      render(
+        <AgentsTable
+          initialAgents={[
+            makeAgent({
+              id: 'agent-1',
+              name: 'Alpha',
+              provider: 'openai',
+              _unapprovedProviders: ['openai'],
+            }),
+            makeAgent({ id: 'agent-2', name: 'Beta', _unapprovedProviders: [] }),
+            // Unknown (the policy could not be read): no claim either way.
+            makeAgent({ id: 'agent-3', name: 'Gamma', _unapprovedProviders: null }),
+          ]}
+          initialMeta={MOCK_META}
+        />
+      );
+
+      const badges = screen.getAllByText('Not approved');
+      expect(badges).toHaveLength(1);
+      expect(badges[0].closest('tr')).toHaveTextContent('Alpha');
+    });
+  });
+
   // ── Budget MTD ─────────────────────────────────────────────────────────────
 
   describe('budget MTD column', () => {

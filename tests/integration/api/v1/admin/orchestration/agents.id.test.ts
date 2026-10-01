@@ -163,6 +163,35 @@ describe('GET /api/v1/admin/orchestration/agents/:id', () => {
     });
   });
 
+  describe('Stranded by the org provider policy (§120 t-745)', () => {
+    it('names the providers the agent holds that its org is no longer approved for', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ provider: 'openai', fallbackProviders: ['anthropic', 'voyage'] }) as never
+      );
+      mockUnapprovedProviders.mockImplementationOnce(async (slugs) =>
+        slugs.filter((slug) => slug !== 'anthropic')
+      );
+
+      const response = await GET(makeRequest(), makeParams(AGENT_ID));
+
+      const data = await parseJson<{ data: { _unapprovedProviders: unknown } }>(response);
+      expect(data.data._unapprovedProviders).toEqual(['openai', 'voyage']);
+    });
+
+    it('reports null, and still returns the agent, when the policy cannot be read', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+      mockUnapprovedProviders.mockRejectedValueOnce(new Error('connection reset'));
+
+      const response = await GET(makeRequest(), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{ data: { _unapprovedProviders: unknown } }>(response);
+      expect(data.data._unapprovedProviders).toBeNull();
+    });
+  });
+
   describe('Error cases', () => {
     it('returns 400 for invalid CUID param', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());

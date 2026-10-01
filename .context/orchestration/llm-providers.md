@@ -676,6 +676,17 @@ providers by slug:
 Both are platform-admin only (`withAdminAuth`). Org admins do not administer
 providers: they are platform-ops configuration.
 
+**In the admin UI** (§120 t-745): a platform admin edits the set on the org's
+page, `/admin/orgs/[id]` (Management → Organisations), which says when the
+policy is not enforced (`single`) and that the install org is unrestricted.
+The agent form offers a provider the org is not approved for disabled, with
+the reason, as primary and as fallback — unless the agent already holds it.
+An agent stranded by a later change shows a "Not approved" badge in the agents
+list and a banner on its edit page. The data comes from the list endpoints:
+`approvedForOrg` on each row of `GET /providers`, and `_unapprovedProviders`
+on each agent from `GET /agents` and `GET /agents/:id` (`null` when the
+policy could not be read — a read is decorated, never failed, by it).
+
 How it is applied:
 
 | Property              | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |

@@ -2,7 +2,11 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
-import { AgentForm, type AgentProfileSummary } from '@/components/admin/orchestration/agent-form';
+import {
+  AgentForm,
+  type AgentProfileSummary,
+  type AgentWithGrants,
+} from '@/components/admin/orchestration/agent-form';
 import {
   EvaluationTrendChart,
   type EvaluationTrendPoint,
@@ -11,6 +15,7 @@ import {
   QuarantinedCapabilitiesBanner,
   type QuarantinedCapabilityForAgent,
 } from '@/components/admin/orchestration/agents/quarantined-capabilities-banner';
+import { UnapprovedProvidersBanner } from '@/components/admin/orchestration/agents/unapproved-providers-banner';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
@@ -19,7 +24,6 @@ import {
   getEffectiveAgentDefaults,
   getProviders,
 } from '@/lib/orchestration/prefetch-helpers';
-import type { AiAgent } from '@/types/prisma';
 
 export async function generateMetadata({
   params,
@@ -49,11 +53,11 @@ export async function generateMetadata({
  * fallbacks.
  */
 
-async function getAgent(id: string): Promise<AiAgent | null> {
+async function getAgent(id: string): Promise<AgentWithGrants | null> {
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.agentById(id));
     if (!res.ok) return null;
-    const body = await parseApiResponse<AiAgent>(res);
+    const body = await parseApiResponse<AgentWithGrants>(res);
     return body.success ? body.data : null;
   } catch (err) {
     logger.error('edit agent page: agent fetch failed', err, { id });
@@ -143,6 +147,11 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
         {' / '}
         <span>{agent.name}</span>
       </nav>
+
+      <UnapprovedProvidersBanner
+        provider={agent.provider}
+        unapproved={agent._unapprovedProviders ?? []}
+      />
 
       <QuarantinedCapabilitiesBanner items={quarantinedCapabilities} />
 

@@ -1314,6 +1314,12 @@ export interface BudgetSummary {
 export type AiAgentListItem = AiAgent & {
   _count: { capabilities: number; conversations: number };
   _budget: BudgetSummary | null;
+  /**
+   * Providers the agent names that its org is no longer approved for — its
+   * calls are refused until a platform admin grants them (§120 t-745). `[]`
+   * when none; `null` when the org's provider policy could not be read.
+   */
+  _unapprovedProviders: string[] | null;
   creator?: { name: string | null };
   profile: { id: string; name: string; slug: string; isSystem: boolean } | null;
 };

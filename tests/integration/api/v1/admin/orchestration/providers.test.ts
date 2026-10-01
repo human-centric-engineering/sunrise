@@ -13,6 +13,16 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// The org's provider policy (§120 t-745): approves everything unless a test
+// says otherwise. Hoisted, so it applies however the route is imported.
+const mockUnapprovedProviders = vi.hoisted(() =>
+  vi.fn(async (_slugs: readonly string[]): Promise<string[]> => [])
+);
+vi.mock('@/lib/orchestration/llm/org-provider-policy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-policy')>()),
+  unapprovedProviders: mockUnapprovedProviders,
+}));
 import { NextRequest } from 'next/server';
 import { GET, POST } from '@/app/api/v1/admin/orchestration/providers/route';
 import {
@@ -170,6 +180,44 @@ describe('GET /api/v1/admin/orchestration/providers', () => {
       expect(data.data).toHaveLength(2);
       expect(typeof data.data[0].apiKeyPresent).toBe('boolean');
       expect(data.meta).toBeDefined();
+    });
+
+    it('marks each provider with whether the org in context may use it (§120 t-745)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(hasProviderKey).mockResolvedValue(true);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+        makeProvider(),
+        makeProvider({ id: 'cmjbv4i3x00003wsloputgwu2', slug: 'openai' }),
+      ]);
+      vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(2);
+      mockUnapprovedProviders.mockImplementationOnce(async (slugs) =>
+        slugs.filter((slug) => slug === 'openai')
+      );
+
+      const response = await GET(makeGetRequest());
+
+      const data = await parseJson<{ data: Array<{ slug: string; approvedForOrg: unknown }> }>(
+        response
+      );
+      expect(data.data.map((p) => [p.slug, p.approvedForOrg])).toEqual([
+        ['anthropic', true],
+        ['openai', false],
+      ]);
+      expect(mockUnapprovedProviders).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports approvedForOrg as null, and still lists, when the policy cannot be read', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(hasProviderKey).mockResolvedValue(true);
+      vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()]);
+      vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(1);
+      mockUnapprovedProviders.mockRejectedValueOnce(new Error('connection reset'));
+
+      const response = await GET(makeGetRequest());
+
+      expect(response.status).toBe(200);
+      const data = await parseJson<{ data: Array<{ approvedForOrg: unknown }> }>(response);
+      expect(data.data[0].approvedForOrg).toBeNull();
     });
 
     it('returns apiKeyPresent: true when env var is set', async () => {

@@ -173,6 +173,20 @@ release process.
   nothing changes. See
   [`llm-providers.md`](./.context/orchestration/llm-providers.md).
 
+- **An Organisations page, and approved providers shown in the agent UI**
+  (§120 t-745). `/admin/orgs` lists every org and `/admin/orgs/[id]` edits its
+  approved providers and jurisdictions (under Management in the sidebar);
+  rename, suspend and members stay API-only. The agent form offers a provider
+  the org is not approved for disabled, with the reason, and an agent stranded
+  by a later policy change shows it in the agents list and on its edit page.
+  New response fields: `approvedForOrg: boolean | null` on each row of
+  `GET /api/v1/admin/orchestration/providers`, and
+  `_unapprovedProviders: string[] | null` on each agent from
+  `GET /agents` and `GET /agents/:id` (on `AiAgentListItem` too; `null` when
+  the policy could not be read). New helper `strandedAgentProviders` in
+  `lib/orchestration/agents/provider-approval.ts`. At `single` every provider
+  is approved and nothing is disabled.
+
 ### Changed
 
 - **At `TENANCY_MODE=multi`, an org other than the install org can no longer

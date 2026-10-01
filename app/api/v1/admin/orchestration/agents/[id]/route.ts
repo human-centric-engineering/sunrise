@@ -53,7 +53,10 @@ import {
   type SystemInstructionsHistoryEntry,
 } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
-import { assertAgentProvidersApproved } from '@/lib/orchestration/agents/provider-approval';
+import {
+  assertAgentProvidersApproved,
+  strandedAgentProviders,
+} from '@/lib/orchestration/agents/provider-approval';
 
 /**
  * Cap on each string value inside an outbound `changes` payload. Agents'
@@ -102,6 +105,9 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   // always set in the query above, but defensive defaults keep tests that mock
   // findUnique with a partial shape from blowing up at runtime.
   const { grantedTags, grantedDocuments, ...rest } = agent;
+  // What the edit page's stranded-agent banner reads (§120 t-745); `null`
+  // when the org's provider policy could not be read.
+  const stranded = await strandedAgentProviders([agent]);
   const response = {
     ...rest,
     grantedTagIds: (grantedTags ?? []).map((g) => g.tagId),
@@ -109,6 +115,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
     // What PATCH and the binding routes refuse on a system agent, so the form
     // shows exactly those controls read-only. `null` for an org's own agent.
     platformAgent: platformAgentEditPolicy(agent),
+    _unapprovedProviders: stranded ? (stranded.get(agent.id) ?? []) : null,
   };
 
   log.info('Agent fetched', { agentId: id });

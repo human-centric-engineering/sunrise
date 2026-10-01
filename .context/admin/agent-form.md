@@ -71,7 +71,9 @@ The authorship signal is deliberately **explicit component state, not react-hook
 
 `resolveAgentProviderAndModel` deliberately never re-filters an _explicit_ `AiAgent.provider`, because that is meant to be an operator's recorded decision. So anything the form writes there is final — which is what made a `|| 'anthropic'` fallback able to launder a policy refusal (a fork's `registerProviderEligibility` rule permitting nothing for `source: 'primary'`, or throwing, which fails closed to the same empty set) into a permanent pinned choice the seam then honoured. Removing the literal was necessary; not submitting unauthored values is what actually closes it.
 
-What this does **not** do is stop an operator picking a denied provider from the dropdown by hand. The Select lists every configured provider, and filtering it would need a write-time `source` the eligibility seam does not have — an operator choosing is not Sunrise choosing, and a fork may legitimately permit one and deny the other. Validating an operator's own choice against per-org policy is per-org work, recorded as such in the Q15 row of `.context/architecture/multi-tenancy-design.md`.
+What this does **not** do is stop an operator picking a provider a **fork's** eligibility rule denies. Filtering by that rule would need a write-time `source` the seam does not have — an operator choosing is not Sunrise choosing, and a fork may legitimately permit one and deny the other.
+
+**Core's per-org approval is shown, though** (§120 t-745). Each row of `GET /providers` carries `approvedForOrg`; a provider with `approvedForOrg: false` is listed **disabled** with "not approved for this organisation", not hidden, and an extra `<FieldHelp>` ("Why some providers are unavailable") says where a platform admin grants it. A provider the agent already holds — as primary or fallback — stays selectable, because the save refuses only what a write introduces (t-743): a stranded agent can keep, swap or drop it. `null` (the policy could not be read) and an absent field leave the option enabled, and the save judges. At `single` every row is approved, so nothing is disabled.
 
 ### Model select
 
@@ -133,7 +135,7 @@ Optional number input (`AiAgent.maxCostPerTurnUsd`). Caps the total LLM cost of 
 
 ### Fallback providers
 
-Multi-checkbox list populated from the provider list. When the primary provider's circuit breaker is open, the chat handler falls back through these in order. Maximum 5 entries.
+Multi-checkbox list populated from the provider list. When the primary provider's circuit breaker is open, the chat handler falls back through these in order. Maximum 5 entries. A provider the org is not approved for is disabled with its reason, unless the agent already holds it (see Provider select).
 
 ### Rate limit RPM
 

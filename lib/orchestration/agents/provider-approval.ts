@@ -100,6 +100,46 @@ export async function assertAgentProvidersApproved(
   throw new ValidationError(reason(slugs), { errors, unapprovedProviders: slugs });
 }
 
+/** The agent fields a read reports on. */
+export interface StoredAgentProviders extends AgentProviderFields {
+  id: string;
+}
+
+/**
+ * For the admin reads (§120 t-745): per agent, the providers it names that its
+ * org is no longer approved for — an agent stranded by a policy change, whose
+ * calls the runtime refuses. Keyed by agent id; an agent naming none is `[]`.
+ *
+ * One policy read for the whole page. `null` when the policy cannot be read:
+ * this decorates a list, so it says "unknown" rather than failing the read or
+ * reporting every agent healthy.
+ */
+export async function strandedAgentProviders(
+  agents: readonly StoredAgentProviders[]
+): Promise<Map<string, string[]> | null> {
+  let refused: Set<string>;
+  try {
+    refused = new Set(
+      await unapprovedProviders(
+        agents.flatMap((agent) => [agent.provider ?? '', ...(agent.fallbackProviders ?? [])])
+      )
+    );
+  } catch (error) {
+    logger.warn('Could not check agents against the org provider policy', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+  return new Map(
+    agents.map((agent) => [
+      agent.id,
+      [...new Set([agent.provider ?? '', ...(agent.fallbackProviders ?? [])])].filter((slug) =>
+        refused.has(slug)
+      ),
+    ])
+  );
+}
+
 /** The agent fields an import reports on. */
 export interface ImportedAgentProviders extends AgentProviderFields {
   slug: string;

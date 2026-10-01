@@ -25,20 +25,20 @@ All three are async server components using `serverFetch()` + `parseApiResponse(
 
 Columns:
 
-| Column      | Source                              | Notes                                                                                                  |
-| ----------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| ☐ select    | Local `Set<string>` state           | Clears on page change / refetch                                                                        |
-| Name        | `agent.name`                        | **Sortable** (page-local). Links to edit page. Visibility badge inline. Description below              |
-| Profile     | `agent.profile`                     | Badge linking to the profile detail page. Shield icon for system profiles. `—` for unassigned.         |
-| Tools       | `agent._count.capabilities`         | Inline from list API. Links to edit page when > 0                                                      |
-| Chats       | `agent._count.conversations`        | **Sortable** (page-local)                                                                              |
-| Model       | `agent.provider` + `agent.model`    | Combined: `provider / model`                                                                           |
-| Budget      | `agent.monthlyBudgetUsd`            | `—` when `null`                                                                                        |
-| Spend MTD   | `agent._budget.spent`               | **Sortable** (page-local). Inline from list API (batch `groupBy`). `—` when no budget                  |
-| Last active | `agent.lastActiveAt`                | **Sortable** (page-local). Relative time (`2h ago`). Absolute timestamp in tooltip. `Never` when null. |
-| Created     | `agent.createdAt`                   | **Sortable** (page-local). Relative time (`3d ago`). Creator name in tooltip via `agent.creator`       |
-| Status      | `agent.isActive`                    | `<Switch>` — optimistic PATCH, reverts on failure                                                      |
-| ⋯ Actions   | Dropdown: Edit · Duplicate · Delete |                                                                                                        |
+| Column      | Source                              | Notes                                                                                                      |
+| ----------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| ☐ select    | Local `Set<string>` state           | Clears on page change / refetch                                                                            |
+| Name        | `agent.name`                        | **Sortable** (page-local). Links to edit page. Visibility badge inline. Description below                  |
+| Profile     | `agent.profile`                     | Badge linking to the profile detail page. Shield icon for system profiles. `—` for unassigned.             |
+| Tools       | `agent._count.capabilities`         | Inline from list API. Links to edit page when > 0                                                          |
+| Chats       | `agent._count.conversations`        | **Sortable** (page-local)                                                                                  |
+| Model       | `agent.provider` + `agent.model`    | Combined: `provider / model`. A "Not approved" badge when `agent._unapprovedProviders` is non-empty (§120) |
+| Budget      | `agent.monthlyBudgetUsd`            | `—` when `null`                                                                                            |
+| Spend MTD   | `agent._budget.spent`               | **Sortable** (page-local). Inline from list API (batch `groupBy`). `—` when no budget                      |
+| Last active | `agent.lastActiveAt`                | **Sortable** (page-local). Relative time (`2h ago`). Absolute timestamp in tooltip. `Never` when null.     |
+| Created     | `agent.createdAt`                   | **Sortable** (page-local). Relative time (`3d ago`). Creator name in tooltip via `agent.creator`           |
+| Status      | `agent.isActive`                    | `<Switch>` — optimistic PATCH, reverts on failure                                                          |
+| ⋯ Actions   | Dropdown: Edit · Duplicate · Delete |                                                                                                            |
 
 ### Default sort vs explicit sort
 

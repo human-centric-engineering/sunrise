@@ -26,7 +26,10 @@ import {
 } from '@/lib/orchestration/agents/agent-versioning';
 import { logger } from '@/lib/logging';
 import type { BudgetSummary } from '@/types/orchestration';
-import { assertAgentProvidersApproved } from '@/lib/orchestration/agents/provider-approval';
+import {
+  assertAgentProvidersApproved,
+  strandedAgentProviders,
+} from '@/lib/orchestration/agents/provider-approval';
 
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
@@ -145,9 +148,14 @@ export const GET = withAdminAuth(async (request, _session) => {
     }
   }
 
+  // Agents naming a provider their org is no longer approved for (§120 t-745);
+  // `null` per row when the policy could not be read.
+  const stranded = rawAgents.length > 0 ? await strandedAgentProviders(rawAgents) : null;
+
   const agents = rawAgents.map((agent) => ({
     ...agent,
     _budget: budgetMap[agent.id] ?? null,
+    _unapprovedProviders: stranded ? (stranded.get(agent.id) ?? []) : null,
   }));
 
   log.info('Agents listed', { count: agents.length, total, page, limit });

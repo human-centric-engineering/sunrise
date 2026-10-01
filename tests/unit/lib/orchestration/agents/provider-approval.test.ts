@@ -37,6 +37,7 @@ import {
   assertAgentProvidersApproved,
   findUnapprovedAgentProviders,
   importedAgentProviderWarnings,
+  strandedAgentProviders,
 } from '@/lib/orchestration/agents/provider-approval';
 import {
   forgetOrgProviderPolicy,
@@ -213,5 +214,53 @@ describe('importedAgentProviderWarnings', () => {
 
     expect(bySlug.size).toBe(0);
     expect(unchecked).toContain('could not be read');
+  });
+});
+
+describe('strandedAgentProviders', () => {
+  it('names, per agent, every provider it holds that the org is not approved for', async () => {
+    const stranded = await inOrg(() =>
+      strandedAgentProviders([
+        { id: 'a1', provider: 'openai', fallbackProviders: ['anthropic', 'voyage'] },
+        { id: 'a2', provider: 'anthropic', fallbackProviders: ['voyage'] },
+        { id: 'a3', provider: 'anthropic', fallbackProviders: [] },
+        // Inherits its provider: nothing pinned, so nothing stranded.
+        { id: 'a4', provider: '', fallbackProviders: null },
+      ])
+    );
+
+    expect(stranded).toEqual(
+      new Map([
+        ['a1', ['openai', 'voyage']],
+        ['a2', ['voyage']],
+        ['a3', []],
+        ['a4', []],
+      ])
+    );
+  });
+
+  it('reads the policy once for the whole page', async () => {
+    await inOrg(() =>
+      strandedAgentProviders([
+        { id: 'a1', provider: 'openai' },
+        { id: 'a2', provider: 'voyage' },
+      ])
+    );
+    expect(prisma.org.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.aiProviderConfig.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('strands nothing at single', async () => {
+    mockMode.value = 'single';
+    expect(await inOrg(() => strandedAgentProviders([{ id: 'a1', provider: 'openai' }]))).toEqual(
+      new Map([['a1', []]])
+    );
+  });
+
+  it('answers null, not "all clear", when the policy cannot be read', async () => {
+    vi.mocked(prisma.org.findUnique).mockRejectedValue(new Error('connection reset'));
+    expect(
+      await inOrg(() => strandedAgentProviders([{ id: 'a1', provider: 'openai' }]))
+    ).toBeNull();
   });
 });
