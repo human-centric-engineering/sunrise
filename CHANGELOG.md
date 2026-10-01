@@ -126,9 +126,13 @@ release process.
   returns `breakerKey`; pass it (or `breakerKeyOf(provider)`) to `getBreaker`
   instead of the slug. The admin provider list and health route aggregate a
   provider's breakers, and the live-engine dashboard's in-flight `provider` is
-  that key. Reachability checks (auto-pick, the agent form preview, the
-  clean-up agent's pin, the admin model routes) now ask the credential seam
-  instead of reading `process.env`.
+  that key. A provider's breaker is checked once it is fetched (that is what
+  says which credential applies), and a chat turn that fails over credits its
+  success to the provider that served it, not the primary it left — which had
+  cleared the failure just recorded. Reachability checks (auto-pick, the agent
+  form preview, the clean-up agent's pin, the admin model routes) and the admin
+  `apiKeyPresent` flag now ask the credential seam instead of reading
+  `process.env`.
 - **An eligibility rule now also decides operator-chosen providers, at call
   time** (§120 t-741). Selection still never reroutes an explicit
   `agent.provider`, a step's `modelOverride`, a pinned embedding default, or an
