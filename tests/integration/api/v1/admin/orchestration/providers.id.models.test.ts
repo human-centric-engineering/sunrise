@@ -210,7 +210,10 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
           isLocal: true,
         }) as never
       );
-      vi.mocked(hasProviderCredential).mockResolvedValue(false);
+      // A local row needs no key: that rule is the credential seam's now
+      // (`hasProviderCredential`, tested in provider-credentials.test.ts), and
+      // this is its answer for one. The route must act on it.
+      vi.mocked(hasProviderCredential).mockResolvedValue(true);
       mockListModels.mockResolvedValue([
         makeModelInfo({ id: 'llama3', name: 'Llama 3' }),
         makeModelInfo({ id: 'mistral', name: 'Mistral' }),
