@@ -82,8 +82,39 @@ release process.
   one, and refuse redirects. `OpenAiCompatibleProvider` asks for
   `encoding_format: 'float'`, because the `openai` SDK's base64 default decodes
   to `Float32Array`.
+- **A call-time provider gate** (§120 t-741). Every vendor call through the
+  provider manager (`chat`, `chatStream`, `embed`, `embedMany`, `transcribe`,
+  `transcribeStream`) now asks the provider eligibility rule first, per call,
+  and a refused call throws `ProviderCallRefusedError` (a `ProviderError`,
+  code `provider_not_permitted`) from `provider-eligibility.ts`. Until now the
+  rule was only consulted where a provider was chosen, from a hand-maintained
+  list of sites; a site missing from it now chooses less well but cannot send
+  a call the rule refuses. To tell the rule where a provider came from,
+  `getProvider(slug, context?)` and `getProviderWithFallbacks(primary,
+  fallbacks, provenance?)` take a new optional argument, and
+  `ResolvedAgentBinding` gains `provenance`. **A call made without one is
+  permitted only if the rule permits it under every `source`**, so a fork
+  calling `getProvider` directly should pass a context. At `TENANCY_MODE=multi`
+  a vendor call outside any org scope, or inside `runAsSystem`, is refused.
+  With no rule registered (the default), nothing changes.
+  `listModels` and `testConnection` are not gated. See
+  [`llm-providers.md` → The call-time gate](./.context/orchestration/llm-providers.md#the-call-time-gate).
 
 ### Changed
+
+- **An eligibility rule now also decides operator-chosen providers, at call
+  time** (§120 t-741). Selection still never reroutes an explicit
+  `agent.provider`, a step's `modelOverride`, a pinned audio or embedding
+  default, or an `EVALUATION_*` env var, but the call-time gate refuses one the
+  rule refuses, asking it with `source: 'explicit'`. So a fork rule that barred
+  a provider only for `'primary'` / `'system'` behaves as before, and one that
+  barred it for `'explicit'` too now stops agents that name it, where before it
+  only removed it from their fallback lists. A refusal counts as a request
+  fault: chat does not fail over from it, a workflow step does not retry it,
+  and no circuit breaker records it.
+- **`getProvider` prefers a slug match over a name match** (§120 t-741). It
+  used one unordered `findFirst` over both, so a caller holding one row's slug
+  could be handed a different row whose name equalled it.
 
 - **Admin edits to a system agent's platform-owned fields no longer
   survive** (§116 t-724). This is the upgrade to look at. On the first

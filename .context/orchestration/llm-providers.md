@@ -203,14 +203,14 @@ The per-agent `enableImageInput` / `enableDocumentInput` toggles (on `AiAgent`) 
 
 ## Provider Manager (DB-Backed Factory)
 
-`providerManager.getProvider(slug)` is the single entry point. It:
+`providerManager.getProvider(slug, context?)` is the single entry point. It:
 
-1. Checks the in-memory cache. Each entry stores `{ provider, cachedAt }` and is evicted after **5 minutes** (`CACHE_TTL_MS`). This ensures config changes in the database (e.g. switching API keys, toggling `isActive`) take effect without a restart.
-2. Loads the matching `AiProviderConfig` row (`findFirst` against slug or name).
+1. Checks the in-memory cache. Each entry stores the built instance, its slug and `cachedAt`, and is evicted after **5 minutes** (`CACHE_TTL_MS`). This ensures config changes in the database (e.g. switching API keys, toggling `isActive`) take effect without a restart.
+2. Loads the matching `AiProviderConfig` row: a row with that **slug** first, and only if there is none, a row with that **name**. (One unordered `findFirst` over both used to let a caller holding row A's slug be handed row B, whose name equals it.)
 3. Throws `ProviderError` with `code: 'provider_not_found'` / `'provider_disabled'` if missing or inactive.
 4. Resolves the API key from `process.env[config.apiKeyEnvVar]` (or skips for local providers).
 5. Instantiates `AnthropicProvider` or `OpenAiCompatibleProvider` based on `providerType`.
-6. Caches with timestamp and returns.
+6. Caches with timestamp and returns the Proxy for `context` — see _The call-time gate_ below for what `context` is and why to pass it.
 
 **Do:**
 
@@ -233,9 +233,10 @@ For tests or scripts that bypass the database, use `providerManager.registerProv
 ### Every instance is wrapped in a Proxy
 
 Between steps 5 and 6, `getProvider` passes the new instance through
-`withInFlightTracking(provider, slug)`, which returns a `Proxy`. It keeps the
-in-flight counter accurate, and it is the only place in the tree where **every**
-LLM call through a manager-built provider can be observed in one spot.
+`withInFlightTracking(provider, slug, context)`, which returns a `Proxy`. It
+keeps the in-flight counter accurate, it is where the call-time gate runs, and it
+is the only place in the tree where **every** LLM call through a manager-built
+provider can be observed in one spot.
 
 `registerProvider()` and `registerProviderInstance()` wrap too, so _everything
 `getProvider` hands back has been through the Proxy, whichever of the three
@@ -254,11 +255,11 @@ does not. Assert on behaviour.
 Interception is driven by one exhaustive table, `METHOD_DISPOSITION` in
 `provider-manager.ts`:
 
-| Disposition   | Methods                          | Effect                                                       |
-| ------------- | -------------------------------- | ------------------------------------------------------------ |
-| `track`       | `chat`, `embed`, `transcribe`    | `track(slug, …)` — holds a gauge for the life of the promise |
-| `trackStream` | `chatStream`, `transcribeStream` | `trackStream(slug, …)` — holds it until the stream settles   |
-| `passthrough` | `listModels`, `testConnection`   | forwarded bound to the target, deliberately **not** counted  |
+| Disposition   | Methods                                    | Effect                                                                        |
+| ------------- | ------------------------------------------ | ----------------------------------------------------------------------------- |
+| `track`       | `chat`, `embed`, `embedMany`, `transcribe` | gated, then `track(slug, …)` — holds a gauge for the life of the promise      |
+| `trackStream` | `chatStream`, `transcribeStream`           | gated before the first chunk, then `trackStream(slug, …)` until it settles    |
+| `passthrough` | `listModels`, `testConnection`             | forwarded bound to the target, deliberately **not** counted and **not** gated |
 
 Symbol-keyed accesses and non-function properties pass through unwrapped,
 deliberately: proxying `Symbol.toPrimitive` as though it were a tracked method
@@ -292,8 +293,31 @@ Two things changed, and both matter:
   not to count it" and "nobody looked" used to be the same state. They are now
   different rows.
 
-The Proxy is created once per cache entry, not per call; the closures it returns
-run per call.
+The Proxy is created once per cache entry and call context, not per call; the
+closures it returns run per call.
+
+### The call-time gate
+
+Every `track` / `trackStream` call asks the provider eligibility rule first
+(`assertProviderCallPermitted` in `provider-eligibility.ts`, §120 t-741). It is
+what makes the policy complete for core: the selection sites below decide which
+provider to choose, and the gate refuses any call the rule does not permit,
+wherever the provider came from — including a site nobody has listed yet.
+
+| Property                   | Behaviour                                                                                                                                                                                                                                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **When**                   | On every call, inside the returned closure — never once per cached instance, so a rule whose answer changes applies on the next call rather than after the 5-minute TTL.                                                                                                                                            |
+| **Which slug**             | The built row's `config.slug` (or a registrar's name), never the string the caller asked for.                                                                                                                                                                                                                       |
+| **What the rule is told**  | The `context` the caller passed to `getProvider`, or the binding provenance passed to `getProviderWithFallbacks` (`ResolvedAgentBinding.provenance`: the primary is `'primary'` or `'explicit'`, fallbacks `'explicit'` or `'system'`, and a fallback carries the primary's slug). Every core caller passes one.    |
+| **No recorded provenance** | Permitted only if the rule permits the provider under **every** `source`. Whichever way a rule is written, an unrecorded call gets its strictest answer; recording provenance can only relax a refusal. Its `task` comes from the method: `embed*` → `embeddings`, `transcribe*` → `audio`, otherwise `chat`.       |
+| **The org**                | The rule runs in the caller's async context and can read `getTenantContext()`. At `single`, no context is the install org. At `multi`, a call with no org scope, or inside `runAsSystem`, is refused before the rule is asked — there is no org whose policy could permit it.                                       |
+| **Explicit choices**       | Gated. Selection never reroutes an explicit `agent.provider`, step `modelOverride`, pinned default or `EVALUATION_*` env var; the gate refuses one the rule refuses (as `source: 'explicit'`). Refusing a recorded choice is not rerouting it.                                                                      |
+| **Refusal**                | `ProviderCallRefusedError` (a `ProviderError`, code `provider_not_permitted`, non-retriable), thrown before `track` counts anything or a stream is opened. Its message names no provider (executors forward `ProviderError` messages to clients); the slug is on `providerSlug` and in the log.                     |
+| **After a refusal**        | `isRequestFault` counts it, so chat does not fail over, a workflow step does not retry, and no circuit breaker records a failure — one org's policy must not open the circuit for every org on that slug. Chat surfaces `provider_not_permitted`; the admin Test-model action reports it as such, not as a failure. |
+| **Not gated**              | `listModels` and `testConnection`. They send no prompt or document text, and providers are platform-admin configuration: gating them by the admin's active org would stop a platform admin testing a provider before granting it.                                                                                   |
+
+The gate binds what core sends through the manager. It does not bind a fork's
+own direct construction of a provider class — see the next two sections.
 
 ### What bypasses the Provider Manager
 
@@ -345,7 +369,9 @@ could not.
 **So, concretely, for a fork engineer:**
 
 - Reaching a vendor through `getProvider` inherits counting, the disposition
-  map and (at the selection sites listed below) the eligibility rule.
+  map and the call-time gate. Pass `getProvider` a context saying where the
+  provider came from; without one, the call is held to the rule's strictest
+  answer.
 - `new OpenAiCompatibleProvider({…})` in your own code reaches the vendor
   directly. That is supported and will keep working. It is outside every
   guarantee on this page, and nothing will tell you so at runtime.
@@ -611,22 +637,22 @@ export function registerAppProviderEligibility(): void {
 }
 ```
 
-| Property                 | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Default**              | No resolver registered → `candidates` returned unchanged. Single-tenant behaviour is byte-identical; there is no dormant second code path.                                                                                                                                                                                                                                                                                                           |
-| **Applied at**           | Both of the resolver's return paths — the early exit for a fully-configured agent AND the candidates path (a fully-configured agent never reaches the second, so filtering only there would cover the minority of agents) — plus `llm-runner.ts` and `keyword-enricher.ts`, which never reach the resolver. See the coverage table below.                                                                                                            |
-| **`ctx.source`**         | `'primary'` when Sunrise is CHOOSING the provider — the agent left it blank, or a workflow step / enrichment run has no explicit model — `'system'` for the automatic fallback fill, `'explicit'` for the agent's own fallback list. A fork may answer differently for each.                                                                                                                                                                         |
-| **No eligible provider** | Fail-closed everywhere, in each path's own vocabulary: `NoEligibleProviderError` (`code: no_eligible_provider`) from the resolver, `ExecutorError` (`code: provider_not_permitted`, non-retriable) from a workflow step, `ProviderNotPermittedError` → 403 from keyword enrichment. All distinct from `NoProviderConfiguredError`, which means "nothing is set up" and sends an operator to the setup wizard — a different fix in a different place. |
-| **Cannot widen**         | The result is intersected with `candidates` and returned in the resolver's order — fallbacks are tried in sequence, so order is load-bearing and does not come from the rule.                                                                                                                                                                                                                                                                        |
-| **On throw**             | Logged as an error and treated as "nothing is eligible" — a restriction that cannot be evaluated must not be read as permission. An agent that names its provider keeps working and loses only its fallbacks; one that does not gets `NoEligibleProviderError`.                                                                                                                                                                                      |
+| Property                 | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Default**              | No resolver registered → `candidates` returned unchanged. Single-tenant behaviour is byte-identical; there is no dormant second code path.                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Applied at**           | Every vendor call through the provider manager, by the call-time gate (above). And, so that Sunrise chooses well, at the selection sites: both of the resolver's return paths — the early exit for a fully-configured agent AND the candidates path — plus the five paths that never reach the resolver. See the coverage table below.                                                                                                                                                                                                          |
+| **`ctx.source`**         | `'primary'` when Sunrise is CHOOSING the provider — the agent left it blank, or a workflow step / enrichment run has no explicit model — `'system'` for the automatic fallback fill, `'explicit'` for an operator's recorded choice: the agent's own fallback list at selection, and at the gate also an explicit primary (`agent.provider`, a step `modelOverride`, a pinned default). A fork may answer differently for each.                                                                                                                 |
+| **No eligible provider** | Fail-closed everywhere, in each path's own vocabulary: `NoEligibleProviderError` (`code: no_eligible_provider`) from the resolver, `ExecutorError` (`code: provider_not_permitted`, non-retriable) from a workflow step, `ProviderNotPermittedError` → 403 from keyword enrichment, and `ProviderCallRefusedError` (`code: provider_not_permitted`) from the gate on any call. All distinct from `NoProviderConfiguredError`, which means "nothing is set up" and sends an operator to the setup wizard — a different fix in a different place. |
+| **Cannot widen**         | The result is intersected with `candidates` and returned in the resolver's order — fallbacks are tried in sequence, so order is load-bearing and does not come from the rule.                                                                                                                                                                                                                                                                                                                                                                   |
+| **On throw**             | Logged as an error and treated as "nothing is eligible" — a restriction that cannot be evaluated must not be read as permission. An agent that names its provider keeps working and loses only its fallbacks; one that does not gets `NoEligibleProviderError`.                                                                                                                                                                                                                                                                                 |
 
 **Within the agent-binding resolver it filters every choice Sunrise makes on
 the caller's behalf — the auto-picked primary and both fallback lists — but
-never an explicit `agent.provider`.** ("Within the resolver" is load-bearing;
-see the non-coverage table below.) That is an operator's recorded decision, and silently
-rerouting it would make an agent answer from a provider its own configuration
-does not name: harder to diagnose than a refusal, and a worse failure than the
-one being prevented.
+never an explicit `agent.provider`.** That is an operator's recorded decision,
+and silently rerouting it would make an agent answer from a provider its own
+configuration does not name: harder to diagnose than a refusal, and a worse
+failure than the one being prevented. The call-time gate does not reroute it
+either. It refuses the call, which is the difference.
 
 The intended enforcement for an explicit choice is at the point of **choosing**:
 a per-org install should not offer a provider the org has not approved, so the
@@ -635,35 +661,32 @@ value never reaches the row. That is write-time work with a UX question attached
 per-org rules. **Both layers are needed** — write-time validation cannot reach
 agents configured while a provider was permitted and stranded when the policy
 later changed, and it does not see writes that bypass the form (config import,
-seeds, the admin API). This seam is the runtime backstop for those, **on the
-paths marked covered below and no others**.
+seeds, the admin API). The call-time gate is the runtime backstop for those.
 
-### Per-path coverage
+### Per-path coverage: where Sunrise chooses
 
-The seam is consulted at **six** places: the agent-binding resolver, and the
-five paths that never reach it and call `isProviderEligible` directly
-(`llm-runner.ts`, `keyword-enricher.ts`, the retroactive-review route, audio
-resolution in `provider-manager.ts`, and the embedding fallback chain in
-`knowledge/embedder.ts`). Anything resolving a provider by another route is
-unfiltered.
+This table is about **choosing well**, not about where data can go. The
+security boundary for core is the call-time gate: every vendor call through the
+provider manager is refused when the rule says no, whatever this table says
+about the site that chose the provider — including the rows marked **No**, which
+are the operator's own choices and are refused rather than rerouted. What the
+table records is the earlier, softer layer: where Sunrise consults the rule
+while CHOOSING, so it picks a permitted provider instead of picking one and
+having the gate refuse it.
 
-**Do not build an isolation boundary on the table below.** An earlier version of
-this section said a fork "needs this list rather than an assurance", which
-presented it as something to rely on. It is not: the list is derived by hand,
-and it has been short every one of the three times anyone has checked it — the
-t-656 review named four paths and missed two; a `grep getProvider(` found those
-two and missed the embedder; a `grep getDefaultModelForTask(` found the
-embedder. Assume a fourth pass would find something too.
+The rule is consulted while choosing at **six** places: the agent-binding
+resolver, and the five paths that never reach it and call `isProviderEligible`
+directly (`llm-runner.ts`, `keyword-enricher.ts`, the retroactive-review route,
+audio resolution in `provider-manager.ts`, and the embedding fallback chain in
+`knowledge/embedder.ts`). The list is derived by hand and was short every one of
+the three times anyone checked it — the t-656 review named four paths and missed
+two; a `grep getProvider(` found those two and missed the embedder; a
+`grep getDefaultModelForTask(` found the embedder. That is why the boundary moved
+to the gate (§120 t-741): a site missing from this table now chooses less well,
+and still cannot send a call the rule refuses.
 
-The table is useful for understanding **where Sunrise chooses a provider and on
-what basis**. It is not a statement about where data can go, and the difference
-matters most to exactly the reader who would treat it as one.
-
-The completeness question — _can a call escape the policy?_ — is answered by
-enforcing at the point every call passes through rather than at each site that
-chooses; see **Every instance is wrapped in a Proxy** above, the two routes that
-bypass it, and **What the outbound-egress guarantee covers** for the limit on
-all of it.
+The limit on all of it is the one in **What the outbound-egress guarantee
+covers**: code that constructs a provider class itself.
 
 | Path                                                                                                                                                  | Resolves via                                                                                                                                             | Covered?                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -677,7 +700,7 @@ all of it.
 | An operator's pinned audio default                                                                                                                    | `tryAudioRow(row, 'operator_default')` in `provider-manager.ts`                                                                                          | **No** — pinned in Settings → Default models.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Knowledge embedding, whenever `resolveActiveEmbeddingConfig()` returns `null` — no pin, **or** a pin that no longer resolves                          | the Voyage → local → openai-compatible chain in `knowledge/embedder.ts`                                                                                  | **Yes** — `source: 'primary'`, `task: 'embeddings'`. A refused arm is skipped and the chain tries the next, the audio loop's shape. Every arm is a provider row: the bare-`OPENAI_API_KEY` arm and its `env:openai` slug were retired in t-740. If everything available is refused the call fails with a message distinct from "nothing is configured". The call itself goes through the Proxy — see _The embedder chooses; the provider manager calls_ below.                                                                                                                                                                                                                                |
 | An operator's pinned `activeEmbeddingModelId`, **while it still resolves**                                                                            | `resolveActiveEmbeddingConfig()` in `knowledge/embedder.ts`                                                                                              | **No** — an operator's recorded choice. But the pin is not sticky: it drops through to the gap row above on **five** conditions — the model is missing or inactive, lacks the `embedding` capability, has no `dimensions`, has no active `AiProviderConfig`, or is non-Voyage with no `baseUrl`. Each of those five drop-throughs is logged at `warn` inside `resolveActiveEmbeddingConfig`, which is where the transition happens and is visible at production's default `INFO` level. The arm the chain then lands on is `debug` — per-call provenance, fired once per search query and once per chat message on any unpinned install, so it is not the place to carry a transition signal. |
-| `provider.testConnection()` / `provider.listModels()`                                                                                                 | admin provider routes                                                                                                                                    | **No** — they do reach the vendor, and a gate on `chat`/`embed`/`transcribe` would silently not cover them. Out of scope because every caller is an admin acting on providers they configured — but note `providers/test-bulk` pings **every** configured row rather than one an admin named, so the justification is "operator-initiated", not "operator-named".                                                                                                                                                                                                                                                                                                                             |
+| `provider.testConnection()` / `provider.listModels()`                                                                                                 | admin provider routes                                                                                                                                    | **No, and not gated at call time either** — they reach the vendor but send no prompt or document text. Out of scope because every caller is an admin acting on platform-level provider configuration — but note `providers/test-bulk` pings **every** configured row rather than one an admin named, so the justification is "operator-initiated", not "operator-named". The admin **Test model** action is different: it calls `chat` / `embedMany` / `transcribe`, which are gated as an explicit choice.                                                                                                                                                                                   |
 | `provider.transcribeStream()`                                                                                                                         | `streamTranscription` in `llm/transcribe-stream.ts` — which has **no production caller**; both voice routes call `provider.transcribe()`                 | **Not a provider _choice_ at all** — by the time it is called the provider is resolved, so there is nothing here for the eligibility seam to filter. It is now `trackStream` in the disposition map, so it is counted and interceptable like `chatStream`. An earlier version of this row said it was "from the voice path" and carried user audio today: it does not.                                                                                                                                                                                                                                                                                                                        |
 | `EVALUATION_DEFAULT_PROVIDER` / `_MODEL`                                                                                                              | env vars read in `complete-session.ts`                                                                                                                   | **No** — an operator pinned these deliberately; environment is trusted operator configuration.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 

@@ -27,16 +27,15 @@
  * only where the rule has been applied so far.
  *
  * **That list is hand-derived and was short on all three occasions it was
- * checked**, so treat it as the current state, not a guarantee. The seam
- * constrains what it is consulted for; it is not a boundary around the process.
- * `.context/orchestration/llm-providers.md` carries the per-path table, the
- * Proxy every manager-built provider passes through, and the two routes that
- * bypass the provider manager entirely — the last of which is why a complete
- * boundary needs enforcement at the point calls pass through rather than at
- * each site that chooses. Note the limit on all of it, recorded 2026-09-07 and
- * written down in that file: the guarantee binds Sunrise core, not a fork's own
- * code, which can construct a provider directly. The eight choices this seam
- * covers:
+ * checked**, which is why it is not the boundary. The boundary is
+ * {@link assertProviderCallPermitted}, the call-time gate at the bottom of this
+ * file: the provider manager's Proxy runs it before every vendor call, so a
+ * site missing from this list chooses less well but cannot send a call the rule
+ * refuses (§120 t-741). `.context/orchestration/llm-providers.md` carries the
+ * per-path table and the gate. Note the limit on all of it, recorded 2026-09-07
+ * and written down in that file: the guarantee binds Sunrise core, not a fork's
+ * own code, which can construct a provider directly. The eight choices
+ * selection covers:
  *
  *  - the **auto-picked primary**, when the agent leaves `provider` blank and
  *    the resolver chooses `candidates[0]`;
@@ -67,17 +66,16 @@
  * next candidate, which is what every other guard in those functions already
  * does.
  *
- * It does NOT filter an **explicit `agent.provider`**, an explicit step
+ * At selection it does NOT filter an **explicit `agent.provider`**, an explicit step
  * `modelOverride`, a review request's own `modelOverride`, an operator's pinned
  * audio default, or the `EVALUATION_DEFAULT_PROVIDER` / `_MODEL` /
  * `EVALUATION_JUDGE_MODEL` environment variables. Each is an operator's
  * recorded decision, and silently rerouting one would make a request answer
  * from a provider its own configuration does not name — harder to diagnose than
- * a refusal, and a worse failure than the one being prevented.
+ * a refusal, and a worse failure than the one being prevented. The call-time
+ * gate refuses them instead, as `source: 'explicit'`, when the rule says no.
  * `.context/orchestration/llm-providers.md` carries the per-path coverage
- * table. It is hand-derived and has been short once, so re-derive it from the
- * tree rather than from its previous version before treating this seam as a
- * whole-tree guarantee.
+ * table, which says where Sunrise chooses rather than where data can go.
  *
  * The intended enforcement for that case is at the point of CHOOSING: a
  * per-org install should not offer a provider the org has not approved, so the
