@@ -6,7 +6,9 @@
  * DELETE /api/v1/admin/orchestration/providers/:id           — soft delete (`isActive=false`)
  * DELETE /api/v1/admin/orchestration/providers/:id?permanent=true
  *        — hard delete; refuses with 409 if any agent or cost log references
- *          the slug (chat binding, fallback list, or historical cost rows).
+ *          the slug (chat binding, fallback list, or historical cost rows), or
+ *          any org's approved providers name it (§120 t-742). A PATCH that
+ *          renames the slug is refused for the same org grants.
  *
  * Authentication: Admin role required.
  *
@@ -29,6 +31,7 @@ import { hasProviderKey } from '@/lib/orchestration/llm/provider-credentials';
 import { updateProviderConfigSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { orgsApprovingProvider } from '@/lib/tenancy/org-settings';
 
 export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
   const log = await getRouteLogger(request);
@@ -56,6 +59,21 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (!current) throw new NotFoundError(`Provider ${id} not found`);
 
   const body = await validateRequestBody(request, updateProviderConfigSchema);
+
+  // An org's provider grant names the slug (§120 t-742). Renaming a row an
+  // org is approved for would strand the grant, and hand it to whichever row
+  // takes the old slug next — a provider nobody approved. Revoke first.
+  if (body.slug !== undefined && body.slug !== current.slug) {
+    const approvingOrgs = await orgsApprovingProvider(current.slug);
+    if (approvingOrgs.length > 0) {
+      throw new ConflictError(
+        `Cannot rename '${current.slug}' — ${approvingOrgs.length} org${
+          approvingOrgs.length === 1 ? ' is' : 's are'
+        } approved for it by slug. Remove it from their approved providers first.`,
+        { slug: current.slug, approvingOrgs }
+      );
+    }
+  }
 
   const data: Prisma.AiProviderConfigUpdateInput = {};
   if (body.name !== undefined) data.name = body.name;
@@ -128,13 +146,30 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   // re-point the agents/clear the cost log first, or stick with the
   // soft-delete via the default DELETE.
   if (permanent) {
-    const [primaryAgentCount, fallbackAgentCount, costLogCount] = await Promise.all([
+    const [primaryAgentCount, fallbackAgentCount, costLogCount, approvingOrgs] = await Promise.all([
       prisma.aiAgent.count({ where: { provider: current.slug } }),
       prisma.aiAgent.count({ where: { fallbackProviders: { has: current.slug } } }),
       prisma.aiCostLog.count({ where: { provider: current.slug } }),
+      // An org grant names the slug too (§120 t-742): deleting the row and
+      // re-creating the slug would hand the grant to a different provider.
+      orgsApprovingProvider(current.slug),
     ]);
 
     const totalAgentRefs = primaryAgentCount + fallbackAgentCount;
+
+    if (approvingOrgs.length > 0) {
+      log.info('Permanent delete blocked by org grants', {
+        providerId: id,
+        slug: current.slug,
+        approvingOrgs,
+      });
+      throw new ConflictError(
+        `Cannot permanently delete '${current.slug}' — ${approvingOrgs.length} org${
+          approvingOrgs.length === 1 ? ' is' : 's are'
+        } approved for it. Remove it from their approved providers first, or deactivate instead.`,
+        { slug: current.slug, approvingOrgs }
+      );
+    }
 
     if (totalAgentRefs > 0 || costLogCount > 0) {
       log.info('Permanent delete blocked by references', {

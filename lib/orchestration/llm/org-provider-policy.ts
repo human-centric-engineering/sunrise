@@ -45,49 +45,76 @@ import type { OrgProviderPolicy } from '@/lib/validations/tenancy';
 /** How long a read policy or jurisdiction answers before it is read again. */
 export const ORG_PROVIDER_POLICY_TTL_MS = 60_000;
 
-const policyCache = new Map<string, { policy: OrgProviderPolicy; cachedAt: number }>();
-const jurisdictionCache = new Map<string, { jurisdiction: string | null; cachedAt: number }>();
+/**
+ * The LOOKUP is cached, not its answer: the entry is set before the query
+ * runs, so concurrent misses share one query, and `forget` evicts it outright.
+ * Caching the answer once the query returned would let a read that started
+ * before a write put the old policy back after the write's `forget` — a
+ * revoked grant answering for another full TTL in the very process that was
+ * told about the revocation.
+ */
+interface Entry<T> {
+  value: Promise<T>;
+  cachedAt: number;
+}
 
-function fresh(cachedAt: number): boolean {
-  return Date.now() - cachedAt < ORG_PROVIDER_POLICY_TTL_MS;
+const policyCache = new Map<string, Entry<OrgProviderPolicy>>();
+const jurisdictionCache = new Map<string, Entry<string | null>>();
+
+function fresh<T>(entry: Entry<T> | undefined): entry is Entry<T> {
+  return entry !== undefined && Date.now() - entry.cachedAt < ORG_PROVIDER_POLICY_TTL_MS;
+}
+
+/** Cache `value` under `key`, and drop it again if it rejects. */
+function remember<T>(cache: Map<string, Entry<T>>, key: string, value: Promise<T>): Promise<T> {
+  const entry: Entry<T> = { value, cachedAt: Date.now() };
+  cache.set(key, entry);
+  // A failed read is not an answer: the next caller asks again.
+  value.catch(() => {
+    if (cache.get(key) === entry) cache.delete(key);
+  });
+  return value;
 }
 
 /** One org's policy. An org that does not exist has approved nothing. */
-async function loadPolicy(orgId: string): Promise<OrgProviderPolicy> {
+function loadPolicy(orgId: string): Promise<OrgProviderPolicy> {
   const cached = policyCache.get(orgId);
-  if (cached && fresh(cached.cachedAt)) return cached.policy;
-  const org = await prisma.org.findUnique({ where: { id: orgId }, select: { settings: true } });
-  const policy = readOrgProviderPolicy(org?.settings ?? null, { orgId });
-  policyCache.set(orgId, { policy, cachedAt: Date.now() });
-  return policy;
+  if (fresh(cached)) return cached.value;
+  return remember(
+    policyCache,
+    orgId,
+    prisma.org
+      .findUnique({ where: { id: orgId }, select: { settings: true } })
+      .then((org) => readOrgProviderPolicy(org?.settings ?? null, { orgId }))
+  );
 }
 
 /** The recorded jurisdiction of each slug; a slug with no row has none. */
 async function loadJurisdictions(slugs: readonly string[]): Promise<Map<string, string | null>> {
-  const result = new Map<string, string | null>();
-  const missing: string[] = [];
-  for (const slug of slugs) {
-    const cached = jurisdictionCache.get(slug);
-    if (cached && fresh(cached.cachedAt)) result.set(slug, cached.jurisdiction);
-    else missing.push(slug);
-  }
+  const missing = slugs.filter((slug) => !fresh(jurisdictionCache.get(slug)));
   if (missing.length > 0) {
-    const rows = await prisma.aiProviderConfig.findMany({
+    const rows = prisma.aiProviderConfig.findMany({
       where: { slug: { in: missing } },
       select: { slug: true, jurisdiction: true },
     });
-    const bySlug = new Map(rows.map((row) => [row.slug, row.jurisdiction]));
-    const now = Date.now();
     for (const slug of missing) {
-      // Upper-cased to match the stored restriction, which the schema
-      // upper-cases; a row written before the column was validated still
-      // matches its own code.
-      const jurisdiction = bySlug.get(slug)?.toUpperCase() ?? null;
-      jurisdictionCache.set(slug, { jurisdiction, cachedAt: now });
-      result.set(slug, jurisdiction);
+      // Awaited below, from the cache, with the rest.
+      void remember(
+        jurisdictionCache,
+        slug,
+        // Upper-cased to match the stored restriction, which the schema
+        // upper-cases; a row written before the column was validated still
+        // matches its own code.
+        rows.then(
+          (found) => found.find((row) => row.slug === slug)?.jurisdiction?.toUpperCase() ?? null
+        )
+      );
     }
   }
-  return result;
+  const answers = await Promise.all(
+    slugs.map((slug) => jurisdictionCache.get(slug)?.value ?? Promise.resolve(null))
+  );
+  return new Map(slugs.map((slug, index) => [slug, answers[index]]));
 }
 
 /**
@@ -127,7 +154,10 @@ export async function applyOrgProviderPolicy(
   });
 }
 
-/** Drop one org's cached policy, or every org's. Called after a write. */
+/**
+ * Drop one org's cached policy, or every org's. Called after a write; a
+ * lookup already in flight still answers its own callers, but no later one.
+ */
 export function forgetOrgProviderPolicy(orgId?: string): void {
   if (orgId === undefined) policyCache.clear();
   else policyCache.delete(orgId);

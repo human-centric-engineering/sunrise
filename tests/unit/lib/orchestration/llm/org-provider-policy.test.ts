@@ -298,6 +298,40 @@ describe('the cache', () => {
     }
   });
 
+  it('shares one lookup between concurrent misses', async () => {
+    await Promise.all([call(GRANTED_ORG, 'x'), call(GRANTED_ORG, 'x'), call(GRANTED_ORG, 'x')]);
+    expect(prisma.org.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let a read that started before a revocation cache the old grant', async () => {
+    // A read in flight when the PUT lands: it answers from the old policy.
+    let finishOldRead!: (row: unknown) => void;
+    vi.mocked(prisma.org.findUnique).mockImplementationOnce(
+      () => new Promise((resolve) => (finishOldRead = resolve)) as never
+    );
+    const inFlight = call(GRANTED_ORG, 'x');
+    await vi.waitFor(() => expect(prisma.org.findUnique).toHaveBeenCalledTimes(1));
+
+    // The revocation is written and this process told.
+    vi.mocked(prisma.org.findUnique).mockResolvedValue({
+      settings: { providers: { approved: [] } },
+    } as never);
+    forgetOrgProviderPolicy(GRANTED_ORG);
+    finishOldRead({ settings: { providers: { approved: ['x'] } } });
+    await inFlight;
+
+    // The next call reads the revocation, not the old answer.
+    await expect(call(GRANTED_ORG, 'x')).rejects.toBeInstanceOf(ProviderCallRefusedError);
+  });
+
+  it('does not cache a failed read', async () => {
+    vi.mocked(prisma.org.findUnique).mockRejectedValueOnce(new Error('connection reset'));
+    await expect(call(GRANTED_ORG, 'x')).rejects.toBeInstanceOf(ProviderCallRefusedError);
+
+    await call(GRANTED_ORG, 'x');
+    expect(chats.x).toHaveBeenCalledTimes(1);
+  });
+
   it('reads the policy again after the TTL', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     try {

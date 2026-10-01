@@ -44,6 +44,7 @@ const ENTITY_TYPES = [
   { value: 'workflow', label: 'Workflows' },
   { value: 'capability', label: 'Capabilities' },
   { value: 'provider', label: 'Providers' },
+  { value: 'org', label: 'Organisations' },
   { value: 'mcp_api_key', label: 'MCP API keys' },
   { value: 'knowledge_document', label: 'Knowledge' },
   { value: 'settings', label: 'Settings' },

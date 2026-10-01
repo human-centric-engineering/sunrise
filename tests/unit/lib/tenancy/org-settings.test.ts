@@ -38,6 +38,8 @@ import {
   loadOrgRetention,
   loadPlatformAgentsMarker,
   readOrgRetention,
+  isSettingsWriteConflict,
+  orgsApprovingProvider,
   readOrgProviderPolicy,
   readPlatformAgentsMarker,
   writeOrgProviderPolicy,
@@ -369,5 +371,32 @@ describe('the provider policy (§120 t-742)', () => {
   it('keeps the retention slice’s own writes from dropping the policy', () => {
     const providers = { approved: ['openai'] };
     expect(applyRetentionPatch({ providers }, null)).toEqual({ providers });
+  });
+
+  it('finds the orgs approving a slug by an exact element of their approved set', async () => {
+    const findMany = vi.fn().mockResolvedValue([{ id: 'org_a' }, { id: 'org_b' }]);
+
+    expect(await orgsApprovingProvider('openai', { org: { findMany } } as never)).toEqual([
+      'org_a',
+      'org_b',
+    ]);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { settings: { path: ['providers', 'approved'], array_contains: ['openai'] } },
+      select: { id: true },
+    });
+  });
+
+  it('recognises a serialization clash and nothing else as a write conflict', () => {
+    const clash = new Prisma.PrismaClientKnownRequestError('x', {
+      code: 'P2034',
+      clientVersion: 't',
+    });
+    const unique = new Prisma.PrismaClientKnownRequestError('x', {
+      code: 'P2002',
+      clientVersion: 't',
+    });
+    expect(isSettingsWriteConflict(clash)).toBe(true);
+    expect(isSettingsWriteConflict(unique)).toBe(false);
+    expect(isSettingsWriteConflict(new Error('x'))).toBe(false);
   });
 });

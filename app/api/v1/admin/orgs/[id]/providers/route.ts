@@ -29,7 +29,11 @@ import { forgetOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-po
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
-import { readOrgProviderPolicy, writeOrgProviderPolicy } from '@/lib/tenancy/org-settings';
+import {
+  isSettingsWriteConflict,
+  readOrgProviderPolicy,
+  writeOrgProviderPolicy,
+} from '@/lib/tenancy/org-settings';
 import {
   orgIdParamSchema,
   orgProviderPolicySchema,
@@ -96,7 +100,21 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
     });
   }
 
-  const written = await writeOrgProviderPolicy(id, body);
+  let written: Awaited<ReturnType<typeof writeOrgProviderPolicy>>;
+  try {
+    written = await writeOrgProviderPolicy(id, body);
+  } catch (error) {
+    if (!isSettingsWriteConflict(error)) throw error;
+    // Another write to this org's settings landed between our read and ours.
+    // Nothing was written; the caller re-reads and retries.
+    return errorResponse(
+      "Another change to this org's settings was saved at the same time; retry",
+      {
+        code: 'CONFLICT',
+        status: 409,
+      }
+    );
+  }
   if (!written) throw new OrgLifecycleError('ORG_NOT_FOUND', 'Organisation not found');
   // This process at once; other processes within the policy cache's TTL.
   forgetOrgProviderPolicy(id);

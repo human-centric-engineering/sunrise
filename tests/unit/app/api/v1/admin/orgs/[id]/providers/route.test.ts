@@ -190,6 +190,28 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
     expect(mockForgetOrgProviderPolicy).toHaveBeenCalledWith(OTHER);
   });
 
+  it('answers a clash with a concurrent settings write with a 409, and audits nothing', async () => {
+    const { Prisma } = await import('@prisma/client');
+    mockPrisma.$transaction.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('could not serialize access', {
+        code: 'P2034',
+        clientVersion: 'test',
+      })
+    );
+
+    const res = await put({ approved: ['openai'] });
+
+    expect(res.status).toBe(409);
+    expect((await json(res)).error?.code).toBe('CONFLICT');
+    expect(mockLogAdminAction).not.toHaveBeenCalled();
+    expect(mockForgetOrgProviderPolicy).not.toHaveBeenCalled();
+  });
+
+  it('lets any other write failure through as a 500', async () => {
+    mockPrisma.$transaction.mockRejectedValueOnce(new Error('connection reset'));
+    expect((await put({ approved: ['openai'] })).status).toBe(500);
+  });
+
   it('revokes every grant with an empty set', async () => {
     const res = await put({ approved: [] });
     expect((await json(res)).data).toMatchObject({ approved: [] });

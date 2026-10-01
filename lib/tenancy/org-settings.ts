@@ -222,30 +222,16 @@ export async function loadPlatformAgentsMarker(
 /**
  * Store the marker, preserving every other key in `settings`.
  *
- * A read-modify-write in a SERIALIZABLE transaction — the same answer, for the
- * same reason, as `updateOrg`'s retention patch: two writers each reading the
- * object before the other wrote would drop one slice. A clash fails the later
- * writer rather than losing either; the reconcile is re-run by the next
- * maintenance tick.
+ * Through {@link writeSettingsSlice}, the same serializable read-modify-write
+ * as `updateOrg`'s retention patch. A clash fails the later writer rather than
+ * losing either; the reconcile is re-run by the next maintenance tick.
  */
 export async function writePlatformAgentsMarker(
   orgId: string,
   marker: PlatformAgentsMarker,
   db: Pick<PrismaClient, '$transaction'> = prisma
 ): Promise<void> {
-  await db.$transaction(
-    async (tx) => {
-      const row = await tx.org.findUnique({ where: { id: orgId }, select: { settings: true } });
-      if (!row) return;
-      const base: Record<string, unknown> = isJsonObject(row.settings) ? { ...row.settings } : {};
-      base[ORG_PLATFORM_AGENTS_KEY] = marker;
-      await tx.org.update({
-        where: { id: orgId },
-        data: { settings: base as Prisma.InputJsonObject },
-      });
-    },
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
-  );
+  await writeSettingsSlice(orgId, ORG_PLATFORM_AGENTS_KEY, () => marker, db);
 }
 
 /** The key the provider policy owns inside `Org.settings` (§120 t-742). */
@@ -289,9 +275,8 @@ export function readOrgProviderPolicy(
  * Replace an org's provider policy, preserving every other key in
  * `settings`, and return what it replaced.
  *
- * A read-modify-write in a SERIALIZABLE transaction, as
- * {@link writePlatformAgentsMarker} is: two writers each reading the object
- * before the other wrote would drop one slice. A clash fails the later writer.
+ * Through {@link writeSettingsSlice}: a clash with a concurrent settings write
+ * throws `P2034`, which the route answers with a 409.
  *
  * @returns the previous and the stored policy, or `null` when the org does
  *   not exist.
@@ -301,25 +286,80 @@ export async function writeOrgProviderPolicy(
   policy: OrgProviderPolicy,
   db: Pick<PrismaClient, '$transaction'> = prisma
 ): Promise<{ previous: OrgProviderPolicy; stored: OrgProviderPolicy } | null> {
+  // `null` jurisdictions and an absent key say the same thing; store one.
+  const stored: OrgProviderPolicy = policy.jurisdictions
+    ? { approved: policy.approved, jurisdictions: policy.jurisdictions }
+    : { approved: policy.approved };
+  let previous: OrgProviderPolicy | null = null;
+  const written = await writeSettingsSlice(
+    orgId,
+    ORG_PROVIDERS_KEY,
+    (settings) => {
+      previous = readOrgProviderPolicy(settings, { orgId });
+      return stored;
+    },
+    db
+  );
+  return written && previous ? { previous, stored } : null;
+}
+
+/**
+ * The orgs whose provider policy approves `slug`. A provider row's slug is
+ * what a grant names, so renaming or deleting a row an org is approved for
+ * would move that grant to whichever row takes the slug next; the provider
+ * routes ask this first and refuse. `Org` is a system model, so no tenant
+ * scope is needed.
+ */
+export async function orgsApprovingProvider(
+  slug: string,
+  db: Pick<PrismaClient, 'org'> = prisma
+): Promise<string[]> {
+  const rows = await db.org.findMany({
+    where: { settings: { path: [ORG_PROVIDERS_KEY, 'approved'], array_contains: [slug] } },
+    select: { id: true },
+  });
+  return rows.map((row) => row.id);
+}
+
+/**
+ * Replace one platform-owned key in an org's `settings`, preserving every
+ * other key — a fork's included.
+ *
+ * A read-modify-write in a SERIALIZABLE transaction: two writers each reading
+ * the object before the other wrote would drop one slice. A clash fails the
+ * later writer with Prisma's `P2034` rather than losing either; a route maps
+ * it to a 409 with {@link isSettingsWriteConflict}.
+ *
+ * `value` is given the column as it stands, so a caller can read the slice it
+ * is replacing in the same transaction.
+ *
+ * @returns `false` when the org does not exist, and nothing was written.
+ */
+async function writeSettingsSlice(
+  orgId: string,
+  key: string,
+  value: (settings: unknown) => unknown,
+  db: Pick<PrismaClient, '$transaction'>
+): Promise<boolean> {
   return db.$transaction(
     async (tx) => {
       const row = await tx.org.findUnique({ where: { id: orgId }, select: { settings: true } });
-      if (!row) return null;
-      const previous = readOrgProviderPolicy(row.settings, { orgId });
+      if (!row) return false;
       const base: Record<string, unknown> = isJsonObject(row.settings) ? { ...row.settings } : {};
-      // `null` jurisdictions and an absent key say the same thing; store one.
-      const stored: OrgProviderPolicy = policy.jurisdictions
-        ? { approved: policy.approved, jurisdictions: policy.jurisdictions }
-        : { approved: policy.approved };
-      base[ORG_PROVIDERS_KEY] = stored;
+      base[key] = value(row.settings);
       await tx.org.update({
         where: { id: orgId },
         data: { settings: base as Prisma.InputJsonObject },
       });
-      return { previous, stored };
+      return true;
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
   );
+}
+
+/** Whether `error` is a SERIALIZABLE clash from {@link writeSettingsSlice}. */
+export function isSettingsWriteConflict(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034';
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {

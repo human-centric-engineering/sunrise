@@ -134,7 +134,8 @@ release process.
 - **`GET` / `PUT /api/v1/admin/orgs/[id]/providers`** (§120 t-742). Platform
   admins read and replace an org's approved providers and jurisdictions. Each
   replace writes an `org.providers.replace` audit row. The install org has no
-  set and a `PUT` naming it is refused, and an unknown slug is a 400. Also
+  set and a `PUT` naming it is refused, an unknown slug is a 400, and a clash
+  with a concurrent settings write is a 409. Also
   exported: `readOrgProviderPolicy` / `writeOrgProviderPolicy` from
   `lib/tenancy/org-settings.ts`, `orgProviderPolicySchema` /
   `jurisdictionSchema` from `lib/validations/tenancy.ts`, and
@@ -155,6 +156,12 @@ release process.
   release, or their chat, workflow, embedding and transcription calls are
   refused with `provider_not_permitted`. Single-tenant installs are
   unaffected.
+- **A provider whose slug an org is approved for can no longer be renamed or
+  permanently deleted** (§120 t-742). `PATCH` with a new `slug` and
+  `DELETE ?permanent=true` on `/api/v1/admin/orchestration/providers/[id]`
+  return 409 with the approving orgs in `details.approvingOrgs`. An org's
+  grant names the slug, so either change would otherwise hand the grant to
+  whichever provider takes the slug next. Revoke the grant first.
 - **Provider clients, circuit breakers and in-flight counts are keyed per
   credential** (§120 t-744), on `credentialKey(slug, identity)`: the bare slug
   for the install's shared credential, so nothing changes until a credential

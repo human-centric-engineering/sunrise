@@ -23,6 +23,7 @@ import { logger } from '@/lib/logging';
 import { filterProvidersWithCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { getTenantContext } from '@/lib/tenancy/context';
 // The fork's eligibility rule wires itself, lazily, inside
 // `resolveEligibleProviders`. It used to be a module-load side effect here,
 // which made registration depend on who imported this file — see that module's
@@ -158,7 +159,8 @@ export async function resolveAgentProviderAndModel(
       logger.error('No configured provider is eligible for this request', {
         task,
         reachableCandidates: candidates.map((c) => c.slug),
-        fix: 'The rule registered via registerProviderEligibility() in lib/app/llm-providers.ts permitted none of them — by policy, or because it threw (a rule that cannot be evaluated denies). Check above for a resolver failure; if there is none, widen the rule or give the agent an explicit provider.',
+        orgId: getTenantContext()?.orgId ?? null,
+        fix: "None of them is permitted. At TENANCY_MODE=multi the usual reason is the org's approved providers (§120 t-742): an org other than the install org starts with none, so grant them with PUT /api/v1/admin/orgs/[id]/providers; a call outside any org scope is permitted nothing. Otherwise the rule registered via registerProviderEligibility() in lib/app/llm-providers.ts permitted none of them — by policy, or because it threw (a rule that cannot be evaluated denies). Check above for a policy or resolver failure; if there is none, widen the grant or the rule, or give the agent an explicit provider.",
       });
       throw new NoEligibleProviderError();
     }

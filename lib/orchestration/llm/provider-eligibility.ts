@@ -393,16 +393,17 @@ export async function resolveEligibleProviders(
   try {
     const eligible = await appResolver(permitted, context);
     const allowed = new Set(eligible);
-    // Intersect rather than trust: a resolver cannot introduce a provider the
-    // resolver never considered, nor reorder them. Order is load-bearing —
-    // fallbacks are tried in sequence — so it comes from `candidates`.
+    // Intersect rather than trust: a resolver cannot introduce a provider it
+    // was not handed, nor reorder them. Order is load-bearing — fallbacks are
+    // tried in sequence — so it comes from `permitted`, which kept the
+    // caller's order.
     return permitted.filter((slug) => allowed.has(slug));
   } catch (error) {
     logger.error('provider eligibility resolver threw; denying every candidate', {
       task: context.task,
       primarySlug: context.primarySlug,
       source: context.source,
-      candidateCount: candidates.length,
+      candidateCount: permitted.length,
       error: error instanceof Error ? error.message : String(error),
       fix: "A restriction that cannot be evaluated must not be treated as permission. With source 'primary' this fails the request (NoEligibleProviderError); otherwise the request keeps its provider and runs without fallbacks.",
     });
@@ -651,7 +652,7 @@ export async function assertProviderCallPermitted(
       source: askedContext.source,
       primarySlug: askedContext.primarySlug,
       orgId: tenant?.orgId ?? null,
-      fix: 'The rule registered via registerProviderEligibility() in lib/app/llm-providers.ts did not permit this provider for this call — by policy, or because it threw. A call with no recorded provenance must be permitted as both an auto-picked and an operator-chosen primary.',
+      fix: "At TENANCY_MODE=multi, check the org's approved providers first (GET /api/v1/admin/orgs/[id]/providers): an org other than the install org may call only the providers granted to it, within its jurisdictions. Otherwise the rule registered via registerProviderEligibility() in lib/app/llm-providers.ts did not permit this provider for this call — by policy, or because it threw. A call with no recorded provenance must be permitted as both an auto-picked and an operator-chosen primary.",
     });
     throw new ProviderCallRefusedError(slug);
   }
