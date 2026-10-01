@@ -53,6 +53,7 @@ import {
   type SystemInstructionsHistoryEntry,
 } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import { assertAgentProvidersApproved } from '@/lib/orchestration/agents/provider-approval';
 
 /**
  * Cap on each string value inside an outbound `changes` payload. Agents'
@@ -156,6 +157,11 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.slug !== undefined && body.slug !== current.slug) {
     assertAgentSlugNotReserved(body.slug);
   }
+
+  // At multi, a provider this write introduces must be one the org is approved
+  // for (§120 t-743). What the agent already holds is not re-checked, so a
+  // stranded agent can still be edited.
+  await assertAgentProvidersApproved(body, current);
 
   // Build the update payload. Only include fields the caller actually sent.
   // Plain scalar fields are assigned generically from the registry's

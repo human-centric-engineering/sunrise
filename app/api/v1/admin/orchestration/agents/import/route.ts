@@ -43,6 +43,7 @@ import {
   reservedAgentSlugMessage,
 } from '@/lib/orchestration/agents/platform-agent-guard';
 import { ValidationError } from '@/lib/api/errors';
+import { unapprovedAgentProvidersWarning } from '@/lib/orchestration/agents/provider-approval';
 
 type ImportResults = {
   imported: number;
@@ -197,6 +198,11 @@ export const POST = withAdminAuth(async (request, session) => {
         }
         documentIds.push(resolved);
       }
+
+      // Imported and flagged, not refused (§120 t-743): see
+      // unapprovedAgentProvidersWarning for why an import does not skip it.
+      const unapproved = await unapprovedAgentProvidersWarning(bundled.slug, bundled);
+      if (unapproved) results.warnings.push(unapproved);
 
       const agentData = {
         name: bundled.name,

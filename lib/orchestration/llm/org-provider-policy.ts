@@ -187,6 +187,28 @@ export async function applyOrgProviderPolicy(
 }
 
 /**
+ * The providers among `slugs` the org in context is NOT approved for, by core's
+ * policy alone — the write-time question (§120 t-743): "may this org save a
+ * configuration naming these?". Blank entries (an inherited provider) and
+ * duplicates are ignored; order is kept.
+ *
+ * Empty at `single`, for the install org, and whenever every slug is approved.
+ * Deliberately not the fork's eligibility rule: that rule answers per call and
+ * per source, and may be a network lookup, so a save would fail whenever the
+ * fork's policy backend was down. The call-time gate still asks it on every
+ * call.
+ *
+ * Throws when the org's policy cannot be read, so a save fails loudly rather
+ * than being waved through on a read that never happened.
+ */
+export async function unapprovedProviders(slugs: readonly string[]): Promise<string[]> {
+  const named = [...new Set(slugs.filter((slug) => slug.length > 0))];
+  if (named.length === 0) return [];
+  const permitted = new Set(await applyOrgProviderPolicy(named));
+  return named.filter((slug) => !permitted.has(slug));
+}
+
+/**
  * Drop one org's cached policy, or every org's. Called after a write; a
  * lookup already in flight still answers its own callers, but no later one.
  */

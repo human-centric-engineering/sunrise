@@ -4,8 +4,9 @@
  * DB-backed validation that checks whether a workflow's steps reference
  * real, active resources:
  *
- *   - LLM steps with `modelOverride` → model exists in the registry and
- *     its provider is active in the database
+ *   - LLM steps with `modelOverride` → model exists in the registry, its
+ *     provider is active in the database, and — at `TENANCY_MODE=multi` — the
+ *     org in context is approved for that provider (§120 t-743)
  *   - `tool_call` steps with `capabilitySlug` → capability exists and is active
  *   - `agent_call` steps with `agentSlug` → agent exists and is active
  *
@@ -21,11 +22,16 @@ import { modelRegistry } from '@/lib/orchestration/llm';
 import { logger } from '@/lib/logging';
 import type { WorkflowDefinition } from '@/types/orchestration';
 import { platformSlugsWhere } from '@/lib/orchestration/agents/platform-agent-guard';
+import { unapprovedProviders } from '@/lib/orchestration/llm/org-provider-policy';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export type SemanticErrorCode =
-  'UNKNOWN_MODEL_OVERRIDE' | 'INACTIVE_PROVIDER' | 'INACTIVE_CAPABILITY' | 'INACTIVE_AGENT';
+  | 'UNKNOWN_MODEL_OVERRIDE'
+  | 'INACTIVE_PROVIDER'
+  | 'PROVIDER_NOT_APPROVED'
+  | 'INACTIVE_CAPABILITY'
+  | 'INACTIVE_AGENT';
 
 export interface SemanticValidationError {
   code: SemanticErrorCode;
@@ -51,6 +57,69 @@ const LLM_STEP_TYPES = new Set([
   'orchestrator',
 ]);
 
+// ── Org approval ───────────────────────────────────────────────────────────
+
+/** Model id → the LLM steps that override to it. */
+function collectModelOverrides(def: WorkflowDefinition): Map<string, string[]> {
+  const modelSteps = new Map<string, string[]>();
+  for (const step of def.steps) {
+    if (!LLM_STEP_TYPES.has(step.type)) continue;
+    const override = step.config?.modelOverride;
+    if (typeof override === 'string' && override.length > 0) {
+      modelSteps.set(override, [...(modelSteps.get(override) ?? []), step.id]);
+    }
+  }
+  return modelSteps;
+}
+
+/**
+ * Steps whose `modelOverride` names a model whose provider the org in context
+ * is not approved for (§120 t-743). Empty at `single` and for the install org.
+ *
+ * A step override is an operator's explicit choice, which the call-time gate
+ * refuses rather than reroutes, so a step saved naming such a provider fails
+ * on every run. This says so at save instead. An unknown model is left to the
+ * semantic validator's own `UNKNOWN_MODEL_OVERRIDE`.
+ *
+ * Exported for workflow CREATE, which publishes v1 without the rest of the
+ * semantic validation; publish, rollback, validate and dry-run reach it
+ * through {@link semanticValidateWorkflow}.
+ *
+ * @throws when the org's policy cannot be read.
+ */
+export async function findUnapprovedModelOverrides(
+  def: WorkflowDefinition
+): Promise<SemanticValidationError[]> {
+  const modelSteps = collectModelOverrides(def);
+  const providerByModel = new Map<string, string>();
+  for (const modelId of modelSteps.keys()) {
+    const model = modelRegistry.getModel(modelId);
+    if (model) providerByModel.set(modelId, model.provider);
+  }
+  return approvalErrors(modelSteps, providerByModel);
+}
+
+/** The approval check, given each override's provider already looked up. */
+async function approvalErrors(
+  modelSteps: Map<string, string[]>,
+  providerByModel: Map<string, string>
+): Promise<SemanticValidationError[]> {
+  const refused = new Set(await unapprovedProviders([...providerByModel.values()]));
+  const errors: SemanticValidationError[] = [];
+  for (const [modelId, stepIds] of modelSteps) {
+    const provider = providerByModel.get(modelId);
+    if (provider === undefined || !refused.has(provider)) continue;
+    for (const stepId of stepIds) {
+      errors.push({
+        code: 'PROVIDER_NOT_APPROVED',
+        message: `Step "${stepId}" references model "${modelId}", whose provider "${provider}" this organisation is not approved to use`,
+        stepId,
+      });
+    }
+  }
+  return errors;
+}
+
 // ── Validator ──────────────────────────────────────────────────────────────
 
 /**
@@ -67,22 +136,13 @@ export async function semanticValidateWorkflow(
   // ── Collect unique references ──────────────────────────────────────────
 
   /** Map model id → step ids that reference it */
-  const modelSteps = new Map<string, string[]>();
+  const modelSteps = collectModelOverrides(def);
   /** Map capability slug → step ids that reference it */
   const capabilitySteps = new Map<string, string[]>();
   /** Map agent slug → step ids that reference it */
   const agentSteps = new Map<string, string[]>();
 
   for (const step of def.steps) {
-    if (LLM_STEP_TYPES.has(step.type)) {
-      const override = step.config?.modelOverride;
-      if (typeof override === 'string' && override.length > 0) {
-        const existing = modelSteps.get(override) ?? [];
-        existing.push(step.id);
-        modelSteps.set(override, existing);
-      }
-    }
-
     if (step.type === 'tool_call') {
       const slug = step.config?.capabilitySlug;
       if (typeof slug === 'string' && slug.length > 0) {
@@ -153,8 +213,10 @@ export async function semanticValidateWorkflow(
 
   const activeProviderSlugs = new Set(activeProviders.map((p) => p.slug));
 
+  const providerByModel = new Map<string, string>();
   for (const [modelId, stepIds] of modelSteps) {
     const model = modelRegistry.getModel(modelId);
+    if (model) providerByModel.set(modelId, model.provider);
     if (!model) {
       for (const stepId of stepIds) {
         errors.push({
@@ -174,6 +236,20 @@ export async function semanticValidateWorkflow(
           stepId,
         });
       }
+    }
+  }
+
+  // ── Check org approval of override providers (§120 t-743) ──────────────
+  // Its own failure is handled as the queries above are: logged and skipped,
+  // so a policy read that fails does not block a save. The call-time gate
+  // still refuses every call such a step makes.
+  if (modelSteps.size > 0) {
+    try {
+      errors.push(...(await approvalErrors(modelSteps, providerByModel)));
+    } catch (err) {
+      logger.error('Semantic validator: org provider policy unreadable, skipping approval check', {
+        error: err,
+      });
     }
   }
 

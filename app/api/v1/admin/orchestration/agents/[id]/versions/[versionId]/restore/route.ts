@@ -38,6 +38,7 @@ import {
   nextAgentVersionNumber,
 } from '@/lib/orchestration/agents/agent-versioning';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
+import { assertAgentProvidersApproved } from '@/lib/orchestration/agents/provider-approval';
 
 /**
  * A version snapshot is validated against the same per-field rules a PATCH uses
@@ -157,6 +158,21 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
       // coerce to Prisma.JsonNull, as the create/clone/import paths do.
       updateData[field] = getAgentField(field)?.json && value === null ? Prisma.JsonNull : value;
     }
+
+    // A restore is a write like any other: at multi, a provider it brings back
+    // that the agent does not hold now must be one the org is approved for
+    // (§120 t-743). A version saved before the org's grant changed would
+    // otherwise restore the agent straight into refusal.
+    const restoredFallbacks = updateData.fallbackProviders;
+    await assertAgentProvidersApproved(
+      {
+        provider: typeof updateData.provider === 'string' ? updateData.provider : undefined,
+        fallbackProviders: Array.isArray(restoredFallbacks)
+          ? restoredFallbacks.filter((slug): slug is string => typeof slug === 'string')
+          : undefined,
+      },
+      agent
+    );
 
     // Resolve the knowledge grants this restore lands on. Snapshots capture
     // grants by value; restore them so the agent's knowledge access matches the

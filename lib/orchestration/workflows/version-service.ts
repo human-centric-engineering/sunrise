@@ -46,9 +46,12 @@ async function validatePublishableDefinition(definition: unknown): Promise<Workf
   }
   const semantic = await semanticValidateWorkflow(parsed.data);
   if (!semantic.ok) {
-    throw new ValidationError('Workflow definition references invalid agents or capabilities', {
-      definition: semantic.errors.map((e) => e.message),
-    });
+    throw new ValidationError(
+      'Workflow definition references invalid models, providers, agents or capabilities',
+      {
+        definition: semantic.errors.map((e) => e.message),
+      }
+    );
   }
   return parsed.data;
 }

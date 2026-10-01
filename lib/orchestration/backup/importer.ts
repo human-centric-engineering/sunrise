@@ -26,6 +26,7 @@ import {
 } from '@/lib/orchestration/workflows/template-catalogue';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
+import { unapprovedAgentProvidersWarning } from '@/lib/orchestration/agents/provider-approval';
 
 export interface ImportResult {
   agents: { created: number; updated: number };
@@ -124,6 +125,10 @@ export async function importOrchestrationConfig(
         );
         continue;
       }
+      // Imported and flagged, not refused (§120 t-743): see
+      // unapprovedAgentProvidersWarning for why an import does not skip it.
+      const unapproved = await unapprovedAgentProvidersWarning(agent.slug, agent);
+      if (unapproved) result.warnings.push(unapproved);
       if (existing) {
         await tx.aiAgent.update({
           where: { id: existing.id },

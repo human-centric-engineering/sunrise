@@ -26,6 +26,7 @@ import {
 } from '@/lib/orchestration/agents/agent-versioning';
 import { logger } from '@/lib/logging';
 import type { BudgetSummary } from '@/types/orchestration';
+import { assertAgentProvidersApproved } from '@/lib/orchestration/agents/provider-approval';
 
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
@@ -162,6 +163,9 @@ export const POST = withAdminAuth(async (request, session) => {
 
   // A platform agent's slug is never an org's own agent's (§116 t-725).
   assertAgentSlugNotReserved(body.slug);
+
+  // At multi, only providers the org is approved for (§120 t-743).
+  await assertAgentProvidersApproved(body);
 
   try {
     // Create the agent and its explicit `v1` ("Initial configuration") in one
