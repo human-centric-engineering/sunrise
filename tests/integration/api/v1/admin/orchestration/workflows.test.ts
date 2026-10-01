@@ -11,12 +11,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // The org's provider policy (§120 t-743): approves everything unless a test
 // refuses a slug.
+// The policy applies (an org at multi) unless a test says otherwise.
+const mockPolicyScope = vi.hoisted(() => vi.fn((): 'open' | 'no-org' | 'enforced' => 'enforced'));
 const mockUnapprovedProviders = vi.hoisted(() =>
   vi.fn(async (_slugs: readonly string[]): Promise<string[]> => [])
 );
 vi.mock('@/lib/orchestration/llm/org-provider-policy', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-policy')>()),
   unapprovedProviders: mockUnapprovedProviders,
+  orgProviderPolicyScope: mockPolicyScope,
 }));
 import { NextRequest } from 'next/server';
 import { GET, POST } from '@/app/api/v1/admin/orchestration/workflows/route';

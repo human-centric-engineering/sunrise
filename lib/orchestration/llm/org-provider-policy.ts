@@ -121,10 +121,19 @@ async function loadProviderRows(
           const row =
             found.find((candidate) => candidate.slug === slug) ??
             found.find((candidate) => candidate.name === slug);
+          if (!row) {
+            // A miss is not cached: the write-time check is handed whatever
+            // an admin typed, so caching misses would grow this map without
+            // bound, and a row created in another process would read as
+            // missing here until the TTL ran out. (The entry is already set
+            // by now; callers holding its promise still get this answer.)
+            providerRowCache.delete(slug);
+            return null;
+          }
           // Upper-cased to match the stored restriction, which the schema
           // upper-cases; a row written before the column was validated still
           // matches its own code.
-          return row ? { id: row.id, jurisdiction: row.jurisdiction?.toUpperCase() ?? null } : null;
+          return { id: row.id, jurisdiction: row.jurisdiction?.toUpperCase() ?? null };
         })
       );
     }
@@ -133,6 +142,19 @@ async function loadProviderRows(
     slugs.map((slug) => providerRowCache.get(slug)?.value ?? Promise.resolve(null))
   );
   return new Map(slugs.map((slug, index) => [slug, answers[index]]));
+}
+
+/**
+ * Whether core's policy restricts the org in context: `'open'` at `single` and
+ * for the install org, `'no-org'` at `multi` with no org in scope (nothing is
+ * permitted), `'enforced'` otherwise. For write-time callers that word their
+ * refusal, or skip work, by it.
+ */
+export function orgProviderPolicyScope(): 'open' | 'no-org' | 'enforced' {
+  if (!isMultiTenant()) return 'open';
+  const orgId = getTenantContext()?.orgId ?? null;
+  if (orgId === null) return 'no-org';
+  return orgId === INSTALL_ORG_ID ? 'open' : 'enforced';
 }
 
 /**

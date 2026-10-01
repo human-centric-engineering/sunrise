@@ -22,7 +22,10 @@
 
 import { ValidationError } from '@/lib/api/errors';
 import { logger } from '@/lib/logging';
-import { unapprovedProviders } from '@/lib/orchestration/llm/org-provider-policy';
+import {
+  orgProviderPolicyScope,
+  unapprovedProviders,
+} from '@/lib/orchestration/llm/org-provider-policy';
 
 /** The provider fields of an agent, as a write sets them. */
 export interface AgentProviderFields {
@@ -83,8 +86,11 @@ export async function assertAgentProvidersApproved(
   if (slugs.length === 0) return;
 
   const reason = (names: string[]) =>
-    `This organisation is not approved to use ${names.map((slug) => `"${slug}"`).join(', ')}. ` +
-    'A platform admin grants providers to an organisation; until then every call to it is refused.';
+    orgProviderPolicyScope() === 'no-org'
+      ? `No organisation is in scope for this request, so ${names.map((slug) => `"${slug}"`).join(', ')} cannot be approved for it. ` +
+        'Make the request from inside an organisation.'
+      : `This organisation is not approved to use ${names.map((slug) => `"${slug}"`).join(', ')}. ` +
+        'A platform admin grants providers to an organisation; until then every call to it is refused.';
   const errors = [
     ...(found.provider.length > 0 ? [{ path: 'provider', message: reason(found.provider) }] : []),
     ...(found.fallbackProviders.length > 0

@@ -159,9 +159,10 @@ release process.
   `details.unapprovedProviders` and a per-field `details.errors` entry; only
   providers the write introduces are checked, so a stranded agent can still
   be edited. A workflow step `modelOverride` whose provider is not approved is
-  a new semantic error, `PROVIDER_NOT_APPROVED`, refused on create,
-  save-as-template, publish, rollback and `/validate` (publish and rollback only
-  for a provider the new version introduces), not at execution.
+  a new semantic error, `PROVIDER_NOT_APPROVED`: create, save-as-template,
+  publish and rollback refuse it (publish and rollback only for a provider the
+  new version introduces), `/validate` reports it, and execution does not
+  check it.
   `semanticValidateWorkflow` takes a new optional
   `{ approval: { held?, onUnreadable? } }` argument for it; that check also
   covers `supervisor` steps' overrides. Also exported:

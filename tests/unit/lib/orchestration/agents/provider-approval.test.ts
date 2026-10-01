@@ -149,6 +149,32 @@ describe('assertAgentProvidersApproved', () => {
   });
 });
 
+describe('a request with no organisation in scope (multi)', () => {
+  it('is refused with a message that says so, not one blaming an org', async () => {
+    const error = await assertAgentProvidersApproved({ provider: 'anthropic' }).catch(
+      (err: unknown) => err
+    );
+    expect(error).toMatchObject({
+      status: 400,
+      message: expect.stringContaining('No organisation is in scope for this request'),
+    });
+  });
+});
+
+describe('the provider-row cache', () => {
+  it('does not keep a miss: a slug with no row is looked up again', async () => {
+    await inOrg(() => unapprovedProviders(['nonexistent']));
+    await inOrg(() => unapprovedProviders(['nonexistent']));
+    expect(prisma.aiProviderConfig.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a hit', async () => {
+    await inOrg(() => unapprovedProviders(['openai']));
+    await inOrg(() => unapprovedProviders(['openai']));
+    expect(prisma.aiProviderConfig.findMany).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('importedAgentProviderWarnings', () => {
   it('warns per agent, naming every non-approved provider it names', async () => {
     const { bySlug, unchecked } = await inOrg(() =>

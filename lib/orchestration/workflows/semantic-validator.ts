@@ -23,7 +23,10 @@ import { logger } from '@/lib/logging';
 import { ValidationError } from '@/lib/api/errors';
 import type { WorkflowDefinition } from '@/types/orchestration';
 import { platformSlugsWhere } from '@/lib/orchestration/agents/platform-agent-guard';
-import { unapprovedProviders } from '@/lib/orchestration/llm/org-provider-policy';
+import {
+  orgProviderPolicyScope,
+  unapprovedProviders,
+} from '@/lib/orchestration/llm/org-provider-policy';
 import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -136,6 +139,9 @@ export async function findUnapprovedModelOverridesIn<K>(
   defs: ReadonlyMap<K, WorkflowDefinition>,
   check: Pick<ApprovalCheck, 'held'> = {}
 ): Promise<Map<K, SemanticValidationError[]>> {
+  // Nothing can be refused at single or for the install org, so do nothing —
+  // not even hydrate, which would change what the existence checks see there.
+  if (orgProviderPolicyScope() === 'open') return new Map([...defs.keys()].map((k) => [k, []]));
   await hydrateModelRegistryFromDb();
   const looked = new Map(
     [...defs].map(([key, def]) => {
@@ -194,10 +200,29 @@ export async function findUnapprovedModelOverrides(
  */
 export async function assertWorkflowProvidersApproved(def: WorkflowDefinition): Promise<void> {
   const errors = await findUnapprovedModelOverrides(def);
+  if (orgProviderPolicyScope() === 'enforced') {
+    // These paths run no existence check, so an override whose model the
+    // registry cannot resolve would otherwise pass with its provider never
+    // asked about. Where the policy is enforced, that is refused: the save
+    // cannot be shown to be approved.
+    for (const [modelId, stepIds] of collectModelOverrides(def, PROVIDER_CHOOSING_STEP_TYPES)) {
+      if (modelRegistry.getModel(modelId)) continue;
+      for (const stepId of stepIds) {
+        errors.push({
+          code: 'UNKNOWN_MODEL_OVERRIDE',
+          message: `Step "${stepId}" references unknown model "${modelId}", so its provider cannot be checked against this organisation's approved providers`,
+          stepId,
+        });
+      }
+    }
+  }
   if (errors.length === 0) return;
-  throw new ValidationError('Workflow steps use providers this organisation is not approved for', {
-    definition: errors.map((e) => e.message),
-  });
+  throw new ValidationError(
+    orgProviderPolicyScope() === 'no-org'
+      ? 'No organisation is in scope for this request, so no provider can be approved for it'
+      : 'Workflow steps use providers this organisation is not approved for',
+    { definition: errors.map((e) => e.message) }
+  );
 }
 
 // ── Validator ──────────────────────────────────────────────────────────────
@@ -340,7 +365,12 @@ export async function semanticValidateWorkflow(
     }
   }
 
-  errors.push(...approval);
+  // A step already reported as on an inactive provider is not reported again
+  // as unapproved: one remedy per step.
+  const inactiveSteps = new Set(
+    errors.filter((e) => e.code === 'INACTIVE_PROVIDER').map((e) => e.stepId)
+  );
+  errors.push(...approval.filter((e) => !inactiveSteps.has(e.stepId)));
 
   // ── Check capability slugs ─────────────────────────────────────────────
 

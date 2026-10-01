@@ -65,8 +65,10 @@ export async function importOrchestrationConfig(
   // approved for are imported and flagged, not refused (§120 t-743). Asked
   // once, before the transaction, so the policy read neither holds its
   // connection nor fails the import: these are warnings.
-  const agentProviders = await importedAgentProviderWarnings(parsed.data.agents);
-  const workflowProviders = await importedWorkflowProviderWarnings(parsed.data.workflows);
+  const [agentProviders, workflowProviders] = await Promise.all([
+    importedAgentProviderWarnings(parsed.data.agents),
+    importedWorkflowProviderWarnings(parsed.data.workflows),
+  ]);
   for (const unchecked of [agentProviders.unchecked, workflowProviders.unchecked]) {
     if (unchecked) result.warnings.push(unchecked);
   }

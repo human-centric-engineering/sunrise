@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // The org's provider policy (§120 t-743): approves everything unless a test
 // refuses a slug.
+// The policy applies (an org at multi) unless a test says otherwise.
+const mockPolicyScope = vi.hoisted(() => vi.fn((): 'open' | 'no-org' | 'enforced' => 'enforced'));
 const mockUnapprovedProviders = vi.hoisted(() =>
   vi.fn(async (_slugs: readonly string[]): Promise<string[]> => [])
 );
@@ -12,6 +14,7 @@ vi.mock('@/lib/orchestration/llm/model-registry-db-hydrate', () => ({
 vi.mock('@/lib/orchestration/llm/org-provider-policy', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-policy')>()),
   unapprovedProviders: mockUnapprovedProviders,
+  orgProviderPolicyScope: mockPolicyScope,
 }));
 
 import type { WorkflowDefinition } from '@/types/orchestration';
@@ -318,6 +321,7 @@ describe('org approval of a modelOverride provider (§120 t-743)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockPolicyScope.mockReturnValue('enforced');
     mockUnapprovedProviders.mockImplementation(async () => []);
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       { slug: 'anthropic' },
@@ -423,6 +427,58 @@ describe('org approval of a modelOverride provider (§120 t-743)', () => {
       ['a', 1],
       ['b', 0],
     ]);
+  });
+
+  it('does nothing where the policy is open — not even hydrate (single, the install org)', async () => {
+    mockPolicyScope.mockReturnValue('open');
+    mockUnapprovedProviders.mockImplementation(refuseAnthropic);
+
+    const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'claude-sonnet-4-6')]), {
+      approval: {},
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(mockHydrate).not.toHaveBeenCalled();
+    expect(mockUnapprovedProviders).not.toHaveBeenCalled();
+  });
+
+  it('reports a step on an inactive provider once, not also as unapproved', async () => {
+    mockUnapprovedProviders.mockImplementation(refuseAnthropic);
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([{ slug: 'openai' }] as never);
+
+    const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'claude-sonnet-4-6')]), {
+      approval: {},
+    });
+
+    expect(result.errors.map((e) => e.code)).toEqual(['INACTIVE_PROVIDER']);
+  });
+
+  it('refuses, on create, a model whose provider cannot be determined where the policy applies', async () => {
+    await expect(
+      assertWorkflowProvidersApproved(makeDef([llmStep('s1', 'not-in-registry')]))
+    ).rejects.toMatchObject({
+      status: 400,
+      details: { definition: [expect.stringContaining('its provider cannot be checked')] },
+    });
+  });
+
+  it('lets an unknown model through on create where the policy is open', async () => {
+    mockPolicyScope.mockReturnValue('open');
+    await expect(
+      assertWorkflowProvidersApproved(makeDef([llmStep('s1', 'not-in-registry')]))
+    ).resolves.toBeUndefined();
+  });
+
+  it('says no organisation is in scope, rather than blaming one, when none is', async () => {
+    mockPolicyScope.mockReturnValue('no-org');
+    mockUnapprovedProviders.mockImplementation(async (slugs) => [...slugs]);
+
+    await expect(
+      assertWorkflowProvidersApproved(makeDef([llmStep('s1', 'claude-sonnet-4-6')]))
+    ).rejects.toMatchObject({
+      message:
+        'No organisation is in scope for this request, so no provider can be approved for it',
+    });
   });
 
   it('refuses a definition with a 400 naming the steps, for create and save-as-template', async () => {
