@@ -205,10 +205,10 @@ The per-agent `enableImageInput` / `enableDocumentInput` toggles (on `AiAgent`) 
 
 `providerManager.getProvider(slug, context?)` is the single entry point. It:
 
-1. Checks the in-memory cache. Each entry stores the built instance, its slug and `cachedAt`, and is evicted after **5 minutes** (`CACHE_TTL_MS`). This ensures config changes in the database (e.g. switching API keys, toggling `isActive`) take effect without a restart.
+1. Checks the in-memory cache. Each entry is a provider row with the clients built from it, one per credential identity, and is evicted after **5 minutes** (`CACHE_TTL_MS`). This ensures config changes in the database (e.g. switching API keys, toggling `isActive`) take effect without a restart.
 2. Loads the matching `AiProviderConfig` row: a row with that **slug** first, and only if there is none, a row with that **name**. (One unordered `findFirst` over both used to let a caller holding row A's slug be handed row B, whose name equals it.)
 3. Throws `ProviderError` with `code: 'provider_not_found'` / `'provider_disabled'` if missing or inactive.
-4. Resolves the API key from `process.env[config.apiKeyEnvVar]` (or skips for local providers).
+4. Resolves the API key through the credential seam — by default `process.env[config.apiKeyEnvVar]` — and reuses the client built for that credential's identity, or builds one (see _Provider credentials_).
 5. Instantiates `AnthropicProvider` or `OpenAiCompatibleProvider` based on `providerType`.
 6. Caches with timestamp and returns the Proxy for `context` — see _The call-time gate_ below for what `context` is and why to pass it.
 
@@ -607,6 +607,39 @@ Anthropic thinking blocks are stripped from response content in both `chat()` an
 | `isActive`     | `false` → `getProvider` throws `provider_disabled`                                                                               |
 | `timeoutMs`    | Per-provider timeout override (1,000–300,000 ms). Resolution: `timeoutMs` → `LOCAL_TIMEOUT_MS` (if local) → `DEFAULT_TIMEOUT_MS` |
 | `maxRetries`   | Per-provider retry override (0–10). Passed to the SDK constructor                                                                |
+
+## Provider credentials (fork seam)
+
+By default a provider row's API key is the environment variable it names
+(`apiKeyEnvVar`). A fork that keeps keys in a gateway, behind a vault reference
+or behind workload federation, or that gives each org its own key, registers a
+resolver from the fork-owned `lib/app/provider-credentials.ts` (§120 t-744):
+
+```typescript
+import { registerProviderCredentialResolver } from '@/lib/orchestration/llm/provider-credentials';
+
+export function initAppProviderCredentials(): void {
+  registerProviderCredentialResolver(async (config, { orgId }) => {
+    const key = await vault.read(`llm/${orgId}/${config.slug}`); // cache this
+    return { apiKey: key, identity: `org:${orgId}` };
+  });
+}
+```
+
+**Sunrise stores no tenant's vendor key** (multi-tenancy design Q5). The
+resolver is asked when a provider is fetched; the key builds a client held in
+memory for the instance cache's TTL and is written nowhere.
+
+| Property                  | Behaviour                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Default**               | Nothing registered: `process.env[config.apiKeyEnvVar]`, identity `''`. Byte-identical to before the seam.                                                                                                                                                                                                                                    |
+| **When it runs**          | Every `getProvider` — every chat turn, workflow step and embedding batch — in the caller's async context, so `orgId` is the org the call acts for (the install org at `single`; `null` at `multi` outside an org scope, where the call-time gate refuses the call anyway). Cache whatever the resolver looks up.                             |
+| **The identity**          | A stable, non-secret name for the credential. The client cache, the circuit breakers and the in-flight counter key on `credentialKey(slug, identity)` (`credential-key.ts`): the bare slug for `''`, `slug#identity` otherwise. Different keys need different identities, or two orgs share one client and one key.                          |
+| **Reachability**          | Auto-pick, the agent form's preview, the clean-up agent's pin and the admin model routes ask `hasProviderCredential` rather than reading the env var, so a fork whose keys are not in the environment still has reachable providers.                                                                                                         |
+| **Breakers, admin views** | `getBreaker` takes `breakerKeyOf(provider)` / `getProviderWithFallbacks().breakerKey`, so one org's failing key does not pause another's. The admin provider list and health route show the worst breaker across a provider's credentials, and a reset resets all of them. The live-engine dashboard lists in-flight counts by the same key. |
+| **On a resolver throw**   | The provider is unavailable for that call (`ProviderError`, `credential_unavailable`). **No fallback to the env var**: a fork that moved keys out of the environment did not mean the environment's key, possibly the platform's own, to be used for its orgs.                                                                               |
+| **On an init throw**      | Rolled back and logged by the shared gate (`fork-init-seams.md`), then every credential is refused until it is fixed, for the same reason.                                                                                                                                                                                                   |
+| **Registrar entries**     | `registerProvider` / `registerProviderInstance` carry their own key and bypass the resolver, on the shared identity.                                                                                                                                                                                                                         |
 
 ## Provider eligibility (fork seam)
 

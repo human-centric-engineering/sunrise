@@ -96,9 +96,11 @@ says which piece each feature lands):
   see a Node heap, so every module-level holder in `lib/` is declared in
   [`lib/tenancy/process-state.ts`](../../lib/tenancy/process-state.ts) with
   the posture it carries (§108 t-712). What that leaves shared is the
-  deliberate part: an LLM provider's circuit breaker and in-flight counter
-  are keyed by provider slug, which IS the credential identity until §109
-  makes credentials per org, so a breaker one org opens pauses every org; the
+  deliberate part: an LLM provider's client, circuit breaker and in-flight
+  counter are keyed by (provider slug, credential identity) (§120 t-744), so
+  orgs on the install's shared credential share them — a breaker one of them
+  opens pauses all of them — while a per-org credential from the
+  `lib/app/provider-credentials.ts` seam gets its own; the
   outbound host limiter is per third-party host; the rate-limit counters are
   keyed by the caller. The admin log buffer is the one holder scoped at the
   QUERY rather than partitioned: one process-wide ring, each entry stamped

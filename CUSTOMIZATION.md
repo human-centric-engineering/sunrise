@@ -470,6 +470,7 @@ small and conflict-free.)
 | `lib/app/reserved-tiers.ts`                | which reserved tiers THIS checkout occupies                           | `tests/unit/reserved-fork-tiers.test.ts` + the metadata guard (test)                                                  |
 | `lib/app/authorization.ts`                 | who may administer, and over whose data                               | `withAuth` / `withAdminAuth` / the admin layout (server)                                                              |
 | `lib/app/platform-agents.ts`               | agents every org gets its own instance of (`initAppPlatformAgents`)   | the platform-agent registry → its reconcile (org creation, seed, maintenance tick)                                    |
+| `lib/app/provider-credentials.ts`          | where a provider's API key comes from (`initAppProviderCredentials`)  | the provider manager, every time a provider is fetched (server)                                                       |
 
 > **Filling a seam is expected to fail one row of a core test.**
 > `tests/unit/lib/app/defaults.test.ts` asserts every seam ships empty — that
