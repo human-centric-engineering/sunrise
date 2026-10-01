@@ -36,9 +36,9 @@ vi.mock('@/lib/app/llm-providers', () => ({
 vi.mock('@/lib/db/client', () => ({
   prisma: { aiProviderConfig: { findMany: vi.fn() } },
 }));
-vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
-  isApiKeyEnvVarSet: vi.fn(() => true),
-}));
+// Reachability asks the credential seam, whose default reads these env vars.
+process.env.K1 = 'present';
+process.env.K2 = 'present';
 vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
   getDefaultModelForTask: vi.fn(async () => 'some-model'),
 }));

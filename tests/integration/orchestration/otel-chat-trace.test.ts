@@ -58,6 +58,8 @@ vi.mock('@/lib/env', () => ({
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   getProviderWithFallbacks: vi.fn(),
   getProvider: vi.fn(),
+  // Test doubles have no credential key; the handler falls back to the slug.
+  breakerKeyOf: vi.fn(() => undefined),
 }));
 
 vi.mock('@/lib/orchestration/llm/cost-tracker', async () => {

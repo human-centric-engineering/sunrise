@@ -20,7 +20,8 @@ import { prisma } from '@/lib/db/client';
 import { errorResponse, successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
-import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { hasProviderCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { inferCapability } from '@/lib/orchestration/llm/capability-inference';
 import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
@@ -40,7 +41,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   const row = await prisma.aiProviderConfig.findUnique({ where: { id } });
   if (!row) throw new NotFoundError(`Provider ${id} not found`);
 
-  if (!row.isLocal && !isApiKeyEnvVarSet(row.apiKeyEnvVar)) {
+  if (!(await hasProviderCredential(row))) {
     return errorResponse(`Provider "${row.slug}" has no API key configured`, {
       code: 'API_KEY_MISSING',
       status: 422,

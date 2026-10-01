@@ -20,7 +20,7 @@
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import { filterProvidersWithCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 // The fork's eligibility rule wires itself, lazily, inside
@@ -216,15 +216,17 @@ export async function resolveAgentProviderAndModel(
 }
 
 /**
- * Find every active provider whose `apiKeyEnvVar` is set in
- * `process.env` (or whose row is `isLocal` and therefore needs no
- * key). Ordered by `createdAt` so the first user-configured provider
- * wins on ties.
+ * Find every active provider that has a credential in this context (by
+ * default: its `apiKeyEnvVar` is set in `process.env`), or whose row is
+ * `isLocal` and therefore needs no key. Asked through the credential seam
+ * (§120 t-744), so a fork whose keys are not in the environment still has
+ * reachable providers. Ordered by `createdAt` so the first user-configured
+ * provider wins on ties.
  */
 async function pickActiveProviderCandidates(): Promise<AiProviderConfig[]> {
   const rows = await prisma.aiProviderConfig.findMany({
     where: { isActive: true },
     orderBy: { createdAt: 'asc' },
   });
-  return rows.filter((row) => row.isLocal || isApiKeyEnvVarSet(row.apiKeyEnvVar));
+  return filterProvidersWithCredential(rows);
 }

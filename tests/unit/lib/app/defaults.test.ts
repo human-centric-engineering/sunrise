@@ -33,6 +33,11 @@ import { registerAppRateLimits } from '@/lib/app/rate-limit';
 import { registerAppTenantResolver } from '@/lib/app/tenant-resolver';
 import { hasTenantResolver } from '@/lib/tenancy/resolver';
 import { initAppCapabilities } from '@/lib/app/capabilities';
+import {
+  hasProviderCredentialResolver,
+  resetProviderCredentialResolver,
+  resolveProviderCredential,
+} from '@/lib/orchestration/llm/provider-credentials';
 import { initAppContextContributors } from '@/lib/app/context-contributors';
 import { initAppNav } from '@/lib/app/admin-nav';
 import { publicNavItems, footerNavItems, footerLegalItems } from '@/lib/app/public-nav';
@@ -335,6 +340,28 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       listPlatformAgents().forEach((definition, i) =>
         expect(definition).toBe(CORE_PLATFORM_AGENTS[i])
       );
+    },
+  },
+  {
+    seam: 'lib/app/provider-credentials.ts',
+    risk: 'a stray credential resolver would send every install\u2019s provider calls out on a key that is not the one its rows name',
+    assert: async () => {
+      resetProviderCredentialResolver();
+      // The read triggers the lazy init, so this exercises the REAL file.
+      expect(hasProviderCredentialResolver()).toBe(false);
+      // And the default is exactly the env var, on the shared identity.
+      process.env.SHIPS_EMPTY_TEST_KEY = 'from-env';
+      await expect(
+        resolveProviderCredential({
+          id: 'p1',
+          slug: 'p1',
+          name: 'P1',
+          providerType: 'anthropic',
+          apiKeyEnvVar: 'SHIPS_EMPTY_TEST_KEY',
+          isLocal: false,
+        })
+      ).resolves.toEqual({ apiKey: 'from-env', identity: '' });
+      delete process.env.SHIPS_EMPTY_TEST_KEY;
     },
   },
   {

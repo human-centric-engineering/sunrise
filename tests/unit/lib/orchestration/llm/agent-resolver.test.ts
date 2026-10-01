@@ -29,12 +29,11 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
-vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
-  isApiKeyEnvVarSet: vi.fn((envVar: string | null) => {
-    if (!envVar) return false;
-    return envVar === 'PRESENT_KEY' || envVar === 'OTHER_PRESENT_KEY';
-  }),
-}));
+// Reachability goes through the credential seam (§120 t-744), whose default
+// reads the row's env var — so the keys are real env vars, not a stubbed check.
+process.env.PRESENT_KEY = 'present';
+process.env.OTHER_PRESENT_KEY = 'present';
+delete process.env.MISSING_KEY;
 
 vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
   getDefaultModelForTask: vi.fn(async (task: string) => {

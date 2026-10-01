@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
-import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import { filterProvidersWithCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { resolveEligibleProviders } from '@/lib/orchestration/llm/provider-eligibility';
 import { getDefaultModelForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
 import { prisma } from '@/lib/db/client';
@@ -92,7 +92,8 @@ export async function getEffectiveAgentDefaults(agent: {
         where: { isActive: true },
         orderBy: { createdAt: 'asc' },
       });
-      const reachable = rows.filter((r) => r.isLocal || isApiKeyEnvVarSet(r.apiKeyEnvVar));
+      // Through the credential seam, as the runtime's own pick is (§120 t-744).
+      const reachable = await filterProvidersWithCredential(rows);
       // Same eligibility rule the runtime applies when IT picks the provider
       // (`resolveAgentProviderAndModel`, source 'primary'). Without this the
       // form previews a provider the policy forbids while every turn runs on a

@@ -4,6 +4,7 @@
  * capabilities. Cleanup conversations edit one document directly and never
  * query the knowledge base.
  */
+import { filterProvidersWithCredential } from '@/lib/orchestration/llm/provider-credentials';
 import type { TenancyClient } from '@/lib/db/tenancy-extension';
 import type {
   PlatformAgentBinding,
@@ -83,11 +84,18 @@ export async function pickCleanupBinding(
   const providers = await prisma.aiProviderConfig.findMany({
     where: { isActive: true },
     orderBy: { createdAt: 'asc' },
-    select: { slug: true, isLocal: true, apiKeyEnvVar: true },
+    select: {
+      id: true,
+      slug: true,
+      name: true,
+      providerType: true,
+      isLocal: true,
+      apiKeyEnvVar: true,
+    },
   });
-  const reachable = providers.filter(
-    (p) => p.isLocal || (p.apiKeyEnvVar !== null && (process.env[p.apiKeyEnvVar] ?? '') !== '')
-  );
+  // Through the credential seam (§120 t-744): by default the row's env var, as
+  // this read directly before; a fork's resolver otherwise.
+  const reachable = await filterProvidersWithCredential(providers);
   if (reachable.length === 0) return null;
 
   const models = await prisma.aiProviderModel.findMany({

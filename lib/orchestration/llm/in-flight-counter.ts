@@ -2,7 +2,10 @@
  * Per-provider in-flight call counter.
  *
  * Tracks how many LLM/embedding/transcribe calls are currently in
- * flight against each provider slug, surfaced on the admin live-engine
+ * flight against each provider credential — keyed `credentialKey(slug,
+ * identity)` (§120 t-744), which is the bare slug for the install's shared
+ * credential and slug + identity for one a fork's resolver gives a single
+ * org, so the `provider` a reader sees is that key — surfaced on the admin live-engine
  * dashboard so operators can spot provider saturation independently of
  * the circuit breaker (which fires on *failures*, not concurrency).
  *
@@ -20,8 +23,8 @@
  * should use `trackStream()` instead, which guarantees decrement once
  * the iterator settles (completes, throws, or is abandoned).
  *
- * Tenancy posture: shared-by-decision — per provider slug, the same §109
- * trigger as the breaker (lib/tenancy/process-state.ts).
+ * Tenancy posture: shared-by-decision — per (provider slug, credential
+ * identity), the same keying as the breaker (lib/tenancy/process-state.ts).
  */
 
 const counts = new Map<string, number>();

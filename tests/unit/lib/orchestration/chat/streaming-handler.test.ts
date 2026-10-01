@@ -52,6 +52,9 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   getProvider: vi.fn(),
   getProviderWithFallbacks: vi.fn(),
   assertModelSupportsAttachments: vi.fn(),
+  // A test double is not a manager-built view, so it has no credential key;
+  // the handler falls back to the slug, which is what these tests assert.
+  breakerKeyOf: vi.fn(() => undefined),
 }));
 
 vi.mock('@/lib/orchestration/llm/circuit-breaker', () => ({

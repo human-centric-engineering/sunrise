@@ -40,9 +40,10 @@ vi.mock('@/lib/db/client', () => ({
   prisma: { aiProviderConfig: { findMany: vi.fn() } },
 }));
 
-vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
-  isApiKeyEnvVarSet: vi.fn((envVar: string | null) => envVar === 'PRESENT_KEY'),
-}));
+// Both modules ask the credential seam (§120 t-744), whose default reads the
+// row's env var — so the keys are real env vars, not a stubbed check.
+process.env.PRESENT_KEY = 'present';
+delete process.env.MISSING_KEY;
 
 // The runtime resolver reads `getDefaultModelForTask`; the mirror reads the
 // `OrNull` variant. Same underlying setting, so both answer the same here —

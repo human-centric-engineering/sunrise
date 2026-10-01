@@ -21,7 +21,7 @@ import {
   isApiKeyEnvVarSet,
   clearCache as clearProviderCache,
 } from '@/lib/orchestration/llm/provider-manager';
-import { getCircuitBreakerStatus } from '@/lib/orchestration/llm/circuit-breaker';
+import { getCircuitBreakerStatusForProvider } from '@/lib/orchestration/llm/circuit-breaker';
 import { listProvidersQuerySchema, providerConfigSchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
@@ -59,7 +59,7 @@ export const GET = withAdminAuth(async (request, _session) => {
   const data = rows.map((config) => ({
     ...config,
     apiKeyPresent: isApiKeyEnvVarSet(config.apiKeyEnvVar),
-    circuitBreaker: getCircuitBreakerStatus(config.slug) ?? {
+    circuitBreaker: getCircuitBreakerStatusForProvider(config.slug) ?? {
       state: 'closed' as const,
       failureCount: 0,
     },

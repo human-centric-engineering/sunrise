@@ -30,7 +30,8 @@ import { prisma } from '@/lib/db/client';
 import { errorResponse, successResponse } from '@/lib/api/responses';
 import { ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
-import { getProvider, isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { hasProviderCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { inferCapability, type Capability } from '@/lib/orchestration/llm/capability-inference';
 import { getModelsByProvider, refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
 import {
@@ -99,7 +100,7 @@ export const GET = withAdminAuth(async (request) => {
   // Both tiers run in parallel — keeps the route fast and lets us
   // fall back cleanly when either one fails.
   const vendorPromise = (async (): Promise<ModelInfo[] | null> => {
-    if (!providerRow.isLocal && !isApiKeyEnvVarSet(providerRow.apiKeyEnvVar)) {
+    if (!(await hasProviderCredential(providerRow))) {
       // No API key — the vendor SDK can't be called. Skip without
       // failing the route so OpenRouter still has a chance.
       return null;

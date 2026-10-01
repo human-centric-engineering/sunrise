@@ -40,9 +40,11 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
-vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
-  isApiKeyEnvVarSet: vi.fn(),
-}));
+// Reachability asks the credential seam (§120 t-744), whose default reads the
+// row's env var.
+process.env.OPENAI_KEY = 'present';
+process.env.ANTHROPIC_KEY = 'present';
+delete process.env.MISSING_KEY;
 
 vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
   getDefaultModelForTaskOrNull: vi.fn(),
@@ -56,7 +58,6 @@ import {
   registerProviderEligibility,
   resetProviderEligibility,
 } from '@/lib/orchestration/llm/provider-eligibility';
-import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
 import { getDefaultModelForTaskOrNull } from '@/lib/orchestration/llm/settings-resolver';
 import {
   getAgentModels,
@@ -457,7 +458,6 @@ describe('getEffectiveAgentDefaults', () => {
       { id: 'p2', slug: 'anthropic', isLocal: false, apiKeyEnvVar: 'ANTHROPIC_KEY' },
     ] as never);
     // BOTH reachable, so the rule is the only thing that can exclude one.
-    vi.mocked(isApiKeyEnvVarSet).mockImplementation(() => true);
     vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue('claude-opus-4-6');
 
     try {
@@ -480,7 +480,6 @@ describe('getEffectiveAgentDefaults', () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       { id: 'p1', slug: 'openai', isLocal: false, apiKeyEnvVar: 'OPENAI_KEY' },
     ] as never);
-    vi.mocked(isApiKeyEnvVarSet).mockImplementation(() => true);
     vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue('claude-opus-4-6');
 
     try {
@@ -500,7 +499,7 @@ describe('getEffectiveAgentDefaults', () => {
         id: 'p1',
         slug: 'openai',
         isLocal: false,
-        apiKeyEnvVar: 'OPENAI_KEY',
+        apiKeyEnvVar: 'MISSING_KEY',
       },
       {
         id: 'p2',
@@ -510,7 +509,6 @@ describe('getEffectiveAgentDefaults', () => {
       },
     ] as never);
     // First provider's key is missing; second one is reachable
-    vi.mocked(isApiKeyEnvVarSet).mockImplementation((v) => v === 'ANTHROPIC_KEY');
     vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue('claude-opus-4-6');
 
     const result = await getEffectiveAgentDefaults({ provider: '', model: '' });
@@ -527,7 +525,6 @@ describe('getEffectiveAgentDefaults', () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
       { id: 'p1', slug: 'ollama', isLocal: true, apiKeyEnvVar: null },
     ] as never);
-    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(false);
     vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue('llama-3');
 
     const result = await getEffectiveAgentDefaults({ provider: '', model: '' });
@@ -538,9 +535,8 @@ describe('getEffectiveAgentDefaults', () => {
 
   it('keeps provider empty when no reachable provider exists', async () => {
     vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
-      { id: 'p1', slug: 'openai', isLocal: false, apiKeyEnvVar: 'OPENAI_KEY' },
+      { id: 'p1', slug: 'openai', isLocal: false, apiKeyEnvVar: 'MISSING_KEY' },
     ] as never);
-    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(false);
     vi.mocked(getDefaultModelForTaskOrNull).mockResolvedValue('claude-opus-4-6');
 
     const result = await getEffectiveAgentDefaults({ provider: '', model: '' });

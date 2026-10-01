@@ -14,7 +14,10 @@ import { NotFoundError } from '@/lib/api/errors';
 import { validatePathParam } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
-import { getBreaker, getCircuitBreakerStatus } from '@/lib/orchestration/llm/circuit-breaker';
+import {
+  getCircuitBreakerStatusForProvider,
+  resetBreakersForProvider,
+} from '@/lib/orchestration/llm/circuit-breaker';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 
@@ -26,7 +29,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   const provider = await prisma.aiProviderConfig.findUnique({ where: { id } });
   if (!provider) throw new NotFoundError(`Provider ${id} not found`);
 
-  const status = getCircuitBreakerStatus(provider.slug) ?? {
+  const status = getCircuitBreakerStatusForProvider(provider.slug) ?? {
     state: 'closed' as const,
     failureCount: 0,
     openedAt: null,
@@ -52,9 +55,9 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const provider = await prisma.aiProviderConfig.findUnique({ where: { id } });
   if (!provider) throw new NotFoundError(`Provider ${id} not found`);
 
-  getBreaker(provider.slug).reset();
+  resetBreakersForProvider(provider.slug);
 
-  const status = getCircuitBreakerStatus(provider.slug) ?? {
+  const status = getCircuitBreakerStatusForProvider(provider.slug) ?? {
     state: 'closed' as const,
     failureCount: 0,
     openedAt: null,

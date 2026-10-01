@@ -1,9 +1,9 @@
 # Fork Init Seams
 
-Thirteen of the `lib/app/*` scaffolds Sunrise ships are reached the same way: a
+Fourteen of the `lib/app/*` scaffolds Sunrise ships are reached the same way: a
 core registry runs the fork's `initApp*()` function **once, lazily, before its
 first read**. (Most of `lib/app/` is not this — the majority of those files are
-value and config scaffolds with no init function at all, and two of the fifteen
+value and config scaffolds with no init function at all, and two of the sixteen
 `initApp*` exports are different shapes; see below.)
 That lets a fork accumulate registrations at module-import time without a startup
 hook, and without core needing to know which bundle realm got there first.
@@ -63,6 +63,7 @@ Three properties come with it:
 | `knowledge-access-contributors.ts` | `initAppKnowledgeAccessContributors` | `lib/orchestration/knowledge/resolveAgentDocumentAccess.ts` | roll back, log, degrade        |
 | `mcp-resources.ts`                 | `initAppMcpResources`                | `lib/orchestration/mcp/resource-registry.ts`                | roll back, log, degrade        |
 | `platform-agents.ts`               | `initAppPlatformAgents`              | `lib/orchestration/agents/platform-agents.ts`               | roll back, log, degrade        |
+| `provider-credentials.ts`          | `initAppProviderCredentials`         | `lib/orchestration/llm/provider-credentials.ts`             | roll back, log, **refuse**     |
 | `user-created.ts`                  | `initAppUserCreatedHooks`            | `lib/auth/user-created-hooks.ts`                            | roll back, log, degrade        |
 
 ## The other family: `registerApp*`

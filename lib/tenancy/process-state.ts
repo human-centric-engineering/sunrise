@@ -245,15 +245,15 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     file: 'lib/orchestration/llm/circuit-breaker.ts',
     holders: ['breakers'],
     posture: 'shared-by-decision',
-    keyedBy: 'provider slug',
-    why: 'A breaker guards the upstream credential, which is a process environment variable today, so the slug IS the credential identity — the key gains the credential when §109 makes credentials per org, and until then a breaker opened by one org pauses all of them.',
+    keyedBy: 'provider slug and credential identity',
+    why: "A breaker guards the upstream credential, so it is keyed on (slug, credential identity) (§120 t-744): the bare slug for the install's shared credential, which every org using it shares by decision — a breaker that credential trips pauses all of them — and slug + identity for a credential a fork's resolver gives one org, whose failures pause only that org.",
   },
   {
     file: 'lib/orchestration/llm/in-flight-counter.ts',
     holders: ['counts'],
     posture: 'shared-by-decision',
-    keyedBy: 'provider slug',
-    why: 'A saturation gauge for the process against one upstream provider, read by the live-engine dashboard as "this worker\'s load"; the same §109 trigger as the breaker applies.',
+    keyedBy: 'provider slug and credential identity',
+    why: 'A saturation gauge for the process against one upstream credential, read by the live-engine dashboard as "this worker\'s load"; keyed like the breaker (§120 t-744), so a per-org credential is counted on its own.',
   },
   {
     file: 'lib/orchestration/maintenance/idle-gate.ts',
@@ -326,10 +326,10 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/llm/provider-manager.ts',
-    holders: ['instanceCache'],
-    posture: 'global-config',
-    keyedBy: 'provider slug or name',
-    why: 'Constructed provider instances from AiProviderConfig, a global-config model whose slugs are unique install-wide, with the API key coming from the environment rather than from a row (§109 changes both halves of that).',
+    holders: ['instanceCache', 'viewKeys'],
+    posture: 'shared-by-decision',
+    keyedBy: 'provider slug (rows), then credential identity (clients)',
+    why: "AiProviderConfig rows, a global-config model whose slugs are unique install-wide, each holding the clients built from it ONE PER CREDENTIAL IDENTITY (§120 t-744): the credential seam may give two orgs different keys for one row, so a client is never shared across identities, and an org only ever reaches the client for the identity the resolver gave it in its own context. Clients on the install's shared credential are shared by every org by decision. `viewKeys` maps each handed-out view to that (slug, identity) key, for the breaker.",
   },
   {
     file: 'lib/orchestration/llm/provider-selector.ts',
@@ -580,6 +580,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     holders: ['heuristic', 'openAiModern', 'openAiLegacy', 'anthropic', 'gemini', 'llama'],
     posture: 'no-tenant-data',
     why: 'Stateless tokeniser strategies, one instance each because constructing them is the only cost.',
+  },
+  {
+    file: 'lib/orchestration/llm/provider-credentials.ts',
+    holders: ['appResolver', 'registrationFailed', 'appInit'],
+    posture: 'global-config',
+    why: "The fork's one credential resolver and its init gate, registered from code. It holds no credential: a resolver is asked per call, in the caller's org context, and what it returns is cached by the provider manager under the credential's identity (§120 t-744).",
   },
   {
     file: 'lib/orchestration/maintenance/app-jobs.ts',
