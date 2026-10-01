@@ -96,7 +96,7 @@ release process.
   permitted only if the rule permits it under every `source`**, so a fork
   calling `getProvider` directly should pass a context. At `TENANCY_MODE=multi`
   a vendor call outside any org scope, or inside `runAsSystem`, is refused.
-  With no rule registered (the default), nothing changes.
+  At `single` with no rule registered (the default), nothing changes.
   `listModels` and `testConnection` are not gated. See
   [`llm-providers.md` → The call-time gate](./.context/orchestration/llm-providers.md#the-call-time-gate).
 

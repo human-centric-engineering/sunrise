@@ -58,12 +58,14 @@ Public getters on `CircuitBreaker`: `failureCount` (prunes window first), `curre
 
 ## Provider Fallback Chain
 
-`getProviderWithFallbacks(primarySlug, fallbackSlugs)` resolves a provider by checking circuit breakers in order:
+`getProviderWithFallbacks(primarySlug, fallbackSlugs, provenance?)` resolves a provider by checking circuit breakers in order:
 
 1. Build candidate list: `[primary, ...fallbacks]`
 2. For each: check `getBreaker(slug).canAttempt()`
-3. First passing candidate: resolve via `getProvider(slug)`, return `{ provider, usedSlug }`
+3. First passing candidate: resolve via `getProvider(slug, context)`, return `{ provider, usedSlug }`. `context` comes from `provenance` (the resolved binding's): the primary's for the first candidate, the fallbacks' for the rest, so the call-time provider gate tells the eligibility rule which it is.
 4. All breakers open or providers not found: throw `ProviderError('all_providers_exhausted')`
+
+A call the provider eligibility rule refuses (`ProviderCallRefusedError`, code `provider_not_permitted`) is a request fault, not a provider failure: chat does not fail over from it and no breaker records it. See [`llm-providers.md` → The call-time gate](./llm-providers.md#the-call-time-gate).
 
 Configure via `AiAgent.fallbackProviders` (Prisma `String[]`, max 5 entries, Zod-validated).
 
