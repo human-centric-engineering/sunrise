@@ -1,5 +1,15 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+// The org's provider policy (§120 t-743): approves everything unless a test
+// refuses a slug.
+const mockUnapprovedProviders = vi.hoisted(() =>
+  vi.fn(async (_slugs: readonly string[]): Promise<string[]> => [])
+);
+vi.mock('@/lib/orchestration/llm/org-provider-policy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-policy')>()),
+  unapprovedProviders: mockUnapprovedProviders,
+}));
+
 import type { WorkflowDefinition } from '@/types/orchestration';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
@@ -24,7 +34,10 @@ vi.mock('@/lib/orchestration/llm', () => ({
 
 // ─── Imports after mocks ────────────────────────────────────────────────────
 
-import { semanticValidateWorkflow } from '@/lib/orchestration/workflows/semantic-validator';
+import {
+  findUnapprovedModelOverrides,
+  semanticValidateWorkflow,
+} from '@/lib/orchestration/workflows/semantic-validator';
 import { prisma } from '@/lib/db/client';
 import { modelRegistry } from '@/lib/orchestration/llm';
 
@@ -278,5 +291,65 @@ describe('semanticValidateWorkflow', () => {
     expect(prisma.aiProviderConfig.findMany).not.toHaveBeenCalled();
     expect(prisma.aiCapability.findMany).not.toHaveBeenCalled();
     expect(prisma.aiAgent.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('org approval of a modelOverride provider (§120 t-743)', () => {
+  const sonnet = {
+    id: 'claude-sonnet-4-6',
+    provider: 'anthropic',
+    name: 'Claude Sonnet',
+    maxContext: 200000,
+    inputCostPerMillion: 3,
+    outputCostPerMillion: 15,
+    tier: 'frontier',
+    supportsTools: true,
+    available: true,
+  } as const;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUnapprovedProviders.mockImplementation(async () => []);
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([{ slug: 'anthropic' }] as never);
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([]);
+    vi.mocked(modelRegistry.getModel).mockReturnValue(sonnet);
+  });
+
+  it('returns PROVIDER_NOT_APPROVED for each step overriding to a non-approved provider', async () => {
+    mockUnapprovedProviders.mockImplementation(async (slugs) =>
+      slugs.filter((slug) => slug === 'anthropic')
+    );
+
+    const result = await semanticValidateWorkflow(
+      makeDef([llmStep('s1', 'claude-sonnet-4-6'), llmStep('s2', 'claude-sonnet-4-6')])
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.map((e) => [e.code, e.stepId])).toEqual([
+      ['PROVIDER_NOT_APPROVED', 's1'],
+      ['PROVIDER_NOT_APPROVED', 's2'],
+    ]);
+  });
+
+  it('passes an approved provider', async () => {
+    const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'claude-sonnet-4-6')]));
+    expect(result.errors).toEqual([]);
+    expect(mockUnapprovedProviders).toHaveBeenCalledWith(['anthropic']);
+  });
+
+  it('skips the approval check, logged, when the policy cannot be read — the call-time gate still refuses', async () => {
+    mockUnapprovedProviders.mockRejectedValue(new Error('connection reset'));
+
+    const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'claude-sonnet-4-6')]));
+
+    expect(result.errors).toEqual([]);
+  });
+
+  it('leaves an unknown model to UNKNOWN_MODEL_OVERRIDE rather than asking about it', async () => {
+    vi.mocked(modelRegistry.getModel).mockReturnValue(undefined);
+
+    expect(await findUnapprovedModelOverrides(makeDef([llmStep('s1', 'nope')]))).toEqual([]);
+    expect(mockUnapprovedProviders).toHaveBeenCalledWith([]);
   });
 });

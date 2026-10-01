@@ -8,6 +8,16 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// The org's provider policy (§120 t-743): approves everything unless a test
+// refuses a slug.
+const mockUnapprovedProviders = vi.hoisted(() =>
+  vi.fn(async (_slugs: readonly string[]): Promise<string[]> => [])
+);
+vi.mock('@/lib/orchestration/llm/org-provider-policy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-policy')>()),
+  unapprovedProviders: mockUnapprovedProviders,
+}));
 import { NextRequest } from 'next/server';
 import { GET, POST } from '@/app/api/v1/admin/orchestration/workflows/route';
 import {
@@ -342,5 +352,54 @@ describe('POST /api/v1/admin/orchestration/workflows', () => {
       const data = await parseJson(response);
       expect(data).toMatchObject({ success: false, error: { code: 'CONFLICT' } });
     });
+  });
+});
+
+describe('POST /api/v1/admin/orchestration/workflows — approved providers (§120 t-743)', () => {
+  // A registry model, so the override resolves to a provider.
+  const withOverride = {
+    ...VALID_WORKFLOW,
+    workflowDefinition: {
+      ...VALID_DEFINITION,
+      steps: [
+        {
+          ...VALID_DEFINITION.steps[0],
+          config: { prompt: 'Hello', modelOverride: 'claude-sonnet-4-6' },
+        },
+      ],
+    },
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUnapprovedProviders.mockImplementation(async () => []);
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('refuses a step overriding to a model whose provider the org is not approved for', async () => {
+    mockUnapprovedProviders.mockImplementation(async (slugs) =>
+      slugs.filter((slug) => slug === 'anthropic')
+    );
+
+    const response = await POST(makePostRequest(withOverride));
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { message: string; details: { definition: string[] } } }>(
+      response
+    );
+    expect(body.error.message).toContain('not approved');
+    expect(body.error.details.definition).toEqual([
+      expect.stringContaining(
+        'Step "step-1" references model "claude-sonnet-4-6", whose provider "anthropic"'
+      ),
+    ]);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("asks about the override model's provider, and creates the workflow when it is approved", async () => {
+    await POST(makePostRequest(withOverride));
+
+    expect(mockUnapprovedProviders).toHaveBeenCalledWith(['anthropic']);
+    expect(prisma.$transaction).toHaveBeenCalled();
   });
 });

@@ -12,6 +12,23 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// The org's provider policy (§120 t-743): approves everything unless a test
+// refuses a slug. Hoisted, so it applies however the route is imported.
+const mockUnapprovedProviders = vi.hoisted(() =>
+  vi.fn(async (_slugs: readonly string[]): Promise<string[]> => [])
+);
+vi.mock('@/lib/orchestration/llm/org-provider-policy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-policy')>()),
+  unapprovedProviders: mockUnapprovedProviders,
+}));
+
+/** Refuse exactly these slugs, as an org with no grant for them would. */
+function refuse(...barred: string[]) {
+  mockUnapprovedProviders.mockImplementation(async (slugs) =>
+    slugs.filter((slug) => barred.includes(slug))
+  );
+}
 import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/v1/admin/orchestration/agents/import/route';
 import {
@@ -627,5 +644,43 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
 
       expect(response.status).toBe(400);
     });
+  });
+});
+
+describe('POST /api/v1/admin/orchestration/agents/import — approved providers (§120 t-743)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUnapprovedProviders.mockImplementation(async () => []);
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('imports an agent naming a non-approved provider, and warns that its calls will be refused', async () => {
+    refuse('anthropic');
+    const tx = getTxMock();
+    tx.aiAgent.findFirst.mockResolvedValue(null);
+
+    const response = await POST(
+      makeRequest({ bundle: makeBundle([makeBundledAgent('stranded')]) })
+    );
+
+    expect(response.status).toBe(200);
+    const data = await parseJson<{ data: { imported: number; warnings: string[] } }>(response);
+    expect(data.data.imported).toBe(1);
+    expect(tx.aiAgent.create).toHaveBeenCalledTimes(1);
+    expect(data.data.warnings).toEqual([
+      expect.stringContaining(
+        'Agent \'stranded\': imported, but this organisation is not approved to use "anthropic"'
+      ),
+    ]);
+  });
+
+  it('warns about nothing when every provider is approved', async () => {
+    const tx = getTxMock();
+    tx.aiAgent.findFirst.mockResolvedValue(null);
+
+    const response = await POST(makeRequest({ bundle: makeBundle([makeBundledAgent('fine')]) }));
+
+    const data = await parseJson<{ data: { warnings: string[] } }>(response);
+    expect(data.data.warnings).toEqual([]);
   });
 });

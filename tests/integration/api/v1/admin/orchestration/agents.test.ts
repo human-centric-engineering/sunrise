@@ -8,6 +8,23 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// The org's provider policy (§120 t-743): approves everything unless a test
+// refuses a slug. Hoisted, so it applies however the route is imported.
+const mockUnapprovedProviders = vi.hoisted(() =>
+  vi.fn(async (_slugs: readonly string[]): Promise<string[]> => [])
+);
+vi.mock('@/lib/orchestration/llm/org-provider-policy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-policy')>()),
+  unapprovedProviders: mockUnapprovedProviders,
+}));
+
+/** Refuse exactly these slugs, as an org with no grant for them would. */
+function refuse(...barred: string[]) {
+  mockUnapprovedProviders.mockImplementation(async (slugs) =>
+    slugs.filter((slug) => barred.includes(slug))
+  );
+}
 import { NextRequest } from 'next/server';
 import { GET, POST } from '@/app/api/v1/admin/orchestration/agents/route';
 import {
@@ -514,5 +531,56 @@ describe('POST /api/v1/admin/orchestration/agents', () => {
       const data = await parseJson(response);
       expect(data).toMatchObject({ success: false, error: { code: 'CONFLICT' } });
     });
+  });
+});
+
+describe('POST /api/v1/admin/orchestration/agents — approved providers (§120 t-743)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUnapprovedProviders.mockImplementation(async () => []);
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('refuses a provider the org is not approved for, naming it, and creates nothing', async () => {
+    refuse('openai');
+
+    const response = await POST(makePostRequest({ ...VALID_AGENT, provider: 'openai' }));
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{
+      error: { code: string; message: string; details: Record<string, unknown> };
+    }>(response);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(body.error.message).toContain('"openai"');
+    expect(body.error.details).toMatchObject({
+      unapprovedProviders: ['openai'],
+      errors: [{ path: 'provider' }],
+    });
+    expect(prisma.aiAgent.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses a fallback the org is not approved for, on the fallback field', async () => {
+    refuse('voyage');
+
+    const response = await POST(
+      makePostRequest({ ...VALID_AGENT, fallbackProviders: ['openai', 'voyage'] })
+    );
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { details: Record<string, unknown> } }>(response);
+    expect(body.error.details).toMatchObject({
+      unapprovedProviders: ['voyage'],
+      errors: [{ path: 'fallbackProviders' }],
+    });
+    expect(prisma.aiAgent.create).not.toHaveBeenCalled();
+  });
+
+  it('creates the agent when every provider is approved', async () => {
+    vi.mocked(prisma.aiAgent.create).mockResolvedValue(makeAgent() as never);
+
+    const response = await POST(makePostRequest({ ...VALID_AGENT, fallbackProviders: ['openai'] }));
+
+    expect(response.status).toBe(201);
+    expect(mockUnapprovedProviders).toHaveBeenCalledWith([VALID_AGENT.provider, 'openai']);
   });
 });

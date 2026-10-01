@@ -126,14 +126,15 @@ Lives in `lib/orchestration/workflows/semantic-validator.ts`. Requires Prisma + 
 
 ### Semantic error codes
 
-| `code`                   | `stepId` | Meaning                                                       |
-| ------------------------ | -------- | ------------------------------------------------------------- |
-| `UNKNOWN_MODEL_OVERRIDE` | yes      | Step references a model not in the registry                   |
-| `INACTIVE_PROVIDER`      | yes      | Step's model override belongs to an inactive provider         |
-| `INACTIVE_CAPABILITY`    | yes      | `tool_call` step references an inactive or unknown capability |
-| `INACTIVE_AGENT`         | yes      | `agent_call` step references an inactive or unknown agent     |
+| `code`                   | `stepId` | Meaning                                                                             |
+| ------------------------ | -------- | ----------------------------------------------------------------------------------- |
+| `UNKNOWN_MODEL_OVERRIDE` | yes      | Step references a model not in the registry                                         |
+| `INACTIVE_PROVIDER`      | yes      | Step's model override belongs to an inactive provider                               |
+| `PROVIDER_NOT_APPROVED`  | yes      | At `multi`, the override's provider is not one the org is approved for (§120 t-743) |
+| `INACTIVE_CAPABILITY`    | yes      | `tool_call` step references an inactive or unknown capability                       |
+| `INACTIVE_AGENT`         | yes      | `agent_call` step references an inactive or unknown agent                           |
 
-The `/validate` and `/dry-run` endpoints run both structural and semantic validation. The workflow builder UI currently runs structural checks only (semantic checks require DB access).
+The `/validate` and `/dry-run` endpoints run both structural and semantic validation. Creating a workflow publishes v1 without the semantic checks, except `PROVIDER_NOT_APPROVED`, which `POST /workflows` refuses with a 400. If the org's provider policy cannot be read, the approval check is skipped and logged, as the other semantic checks are when their queries fail; the call-time gate still refuses every call such a step makes. The workflow builder UI currently runs structural checks only (semantic checks require DB access).
 
 ## Consumers
 

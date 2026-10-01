@@ -18,6 +18,23 @@
  */
 
 import { afterEach, describe, it, expect, beforeEach, vi } from 'vitest';
+
+// The org's provider policy (§120 t-743): approves everything unless a test
+// refuses a slug. Hoisted, so it applies however the route is imported.
+const mockUnapprovedProviders = vi.hoisted(() =>
+  vi.fn(async (_slugs: readonly string[]): Promise<string[]> => [])
+);
+vi.mock('@/lib/orchestration/llm/org-provider-policy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-policy')>()),
+  unapprovedProviders: mockUnapprovedProviders,
+}));
+
+/** Refuse exactly these slugs, as an org with no grant for them would. */
+function refuse(...barred: string[]) {
+  mockUnapprovedProviders.mockImplementation(async (slugs) =>
+    slugs.filter((slug) => barred.includes(slug))
+  );
+}
 import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/v1/admin/orchestration/agents/[id]/clone/route';
 import {
@@ -726,5 +743,36 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
         customRateLimit: null,
       });
     });
+  });
+});
+
+describe('POST /api/v1/admin/orchestration/agents/:id/clone — approved providers (§120 t-743)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUnapprovedProviders.mockImplementation(async () => []);
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  });
+
+  it('refuses to clone an agent whose provider the org is not approved for', async () => {
+    refuse('anthropic');
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeSourceAgent() as never);
+
+    const response = await POST(makePostRequest(), makeParams(AGENT_ID));
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { details: Record<string, unknown> } }>(response);
+    expect(body.error.details).toMatchObject({ unapprovedProviders: ['anthropic'] });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('checks every provider the clone copies, fallbacks included', async () => {
+    vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue({
+      ...makeSourceAgent(),
+      fallbackProviders: ['openai'],
+    } as never);
+
+    await POST(makePostRequest(), makeParams(AGENT_ID));
+
+    expect(mockUnapprovedProviders).toHaveBeenCalledWith(['anthropic', 'openai']);
   });
 });

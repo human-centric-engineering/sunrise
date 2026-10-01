@@ -11,6 +11,16 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// The org's provider policy (§120 t-743): approves everything unless a test
+// refuses a slug.
+const mockUnapprovedProviders = vi.hoisted(() =>
+  vi.fn(async (_slugs: readonly string[]): Promise<string[]> => [])
+);
+vi.mock('@/lib/orchestration/llm/org-provider-policy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-policy')>()),
+  unapprovedProviders: mockUnapprovedProviders,
+}));
+
 // ─── Mocks (declared before imports) ────────────────────────────────────────
 
 const mockTx = {
@@ -228,6 +238,23 @@ describe('importOrchestrationConfig', () => {
     expect(mockTx.aiAgent.create).toHaveBeenCalledOnce();
     const createData = mockTx.aiAgent.create.mock.calls[0][0].data as Record<string, unknown>;
     expect(createData).not.toHaveProperty('knowledgeCategories');
+  });
+
+  it('imports an agent naming a non-approved provider and warns, rather than skipping it (§120 t-743)', async () => {
+    mockUnapprovedProviders.mockImplementationOnce(async (slugs) =>
+      slugs.filter((slug) => slug === 'openai')
+    );
+    mockTx.aiAgent.findFirst.mockResolvedValue(null);
+    mockTx.aiAgent.create.mockResolvedValue({});
+
+    const payload = { ...minPayload, data: { ...minPayload.data, agents: [makeAgent()] } };
+    const result = await importOrchestrationConfig(payload, 'user-1');
+
+    expect(result.agents.created).toBe(1);
+    expect(mockTx.aiAgent.create).toHaveBeenCalledOnce();
+    expect(result.warnings).toContain(
+      'Agent \'support-bot\': imported, but this organisation is not approved to use "openai" — its calls are refused until a platform admin grants it'
+    );
   });
 
   it('updates existing agent when record already exists → agents.updated = 1', async () => {
