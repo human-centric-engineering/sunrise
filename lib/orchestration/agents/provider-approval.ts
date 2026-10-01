@@ -21,6 +21,7 @@
  */
 
 import { ValidationError } from '@/lib/api/errors';
+import { logger } from '@/lib/logging';
 import { unapprovedProviders } from '@/lib/orchestration/llm/org-provider-policy';
 
 /** The provider fields of an agent, as a write sets them. */
@@ -38,15 +39,20 @@ export interface UnapprovedAgentProviders {
 /**
  * The providers `next` introduces that the org in context is not approved
  * for. A field `next` leaves undefined is not being written and is not checked;
- * a value `current` already holds is not new.
+ * a provider `current` already holds, as primary or fallback, is not new.
  */
 export async function findUnapprovedAgentProviders(
   next: AgentProviderFields,
   current: AgentProviderFields = {}
 ): Promise<UnapprovedAgentProviders> {
+  // Held means anywhere on the agent now: keeping a revoked primary as a
+  // fallback, or promoting a fallback to primary, introduces nothing.
+  const held = new Set([
+    ...(current.provider ? [current.provider] : []),
+    ...(current.fallbackProviders ?? []),
+  ]);
   const provider =
-    typeof next.provider === 'string' && next.provider !== current.provider ? [next.provider] : [];
-  const held = new Set(current.fallbackProviders ?? []);
+    typeof next.provider === 'string' && !held.has(next.provider) ? [next.provider] : [];
   const fallbackProviders = (next.fallbackProviders ?? []).filter((slug) => !held.has(slug));
 
   const refused = new Set(await unapprovedProviders([...provider, ...fallbackProviders]));
@@ -88,28 +94,61 @@ export async function assertAgentProvidersApproved(
   throw new ValidationError(reason(slugs), { errors, unapprovedProviders: slugs });
 }
 
+/** The agent fields an import reports on. */
+export interface ImportedAgentProviders extends AgentProviderFields {
+  slug: string;
+}
+
 /**
- * For the import paths: the warning to report when an imported agent names a
- * provider its org is not approved for, or `null` when it names none.
+ * For the import paths: a warning per imported agent that names a provider its
+ * org is not approved for, keyed by agent slug.
  *
  * Imports do not refuse such an agent; they import it and say so. An import
  * restores a configuration wholesale, and skipping one agent would silently
  * drop what other imported rows — a workflow's `agent_call`, say — point at.
  * The call-time gate refuses every call the agent makes until the org is
  * granted the provider, and the warning tells the importer why.
+ *
+ * Asked ONCE for the whole import, before its transaction opens, so the policy
+ * read neither holds the transaction's connection nor runs per agent. Every
+ * provider an agent names is reported, not only what differs from a row it
+ * overwrites: the importer wants to know the agent will be refused.
+ *
+ * A policy that cannot be read does not fail the import — this is a warning,
+ * not a gate — and is reported as one general warning instead.
  */
-export async function unapprovedAgentProvidersWarning(
-  slug: string,
-  imported: AgentProviderFields
-): Promise<string | null> {
-  // Everything the imported agent names, not only what differs from a row it
-  // overwrites: the importer wants to know the agent will be refused, whether
-  // or not it was before.
-  const names = unapprovedSlugs(await findUnapprovedAgentProviders(imported));
-  if (names.length === 0) return null;
-  return (
-    `Agent '${slug}': imported, but this organisation is not approved to use ` +
-    `${names.map((name) => `"${name}"`).join(', ')} — its calls are refused until a platform admin grants ` +
-    `${names.length === 1 ? 'it' : 'them'}`
-  );
+export async function importedAgentProviderWarnings(
+  agents: readonly ImportedAgentProviders[]
+): Promise<{ bySlug: Map<string, string>; unchecked: string | null }> {
+  const bySlug = new Map<string, string>();
+  let refused: Set<string>;
+  try {
+    refused = new Set(
+      await unapprovedProviders(
+        agents.flatMap((agent) => [agent.provider ?? '', ...(agent.fallbackProviders ?? [])])
+      )
+    );
+  } catch (error) {
+    logger.error('Import could not check agents against the org provider policy', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {
+      bySlug,
+      unchecked:
+        "Agents were imported without checking their providers against this organisation's approved providers, which could not be read",
+    };
+  }
+  for (const agent of agents) {
+    const names = [...new Set([agent.provider ?? '', ...(agent.fallbackProviders ?? [])])].filter(
+      (slug) => refused.has(slug)
+    );
+    if (names.length === 0) continue;
+    bySlug.set(
+      agent.slug,
+      `Agent '${agent.slug}': imported, but this organisation is not approved to use ` +
+        `${names.map((name) => `"${name}"`).join(', ')} — its calls are refused until a platform admin grants ` +
+        `${names.length === 1 ? 'it' : 'them'}`
+    );
+  }
+  return { bySlug, unchecked: null };
 }

@@ -94,7 +94,7 @@ Response 200:
 - Webhooks: **created only** if no identical URL already exists; otherwise skipped with a warning
 - Settings: **fully replaced** with backup values if present
 - Webhook secrets: always skipped (secret fields are never exported); import adds a warning
-- Agents naming a provider the org is not approved for (at `TENANCY_MODE=multi`): **imported, with a warning** naming the agent and the providers (§120 t-743). Not skipped: skipping would drop an agent other imported rows may reference, and the call-time gate refuses its calls until the org is granted the provider. `POST /agents/import` does the same.
+- Agents naming a provider the org is not approved for (at `TENANCY_MODE=multi`): **imported, with a warning** naming the agent and the providers (§120 t-743). Not skipped: skipping would drop an agent other imported rows may reference, and the call-time gate refuses its calls until the org is granted the provider. `POST /agents/import` does the same. Workflows whose steps override to such a provider are imported with a warning naming the steps. The check runs once, before the import's transaction; if the org's provider policy cannot be read, the import goes ahead with one general warning saying the check did not run.
 
 ### `ImportResult` shape
 

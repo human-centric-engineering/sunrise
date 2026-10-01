@@ -159,13 +159,17 @@ release process.
   `details.unapprovedProviders` and a per-field `details.errors` entry; only
   providers the write introduces are checked, so a stranded agent can still
   be edited. A workflow step `modelOverride` whose provider is not approved is
-  a new semantic error, `PROVIDER_NOT_APPROVED`, refused on create and on
-  publish. Bundle and backup import keep such an agent and add a warning. New
-  helpers: `unapprovedProviders` in `org-provider-policy.ts`,
-  `lib/orchestration/agents/provider-approval.ts`, and
+  a new semantic error, `PROVIDER_NOT_APPROVED`, refused on create, publish,
+  rollback and `/validate` (publish and rollback only for a provider the new
+  version introduces), not at execution. `semanticValidateWorkflow` takes a new
+  optional `{ approval: { held } }` argument for it, and now also checks
+  `supervisor` steps' overrides. Bundle and backup import keep such agents
+  and workflows and add a warning. New helpers: `unapprovedProviders` in
+  `org-provider-policy.ts`, `lib/orchestration/agents/provider-approval.ts`, and
   `findUnapprovedModelOverrides` in `semantic-validator.ts`. At `single`
   nothing changes. See
   [`llm-providers.md`](./.context/orchestration/llm-providers.md).
+
 ### Changed
 
 - **At `TENANCY_MODE=multi`, an org other than the install org can no longer

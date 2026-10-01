@@ -36,7 +36,7 @@ import { ValidationError } from '@/lib/api/errors';
 import {
   assertAgentProvidersApproved,
   findUnapprovedAgentProviders,
-  unapprovedAgentProvidersWarning,
+  importedAgentProviderWarnings,
 } from '@/lib/orchestration/agents/provider-approval';
 import {
   forgetOrgProviderPolicy,
@@ -97,12 +97,21 @@ describe('findUnapprovedAgentProviders', () => {
   it('checks only what a write introduces', async () => {
     const found = await inOrg(() =>
       findUnapprovedAgentProviders(
-        { provider: 'openai', fallbackProviders: ['voyage', 'openai'] },
-        // Already held: the provider, and one fallback.
-        { provider: 'openai', fallbackProviders: ['voyage'] }
+        { provider: 'openai', fallbackProviders: ['openai', 'voyage'] },
+        // Held: the primary. The fallback `voyage` is new.
+        { provider: 'openai', fallbackProviders: [] }
       )
     );
-    expect(found).toEqual({ provider: [], fallbackProviders: ['openai'] });
+    expect(found).toEqual({ provider: [], fallbackProviders: ['voyage'] });
+  });
+
+  it('counts a held primary as held: keeping it as a fallback, or swapping the two, introduces nothing', async () => {
+    const current = { provider: 'openai', fallbackProviders: ['voyage'] };
+    expect(
+      await inOrg(() =>
+        findUnapprovedAgentProviders({ provider: 'voyage', fallbackProviders: ['openai'] }, current)
+      )
+    ).toEqual({ provider: [], fallbackProviders: [] });
   });
 
   it('checks nothing for a field the write leaves out', async () => {
@@ -140,23 +149,43 @@ describe('assertAgentProvidersApproved', () => {
   });
 });
 
-describe('unapprovedAgentProvidersWarning', () => {
-  it('names the agent and every non-approved provider it names', async () => {
-    expect(
-      await inOrg(() =>
-        unapprovedAgentProvidersWarning('support', {
-          provider: 'openai',
-          fallbackProviders: ['anthropic', 'voyage'],
-        })
-      )
-    ).toBe(
-      'Agent \'support\': imported, but this organisation is not approved to use "openai", "voyage" — its calls are refused until a platform admin grants them'
+describe('importedAgentProviderWarnings', () => {
+  it('warns per agent, naming every non-approved provider it names', async () => {
+    const { bySlug, unchecked } = await inOrg(() =>
+      importedAgentProviderWarnings([
+        { slug: 'support', provider: 'openai', fallbackProviders: ['anthropic', 'voyage'] },
+        { slug: 'fine', provider: 'anthropic' },
+      ])
     );
+
+    expect(unchecked).toBeNull();
+    expect([...bySlug.entries()]).toEqual([
+      [
+        'support',
+        'Agent \'support\': imported, but this organisation is not approved to use "openai", "voyage" — its calls are refused until a platform admin grants them',
+      ],
+    ]);
   });
 
-  it('is null when everything is approved', async () => {
-    expect(
-      await inOrg(() => unapprovedAgentProvidersWarning('support', { provider: 'anthropic' }))
-    ).toBeNull();
+  it('reads the policy once for the whole import', async () => {
+    await inOrg(() =>
+      importedAgentProviderWarnings([
+        { slug: 'a', provider: 'openai' },
+        { slug: 'b', provider: 'voyage' },
+      ])
+    );
+    expect(prisma.org.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.aiProviderConfig.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports an unreadable policy as one warning, without failing the import', async () => {
+    vi.mocked(prisma.org.findUnique).mockRejectedValue(new Error('connection reset'));
+
+    const { bySlug, unchecked } = await inOrg(() =>
+      importedAgentProviderWarnings([{ slug: 'a', provider: 'openai' }])
+    );
+
+    expect(bySlug.size).toBe(0);
+    expect(unchecked).toContain('could not be read');
   });
 });

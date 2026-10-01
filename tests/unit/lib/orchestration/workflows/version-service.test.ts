@@ -655,3 +655,71 @@ describe('getVersion', () => {
     await expect(getVersion(WORKFLOW_ID, 999)).rejects.toBeInstanceOf(NotFoundError);
   });
 });
+
+describe('org provider approval on publish and rollback (§120 t-743)', () => {
+  it('asks with the published version as held, so only overrides the draft introduces are checked', async () => {
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+      makeWorkflow({ draftDefinition: ALT_DEF, publishedVersionId: VERSION_ID_V1 }) as never
+    );
+    vi.mocked(prisma.aiWorkflowVersion.findUnique).mockResolvedValue({
+      snapshot: VALID_DEF,
+    } as never);
+
+    await publishDraft({ workflowId: WORKFLOW_ID, userId: ADMIN_ID }).catch(() => undefined);
+
+    expect(prisma.aiWorkflowVersion.findUnique).toHaveBeenCalledWith({
+      where: { id: VERSION_ID_V1 },
+      select: { snapshot: true },
+    });
+    expect(semanticValidateWorkflow).toHaveBeenCalledWith(ALT_DEF, {
+      approval: { held: VALID_DEF },
+    });
+  });
+
+  it('asks with nothing held when the workflow has no published version', async () => {
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+      makeWorkflow({ draftDefinition: ALT_DEF, publishedVersionId: null }) as never
+    );
+
+    await publishDraft({ workflowId: WORKFLOW_ID, userId: ADMIN_ID }).catch(() => undefined);
+
+    expect(semanticValidateWorkflow).toHaveBeenCalledWith(ALT_DEF, { approval: { held: null } });
+  });
+
+  it('refuses the publish when the approval check refuses a step', async () => {
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+      makeWorkflow({ draftDefinition: ALT_DEF }) as never
+    );
+    vi.mocked(prisma.aiWorkflowVersion.findUnique).mockResolvedValue(null);
+    vi.mocked(semanticValidateWorkflow).mockResolvedValueOnce({
+      ok: false,
+      errors: [{ code: 'PROVIDER_NOT_APPROVED', message: 'not approved', stepId: 's1' }],
+    });
+
+    await expect(
+      publishDraft({ workflowId: WORKFLOW_ID, userId: ADMIN_ID })
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rolls back against the current published version as held', async () => {
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(
+      makeWorkflow({ publishedVersionId: VERSION_ID_V2 }) as never
+    );
+    vi.mocked(prisma.aiWorkflowVersion.findUnique)
+      // The rollback target.
+      .mockResolvedValueOnce(makeVersion({ snapshot: ALT_DEF }) as never)
+      // The published version it replaces.
+      .mockResolvedValueOnce({ snapshot: VALID_DEF } as never);
+
+    await rollback({
+      workflowId: WORKFLOW_ID,
+      targetVersionId: VERSION_ID_V1,
+      userId: ADMIN_ID,
+    }).catch(() => undefined);
+
+    expect(semanticValidateWorkflow).toHaveBeenCalledWith(ALT_DEF, {
+      approval: { held: VALID_DEF },
+    });
+  });
+});

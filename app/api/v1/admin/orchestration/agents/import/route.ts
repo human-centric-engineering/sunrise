@@ -43,7 +43,7 @@ import {
   reservedAgentSlugMessage,
 } from '@/lib/orchestration/agents/platform-agent-guard';
 import { ValidationError } from '@/lib/api/errors';
-import { unapprovedAgentProvidersWarning } from '@/lib/orchestration/agents/provider-approval';
+import { importedAgentProviderWarnings } from '@/lib/orchestration/agents/provider-approval';
 
 type ImportResults = {
   imported: number;
@@ -117,6 +117,12 @@ export const POST = withAdminAuth(async (request, session) => {
     skipped: 0,
     warnings: [],
   };
+
+  // At multi, an agent naming a provider the org is not approved for is
+  // imported and flagged (§120 t-743). Asked once, before the transaction, so
+  // the policy read neither holds its connection nor fails the import.
+  const agentProviders = await importedAgentProviderWarnings(bundle.agents);
+  if (agentProviders.unchecked) results.warnings.push(agentProviders.unchecked);
 
   await prisma.$transaction(async (tx) => {
     for (const bundled of bundle.agents) {
@@ -199,9 +205,8 @@ export const POST = withAdminAuth(async (request, session) => {
         documentIds.push(resolved);
       }
 
-      // Imported and flagged, not refused (§120 t-743): see
-      // unapprovedAgentProvidersWarning for why an import does not skip it.
-      const unapproved = await unapprovedAgentProvidersWarning(bundled.slug, bundled);
+      // Imported and flagged, not refused (§120 t-743).
+      const unapproved = agentProviders.bySlug.get(bundled.slug);
       if (unapproved) results.warnings.push(unapproved);
 
       const agentData = {

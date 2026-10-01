@@ -736,14 +736,15 @@ either. It refuses the call, which is the difference.
 The enforcement for an explicit choice is at the point of **choosing**, and at
 `multi` it is in place for every route that saves one (§120 t-743):
 
-| Write                                                                        | At `multi`, naming a provider the org is not approved for                                                   |
-| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Agent create, update, clone, version restore                                 | **Refused**, 400 `VALIDATION_ERROR`, `details.unapprovedProviders` and a per-field `details.errors` entry   |
-| Agent bundle import, backup import                                           | **Imported, with a warning** naming the agent and providers — skipping would drop what other rows reference |
-| Workflow step `modelOverride` (create, publish, rollback, validate, dry-run) | **Refused**, semantic error `PROVIDER_NOT_APPROVED`                                                         |
+| Write                                                               | At `multi`, naming a provider the org is not approved for                                                                                                                                                             |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agent create, update, clone, version restore                        | **Refused**, 400 `VALIDATION_ERROR`, `details.unapprovedProviders` and a per-field `details.errors` entry                                                                                                             |
+| Agent bundle import, backup import                                  | **Imported, with a warning** naming the agent and providers — skipping would drop what other rows reference                                                                                                           |
+| Workflow step `modelOverride` (create, publish, rollback, validate) | **Refused**, semantic error `PROVIDER_NOT_APPROVED`; publish and rollback only for a provider the new version introduces. Not at execution or dry-run, where the gate refuses the step and its error strategy applies |
+| Workflows in a backup import                                        | **Imported, with a warning** naming the steps                                                                                                                                                                         |
 
-Only what a write **introduces** is checked: a provider an agent already holds
-is not re-checked, so an agent stranded by a later policy change can still be
+Only what a write **introduces** is checked: a provider an agent already holds,
+as primary or fallback, is not re-checked, so an agent stranded by a later policy change can still be
 edited. The check is core's org policy (`unapprovedProviders` in
 `org-provider-policy.ts`), not a fork's eligibility rule, which answers per
 call and may depend on a backend a save should not wait on. At `single`, and
