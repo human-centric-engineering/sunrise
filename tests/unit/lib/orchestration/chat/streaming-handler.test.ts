@@ -215,6 +215,7 @@ const { streamChat } = await import('@/lib/orchestration/chat/streaming-handler'
 const { CostOperation } = await import('@/types/orchestration');
 const { getBreaker } = await import('@/lib/orchestration/llm/circuit-breaker');
 const { ProviderError } = await import('@/lib/orchestration/llm/provider');
+const { ProviderCallRefusedError } = await import('@/lib/orchestration/llm/provider-eligibility');
 const { scanForInjection } = await import('@/lib/orchestration/chat/input-guard');
 const { registerGuardFloorContributor, __resetGuardFloorContributorsForTests } =
   await import('@/lib/orchestration/chat/guard-floor');
@@ -2267,6 +2268,53 @@ describe('StreamingChatHandler', () => {
       // And wipes whatever fragment was streamed, so the live view agrees
       // with the error marker a reload will show.
       expect(typed.some((e) => e.type === 'content_reset' && e.reason === 'request_fault')).toBe(
+        true
+      );
+    });
+
+    it('does not fail over or trip the breaker when the call-time gate refuses the provider', async () => {
+      // §120 t-741. A refusal is the deployment's policy, not the provider's
+      // health: failing over to the next provider is the reroute the gate
+      // exists to rule out, and a breaker failure would let one org's policy
+      // open the circuit for every org on that slug.
+      const refusedProvider = {
+        name: 'refused',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderCallRefusedError('anthropic');
+        }),
+      };
+      const fallbackProvider = mockProvider([
+        [
+          { type: 'text', content: 'OK' },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+        ],
+      ]);
+
+      const mockBreaker = { recordSuccess: vi.fn(), recordFailure: vi.fn() };
+      (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue(mockBreaker);
+
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai'] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: refusedProvider,
+        usedSlug: 'anthropic',
+      });
+      (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(fallbackProvider);
+
+      const events = await collect(streamChat(baseRequest));
+
+      const typed = events as Array<{ type: string; code?: string }>;
+      expect(mockBreaker.recordFailure).not.toHaveBeenCalled();
+      expect(getProvider).not.toHaveBeenCalled();
+      expect(fallbackProvider.chatStream).not.toHaveBeenCalled();
+      expect(typed.some((e) => e.type === 'error' && e.code === 'provider_not_permitted')).toBe(
         true
       );
     });
