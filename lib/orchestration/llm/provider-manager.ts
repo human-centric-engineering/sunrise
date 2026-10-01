@@ -269,9 +269,10 @@ async function acquireProvider(slugOrName: string, context: CallOrigin): Promise
 /**
  * How the in-flight Proxy treats one method on the provider surface.
  *
- *  - `'track'` — a single-shot vendor call; wrapped in `track(slug, …)`.
+ *  - `'track'` — a single-shot vendor call; wrapped in `track(key, …)`, where
+ *    `key` is `credentialKey(slug, identity)` (§120 t-744).
  *  - `'trackStream'` — a vendor call returning an `AsyncIterable`; wrapped in
- *    `trackStream(slug, …)`, which holds the count until the stream settles.
+ *    `trackStream(key, …)`, which holds the count until the stream settles.
  *  - `'passthrough'` — reaches the vendor but is deliberately NOT counted:
  *    short admin-metadata calls that are not part of the runtime workload the
  *    dashboard measures. Listing them is not a formality — it is the
@@ -389,7 +390,8 @@ function dispositionOf(prop: string): MethodDisposition | undefined {
 
 /**
  * Wrap a freshly-built provider so its vendor calls are refused when the
- * eligibility rule says so, accounted in the in-flight counter under `slug`,
+ * eligibility rule says so, accounted in the in-flight counter under
+ * `stateKey` (the slug, or slug + credential identity),
  * and so no unclassified method on the instance can reach a vendor unnoticed.
  *
  * Uses a `Proxy` so the returned value preserves the original prototype —
