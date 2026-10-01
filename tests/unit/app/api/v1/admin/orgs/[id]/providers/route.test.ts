@@ -189,7 +189,7 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
   });
 
   it('writes an audit row with the policy before and after, and who changed it', async () => {
-    await put({ approved: ['openai'] });
+    await put({ approved: ['openai'], jurisdictions: null });
 
     expect(mockLogAdminAction).toHaveBeenCalledTimes(1);
     expect(mockLogAdminAction).toHaveBeenCalledWith(
@@ -207,7 +207,7 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
   });
 
   it("drops this process's cached policy for the org, so a revocation applies at once", async () => {
-    await put({ approved: [] });
+    await put({ approved: [], jurisdictions: null });
     expect(mockForgetOrgProviderPolicy).toHaveBeenCalledWith(OTHER);
   });
 
@@ -220,7 +220,7 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
       })
     );
 
-    const res = await put({ approved: ['openai'] });
+    const res = await put({ approved: ['openai'], jurisdictions: null });
 
     expect(res.status).toBe(409);
     expect((await json(res)).error?.code).toBe('CONFLICT');
@@ -230,16 +230,16 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
 
   it('lets any other write failure through as a 500', async () => {
     mockPrisma.$transaction.mockRejectedValueOnce(new Error('connection reset'));
-    expect((await put({ approved: ['openai'] })).status).toBe(500);
+    expect((await put({ approved: ['openai'], jurisdictions: null })).status).toBe(500);
   });
 
   it('revokes every grant with an empty set', async () => {
-    const res = await put({ approved: [] });
+    const res = await put({ approved: [], jurisdictions: null });
     expect((await json(res)).data).toMatchObject({ approved: [] });
   });
 
   it('refuses a slug that names no provider, and writes nothing', async () => {
-    const res = await put({ approved: ['openai', 'nope'] });
+    const res = await put({ approved: ['openai', 'nope'], jurisdictions: null });
 
     expect(res.status).toBe(400);
     expect((await json(res)).error).toMatchObject({
@@ -252,14 +252,20 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
   });
 
   it('refuses the install org, which is unrestricted by rule', async () => {
-    const res = await put({ approved: ['openai'] }, INSTALL_ORG_ID);
+    const res = await put({ approved: ['openai'], jurisdictions: null }, INSTALL_ORG_ID);
     expect(res.status).toBe(400);
     expect((await json(res)).error?.code).toBe('INSTALL_ORG_IMMUTABLE');
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 
+  it('refuses a body that leaves out jurisdictions — a replace must say whether to lift them', async () => {
+    const res = await put({ approved: ['openai'] });
+    expect(res.status).toBe(400);
+    expect(mockPrisma.org.update).not.toHaveBeenCalled();
+  });
+
   it('refuses a body with an unknown key or a malformed jurisdiction', async () => {
-    expect((await put({ approved: [], extra: 1 })).status).toBe(400);
+    expect((await put({ approved: [], jurisdictions: null, extra: 1 })).status).toBe(400);
     expect((await put({ approved: [], jurisdictions: ['not a code'] })).status).toBe(400);
     expect((await put({ approved: [], jurisdictions: [] })).status).toBe(400);
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
@@ -268,7 +274,7 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
   it('is a 404 for an org that does not exist, whatever the body names, with no audit row', async () => {
     mockPrisma.org.findUnique.mockResolvedValue(null);
     for (const approved of [['openai'], ['nope'], []]) {
-      const res = await put({ approved });
+      const res = await put({ approved, jurisdictions: null });
       expect(res.status).toBe(404);
       expect((await json(res)).error?.code).toBe('ORG_NOT_FOUND');
     }
@@ -277,7 +283,7 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
 
   it('is platform-admin only', async () => {
     mockGetSession.mockResolvedValue(session('USER'));
-    expect((await put({ approved: ['openai'] })).status).toBe(403);
+    expect((await put({ approved: ['openai'], jurisdictions: null })).status).toBe(403);
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 });

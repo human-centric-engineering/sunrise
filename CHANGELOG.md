@@ -136,8 +136,9 @@ release process.
 - **`GET` / `PUT /api/v1/admin/orgs/[id]/providers`** (§120 t-742). Platform
   admins read and replace an org's approved providers and jurisdictions. Each
   replace writes an `org.providers.replace` audit row. The install org has no
-  set and a `PUT` naming it is refused. The `PUT` names providers by slug; an
-  unknown slug is a 400, and a clash with a concurrent settings write is a 409
+  set and a `PUT` naming it is refused. The `PUT` names providers by slug and
+  must state `jurisdictions` (`null` lifts the restriction); an unknown slug
+  is a 400, and a clash with a concurrent settings write is a 409
   (as it now is on `PATCH /api/v1/admin/orgs/[id]`). Both return each grant as
   `{ id, slug }`. Also
   exported: `readOrgProviderPolicy` / `writeOrgProviderPolicy` /

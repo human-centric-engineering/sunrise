@@ -115,8 +115,9 @@ const providerRowSchema = z
     metadata: z.unknown().nullable(),
     timeoutMs: z.number().nullable(),
     maxRetries: z.number().nullable(),
-    // Not read here; optional so a response without it (an older instance
-    // mid-deploy) still parses.
+    // Not read here, but `ProviderRow` (the Prisma row) carries it, and the
+    // cast below needs the schema to as well. Optional so a response without
+    // it (an older instance mid-deploy) still parses.
     jurisdiction: z.string().nullable().optional(),
     createdBy: z.string(),
     createdAt: z.union([z.string(), z.date()]),

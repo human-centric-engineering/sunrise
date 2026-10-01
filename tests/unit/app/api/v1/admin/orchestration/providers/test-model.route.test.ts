@@ -230,13 +230,14 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       expect(body.data.model).toBe(MODEL);
     });
 
-    it('fetches and calls the provider as the install org, whatever org the admin acts in (§120 t-742)', async () => {
+    it('fetches the provider as the acting org and calls it as the install org (§120 t-742)', async () => {
       // A platform admin must be able to test a provider before granting it to
-      // any org, so the probe never runs under the admin's active org's policy.
+      // any org, so the probe never runs under the admin's active org's policy;
+      // but a fork's per-org credential is the one being tested.
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
-      // The scope each vendor step sees: the install org, entered for the
-      // probe — not the request's own session scope.
+      // The scope each step sees. The fetch resolves the credential, so it
+      // stays in the admin's context; only the vendor call is moved.
       const seen: unknown[] = [];
       const scope = () => {
         const ctx = getTenantContext();
@@ -254,8 +255,12 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       const response = await POST(makePostRequest(), makeParams(PROVIDER_ID));
 
       expect(response.status).toBe(200);
-      const probe = { orgId: INSTALL_ORG_ID, source: 'job' };
-      expect(seen).toEqual([probe, probe]);
+      expect(seen).toEqual([
+        // The fetch, and so the credential, is the request's own scope...
+        { orgId: INSTALL_ORG_ID, source: 'session' },
+        // ...and the probe runs in the install org entered for it.
+        { orgId: INSTALL_ORG_ID, source: 'job' },
+      ]);
     });
 
     it('calls getProvider with the provider slug', async () => {

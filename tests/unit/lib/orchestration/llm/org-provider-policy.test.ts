@@ -121,12 +121,16 @@ beforeEach(() => {
   rowBySlug = structuredClone(ROWS);
   vi.mocked(prisma.org.findUnique).mockImplementation((async (args: { where: { id: string } }) =>
     args.where.id in settingsByOrg ? { settings: settingsByOrg[args.where.id] } : null) as never);
+  // Rows matched by slug or by name, as the policy asks; each row's name is
+  // its slug upper-cased.
   vi.mocked(prisma.aiProviderConfig.findMany).mockImplementation((async (args: {
-    where: { slug: { in: string[] } };
-  }) =>
-    args.where.slug.in
-      .filter((slug) => slug in rowBySlug)
-      .map((slug) => ({ slug, ...rowBySlug[slug] }))) as never);
+    where: { OR: [{ slug: { in: string[] } }, { name: { in: string[] } }] };
+  }) => {
+    const wanted = new Set(args.where.OR.flatMap((clause) => Object.values(clause)[0].in));
+    return Object.entries(rowBySlug)
+      .map(([slug, row]) => ({ slug, name: slug.toUpperCase(), ...row }))
+      .filter((row) => wanted.has(row.slug) || wanted.has(row.name));
+  }) as never);
   const built = SLUGS.map((slug) => [slug, fakeProvider(slug)] as const);
   for (const [slug, { provider }] of built) registerProviderInstance(slug, provider);
   chats = Object.fromEntries(built.map(([slug, { chat }]) => [slug, chat])) as typeof chats;
@@ -218,6 +222,16 @@ describe('at multi', () => {
 
     await expect(call(GRANTED_ORG, 'x')).rejects.toBeInstanceOf(ProviderCallRefusedError);
     expect(chats.x).not.toHaveBeenCalled();
+  });
+
+  it('judges a candidate given by provider name by the row it names', async () => {
+    // A fallback list may hold a row's name; getProvider resolves it, so the
+    // policy must too, rather than refuse a provider the org was granted.
+    expect(
+      await runAsOrg(GRANTED_ORG, () =>
+        resolveEligibleProviders(['X', 'Y'], { task: 'chat', source: 'explicit', primarySlug: 'z' })
+      )
+    ).toEqual(['X']);
   });
 
   it('refuses everything for an org that does not exist', async () => {

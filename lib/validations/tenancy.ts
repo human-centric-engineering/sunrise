@@ -151,14 +151,13 @@ export const jurisdictionSchema = z
   )
   .transform((code) => code.toUpperCase());
 
-/** An org's jurisdiction restriction: absent or `null` means none. */
-const jurisdictionRestriction = z
+/** An org's jurisdiction restriction: `null` means none. */
+const jurisdictionList = z
   .array(jurisdictionSchema)
-  .min(1, 'Name at least one jurisdiction, or omit the restriction')
+  .min(1, 'Name at least one jurisdiction, or send null for no restriction')
   .max(50, 'At most 50 jurisdictions')
   .transform((codes) => [...new Set(codes)])
-  .nullable()
-  .optional();
+  .nullable();
 
 /**
  * One org's provider policy as STORED in `Org.settings.providers` (§120
@@ -187,7 +186,8 @@ export const orgProviderPolicySchema = z
       .array(z.string().min(1).max(64))
       .max(200, 'At most 200 providers')
       .transform((ids) => [...new Set(ids)]),
-    jurisdictions: jurisdictionRestriction,
+    // Stored without the key when there is no restriction.
+    jurisdictions: jurisdictionList.optional(),
   })
   .strict();
 
@@ -198,6 +198,11 @@ export type OrgProviderPolicy = z.infer<typeof orgProviderPolicySchema>;
  * providers by SLUG, which is what an operator knows them by. The route
  * resolves each slug to its row and stores the ids; an unknown slug is a 400.
  * Duplicates are folded on the way in.
+ *
+ * **`jurisdictions` is required**, as a list or `null`. A PUT replaces the
+ * whole policy, so an optional key would let a caller who meant only to add a
+ * provider silently lift the org's jurisdiction restriction — a write that
+ * widens what an org's data may reach must say so.
  */
 export const orgProviderPolicyInputSchema = z
   .object({
@@ -205,7 +210,7 @@ export const orgProviderPolicyInputSchema = z
       .array(slugSchema.max(50, 'Provider slug must be less than 50 characters'))
       .max(200, 'At most 200 providers')
       .transform((slugs) => [...new Set(slugs)]),
-    jurisdictions: jurisdictionRestriction,
+    jurisdictions: jurisdictionList,
   })
   .strict();
 

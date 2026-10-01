@@ -174,15 +174,20 @@ describe('orgProviderPolicySchema — the stored slice (§120 t-742)', () => {
 
 describe('orgProviderPolicyInputSchema — the PUT body (§120 t-742)', () => {
   it('names providers by slug, folding duplicates', () => {
-    expect(orgProviderPolicyInputSchema.parse({ approved: ['a', 'a', 'b'] })).toEqual({
-      approved: ['a', 'b'],
-    });
+    expect(
+      orgProviderPolicyInputSchema.parse({ approved: ['a', 'a', 'b'], jurisdictions: null })
+    ).toEqual({ approved: ['a', 'b'], jurisdictions: null });
+  });
+
+  it('requires jurisdictions to be stated, as a list or null', () => {
+    expect(orgProviderPolicyInputSchema.safeParse({ approved: ['a'] }).success).toBe(false);
   });
 
   it('refuses a non-slug, an empty restriction and an unknown key', () => {
-    expect(orgProviderPolicyInputSchema.safeParse({ approved: ['Not A Slug'] }).success).toBe(
-      false
-    );
+    expect(
+      orgProviderPolicyInputSchema.safeParse({ approved: ['Not A Slug'], jurisdictions: null })
+        .success
+    ).toBe(false);
     expect(
       orgProviderPolicyInputSchema.safeParse({ approved: [], jurisdictions: [] }).success
     ).toBe(false);

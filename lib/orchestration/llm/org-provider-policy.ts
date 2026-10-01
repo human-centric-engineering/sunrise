@@ -97,15 +97,20 @@ function loadPolicy(orgId: string): Promise<OrgProviderPolicy> {
   );
 }
 
-/** The row behind each slug; a slug with no row maps to `null`. */
+/**
+ * The row behind each candidate; one with no row maps to `null`. A candidate
+ * is matched as `getProvider` matches it — a row with that slug first, else a
+ * row with that name — so a fallback list holding a provider's name is judged
+ * by the row it would actually reach.
+ */
 async function loadProviderRows(
   slugs: readonly string[]
 ): Promise<Map<string, ProviderRow | null>> {
   const missing = slugs.filter((slug) => !fresh(providerRowCache.get(slug)));
   if (missing.length > 0) {
     const rows = prisma.aiProviderConfig.findMany({
-      where: { slug: { in: missing } },
-      select: { id: true, slug: true, jurisdiction: true },
+      where: { OR: [{ slug: { in: missing } }, { name: { in: missing } }] },
+      select: { id: true, slug: true, name: true, jurisdiction: true },
     });
     for (const slug of missing) {
       // Awaited below, from the cache, with the rest.
@@ -113,7 +118,9 @@ async function loadProviderRows(
         providerRowCache,
         slug,
         rows.then((found) => {
-          const row = found.find((candidate) => candidate.slug === slug);
+          const row =
+            found.find((candidate) => candidate.slug === slug) ??
+            found.find((candidate) => candidate.name === slug);
           // Upper-cased to match the stored restriction, which the schema
           // upper-cases; a row written before the column was validated still
           // matches its own code.
@@ -145,7 +152,15 @@ async function loadProviderRows(
  * followed whichever row held that slug, so deleting a provider and creating
  * another under its old slug handed the new one every grant the old one had.
  * Keyed on the id, a renamed row keeps its grants and a new row starts with
- * none, whatever path wrote the slug.
+ * none, whatever path wrote the slug — once this process has read the row.
+ * The slug-to-row answer is cached for the TTL like the policy, so a delete
+ * and re-create made in ANOTHER process (or by a seed, which does not call
+ * the provider manager's `clearCache`) can be judged against the old row for
+ * up to 60 seconds: the same window as a revoked grant.
+ *
+ * A provider with no row — one registered in code with `registerProvider`
+ * or `registerProviderInstance` — cannot be granted, so at `multi` it serves
+ * the install org only.
  *
  * Throws when the policy cannot be read; `resolveEligibleProviders` turns that
  * into "nothing is eligible", as it does for a throwing fork rule.
@@ -158,11 +173,10 @@ export async function applyOrgProviderPolicy(
   if (orgId === null) return [];
   if (orgId === INSTALL_ORG_ID) return candidates;
 
-  const policy = await loadPolicy(orgId);
-  if (policy.approved.length === 0) return [];
+  // Independent reads, both cached; on a miss they share the round trip.
+  const [policy, rows] = await Promise.all([loadPolicy(orgId), loadProviderRows(candidates)]);
   const approved = new Set(policy.approved);
   const allowed = policy.jurisdictions ? new Set(policy.jurisdictions) : null;
-  const rows = await loadProviderRows(candidates);
   return candidates.filter((slug) => {
     const row = rows.get(slug) ?? null;
     if (row === null || !approved.has(row.id)) return false;

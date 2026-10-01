@@ -109,20 +109,19 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     // An admin testing a provider they named is an explicit choice, so the
     // call-time gate (§120 t-741) evaluates it as one.
     //
-    // Every vendor step runs AS THE INSTALL ORG, whichever org the admin is
-    // acting in (§120 t-742). The probe is a fixed prompt, a fixed word or a
-    // silent clip, so no org's data is sent; and providers are platform
-    // configuration, so at multi a platform admin must be able to test one
-    // before granting it to any org. Under the admin's active org, a customer
-    // org with no grants would refuse every test.
+    // The provider is fetched in the admin's own context, so a fork's
+    // credential resolver hands back the key of the org they are acting in —
+    // the key being tested. Each vendor CALL then runs as the install org
+    // (§120 t-742): the probe is a fixed prompt, a fixed word or a silent
+    // clip, so no org's data is sent, and at multi a platform admin must be
+    // able to test a provider before granting it to any org. Under the admin's
+    // active org, a customer org with no grants would refuse every test.
+    const provider = await getProvider(providerRow.slug, {
+      task: capability === 'embedding' ? 'embeddings' : capability === 'audio' ? 'audio' : 'chat',
+      source: 'explicit',
+      primarySlug: null,
+    });
     const asPlatform = <T>(fn: () => Promise<T>): Promise<T> => runAsOrg(INSTALL_ORG_ID, fn);
-    const provider = await asPlatform(() =>
-      getProvider(providerRow.slug, {
-        task: capability === 'embedding' ? 'embeddings' : capability === 'audio' ? 'audio' : 'chat',
-        source: 'explicit',
-        primarySlug: null,
-      })
-    );
 
     // Audio: providers opt-in via the optional transcribe() interface
     // member. Guard before timing — a missing method is "this provider

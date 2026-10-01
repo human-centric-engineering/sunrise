@@ -4,8 +4,10 @@
  * GET /api/v1/admin/orgs/[id]/providers — the org's provider policy: the
  *     provider slugs it is approved for and the jurisdictions it is held to.
  * PUT /api/v1/admin/orgs/[id]/providers — replace it:
- *     `{ approved: string[], jurisdictions?: string[] | null }`, naming
- *     providers by slug. `[]` revokes every grant.
+ *     `{ approved: string[], jurisdictions: string[] | null }`, naming
+ *     providers by slug. `[]` revokes every grant. `jurisdictions` must be
+ *     stated: `null` lifts the restriction, so a replace cannot lift it by
+ *     leaving the key out.
  *
  * A grant is stored as the provider ROW's id, resolved from the slug here, so
  * renaming a provider keeps its grants and deleting one and re-creating its
@@ -121,8 +123,12 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
       details: { unknownProviders },
     });
   }
+  // Every slug resolved (the 400 above), so this keeps them all, in order.
   const policy: OrgProviderPolicy = {
-    approved: body.approved.map((slug) => idBySlug.get(slug) ?? ''),
+    approved: body.approved.flatMap((slug) => {
+      const providerId = idBySlug.get(slug);
+      return providerId === undefined ? [] : [providerId];
+    }),
     jurisdictions: body.jurisdictions,
   };
 

@@ -386,7 +386,8 @@ PUT /api/v1/admin/orgs/[id]/providers
 ```
 
 Which AI providers the org may use at `TENANCY_MODE=multi` (§120 t-742). A
-`PUT` replaces the whole policy, `{ approved: string[], jurisdictions?: string[] | null }`,
+`PUT` replaces the whole policy, `{ approved: string[], jurisdictions: string[] | null }`
+(`jurisdictions` is required: `null` lifts the restriction, and leaving it out is a 400),
 and writes an `org.providers.replace` audit row. `[]` revokes every grant.
 Both return `{ orgId, unrestricted, enforced, approved, jurisdictions }`, each
 grant in `approved` as `{ id, slug }`: the grant is stored as the provider row's
