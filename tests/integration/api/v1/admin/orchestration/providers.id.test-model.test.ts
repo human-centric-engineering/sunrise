@@ -80,6 +80,7 @@ function makeProvider() {
     metadata: null,
     timeoutMs: null,
     maxRetries: null,
+    jurisdiction: null,
     createdBy: 'system',
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),

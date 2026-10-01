@@ -121,8 +121,40 @@ release process.
   `providerSlug` stays the plain slug. See
   [`llm-providers.md` → Provider credentials](./.context/orchestration/llm-providers.md#provider-credentials-fork-seam).
 
+- **Per-org approved providers at `multi`** (§120 t-742). The install org may
+  use every provider. Every other org may use only the providers a platform
+  admin has granted it, and starts with none. The grant is the org's new
+  platform-owned `Org.settings.providers` slice,
+  `{ approved: string[], jurisdictions?: string[] }`. It is enforced inside
+  `resolveEligibleProviders`, so it applies at every selection site and in the
+  call-time gate on every vendor call. A fork's `registerProviderEligibility`
+  rule now runs on what core's rule permitted, so it can narrow the org's set
+  and never widen it. At `single` nothing changes. See
+  [`llm-providers.md` → Per-org approved providers](./.context/orchestration/llm-providers.md#per-org-approved-providers-core-at-multi).
+- **`GET` / `PUT /api/v1/admin/orgs/[id]/providers`** (§120 t-742). Platform
+  admins read and replace an org's approved providers and jurisdictions. Each
+  replace writes an `org.providers.replace` audit row. The install org has no
+  set and a `PUT` naming it is refused, and an unknown slug is a 400. Also
+  exported: `readOrgProviderPolicy` / `writeOrgProviderPolicy` from
+  `lib/tenancy/org-settings.ts`, `orgProviderPolicySchema` /
+  `jurisdictionSchema` from `lib/validations/tenancy.ts`, and
+  `lib/orchestration/llm/org-provider-policy.ts`.
+- **`AiProviderConfig.jurisdiction`** (§120 t-742; migration
+  `20261001100000_provider_jurisdiction`): a nullable, upper-cased code for
+  where the vendor processes data, writable through the provider create and
+  update APIs. An org held to jurisdictions is permitted only providers
+  recorded in one of them. A provider with none recorded matches no
+  restriction.
+
 ### Changed
 
+- **At `TENANCY_MODE=multi`, an org other than the install org can no longer
+  call any AI provider until it is granted one** (§120 t-742). An install
+  that is already at `multi` with customer orgs must grant each one its
+  providers with `PUT /api/v1/admin/orgs/[id]/providers` when it takes this
+  release, or their chat, workflow, embedding and transcription calls are
+  refused with `provider_not_permitted`. Single-tenant installs are
+  unaffected.
 - **Provider clients, circuit breakers and in-flight counts are keyed per
   credential** (§120 t-744), on `credentialKey(slug, identity)`: the bare slug
   for the install's shared credential, so nothing changes until a credential

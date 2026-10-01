@@ -136,6 +136,55 @@ export const orgRetentionSchema = z
 export type OrgRetentionSlice = z.infer<typeof orgRetentionSchema>;
 
 /**
+ * A jurisdiction code: where a provider processes data (`AiProviderConfig
+ * .jurisdiction`), and what an org's provider policy may restrict to (§120
+ * t-742). The operator chooses the vocabulary — `EU`, `US`, `UK`, `EU-DE` —
+ * so this checks a shape, not a list. Stored upper-cased, so `eu` and `EU`
+ * are one code and a match never turns on case.
+ */
+export const jurisdictionSchema = z
+  .string()
+  .trim()
+  .regex(
+    /^[A-Za-z][A-Za-z0-9-]{0,31}$/,
+    'Jurisdiction must be a short code of letters, digits and hyphens, starting with a letter (e.g. EU, US, EU-DE)'
+  )
+  .transform((code) => code.toUpperCase());
+
+/**
+ * One org's provider policy (§120 t-742): the providers a platform admin has
+ * approved it for, and optionally the jurisdictions it is held to.
+ *
+ * Providers are global (design Q3), so `approved` is a permission over the
+ * operator's provider rows, by slug — not a list of the org's own providers.
+ * `[]` approves nothing, which is where every org but the install org starts.
+ *
+ * `jurisdictions`, when present, restricts the approved set further: a
+ * provider is permitted only if its recorded jurisdiction is one of them, and
+ * a provider with none recorded matches no restriction. Absent or `null`
+ * means no jurisdiction restriction.
+ *
+ * Duplicates are folded on the way in, so the stored set has one spelling.
+ */
+export const orgProviderPolicySchema = z
+  .object({
+    approved: z
+      .array(slugSchema.max(50, 'Provider slug must be less than 50 characters'))
+      .max(200, 'At most 200 providers')
+      .transform((slugs) => [...new Set(slugs)]),
+    jurisdictions: z
+      .array(jurisdictionSchema)
+      .min(1, 'Name at least one jurisdiction, or omit the restriction')
+      .max(50, 'At most 50 jurisdictions')
+      .transform((codes) => [...new Set(codes)])
+      .nullable()
+      .optional(),
+  })
+  .strict();
+
+export type OrgProviderPolicy = z.infer<typeof orgProviderPolicySchema>;
+
+/**
  * The platform-owned slices of `Org.settings` a PATCH may write.
  *
  * `retention: null` removes the slice, so the org inherits every global

@@ -54,6 +54,7 @@ function makeConfig(slug: string) {
     metadata: null,
     timeoutMs: null,
     maxRetries: null,
+    jurisdiction: null,
     createdBy: 'user-1',
     createdAt: new Date(),
     updatedAt: new Date(),

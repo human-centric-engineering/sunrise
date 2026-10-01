@@ -61,6 +61,7 @@ const MOCK_PROVIDERS = [
     metadata: {},
     timeoutMs: null,
     maxRetries: null,
+    jurisdiction: null,
   },
 ];
 

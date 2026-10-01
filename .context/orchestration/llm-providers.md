@@ -607,6 +607,7 @@ Anthropic thinking blocks are stripped from response content in both `chat()` an
 | `isActive`     | `false` → `getProvider` throws `provider_disabled`                                                                               |
 | `timeoutMs`    | Per-provider timeout override (1,000–300,000 ms). Resolution: `timeoutMs` → `LOCAL_TIMEOUT_MS` (if local) → `DEFAULT_TIMEOUT_MS` |
 | `maxRetries`   | Per-provider retry override (0–10). Passed to the SDK constructor                                                                |
+| `jurisdiction` | Where the vendor processes data (`EU`, `US`, …), upper-cased; nullable. Read by the per-org provider policy below                |
 
 ## Provider credentials (fork seam)
 
@@ -643,6 +644,48 @@ memory for the instance cache's TTL and is written nowhere.
 | **On an init throw**      | Rolled back and logged by the shared gate (`fork-init-seams.md`), then every credential is refused until it is fixed, for the same reason.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | **Registrar entries**     | `registerProvider` / `registerProviderInstance` carry their own key and bypass the resolver, on the shared identity.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
+## Per-org approved providers (core, at `multi`)
+
+At `TENANCY_MODE=multi` core holds each org to the providers it has been
+approved for (§120 t-742; design Q15, owner ruling 2026-09-30):
+
+- **The install org may use every provider.** It has no set, and a `PUT`
+  naming it is refused.
+- **Every other org may use only the providers in its approved set**, which
+  starts empty: a new org can call no provider until a platform admin grants
+  one.
+- **An org may also be held to jurisdictions.** A provider is then permitted
+  only if its `jurisdiction` is one of them. A provider with no jurisdiction
+  recorded matches no restriction: an org held to the EU is not sent to a
+  provider nobody has said is in the EU.
+
+At `single` none of this runs: nothing is read and nothing is filtered.
+
+The set lives in the org's `settings.providers` slice
+(`lib/tenancy/org-settings.ts`) as `{ approved: string[], jurisdictions?: string[] }`.
+Providers stay global (design Q3), so it is a permission over the operator's
+provider rows, by slug, not a list of the org's own. A platform admin reads and
+replaces it through the API:
+
+| Route                                   | Body / response                                                                                                                                                                                                                                                  |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/admin/orgs/[id]/providers` | `{ orgId, unrestricted, enforced, approved, jurisdictions }`. `unrestricted` is true for the install org; `enforced` is whether the install is at `multi`.                                                                                                       |
+| `PUT /api/v1/admin/orgs/[id]/providers` | `{ approved: string[], jurisdictions?: string[] \| null }` replaces the whole policy; `[]` revokes every grant. An unknown slug is a 400 naming it (`details.unknownProviders`). Each replace writes an `org.providers.replace` audit row with before and after. |
+
+Both are platform-admin only (`withAdminAuth`). Org admins do not administer
+providers: they are platform-ops configuration.
+
+How it is applied:
+
+| Property              | Behaviour                                                                                                                                                                                                                                                                                                        |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Where**             | Inside `resolveEligibleProviders`, so in every selection site and in the call-time gate on every vendor call. An auto-picked primary, an explicit `agent.provider`, either fallback list and every embedding or audio arm are all held to it.                                                                    |
+| **Composition**       | Core's rule runs first; a fork's registered rule is handed only what it permitted, and its answer is intersected with that. A fork rule can narrow the org's set and never widen it, the floor-not-ceiling shape of the `admin` key scope (Q6).                                                                  |
+| **The org**           | Read from tenant context, as the gate already does. `ProviderEligibilityContext` does not carry an `orgId`. No org in context at `multi` (none entered, or `runAsSystem`) permits nothing.                                                                                                                       |
+| **Unreadable policy** | Fails closed. A malformed slice is read as approving nothing, with a warning. A policy that cannot be loaded denies every candidate, logged as `org provider policy could not be read`.                                                                                                                          |
+| **Freshness**         | Each org's policy and each provider's jurisdiction are cached for 60 seconds. A `PUT` clears that org's entry in the process that served it, and any provider-row write clears the jurisdiction (via the provider manager's `clearCache`). Another process may answer from a revoked grant for up to 60 seconds. |
+| **Renamed provider**  | The set holds slugs. Renaming a provider's slug leaves orgs approved for the old one refused until the set is updated: fail closed, like an agent naming the old slug.                                                                                                                                           |
+
 ## Provider eligibility (fork seam)
 
 `resolveAgentProviderAndModel` attaches up to **three** other configured
@@ -674,7 +717,7 @@ export function registerAppProviderEligibility(): void {
 
 | Property                 | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Default**              | No resolver registered → `candidates` returned unchanged. Single-tenant behaviour is byte-identical; there is no dormant second code path.                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Default**              | At `single`, no resolver registered → `candidates` returned unchanged. Single-tenant behaviour is byte-identical; there is no dormant second code path. At `multi` core's per-org rule (above) applies first, and a registered rule narrows what it permitted.                                                                                                                                                                                                                                                                                  |
 | **Applied at**           | Every vendor call through the provider manager, by the call-time gate (above). And, so that Sunrise chooses well, at the selection sites: both of the resolver's return paths — the early exit for a fully-configured agent AND the candidates path — plus the five paths that never reach the resolver. See the coverage table below.                                                                                                                                                                                                          |
 | **`ctx.source`**         | `'primary'` when Sunrise is CHOOSING the provider — the agent left it blank, or a workflow step / enrichment run has no explicit model — `'system'` for the automatic fallback fill, `'explicit'` for an operator's recorded choice: the agent's own fallback list at selection, and at the gate also an explicit primary (`agent.provider`, a step `modelOverride`, a pinned default). A fork may answer differently for each.                                                                                                                 |
 | **No eligible provider** | Fail-closed everywhere, in each path's own vocabulary: `NoEligibleProviderError` (`code: no_eligible_provider`) from the resolver, `ExecutorError` (`code: provider_not_permitted`, non-retriable) from a workflow step, `ProviderNotPermittedError` → 403 from keyword enrichment, and `ProviderCallRefusedError` (`code: provider_not_permitted`) from the gate on any call. All distinct from `NoProviderConfiguredError`, which means "nothing is set up" and sends an operator to the setup wizard — a different fix in a different place. |

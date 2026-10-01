@@ -21,7 +21,15 @@
  * a leak on a shared one, because the prompt — or the document, or the voice
  * recording — can reach a provider nobody approved.
  *
- * Example — an org may only use the providers it has approved:
+ * **At `TENANCY_MODE=multi` core already holds each org to its approved
+ * providers** (§120 t-742): the install org may use every provider, and every
+ * other org only those a platform admin granted it through
+ * `PUT /api/v1/admin/orgs/[id]/providers`, within its jurisdictions. That rule
+ * runs first and your rule is handed only what it permitted, so a rule here
+ * can narrow it and never widen it. Register one for a constraint core does
+ * not know about — a billing plan, a contract, a single-tenant install.
+ *
+ * Example — an org may only use the providers its plan includes:
  *
  *   import { registerProviderEligibility } from '@/lib/orchestration/llm/provider-eligibility';
  *   import { approvedProviderSlugs } from '@/lib/app/billing';

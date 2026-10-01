@@ -30,6 +30,7 @@ vi.mock('@/lib/env', async (importOriginal) => {
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiProviderConfig: { findFirst: vi.fn(), findMany: vi.fn() },
+    org: { findUnique: vi.fn() },
   },
 }));
 
@@ -65,6 +66,7 @@ import {
   __resetInFlightCountersForTests,
   getInFlightCounts,
 } from '@/lib/orchestration/llm/in-flight-counter';
+import { forgetOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
 import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 
 const ORG_A = 'cmorg00000000000000000orga';
@@ -124,6 +126,7 @@ async function drain(stream: AsyncIterable<unknown>): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks();
   clearCache();
+  forgetOrgProviderPolicy();
   resetProviderEligibility();
   resetAllBreakers();
   __resetInFlightCountersForTests();
@@ -583,6 +586,10 @@ describe('the org a call answers for', () => {
     mockMode.value = 'multi';
     const x = fakeProvider('x');
     registerProviderInstance('x', x.provider);
+    // Core's own rule at multi holds the org to its approved set (§120 t-742).
+    vi.mocked(prisma.org.findUnique).mockResolvedValue({
+      settings: { providers: { approved: ['x'] } },
+    } as never);
     const { getTenantContext } = await import('@/lib/tenancy/context');
     const orgsSeen: (string | null)[] = [];
     registerProviderEligibility((candidates) => {

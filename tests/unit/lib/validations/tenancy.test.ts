@@ -13,6 +13,8 @@ import {
   createOrgSchema,
   orgIdSchema,
   orgMemberParamsSchema,
+  orgProviderPolicySchema,
+  jurisdictionSchema,
   switchOrgSchema,
   updateOrgMemberSchema,
   updateOrgSchema,
@@ -128,5 +130,41 @@ describe('the member bodies', () => {
     for (const role of ORG_ROLES) expect(updateOrgMemberSchema.parse({ role })).toEqual({ role });
     expect(updateOrgMemberSchema.safeParse({}).success).toBe(false);
     expect(updateOrgMemberSchema.safeParse({ role: 'owner' }).success).toBe(false);
+  });
+});
+
+describe('jurisdictionSchema (§120 t-742)', () => {
+  it('upper-cases a code, so a match never turns on case', () => {
+    expect(jurisdictionSchema.parse(' eu-de ')).toBe('EU-DE');
+  });
+
+  it('refuses something that is not a short code', () => {
+    for (const bad of ['', '1EU', 'E U', 'x'.repeat(33)]) {
+      expect(jurisdictionSchema.safeParse(bad).success).toBe(false);
+    }
+  });
+});
+
+describe('orgProviderPolicySchema (§120 t-742)', () => {
+  it('folds duplicates in both lists', () => {
+    expect(
+      orgProviderPolicySchema.parse({ approved: ['a', 'a', 'b'], jurisdictions: ['eu', 'EU'] })
+    ).toEqual({ approved: ['a', 'b'], jurisdictions: ['EU'] });
+  });
+
+  it('accepts an empty approved set, and no restriction as absent or null', () => {
+    expect(orgProviderPolicySchema.parse({ approved: [] })).toEqual({ approved: [] });
+    expect(orgProviderPolicySchema.parse({ approved: [], jurisdictions: null })).toEqual({
+      approved: [],
+      jurisdictions: null,
+    });
+  });
+
+  it('refuses an empty restriction, a non-slug, and an unknown key', () => {
+    expect(orgProviderPolicySchema.safeParse({ approved: [], jurisdictions: [] }).success).toBe(
+      false
+    );
+    expect(orgProviderPolicySchema.safeParse({ approved: ['Not A Slug'] }).success).toBe(false);
+    expect(orgProviderPolicySchema.safeParse({ approved: [], extra: true }).success).toBe(false);
   });
 });

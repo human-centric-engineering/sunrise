@@ -48,6 +48,7 @@ import {
 } from '@/lib/orchestration/llm/provider-eligibility';
 import { track, trackStream } from '@/lib/orchestration/llm/in-flight-counter';
 import { OpenAiCompatibleProvider } from '@/lib/orchestration/llm/openai-compatible';
+import { forgetProviderJurisdiction } from '@/lib/orchestration/llm/org-provider-policy';
 import {
   ProviderError,
   type LlmProvider,
@@ -1020,12 +1021,18 @@ export async function hasModelWithCapability(capability: string): Promise<boolea
   return count > 0;
 }
 
-/** Evict one (or all) cached provider instances. */
+/**
+ * Evict one (or all) cached provider instances, and the provider policy's
+ * cached jurisdiction for the same row (§120 t-742) — every provider-row
+ * write already calls this, so a changed jurisdiction applies at once.
+ */
 export function clearCache(slugOrName?: string): void {
   if (slugOrName) {
     instanceCache.delete(slugOrName);
+    forgetProviderJurisdiction(slugOrName);
   } else {
     instanceCache.clear();
+    forgetProviderJurisdiction();
   }
 }
 

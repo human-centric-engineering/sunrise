@@ -205,6 +205,13 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'A resolved document-access set per agent cuid, invalidated on grant mutations; the 60-second TTL is the window in which a revoked grant still answers, and it is the same window at single and multi.',
   },
   {
+    file: 'lib/orchestration/llm/org-provider-policy.ts',
+    holders: ['policyCache', 'jurisdictionCache'],
+    posture: 'row-keyed',
+    keyedBy: 'org id (policies); provider slug (jurisdictions)',
+    why: "Each org's approved-provider policy, filled by a `findUnique` on the org id, so a system-scoped fill returns the same row an org scope would; and each provider row's jurisdiction, global config keyed by a slug unique install-wide (§120 t-742). A write through the org providers API clears that org's entry and a provider-row write clears the jurisdiction; the 60-second TTL is the window in which another process may still answer with a revoked grant. Read only at multi.",
+  },
+  {
     file: 'lib/orchestration/llm/budget-mutex.ts',
     holders: ['locks'],
     posture: 'row-keyed',

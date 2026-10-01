@@ -89,6 +89,7 @@ function makeProvider(overrides: Record<string, unknown> = {}) {
     metadata: null,
     timeoutMs: null,
     maxRetries: null,
+    jurisdiction: null,
     createdBy: ADMIN_ID,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
@@ -272,6 +273,34 @@ describe('PATCH /api/v1/admin/orchestration/providers/:id', () => {
         isActive: false,
         metadata: { team: 'platform' },
       });
+    });
+
+    it('sets a jurisdiction upper-cased, clears it with null, and leaves it when absent (§120 t-742)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
+      vi.mocked(prisma.aiProviderConfig.update).mockResolvedValue(makeProvider());
+
+      await PATCH(makeRequest('PATCH', { jurisdiction: 'us' }), makeParams(PROVIDER_ID));
+      await PATCH(makeRequest('PATCH', { jurisdiction: null }), makeParams(PROVIDER_ID));
+      await PATCH(makeRequest('PATCH', { name: 'Renamed' }), makeParams(PROVIDER_ID));
+
+      const data = vi.mocked(prisma.aiProviderConfig.update).mock.calls.map(([args]) => args.data);
+      expect(data[0]).toMatchObject({ jurisdiction: 'US' });
+      expect(data[1]).toMatchObject({ jurisdiction: null });
+      expect(data[2]).not.toHaveProperty('jurisdiction');
+    });
+
+    it('refuses a jurisdiction that is not a short code', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
+
+      const response = await PATCH(
+        makeRequest('PATCH', { jurisdiction: 'European Union' }),
+        makeParams(PROVIDER_ID)
+      );
+
+      expect(response.status).toBe(400);
+      expect(prisma.aiProviderConfig.update).not.toHaveBeenCalled();
     });
 
     it('clears provider cache after update', async () => {

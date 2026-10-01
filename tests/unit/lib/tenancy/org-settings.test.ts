@@ -38,7 +38,9 @@ import {
   loadOrgRetention,
   loadPlatformAgentsMarker,
   readOrgRetention,
+  readOrgProviderPolicy,
   readPlatformAgentsMarker,
+  writeOrgProviderPolicy,
   writePlatformAgentsMarker,
 } from '@/lib/tenancy/org-settings';
 
@@ -291,5 +293,81 @@ describe('the platform-agents marker (§116 t-724)', () => {
     expect(applyRetentionPatch({ platformAgents: marker, retention: {} }, null)).toEqual({
       platformAgents: marker,
     });
+  });
+});
+
+describe('the provider policy (§120 t-742)', () => {
+  it('reads a stored policy', () => {
+    expect(
+      readOrgProviderPolicy({ providers: { approved: ['openai'], jurisdictions: ['EU'] } })
+    ).toEqual({ approved: ['openai'], jurisdictions: ['EU'] });
+  });
+
+  it('reads an org never granted anything as approved for nothing', () => {
+    expect(readOrgProviderPolicy(null)).toEqual({ approved: [] });
+    expect(readOrgProviderPolicy({ retention: { webhookRetentionDays: 7 } })).toEqual({
+      approved: [],
+    });
+  });
+
+  it('fails closed on a malformed slice — half a policy is wider than the one written', () => {
+    // The approved set is readable; the restriction on it is not. Keeping the
+    // set and dropping the restriction would permit what it refused.
+    expect(
+      readOrgProviderPolicy(
+        { providers: { approved: ['openai'], jurisdictions: 'EU' } },
+        { orgId: ORG_A },
+        mockLogger as never
+      )
+    ).toEqual({ approved: [] });
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'Org provider policy is malformed; treating the org as approved for no provider',
+      expect.objectContaining({ orgId: ORG_A, issues: ['jurisdictions'] })
+    );
+  });
+
+  it('replaces the policy in a serializable transaction, keeping every other key', async () => {
+    const tx = {
+      org: {
+        findUnique: vi.fn().mockResolvedValue({
+          settings: { retention: { webhookRetentionDays: 7 }, providers: { approved: ['a'] } },
+        }),
+        update: vi.fn(),
+      },
+    };
+    const $transaction = vi.fn(async (fn: (t: typeof tx) => Promise<unknown>, _opts?: unknown) =>
+      fn(tx)
+    );
+
+    const written = await writeOrgProviderPolicy(ORG_A, { approved: ['b'], jurisdictions: null }, {
+      $transaction,
+    } as never);
+
+    expect($transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    });
+    // A null restriction is stored as no key, so "unrestricted" has one spelling.
+    expect(written).toEqual({ previous: { approved: ['a'] }, stored: { approved: ['b'] } });
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: ORG_A },
+      data: {
+        settings: { retention: { webhookRetentionDays: 7 }, providers: { approved: ['b'] } },
+      },
+    });
+  });
+
+  it('writes nothing for an org that is gone', async () => {
+    const tx = { org: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn() } };
+    const $transaction = vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx));
+
+    expect(await writeOrgProviderPolicy('gone', { approved: [] }, { $transaction } as never)).toBe(
+      null
+    );
+    expect(tx.org.update).not.toHaveBeenCalled(); // test-review:accept no_arg_called — no row, so no write at all
+  });
+
+  it('keeps the retention slice’s own writes from dropping the policy', () => {
+    const providers = { approved: ['openai'] };
+    expect(applyRetentionPatch({ providers }, null)).toEqual({ providers });
   });
 });

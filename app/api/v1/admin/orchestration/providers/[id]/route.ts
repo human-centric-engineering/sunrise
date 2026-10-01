@@ -65,6 +65,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
   if (body.apiKeyEnvVar !== undefined) data.apiKeyEnvVar = body.apiKeyEnvVar;
   if (body.isLocal !== undefined) data.isLocal = body.isLocal;
   if (body.isActive !== undefined) data.isActive = body.isActive;
+  if (body.jurisdiction !== undefined) data.jurisdiction = body.jurisdiction;
   if (body.metadata !== undefined) data.metadata = body.metadata;
   if (body.timeoutMs !== undefined) data.timeoutMs = body.timeoutMs;
   if (body.maxRetries !== undefined) data.maxRetries = body.maxRetries;

@@ -80,6 +80,7 @@ function makeProvider(overrides: Record<string, unknown> = {}) {
     metadata: null,
     timeoutMs: null,
     maxRetries: null,
+    jurisdiction: null,
     createdBy: ADMIN_ID,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
@@ -306,6 +307,19 @@ describe('POST /api/v1/admin/orchestration/providers', () => {
           data: expect.objectContaining({ createdBy: ADMIN_ID }),
         })
       );
+    });
+
+    it('stores a jurisdiction upper-cased, and none when the body names none (§120 t-742)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.create).mockResolvedValue(makeProvider());
+
+      await POST(makePostRequest({ ...VALID_PROVIDER, jurisdiction: 'eu' }));
+      await POST(makePostRequest(VALID_PROVIDER));
+
+      const stored = vi
+        .mocked(prisma.aiProviderConfig.create)
+        .mock.calls.map(([args]) => args.data.jurisdiction);
+      expect(stored).toEqual(['EU', null]);
     });
   });
 

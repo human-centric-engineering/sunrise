@@ -87,6 +87,7 @@ export const POST = withAdminAuth(async (request, session) => {
         apiKeyEnvVar: body.apiKeyEnvVar ?? null,
         isLocal: body.isLocal,
         isActive: body.isActive,
+        jurisdiction: body.jurisdiction ?? null,
         metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
         timeoutMs: body.timeoutMs ?? null,
         maxRetries: body.maxRetries ?? null,

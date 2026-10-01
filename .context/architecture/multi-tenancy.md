@@ -75,6 +75,16 @@ is on:
   use is the org's choice. The workflow builder offers every org the
   built-in templates, served from code. See
   [platform agents](../orchestration/platform-agents.md).
+- **Each org reaches only the AI providers it was approved for** (§120
+  t-742). The install org may use every provider; every other org starts with
+  none, and a platform admin grants providers, and optionally holds the org to
+  jurisdictions, with `PUT /api/v1/admin/orgs/[id]/providers`. Enforced on
+  every vendor call core makes, whether the provider was auto-picked, named on
+  the agent, a fallback, or an embedding or audio arm, and a fork's own
+  eligibility rule can narrow it but never widen it. **Grant providers to each
+  org you create after flipping the mode**, or its agents, workflows and
+  knowledge base will refuse to call any vendor. See
+  [LLM providers → Per-org approved providers](../orchestration/llm-providers.md#per-org-approved-providers-core-at-multi).
 - **The data subject is per org.** `eraseUser` / `exportUserData` act inside
   the org the request entered: a person with memberships in several orgs is
   erased from, and exported from, the org that asked — the tenant is the
@@ -113,7 +123,9 @@ says which piece each feature lands):
   platform admin from an org OWNER/ADMIN, but the console is not split; the
   [control-plane map](#the-control-plane-which-admin-surfaces-are-whose)
   below is what §111 splits along.
-- **Storage, provider policy, quotas** — §109 / §110.
+- **Storage and quotas** — §109 / §110. Provider policy is enforced at call
+  time (above); offering only approved providers when an agent is configured
+  is §120 t-743.
 
 ## Enabling it, end to end
 
@@ -190,6 +202,12 @@ MIGRATE_DATABASE_URL=<owner dsn>
 From here every operation on a tenant-owned model runs as
 `$transaction([set_config('app.current_org', <org>, true), op])`, and an
 operation that has no org throws before any SQL.
+
+It also turns on the per-org provider policy: every org except the install
+org may now call only the providers granted to it, and every org starts with
+none. An install that already has customer orgs when it flips must grant each
+one its providers (`PUT /api/v1/admin/orgs/[id]/providers`), or their calls
+are refused with `provider_not_permitted`. The install org is unaffected.
 
 ### 4. Prove it
 
@@ -452,19 +470,19 @@ the rule and the classification win.
 
 ### Platform-ops — the vendor's
 
-| Surface                                                      | Backing models                                                     |
-| ------------------------------------------------------------ | ------------------------------------------------------------------ |
-| `orchestration/providers`, `orchestration/provider-models`   | `AiProviderConfig`, `AiProviderModel`                              |
-| `orchestration/capabilities`                                 | `AiCapability`                                                     |
-| `orchestration/agent-profiles`                               | `AiAgentProfile`                                                   |
-| `features` (feature flags)                                   | `FeatureFlag`                                                      |
-| `orchestration/knowledge/tags`                               | `KnowledgeTag`                                                     |
-| `orchestration/settings`, `orchestration/mcp/settings`       | The two singletons                                                 |
-| `orchestration/mcp/tools`, `mcp/resources`                   | `McpExposedTool`, `McpExposedResource`                             |
-| `users`, `users/[id]`, `users/invite`                        | `User` — tenancy arrives via the `Org` join, not an `orgId` column |
-| `/api/v1/admin/orgs` (API only; no page yet)                 | `Org` — the vendor's acts: create, suspend, export, delete         |
-| `logs`, `orchestration/audit-log`, `orchestration/mcp/audit` | Audit models — the actor is retained deliberately                  |
-| `orchestration/learn`                                        | Static content, no data                                            |
+| Surface                                                      | Backing models                                                                                   |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `orchestration/providers`, `orchestration/provider-models`   | `AiProviderConfig`, `AiProviderModel`                                                            |
+| `orchestration/capabilities`                                 | `AiCapability`                                                                                   |
+| `orchestration/agent-profiles`                               | `AiAgentProfile`                                                                                 |
+| `features` (feature flags)                                   | `FeatureFlag`                                                                                    |
+| `orchestration/knowledge/tags`                               | `KnowledgeTag`                                                                                   |
+| `orchestration/settings`, `orchestration/mcp/settings`       | The two singletons                                                                               |
+| `orchestration/mcp/tools`, `mcp/resources`                   | `McpExposedTool`, `McpExposedResource`                                                           |
+| `users`, `users/[id]`, `users/invite`                        | `User` — tenancy arrives via the `Org` join, not an `orgId` column                               |
+| `/api/v1/admin/orgs` (API only; no page yet)                 | `Org` — the vendor's acts: create, suspend, export, delete, and which providers each org may use |
+| `logs`, `orchestration/audit-log`, `orchestration/mcp/audit` | Audit models — the actor is retained deliberately                                                |
+| `orchestration/learn`                                        | Static content, no data                                                                          |
 
 Credentials are the hard stop, not a preference: `AiProviderConfig` keys its
 credential off `apiKeyEnvVar` — the _name_ of a process environment variable

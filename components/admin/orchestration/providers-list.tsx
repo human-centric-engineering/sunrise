@@ -115,6 +115,7 @@ const providerRowSchema = z
     metadata: z.unknown().nullable(),
     timeoutMs: z.number().nullable(),
     maxRetries: z.number().nullable(),
+    jurisdiction: z.string().nullable(),
     createdBy: z.string(),
     createdAt: z.union([z.string(), z.date()]),
     updatedAt: z.union([z.string(), z.date()]),
