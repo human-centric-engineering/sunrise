@@ -36,6 +36,11 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: mockLogAdminAction,
 }));
 
+const mockForgetOrgProviderPolicy = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/orchestration/llm/org-provider-policy', () => ({
+  forgetOrgProviderPolicy: mockForgetOrgProviderPolicy,
+}));
+
 const mockLog = vi.hoisted(() => ({
   info: vi.fn(),
   warn: vi.fn(),
@@ -180,6 +185,11 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
     );
   });
 
+  it("drops this process's cached policy for the org, so a revocation applies at once", async () => {
+    await put({ approved: [] });
+    expect(mockForgetOrgProviderPolicy).toHaveBeenCalledWith(OTHER);
+  });
+
   it('revokes every grant with an empty set', async () => {
     const res = await put({ approved: [] });
     expect((await json(res)).data).toMatchObject({ approved: [] });
@@ -195,6 +205,7 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
     });
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
     expect(mockLogAdminAction).not.toHaveBeenCalled();
+    expect(mockForgetOrgProviderPolicy).not.toHaveBeenCalled();
   });
 
   it('refuses the install org, which is unrestricted by rule', async () => {
