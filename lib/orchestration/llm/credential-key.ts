@@ -34,9 +34,3 @@ export function slugOfCredentialKey(key: string): string {
   const at = key.indexOf(SEPARATOR);
   return at === -1 ? key : key.slice(0, at);
 }
-
-/** The credential identity a {@link credentialKey} was built from; `''` for the shared one. */
-export function identityOfCredentialKey(key: string): string {
-  const at = key.indexOf(SEPARATOR);
-  return at === -1 ? '' : key.slice(at + 1);
-}
