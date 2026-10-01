@@ -163,14 +163,8 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     // that the agent does not hold now must be one the org is approved for
     // (§120 t-743). A version saved before the org's grant changed would
     // otherwise restore the agent straight into refusal.
-    const restoredFallbacks = updateData.fallbackProviders;
     await assertAgentProvidersApproved(
-      {
-        provider: typeof updateData.provider === 'string' ? updateData.provider : undefined,
-        fallbackProviders: Array.isArray(restoredFallbacks)
-          ? restoredFallbacks.filter((slug): slug is string => typeof slug === 'string')
-          : undefined,
-      },
+      { provider: snapshot.provider, fallbackProviders: snapshot.fallbackProviders },
       agent
     );
 

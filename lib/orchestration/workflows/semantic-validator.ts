@@ -20,6 +20,7 @@
 import { prisma } from '@/lib/db/client';
 import { modelRegistry } from '@/lib/orchestration/llm';
 import { logger } from '@/lib/logging';
+import { ValidationError } from '@/lib/api/errors';
 import type { WorkflowDefinition } from '@/types/orchestration';
 import { platformSlugsWhere } from '@/lib/orchestration/agents/platform-agent-guard';
 import { unapprovedProviders } from '@/lib/orchestration/llm/org-provider-policy';
@@ -47,11 +48,7 @@ export interface SemanticValidationResult {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-/**
- * Step types whose `modelOverride` chooses the model, and so its provider.
- * (`chat_turn` also takes one, but it overrides only the model on the agent's
- * own provider binding, so it names no provider.)
- */
+/** Step types that accept an optional `modelOverride` in their config. */
 const LLM_STEP_TYPES = new Set([
   'llm_call',
   'route',
@@ -60,16 +57,28 @@ const LLM_STEP_TYPES = new Set([
   'evaluate',
   'plan',
   'orchestrator',
-  'supervisor',
 ]);
+
+/**
+ * Step types whose `modelOverride` chooses a provider, for the org-approval
+ * check (§120 t-743): the above plus `supervisor`, which passes its override
+ * to `runLlmCall` too. Kept apart so adding it here does not also subject
+ * supervisor steps to the existence checks above, at execution, unasked.
+ * (`chat_turn` takes an override too, but only of the model on the agent's
+ * own provider binding, so it names no provider.)
+ */
+const PROVIDER_CHOOSING_STEP_TYPES = new Set([...LLM_STEP_TYPES, 'supervisor']);
 
 // ── Org approval ───────────────────────────────────────────────────────────
 
-/** Model id → the LLM steps that override to it. */
-function collectModelOverrides(def: WorkflowDefinition): Map<string, string[]> {
+/** Model id → the steps of `types` that override to it. */
+function collectModelOverrides(
+  def: WorkflowDefinition,
+  types: ReadonlySet<string> = LLM_STEP_TYPES
+): Map<string, string[]> {
   const modelSteps = new Map<string, string[]>();
   for (const step of def.steps) {
-    if (!LLM_STEP_TYPES.has(step.type)) continue;
+    if (!types.has(step.type)) continue;
     const override = step.config?.modelOverride;
     if (typeof override === 'string' && override.length > 0) {
       modelSteps.set(override, [...(modelSteps.get(override) ?? []), step.id]);
@@ -88,71 +97,107 @@ function providersOf(modelSteps: Map<string, string[]>): Map<string, string> {
   return providerByModel;
 }
 
-/**
- * Ask for an org-approval check of override providers (§120 t-743).
- *
- * `held` is the definition being replaced — the published version a publish
- * or rollback supersedes. A provider its overrides already use is not
- * re-checked, the rule agents follow: a workflow stranded by a later policy
- * change can still publish an unrelated edit, and only a provider the write
- * INTRODUCES is refused.
- */
+/** How the org-approval check of override providers is asked (§120 t-743). */
 export interface ApprovalCheck {
-  held?: WorkflowDefinition | null;
+  /**
+   * The definition being replaced — the published version a publish or
+   * rollback supersedes — loaded only if something would otherwise be
+   * refused. A provider its overrides already use is excused, the rule agents
+   * follow: a workflow stranded by a later policy change can still publish an
+   * unrelated edit, and only a provider the write INTRODUCES is refused.
+   */
+  held?: () => Promise<WorkflowDefinition | null>;
+  /**
+   * An unreadable policy throws by default — a save fails loudly rather than
+   * passing unchecked. A diagnostic that saves nothing passes `'skip'`.
+   */
+  onUnreadable?: 'throw' | 'skip';
 }
 
 /**
- * Steps whose `modelOverride` names a model whose provider the org in context
- * is not approved for, and which `held` did not already use. Empty at
- * `single` and for the install org.
+ * For each definition, the steps whose `modelOverride` names a model whose
+ * provider the org in context is not approved for, excusing what `held`
+ * already used. Empty at `single` and for the install org.
  *
  * A step override is an operator's explicit choice, which the call-time gate
  * refuses rather than reroutes, so a step saved naming such a provider fails
- * on every run. This says so at save instead. The registry is hydrated from
+ * on every run; this says so at save instead. The registry is hydrated from
  * the operator's Model Matrix first, so a model added there resolves to its
- * provider; one that still does not resolve is left to
- * `UNKNOWN_MODEL_OVERRIDE`.
+ * provider; one that still does not is left to `UNKNOWN_MODEL_OVERRIDE`.
  *
- * Exported for workflow CREATE, which publishes v1 without the rest of the
- * semantic validation; publish, rollback and validate reach it through
- * {@link semanticValidateWorkflow}'s `approval` option. Execution does not ask:
- * a step the gate refuses there takes its own error strategy, and refusing the
- * whole run up front would stop runs that skip or fall back from it.
+ * Batched for the backup import: one hydrate and one policy question for
+ * every definition. Execution does not ask at all — a step the gate refuses
+ * there takes its own error strategy, and refusing the whole run up front
+ * would stop runs that skip or fall back from it.
  *
- * @throws when the org's policy cannot be read — a save fails loudly rather
- *   than being waved through on a check that never ran.
+ * @throws when the org's policy cannot be read.
  */
-export async function findUnapprovedModelOverrides(
-  def: WorkflowDefinition,
-  check: ApprovalCheck = {}
-): Promise<SemanticValidationError[]> {
+export async function findUnapprovedModelOverridesIn<K>(
+  defs: ReadonlyMap<K, WorkflowDefinition>,
+  check: Pick<ApprovalCheck, 'held'> = {}
+): Promise<Map<K, SemanticValidationError[]>> {
   await hydrateModelRegistryFromDb();
-  const modelSteps = collectModelOverrides(def);
-  return approvalErrors(modelSteps, providersOf(modelSteps), check);
-}
-
-/** The approval check, given each override's provider already looked up. */
-async function approvalErrors(
-  modelSteps: Map<string, string[]>,
-  providerByModel: Map<string, string>,
-  check: ApprovalCheck
-): Promise<SemanticValidationError[]> {
-  const held = new Set(check.held ? providersOf(collectModelOverrides(check.held)).values() : []);
-  const introduced = [...new Set(providerByModel.values())].filter((slug) => !held.has(slug));
-  const refused = new Set(await unapprovedProviders(introduced));
-  const errors: SemanticValidationError[] = [];
-  for (const [modelId, stepIds] of modelSteps) {
-    const provider = providerByModel.get(modelId);
-    if (provider === undefined || !refused.has(provider)) continue;
-    for (const stepId of stepIds) {
-      errors.push({
-        code: 'PROVIDER_NOT_APPROVED',
-        message: `Step "${stepId}" references model "${modelId}", whose provider "${provider}" this organisation is not approved to use`,
-        stepId,
-      });
+  const looked = new Map(
+    [...defs].map(([key, def]) => {
+      const modelSteps = collectModelOverrides(def, PROVIDER_CHOOSING_STEP_TYPES);
+      return [key, { modelSteps, providerByModel: providersOf(modelSteps) }] as const;
+    })
+  );
+  const refused = new Set(
+    await unapprovedProviders([...looked.values()].flatMap((l) => [...l.providerByModel.values()]))
+  );
+  if (refused.size > 0 && check.held) {
+    const held = await check.held();
+    if (held) {
+      for (const provider of providersOf(
+        collectModelOverrides(held, PROVIDER_CHOOSING_STEP_TYPES)
+      ).values()) {
+        refused.delete(provider);
+      }
     }
   }
-  return errors;
+
+  const result = new Map<K, SemanticValidationError[]>();
+  for (const [key, { modelSteps, providerByModel }] of looked) {
+    const errors: SemanticValidationError[] = [];
+    for (const [modelId, stepIds] of modelSteps) {
+      const provider = providerByModel.get(modelId);
+      if (provider === undefined || !refused.has(provider)) continue;
+      for (const stepId of stepIds) {
+        errors.push({
+          code: 'PROVIDER_NOT_APPROVED',
+          message: `Step "${stepId}" references model "${modelId}", whose provider "${provider}" this organisation is not approved to use`,
+          stepId,
+        });
+      }
+    }
+    result.set(key, errors);
+  }
+  return result;
+}
+
+/** {@link findUnapprovedModelOverridesIn} for one definition. */
+export async function findUnapprovedModelOverrides(
+  def: WorkflowDefinition,
+  check: Pick<ApprovalCheck, 'held'> = {}
+): Promise<SemanticValidationError[]> {
+  return (await findUnapprovedModelOverridesIn(new Map([[0, def]]), check)).get(0) ?? [];
+}
+
+/**
+ * Refuse a workflow definition that would be published with a step overriding
+ * to a provider the org is not approved for. For the paths that publish a v1
+ * without the rest of the semantic validation: workflow create and
+ * save-as-template.
+ *
+ * @throws ValidationError naming each refused step.
+ */
+export async function assertWorkflowProvidersApproved(def: WorkflowDefinition): Promise<void> {
+  const errors = await findUnapprovedModelOverrides(def);
+  if (errors.length === 0) return;
+  throw new ValidationError('Workflow steps use providers this organisation is not approved for', {
+    definition: errors.map((e) => e.message),
+  });
 }
 
 // ── Validator ──────────────────────────────────────────────────────────────
@@ -203,19 +248,25 @@ export async function semanticValidateWorkflow(
     }
   }
 
-  // Nothing to check — fast path
-  if (modelSteps.size === 0 && capabilitySteps.size === 0 && agentSteps.size === 0) {
-    return { ok: true, errors: [] };
-  }
-
   // ── Org approval of override providers (§120 t-743) ────────────────────
   // Before the existence queries, so their graceful skip on a DB failure
   // cannot skip this too: a save asked for it, and an unreadable policy
-  // fails the save (throws) rather than passing it unchecked.
+  // fails the save (throws) unless the caller is a diagnostic that said skip.
   let approval: SemanticValidationError[] = [];
-  if (options.approval && modelSteps.size > 0) {
-    await hydrateModelRegistryFromDb();
-    approval = await approvalErrors(modelSteps, providersOf(modelSteps), options.approval);
+  if (options.approval) {
+    try {
+      approval = await findUnapprovedModelOverrides(def, options.approval);
+    } catch (err) {
+      if (options.approval.onUnreadable !== 'skip') throw err;
+      logger.error('Semantic validator: org provider policy unreadable, skipping approval check', {
+        error: err,
+      });
+    }
+  }
+
+  // Nothing to check — fast path
+  if (modelSteps.size === 0 && capabilitySteps.size === 0 && agentSteps.size === 0) {
+    return { ok: approval.length === 0, errors: approval };
   }
 
   // ── Batch DB queries ───────────────────────────────────────────────────

@@ -15,14 +15,14 @@ import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse, successResponse } from '@/lib/api/responses';
-import { ConflictError, ValidationError } from '@/lib/api/errors';
+import { ConflictError } from '@/lib/api/errors';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { createWorkflowSchema, listWorkflowsQuerySchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
-import { findUnapprovedModelOverrides } from '@/lib/orchestration/workflows/semantic-validator';
+import { assertWorkflowProvidersApproved } from '@/lib/orchestration/workflows/semantic-validator';
 
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
@@ -76,15 +76,7 @@ export const POST = withAdminAuth(async (request, session) => {
   // v1 is published as it is created, without the semantic validation a later
   // publish runs. At multi, a step overriding to a provider the org is not
   // approved for would fail every run, so it is refused here (§120 t-743).
-  const unapproved = await findUnapprovedModelOverrides(body.workflowDefinition);
-  if (unapproved.length > 0) {
-    throw new ValidationError(
-      'Workflow steps use providers this organisation is not approved for',
-      {
-        definition: unapproved.map((e) => e.message),
-      }
-    );
-  }
+  await assertWorkflowProvidersApproved(body.workflowDefinition);
 
   try {
     // Create the workflow row + its v1 version atomically. The workflow is

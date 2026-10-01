@@ -159,11 +159,13 @@ release process.
   `details.unapprovedProviders` and a per-field `details.errors` entry; only
   providers the write introduces are checked, so a stranded agent can still
   be edited. A workflow step `modelOverride` whose provider is not approved is
-  a new semantic error, `PROVIDER_NOT_APPROVED`, refused on create, publish,
-  rollback and `/validate` (publish and rollback only for a provider the new
-  version introduces), not at execution. `semanticValidateWorkflow` takes a new
-  optional `{ approval: { held } }` argument for it, and now also checks
-  `supervisor` steps' overrides. Bundle and backup import keep such agents
+  a new semantic error, `PROVIDER_NOT_APPROVED`, refused on create,
+  save-as-template, publish, rollback and `/validate` (publish and rollback only
+  for a provider the new version introduces), not at execution.
+  `semanticValidateWorkflow` takes a new optional
+  `{ approval: { held?, onUnreadable? } }` argument for it; that check also
+  covers `supervisor` steps' overrides. Also exported:
+  `findUnapprovedModelOverridesIn` and `assertWorkflowProvidersApproved`. Bundle and backup import keep such agents
   and workflows and add a warning. New helpers: `unapprovedProviders` in
   `org-provider-policy.ts`, `lib/orchestration/agents/provider-approval.ts`, and
   `findUnapprovedModelOverrides` in `semantic-validator.ts`. At `single`

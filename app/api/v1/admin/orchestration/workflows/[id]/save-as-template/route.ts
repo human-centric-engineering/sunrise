@@ -23,6 +23,7 @@ import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
+import { assertWorkflowProvidersApproved } from '@/lib/orchestration/workflows/semantic-validator';
 
 const saveAsTemplateSchema = z.object({
   name: z.string().min(1).max(200).trim().optional(),
@@ -69,6 +70,12 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const sourceDefinition = sourceDefinitionParsed.data;
 
   const body = await validateRequestBody(request, saveAsTemplateSchema);
+
+  // The template is a new, runnable workflow whose v1 is published here
+  // without semantic validation — as create's is, so it is checked as create's
+  // is (§120 t-743): every override's provider must be one the org is
+  // approved for, whatever the source workflow was allowed to keep.
+  await assertWorkflowProvidersApproved(sourceDefinition);
 
   // Generate a unique slug for the template
   const baseSlug = `${workflow.slug}-template`;

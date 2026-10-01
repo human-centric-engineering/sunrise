@@ -16,6 +16,16 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+// The workflow approval check (§120 t-743), mocked at its boundary; the real
+// one is tested in semantic-validator.test.ts.
+const mockAssertWorkflowProvidersApproved = vi.hoisted(() =>
+  vi.fn(async (_def: unknown): Promise<void> => undefined)
+);
+vi.mock('@/lib/orchestration/workflows/semantic-validator', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/workflows/semantic-validator')>()),
+  assertWorkflowProvidersApproved: mockAssertWorkflowProvidersApproved,
+}));
 import { NextRequest } from 'next/server';
 
 // ─── Module mocks (must appear before imports) ──────────────────────────────
@@ -485,5 +495,37 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       const response = await POST(makeRequest(), makeParams());
       expect(response.status).toBe(500);
     });
+  });
+});
+
+describe('POST …/save-as-template — approved providers (§120 t-743)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAssertWorkflowProvidersApproved.mockImplementation(async () => undefined);
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflow.findUnique).mockImplementation((async (args: unknown) => {
+      const { where } = args as { where: { id?: string; slug?: string } };
+      return where.id === WORKFLOW_ID ? makeWorkflow() : null;
+    }) as never);
+    txMocks.workflowCreate.mockResolvedValue({ id: TEMPLATE_ID });
+    txMocks.versionCreate.mockResolvedValue({ id: 'wfv-tpl-1', version: 1 });
+    txMocks.workflowFindUniqueOrThrow.mockResolvedValue(makeTemplate());
+  });
+
+  it("checks the source's published definition, as create checks a new one", async () => {
+    await POST(makeRequest(), makeParams());
+    expect(mockAssertWorkflowProvidersApproved).toHaveBeenCalledWith(VALID_DEFINITION);
+  });
+
+  it('creates no template when the check refuses it', async () => {
+    const { ValidationError } = await import('@/lib/api/errors');
+    mockAssertWorkflowProvidersApproved.mockRejectedValueOnce(
+      new ValidationError('Workflow steps use providers this organisation is not approved for')
+    );
+
+    const response = await POST(makeRequest(), makeParams());
+
+    expect(response.status).toBe(400);
+    expect(txMocks.workflowCreate).not.toHaveBeenCalled();
   });
 });

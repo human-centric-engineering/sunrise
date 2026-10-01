@@ -26,8 +26,9 @@ import {
 } from '@/lib/orchestration/workflows/template-catalogue';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
+import type { WorkflowDefinition } from '@/types/orchestration';
 import { importedAgentProviderWarnings } from '@/lib/orchestration/agents/provider-approval';
-import { findUnapprovedModelOverrides } from '@/lib/orchestration/workflows/semantic-validator';
+import { findUnapprovedModelOverridesIn } from '@/lib/orchestration/workflows/semantic-validator';
 
 export interface ImportResult {
   agents: { created: number; updated: number };
@@ -608,25 +609,22 @@ export async function importOrchestrationConfig(
  * A warning per imported workflow with a step overriding to a model whose
  * provider the org is not approved for, keyed by workflow slug (§120 t-743).
  * The workflow is still imported and published — the call-time gate refuses
- * those steps — as agents are; see `importedAgentProviderWarnings`. A policy
- * that cannot be read yields one general warning instead.
+ * those steps — as agents are; see `importedAgentProviderWarnings`. One batched
+ * policy question for every workflow; a policy that cannot be read yields one
+ * general warning instead.
  */
 async function importedWorkflowProviderWarnings(
   workflows: ReadonlyArray<{ slug: string; workflowDefinition: unknown }>
 ): Promise<{ bySlug: Map<string, string>; unchecked: string | null }> {
-  const bySlug = new Map<string, string>();
+  const defs = new Map<string, WorkflowDefinition>();
+  for (const wf of workflows) {
+    const parsed = workflowDefinitionSchema.safeParse(wf.workflowDefinition);
+    // An unparseable one is reported as a skip by the import loop.
+    if (parsed.success) defs.set(wf.slug, parsed.data);
+  }
+  let found: Map<string, { stepId: string }[]>;
   try {
-    for (const wf of workflows) {
-      const parsed = workflowDefinitionSchema.safeParse(wf.workflowDefinition);
-      if (!parsed.success) continue; // reported as a skip by the import loop
-      const errors = await findUnapprovedModelOverrides(parsed.data);
-      if (errors.length === 0) continue;
-      bySlug.set(
-        wf.slug,
-        `Workflow '${wf.slug}': imported, but steps ${errors.map((e) => `"${e.stepId}"`).join(', ')} ` +
-          'override to providers this organisation is not approved to use — those steps are refused until a platform admin grants them'
-      );
-    }
+    found = await findUnapprovedModelOverridesIn(defs);
   } catch (error) {
     logger.error('Backup import could not check workflows against the org provider policy', {
       error: error instanceof Error ? error.message : String(error),
@@ -636,6 +634,15 @@ async function importedWorkflowProviderWarnings(
       unchecked:
         "Workflows were imported without checking their model overrides against this organisation's approved providers, which could not be read",
     };
+  }
+  const bySlug = new Map<string, string>();
+  for (const [slug, errors] of found) {
+    if (errors.length === 0) continue;
+    bySlug.set(
+      slug,
+      `Workflow '${slug}': imported, but steps ${errors.map((e) => `"${e.stepId}"`).join(', ')} ` +
+        'override to providers this organisation is not approved to use — those steps are refused until a platform admin grants them'
+    );
   }
   return { bySlug, unchecked: null };
 }

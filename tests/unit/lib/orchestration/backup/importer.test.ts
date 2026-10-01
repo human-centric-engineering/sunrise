@@ -18,12 +18,16 @@ const mockUnapprovedProviders = vi.hoisted(() =>
 );
 // The workflow approval check, mocked at its boundary; the real one is tested
 // in semantic-validator.test.ts.
-const mockFindUnapprovedModelOverrides = vi.hoisted(() =>
-  vi.fn(async (_def: unknown): Promise<{ code: string; message: string; stepId: string }[]> => [])
+const mockFindUnapprovedModelOverridesIn = vi.hoisted(() =>
+  vi.fn(
+    async (
+      _defs: ReadonlyMap<string, unknown>
+    ): Promise<Map<string, { code: string; message: string; stepId: string }[]>> => new Map()
+  )
 );
 vi.mock('@/lib/orchestration/workflows/semantic-validator', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/workflows/semantic-validator')>()),
-  findUnapprovedModelOverrides: mockFindUnapprovedModelOverrides,
+  findUnapprovedModelOverridesIn: mockFindUnapprovedModelOverridesIn,
 }));
 vi.mock('@/lib/orchestration/llm/org-provider-policy', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-policy')>()),
@@ -309,9 +313,14 @@ describe('importOrchestrationConfig', () => {
   });
 
   it('imports a workflow whose steps use non-approved providers, and warns naming the steps (§120 t-743)', async () => {
-    mockFindUnapprovedModelOverrides.mockResolvedValueOnce([
-      { code: 'PROVIDER_NOT_APPROVED', message: 'not approved', stepId: 'step-1' },
-    ]);
+    mockFindUnapprovedModelOverridesIn.mockResolvedValueOnce(
+      new Map([
+        [
+          'onboarding-flow',
+          [{ code: 'PROVIDER_NOT_APPROVED', message: 'not approved', stepId: 'step-1' }],
+        ],
+      ])
+    );
     mockTx.aiWorkflow.findUnique.mockResolvedValue(null);
     mockTx.aiWorkflow.create.mockResolvedValue({ id: 'wf-1' });
     mockTx.aiWorkflow.update.mockResolvedValue({ id: 'wf-1' });
@@ -329,7 +338,7 @@ describe('importOrchestrationConfig', () => {
   });
 
   it('imports anyway, with one general warning, when the policy cannot be read (§120 t-743)', async () => {
-    mockFindUnapprovedModelOverrides.mockRejectedValueOnce(new Error('connection reset'));
+    mockFindUnapprovedModelOverridesIn.mockRejectedValueOnce(new Error('connection reset'));
     mockUnapprovedProviders.mockRejectedValueOnce(new Error('connection reset'));
     mockTx.aiAgent.findFirst.mockResolvedValue(null);
     mockTx.aiAgent.create.mockResolvedValue({});

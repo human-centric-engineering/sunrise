@@ -39,7 +39,9 @@ vi.mock('@/lib/orchestration/llm', () => ({
 // ─── Imports after mocks ────────────────────────────────────────────────────
 
 import {
+  assertWorkflowProvidersApproved,
   findUnapprovedModelOverrides,
+  findUnapprovedModelOverridesIn,
   semanticValidateWorkflow,
 } from '@/lib/orchestration/workflows/semantic-validator';
 import { prisma } from '@/lib/db/client';
@@ -352,9 +354,9 @@ describe('org approval of a modelOverride provider (§120 t-743)', () => {
     expect(result.errors.map((e) => e.code)).toEqual(['PROVIDER_NOT_APPROVED']);
   });
 
-  it('does not re-check a provider the replaced version already used', async () => {
+  it('does not refuse a provider the replaced version already used', async () => {
     mockUnapprovedProviders.mockImplementation(refuseAnthropic);
-    const held = makeDef([llmStep('old', 'claude-sonnet-4-6')]);
+    const held = vi.fn(async () => makeDef([llmStep('old', 'claude-sonnet-4-6')]));
 
     const result = await semanticValidateWorkflow(
       makeDef([llmStep('s1', 'claude-sonnet-4-6'), llmStep('s2', 'gpt-5')]),
@@ -362,8 +364,77 @@ describe('org approval of a modelOverride provider (§120 t-743)', () => {
     );
 
     expect(result.errors).toEqual([]);
-    // Only what the draft introduces is asked about.
-    expect(mockUnapprovedProviders).toHaveBeenCalledWith(['openai']);
+    expect(held).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refuses a provider the replaced version did not use', async () => {
+    mockUnapprovedProviders.mockImplementation(refuseAnthropic);
+    const held = vi.fn(async () => makeDef([llmStep('old', 'gpt-5')]));
+
+    const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'claude-sonnet-4-6')]), {
+      approval: { held },
+    });
+
+    expect(result.errors.map((e) => e.code)).toEqual(['PROVIDER_NOT_APPROVED']);
+  });
+
+  it('never loads the replaced version when nothing is refused (always, at single)', async () => {
+    const held = vi.fn(async () => null);
+
+    await semanticValidateWorkflow(makeDef([llmStep('s1', 'claude-sonnet-4-6')]), {
+      approval: { held },
+    });
+
+    expect(held).not.toHaveBeenCalled();
+  });
+
+  it('does not subject supervisor steps to the existence checks — execution is unchanged', async () => {
+    vi.mocked(modelRegistry.getModel).mockReturnValue(undefined);
+    const supervisor = { ...llmStep('sup', 'unknown-model'), type: 'supervisor' };
+
+    const result = await semanticValidateWorkflow(makeDef([supervisor]));
+
+    expect(result.errors).toEqual([]);
+  });
+
+  it('skips the check, logged, for a diagnostic that asked to skip an unreadable policy', async () => {
+    mockUnapprovedProviders.mockRejectedValue(new Error('connection reset'));
+
+    const result = await semanticValidateWorkflow(makeDef([llmStep('s1', 'claude-sonnet-4-6')]), {
+      approval: { onUnreadable: 'skip' },
+    });
+
+    expect(result.errors).toEqual([]);
+  });
+
+  it('asks the policy once for a whole batch of definitions', async () => {
+    mockUnapprovedProviders.mockImplementation(refuseAnthropic);
+
+    const found = await findUnapprovedModelOverridesIn(
+      new Map([
+        ['a', makeDef([llmStep('s1', 'claude-sonnet-4-6')])],
+        ['b', makeDef([llmStep('s1', 'gpt-5')])],
+      ])
+    );
+
+    expect(mockUnapprovedProviders).toHaveBeenCalledTimes(1);
+    expect(mockHydrate).toHaveBeenCalledTimes(1);
+    expect([...found].map(([key, errors]) => [key, errors.length])).toEqual([
+      ['a', 1],
+      ['b', 0],
+    ]);
+  });
+
+  it('refuses a definition with a 400 naming the steps, for create and save-as-template', async () => {
+    mockUnapprovedProviders.mockImplementation(refuseAnthropic);
+
+    await expect(
+      assertWorkflowProvidersApproved(makeDef([llmStep('s1', 'claude-sonnet-4-6')]))
+    ).rejects.toMatchObject({
+      status: 400,
+      message: 'Workflow steps use providers this organisation is not approved for',
+      details: { definition: [expect.stringContaining('Step "s1"')] },
+    });
   });
 
   it('is not asked without the approval option — execution leaves a refused step to the gate', async () => {

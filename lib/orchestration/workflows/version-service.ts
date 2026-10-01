@@ -50,7 +50,7 @@ async function validatePublishableDefinition(
   // At multi, an override's provider must be one the org is approved for —
   // unless the version being replaced already used it (§120 t-743).
   const semantic = await semanticValidateWorkflow(parsed.data, {
-    approval: { held: await publishedDefinition(replacing) },
+    approval: { held: () => publishedDefinition(replacing) },
   });
   if (!semantic.ok) {
     throw new ValidationError(
