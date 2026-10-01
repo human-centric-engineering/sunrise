@@ -131,7 +131,7 @@ export async function enrichDocumentKeywords(documentId: string): Promise<Enrich
       documentId,
       modelId,
       providerSlug: modelInfo.provider,
-      fix: 'The rule registered via registerProviderEligibility() in lib/app/llm-providers.ts did not permit this provider — by policy, or because it threw (a rule that cannot be evaluated denies). Point the chat task default at a permitted model, or widen the rule.',
+      fix: 'This provider is not permitted: at TENANCY_MODE=multi, by the org’s approved providers (GET /api/v1/admin/orgs/[id]/providers); or by the rule registered via registerProviderEligibility() in lib/app/llm-providers.ts — by policy, or because it threw (a rule that cannot be evaluated denies). Point the chat task default at a permitted model, or widen the rule.',
     });
     throw new ProviderNotPermittedError(modelInfo.provider, modelId);
   }

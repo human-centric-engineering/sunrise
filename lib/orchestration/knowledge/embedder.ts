@@ -403,16 +403,17 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
   }
 
   // Two distinct endings, kept distinct: "nothing is set up" sends an operator
-  // to the setup wizard, and "what is set up was refused" sends them to
-  // whoever wrote the rule. Collapsing them into one message would send half
+  // to the setup wizard, and "what is set up was refused" sends them to the
+  // org's grants or to whoever wrote the rule. Collapsing them into one message would send half
   // of the readers to the wrong place. The flag is what separates them — an
   // install with only an Anthropic row reaches the end of this chain having
   // been refused nothing, and must not be told a policy turned it away.
   if (refusals.length > 0) {
     throw new NoEligibleProviderError(
       'No permitted embedding provider. Every embedding provider this install could ' +
-        'have used was refused by the app provider-eligibility rule ' +
-        '(lib/app/llm-providers.ts).'
+        'have used was refused: at TENANCY_MODE=multi, by the org’s approved providers ' +
+        '(PUT /api/v1/admin/orgs/[id]/providers); otherwise by the app provider-eligibility ' +
+        'rule (lib/app/llm-providers.ts).'
     );
   }
   // The bare-key arm is gone (t-740). An install that relied on it has the key

@@ -74,6 +74,7 @@ import {
   runAsSystem,
 } from '@/lib/tenancy/context';
 import { createOrg } from '@/lib/tenancy/lifecycle';
+import { writeOrgProviderPolicy } from '@/lib/tenancy/org-settings';
 import { hashApiKey } from '@/lib/auth/api-keys';
 import { resolveApiKey } from '@/lib/auth/api-keys';
 import { resolveEmbedToken } from '@/lib/embed/auth';
@@ -285,7 +286,12 @@ interface OrgFixture {
 }
 
 /** The same fixture in each org: what B has, A must never see. */
-async function seedOrg(label: 'a' | 'b', capabilityId: string, tagId: string): Promise<OrgFixture> {
+async function seedOrg(
+  label: 'a' | 'b',
+  capabilityId: string,
+  tagId: string,
+  providerId: string
+): Promise<OrgFixture> {
   const owner = await prisma.user.create({
     data: { name: `${PREFIX} owner ${label}`, email: `${PREFIX}-${label}-${stamp}@example.com` },
   });
@@ -294,6 +300,9 @@ async function seedOrg(label: 'a' | 'b', capabilityId: string, tagId: string): P
     name: `${PREFIX} org ${label}`,
     ownerUserId: owner.id,
   });
+  // At multi a new org may call no provider until it is granted one (§120
+  // t-742). Both orgs get the smoke's local provider, as an operator would.
+  await writeOrgProviderPolicy(org.id, { approved: [providerId] });
   const topic = label === 'a' ? 'alpha aardvark accounting' : 'bravo bison billing';
   const costUsd = label === 'a' ? 0.013 : 0.031;
 
@@ -512,7 +521,7 @@ async function main(): Promise<void> {
     // ── Global fixtures: a local embedding provider, a tag, a capability ────
     // AiProviderConfig and KnowledgeTag are global tables (no orgId); the
     // capability is one the seed shipped.
-    await prisma.aiProviderConfig.create({
+    const localProvider = await prisma.aiProviderConfig.create({
       data: {
         name: `${PREFIX} local embeddings`,
         slug: LOCAL_PROVIDER_SLUG,
@@ -527,8 +536,8 @@ async function main(): Promise<void> {
     if (!capability) throw new Error('no seeded capability — run the seed first');
 
     // ── Two orgs, the same fixture in each ─────────────────────────────────
-    const a = await seedOrg('a', capability.id, tag.id);
-    const b = await seedOrg('b', capability.id, tag.id);
+    const a = await seedOrg('a', capability.id, tag.id, localProvider.id);
+    const b = await seedOrg('b', capability.id, tag.id, localProvider.id);
     fixtures = [a, b];
     console.log(`\n[1] seeded org A (${a.orgId}) and org B (${b.orgId})`);
 
