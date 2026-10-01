@@ -169,9 +169,12 @@ export async function getProvider(
   }
 
   const entry = newEntry(buildProviderFromConfig(config), config.slug);
+  // Cached under the row's slug only. A name lookup used to be cached under
+  // the name as well, and that alias outlived the "slug wins" rule: a row
+  // created later with that string as its SLUG was shadowed by the named row
+  // until the TTL ran out. A name lookup now costs a query on each miss, which
+  // only callers holding a name pay.
   instanceCache.set(config.slug, entry);
-  // Also key by name so callers that already looked up via name are consistent.
-  if (slugOrName !== config.slug) instanceCache.set(slugOrName, entry);
   return viewOf(entry, context);
 }
 
@@ -597,12 +600,19 @@ async function tryAudioRow(
   row: { providerSlug: string; modelId: string },
   source: 'operator_default' | 'matrix_fallback'
 ): Promise<AudioProviderResolution | null> {
-  // Provider eligibility, on the fallback arm only. `'matrix_fallback'` is
-  // Sunrise choosing — no operator pinned this row, we are walking the matrix
-  // in order — so an org's policy applies to it exactly as it applies to the
-  // agent resolver's automatic fill. `'operator_default'` is the pin an
-  // operator set in Settings → Default models, the same category as an
-  // explicit `agent.provider`, and is left alone.
+  // Provider eligibility, on both arms. `'matrix_fallback'` is Sunrise
+  // choosing — no operator pinned this row, we are walking the matrix in order —
+  // so it is asked as `'primary'`, exactly as the agent resolver's automatic
+  // pick is. `'operator_default'` is the pin an operator set in Settings →
+  // Default models, the same category as an explicit `agent.provider`, so it is
+  // asked as `'explicit'`.
+  //
+  // The pin is asked HERE, and not left to the call-time gate, because of what
+  // this function promises about a pin: an unusable one falls through to the
+  // matrix (an open breaker, a missing `transcribe()`). Left to the gate, a
+  // refused pin was returned as resolved, `transcribe()` was refused, and a
+  // permitted row further down was never tried, so voice input was dead (§120
+  // t-741 review). A refused pin is unusable in the same sense.
   //
   // Denial returns `null` rather than throwing, because that is what every
   // other guard in this function already does and what the loop above is
@@ -611,20 +621,18 @@ async function tryAudioRow(
   // three callers already treat as "speech-to-text is unavailable" — a
   // fail-closed outcome with an existing, tested user-facing path, and one
   // that still lets a permitted row further down the matrix serve the request.
-  if (source === 'matrix_fallback') {
-    const permitted = await isProviderEligible(row.providerSlug, {
-      task: 'audio',
-      source: 'primary',
-      primarySlug: null,
+  const asked = {
+    task: 'audio',
+    source: source === 'operator_default' ? 'explicit' : 'primary',
+    primarySlug: source === 'operator_default' ? row.providerSlug : null,
+  } as const satisfies ProviderEligibilityContext;
+  if (!(await isProviderEligible(row.providerSlug, asked))) {
+    logger.info('Skipping audio provider — not permitted by the app eligibility rule', {
+      providerSlug: row.providerSlug,
+      modelId: row.modelId,
+      source,
     });
-    if (!permitted) {
-      logger.info('Skipping audio provider — not permitted by the app eligibility rule', {
-        providerSlug: row.providerSlug,
-        modelId: row.modelId,
-        source,
-      });
-      return null;
-    }
+    return null;
   }
 
   const breaker = getBreaker(row.providerSlug);
@@ -639,13 +647,8 @@ async function tryAudioRow(
 
   let provider: LlmProvider;
   try {
-    // The gate's view of the same distinction made above: an operator's pin is
-    // their recorded choice, a matrix row reached by order is Sunrise's.
-    provider = await getProvider(row.providerSlug, {
-      task: 'audio',
-      source: source === 'operator_default' ? 'explicit' : 'primary',
-      primarySlug: null,
-    });
+    // The call-time gate is told the same thing the check above was.
+    provider = await getProvider(row.providerSlug, asked);
   } catch (err) {
     logger.warn('Audio provider resolution failed, trying next', {
       providerSlug: row.providerSlug,

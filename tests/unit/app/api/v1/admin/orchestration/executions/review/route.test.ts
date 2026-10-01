@@ -70,6 +70,7 @@ import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { runSupervisorAssessment } from '@/lib/orchestration/supervisor';
 import {
+  ProviderCallRefusedError,
   registerProviderEligibility,
   resetProviderEligibility,
 } from '@/lib/orchestration/llm/provider-eligibility';
@@ -476,6 +477,29 @@ describe('POST …/review — provider eligibility', () => {
 
     expect(res.status).toBe(200);
     expect(vi.mocked(runSupervisorAssessment)).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers 403, not 500, when the call-time gate refuses an operator-chosen judge (§120 t-741)', async () => {
+    // The override is not filtered at selection (above), so the refusal comes
+    // from the gate inside the judge's own call, and bubbles out of the
+    // assessment unwrapped. It is the same policy answer as the task-default
+    // arm's, and gets the same response.
+    vi.mocked(runSupervisorAssessment).mockRejectedValue(new ProviderCallRefusedError('anthropic'));
+
+    const res = await POST(makeRequest({ modelOverride: 'operator-picked-judge' }), makeContext());
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('provider_not_permitted');
+    expect(vi.mocked(prisma.aiWorkflowExecution.update)).not.toHaveBeenCalled();
+  });
+
+  it('still lets any other assessment failure propagate', async () => {
+    vi.mocked(runSupervisorAssessment).mockRejectedValue(new Error('vendor down'));
+
+    const res = await POST(makeRequest({ modelOverride: 'operator-picked-judge' }), makeContext());
+
+    expect(res.status).toBe(500);
   });
 
   it('runs normally when the rule permits the provider', async () => {

@@ -90,6 +90,7 @@ import { executeChatTurn } from '@/lib/orchestration/engine/executors/chat-turn'
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import type { WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -392,6 +393,28 @@ describe('chat_turn — error paths', () => {
     expect(err).toBeInstanceOf(ExecutorError);
     expect(err.code).toBe('chat_turn_failed');
     expect(err.message).toContain('503');
+  });
+
+  it('codes a call-time gate refusal provider_not_permitted and does not retry it (§120 t-741)', async () => {
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+      id: 'conv_1',
+      agentId: 'agent_1',
+    } as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
+    vi.mocked(getProviderWithFallbacks).mockResolvedValue({
+      provider: {
+        chat: vi.fn(async () => {
+          throw new ProviderCallRefusedError('openai');
+        }),
+      } as never,
+      usedSlug: 'openai',
+    });
+
+    const err = await executeChatTurn(makeStep(), makeCtx()).catch((e) => e);
+    expect(err).toBeInstanceOf(ExecutorError);
+    expect(err.code).toBe('provider_not_permitted');
+    expect(err.retriable).toBe(false);
   });
 });
 

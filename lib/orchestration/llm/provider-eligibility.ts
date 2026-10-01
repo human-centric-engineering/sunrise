@@ -67,13 +67,17 @@
  * does.
  *
  * At selection it does NOT filter an **explicit `agent.provider`**, an explicit step
- * `modelOverride`, a review request's own `modelOverride`, an operator's pinned
- * audio default, or the `EVALUATION_DEFAULT_PROVIDER` / `_MODEL` /
- * `EVALUATION_JUDGE_MODEL` environment variables. Each is an operator's
+ * `modelOverride`, a review request's own `modelOverride`, or the
+ * `EVALUATION_DEFAULT_PROVIDER` / `_MODEL` / `EVALUATION_JUDGE_MODEL`
+ * environment variables. Each is an operator's
  * recorded decision, and silently rerouting one would make a request answer
  * from a provider its own configuration does not name — harder to diagnose than
  * a refusal, and a worse failure than the one being prevented. The call-time
  * gate refuses them instead, as `source: 'explicit'`, when the rule says no.
+ * The one operator choice asked at selection is the pinned AUDIO default, as
+ * `'explicit'`: that pin is documented to fall through to the matrix when it is
+ * unusable, and a refused pin is unusable, so asking first lets a permitted row
+ * serve the request instead of the gate failing it.
  * `.context/orchestration/llm-providers.md` carries the per-path coverage
  * table, which says where Sunrise chooses rather than where data can go.
  *
@@ -160,9 +164,11 @@ export interface ProviderEligibilityContext {
    */
   source: 'primary' | 'explicit' | 'system';
   /**
-   * The provider already chosen as primary. `null` when `source` is
-   * `'primary'`, because that is the choice being made — and, at the call-time
-   * gate, `null` for any call to the primary itself, explicit or not.
+   * The provider already chosen as primary. `null` exactly when `source` is
+   * `'primary'`, because that is the choice being made; for `'explicit'` and
+   * `'system'` it is always set. At the call-time gate, a call to the primary
+   * itself under one of those sources (an explicit `agent.provider`, or an
+   * unrecorded call checked under every source) carries its own slug here.
    *
    * NOT guaranteed absent from `candidates`. The system fill excludes it, but
    * an agent's own `fallbackProviders` list is passed through as the operator
@@ -391,11 +397,12 @@ export async function resolveEligibleProviders(
  * and remedied in different places; a shared throw here would force all of them
  * through one error type that fits none.
  *
- * Only call this where SUNRISE chose the provider. A provider reached through
- * an operator's recorded choice — an explicit `agent.provider`, a step's
- * `modelOverride`, a pinned audio default, an `EVALUATION_*` env var — is out
- * of scope by the seam's rule, and passing one here would reroute a decision
- * that was made deliberately.
+ * Call this where SUNRISE chose the provider. A provider reached through an
+ * operator's recorded choice — an explicit `agent.provider`, a step's
+ * `modelOverride`, an `EVALUATION_*` env var — is left to the call-time gate,
+ * which refuses rather than reroutes. The exception is a choice whose own
+ * contract is to fall through when unusable (the pinned audio default, asked
+ * as `'explicit'` in `tryAudioRow`).
  */
 export async function isProviderEligible(
   slug: string,
@@ -468,6 +475,22 @@ export class ProviderCallRefusedError extends ProviderError {
   }
 }
 
+/**
+ * Keep the context's contract: `primarySlug` is `null` only for `'primary'`.
+ * A call-time context for the primary position has no other primary to name,
+ * so for `'explicit'` (an operator's named provider) it is the provider itself.
+ * A fork rule written against the selection-time contract may dereference it
+ * for any non-`'primary'` source, and a `null` there would refuse, or throw and
+ * refuse, a call the rule means to allow.
+ */
+function withPrimarySlug(
+  context: ProviderEligibilityContext,
+  slug: string
+): ProviderEligibilityContext {
+  if (context.source === 'primary' || context.primarySlug !== null) return context;
+  return { ...context, primarySlug: slug };
+}
+
 const EVERY_SOURCE: readonly ProviderEligibilityContext['source'][] = [
   'primary',
   'explicit',
@@ -532,11 +555,12 @@ export async function assertProviderCallPermitted(
 
   let permitted: boolean;
   if (context) {
-    permitted = await isProviderEligible(slug, context);
+    permitted = await isProviderEligible(slug, withPrimarySlug(context, slug));
   } else {
     permitted = true;
     for (const source of EVERY_SOURCE) {
-      if (!(await isProviderEligible(slug, { task, source, primarySlug: null }))) {
+      const asked = withPrimarySlug({ task, source, primarySlug: null }, slug);
+      if (!(await isProviderEligible(slug, asked))) {
         permitted = false;
         break;
       }

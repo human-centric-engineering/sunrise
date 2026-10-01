@@ -268,7 +268,9 @@ describe('what the rule is told', () => {
 
     expect(seen.map((s) => s.context)).toEqual([
       { task: 'chat', source: 'primary', primarySlug: null },
-      { task: 'chat', source: 'explicit', primarySlug: null },
+      // The seam's contract: `primarySlug` is null only for 'primary'. An
+      // explicit primary IS the primary, so it carries its own slug.
+      { task: 'chat', source: 'explicit', primarySlug: 'a' },
     ]);
   });
 
@@ -318,7 +320,34 @@ describe('what the rule is told', () => {
     await provider.transcribe!(Buffer.from(''), { model: 'w', mimeType: 'audio/wav' });
 
     expect(new Set(seen.map((s) => s.context.task))).toEqual(new Set(['embeddings', 'audio']));
-    expect(seen.every((s) => s.context.primarySlug === null)).toBe(true);
+    // Null only under 'primary'; under 'explicit' and 'system' the provider
+    // stands as its own primary, as the contract promises those sources.
+    expect(
+      seen.every((s) =>
+        s.context.source === 'primary'
+          ? s.context.primarySlug === null
+          : s.context.primarySlug === 'x'
+      )
+    ).toBe(true);
+  });
+
+  it('never hands a non-primary source a null primarySlug, so a rule written to the selection contract keeps working', async () => {
+    // A region rule written before the gate existed: for every source but
+    // 'primary' it reads `primarySlug!`, which selection always set.
+    const x = fakeProvider('x');
+    registerProviderInstance('x', x.provider);
+    registerProviderEligibility((candidates, ctx) => {
+      if (ctx.source === 'primary') return candidates;
+      const region = ctx.primarySlug!.split('-')[0];
+      return candidates.filter((c) => c.startsWith(region));
+    });
+
+    const explicit = await getProvider('x', EXPLICIT);
+    await explicit.chat([], { model: 'm' });
+    const unrecorded = await getProvider('x');
+    await unrecorded.chat([], { model: 'm' });
+
+    expect(x.chat).toHaveBeenCalledTimes(2);
   });
 
   it('asks the rule on every call, not once per cached instance', async () => {
@@ -403,6 +432,24 @@ describe('the row the gate evaluates', () => {
     expect(provider.name).toBe('Shared');
     expect(prisma.aiProviderConfig.findFirst).toHaveBeenCalledTimes(1);
     expect(prisma.aiProviderConfig.findFirst).toHaveBeenCalledWith({ where: { slug: 'shared' } });
+  });
+
+  it('does not cache a name lookup under the name, so a row created later with that slug wins at once', async () => {
+    let slugRowExists = false;
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockImplementation((async (args: {
+      where: { slug?: string; name?: string };
+    }) => {
+      if (args.where.slug === 'shared') return slugRowExists ? row('shared', 'Shared') : null;
+      if (args.where.name === 'shared') return row('other', 'shared');
+      return null;
+    }) as never);
+
+    const first = await getProvider('shared');
+    expect(first.name).toBe('shared'); // the row NAMED 'shared'
+
+    slugRowExists = true;
+    const second = await getProvider('shared');
+    expect(second.name).toBe('Shared'); // the row whose SLUG is 'shared'
   });
 });
 

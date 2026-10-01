@@ -41,6 +41,7 @@ import { ProviderError, toProviderError } from '@/lib/orchestration/llm/provider
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import {
+  ProviderCallRefusedError,
   registerProviderEligibility,
   resetProviderEligibility,
 } from '@/lib/orchestration/llm/provider-eligibility';
@@ -218,6 +219,24 @@ describe('runLlmCall', () => {
     ).rejects.toMatchObject({
       name: 'ExecutorError',
       code: 'llm_call_failed',
+      retriable: false,
+    });
+  });
+
+  it('codes a call-time gate refusal provider_not_permitted, the same as the pre-check, and does not retry it', async () => {
+    // §120 t-741. An override is not pre-checked, so its refusal comes from the
+    // gate inside provider.chat. It must read the same as the task-default
+    // refusal, or a filter on provider_not_permitted misses it.
+    vi.mocked(getModel).mockReturnValue({ provider: 'openai' } as any);
+    vi.mocked(getProvider).mockResolvedValue({
+      chat: vi.fn().mockRejectedValue(new ProviderCallRefusedError('openai')),
+    } as any);
+
+    await expect(
+      runLlmCall(makeCtx(), { stepId: 's8', prompt: 'test', modelOverride: 'gpt-5' })
+    ).rejects.toMatchObject({
+      name: 'ExecutorError',
+      code: 'provider_not_permitted',
       retriable: false,
     });
   });

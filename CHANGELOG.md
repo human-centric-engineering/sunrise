@@ -104,17 +104,25 @@ release process.
 
 - **An eligibility rule now also decides operator-chosen providers, at call
   time** (§120 t-741). Selection still never reroutes an explicit
-  `agent.provider`, a step's `modelOverride`, a pinned audio or embedding
-  default, or an `EVALUATION_*` env var, but the call-time gate refuses one the
-  rule refuses, asking it with `source: 'explicit'`. So a fork rule that barred
-  a provider only for `'primary'` / `'system'` behaves as before, and one that
-  barred it for `'explicit'` too now stops agents that name it, where before it
-  only removed it from their fallback lists. A refusal counts as a request
-  fault: chat does not fail over from it, a workflow step does not retry it,
-  and no circuit breaker records it.
+  `agent.provider`, a step's `modelOverride`, a pinned embedding default, or an
+  `EVALUATION_*` env var, but the call-time gate refuses one the rule refuses,
+  asking it with `source: 'explicit'` and `primarySlug` set to that provider
+  (the context keeps its contract: `primarySlug` is `null` only for
+  `'primary'`). So a fork rule that barred a provider only for `'primary'` /
+  `'system'` behaves as before, and one that barred it for `'explicit'` too
+  now stops agents that name it, where before it only removed it from their
+  fallback lists. The pinned **audio** default is now asked at selection, as
+  `'explicit'`, and a refused pin falls through to the next permitted audio
+  row, as an unreachable pin already did. A refusal counts as a request fault:
+  chat does not fail over from it, a workflow step does not retry it and fails
+  with code `provider_not_permitted` (as a refused task default already did),
+  no circuit breaker records it, and the retroactive-review route answers 403
+  `provider_not_permitted` for a refused `modelOverride` or
+  `EVALUATION_JUDGE_MODEL`.
 - **`getProvider` prefers a slug match over a name match** (§120 t-741). It
   used one unordered `findFirst` over both, so a caller holding one row's slug
-  could be handed a different row whose name equalled it.
+  could be handed a different row whose name equalled it. A name lookup is no
+  longer cached under the name, so it costs a query on each call.
 
 - **Admin edits to a system agent's platform-owned fields no longer
   survive** (§116 t-724). This is the upgrade to look at. On the first

@@ -53,7 +53,10 @@ import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
-import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
+import {
+  isProviderEligible,
+  ProviderCallRefusedError,
+} from '@/lib/orchestration/llm/provider-eligibility';
 import { JUDGE_MODEL } from '@/lib/orchestration/evaluations/judge-model';
 import { runSupervisorAssessment, type LlmCallShim } from '@/lib/orchestration/supervisor';
 
@@ -226,21 +229,37 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     };
   };
 
-  const assessment = await runSupervisorAssessment({
-    stepOutputs,
-    inputData: execution.inputData,
-    outputData: execution.outputData,
-    workflowId: execution.workflowId,
-    executionId: id,
-    assessmentCriteria: body.assessmentCriteria ?? DEFAULT_ASSESSMENT_CRITERIA,
-    redTeamPrompts: body.redTeamPrompts,
-    requireEvidenceCitations: true,
-    minWeaknesses: body.minWeaknesses ?? 1,
-    includeStepOutputs: body.includeStepOutputs ?? 'auto',
-    temperature: 0.2,
-    llmCall,
-    triggeredBy: 'retroactive',
-  });
+  let assessment: Awaited<ReturnType<typeof runSupervisorAssessment>>;
+  try {
+    assessment = await runSupervisorAssessment({
+      stepOutputs,
+      inputData: execution.inputData,
+      outputData: execution.outputData,
+      workflowId: execution.workflowId,
+      executionId: id,
+      assessmentCriteria: body.assessmentCriteria ?? DEFAULT_ASSESSMENT_CRITERIA,
+      redTeamPrompts: body.redTeamPrompts,
+      requireEvidenceCitations: true,
+      minWeaknesses: body.minWeaknesses ?? 1,
+      includeStepOutputs: body.includeStepOutputs ?? 'auto',
+      temperature: 0.2,
+      llmCall,
+      triggeredBy: 'retroactive',
+    });
+  } catch (err) {
+    // The call-time gate (§120 t-741) refused an operator-chosen judge — a
+    // request `modelOverride` or `EVALUATION_JUDGE_MODEL`, which the check
+    // above deliberately leaves to it. Same answer as that check gives the
+    // task-default arm: a policy refusal, not a server fault. Provider errors
+    // bubble out of the assessment unwrapped, so this is the error itself.
+    if (err instanceof ProviderCallRefusedError) {
+      return errorResponse(
+        `The judge model "${modelId}" resolves to provider "${modelInfo.provider}", which is not permitted for retroactive review. Choose a judge model on a permitted provider.`,
+        { code: 'provider_not_permitted', status: 403 }
+      );
+    }
+    throw err;
+  }
 
   // Archive any prior verdict into supervisorReport.previousVerdicts[] —
   // operators rerun for a reason; overwriting silently would discard the

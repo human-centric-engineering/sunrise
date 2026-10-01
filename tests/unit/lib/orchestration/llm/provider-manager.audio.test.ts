@@ -471,11 +471,10 @@ describe('getAudioProvider — provider eligibility', () => {
     expect(result?.providerSlug).toBe('openai');
   });
 
-  it('does NOT filter an operator-pinned audio default', async () => {
-    // The boundary, pinned rather than assumed. A pin in Settings → Default
-    // models is an operator's recorded choice, the same category as an explicit
-    // `agent.provider`. The rule below denies EVERYTHING, so this resolving is
-    // the whole proof that the `operator_default` arm never consults it.
+  it("asks the rule about an operator's pinned default as 'explicit', and keeps it when permitted", async () => {
+    // A pin in Settings → Default models is an operator's recorded choice, the
+    // same category as an explicit `agent.provider`. This rule refuses only
+    // what Sunrise picks; the pin, asked as 'explicit', survives it.
     vi.mocked(getOrchestrationSettings).mockResolvedValue({
       defaultModels: {
         routing: '',
@@ -487,11 +486,43 @@ describe('getAudioProvider — provider eligibility', () => {
     } as never);
     vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([makeAudioModelRow()]);
     vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
-    registerProviderEligibility(() => []);
+    const rule = vi.fn((candidates: readonly string[], ctx: { source: string }) =>
+      ctx.source === 'explicit' ? candidates : []
+    );
+    registerProviderEligibility(rule);
 
     const result = await getAudioProvider();
 
     expect(result?.providerSlug).toBe('openai');
     expect(result?.modelId).toBe('whisper-1');
+    expect(rule).toHaveBeenCalledWith(['openai'], {
+      task: 'audio',
+      source: 'explicit',
+      primarySlug: 'openai',
+    });
+  });
+
+  it('falls through from a REFUSED pin to a permitted matrix row, as it does from any unusable pin (§120 t-741)', async () => {
+    // Left to the call-time gate, the refused pin was returned as resolved,
+    // transcribe() was refused, and the permitted row below was never tried.
+    vi.mocked(getOrchestrationSettings).mockResolvedValue({
+      defaultModels: {
+        routing: '',
+        chat: '',
+        reasoning: '',
+        embeddings: '',
+        audio: 'barred::whisper-1',
+      },
+    } as never);
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+      makeAudioModelRow({ providerSlug: 'barred' }),
+      makeAudioModelRow({ providerSlug: 'openai' }),
+    ]);
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+    registerProviderEligibility((candidates) => candidates.filter((c) => c !== 'barred'));
+
+    const result = await getAudioProvider();
+
+    expect(result?.providerSlug).toBe('openai');
   });
 });

@@ -93,6 +93,7 @@ import { registerTracer, resetTracer } from '@/lib/orchestration/tracing/registr
 import { SPAN_AGENT_CALL_TURN } from '@/lib/orchestration/tracing/attributes';
 import { createContext } from '@/lib/orchestration/engine/context';
 import { logger } from '@/lib/logging';
+import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -405,6 +406,16 @@ describe('executeAgentCall', () => {
       name: 'ExecutorError',
       code: 'agent_call_failed',
       message: 'Rate limited',
+    });
+  });
+
+  it('codes a call-time gate refusal provider_not_permitted and does not retry it (§120 t-741)', async () => {
+    mockChat.mockRejectedValue(new ProviderCallRefusedError('openai'));
+
+    await expect(executeAgentCall(makeStep(), makeCtx())).rejects.toMatchObject({
+      name: 'ExecutorError',
+      code: 'provider_not_permitted',
+      retriable: false,
     });
   });
 
