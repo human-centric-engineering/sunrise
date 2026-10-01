@@ -50,8 +50,12 @@ vi.mock('@/lib/db/client', () => ({
 }));
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
-  isApiKeyEnvVarSet: vi.fn(() => false),
   clearCache: vi.fn(),
+}));
+
+// `apiKeyPresent` is the credential seam's answer (§120 t-744), not the env var's.
+vi.mock('@/lib/orchestration/llm/provider-credentials', () => ({
+  hasProviderKey: vi.fn(async () => false),
 }));
 
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
@@ -63,7 +67,8 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { isApiKeyEnvVarSet, clearCache } from '@/lib/orchestration/llm/provider-manager';
+import { clearCache } from '@/lib/orchestration/llm/provider-manager';
+import { hasProviderKey } from '@/lib/orchestration/llm/provider-credentials';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -146,7 +151,7 @@ describe('GET /api/v1/admin/orchestration/providers/:id', () => {
   describe('Successful retrieval', () => {
     it('returns provider with apiKeyPresent field', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+      vi.mocked(hasProviderKey).mockResolvedValue(true);
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
 
       const response = await GET(makeRequest(), makeParams(PROVIDER_ID));
@@ -159,7 +164,8 @@ describe('GET /api/v1/admin/orchestration/providers/:id', () => {
       // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe(PROVIDER_ID);
-      expect(typeof data.data.apiKeyPresent).toBe('boolean');
+      // The seam's answer, passed through (it was told `true` above).
+      expect(data.data.apiKeyPresent).toBe(true);
     });
   });
 
@@ -215,7 +221,7 @@ describe('PATCH /api/v1/admin/orchestration/providers/:id', () => {
   describe('Successful update', () => {
     it('updates provider and returns 200 with apiKeyPresent field', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+      vi.mocked(hasProviderKey).mockResolvedValue(true);
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
       vi.mocked(prisma.aiProviderConfig.update).mockResolvedValue(
         makeProvider({ name: 'Updated' })
@@ -232,12 +238,13 @@ describe('PATCH /api/v1/admin/orchestration/providers/:id', () => {
       );
       // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
-      expect(typeof data.data.apiKeyPresent).toBe('boolean');
+      // The seam's answer, passed through (it was told `true` above).
+      expect(data.data.apiKeyPresent).toBe(true);
     });
 
     it('updates all optional fields in a single payload', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+      vi.mocked(hasProviderKey).mockResolvedValue(true);
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
       vi.mocked(prisma.aiProviderConfig.update).mockResolvedValue(makeProvider());
 
@@ -306,7 +313,7 @@ describe('PATCH /api/v1/admin/orchestration/providers/:id', () => {
       process.env[secretEnvVar] = secretValue;
 
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+      vi.mocked(hasProviderKey).mockResolvedValue(true);
       const current = makeProvider({ apiKeyEnvVar: 'OLD_KEY' });
       const updated = makeProvider({ apiKeyEnvVar: secretEnvVar });
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(current);
@@ -326,7 +333,8 @@ describe('PATCH /api/v1/admin/orchestration/providers/:id', () => {
       const data = JSON.parse(responseText) as {
         data: { apiKeyPresent: boolean; apiKeyEnvVar?: string };
       };
-      expect(typeof data.data.apiKeyPresent).toBe('boolean');
+      // The seam's answer, passed through (it was told `true` above).
+      expect(data.data.apiKeyPresent).toBe(true);
 
       // Cleanup
       delete process.env[secretEnvVar];

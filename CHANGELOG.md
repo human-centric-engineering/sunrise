@@ -111,10 +111,14 @@ release process.
   non-secret `identity`, and is asked on every `getProvider` with the org in
   context. Sunrise still stores no tenant's key. A resolver or registration
   that throws refuses the credential (`credential_unavailable`) rather than
-  falling back to the environment. Also exported: `hasProviderCredential`,
-  `filterProvidersWithCredential`, `breakerKeyOf` (provider manager), and
-  `getCircuitBreakerStatusForProvider` / `resetBreakersForProvider` (circuit
-  breaker). See
+  falling back to the environment. Also exported: `hasProviderCredential`
+  (can this row be called), `hasProviderKey` (does it have a key — the admin
+  `apiKeyPresent` flag), `filterProvidersWithCredential` and `readEnvKey` from
+  the seam module; `breakerKeyOf` and `getProviderIfBreakerClosed` from the
+  provider manager; `getCircuitBreakerStatusForProvider` /
+  `resetBreakersForProvider` from the circuit breaker. The
+  `circuit_breaker_opened` webhook gains `perCredential`, and its
+  `providerSlug` stays the plain slug. See
   [`llm-providers.md` → Provider credentials](./.context/orchestration/llm-providers.md#provider-credentials-fork-seam).
 
 ### Changed

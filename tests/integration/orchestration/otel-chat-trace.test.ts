@@ -55,12 +55,18 @@ vi.mock('@/lib/env', () => ({
   },
 }));
 
-vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
-  getProviderWithFallbacks: vi.fn(),
-  getProvider: vi.fn(),
-  // Test doubles have no credential key; the handler falls back to the slug.
-  breakerKeyOf: vi.fn(() => undefined),
-}));
+vi.mock('@/lib/orchestration/llm/provider-manager', () => {
+  const getProvider = vi.fn();
+  return {
+    getProviderWithFallbacks: vi.fn(),
+    getProvider,
+    // Failover fetches through this; delegate, with a closed breaker.
+    getProviderIfBreakerClosed: vi.fn(async (slug: string, context?: unknown) => ({
+      provider: (await getProvider(slug, context)) as unknown,
+      breakerKey: slug,
+    })),
+  };
+});
 
 vi.mock('@/lib/orchestration/llm/cost-tracker', async () => {
   const actual = await vi.importActual<typeof import('@/lib/orchestration/llm/cost-tracker')>(

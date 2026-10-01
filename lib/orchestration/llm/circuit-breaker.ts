@@ -95,7 +95,12 @@ export class CircuitBreaker {
       if (wasClosed) {
         this.openedAt = now;
         void dispatchWebhookEvent('circuit_breaker_opened', {
-          providerSlug: this.slug,
+          // The provider SLUG, never the credential key this breaker is keyed
+          // on (§120 t-744): receivers match on the slug, and an org's
+          // credential identity is not theirs to see. A per-credential breaker
+          // says so without saying whose.
+          providerSlug: slugOfCredentialKey(this.slug),
+          perCredential: slugOfCredentialKey(this.slug) !== this.slug,
           failures: this.failures.length,
           threshold: this.config.failureThreshold,
           // Config the receiver needs to understand how long the breaker

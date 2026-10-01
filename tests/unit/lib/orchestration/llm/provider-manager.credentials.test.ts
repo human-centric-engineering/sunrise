@@ -44,6 +44,7 @@ import {
   breakerKeyOf,
   clearCache,
   getProvider,
+  getProviderIfBreakerClosed,
   getProviderWithFallbacks,
 } from '@/lib/orchestration/llm/provider-manager';
 import {
@@ -114,6 +115,17 @@ describe('with nothing registered', () => {
     expect(b).toBe(a);
     expect(clients.map((c) => c.apiKey)).toEqual(['from-env']);
     expect(breakerKeyOf(a)).toBe('anthropic');
+  });
+});
+
+describe('with nothing registered, an open breaker', () => {
+  it('skips the provider without fetching it, as before the seam', async () => {
+    const shared = getBreaker('anthropic');
+    for (let i = 0; i < 10; i++) shared.recordFailure();
+
+    await expect(getProviderIfBreakerClosed('anthropic')).resolves.toBeNull();
+    expect(prisma.aiProviderConfig.findFirst).not.toHaveBeenCalled();
+    expect(clients).toHaveLength(0);
   });
 });
 

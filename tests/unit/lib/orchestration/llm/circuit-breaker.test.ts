@@ -206,6 +206,26 @@ describe('CircuitBreaker', () => {
     );
   });
 
+  it("reports a per-credential breaker under its plain slug, without the org's credential identity", async () => {
+    // §120 t-744: breakers are keyed slug#identity for a fork's per-org key.
+    // Webhook receivers match on the slug and must not learn the identity.
+    vi.clearAllMocks();
+    const perOrg = new CircuitBreaker('anthropic#org:cm123', {
+      failureThreshold: 1,
+      windowMs: 60_000,
+      cooldownMs: 30_000,
+    });
+
+    perOrg.recordFailure();
+    await Promise.resolve();
+
+    expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledWith(
+      'circuit_breaker_opened',
+      expect.objectContaining({ providerSlug: 'anthropic', perCredential: true })
+    );
+    expect(JSON.stringify(vi.mocked(dispatchWebhookEvent).mock.calls)).not.toContain('org:cm123');
+  });
+
   it('does not re-dispatch circuit_breaker_opened on additional failures while already open', async () => {
     // Trip the breaker.
     vi.clearAllMocks();

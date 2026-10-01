@@ -378,7 +378,11 @@ template that covers any update event:
   half_open→open transition. The dispatch is guarded against
   duplicates while the breaker stays open; receivers don't get a new
   event from a flapping provider until the breaker actually cycles.
-  Payload: `{ providerSlug, failures, threshold, windowMs, cooldownMs, openedAt }`.
+  Payload: `{ providerSlug, perCredential, failures, threshold, windowMs, cooldownMs, openedAt }`.
+  Breakers are per credential (§120 t-744): `perCredential` is `true` when
+  the breaker that opened belongs to one org's credential from a fork's
+  credential resolver rather than the install's shared one. `providerSlug` is
+  always the plain slug, and the credential's identity is not sent.
 
 ## Entity-Scoped Subscriptions
 

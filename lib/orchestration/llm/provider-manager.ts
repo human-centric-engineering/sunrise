@@ -590,9 +590,9 @@ export async function listProviders(): Promise<ProviderStatus[]> {
 }
 
 /**
- * Same as `listProviders` but also reports whether the configured
- * `apiKeyEnvVar` is set in `process.env`. Only inspects `typeof value`
- * and `length > 0` — never returns or logs the value itself.
+ * Same as `listProviders` but also reports whether each row has an API key,
+ * asked through the credential seam (`hasProviderKey`; by default whether its
+ * `apiKeyEnvVar` is set in `process.env`). Never returns or logs the key.
  */
 export async function listProvidersWithStatus(
   where: Parameters<typeof prisma.aiProviderConfig.findMany>[0] = {}
@@ -613,9 +613,12 @@ export async function listProvidersWithStatus(
 }
 
 /**
- * Report whether a single row's `apiKeyEnvVar` is set in the current
- * process. Exposed so the single-item GET route can hydrate its
- * response the same way `listProvidersWithStatus` does.
+ * Report whether a named env var is set in the current process. This is the
+ * ENV VAR question only, not "does this provider have a key" — that is
+ * `hasProviderKey` / `hasProviderCredential` in `provider-credentials.ts`,
+ * which a fork's credential resolver answers. Use those for anything about a
+ * provider row; this is for a check that is genuinely about the variable
+ * (the embedder's hint about a retired bare-`OPENAI_API_KEY` setup).
  */
 export function isApiKeyEnvVarSet(apiKeyEnvVar: string | null): boolean {
   return readEnvKey(apiKeyEnvVar) !== undefined;
@@ -668,18 +671,12 @@ export async function getProviderWithFallbacks(
         index === 0
           ? primaryCallContext(provenance)
           : (fallbackCallContext(provenance, primarySlug) ?? { unrecordedFallbackOf: primarySlug });
-      const provider = await acquireProvider(slug, origin);
-      // The breaker is the CREDENTIAL's (§120 t-744), so it is checked after
-      // the provider is fetched — which is what says which credential this org
-      // gets. The bare slug for the shared credential, slug + identity for a
-      // per-org one: one org's failing key never pauses another org's healthy
-      // one. Checking the slug first, as this used to, let the shared
-      // credential's breaker block orgs with keys of their own.
-      const breakerKey = breakerKeyOf(provider) ?? slug;
-      if (!getBreaker(breakerKey).canAttempt()) {
+      const acquired = await acquireIfBreakerClosed(slug, origin);
+      if (!acquired) {
         logger.info('Skipping provider — circuit breaker open', { provider: slug });
         continue;
       }
+      const { provider, breakerKey } = acquired;
       if (slug !== primarySlug) {
         logger.info('Using fallback provider', {
           primary: primarySlug,
@@ -701,6 +698,40 @@ export async function getProviderWithFallbacks(
     code: 'all_providers_exhausted',
     retriable: true,
   });
+}
+
+/**
+ * Fetch `slug` for one call if its CREDENTIAL's circuit breaker is closed;
+ * `null` when it is open (§120 t-744). Every path that picks a provider by
+ * trying candidates in turn goes through this — `getProviderWithFallbacks`,
+ * the audio matrix walk and chat's mid-stream failover — so none of them sends
+ * a call to a credential known to be down, and none of them lets the shared
+ * credential's breaker block an org whose resolver gives it its own key.
+ *
+ * The breaker is the credential's, so in general it can only be checked once
+ * the provider is fetched: that is what says which credential this org gets.
+ * With no resolver registered every credential is the shared one and its key
+ * is the slug, so the breaker is checked first and an open one skips the
+ * fetch entirely, as it always did.
+ *
+ * @throws whatever `getProvider` throws (not found, disabled, no credential).
+ */
+export async function getProviderIfBreakerClosed(
+  slug: string,
+  context?: ProviderEligibilityContext
+): Promise<{ provider: LlmProvider; breakerKey: string } | null> {
+  return acquireIfBreakerClosed(slug, context);
+}
+
+async function acquireIfBreakerClosed(
+  slug: string,
+  origin: CallOrigin
+): Promise<{ provider: LlmProvider; breakerKey: string } | null> {
+  if (!hasProviderCredentialResolver() && !getBreaker(slug).canAttempt()) return null;
+  const provider = await acquireProvider(slug, origin);
+  const breakerKey = breakerKeyOf(provider) ?? slug;
+  if (!getBreaker(breakerKey).canAttempt()) return null;
+  return { provider, breakerKey };
 }
 
 /**
@@ -762,10 +793,10 @@ async function tryAudioRow(
     return null;
   }
 
-  let provider: LlmProvider;
+  let acquired: { provider: LlmProvider; breakerKey: string } | null;
   try {
     // The call-time gate is told the same thing the check above was.
-    provider = await getProvider(row.providerSlug, asked);
+    acquired = await acquireIfBreakerClosed(row.providerSlug, asked);
   } catch (err) {
     logger.warn('Audio provider resolution failed, trying next', {
       providerSlug: row.providerSlug,
@@ -775,9 +806,8 @@ async function tryAudioRow(
     return null;
   }
 
-  // The CREDENTIAL's breaker (§120 t-744), checked once the provider is
-  // fetched and the credential known — see getProviderWithFallbacks.
-  if (!getBreaker(breakerKeyOf(provider) ?? row.providerSlug).canAttempt()) {
+  // The CREDENTIAL's breaker (§120 t-744) — see acquireIfBreakerClosed.
+  if (!acquired) {
     logger.info('Skipping audio provider — circuit breaker open', {
       providerSlug: row.providerSlug,
       modelId: row.modelId,
@@ -785,6 +815,7 @@ async function tryAudioRow(
     });
     return null;
   }
+  const { provider } = acquired;
 
   if (typeof provider.transcribe !== 'function') {
     logger.warn(

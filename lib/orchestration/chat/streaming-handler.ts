@@ -46,9 +46,8 @@ import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics'
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import {
   assertModelSupportsAttachments,
-  getProvider,
   getProviderWithFallbacks,
-  breakerKeyOf,
+  getProviderIfBreakerClosed,
   type AttachmentCapability,
 } from '@/lib/orchestration/llm/provider-manager';
 import { fallbackCallContext } from '@/lib/orchestration/llm/provider-eligibility';
@@ -1186,8 +1185,7 @@ export class StreamingChatHandler {
         resolvedBinding.provenance
       );
       resolvedProviderSlug = usedSlug;
-      const usedBreakerKey = usedBreakerKeyOrUndefined ?? usedSlug;
-      resolvedBreakerKey = usedBreakerKey;
+      resolvedBreakerKey = usedBreakerKeyOrUndefined ?? usedSlug;
 
       // Extract responseFormat from agent metadata if configured
       const agentMetadata =
@@ -1201,7 +1199,12 @@ export class StreamingChatHandler {
       const remainingFallbacks = [...resolvedFallbackProviders];
       let currentProvider = provider;
       let currentProviderSlug = usedSlug;
-      let currentBreakerKey = usedBreakerKey;
+      // The breaker of the provider that is serving the turn — after a
+      // mid-stream failover, the fallback's, not the one first resolved. Its
+      // success is credited here: crediting the primary cleared the failure it
+      // had just recorded, so a primary failing every first attempt never
+      // tripped its breaker (§120 t-744).
+      let currentBreakerKey = resolvedBreakerKey;
 
       // Track consecutive per-tool failures to avoid burning iterations
       // on a tool that keeps crashing. After 2 failures the tool is
@@ -1565,13 +1568,18 @@ export class StreamingChatHandler {
                 finishReason = undefined;
 
                 try {
-                  currentProvider = await getProvider(
+                  // Only if its credential's breaker is closed (§120 t-744), as
+                  // getProviderWithFallbacks does for the first choice: never
+                  // stream through a credential known to be down.
+                  const acquired = await getProviderIfBreakerClosed(
                     nextSlug,
                     fallbackCallContext(resolvedBinding.provenance, resolvedBinding.providerSlug)
                   );
+                  if (!acquired) throw new Error(`Provider ${nextSlug} circuit breaker is open`);
+                  currentProvider = acquired.provider;
                   currentProviderSlug = nextSlug;
                   resolvedProviderSlug = nextSlug;
-                  currentBreakerKey = breakerKeyOf(currentProvider) ?? nextSlug;
+                  currentBreakerKey = acquired.breakerKey;
                   resolvedBreakerKey = currentBreakerKey;
                 } catch {
                   log.error(
@@ -1872,10 +1880,7 @@ export class StreamingChatHandler {
             });
           }
 
-          // The provider that SERVED the turn, which after a mid-stream failover is
-          // not the one first resolved (§120 t-744 review). Crediting the primary
-          // cleared the failure it had just recorded, so a primary failing every
-          // first attempt never tripped its breaker.
+          // The provider that served the turn — see `currentBreakerKey`.
           getBreaker(currentBreakerKey).recordSuccess();
           if (citations.length > 0) {
             yield { type: 'citations', citations };
@@ -2293,10 +2298,7 @@ export class StreamingChatHandler {
           }
 
           if (result.skipFollowup) {
-            // The provider that SERVED the turn, which after a mid-stream failover is
-            // not the one first resolved (§120 t-744 review). Crediting the primary
-            // cleared the failure it had just recorded, so a primary failing every
-            // first attempt never tripped its breaker.
+            // The provider that served the turn — see `currentBreakerKey`.
             getBreaker(currentBreakerKey).recordSuccess();
             if (citations.length > 0) {
               yield { type: 'citations', citations };
@@ -2591,10 +2593,7 @@ export class StreamingChatHandler {
           }
 
           if (anySkipFollowup) {
-            // The provider that SERVED the turn, which after a mid-stream failover is
-            // not the one first resolved (§120 t-744 review). Crediting the primary
-            // cleared the failure it had just recorded, so a primary failing every
-            // first attempt never tripped its breaker.
+            // The provider that served the turn — see `currentBreakerKey`.
             getBreaker(currentBreakerKey).recordSuccess();
             if (citations.length > 0) {
               yield { type: 'citations', citations };

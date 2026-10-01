@@ -48,14 +48,21 @@ vi.mock('@/lib/orchestration/llm/model-registry', () => ({
   getModel: vi.fn().mockReturnValue(null),
 }));
 
-vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
-  getProvider: vi.fn(),
-  getProviderWithFallbacks: vi.fn(),
-  assertModelSupportsAttachments: vi.fn(),
-  // A test double is not a manager-built view, so it has no credential key;
-  // the handler falls back to the slug, which is what these tests assert.
-  breakerKeyOf: vi.fn(() => undefined),
-}));
+vi.mock('@/lib/orchestration/llm/provider-manager', () => {
+  const getProvider = vi.fn();
+  return {
+    getProvider,
+    getProviderWithFallbacks: vi.fn(),
+    assertModelSupportsAttachments: vi.fn(),
+    // Mid-stream failover fetches through this (§120 t-744). By default it
+    // delegates to `getProvider` with a closed breaker keyed on the slug, so
+    // the failover tests keep asserting on `getProvider`.
+    getProviderIfBreakerClosed: vi.fn(async (slug: string, context?: unknown) => ({
+      provider: (await getProvider(slug, context)) as unknown,
+      breakerKey: slug,
+    })),
+  };
+});
 
 vi.mock('@/lib/orchestration/llm/circuit-breaker', () => ({
   getBreaker: vi.fn(() => ({
@@ -204,8 +211,12 @@ vi.mock('@/lib/orchestration/chat/summarizer', async (importOriginal) => ({
 
 const { prisma } = await import('@/lib/db/client');
 const { logger } = await import('@/lib/logging');
-const { getProviderWithFallbacks, getProvider, assertModelSupportsAttachments, breakerKeyOf } =
-  await import('@/lib/orchestration/llm/provider-manager');
+const {
+  getProviderWithFallbacks,
+  getProvider,
+  assertModelSupportsAttachments,
+  getProviderIfBreakerClosed,
+} = await import('@/lib/orchestration/llm/provider-manager');
 const { checkBudget, logCost } = await import('@/lib/orchestration/llm/cost-tracker');
 const { capabilityDispatcher } = await import('@/lib/orchestration/capabilities/dispatcher');
 // Registry mocks are established via vi.mock above; capture getCapabilityDefinitions
@@ -2248,9 +2259,10 @@ describe('StreamingChatHandler', () => {
         }
         return breakers.get(key);
       });
-      vi.mocked(breakerKeyOf).mockImplementation((provider) =>
-        provider === failingProvider ? 'anthropic#org:a' : 'openai#org:a'
-      );
+      vi.mocked(getProviderIfBreakerClosed).mockResolvedValueOnce({
+        provider: fallbackProvider as never,
+        breakerKey: 'openai#org:a',
+      });
 
       (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
         makeAgent({ fallbackProviders: ['openai'] })
@@ -2260,14 +2272,52 @@ describe('StreamingChatHandler', () => {
         usedSlug: 'anthropic',
         breakerKey: 'anthropic#org:a',
       });
-      (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(fallbackProvider);
 
-      await collect(streamChat(baseRequest));
+      try {
+        await collect(streamChat(baseRequest));
 
-      expect(breakers.get('anthropic#org:a')?.recordFailure).toHaveBeenCalledTimes(1);
-      expect(breakers.get('anthropic#org:a')?.recordSuccess).not.toHaveBeenCalled();
-      expect(breakers.get('openai#org:a')?.recordSuccess).toHaveBeenCalledTimes(1);
-      vi.mocked(breakerKeyOf).mockImplementation(() => undefined);
+        expect(breakers.get('anthropic#org:a')?.recordFailure).toHaveBeenCalledTimes(1);
+        expect(breakers.get('anthropic#org:a')?.recordSuccess).not.toHaveBeenCalled();
+        expect(breakers.get('openai#org:a')?.recordSuccess).toHaveBeenCalledTimes(1);
+      } finally {
+        // `clearAllMocks` in beforeEach does not restore implementations, so a
+        // failing assertion must not leave the Map-backed breaker behind: put
+        // back the module mock's default.
+        (getBreaker as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+          recordSuccess: vi.fn(),
+          recordFailure: vi.fn(),
+          canAttempt: vi.fn(() => true),
+          state: 'closed',
+        }));
+      }
+    });
+
+    it("does not fail over onto a fallback whose credential's breaker is open", async () => {
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new Error('Provider down');
+        }),
+      };
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['openai'] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+      vi.mocked(getProviderIfBreakerClosed).mockResolvedValueOnce(null);
+
+      const events = await collect(streamChat(baseRequest));
+
+      expect(getProvider).not.toHaveBeenCalled();
+      expect((events as Array<{ type: string }>).some((e) => e.type === 'error')).toBe(true);
     });
 
     it('does not fail over or trip the breaker on a request-fault provider error', async () => {

@@ -20,6 +20,8 @@
  *
  *   export function initAppProviderCredentials(): void {
  *     registerProviderCredentialResolver(async (config, { orgId }) => {
+ *       // Local rows (Ollama, LM Studio) are asked too, and usually need no key.
+ *       if (config.isLocal) return { apiKey: undefined, identity: '' };
  *       const key = await vault.read(`llm/${orgId}/${config.slug}`); // cache this
  *       return { apiKey: key, identity: `org:${orgId}` };
  *     });
@@ -40,7 +42,11 @@
  *  - **The identity is not secret and must not be the key.** It appears in
  *    breaker and dashboard keys and in logs. It must not contain `#`.
  *  - **It runs every time a provider is fetched** — every chat turn, workflow
- *    step and embedding batch. Cache whatever you look up.
+ *    step and embedding batch — and whenever Sunrise checks which providers
+ *    are reachable. Cache whatever you look up.
+ *  - **It is asked about EVERY row, local ones included.** A local row needs
+ *    no key (`apiKey: undefined` is fine), but a resolver that throws for one
+ *    makes it unusable and drops it from auto-pick.
  *  - **A throw, or a non-credential, makes the provider unavailable** for that
  *    call (`credential_unavailable`). There is no fallback to the env var.
  *  - **Register synchronously.** This function must not be `async`; load

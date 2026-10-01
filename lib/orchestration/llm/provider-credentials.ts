@@ -159,10 +159,9 @@ function credentialFromEnv(config: ProviderCredentialConfig): ProviderCredential
 /**
  * The value of a named env var, or `undefined` when it is unset or empty. The
  * one place a provider key is read from the environment: the seam's default
- * uses it, and so does `isApiKeyEnvVarSet` (the admin "env var present" flag),
- * so the two cannot disagree. Silent: it runs on reachability checks every
- * turn, and the provider manager warns about a missing key once, when it
- * builds a client.
+ * uses it, and so does `isApiKeyEnvVarSet`, so the two cannot disagree.
+ * Silent: it runs on reachability checks every turn, and the provider manager
+ * warns about a missing key once, when it builds a client.
  */
 export function readEnvKey(apiKeyEnvVar: string | null): string | undefined {
   if (!apiKeyEnvVar) return undefined;
@@ -236,6 +235,22 @@ export async function resolveProviderCredential(
 }
 
 /**
+ * The key the seam gives `config` in this context, or `undefined` for none or
+ * for a resolver that failed. The one place the two answers below read it, so
+ * how a failure is treated cannot drift between them.
+ */
+async function resolvedKey(
+  config: ProviderCredentialConfig
+): Promise<{ ok: true; apiKey: string | undefined } | { ok: false }> {
+  try {
+    const { apiKey } = await resolveProviderCredential(config);
+    return { ok: true, apiKey };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
  * Whether `config` can be called at all in the current context: a local row,
  * or one the resolver gives a key. With nothing registered this is exactly the
  * old check (`isLocal || process.env[apiKeyEnvVar]` set).
@@ -244,18 +259,15 @@ export async function resolveProviderCredential(
  * form's preview, the clean-up agent's pin — use this rather than reading the
  * env var, so a fork whose keys are not in the environment is not left with
  * every provider looking unconfigured. A resolver failure answers `false`.
+ *
+ * A local row is asked too, because `getProvider` asks the resolver for every
+ * row: a resolver that throws for it makes the row unbuildable, and calling it
+ * reachable would bind an agent to a provider that always fails. It just does
+ * not need a key.
  */
 export async function hasProviderCredential(config: ProviderCredentialConfig): Promise<boolean> {
-  // A local row is asked too, because `getProvider` asks the resolver for every
-  // row: a resolver that throws for it makes the row unbuildable, and calling
-  // it reachable would bind an agent to a provider that always fails. It just
-  // does not need a key.
-  try {
-    const { apiKey } = await resolveProviderCredential(config);
-    return config.isLocal || (typeof apiKey === 'string' && apiKey.length > 0);
-  } catch {
-    return false;
-  }
+  const resolved = await resolvedKey(config);
+  return resolved.ok && (config.isLocal || resolved.apiKey !== undefined);
 }
 
 /**
@@ -264,12 +276,8 @@ export async function hasProviderCredential(config: ProviderCredentialConfig): P
  * a local row without one answers `false`, as the flag always has.
  */
 export async function hasProviderKey(config: ProviderCredentialConfig): Promise<boolean> {
-  try {
-    const { apiKey } = await resolveProviderCredential(config);
-    return typeof apiKey === 'string' && apiKey.length > 0;
-  } catch {
-    return false;
-  }
+  const resolved = await resolvedKey(config);
+  return resolved.ok && resolved.apiKey !== undefined;
 }
 
 /**
