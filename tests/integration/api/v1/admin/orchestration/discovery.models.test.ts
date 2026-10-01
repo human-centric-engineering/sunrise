@@ -47,7 +47,11 @@ const mockListModels = vi.fn();
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   getProvider: vi.fn(() => Promise.resolve({ listModels: mockListModels })),
-  isApiKeyEnvVarSet: vi.fn(() => true),
+}));
+
+// Reachability is the credential seam's answer (§120 t-744), not the env var's.
+vi.mock('@/lib/orchestration/llm/provider-credentials', () => ({
+  hasProviderCredential: vi.fn(async () => true),
 }));
 
 vi.mock('@/lib/orchestration/llm/model-registry', () => ({
@@ -58,7 +62,7 @@ vi.mock('@/lib/orchestration/llm/model-registry', () => ({
 import { GET } from '@/app/api/v1/admin/orchestration/discovery/models/route';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import { hasProviderCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { getModelsByProvider, refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -111,7 +115,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 describe('GET /api/v1/admin/orchestration/discovery/models', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+    vi.mocked(hasProviderCredential).mockResolvedValue(true);
     vi.mocked(refreshFromOpenRouter).mockResolvedValue();
     vi.mocked(getModelsByProvider).mockReturnValue([]);
   });
@@ -240,7 +244,7 @@ describe('GET /api/v1/admin/orchestration/discovery/models', () => {
     it('skips vendor tier when API key env var is unset (non-local provider)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider() as never);
-      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(false);
+      vi.mocked(hasProviderCredential).mockResolvedValue(false);
       vi.mocked(getModelsByProvider).mockReturnValue([makeModelInfo({ id: 'gpt-4o-mini' })]);
 
       const response = await GET(makeRequest('openai'));

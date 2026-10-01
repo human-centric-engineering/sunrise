@@ -46,12 +46,12 @@ vi.mock('@/lib/orchestration/llm/circuit-breaker', () => {
   };
 
   return {
-    getBreaker: vi.fn(() => ({
-      reset: vi.fn(() => {
-        mockState = { state: 'closed', failureCount: 0, openedAt: null };
-      }),
-    })),
-    getCircuitBreakerStatus: vi.fn(() => ({
+    // The routes read a provider's breakers in aggregate: one per credential
+    // (§120 t-744), the bare slug's alone while no credential seam is filled.
+    resetBreakersForProvider: vi.fn(() => {
+      mockState = { state: 'closed', failureCount: 0, openedAt: null };
+    }),
+    getCircuitBreakerStatusForProvider: vi.fn(() => ({
       ...mockState,
       config: { failureThreshold: 5, windowMs: 60_000, cooldownMs: 30_000 },
     })),
@@ -66,7 +66,7 @@ vi.mock('@/lib/orchestration/llm/circuit-breaker', () => {
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { getCircuitBreakerStatus } from '@/lib/orchestration/llm/circuit-breaker';
+import { getCircuitBreakerStatusForProvider } from '@/lib/orchestration/llm/circuit-breaker';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -165,7 +165,7 @@ describe('GET /api/v1/admin/orchestration/providers/:id/health', () => {
   it('returns default status when no breaker exists for the slug', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
-    vi.mocked(getCircuitBreakerStatus).mockReturnValue(null);
+    vi.mocked(getCircuitBreakerStatusForProvider).mockReturnValue(null);
 
     const res = await GET(makeRequest(), makeParams());
 
