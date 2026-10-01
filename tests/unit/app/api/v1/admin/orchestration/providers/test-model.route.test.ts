@@ -56,6 +56,7 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -434,6 +435,29 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       const body = await parseJson<{ data: { ok: boolean; error?: string } }>(response);
       expect(body.data.ok).toBe(false);
       expect(body.data.error).toBe('model_test_failed');
+    });
+
+    it('reports a provider-policy refusal as provider_not_permitted, not as a failed connection', async () => {
+      // §120 t-741. The call-time gate refused the call: keys and URLs are
+      // fine, so `model_test_failed` would send the admin to the wrong place.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
+      vi.mocked(getProvider).mockResolvedValue({
+        chat: vi.fn().mockRejectedValue(new ProviderCallRefusedError('anthropic')),
+      } as never);
+
+      const response = await POST(makePostRequest(), makeParams(PROVIDER_ID));
+
+      expect(response.status).toBe(200);
+      const body = await parseJson<{
+        data: { ok: boolean; error?: string; message?: string; latencyMs: number | null };
+      }>(response);
+      expect(body.data.ok).toBe(false);
+      expect(body.data.latencyMs).toBeNull();
+      expect(body.data.error).toBe('provider_not_permitted');
+      // The error's own message, which names no provider.
+      expect(body.data.message).toBe(new ProviderCallRefusedError('anthropic').message);
+      expect(body.data.message).not.toContain('anthropic');
     });
   });
 
