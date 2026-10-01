@@ -32,6 +32,10 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import {
+  primaryCallContext,
+  type ProviderEligibilityContext,
+} from '@/lib/orchestration/llm/provider-eligibility';
 import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation, type Citation } from '@/types/orchestration';
@@ -107,6 +111,8 @@ export async function completeEvaluationSession(
   // for a fully orphaned session.
   let providerSlug: string;
   let model: string;
+  // Where the provider came from, for the call-time gate (§120 t-741).
+  let callContext: ProviderEligibilityContext | undefined;
   if (session.agent) {
     const resolved = await resolveAgentProviderAndModel(
       {
@@ -118,10 +124,12 @@ export async function completeEvaluationSession(
     );
     providerSlug = resolved.providerSlug;
     model = resolved.model;
+    callContext = primaryCallContext(resolved.provenance);
   } else if (DEFAULT_PROVIDER !== null && DEFAULT_MODEL !== null) {
     // Operator explicitly set EVALUATION_DEFAULT_PROVIDER + _MODEL.
     providerSlug = DEFAULT_PROVIDER;
     model = DEFAULT_MODEL;
+    callContext = { task: 'chat', source: 'explicit', primarySlug: null };
   } else {
     // No explicit eval default → fall through to whatever the system
     // resolves for a chat task (first active provider + configured
@@ -132,9 +140,10 @@ export async function completeEvaluationSession(
     );
     providerSlug = resolved.providerSlug;
     model = resolved.model;
+    callContext = primaryCallContext(resolved.provenance);
   }
 
-  const provider = await getProvider(providerSlug);
+  const provider = await getProvider(providerSlug, callContext);
 
   // Annotations the reviewer captured in the runner UI are persisted on
   // `session.metadata` as flat keys (see annotation-serializer.ts). Feed

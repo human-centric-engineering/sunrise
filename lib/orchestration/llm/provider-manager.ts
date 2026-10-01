@@ -28,7 +28,14 @@ import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { AnthropicProvider } from '@/lib/orchestration/llm/anthropic';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
-import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
+import {
+  assertProviderCallPermitted,
+  fallbackCallContext,
+  isProviderEligible,
+  primaryCallContext,
+  type BindingProvenance,
+  type ProviderEligibilityContext,
+} from '@/lib/orchestration/llm/provider-eligibility';
 import { track, trackStream } from '@/lib/orchestration/llm/in-flight-counter';
 import { OpenAiCompatibleProvider } from '@/lib/orchestration/llm/openai-compatible';
 import {
@@ -40,6 +47,7 @@ import type { ProviderConfig } from '@/lib/orchestration/llm/types';
 import { VoyageProvider } from '@/lib/orchestration/llm/voyage';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
+import type { TaskType } from '@/types/orchestration';
 
 /** Status returned by `listProviders` for each configured row. */
 export interface ProviderStatus {
@@ -71,11 +79,48 @@ export interface ProviderConfigWithStatus {
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 interface CachedProvider {
-  provider: LlmProvider;
+  /** The built instance, unwrapped. Never handed out: every read goes through {@link viewOf}. */
+  instance: LlmProvider;
+  /**
+   * The slug the in-flight counter and the call-time gate use: the BUILT row's
+   * `config.slug`, or a registrar's name — never the string a caller asked
+   * `getProvider` for.
+   */
+  slug: string;
   cachedAt: number;
+  /**
+   * One Proxy per call provenance. The gate needs to know where the provider
+   * came from and the instance is shared by every caller, so the provenance
+   * lives on the view each caller is handed rather than on the instance. Kept
+   * so that repeat reads with the same provenance return the same object.
+   * Bounded by tasks × sources × primary slugs, and dropped with the entry.
+   */
+  views: Map<string, LlmProvider>;
 }
 
 const instanceCache = new Map<string, CachedProvider>();
+
+function newEntry(instance: LlmProvider, slug: string): CachedProvider {
+  const entry: CachedProvider = { instance, slug, cachedAt: Date.now(), views: new Map() };
+  // Build the unprovenanced view now, so an unwrappable entry (an empty slug)
+  // throws at registration rather than on its first read.
+  viewOf(entry, undefined);
+  return entry;
+}
+
+/** The gated, in-flight-tracked view of `entry` for one call provenance. */
+function viewOf(
+  entry: CachedProvider,
+  context: ProviderEligibilityContext | undefined
+): LlmProvider {
+  const key = context ? `${context.task}|${context.source}|${context.primarySlug ?? ''}` : '';
+  let view = entry.views.get(key);
+  if (!view) {
+    view = withInFlightTracking(entry.instance, entry.slug, context);
+    entry.views.set(key, view);
+  }
+  return view;
+}
 
 /**
  * Resolve a provider instance by slug (or name).
@@ -86,16 +131,28 @@ const instanceCache = new Map<string, CachedProvider>();
  *
  * Cached instances are evicted after `CACHE_TTL_MS` (5 minutes) so
  * that config changes in the database take effect without a restart.
+ *
+ * `context` is where the caller got this provider from — see
+ * `assertProviderCallPermitted`, which every vendor call on the returned
+ * object passes through. Pass it wherever it is known: without it a call is
+ * permitted only if the eligibility rule permits it under every source.
+ *
+ * A slug match wins over a name match. The two used to be one
+ * `findFirst({ OR: [...] })` with no ordering, so a caller holding row A's slug
+ * could be handed row B, whose NAME equals A's slug. The gate evaluates the
+ * built row's own slug either way, so that was never a policy bypass, but a
+ * caller that checked A should get A.
  */
-export async function getProvider(slugOrName: string): Promise<LlmProvider> {
+export async function getProvider(
+  slugOrName: string,
+  context?: ProviderEligibilityContext
+): Promise<LlmProvider> {
   const cached = instanceCache.get(slugOrName);
-  if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) return cached.provider;
+  if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) return viewOf(cached, context);
 
-  const config = await prisma.aiProviderConfig.findFirst({
-    where: {
-      OR: [{ slug: slugOrName }, { name: slugOrName }],
-    },
-  });
+  const config =
+    (await prisma.aiProviderConfig.findFirst({ where: { slug: slugOrName } })) ??
+    (await prisma.aiProviderConfig.findFirst({ where: { name: slugOrName } }));
 
   if (!config) {
     throw new ProviderError(`Provider "${slugOrName}" not found`, {
@@ -111,12 +168,11 @@ export async function getProvider(slugOrName: string): Promise<LlmProvider> {
     });
   }
 
-  const instance = withInFlightTracking(buildProviderFromConfig(config), config.slug);
-  const entry: CachedProvider = { provider: instance, cachedAt: Date.now() };
+  const entry = newEntry(buildProviderFromConfig(config), config.slug);
   instanceCache.set(config.slug, entry);
   // Also key by name so callers that already looked up via name are consistent.
   if (slugOrName !== config.slug) instanceCache.set(slugOrName, entry);
-  return instance;
+  return viewOf(entry, context);
 }
 
 /**
@@ -164,6 +220,8 @@ type ProviderMethodName = {
  * guarantee this supports, and its limits.
  */
 const METHOD_DISPOSITION: Record<ProviderMethodName, MethodDisposition> = {
+  // Every `track` / `trackStream` method is also gated by
+  // `assertProviderCallPermitted`; `passthrough` is not. See TASK_OF_METHOD.
   chat: 'track',
   embed: 'track',
   embedMany: 'track',
@@ -213,6 +271,25 @@ const HOST_MACHINERY: ReadonlySet<string> = new Set([
   '__lookupSetter__',
 ]);
 
+/**
+ * The task the gate assumes for a call whose caller recorded no provenance.
+ * Only the gated methods need one. A recorded context carries its own task,
+ * which wins: a summariser `chat` call made for a chat binding is still `chat`,
+ * and a routing call is `routing`, which no method name can tell apart.
+ */
+function taskOfMethod(prop: ProviderMethodName): TaskType {
+  switch (prop) {
+    case 'embed':
+    case 'embedMany':
+      return 'embeddings';
+    case 'transcribe':
+    case 'transcribeStream':
+      return 'audio';
+    default:
+      return 'chat';
+  }
+}
+
 function dispositionOf(prop: string): MethodDisposition | undefined {
   return Object.prototype.hasOwnProperty.call(METHOD_DISPOSITION, prop)
     ? METHOD_DISPOSITION[prop as ProviderMethodName]
@@ -220,9 +297,9 @@ function dispositionOf(prop: string): MethodDisposition | undefined {
 }
 
 /**
- * Wrap a freshly-built provider so its vendor calls are accounted in the
- * in-flight counter under `slug`, and so no unclassified method on the
- * instance can reach a vendor unnoticed.
+ * Wrap a freshly-built provider so its vendor calls are refused when the
+ * eligibility rule says so, accounted in the in-flight counter under `slug`,
+ * and so no unclassified method on the instance can reach a vendor unnoticed.
  *
  * Uses a `Proxy` so the returned value preserves the original prototype —
  * existing call sites (and tests) doing `instanceof AnthropicProvider` keep
@@ -230,8 +307,15 @@ function dispositionOf(prop: string): MethodDisposition | undefined {
  * `this` inside the SDK call is the real provider instance, which also means a
  * provider's own internal `this.foo()` calls never re-enter the trap.
  *
- * Wrapping happens once per cache entry, not per call, so the proxy cost is
- * negligible; the closures it returns run per call. Throws on an empty `slug`,
+ * Wrapping happens once per cache entry and call provenance (see
+ * {@link viewOf}), not per call, so the proxy cost is negligible; the closures
+ * it returns run per call.
+ *
+ * **Every `track` / `trackStream` call is gated** by
+ * `assertProviderCallPermitted` against `slug` and `context` (§120 t-741), so
+ * the provider eligibility rule applies to every vendor call core makes through
+ * the manager, whichever site chose the provider. `passthrough` methods are not
+ * gated; that function says why. Throws on an empty `slug`,
  * because the alternative — returning the instance unwrapped — is the one way
  * the cache's invariant could quietly fail.
  *
@@ -244,7 +328,11 @@ function dispositionOf(prop: string): MethodDisposition | undefined {
  * detection (`if (provider.newThing)`) is exactly how such a method gets
  * called, and it should fail there too.
  */
-function withInFlightTracking(provider: LlmProvider, slug: string): LlmProvider {
+function withInFlightTracking(
+  provider: LlmProvider,
+  slug: string,
+  context: ProviderEligibilityContext | undefined
+): LlmProvider {
   // Refuse rather than return the bare instance. This used to be
   // `if (!slug) return provider;`, described as defensive — but the callers are
   // the three ways into `instanceCache`, so "everything `getProvider` returns
@@ -268,13 +356,25 @@ function withInFlightTracking(provider: LlmProvider, slug: string): LlmProvider 
       if (typeof prop !== 'string' || typeof value !== 'function') return value;
       const fn = value as (this: LlmProvider, ...args: unknown[]) => unknown;
 
+      // The call-time gate (§120 t-741) runs inside each returned closure, so
+      // the rule is asked on every CALL. Asking once here, on access, or once
+      // per cached instance would let a rule's changed answer wait out the
+      // cache TTL. A refusal is thrown before `track` counts anything.
       switch (dispositionOf(prop)) {
-        case 'track':
-          return (...args: unknown[]): Promise<unknown> =>
-            track(slug, () => fn.apply(target, args) as Promise<unknown>);
-        case 'trackStream':
+        case 'track': {
+          const task = taskOfMethod(prop as ProviderMethodName);
+          return async (...args: unknown[]): Promise<unknown> => {
+            await assertProviderCallPermitted(slug, context, task);
+            return track(slug, () => fn.apply(target, args) as Promise<unknown>);
+          };
+        }
+        case 'trackStream': {
+          const task = taskOfMethod(prop as ProviderMethodName);
           return (...args: unknown[]): AsyncIterable<unknown> =>
-            trackStream(slug, () => fn.apply(target, args) as AsyncIterable<unknown>);
+            gatedStream(slug, context, task, () =>
+              trackStream(slug, () => fn.apply(target, args) as AsyncIterable<unknown>)
+            );
+        }
         case 'passthrough':
           // Forwarded bound to the original instance so `this` resolution
           // inside the SDK call stays intact.
@@ -312,6 +412,21 @@ function withInFlightTracking(provider: LlmProvider, slug: string): LlmProvider 
 }
 
 /**
+ * A stream that asks the gate before the first chunk. The vendor stream is not
+ * even created until the gate permits it, so a refused call opens no
+ * connection and the in-flight counter never sees it.
+ */
+async function* gatedStream(
+  slug: string,
+  context: ProviderEligibilityContext | undefined,
+  task: TaskType,
+  open: () => AsyncIterable<unknown>
+): AsyncGenerator<unknown> {
+  await assertProviderCallPermitted(slug, context, task);
+  yield* open();
+}
+
+/**
  * Register a provider instance programmatically (tests, scripts, or
  * callers that want to bypass the database). The instance is cached
  * under `config.name` so `getProvider(name)` returns it.
@@ -321,9 +436,9 @@ function withInFlightTracking(provider: LlmProvider, slug: string): LlmProvider 
  * {@link registerProviderInstance} for why.
  */
 export function registerProvider(config: ProviderConfig): LlmProvider {
-  const instance = withInFlightTracking(buildProviderFromInMemoryConfig(config), config.name);
-  instanceCache.set(config.name, { provider: instance, cachedAt: Date.now() });
-  return instance;
+  const entry = newEntry(buildProviderFromInMemoryConfig(config), config.name);
+  instanceCache.set(config.name, entry);
+  return viewOf(entry, undefined);
 }
 
 /**
@@ -349,7 +464,7 @@ export function registerProvider(config: ProviderConfig): LlmProvider {
  * call, spy and `instanceof` still works. Assert on behaviour instead.
  */
 export function registerProviderInstance(name: string, instance: LlmProvider): void {
-  instanceCache.set(name, { provider: withInFlightTracking(instance, name), cachedAt: Date.now() });
+  instanceCache.set(name, newEntry(instance, name));
 }
 
 /**
@@ -410,14 +525,20 @@ export async function testProvider(slugOrName: string): Promise<ProviderTestResu
  *
  * Returns the resolved provider and the slug that was actually used,
  * so the caller can record success/failure on the correct breaker.
+ *
+ * `provenance` is the resolved binding's (`ResolvedAgentBinding.provenance`):
+ * the primary is fetched with its primary context and each fallback with its
+ * fallback context, so the call-time gate tells the rule which one it is.
+ * Without it every call here is evaluated as unrecorded.
  */
 export async function getProviderWithFallbacks(
   primarySlug: string,
-  fallbackSlugs: string[]
+  fallbackSlugs: string[],
+  provenance?: BindingProvenance
 ): Promise<{ provider: LlmProvider; usedSlug: string }> {
   const candidates = [primarySlug, ...fallbackSlugs];
 
-  for (const slug of candidates) {
+  for (const [index, slug] of candidates.entries()) {
     const breaker = getBreaker(slug);
     if (!breaker.canAttempt()) {
       logger.info('Skipping provider — circuit breaker open', { provider: slug });
@@ -425,7 +546,10 @@ export async function getProviderWithFallbacks(
     }
 
     try {
-      const provider = await getProvider(slug);
+      const provider = await getProvider(
+        slug,
+        index === 0 ? primaryCallContext(provenance) : fallbackCallContext(provenance, primarySlug)
+      );
       if (slug !== primarySlug) {
         logger.info('Using fallback provider', {
           primary: primarySlug,
@@ -515,7 +639,13 @@ async function tryAudioRow(
 
   let provider: LlmProvider;
   try {
-    provider = await getProvider(row.providerSlug);
+    // The gate's view of the same distinction made above: an operator's pin is
+    // their recorded choice, a matrix row reached by order is Sunrise's.
+    provider = await getProvider(row.providerSlug, {
+      task: 'audio',
+      source: source === 'operator_default' ? 'explicit' : 'primary',
+      primarySlug: null,
+    });
   } catch (err) {
     logger.warn('Audio provider resolution failed, trying next', {
       providerSlug: row.providerSlug,

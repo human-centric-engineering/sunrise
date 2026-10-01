@@ -112,7 +112,8 @@ describe('getProviderWithFallbacks', () => {
   it('skips provider not found and tries next', async () => {
     // Primary exists but is not found in DB
     mockFindFirst
-      .mockResolvedValueOnce(null) // primary not found
+      .mockResolvedValueOnce(null) // primary: no row with that slug
+      .mockResolvedValueOnce(null) // ...nor with that name
       .mockResolvedValue(makeConfig('fallback-1'));
 
     const { usedSlug } = await getProviderWithFallbacks('primary', ['fallback-1']);

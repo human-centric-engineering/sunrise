@@ -232,6 +232,7 @@ describe('RewriteSectionWithLlmCapability', () => {
       providerSlug: 'anthropic',
       model: 'claude-sonnet-4',
       fallbacks: [],
+      provenance: { task: 'chat', primary: 'primary', fallbacks: 'system' },
     });
     const fakeProvider = makeFakeProvider(makeLlmResponse());
     mockGetProvider.mockResolvedValue(fakeProvider);
@@ -242,7 +243,12 @@ describe('RewriteSectionWithLlmCapability', () => {
     );
 
     expect(result.success).toBe(true);
-    expect(mockGetProvider).toHaveBeenCalledWith('anthropic');
+    // Fetched with the binding's primary provenance, for the call-time gate.
+    expect(mockGetProvider).toHaveBeenCalledWith('anthropic', {
+      task: 'chat',
+      source: 'primary',
+      primarySlug: null,
+    });
     expect(fakeProvider.chat).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ model: 'claude-sonnet-4' })

@@ -18,6 +18,7 @@ import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
 import { generateSilentWav } from '@/lib/audio/silent-wav';
 import { deriveParamProfile } from '@/lib/orchestration/llm/model-heuristics';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
@@ -103,7 +104,13 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   }
 
   try {
-    const provider = await getProvider(providerRow.slug);
+    // An admin testing a provider they named is an explicit choice, so the
+    // call-time gate (§120 t-741) evaluates it as one.
+    const provider = await getProvider(providerRow.slug, {
+      task: capability === 'embedding' ? 'embeddings' : capability === 'audio' ? 'audio' : 'chat',
+      source: 'explicit',
+      primarySlug: null,
+    });
 
     // Audio: providers opt-in via the optional transcribe() interface
     // member. Guard before timing — a missing method is "this provider
@@ -194,6 +201,26 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
     return successResponse({ ok: true, latencyMs, model, capability });
   } catch (err) {
+    // A policy refusal is not a connectivity failure, and reporting it as one
+    // would send the admin to check keys and URLs that are fine. The message is
+    // the error's own, which names no provider.
+    if (err instanceof ProviderCallRefusedError) {
+      log.info('Model test refused by the provider eligibility rule', {
+        providerId: id,
+        slug: providerRow.slug,
+        model,
+        capability,
+        adminId: session.user.id,
+      });
+      return successResponse({
+        ok: false,
+        latencyMs: null,
+        model,
+        capability,
+        error: 'provider_not_permitted',
+        message: err.message,
+      });
+    }
     const message = err instanceof Error ? err.message : String(err);
     log.warn('Model test failed', {
       providerId: id,

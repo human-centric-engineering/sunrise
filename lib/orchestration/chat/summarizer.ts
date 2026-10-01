@@ -26,6 +26,7 @@
 import { logger } from '@/lib/logging';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
+import type { BindingProvenance } from '@/lib/orchestration/llm/provider-eligibility';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { CostOperation } from '@/types/orchestration';
 import type { HistoryRow } from '@/lib/orchestration/chat/message-builder';
@@ -142,6 +143,12 @@ export interface SummarizeOptions {
    * a conversation's cost with no one attached to it.
    */
   userId?: string | null;
+  /**
+   * The provenance of the binding `providerSlug` and `fallbackSlugs` came
+   * from, so the call-time gate evaluates this call as the chat turn's own
+   * (§120 t-741). Without it the call is evaluated as unrecorded.
+   */
+  provenance?: BindingProvenance;
 }
 
 /**
@@ -176,7 +183,11 @@ export async function summarizeMessages(
 
   try {
     const model = await getDefaultModelForTask('routing');
-    const { provider, usedSlug } = await getProviderWithFallbacks(providerSlug, fallbackSlugs);
+    const { provider, usedSlug } = await getProviderWithFallbacks(
+      providerSlug,
+      fallbackSlugs,
+      options.provenance
+    );
 
     const formatted = messages.map((m) => `[${m.role}]: ${m.content}`).join('\n\n');
     const userContent = extending

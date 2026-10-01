@@ -188,7 +188,12 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     }
   }
 
-  const provider = await getProvider(modelInfo.provider);
+  // The call-time gate (§120 t-741) is told which arm answered, as above.
+  const provider = await getProvider(modelInfo.provider, {
+    task: 'chat',
+    source: operatorChoice === null ? 'primary' : 'explicit',
+    primarySlug: null,
+  });
 
   // Provider-agnostic LLM shim. Bills cost per call as a side-effect;
   // the shared core treats this as opaque.

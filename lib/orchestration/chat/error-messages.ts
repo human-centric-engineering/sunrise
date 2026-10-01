@@ -187,6 +187,14 @@ const ERROR_MAP: Record<string, UserFacingError> = {
     // The operator-facing detail lives in the thrown error and the logs.
     action: 'Ask an administrator to review this deployment’s provider settings.',
   },
+  // The call-time gate's refusal (§120 t-741): the provider this call would
+  // have used is barred by the deployment's provider policy. Same copy rule as
+  // the entry above — nothing that names a provider or a file.
+  provider_not_permitted: {
+    title: 'Provider Not Permitted',
+    message: 'This request uses an AI provider this deployment does not permit.',
+    action: 'Ask an administrator to review this deployment’s provider settings.',
+  },
   no_default_model_configured: {
     title: 'Default Model Not Set',
     message: 'A default model for this task has not been chosen yet.',

@@ -169,7 +169,13 @@ export async function runLlmCall(
 
       let provider;
       try {
-        provider = await getProvider(modelInfo.provider);
+        // The gate (§120 t-741) is told the same thing the check above turned
+        // on: an override is the operator's choice, the task default is ours.
+        provider = await getProvider(modelInfo.provider, {
+          task: 'chat',
+          source: override === null ? 'primary' : 'explicit',
+          primarySlug: null,
+        });
       } catch (err) {
         throw new ExecutorError(
           params.stepId,

@@ -382,12 +382,19 @@ describe('executeAgentCall', () => {
       providerSlug: 'openai',
       model: 'gpt-4o-mini',
       fallbacks: ['anthropic'],
+      provenance: { task: 'chat', primary: 'primary', fallbacks: 'system' },
     });
 
     await executeAgentCall(makeStep(), makeCtx());
 
     expect(resolveAgentProviderAndModel).toHaveBeenCalled();
-    expect(getProviderWithFallbacks).toHaveBeenCalledWith('openai', ['anthropic']);
+    // The binding's provenance travels with it, so the call-time gate tells the
+    // eligibility rule the primary was auto-picked and the fallbacks are the fill.
+    expect(getProviderWithFallbacks).toHaveBeenCalledWith('openai', ['anthropic'], {
+      task: 'chat',
+      primary: 'primary',
+      fallbacks: 'system',
+    });
     expect(mockChat.mock.calls[0][1].model).toBe('gpt-4o-mini');
   });
 

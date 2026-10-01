@@ -209,8 +209,10 @@ describe('getAudioProvider', () => {
       makeAudioModelRow({ providerSlug: 'missing' }),
       makeAudioModelRow({ providerSlug: 'openai' }),
     ]);
-    // First lookup returns nothing → ProviderError; second returns the openai config.
+    // The first slug matches no row by slug or by name → ProviderError; the
+    // next lookup returns the openai config.
     vi.mocked(prisma.aiProviderConfig.findFirst)
+      .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(makeOpenAiConfigRow());
 

@@ -29,6 +29,7 @@ import { getEditLockState } from '@/lib/orchestration/knowledge/edit-lock';
 import { detectSections } from '@/lib/orchestration/knowledge/section-detection';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { primaryCallContext } from '@/lib/orchestration/llm/provider-eligibility';
 import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { cleanupRefineLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { cuidSchema } from '@/lib/validations/common';
@@ -168,7 +169,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   let provider;
   try {
-    provider = await getProvider(binding.providerSlug);
+    provider = await getProvider(binding.providerSlug, primaryCallContext(binding.provenance));
   } catch (err) {
     logger.error('cleanup-refine: provider load failed', { err, slug: binding.providerSlug });
     return errorResponse(`Provider "${binding.providerSlug}" unavailable`, {

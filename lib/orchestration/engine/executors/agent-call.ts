@@ -649,7 +649,8 @@ export async function executeAgentCall(
   try {
     const result = await getProviderWithFallbacks(
       resolvedBinding.providerSlug,
-      resolvedBinding.fallbacks
+      resolvedBinding.fallbacks,
+      resolvedBinding.provenance
     );
     provider = result.provider;
     usedSlug = result.usedSlug;

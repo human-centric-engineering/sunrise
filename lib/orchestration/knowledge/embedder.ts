@@ -72,6 +72,12 @@ interface EmbeddingProvider {
   isLocal: boolean;
   /** Recorded on cost rows and provenance, as before t-740 — not the slug. */
   providerType: string;
+  /**
+   * Who chose this provider, for the call-time gate (§120 t-741): `'explicit'`
+   * for the operator's `activeEmbeddingModelId` pin, `'primary'` for a row the
+   * fallback chain picked. Same split as the chain's own eligibility check.
+   */
+  source: 'primary' | 'explicit';
 }
 
 /**
@@ -216,6 +222,7 @@ async function resolveActiveEmbeddingConfig(): Promise<EmbeddingProvider | null>
     sendDimensions: providerConfig.providerType === 'voyage' || (model.schemaCompatible ?? false),
     isLocal: providerConfig.isLocal,
     providerType: providerConfig.providerType,
+    source: 'explicit',
   };
 }
 
@@ -343,6 +350,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
       sendDimensions: true, // voyage-3 supports `output_dimension`
       isLocal: false,
       providerType: 'voyage',
+      source: 'primary',
     };
   }
 
@@ -366,6 +374,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
       sendDimensions: false,
       isLocal: true,
       providerType: localProvider.providerType,
+      source: 'primary',
     };
   }
 
@@ -389,6 +398,7 @@ async function resolveProvider(): Promise<EmbeddingProvider> {
       sendDimensions: isOpenAiSchemaCompatibleModel(model),
       isLocal: false,
       providerType: 'openai-compatible',
+      source: 'primary',
     };
   }
 
@@ -513,7 +523,11 @@ async function callEmbeddingProvider(
   texts: string[],
   inputType?: 'document' | 'query'
 ): Promise<{ embeddings: number[][]; inputTokens: number }> {
-  const llm = await getProvider(provider.slug);
+  const llm = await getProvider(provider.slug, {
+    task: 'embeddings',
+    source: provider.source,
+    primarySlug: null,
+  });
   if (!llm.embedMany) {
     throw new ProviderError(
       `Provider "${provider.slug}" cannot be used for knowledge embedding: it does not ` +

@@ -62,6 +62,14 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
 const { embedText, embedBatch, getActiveEmbeddingModelSummary } =
   await import('@/lib/orchestration/knowledge/embedder');
 const { getProvider, isApiKeyEnvVarSet } = await import('@/lib/orchestration/llm/provider-manager');
+
+/**
+ * The gate context the embedder fetches its provider with (§120 t-741): a row
+ * the fallback chain picked is Sunrise's choice, the operator's pinned active
+ * model is theirs. The call-time gate hands it to the eligibility rule.
+ */
+const CHAIN_PICK = { task: 'embeddings', source: 'primary', primarySlug: null } as const;
+const OPERATOR_PIN = { task: 'embeddings', source: 'explicit', primarySlug: null } as const;
 const { logger } = await import('@/lib/logging');
 const { NoProviderConfiguredError } = await import('@/lib/orchestration/llm/agent-resolver');
 
@@ -135,7 +143,7 @@ describe('resolveProvider (via embedText)', () => {
 
     // The local row wins even though the remote row sorts first.
     expect(getProvider).toHaveBeenCalledTimes(1);
-    expect(getProvider).toHaveBeenCalledWith('ollama');
+    expect(getProvider).toHaveBeenCalledWith('ollama', CHAIN_PICK);
     // Local model is nomic-embed-text, and a fixed-width model is not asked for `dimensions`.
     expect(embedMany).toHaveBeenCalledTimes(1);
     expect(embedMany).toHaveBeenCalledWith(['hello'], { model: 'nomic-embed-text' });
@@ -149,7 +157,7 @@ describe('resolveProvider (via embedText)', () => {
 
     await embedText('hello');
 
-    expect(getProvider).toHaveBeenCalledWith('remote');
+    expect(getProvider).toHaveBeenCalledWith('remote', CHAIN_PICK);
     // settings model, and `dimensions` because text-embedding-3-* accepts it
     expect(embedMany).toHaveBeenCalledWith(['hello'], {
       model: 'text-embedding-3-small',
@@ -165,7 +173,7 @@ describe('resolveProvider (via embedText)', () => {
 
     await embedText('hello');
 
-    expect(getProvider).toHaveBeenCalledWith('voyage');
+    expect(getProvider).toHaveBeenCalledWith('voyage', CHAIN_PICK);
     expect(embedMany).toHaveBeenCalledWith(['hello'], { model: 'voyage-3', dimensions: 1536 });
   });
 
@@ -178,7 +186,7 @@ describe('resolveProvider (via embedText)', () => {
 
     await embedText('hello');
 
-    expect(getProvider).toHaveBeenCalledWith('has-url');
+    expect(getProvider).toHaveBeenCalledWith('has-url', CHAIN_PICK);
     expect(embedMany).toHaveBeenCalledTimes(1);
   });
 
@@ -250,7 +258,7 @@ describe('embedText', () => {
 
     const result = await embedText('my test text');
 
-    expect(getProvider).toHaveBeenCalledWith('together');
+    expect(getProvider).toHaveBeenCalledWith('together', CHAIN_PICK);
     expect(embedMany).toHaveBeenCalledWith(['my test text'], {
       model: 'text-embedding-3-small',
       dimensions: 1536,
@@ -657,7 +665,7 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
   /** Assert the chain's default row served the call, and embedMany ran with the chain's model. */
   function expectFellBackToChain(embedMany: ReturnType<typeof installEmbedMany>) {
     expect(getProvider).toHaveBeenCalledTimes(1);
-    expect(getProvider).toHaveBeenCalledWith('fallback');
+    expect(getProvider).toHaveBeenCalledWith('fallback', CHAIN_PICK);
     expect(embedMany).toHaveBeenCalledWith(['hello'], {
       model: 'text-embedding-3-small',
       dimensions: 1536,
@@ -825,7 +833,7 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
 
     // The pinned row was used, not the fallback row.
     expect(getProvider).toHaveBeenCalledTimes(1);
-    expect(getProvider).toHaveBeenCalledWith('openai-custom');
+    expect(getProvider).toHaveBeenCalledWith('openai-custom', OPERATOR_PIN);
     // Model and width come from the registry row, and dimensions are sent.
     expect(embedMany).toHaveBeenCalledWith(['hello'], {
       model: 'text-embedding-3-large',
@@ -858,7 +866,7 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
 
     const result = await embedText('hello');
 
-    expect(getProvider).toHaveBeenCalledWith('local-ollama');
+    expect(getProvider).toHaveBeenCalledWith('local-ollama', OPERATOR_PIN);
     // The registry model reached embedMany (the path ran) and no width was requested.
     expect(embedMany).toHaveBeenCalledTimes(1);
     expect(embedMany.mock.calls[0][1]).toEqual({ model: 'nomic-embed-text' });
@@ -931,7 +939,7 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
 
     const result = await embedText('hello', 'query');
 
-    expect(getProvider).toHaveBeenCalledWith('voyage-custom');
+    expect(getProvider).toHaveBeenCalledWith('voyage-custom', OPERATOR_PIN);
     expect(embedMany).toHaveBeenCalledWith(['hello'], {
       model: 'voyage-3-large',
       dimensions: 1024,
@@ -955,7 +963,7 @@ describe('resolveActiveEmbeddingConfig (via embedText)', () => {
 
     await embedText('hello');
 
-    expect(getProvider).toHaveBeenCalledWith('plain-host');
+    expect(getProvider).toHaveBeenCalledWith('plain-host', OPERATOR_PIN);
     expect(embedMany).toHaveBeenCalledTimes(1);
     expect(embedMany.mock.calls[0][1]).toEqual({ model: 'text-embedding-3-small' });
   });

@@ -266,7 +266,14 @@ export class ProviderError extends Error {
  * `invalid_schema` is the obvious next member; it is held back to #592 with
  * the rest of the failover-policy work rather than shipped untested here.
  */
-const REQUEST_FAULT_CODES = new Set(['truncated_no_output']);
+//
+// `provider_not_permitted` is the call-time gate's refusal (§120 t-741,
+// `ProviderCallRefusedError`). Deterministic in the sense that matters: the
+// policy gives the same answer on every retry, and failing over to another
+// provider is the reroute the gate exists to rule out. It is also not evidence
+// about the provider's health, so it must never reach a circuit breaker — at
+// `multi`, one org's refusal would otherwise open the circuit for every org.
+const REQUEST_FAULT_CODES = new Set(['truncated_no_output', 'provider_not_permitted']);
 
 /**
  * Whether `err` is a {@link REQUEST_FAULT_CODES} `ProviderError` — i.e. a

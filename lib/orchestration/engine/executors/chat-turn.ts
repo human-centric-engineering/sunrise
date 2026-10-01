@@ -163,7 +163,8 @@ export async function executeChatTurn(
   const model = config.modelOverride ?? resolvedBinding.model;
   const { provider, usedSlug: providerSlug } = await getProviderWithFallbacks(
     resolvedBinding.providerSlug,
-    resolvedBinding.fallbacks
+    resolvedBinding.fallbacks,
+    resolvedBinding.provenance
   );
 
   // 4. Compose system prompt (persona / voice / guardrails inheritance).

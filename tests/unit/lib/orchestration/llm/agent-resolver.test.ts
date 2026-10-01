@@ -128,6 +128,7 @@ describe('resolveAgentProviderAndModel', () => {
         providerSlug: 'openai',
         model: 'gpt-4o-mini',
         fallbacks: ['anthropic'],
+        provenance: { task: 'chat', primary: 'explicit', fallbacks: 'explicit' },
       });
       expect(prisma.aiProviderConfig.findMany).not.toHaveBeenCalled();
     });

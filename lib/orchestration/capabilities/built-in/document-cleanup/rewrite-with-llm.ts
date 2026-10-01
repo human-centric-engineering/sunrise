@@ -8,6 +8,7 @@ import type {
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { primaryCallContext } from '@/lib/orchestration/llm/provider-eligibility';
 import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { resolveCleanupTarget } from '@/lib/orchestration/capabilities/built-in/document-cleanup/context';
 import { requireEditableTarget } from '@/lib/orchestration/knowledge/edit-lock';
@@ -99,7 +100,7 @@ export class RewriteWithLlmCapability extends BaseCapability<Args, Data> {
 
     let provider;
     try {
-      provider = await getProvider(binding.providerSlug);
+      provider = await getProvider(binding.providerSlug, primaryCallContext(binding.provenance));
     } catch (err) {
       logger.error('rewrite_with_llm: provider load failed', { err, slug: binding.providerSlug });
       return this.error(`Provider "${binding.providerSlug}" unavailable.`, 'provider_unavailable');

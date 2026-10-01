@@ -50,6 +50,7 @@ import {
   getProviderWithFallbacks,
   type AttachmentCapability,
 } from '@/lib/orchestration/llm/provider-manager';
+import { fallbackCallContext } from '@/lib/orchestration/llm/provider-eligibility';
 import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { resolveEffectivePrompt } from '@/lib/orchestration/agents/resolve-effective-prompt';
 import { touchAgentLastActive } from '@/lib/orchestration/agents/touch-last-active';
@@ -950,6 +951,7 @@ export class StreamingChatHandler {
             resolvedFallbackProviders,
             {
               ...(storedSummary ? { previousSummary: storedSummary } : {}),
+              ...(resolvedBinding.provenance ? { provenance: resolvedBinding.provenance } : {}),
               // The roster table in `.context/orchestration/capabilities.md`
               // names this boundary as carrying the caller's tags. It has to
               // actually carry them, or the doc is asserting something false
@@ -1172,7 +1174,8 @@ export class StreamingChatHandler {
 
       const { provider, usedSlug } = await getProviderWithFallbacks(
         resolvedBinding.providerSlug,
-        resolvedFallbackProviders
+        resolvedFallbackProviders,
+        resolvedBinding.provenance
       );
       resolvedProviderSlug = usedSlug;
 
@@ -1551,7 +1554,10 @@ export class StreamingChatHandler {
                 finishReason = undefined;
 
                 try {
-                  currentProvider = await getProvider(nextSlug);
+                  currentProvider = await getProvider(
+                    nextSlug,
+                    fallbackCallContext(resolvedBinding.provenance, resolvedBinding.providerSlug)
+                  );
                   currentProviderSlug = nextSlug;
                   resolvedProviderSlug = nextSlug;
                 } catch {

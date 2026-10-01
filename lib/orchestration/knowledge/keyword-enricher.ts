@@ -136,7 +136,11 @@ export async function enrichDocumentKeywords(documentId: string): Promise<Enrich
     throw new ProviderNotPermittedError(modelInfo.provider, modelId);
   }
 
-  const provider = await getProvider(modelInfo.provider);
+  const provider = await getProvider(modelInfo.provider, {
+    task: 'chat',
+    source: 'primary',
+    primarySlug: null,
+  });
 
   const chunks = await prisma.aiKnowledgeChunk.findMany({
     where: { documentId },

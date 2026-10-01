@@ -61,6 +61,13 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
 const { embedText, embedBatch } = await import('@/lib/orchestration/knowledge/embedder');
 const { getProvider } = await import('@/lib/orchestration/llm/provider-manager');
 
+/**
+ * The gate context the embedder fetches its provider with (§120 t-741): a row
+ * the fallback chain picked is Sunrise's choice, the operator's pinned active
+ * model is theirs. The call-time gate hands it to the eligibility rule.
+ */
+const CHAIN_PICK = { task: 'embeddings', source: 'primary', primarySlug: null } as const;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -142,7 +149,7 @@ describe('resolveProvider() Voyage preference (via embedText)', () => {
     await embedText('hello');
 
     expect(getProvider).toHaveBeenCalledTimes(1);
-    expect(getProvider).toHaveBeenCalledWith('voyage');
+    expect(getProvider).toHaveBeenCalledWith('voyage', CHAIN_PICK);
     expect(embedMany.mock.calls[0][1]).toMatchObject({ model: 'voyage-3' });
   });
 
@@ -155,7 +162,7 @@ describe('resolveProvider() Voyage preference (via embedText)', () => {
 
     await embedText('hello');
 
-    expect(getProvider).toHaveBeenCalledWith('voyage');
+    expect(getProvider).toHaveBeenCalledWith('voyage', CHAIN_PICK);
     expect(embedMany.mock.calls[0][1]).toMatchObject({ model: 'voyage-3' });
   });
 
@@ -178,7 +185,7 @@ describe('resolveProvider() Voyage preference (via embedText)', () => {
     await embedText('hello');
 
     // The embedder no longer knows a URL at all: the slug is the whole handoff.
-    expect(getProvider).toHaveBeenCalledWith('voyage-default');
+    expect(getProvider).toHaveBeenCalledWith('voyage-default', CHAIN_PICK);
     expect(embedMany).toHaveBeenCalledTimes(1);
   });
 
@@ -190,7 +197,7 @@ describe('resolveProvider() Voyage preference (via embedText)', () => {
 
     await embedText('hello');
 
-    expect(getProvider).toHaveBeenCalledWith('voyage-eu');
+    expect(getProvider).toHaveBeenCalledWith('voyage-eu', CHAIN_PICK);
     expect(getProvider).not.toHaveBeenCalledWith('Voyage AI (EU)');
   });
 });
@@ -244,7 +251,7 @@ describe('embedMany options by provider type (via embedText)', () => {
     await embedText('test');
 
     // text-embedding-3-small IS schema compatible, so width is sent (and no Voyage-only inputType).
-    expect(getProvider).toHaveBeenCalledWith('openai-like');
+    expect(getProvider).toHaveBeenCalledWith('openai-like', CHAIN_PICK);
     expect(embedMany.mock.calls[0][1]).toEqual({
       model: 'text-embedding-3-small',
       dimensions: 1536,
@@ -259,7 +266,7 @@ describe('embedMany options by provider type (via embedText)', () => {
 
     await embedText('test');
 
-    expect(getProvider).toHaveBeenCalledWith('ollama');
+    expect(getProvider).toHaveBeenCalledWith('ollama', CHAIN_PICK);
     expect(embedMany).toHaveBeenCalledTimes(1);
     expect(embedMany.mock.calls[0][1]).toEqual({ model: 'nomic-embed-text' });
     expect(embedMany.mock.calls[0][1]).not.toHaveProperty('dimensions');
@@ -361,7 +368,7 @@ describe('embedBatch() inputType parameter', () => {
 
     // Dropping `input_type` for a host that rejects it is the openai-compatible
     // provider's job now; the embedder does not gate it on provider type.
-    expect(getProvider).toHaveBeenCalledWith('openai-like');
+    expect(getProvider).toHaveBeenCalledWith('openai-like', CHAIN_PICK);
     expect(embedMany).toHaveBeenCalledWith(['a', 'b'], {
       model: 'text-embedding-3-small',
       dimensions: 1536,

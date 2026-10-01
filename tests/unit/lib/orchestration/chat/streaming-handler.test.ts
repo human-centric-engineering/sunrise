@@ -2082,7 +2082,14 @@ describe('StreamingChatHandler', () => {
       expect(contentEvents.some((e) => e.delta === 'Recovered response')).toBe(true);
 
       expect(types).toContain('done');
-      expect(getProvider).toHaveBeenCalledWith('openai');
+      // The mid-stream failover fetches the agent's own fallback with its
+      // provenance, so the call-time gate evaluates it as an explicit fallback
+      // of the primary it replaces (§120 t-741).
+      expect(getProvider).toHaveBeenCalledWith('openai', {
+        task: 'chat',
+        source: 'explicit',
+        primarySlug: 'anthropic',
+      });
     });
 
     it('preserves the citation accumulator across mid-stream provider fallback', async () => {

@@ -81,7 +81,9 @@ describe('summarizeMessages', () => {
     await summarizeMessages(MESSAGES, 'anthropic', ['openai']);
 
     expect(mockGetModel).toHaveBeenCalledWith('routing');
-    expect(mockGetProvider).toHaveBeenCalledWith('anthropic', ['openai']);
+    // No provenance handed in, so none is passed on: the call is gated as
+    // unrecorded. The streaming handler passes its binding's (tested there).
+    expect(mockGetProvider).toHaveBeenCalledWith('anthropic', ['openai'], undefined);
 
     const chatCall = mockProvider.chat.mock.calls[0];
     const chatMessages = chatCall[0];

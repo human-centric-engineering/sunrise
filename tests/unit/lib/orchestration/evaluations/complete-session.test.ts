@@ -44,6 +44,9 @@ vi.mock('@/lib/orchestration/llm/agent-resolver', () => ({
     providerSlug: 'anthropic',
     model: 'claude-sonnet-4-6',
     fallbacks: [],
+    // An auto-picked binding: the provider is fetched with this provenance so
+    // the call-time gate tells the eligibility rule it was Sunrise's choice.
+    provenance: { task: 'chat', primary: 'primary', fallbacks: 'system' },
   })),
 }));
 
@@ -217,7 +220,11 @@ describe('completeEvaluationSession', () => {
     });
 
     // Provider/model came from the agent
-    expect(mockedGetProvider).toHaveBeenCalledWith('anthropic');
+    expect(mockedGetProvider).toHaveBeenCalledWith('anthropic', {
+      task: 'chat',
+      source: 'primary',
+      primarySlug: null,
+    });
     expect(chat.mock.calls[0][1]).toMatchObject({
       model: 'claude-sonnet-4-6',
       temperature: 0.2,
@@ -417,8 +424,14 @@ describe('completeEvaluationSession', () => {
     await completeEvaluationSession({ sessionId: 'sess-1', userId: 'user-1' });
 
     // Default is 'anthropic' unless EVALUATION_DEFAULT_PROVIDER env is set.
+    // The env pair is the operator's choice; the resolver's pick is Sunrise's.
     expect(mockedGetProvider).toHaveBeenCalledWith(
-      process.env.EVALUATION_DEFAULT_PROVIDER ?? 'anthropic'
+      process.env.EVALUATION_DEFAULT_PROVIDER ?? 'anthropic',
+      {
+        task: 'chat',
+        source: process.env.EVALUATION_DEFAULT_PROVIDER ? 'explicit' : 'primary',
+        primarySlug: null,
+      }
     );
     // Cost log must not carry an agentId when the agent is gone.
     expect(mockedLogCost.mock.calls[0][0]).not.toHaveProperty('agentId');

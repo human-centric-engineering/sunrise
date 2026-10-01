@@ -239,12 +239,18 @@ describe('RewriteWithLlmCapability', () => {
       providerSlug: 'anthropic',
       model: 'claude-sonnet-4',
       fallbacks: [],
+      provenance: { task: 'chat', primary: 'primary', fallbacks: 'system' },
     });
 
     const result = await capability.execute({ instructions: 'Clean it up.' }, makeContext());
 
     expect(result.success).toBe(true);
-    expect(mockGetProvider).toHaveBeenCalledWith('anthropic');
+    // Fetched with the binding's primary provenance, for the call-time gate.
+    expect(mockGetProvider).toHaveBeenCalledWith('anthropic', {
+      task: 'chat',
+      source: 'primary',
+      primarySlug: null,
+    });
     expect(fakeProvider.chat).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ model: 'claude-sonnet-4' })
@@ -342,6 +348,7 @@ describe('RewriteWithLlmCapability', () => {
       providerSlug: 'anthropic',
       model: 'claude-3-5-haiku-20241022',
       fallbacks: [],
+      provenance: { task: 'chat', primary: 'explicit', fallbacks: 'explicit' },
     });
     mockGetProvider.mockResolvedValue(fakeProvider);
 
@@ -349,7 +356,12 @@ describe('RewriteWithLlmCapability', () => {
     const result = await capability.execute({ instructions }, makeContext());
 
     // Assert: provider was fetched by the RESOLVED slug
-    expect(mockGetProvider).toHaveBeenCalledWith('anthropic');
+    // Fetched with the binding's primary provenance, for the call-time gate.
+    expect(mockGetProvider).toHaveBeenCalledWith('anthropic', {
+      task: 'chat',
+      source: 'explicit',
+      primarySlug: null,
+    });
     // Provider.chat was called with a 2-message array
     expect(fakeProvider.chat).toHaveBeenCalledWith(
       expect.arrayContaining([

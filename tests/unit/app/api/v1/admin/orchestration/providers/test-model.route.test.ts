@@ -235,8 +235,13 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       // Act
       await POST(makePostRequest(), makeParams(PROVIDER_ID));
 
-      // Assert: getProvider was called with the provider's slug
-      expect(getProvider).toHaveBeenCalledWith('anthropic');
+      // Assert: getProvider was called with the provider's slug, as an
+      // explicit choice — the admin named this provider (§120 t-741)
+      expect(getProvider).toHaveBeenCalledWith('anthropic', {
+        task: 'chat',
+        source: 'explicit',
+        primarySlug: null,
+      });
     });
 
     it('calls provider.chat with the specified model', async () => {
