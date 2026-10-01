@@ -86,14 +86,16 @@ release process.
   provider manager (`chat`, `chatStream`, `embed`, `embedMany`, `transcribe`,
   `transcribeStream`) now asks the provider eligibility rule first, per call,
   and a refused call throws `ProviderCallRefusedError` (a `ProviderError`,
-  code `provider_not_permitted`) from `provider-eligibility.ts`. Until now the
+  code `provider_not_permitted`, with a `reason` of `'policy'` or
+  `'no_org_scope'`) from `provider-eligibility.ts`. Until now the
   rule was only consulted where a provider was chosen, from a hand-maintained
   list of sites; a site missing from it now chooses less well but cannot send
   a call the rule refuses. To tell the rule where a provider came from,
   `getProvider(slug, context?)` and `getProviderWithFallbacks(primary,
   fallbacks, provenance?)` take a new optional argument, and
   `ResolvedAgentBinding` gains `provenance`. **A call made without one is
-  permitted only if the rule permits it under every `source`**, so a fork
+  permitted only if the rule permits it both as `'primary'` and as
+  `'explicit'`**, the two things a lone provider fetched by name can be, so a fork
   calling `getProvider` directly should pass a context. At `TENANCY_MODE=multi`
   a vendor call outside any org scope, or inside `runAsSystem`, is refused.
   At `single` with no rule registered (the default), nothing changes.
@@ -115,14 +117,18 @@ release process.
   `'explicit'`, and a refused pin falls through to the next permitted audio
   row, as an unreachable pin already did. A refusal counts as a request fault:
   chat does not fail over from it, a workflow step does not retry it and fails
-  with code `provider_not_permitted` (as a refused task default already did),
+  with code `provider_not_permitted` (as a refused task default already did)
+  whichever executor wraps it, a fork's included — `ExecutorError` now takes
+  that code and a non-retriable verdict from a refusal anywhere in its
+  `cause` chain,
   no circuit breaker records it, and the retroactive-review route answers 403
   `provider_not_permitted` for a refused `modelOverride` or
   `EVALUATION_JUDGE_MODEL`.
 - **`getProvider` prefers a slug match over a name match** (§120 t-741). It
   used one unordered `findFirst` over both, so a caller holding one row's slug
   could be handed a different row whose name equalled it. A name lookup is no
-  longer cached under the name, so it costs a query on each call.
+  longer cached under the name: it queries on each call, and reuses the slug's
+  cached instance rather than rebuilding it.
 
 - **Admin edits to a system agent's platform-owned fields no longer
   survive** (§116 t-724). This is the upgrade to look at. On the first

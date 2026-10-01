@@ -465,13 +465,21 @@ export function fallbackCallContext(
  */
 export class ProviderCallRefusedError extends ProviderError {
   readonly providerSlug: string;
-  constructor(providerSlug: string) {
+  /**
+   * Why: `'policy'` when the rule refused the provider, `'no_org_scope'` when
+   * at `multi` there was no org to ask it for. A caller that tells someone what
+   * to change needs the difference — choosing another provider fixes the
+   * first and never the second.
+   */
+  readonly reason: 'policy' | 'no_org_scope';
+  constructor(providerSlug: string, reason: 'policy' | 'no_org_scope' = 'policy') {
     super('The provider for this call is not permitted by this deployment’s provider policy', {
       code: 'provider_not_permitted',
       retriable: false,
     });
     this.name = 'ProviderCallRefusedError';
     this.providerSlug = providerSlug;
+    this.reason = reason;
   }
 }
 
@@ -491,10 +499,18 @@ function withPrimarySlug(
   return { ...context, primarySlug: slug };
 }
 
-const EVERY_SOURCE: readonly ProviderEligibilityContext['source'][] = [
+/**
+ * The sources an unrecorded call is asked under. An unrecorded call is one
+ * provider fetched by name, which is a call in the PRIMARY position, and a
+ * primary is either Sunrise's pick (`'primary'`) or an operator's (`'explicit'`).
+ * `'system'` is not asked: it describes a fill drawn alongside a different
+ * primary, and no honest `primarySlug` exists for it here — giving the provider
+ * as its own primary contradicts the contract a rule is written to, that the
+ * fill excludes the primary.
+ */
+const PRIMARY_POSITION_SOURCES: readonly ProviderEligibilityContext['source'][] = [
   'primary',
   'explicit',
-  'system',
 ];
 
 /**
@@ -515,10 +531,13 @@ const EVERY_SOURCE: readonly ProviderEligibilityContext['source'][] = [
  * checked is refused for that row, not waved through on the caller's check.
  *
  * **No provenance is not permission.** A call whose caller recorded no
- * `context` is permitted only if the rule permits it under every `source`. So
- * whichever way a fork's rule is written — strict about the fill, lenient about
- * operator choices, or the reverse — an unrecorded call gets its strictest
- * answer, and recording provenance can only ever relax a refusal.
+ * `context` is permitted only if the rule permits it both as Sunrise's pick
+ * (`'primary'`) and as an operator's (`'explicit'`) — the two things a lone
+ * provider fetched by name can be. Whichever way a fork's rule treats those
+ * two, an unrecorded call gets the stricter answer, and recording provenance
+ * can only ever relax a refusal. (`'system'` is the fill drawn beside some
+ * other primary, which an unrecorded call is not; see
+ * `PRIMARY_POSITION_SOURCES`.)
  *
  * **The org.** The rule runs in the caller's async context, so a rule reads
  * `getTenantContext()` itself. A call with no org to answer for is decided
@@ -550,31 +569,27 @@ export async function assertProviderCallPermitted(
       tenantSource: tenant?.source ?? null,
       fix: 'At TENANCY_MODE=multi every vendor call must run inside runAsOrg / forEachOrg, so the provider policy of the org it acts for can be applied. runAsSystem names no org.',
     });
-    throw new ProviderCallRefusedError(slug);
+    throw new ProviderCallRefusedError(slug, 'no_org_scope');
   }
 
-  let permitted: boolean;
-  if (context) {
-    permitted = await isProviderEligible(slug, withPrimarySlug(context, slug));
-  } else {
-    permitted = true;
-    for (const source of EVERY_SOURCE) {
-      const asked = withPrimarySlug({ task, source, primarySlug: null }, slug);
-      if (!(await isProviderEligible(slug, asked))) {
-        permitted = false;
-        break;
-      }
-    }
-  }
-
-  if (!permitted) {
+  // The contexts the rule is asked, exactly as it sees them: one for a recorded
+  // call, both primary-position sources for an unrecorded one.
+  const asked = context
+    ? [withPrimarySlug(context, slug)]
+    : PRIMARY_POSITION_SOURCES.map((source) =>
+        withPrimarySlug({ task, source, primarySlug: null }, slug)
+      );
+  for (const askedContext of asked) {
+    if (await isProviderEligible(slug, askedContext)) continue;
     logger.error('Refusing a provider call the eligibility rule does not permit', {
       providerSlug: slug,
-      task: context?.task ?? task,
-      source: context?.source ?? 'unrecorded',
-      primarySlug: context?.primarySlug ?? null,
+      recorded: context !== undefined,
+      // What the rule was given, so the refusal can be reproduced from the log.
+      task: askedContext.task,
+      source: askedContext.source,
+      primarySlug: askedContext.primarySlug,
       orgId: tenant?.orgId ?? null,
-      fix: 'The rule registered via registerProviderEligibility() in lib/app/llm-providers.ts did not permit this provider for this call — by policy, or because it threw. A call with no recorded provenance must be permitted under every source.',
+      fix: 'The rule registered via registerProviderEligibility() in lib/app/llm-providers.ts did not permit this provider for this call — by policy, or because it threw. A call with no recorded provenance must be permitted as both an auto-picked and an operator-chosen primary.',
     });
     throw new ProviderCallRefusedError(slug);
   }

@@ -26,10 +26,7 @@ import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
-import {
-  isProviderEligible,
-  ProviderCallRefusedError,
-} from '@/lib/orchestration/llm/provider-eligibility';
+import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { isRequestFault, ProviderError } from '@/lib/orchestration/llm/provider';
@@ -214,11 +211,7 @@ export async function runLlmCall(
         // call it made. Same hole `streamChat` closes on its own error path.
         throw new ExecutorError(
           params.stepId,
-          // A call-time gate refusal (§120 t-741) gets the code the workflow path
-          // already uses for a policy refusal, so traces and alerts that filter
-          // on it see an override the gate refused as well as a default the
-          // pre-check refused.
-          err instanceof ProviderCallRefusedError ? 'provider_not_permitted' : 'llm_call_failed',
+          'llm_call_failed',
           err instanceof Error ? err.message : 'LLM call failed',
           err,
           !isRequestFault(err),

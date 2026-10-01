@@ -166,6 +166,7 @@ describe('the call-time gate refuses what the rule refuses, wherever the call ca
     await expect(provider.chat([], { model: 'm' })).rejects.toMatchObject({
       code: 'provider_not_permitted',
       providerSlug: 'x',
+      reason: 'policy',
     });
     expect(x.chat).not.toHaveBeenCalled();
   });
@@ -292,22 +293,60 @@ describe('what the rule is told', () => {
     ]);
   });
 
-  it('a call with no recorded provenance must pass under EVERY source, so it is never the lenient answer', async () => {
-    registerProviderInstance('x', fakeProvider('x').provider);
-    // A rule that only minds the silent fill: permitted for 'primary' and
-    // 'explicit', refused for 'system'.
-    const rule = vi.fn((candidates: readonly string[], context: ProviderEligibilityContext) =>
-      context.source === 'system' ? [] : candidates
+  it.each([
+    ['refuses only what Sunrise picks', 'primary', EXPLICIT],
+    ['refuses only operator choices', 'explicit', PRIMARY],
+  ] as const)(
+    'an unrecorded call must pass as BOTH kinds of primary — a rule that %s still refuses it',
+    async (_label, refusedSource, permittedContext) => {
+      registerProviderInstance('x', fakeProvider('x').provider);
+      registerProviderEligibility((candidates, context) =>
+        context.source === refusedSource ? [] : candidates
+      );
+
+      const unrecorded = await getProvider('x');
+      await expect(unrecorded.chat([], { model: 'm' })).rejects.toBeInstanceOf(
+        ProviderCallRefusedError
+      );
+      // With provenance recorded, the same rule permits the call.
+      const recorded = await getProvider('x', permittedContext);
+      await expect(recorded.chat([], { model: 'm' })).resolves.toMatchObject({ content: 'ok' });
+    }
+  );
+
+  it("does not ask an unrecorded call as 'system': it is a lone primary, not a fill beside one", async () => {
+    // Asking it as 'system' would need a primarySlug, and the only one to give
+    // is its own, which contradicts the fill's contract (it excludes the
+    // primary). A rule that de-duplicates the fill would then refuse every call.
+    const x = fakeProvider('x');
+    registerProviderInstance('x', x.provider);
+    const { rule, seen } = refuseRule('nothing');
+    registerProviderEligibility((candidates, ctx) =>
+      ctx.source === 'system'
+        ? candidates.filter((c) => c !== ctx.primarySlug)
+        : rule(candidates, ctx)
     );
-    registerProviderEligibility(rule);
 
     const unrecorded = await getProvider('x');
-    await expect(unrecorded.chat([], { model: 'm' })).rejects.toBeInstanceOf(
+    await unrecorded.chat([], { model: 'm' });
+
+    expect(x.chat).toHaveBeenCalledTimes(1);
+    expect(seen.map((s) => s.context.source)).toEqual(['primary', 'explicit']);
+  });
+
+  it('logs the context the rule was actually asked, so the refusal can be reproduced', async () => {
+    registerProviderInstance('x', fakeProvider('x').provider);
+    registerProviderEligibility(refuseRule('x').rule);
+
+    const provider = await getProvider('x', EXPLICIT);
+    await expect(provider.chat([], { model: 'm' })).rejects.toBeInstanceOf(
       ProviderCallRefusedError
     );
-    // With provenance recorded, the same rule permits the call.
-    const recorded = await getProvider('x', PRIMARY);
-    await expect(recorded.chat([], { model: 'm' })).resolves.toMatchObject({ content: 'ok' });
+
+    expect(logger.error).toHaveBeenCalledWith(
+      'Refusing a provider call the eligibility rule does not permit',
+      expect.objectContaining({ source: 'explicit', primarySlug: 'x', recorded: true })
+    );
   });
 
   it('an unrecorded call takes its task from the method', async () => {
@@ -451,6 +490,19 @@ describe('the row the gate evaluates', () => {
     const second = await getProvider('shared');
     expect(second.name).toBe('Shared'); // the row whose SLUG is 'shared'
   });
+
+  it("reuses the slug's live entry for a name lookup instead of rebuilding it", async () => {
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockImplementation((async (args: {
+      where: { slug?: string; name?: string };
+    }) => (args.where.name === 'Pretty Name' ? row('pretty', 'Pretty Name') : null)) as never);
+
+    const first = await getProvider('Pretty Name');
+    const byNameAgain = await getProvider('Pretty Name');
+
+    // Same entry, same view: the client was not rebuilt and the slug's
+    // cached instance was not evicted.
+    expect(byNameAgain).toBe(first);
+  });
 });
 
 describe('the org a call answers for', () => {
@@ -477,6 +529,9 @@ describe('the org a call answers for', () => {
     );
     expect(rule).not.toHaveBeenCalled();
     expect(x.chat).not.toHaveBeenCalled();
+    await expect(provider.chat([], { model: 'm' })).rejects.toMatchObject({
+      reason: 'no_org_scope',
+    });
     expect(logger.error).toHaveBeenCalledWith(
       'Refusing a provider call made outside any org scope',
       expect.objectContaining({ providerSlug: 'x' })

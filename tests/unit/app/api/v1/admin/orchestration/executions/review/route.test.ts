@@ -494,6 +494,19 @@ describe('POST …/review — provider eligibility', () => {
     expect(vi.mocked(prisma.aiWorkflowExecution.update)).not.toHaveBeenCalled();
   });
 
+  it('does not tell the admin to pick another judge when the refusal was for want of an org scope', async () => {
+    vi.mocked(runSupervisorAssessment).mockRejectedValue(
+      new ProviderCallRefusedError('anthropic', 'no_org_scope')
+    );
+
+    const res = await POST(makeRequest({ modelOverride: 'operator-picked-judge' }), makeContext());
+
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe('provider_not_permitted');
+    expect(body.error.message).not.toContain('Choose a judge model');
+  });
+
   it('still lets any other assessment failure propagate', async () => {
     vi.mocked(runSupervisorAssessment).mockRejectedValue(new Error('vendor down'));
 

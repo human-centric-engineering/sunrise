@@ -253,8 +253,12 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     // task-default arm: a policy refusal, not a server fault. Provider errors
     // bubble out of the assessment unwrapped, so this is the error itself.
     if (err instanceof ProviderCallRefusedError) {
+      // Only a POLICY refusal is fixed by choosing another judge. One made for
+      // want of an org scope (at `multi`) would refuse every model alike.
       return errorResponse(
-        `The judge model "${modelId}" resolves to provider "${modelInfo.provider}", which is not permitted for retroactive review. Choose a judge model on a permitted provider.`,
+        err.reason === 'policy'
+          ? `The judge model "${modelId}" resolves to provider "${modelInfo.provider}", which is not permitted for retroactive review. Choose a judge model on a permitted provider.`
+          : 'The judge call ran outside an organisation scope, so no provider can be permitted for it. This is a server fault, not a model choice.',
         { code: 'provider_not_permitted', status: 403 }
       );
     }

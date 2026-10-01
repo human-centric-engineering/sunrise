@@ -60,6 +60,7 @@ import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { executeAgentCall } from '@/lib/orchestration/engine/executors/agent-call';
 import type { WorkflowStep, OrchestratorTurn, TurnEntry } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
+import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1387,6 +1388,42 @@ describe('config defaults and prompt formatting', () => {
     await expect(executeOrchestrator(makeStep(), makeCtx())).rejects.toMatchObject({
       name: 'ExecutorError',
       code: 'planner_call_failed',
+      retriable: false,
+    });
+  });
+
+  it('codes a refused planner call provider_not_permitted, whatever it re-wraps it as (§120 t-741)', async () => {
+    vi.mocked(runLlmCall).mockRejectedValueOnce(
+      new ExecutorError('s1', 'llm_call_failed', 'refused', new ProviderCallRefusedError('openai'))
+    );
+
+    await expect(executeOrchestrator(makeStep(), makeCtx())).rejects.toMatchObject({
+      name: 'ExecutorError',
+      code: 'provider_not_permitted',
+      retriable: false,
+    });
+  });
+
+  it('codes a refused planner RETRY provider_not_permitted, not planner_parse_failed', async () => {
+    vi.mocked(runLlmCall)
+      .mockResolvedValueOnce({
+        content: 'not valid json {{{',
+        tokensUsed: 100,
+        costUsd: 0.002,
+        model: 'gpt-4o',
+      })
+      .mockRejectedValueOnce(
+        new ExecutorError(
+          's1',
+          'llm_call_failed',
+          'refused',
+          new ProviderCallRefusedError('openai')
+        )
+      );
+
+    await expect(executeOrchestrator(makeStep(), makeCtx())).rejects.toMatchObject({
+      name: 'ExecutorError',
+      code: 'provider_not_permitted',
       retriable: false,
     });
   });

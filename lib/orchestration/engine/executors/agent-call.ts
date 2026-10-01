@@ -48,7 +48,6 @@ import { agentCallConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { isRequestFault, ProviderError } from '@/lib/orchestration/llm/provider';
-import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import {
   composeSystemPromptString,
@@ -203,13 +202,7 @@ async function runSingleTurn(
           // AiCostLog but invisible in the row-level totals.
           throw new ExecutorError(
             step.id,
-            // A call-time gate refusal (§120 t-741) gets the code the workflow path
-            // already uses for a policy refusal, so traces and alerts that filter
-            // on it see an override the gate refused as well as a default the
-            // pre-check refused.
-            err instanceof ProviderCallRefusedError
-              ? 'provider_not_permitted'
-              : 'agent_call_failed',
+            'agent_call_failed',
             err instanceof Error ? err.message : 'Agent LLM call failed',
             err,
             !isRequestFault(err),

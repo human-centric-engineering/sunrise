@@ -47,7 +47,6 @@ import { chatTurnConfigSchema } from '@/lib/validations/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { isRequestFault, ProviderError } from '@/lib/orchestration/llm/provider';
-import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import {
   composeSystemPromptString,
@@ -243,11 +242,7 @@ export async function executeChatTurn(
     const billedOnFailure = err instanceof ProviderError ? err.usage : undefined;
     throw new ExecutorError(
       step.id,
-      // A call-time gate refusal (§120 t-741) gets the code the workflow path
-      // already uses for a policy refusal, so traces and alerts that filter
-      // on it see an override the gate refused as well as a default the
-      // pre-check refused.
-      err instanceof ProviderCallRefusedError ? 'provider_not_permitted' : 'chat_turn_failed',
+      'chat_turn_failed',
       err instanceof Error ? err.message : 'Provider chat() call failed',
       err,
       !isRequestFault(err),

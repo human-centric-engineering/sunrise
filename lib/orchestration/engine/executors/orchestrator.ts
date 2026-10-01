@@ -440,12 +440,16 @@ export async function executeOrchestrator(
 
         const retryParsed: unknown = JSON.parse(retryResult.content);
         plannerResponse = orchestratorPlannerResponseSchema.parse(retryParsed);
-      } catch {
+      } catch (retryErr) {
         throw new ExecutorError(
           step.id,
           'planner_parse_failed',
           `Planner response is not valid JSON after retry in round ${round + 1}`,
-          parseErr,
+          // The retry's own failure when it is an executor error — a refused
+          // call (§120 t-741) must reach ExecutorError as the cause, which is
+          // what codes it `provider_not_permitted`. A second parse failure
+          // keeps the first one as the cause, as before.
+          retryErr instanceof ExecutorError ? retryErr : parseErr,
           true
         );
       }

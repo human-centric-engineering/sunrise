@@ -70,14 +70,20 @@
  *    or make this `async` and `await` your loading.
  *  - **Throwing denies, it never permits**, and is logged loudly — a
  *    restriction that cannot be evaluated must not be read as permission.
- *  - **It filters what Sunrise chooses, not what an operator chose.** The
+ *  - **It decides every vendor call core makes through the provider manager,
+ *    operator choices included (§120 t-741).** Where Sunrise CHOOSES — the
  *    auto-picked primary, both fallback lists, the task-default model's
  *    provider on the three paths that resolve one directly, an audio matrix row
- *    reached by order, and every arm of the embedding fallback chain all go
- *    through your rule. An explicit
- *    `agent.provider`, an explicit step or review `modelOverride`, a pinned
- *    audio default and the `EVALUATION_*` env vars do not. Enforce those at
- *    write time — do not offer a provider the org has not approved.
+ *    reached by order, and every arm of the embedding fallback chain — your rule
+ *    filters the candidates, so Sunrise picks a permitted one. Where an
+ *    operator chose — an explicit `agent.provider`, a step or review
+ *    `modelOverride`, a pinned default, the `EVALUATION_*` env vars — nothing
+ *    is rerouted, but the call-time gate asks your rule with
+ *    `source: 'explicit'` and REFUSES the call if you say no. (The pinned audio
+ *    default is also asked when it is chosen, and falls through to the matrix
+ *    when refused.) So a rule that refuses a provider for every source stops
+ *    agents that name it. Still enforce at write time too — do not offer a
+ *    provider the org has not approved — so that refusal is rare.
  *  - **`source: 'primary'` means every path where Sunrise chose**, not only the
  *    agent one: a blank `agent.provider`, a workflow step with no
  *    `modelOverride`, a keyword-enrichment run, an unpinned retroactive review,

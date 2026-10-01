@@ -27,6 +27,7 @@ vi.mock('@/lib/orchestration/engine/llm-runner', () => ({
 
 import { executeRagRetrieve } from '@/lib/orchestration/engine/executors/rag-retrieve';
 import { searchKnowledge } from '@/lib/orchestration/knowledge/search';
+import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import type { WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
@@ -136,6 +137,17 @@ describe('executeRagRetrieve', () => {
     await expect(executeRagRetrieve(step, makeCtx())).rejects.toMatchObject({
       name: 'ExecutorError',
       code: 'missing_query',
+    });
+  });
+
+  it('codes a provider-policy refusal of the query embedding provider_not_permitted, and does not retry it (§120 t-741)', async () => {
+    vi.mocked(interpolatePrompt).mockReturnValue('hello');
+    vi.mocked(searchKnowledge).mockRejectedValue(new ProviderCallRefusedError('voyage'));
+
+    await expect(executeRagRetrieve(makeStep(), makeCtx())).rejects.toMatchObject({
+      name: 'ExecutorError',
+      code: 'provider_not_permitted',
+      retriable: false,
     });
   });
 

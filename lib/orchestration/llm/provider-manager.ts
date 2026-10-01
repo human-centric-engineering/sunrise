@@ -168,6 +168,12 @@ export async function getProvider(
     });
   }
 
+  // A name lookup lands here on every call (it is not cached under the name),
+  // so reuse the slug's live entry rather than rebuilding the client and
+  // evicting the views every slug caller shares.
+  const live = instanceCache.get(config.slug);
+  if (live && Date.now() - live.cachedAt < CACHE_TTL_MS) return viewOf(live, context);
+
   const entry = newEntry(buildProviderFromConfig(config), config.slug);
   // Cached under the row's slug only. A name lookup used to be cached under
   // the name as well, and that alias outlived the "slug wins" rule: a row

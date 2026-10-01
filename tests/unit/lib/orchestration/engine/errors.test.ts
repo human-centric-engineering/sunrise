@@ -8,6 +8,7 @@ import {
   ExecutorError,
   PausedForApproval,
 } from '@/lib/orchestration/engine/errors';
+import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
 
 describe('BudgetExceeded', () => {
   it('sets usedUsd, limitUsd, name, and formatted message', () => {
@@ -63,5 +64,54 @@ describe('ExecutorError', () => {
     const err = new ExecutorError('s1', 'http_error_retriable', 'HTTP 503', undefined, true);
     // test-review:accept tobe_true — structural assertion on retriable boolean field of ExecutorError
     expect(err.retriable).toBe(true);
+  });
+});
+
+// §120 t-741: a provider-policy refusal anywhere in the cause chain decides the
+// code and the retry verdict, whichever executor wraps it.
+describe('ExecutorError — a provider-policy refusal in the cause chain', () => {
+  it('codes a wrapped ProviderCallRefusedError provider_not_permitted, non-retriable', () => {
+    const err = new ExecutorError(
+      's1',
+      'search_failed',
+      'x',
+      new ProviderCallRefusedError('barred'),
+      true
+    );
+    expect(err.code).toBe('provider_not_permitted');
+    expect(err.retriable).toBe(false);
+  });
+
+  it('finds the refusal through an intermediate wrapper', () => {
+    const inner = new ExecutorError(
+      's1',
+      'llm_call_failed',
+      'x',
+      new ProviderCallRefusedError('b')
+    );
+    const outer = new ExecutorError('s1', 'planner_call_failed', 'y', inner, true);
+    expect(outer.code).toBe('provider_not_permitted');
+    expect(outer.retriable).toBe(false);
+  });
+
+  it('finds it under a plain Error cause too', () => {
+    const wrapped = new Error('search failed', { cause: new ProviderCallRefusedError('b') });
+    expect(new ExecutorError('s1', 'search_failed', 'x', wrapped).code).toBe(
+      'provider_not_permitted'
+    );
+  });
+
+  it('leaves any other cause alone', () => {
+    const err = new ExecutorError('s1', 'search_failed', 'x', new Error('pgvector error'), true);
+    expect(err.code).toBe('search_failed');
+    expect(err.retriable).toBe(true);
+  });
+
+  it('stops walking a cause chain after a bounded depth', () => {
+    // A cycle must not hang the constructor.
+    const a = new Error('a');
+    const b = new Error('b', { cause: a });
+    (a as Error & { cause?: unknown }).cause = b;
+    expect(new ExecutorError('s1', 'x_failed', 'x', a).code).toBe('x_failed');
   });
 });
