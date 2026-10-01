@@ -52,6 +52,7 @@ import {
   resetProviderCredentialResolver,
 } from '@/lib/orchestration/llm/provider-credentials';
 import {
+  getAllBreakerSlugs,
   getBreaker,
   getCircuitBreakerStatusForProvider,
   resetAllBreakers,
@@ -126,6 +127,18 @@ describe('with nothing registered, an open breaker', () => {
     await expect(getProviderIfBreakerClosed('anthropic')).resolves.toBeNull();
     expect(prisma.aiProviderConfig.findFirst).not.toHaveBeenCalled();
     expect(clients).toHaveLength(0);
+  });
+});
+
+describe('a provider fetched by its row name', () => {
+  it('leaves no breaker under the name — breakers are keyed by credential', async () => {
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockImplementation((async (args: {
+      where: { slug?: string; name?: string };
+    }) => (args.where.name === 'Anthropic' ? ROW : null)) as never);
+
+    await getProviderIfBreakerClosed('Anthropic');
+
+    expect(getAllBreakerSlugs()).toEqual(['anthropic']);
   });
 });
 
