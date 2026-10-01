@@ -588,8 +588,11 @@ describe('the org a call answers for', () => {
     registerProviderInstance('x', x.provider);
     // Core's own rule at multi holds the org to its approved set (§120 t-742).
     vi.mocked(prisma.org.findUnique).mockResolvedValue({
-      settings: { providers: { approved: ['x'] } },
+      settings: { providers: { approved: ['id-x'] } },
     } as never);
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([
+      { id: 'id-x', slug: 'x', jurisdiction: null },
+    ] as never);
     const { getTenantContext } = await import('@/lib/tenancy/context');
     const orgsSeen: (string | null)[] = [];
     registerProviderEligibility((candidates) => {

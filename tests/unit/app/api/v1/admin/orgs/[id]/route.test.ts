@@ -383,6 +383,21 @@ describe('PATCH /api/v1/admin/orgs/[id] — the retention slice (§108 t-713)', 
     );
   });
 
+  it('answers a clash with a concurrent settings write with a 409 (§120 t-742)', async () => {
+    const { Prisma } = await import('@prisma/client');
+    mockUpdateOrg.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('could not serialize access', {
+        code: 'P2034',
+        clientVersion: 'test',
+      })
+    );
+
+    const res = await patch({ settings: { retention: { executionRetentionDays: 365 } } });
+
+    expect(res.status).toBe(409);
+    expect(JSON.parse(await res.text()).error.code).toBe('CONFLICT');
+  });
+
   it('does not read the global windows for a patch that sets none', async () => {
     await patch({ name: 'Renamed' });
     expect(mockLoadRetentionWindows).not.toHaveBeenCalled();

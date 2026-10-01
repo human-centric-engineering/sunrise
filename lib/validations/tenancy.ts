@@ -151,38 +151,65 @@ export const jurisdictionSchema = z
   )
   .transform((code) => code.toUpperCase());
 
+/** An org's jurisdiction restriction: absent or `null` means none. */
+const jurisdictionRestriction = z
+  .array(jurisdictionSchema)
+  .min(1, 'Name at least one jurisdiction, or omit the restriction')
+  .max(50, 'At most 50 jurisdictions')
+  .transform((codes) => [...new Set(codes)])
+  .nullable()
+  .optional();
+
 /**
- * One org's provider policy (§120 t-742): the providers a platform admin has
- * approved it for, and optionally the jurisdictions it is held to.
+ * One org's provider policy as STORED in `Org.settings.providers` (§120
+ * t-742): the provider rows a platform admin has approved it for, by id, and
+ * optionally the jurisdictions it is held to.
  *
  * Providers are global (design Q3), so `approved` is a permission over the
- * operator's provider rows, by slug — not a list of the org's own providers.
- * `[]` approves nothing, which is where every org but the install org starts.
+ * operator's provider rows — not a list of the org's own providers. `[]`
+ * approves nothing, which is where every org but the install org starts.
+ *
+ * **Row ids, not slugs.** A slug can be renamed, deleted and re-created by a
+ * platform admin, a seed or an import; a grant keyed on it would follow the
+ * slug to whatever row holds it next. An id cannot move, so a renamed row
+ * keeps its grants and a re-created one starts with none.
  *
  * `jurisdictions`, when present, restricts the approved set further: a
  * provider is permitted only if its recorded jurisdiction is one of them, and
- * a provider with none recorded matches no restriction. Absent or `null`
- * means no jurisdiction restriction.
+ * a provider with none recorded matches no restriction.
  *
- * Duplicates are folded on the way in, so the stored set has one spelling.
+ * `.strict()` on read too, deliberately: the read fails closed, and a key it
+ * does not know may be a restriction it would otherwise ignore.
  */
 export const orgProviderPolicySchema = z
+  .object({
+    approved: z
+      .array(z.string().min(1).max(64))
+      .max(200, 'At most 200 providers')
+      .transform((ids) => [...new Set(ids)]),
+    jurisdictions: jurisdictionRestriction,
+  })
+  .strict();
+
+export type OrgProviderPolicy = z.infer<typeof orgProviderPolicySchema>;
+
+/**
+ * `PUT /api/v1/admin/orgs/[id]/providers` body: the same policy, naming
+ * providers by SLUG, which is what an operator knows them by. The route
+ * resolves each slug to its row and stores the ids; an unknown slug is a 400.
+ * Duplicates are folded on the way in.
+ */
+export const orgProviderPolicyInputSchema = z
   .object({
     approved: z
       .array(slugSchema.max(50, 'Provider slug must be less than 50 characters'))
       .max(200, 'At most 200 providers')
       .transform((slugs) => [...new Set(slugs)]),
-    jurisdictions: z
-      .array(jurisdictionSchema)
-      .min(1, 'Name at least one jurisdiction, or omit the restriction')
-      .max(50, 'At most 50 jurisdictions')
-      .transform((codes) => [...new Set(codes)])
-      .nullable()
-      .optional(),
+    jurisdictions: jurisdictionRestriction,
   })
   .strict();
 
-export type OrgProviderPolicy = z.infer<typeof orgProviderPolicySchema>;
+export type OrgProviderPolicyInput = z.infer<typeof orgProviderPolicyInputSchema>;
 
 /**
  * The platform-owned slices of `Org.settings` a PATCH may write.

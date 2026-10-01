@@ -38,6 +38,7 @@ import { OrgLifecycleError, updateOrg } from '@/lib/tenancy/lifecycle';
 import { readRetentionWindows } from '@/lib/orchestration/retention-windows';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { eraseOrg } from '@/lib/privacy/erase-org';
+import { isSettingsWriteConflict } from '@/lib/tenancy/org-settings';
 import { getRouteLogger } from '@/lib/api/context';
 
 const PLATFORM_ONLY = {
@@ -108,7 +109,21 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     );
   }
 
-  const org = await updateOrg(id, body);
+  let org: Awaited<ReturnType<typeof updateOrg>>;
+  try {
+    org = await updateOrg(id, body);
+  } catch (error) {
+    if (!isSettingsWriteConflict(error)) throw error;
+    // A concurrent write to this org's settings (another admin, the provider
+    // policy, the platform-agent reconcile) landed first. Nothing was written.
+    return errorResponse(
+      "Another change to this org's settings was saved at the same time; retry",
+      {
+        code: 'CONFLICT',
+        status: 409,
+      }
+    );
+  }
 
   if (body.settings?.retention != null && !isMultiTenant()) {
     // Stored and returned, but the sweep will not apply it until the install

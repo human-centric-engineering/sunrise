@@ -46,10 +46,6 @@ vi.mock('@/lib/db/client', () => ({
     aiCostLog: {
       count: vi.fn(),
     },
-    // Orgs whose approved providers name a slug (§120 t-742); none by default.
-    org: {
-      findMany: vi.fn().mockResolvedValue([]),
-    },
   },
 }));
 
@@ -307,40 +303,6 @@ describe('PATCH /api/v1/admin/orchestration/providers/:id', () => {
       expect(prisma.aiProviderConfig.update).not.toHaveBeenCalled();
     });
 
-    it('refuses to rename a slug an org is approved for, and changes nothing (§120 t-742)', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
-      vi.mocked(prisma.org.findMany).mockResolvedValueOnce([
-        { id: 'cmorg00000000000000grant' },
-      ] as never);
-
-      const response = await PATCH(
-        makeRequest('PATCH', { slug: 'renamed' }),
-        makeParams(PROVIDER_ID)
-      );
-
-      expect(response.status).toBe(409);
-      expect(prisma.org.findMany).toHaveBeenCalledWith({
-        where: { settings: { path: ['providers', 'approved'], array_contains: ['anthropic'] } },
-        select: { id: true },
-      });
-      expect(prisma.aiProviderConfig.update).not.toHaveBeenCalled();
-    });
-
-    it('does not look for org grants when the slug is unchanged', async () => {
-      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
-      vi.mocked(prisma.aiProviderConfig.update).mockResolvedValue(makeProvider());
-
-      await PATCH(
-        makeRequest('PATCH', { slug: 'anthropic', name: 'Renamed' }),
-        makeParams(PROVIDER_ID)
-      );
-
-      expect(prisma.org.findMany).not.toHaveBeenCalled();
-      expect(prisma.aiProviderConfig.update).toHaveBeenCalled();
-    });
-
     it('clears provider cache after update', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
@@ -580,24 +542,6 @@ describe('DELETE /api/v1/admin/orchestration/providers/:id?permanent=true', () =
       where: { fallbackProviders: { has: 'anthropic' } },
     });
     expect(prisma.aiCostLog.count).toHaveBeenCalledWith({ where: { provider: 'anthropic' } });
-  });
-
-  it('returns 409 when an org is approved for the slug (§120 t-742)', async () => {
-    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
-    vi.mocked(prisma.org.findMany).mockResolvedValueOnce([
-      { id: 'cmorg00000000000000grant' },
-    ] as never);
-
-    const response = await DELETE(
-      makeRequest('DELETE', undefined, { permanent: 'true' }),
-      makeParams(PROVIDER_ID)
-    );
-
-    expect(response.status).toBe(409);
-    const data = await parseJson<{ error: { code: string; message: string } }>(response);
-    expect(data.error.code).toBe('CONFLICT');
-    expect(data.error.message).toMatch(/1 org is approved/);
-    expect(prisma.aiProviderConfig.delete).not.toHaveBeenCalled();
   });
 
   it('returns 409 when agents reference the slug as primary provider', async () => {

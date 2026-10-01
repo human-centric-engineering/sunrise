@@ -18,6 +18,8 @@ import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { runAsOrg } from '@/lib/tenancy/context';
 import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
 import { generateSilentWav } from '@/lib/audio/silent-wav';
 import { deriveParamProfile } from '@/lib/orchestration/llm/model-heuristics';
@@ -106,11 +108,21 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   try {
     // An admin testing a provider they named is an explicit choice, so the
     // call-time gate (§120 t-741) evaluates it as one.
-    const provider = await getProvider(providerRow.slug, {
-      task: capability === 'embedding' ? 'embeddings' : capability === 'audio' ? 'audio' : 'chat',
-      source: 'explicit',
-      primarySlug: null,
-    });
+    //
+    // Every vendor step runs AS THE INSTALL ORG, whichever org the admin is
+    // acting in (§120 t-742). The probe is a fixed prompt, a fixed word or a
+    // silent clip, so no org's data is sent; and providers are platform
+    // configuration, so at multi a platform admin must be able to test one
+    // before granting it to any org. Under the admin's active org, a customer
+    // org with no grants would refuse every test.
+    const asPlatform = <T>(fn: () => Promise<T>): Promise<T> => runAsOrg(INSTALL_ORG_ID, fn);
+    const provider = await asPlatform(() =>
+      getProvider(providerRow.slug, {
+        task: capability === 'embedding' ? 'embeddings' : capability === 'audio' ? 'audio' : 'chat',
+        source: 'explicit',
+        primarySlug: null,
+      })
+    );
 
     // Audio: providers opt-in via the optional transcribe() interface
     // member. Guard before timing — a missing method is "this provider
@@ -157,14 +169,14 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
             'This provider class does not implement embedMany, so knowledge embedding cannot use it.',
         });
       }
-      await provider.embedMany(['hello'], { model });
+      await asPlatform(() => provider.embedMany!(['hello'], { model }));
     } else if (capability === 'audio') {
       // Tiny silent WAV — verifies API key, base URL and model id
       // without recording a real clip. Most providers return an
       // empty transcript; the Test button only cares about the
       // round-trip succeeding.
       const wav = generateSilentWav();
-      await provider.transcribe!(wav, { model, mimeType: 'audio/wav' });
+      await asPlatform(() => provider.transcribe!(wav, { model, mimeType: 'audio/wav' }));
     } else {
       // Reasoning models (gpt-5, o-series) bill `max_completion_tokens`
       // against reasoning tokens AND visible output combined. A tiny
@@ -179,14 +191,16 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       const registryEntry = getModel(model);
       const profile = registryEntry?.paramProfile ?? deriveParamProfile(model, providerRow.slug);
       const isReasoning = profile === 'openai-reasoning';
-      await provider.chat([{ role: 'user', content: 'Say hello.' }], {
-        model,
-        maxTokens: isReasoning ? 256 : 10,
-        // gpt-5 / o-series reject non-default temperature. The provider
-        // already drops the field for reasoning profiles, but skipping
-        // here keeps the intent legible.
-        ...(isReasoning ? {} : { temperature: 0 }),
-      });
+      await asPlatform(() =>
+        provider.chat([{ role: 'user', content: 'Say hello.' }], {
+          model,
+          maxTokens: isReasoning ? 256 : 10,
+          // gpt-5 / o-series reject non-default temperature. The provider
+          // already drops the field for reasoning profiles, but skipping
+          // here keeps the intent legible.
+          ...(isReasoning ? {} : { temperature: 0 }),
+        })
+      );
     }
     const latencyMs = Date.now() - start;
 

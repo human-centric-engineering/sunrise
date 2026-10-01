@@ -388,7 +388,9 @@ PUT /api/v1/admin/orgs/[id]/providers
 Which AI providers the org may use at `TENANCY_MODE=multi` (§120 t-742). A
 `PUT` replaces the whole policy, `{ approved: string[], jurisdictions?: string[] | null }`,
 and writes an `org.providers.replace` audit row. `[]` revokes every grant.
-Both return `{ orgId, unrestricted, enforced, approved, jurisdictions }`. See
+Both return `{ orgId, unrestricted, enforced, approved, jurisdictions }`, each
+grant in `approved` as `{ id, slug }`: the grant is stored as the provider row's
+id, so it survives a rename, and `slug` is `null` if the row was deleted. See
 [LLM providers → Per-org approved providers](../orchestration/llm-providers.md#per-org-approved-providers-core-at-multi)
 for what it governs.
 

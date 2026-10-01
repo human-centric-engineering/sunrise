@@ -51,10 +51,7 @@ import {
   resolveEligibleProviders,
   type ProviderEligibilityContext,
 } from '@/lib/orchestration/llm/provider-eligibility';
-import {
-  forgetOrgProviderPolicy,
-  forgetProviderJurisdiction,
-} from '@/lib/orchestration/llm/org-provider-policy';
+import { forgetOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
 import type { LlmProvider } from '@/lib/orchestration/llm/provider';
 import { getBreaker, resetAllBreakers } from '@/lib/orchestration/llm/circuit-breaker';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -68,12 +65,18 @@ const EU_ORG = 'cmorg00000000000000000eu';
 const settingsByOrg: Record<string, unknown> = {
   [INSTALL_ORG_ID]: null,
   [NEW_ORG]: null,
-  [GRANTED_ORG]: { providers: { approved: ['x'] } },
-  [EU_ORG]: { providers: { approved: ['x', 'y', 'z'], jurisdictions: ['EU'] } },
+  // Grants name provider ROW ids, never slugs.
+  [GRANTED_ORG]: { providers: { approved: ['id-x'] } },
+  [EU_ORG]: { providers: { approved: ['id-x', 'id-y', 'id-z'], jurisdictions: ['EU'] } },
 };
 
-/** Each provider row's recorded jurisdiction. `z` has none. */
-const jurisdictionBySlug: Record<string, string | null> = { x: 'EU', y: 'US', z: null };
+/** Each slug's provider row: its id and recorded jurisdiction. `z` has none. */
+const ROWS: Record<string, { id: string; jurisdiction: string | null }> = {
+  x: { id: 'id-x', jurisdiction: 'EU' },
+  y: { id: 'id-y', jurisdiction: 'US' },
+  z: { id: 'id-z', jurisdiction: null },
+};
+let rowBySlug: Record<string, { id: string; jurisdiction: string | null }>;
 
 const SLUGS = ['x', 'y', 'z'] as const;
 
@@ -115,15 +118,15 @@ beforeEach(() => {
   forgetOrgProviderPolicy();
   resetProviderEligibility();
   resetAllBreakers();
+  rowBySlug = structuredClone(ROWS);
   vi.mocked(prisma.org.findUnique).mockImplementation((async (args: { where: { id: string } }) =>
     args.where.id in settingsByOrg ? { settings: settingsByOrg[args.where.id] } : null) as never);
   vi.mocked(prisma.aiProviderConfig.findMany).mockImplementation((async (args: {
     where: { slug: { in: string[] } };
   }) =>
-    args.where.slug.in.map((slug) => ({
-      slug,
-      jurisdiction: jurisdictionBySlug[slug] ?? null,
-    }))) as never);
+    args.where.slug.in
+      .filter((slug) => slug in rowBySlug)
+      .map((slug) => ({ slug, ...rowBySlug[slug] }))) as never);
   const built = SLUGS.map((slug) => [slug, fakeProvider(slug)] as const);
   for (const [slug, { provider }] of built) registerProviderInstance(slug, provider);
   chats = Object.fromEntries(built.map(([slug, { chat }]) => [slug, chat])) as typeof chats;
@@ -193,13 +196,28 @@ describe('at multi', () => {
   });
 
   it('matches a jurisdiction recorded in another case', async () => {
-    jurisdictionBySlug.x = 'eu';
-    try {
-      await call(EU_ORG, 'x');
-      expect(chats.x).toHaveBeenCalledTimes(1);
-    } finally {
-      jurisdictionBySlug.x = 'EU';
-    }
+    rowBySlug.x = { id: 'id-x', jurisdiction: 'eu' };
+    await call(EU_ORG, 'x');
+    expect(chats.x).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a grant when its provider is renamed: the grant names the row, not the slug', async () => {
+    rowBySlug['x-renamed'] = rowBySlug.x;
+    delete rowBySlug.x;
+    registerProviderInstance('x-renamed', fakeProvider('x-renamed').provider);
+
+    const provider = await getProvider('x-renamed', NAMED);
+    await runAsOrg(GRANTED_ORG, () => provider.chat([], { model: 'm' }));
+    // And the old slug, with no row behind it, permits nothing.
+    await expect(call(GRANTED_ORG, 'x')).rejects.toBeInstanceOf(ProviderCallRefusedError);
+  });
+
+  it('does not hand a grant to a new provider created under a granted slug', async () => {
+    // `x` deleted and re-created: same slug, a different row.
+    rowBySlug.x = { id: 'id-x-new', jurisdiction: 'EU' };
+
+    await expect(call(GRANTED_ORG, 'x')).rejects.toBeInstanceOf(ProviderCallRefusedError);
+    expect(chats.x).not.toHaveBeenCalled();
   });
 
   it('refuses everything for an org that does not exist', async () => {
@@ -286,16 +304,11 @@ describe('the cache', () => {
 
   it('applies a changed jurisdiction once the provider manager clears the row', async () => {
     await call(EU_ORG, 'x');
-    jurisdictionBySlug.x = 'US';
-    try {
-      // Re-registered because clearCache drops the instance too.
-      clearCache('x');
-      registerProviderInstance('x', fakeProvider('x').provider);
-      await expect(call(EU_ORG, 'x')).rejects.toBeInstanceOf(ProviderCallRefusedError);
-    } finally {
-      jurisdictionBySlug.x = 'EU';
-      forgetProviderJurisdiction();
-    }
+    rowBySlug.x = { id: 'id-x', jurisdiction: 'US' };
+    // Re-registered because clearCache drops the instance too.
+    clearCache('x');
+    registerProviderInstance('x', fakeProvider('x').provider);
+    await expect(call(EU_ORG, 'x')).rejects.toBeInstanceOf(ProviderCallRefusedError);
   });
 
   it('shares one lookup between concurrent misses', async () => {
@@ -317,7 +330,7 @@ describe('the cache', () => {
       settings: { providers: { approved: [] } },
     } as never);
     forgetOrgProviderPolicy(GRANTED_ORG);
-    finishOldRead({ settings: { providers: { approved: ['x'] } } });
+    finishOldRead({ settings: { providers: { approved: ['id-x'] } } });
     await inFlight;
 
     // The next call reads the revocation, not the old answer.

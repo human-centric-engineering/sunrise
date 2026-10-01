@@ -125,7 +125,9 @@ release process.
   use every provider. Every other org may use only the providers a platform
   admin has granted it, and starts with none. The grant is the org's new
   platform-owned `Org.settings.providers` slice,
-  `{ approved: string[], jurisdictions?: string[] }`. It is enforced inside
+  `{ approved: string[], jurisdictions?: string[] }`, which stores provider row
+  ids, so a grant survives a rename and does not pass to a new provider created
+  under a deleted one's slug. It is enforced inside
   `resolveEligibleProviders`, so it applies at every selection site and in the
   call-time gate on every vendor call. A fork's `registerProviderEligibility`
   rule now runs on what core's rule permitted, so it can narrow the org's set
@@ -134,10 +136,13 @@ release process.
 - **`GET` / `PUT /api/v1/admin/orgs/[id]/providers`** (§120 t-742). Platform
   admins read and replace an org's approved providers and jurisdictions. Each
   replace writes an `org.providers.replace` audit row. The install org has no
-  set and a `PUT` naming it is refused, an unknown slug is a 400, and a clash
-  with a concurrent settings write is a 409. Also
-  exported: `readOrgProviderPolicy` / `writeOrgProviderPolicy` from
-  `lib/tenancy/org-settings.ts`, `orgProviderPolicySchema` /
+  set and a `PUT` naming it is refused. The `PUT` names providers by slug; an
+  unknown slug is a 400, and a clash with a concurrent settings write is a 409
+  (as it now is on `PATCH /api/v1/admin/orgs/[id]`). Both return each grant as
+  `{ id, slug }`. Also
+  exported: `readOrgProviderPolicy` / `writeOrgProviderPolicy` /
+  `isSettingsWriteConflict` from `lib/tenancy/org-settings.ts`,
+  `orgProviderPolicySchema` / `orgProviderPolicyInputSchema` /
   `jurisdictionSchema` from `lib/validations/tenancy.ts`, and
   `lib/orchestration/llm/org-provider-policy.ts`.
 - **`AiProviderConfig.jurisdiction`** (§120 t-742; migration
@@ -156,12 +161,6 @@ release process.
   release, or their chat, workflow, embedding and transcription calls are
   refused with `provider_not_permitted`. Single-tenant installs are
   unaffected.
-- **A provider whose slug an org is approved for can no longer be renamed or
-  permanently deleted** (§120 t-742). `PATCH` with a new `slug` and
-  `DELETE ?permanent=true` on `/api/v1/admin/orchestration/providers/[id]`
-  return 409 with the approving orgs in `details.approvingOrgs`. An org's
-  grant names the slug, so either change would otherwise hand the grant to
-  whichever provider takes the slug next. Revoke the grant first.
 - **Provider clients, circuit breakers and in-flight counts are keyed per
   credential** (§120 t-744), on `credentialKey(slug, identity)`: the bare slug
   for the install's shared credential, so nothing changes until a credential

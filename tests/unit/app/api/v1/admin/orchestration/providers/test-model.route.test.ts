@@ -57,6 +57,8 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
+import { getTenantContext } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -226,6 +228,34 @@ describe('POST /api/v1/admin/orchestration/providers/:id/test-model', () => {
       expect(typeof body.data.latencyMs).toBe('number');
       expect(body.data.latencyMs).toBeGreaterThanOrEqual(0);
       expect(body.data.model).toBe(MODEL);
+    });
+
+    it('fetches and calls the provider as the install org, whatever org the admin acts in (§120 t-742)', async () => {
+      // A platform admin must be able to test a provider before granting it to
+      // any org, so the probe never runs under the admin's active org's policy.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
+      // The scope each vendor step sees: the install org, entered for the
+      // probe — not the request's own session scope.
+      const seen: unknown[] = [];
+      const scope = () => {
+        const ctx = getTenantContext();
+        return { orgId: ctx?.orgId ?? null, source: ctx?.source ?? null };
+      };
+      const chat = vi.fn(async () => {
+        seen.push(scope());
+        return { content: 'Hello!' };
+      });
+      vi.mocked(getProvider).mockImplementation(async () => {
+        seen.push(scope());
+        return makeMockProvider(chat) as never;
+      });
+
+      const response = await POST(makePostRequest(), makeParams(PROVIDER_ID));
+
+      expect(response.status).toBe(200);
+      const probe = { orgId: INSTALL_ORG_ID, source: 'job' };
+      expect(seen).toEqual([probe, probe]);
     });
 
     it('calls getProvider with the provider slug', async () => {

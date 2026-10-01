@@ -115,7 +115,9 @@ const providerRowSchema = z
     metadata: z.unknown().nullable(),
     timeoutMs: z.number().nullable(),
     maxRetries: z.number().nullable(),
-    jurisdiction: z.string().nullable(),
+    // Not read here; optional so a response without it (an older instance
+    // mid-deploy) still parses.
+    jurisdiction: z.string().nullable().optional(),
     createdBy: z.string(),
     createdAt: z.union([z.string(), z.date()]),
     updatedAt: z.union([z.string(), z.date()]),

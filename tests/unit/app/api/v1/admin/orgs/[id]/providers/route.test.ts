@@ -96,16 +96,24 @@ beforeEach(() => {
   mockPrisma.aiApiKey.findFirst.mockResolvedValue(null);
   mockGetSession.mockResolvedValue(session('ADMIN'));
   mockPrisma.org.findUnique.mockResolvedValue({
-    settings: { retention: { costLogRetentionDays: 30 }, providers: { approved: ['anthropic'] } },
+    settings: {
+      retention: { costLogRetentionDays: 30 },
+      providers: { approved: ['id-anthropic'] },
+    },
   });
   mockPrisma.orgMembership.findUnique.mockResolvedValue({
     role: 'OWNER',
     org: { status: 'ACTIVE' },
   });
   mockPrisma.org.update.mockResolvedValue({});
+  // Provider rows: each slug's id is `id-<slug>`, and `nope` has no row.
   mockPrisma.aiProviderConfig.findMany.mockImplementation(
-    async (args: { where: { slug: { in: string[] } } }) =>
-      args.where.slug.in.filter((s) => s !== 'nope').map((slug) => ({ slug }))
+    async (args: { where: { slug?: { in: string[] }; id?: { in: string[] } } }) => {
+      const slugs = args.where.slug
+        ? args.where.slug.in
+        : (args.where.id?.in ?? []).map((id) => id.replace(/^id-/, ''));
+      return slugs.filter((s) => s !== 'nope').map((slug) => ({ id: `id-${slug}`, slug }));
+    }
   );
 });
 
@@ -117,8 +125,17 @@ describe('GET /api/v1/admin/orgs/[id]/providers', () => {
       orgId: OTHER,
       unrestricted: false,
       enforced: true,
-      approved: ['anthropic'],
+      approved: [{ id: 'id-anthropic', slug: 'anthropic' }],
       jurisdictions: null,
+    });
+  });
+
+  it('reports a grant whose provider row was deleted with no slug', async () => {
+    mockPrisma.org.findUnique.mockResolvedValue({
+      settings: { providers: { approved: ['id-nope'] } },
+    });
+    expect((await json(await get())).data).toMatchObject({
+      approved: [{ id: 'id-nope', slug: null }],
     });
   });
 
@@ -149,12 +166,15 @@ describe('GET /api/v1/admin/orgs/[id]/providers', () => {
 });
 
 describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
-  it("replaces the set, keeps the org's other settings, and returns what was stored", async () => {
+  it("stores each slug's row id, keeps the org's other settings, and returns what was stored", async () => {
     const res = await put({ approved: ['openai', 'openai', 'voyage'], jurisdictions: ['eu'] });
 
     expect(res.status).toBe(200);
     expect((await json(res)).data).toMatchObject({
-      approved: ['openai', 'voyage'],
+      approved: [
+        { id: 'id-openai', slug: 'openai' },
+        { id: 'id-voyage', slug: 'voyage' },
+      ],
       jurisdictions: ['EU'],
     });
     expect(mockPrisma.org.update).toHaveBeenCalledWith({
@@ -162,7 +182,7 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
       data: {
         settings: {
           retention: { costLogRetentionDays: 30 },
-          providers: { approved: ['openai', 'voyage'], jurisdictions: ['EU'] },
+          providers: { approved: ['id-openai', 'id-voyage'], jurisdictions: ['EU'] },
         },
       },
     });
@@ -179,8 +199,9 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
         entityType: 'org',
         entityId: OTHER,
         changes: {
-          providers: { from: { approved: ['anthropic'] }, to: { approved: ['openai'] } },
+          providers: { from: { approved: ['id-anthropic'] }, to: { approved: ['id-openai'] } },
         },
+        metadata: { approvedSlugs: ['openai'] },
       })
     );
   });
@@ -244,10 +265,13 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
   });
 
-  it('is a 404 for an org that does not exist, with no audit row', async () => {
+  it('is a 404 for an org that does not exist, whatever the body names, with no audit row', async () => {
     mockPrisma.org.findUnique.mockResolvedValue(null);
-    const res = await put({ approved: ['openai'] });
-    expect(res.status).toBe(404);
+    for (const approved of [['openai'], ['nope'], []]) {
+      const res = await put({ approved });
+      expect(res.status).toBe(404);
+      expect((await json(res)).error?.code).toBe('ORG_NOT_FOUND');
+    }
     expect(mockLogAdminAction).not.toHaveBeenCalled();
   });
 

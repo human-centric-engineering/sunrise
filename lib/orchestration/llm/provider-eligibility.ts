@@ -578,7 +578,9 @@ const FALLBACK_POSITION_SOURCES: readonly ProviderEligibilityContext['source'][]
  * (`chat`, `chatStream`, `embed`, `embedMany`, `transcribe`, `transcribeStream`),
  * once per CALL — never once per cached instance, so a rule whose answer changes
  * takes effect on the next call rather than after the 5-minute instance cache
- * expires. The selection sites still filter so that Sunrise chooses well; this
+ * expires. (A fork rule is asked afresh every call. Core's per-org policy is
+ * read through a 60-second cache: a change applies at once in the process that
+ * wrote it and within 60 seconds in any other — see `org-provider-policy.ts`.) The selection sites still filter so that Sunrise chooses well; this
  * is what makes the policy complete for every call core makes through the
  * manager, including the ones no selection site saw. It is not a boundary
  * around a fork's own code, which can construct a provider directly (decided

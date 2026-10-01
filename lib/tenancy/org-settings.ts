@@ -231,7 +231,7 @@ export async function writePlatformAgentsMarker(
   marker: PlatformAgentsMarker,
   db: Pick<PrismaClient, '$transaction'> = prisma
 ): Promise<void> {
-  await writeSettingsSlice(orgId, ORG_PLATFORM_AGENTS_KEY, () => marker, db);
+  await writeSettingsSlice(orgId, ORG_PLATFORM_AGENTS_KEY, marker, db);
 }
 
 /** The key the provider policy owns inside `Org.settings` (§120 t-742). */
@@ -290,35 +290,9 @@ export async function writeOrgProviderPolicy(
   const stored: OrgProviderPolicy = policy.jurisdictions
     ? { approved: policy.approved, jurisdictions: policy.jurisdictions }
     : { approved: policy.approved };
-  let previous: OrgProviderPolicy | null = null;
-  const written = await writeSettingsSlice(
-    orgId,
-    ORG_PROVIDERS_KEY,
-    (settings) => {
-      previous = readOrgProviderPolicy(settings, { orgId });
-      return stored;
-    },
-    db
-  );
-  return written && previous ? { previous, stored } : null;
-}
-
-/**
- * The orgs whose provider policy approves `slug`. A provider row's slug is
- * what a grant names, so renaming or deleting a row an org is approved for
- * would move that grant to whichever row takes the slug next; the provider
- * routes ask this first and refuse. `Org` is a system model, so no tenant
- * scope is needed.
- */
-export async function orgsApprovingProvider(
-  slug: string,
-  db: Pick<PrismaClient, 'org'> = prisma
-): Promise<string[]> {
-  const rows = await db.org.findMany({
-    where: { settings: { path: [ORG_PROVIDERS_KEY, 'approved'], array_contains: [slug] } },
-    select: { id: true },
-  });
-  return rows.map((row) => row.id);
+  const replaced = await writeSettingsSlice(orgId, ORG_PROVIDERS_KEY, stored, db);
+  if (replaced === null) return null;
+  return { previous: readOrgProviderPolicy(replaced.settings, { orgId }), stored };
 }
 
 /**
@@ -330,28 +304,26 @@ export async function orgsApprovingProvider(
  * later writer with Prisma's `P2034` rather than losing either; a route maps
  * it to a 409 with {@link isSettingsWriteConflict}.
  *
- * `value` is given the column as it stands, so a caller can read the slice it
- * is replacing in the same transaction.
- *
- * @returns `false` when the org does not exist, and nothing was written.
+ * @returns the column as it stood before the write, so a caller can say what
+ *   it replaced; `null` when the org does not exist, and nothing was written.
  */
 async function writeSettingsSlice(
   orgId: string,
   key: string,
-  value: (settings: unknown) => unknown,
+  value: unknown,
   db: Pick<PrismaClient, '$transaction'>
-): Promise<boolean> {
+): Promise<{ settings: unknown } | null> {
   return db.$transaction(
     async (tx) => {
       const row = await tx.org.findUnique({ where: { id: orgId }, select: { settings: true } });
-      if (!row) return false;
+      if (!row) return null;
       const base: Record<string, unknown> = isJsonObject(row.settings) ? { ...row.settings } : {};
-      base[key] = value(row.settings);
+      base[key] = value;
       await tx.org.update({
         where: { id: orgId },
         data: { settings: base as Prisma.InputJsonObject },
       });
-      return true;
+      return { settings: row.settings };
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
   );

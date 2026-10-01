@@ -106,8 +106,8 @@ Three things about the shape are decisions, not defaults:
   the [platform-agent](../orchestration/platform-agents.md) reconcile's marker:
   the registry digest it last reconciled the org against, and the agents it
   placed there. Only the reconcile writes it, and no route exposes it.
-  `providers` (§120 t-742) names the AI providers a platform admin approved
-  the org for, and optionally its jurisdictions, written through
+  `providers` (§120 t-742) holds the ids of the AI provider rows a platform
+  admin approved the org for, and optionally its jurisdictions, written through
   `PUT /api/v1/admin/orgs/[id]/providers`. Unlike `retention`, an unreadable
   `providers` slice reads as "no provider", not as a default (see
   [LLM providers](../orchestration/llm-providers.md#per-org-approved-providers-core-at-multi)).

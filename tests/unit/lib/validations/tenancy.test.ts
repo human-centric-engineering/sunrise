@@ -13,6 +13,7 @@ import {
   createOrgSchema,
   orgIdSchema,
   orgMemberParamsSchema,
+  orgProviderPolicyInputSchema,
   orgProviderPolicySchema,
   jurisdictionSchema,
   switchOrgSchema,
@@ -145,11 +146,14 @@ describe('jurisdictionSchema (§120 t-742)', () => {
   });
 });
 
-describe('orgProviderPolicySchema (§120 t-742)', () => {
-  it('folds duplicates in both lists', () => {
+describe('orgProviderPolicySchema — the stored slice (§120 t-742)', () => {
+  it('holds provider row ids, folding duplicates in both lists', () => {
     expect(
-      orgProviderPolicySchema.parse({ approved: ['a', 'a', 'b'], jurisdictions: ['eu', 'EU'] })
-    ).toEqual({ approved: ['a', 'b'], jurisdictions: ['EU'] });
+      orgProviderPolicySchema.parse({
+        approved: ['cmprov1', 'cmprov1', 'cmprov2'],
+        jurisdictions: ['eu', 'EU'],
+      })
+    ).toEqual({ approved: ['cmprov1', 'cmprov2'], jurisdictions: ['EU'] });
   });
 
   it('accepts an empty approved set, and no restriction as absent or null', () => {
@@ -160,11 +164,28 @@ describe('orgProviderPolicySchema (§120 t-742)', () => {
     });
   });
 
-  it('refuses an empty restriction, a non-slug, and an unknown key', () => {
+  it('refuses an empty restriction and an unknown key — the read fails closed on both', () => {
     expect(orgProviderPolicySchema.safeParse({ approved: [], jurisdictions: [] }).success).toBe(
       false
     );
-    expect(orgProviderPolicySchema.safeParse({ approved: ['Not A Slug'] }).success).toBe(false);
     expect(orgProviderPolicySchema.safeParse({ approved: [], extra: true }).success).toBe(false);
+  });
+});
+
+describe('orgProviderPolicyInputSchema — the PUT body (§120 t-742)', () => {
+  it('names providers by slug, folding duplicates', () => {
+    expect(orgProviderPolicyInputSchema.parse({ approved: ['a', 'a', 'b'] })).toEqual({
+      approved: ['a', 'b'],
+    });
+  });
+
+  it('refuses a non-slug, an empty restriction and an unknown key', () => {
+    expect(orgProviderPolicyInputSchema.safeParse({ approved: ['Not A Slug'] }).success).toBe(
+      false
+    );
+    expect(
+      orgProviderPolicyInputSchema.safeParse({ approved: [], jurisdictions: [] }).success
+    ).toBe(false);
+    expect(orgProviderPolicyInputSchema.safeParse({ approved: [], extra: 1 }).success).toBe(false);
   });
 });

@@ -5,8 +5,9 @@
  * 2026-09-30 says how: **the install org is unrestricted, and every other org
  * may use only the providers a platform admin has approved it for** — none,
  * until one is granted. The approval lives in the org's `settings.providers`
- * slice (`lib/tenancy/org-settings.ts`), optionally with the jurisdictions the
- * org is held to, which are matched against `AiProviderConfig.jurisdiction`.
+ * slice (`lib/tenancy/org-settings.ts`) as provider row ids, optionally with
+ * the jurisdictions the org is held to, which are matched against
+ * `AiProviderConfig.jurisdiction`.
  *
  * At `single` this is identity: nothing is read and nothing is filtered.
  *
@@ -23,13 +24,14 @@
  *
  * **Cached for 60 seconds per org and per provider slug**, because this runs
  * on the request hot path several times per chat turn. The window is how long
- * a revoked grant may still answer in another process; a write through the
- * admin API clears this process's entry at once, and a provider-row write
- * clears the jurisdiction entries via the provider manager's `clearCache`.
+ * a revoked grant, or a changed jurisdiction, may still answer in ANOTHER
+ * process; a write through the admin API clears this process's entry at once,
+ * and a provider-row write clears the row's entry via the provider manager's
+ * `clearCache`.
  * The same window, for the same reason, as `resolveAgentDocumentAccess`.
  *
  * Tenancy posture: row-keyed — the policy cache is keyed by org id and filled
- * by a `findUnique` on it; the jurisdiction cache holds global provider config
+ * by a `findUnique` on it; the provider-row cache holds global provider config
  * keyed by slug (lib/tenancy/process-state.ts).
  *
  * @see lib/orchestration/llm/provider-eligibility.ts — where it is applied
@@ -42,7 +44,7 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { readOrgProviderPolicy } from '@/lib/tenancy/org-settings';
 import type { OrgProviderPolicy } from '@/lib/validations/tenancy';
 
-/** How long a read policy or jurisdiction answers before it is read again. */
+/** How long a read policy or provider row answers before it is read again. */
 export const ORG_PROVIDER_POLICY_TTL_MS = 60_000;
 
 /**
@@ -58,8 +60,14 @@ interface Entry<T> {
   cachedAt: number;
 }
 
+/** What the policy needs of a provider row: the id a grant names, and where it is. */
+interface ProviderRow {
+  id: string;
+  jurisdiction: string | null;
+}
+
 const policyCache = new Map<string, Entry<OrgProviderPolicy>>();
-const jurisdictionCache = new Map<string, Entry<string | null>>();
+const providerRowCache = new Map<string, Entry<ProviderRow | null>>();
 
 function fresh<T>(entry: Entry<T> | undefined): entry is Entry<T> {
   return entry !== undefined && Date.now() - entry.cachedAt < ORG_PROVIDER_POLICY_TTL_MS;
@@ -89,30 +97,33 @@ function loadPolicy(orgId: string): Promise<OrgProviderPolicy> {
   );
 }
 
-/** The recorded jurisdiction of each slug; a slug with no row has none. */
-async function loadJurisdictions(slugs: readonly string[]): Promise<Map<string, string | null>> {
-  const missing = slugs.filter((slug) => !fresh(jurisdictionCache.get(slug)));
+/** The row behind each slug; a slug with no row maps to `null`. */
+async function loadProviderRows(
+  slugs: readonly string[]
+): Promise<Map<string, ProviderRow | null>> {
+  const missing = slugs.filter((slug) => !fresh(providerRowCache.get(slug)));
   if (missing.length > 0) {
     const rows = prisma.aiProviderConfig.findMany({
       where: { slug: { in: missing } },
-      select: { slug: true, jurisdiction: true },
+      select: { id: true, slug: true, jurisdiction: true },
     });
     for (const slug of missing) {
       // Awaited below, from the cache, with the rest.
       void remember(
-        jurisdictionCache,
+        providerRowCache,
         slug,
-        // Upper-cased to match the stored restriction, which the schema
-        // upper-cases; a row written before the column was validated still
-        // matches its own code.
-        rows.then(
-          (found) => found.find((row) => row.slug === slug)?.jurisdiction?.toUpperCase() ?? null
-        )
+        rows.then((found) => {
+          const row = found.find((candidate) => candidate.slug === slug);
+          // Upper-cased to match the stored restriction, which the schema
+          // upper-cases; a row written before the column was validated still
+          // matches its own code.
+          return row ? { id: row.id, jurisdiction: row.jurisdiction?.toUpperCase() ?? null } : null;
+        })
       );
     }
   }
   const answers = await Promise.all(
-    slugs.map((slug) => jurisdictionCache.get(slug)?.value ?? Promise.resolve(null))
+    slugs.map((slug) => providerRowCache.get(slug)?.value ?? Promise.resolve(null))
   );
   return new Map(slugs.map((slug, index) => [slug, answers[index]]));
 }
@@ -124,9 +135,17 @@ async function loadJurisdictions(slugs: readonly string[]): Promise<Map<string, 
  *  - `multi`, no org in context (none entered, or `runAsSystem`): `[]` —
  *    there is no org whose policy could permit anything.
  *  - `multi`, the install org: `candidates`, unchanged.
- *  - `multi`, any other org: the candidates in its approved set and, when it
- *    is restricted to some jurisdictions, recorded in one of them. Order is
- *    kept, because fallbacks are tried in it.
+ *  - `multi`, any other org: the candidates whose provider ROW it is approved
+ *    for and, when it is restricted to some jurisdictions, recorded in one of
+ *    them. Order is kept, because fallbacks are tried in it.
+ *
+ * **A grant names the row's id, never its slug.** Candidates arrive as slugs,
+ * and each is resolved to its row here. A slug is something a platform admin
+ * can rename, delete and re-create; an id is not. Keyed on the slug, a grant
+ * followed whichever row held that slug, so deleting a provider and creating
+ * another under its old slug handed the new one every grant the old one had.
+ * Keyed on the id, a renamed row keeps its grants and a new row starts with
+ * none, whatever path wrote the slug.
  *
  * Throws when the policy cannot be read; `resolveEligibleProviders` turns that
  * into "nothing is eligible", as it does for a throwing fork rule.
@@ -140,17 +159,16 @@ export async function applyOrgProviderPolicy(
   if (orgId === INSTALL_ORG_ID) return candidates;
 
   const policy = await loadPolicy(orgId);
+  if (policy.approved.length === 0) return [];
   const approved = new Set(policy.approved);
-  const permitted = candidates.filter((slug) => approved.has(slug));
-  if (!policy.jurisdictions || permitted.length === 0) return permitted;
-
-  const allowed = new Set(policy.jurisdictions);
-  const recorded = await loadJurisdictions(permitted);
-  return permitted.filter((slug) => {
-    const jurisdiction = recorded.get(slug) ?? null;
+  const allowed = policy.jurisdictions ? new Set(policy.jurisdictions) : null;
+  const rows = await loadProviderRows(candidates);
+  return candidates.filter((slug) => {
+    const row = rows.get(slug) ?? null;
+    if (row === null || !approved.has(row.id)) return false;
     // Not recorded is not a match: an org held to the EU is not sent to a
     // provider nobody has said is in the EU.
-    return jurisdiction !== null && allowed.has(jurisdiction);
+    return allowed === null || (row.jurisdiction !== null && allowed.has(row.jurisdiction));
   });
 }
 
@@ -164,11 +182,11 @@ export function forgetOrgProviderPolicy(orgId?: string): void {
 }
 
 /**
- * Drop one provider's cached jurisdiction, or every provider's. The provider
- * manager's `clearCache` calls this, so every provider-row write that evicts
- * the client also evicts the jurisdiction.
+ * Drop one slug's cached provider row, or every one. The provider manager's
+ * `clearCache` calls this, so every provider-row write that evicts the client
+ * also evicts what the policy knows of the row.
  */
-export function forgetProviderJurisdiction(slug?: string): void {
-  if (slug === undefined) jurisdictionCache.clear();
-  else jurisdictionCache.delete(slug);
+export function forgetProviderRow(slug?: string): void {
+  if (slug === undefined) providerRowCache.clear();
+  else providerRowCache.delete(slug);
 }
