@@ -206,6 +206,15 @@ export function getBreaker(slug: string, config?: Partial<CircuitBreakerConfig>)
   return breaker;
 }
 
+/**
+ * The breaker for `key` if one exists, without creating it. For a check that
+ * may be handed a string that is not a credential key (a provider NAME), where
+ * `getBreaker` would leave a stray breaker behind.
+ */
+export function peekBreaker(key: string): CircuitBreaker | undefined {
+  return breakers.get(key);
+}
+
 /** Status snapshot of a circuit breaker. */
 export interface CircuitBreakerStatus {
   state: CircuitState;

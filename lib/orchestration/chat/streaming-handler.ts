@@ -54,7 +54,7 @@ import { fallbackCallContext } from '@/lib/orchestration/llm/provider-eligibilit
 import { resolveAgentProviderAndModel } from '@/lib/orchestration/llm/agent-resolver';
 import { resolveEffectivePrompt } from '@/lib/orchestration/agents/resolve-effective-prompt';
 import { touchAgentLastActive } from '@/lib/orchestration/agents/touch-last-active';
-import { isRequestFault, ProviderError } from '@/lib/orchestration/llm/provider';
+import { isRequestFault, ProviderError, type LlmProvider } from '@/lib/orchestration/llm/provider';
 import { calculateCost, checkBudget, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { resolveMaxCostPerTurn } from '@/lib/orchestration/llm/cost-caps';
 import { withAgentBudgetLock } from '@/lib/orchestration/llm/budget-mutex';
@@ -1197,6 +1197,9 @@ export class StreamingChatHandler {
 
       // Remaining fallback providers for mid-stream retry
       const remainingFallbacks = [...resolvedFallbackProviders];
+      // Slugs this turn has already streamed through, so failover never
+      // retries one (the first may also be in the fallback list).
+      const triedSlugs = new Set<string>([usedSlug]);
       let currentProvider = provider;
       let currentProviderSlug = usedSlug;
       // The breaker of the provider that is serving the turn — after a
@@ -1501,9 +1504,46 @@ export class StreamingChatHandler {
 
                 getBreaker(currentBreakerKey).recordFailure();
 
-                // Try next fallback provider
-                const nextSlug = remainingFallbacks.shift();
-                if (!nextSlug || streamRetries > MAX_STREAM_RETRIES) {
+                // Pick the next fallback BEFORE telling the client a retry is
+                // coming (§120 t-744 review). A candidate whose credential's
+                // breaker is open, that cannot be built, or that this turn has
+                // already used is skipped and the next one tried, as
+                // getProviderWithFallbacks does — one unusable fallback must not
+                // end a turn a later fallback could serve, and the provider that
+                // just failed (it may sit in the fallback list too, when it was
+                // the one getProviderWithFallbacks chose) must not be retried.
+                let next: { slug: string; provider: LlmProvider; breakerKey: string } | null = null;
+                if (streamRetries <= MAX_STREAM_RETRIES) {
+                  // A fallback without a recorded provenance is still gated AS a
+                  // fallback, as getProviderWithFallbacks gates one.
+                  const fallbackOrigin = fallbackCallContext(
+                    resolvedBinding.provenance,
+                    resolvedBinding.providerSlug
+                  ) ?? { unrecordedFallbackOf: resolvedBinding.providerSlug };
+                  while (!next && remainingFallbacks.length > 0) {
+                    const candidate = remainingFallbacks.shift()!;
+                    if (triedSlugs.has(candidate)) continue;
+                    triedSlugs.add(candidate);
+                    try {
+                      const acquired = await getProviderIfBreakerClosed(candidate, fallbackOrigin);
+                      if (acquired) {
+                        next = { slug: candidate, ...acquired };
+                      } else {
+                        log.warn('Skipping fallback provider — circuit breaker open', {
+                          agentSlug: request.agentSlug,
+                          provider: candidate,
+                        });
+                      }
+                    } catch (loadErr) {
+                      log.warn('Skipping fallback provider — not available', {
+                        agentSlug: request.agentSlug,
+                        provider: candidate,
+                        error: loadErr instanceof Error ? loadErr.message : String(loadErr),
+                      });
+                    }
+                  }
+                }
+                if (!next) {
                   log.error('Stream failed, no more fallback providers', streamErr, {
                     agentSlug: request.agentSlug,
                     userId: request.userId,
@@ -1517,6 +1557,7 @@ export class StreamingChatHandler {
                   });
                   throw streamErr;
                 }
+                const nextSlug = next.slug;
 
                 log.warn('Stream failed, retrying with fallback provider', {
                   agentSlug: request.agentSlug,
@@ -1567,30 +1608,11 @@ export class StreamingChatHandler {
                 // truncated.
                 finishReason = undefined;
 
-                try {
-                  // Only if its credential's breaker is closed (§120 t-744), as
-                  // getProviderWithFallbacks does for the first choice: never
-                  // stream through a credential known to be down.
-                  const acquired = await getProviderIfBreakerClosed(
-                    nextSlug,
-                    fallbackCallContext(resolvedBinding.provenance, resolvedBinding.providerSlug)
-                  );
-                  if (!acquired) throw new Error(`Provider ${nextSlug} circuit breaker is open`);
-                  currentProvider = acquired.provider;
-                  currentProviderSlug = nextSlug;
-                  resolvedProviderSlug = nextSlug;
-                  currentBreakerKey = acquired.breakerKey;
-                  resolvedBreakerKey = currentBreakerKey;
-                } catch {
-                  log.error(
-                    'Failed to load fallback provider',
-                    new Error(`Provider ${nextSlug} not available`),
-                    {
-                      agentSlug: request.agentSlug,
-                    }
-                  );
-                  throw streamErr;
-                }
+                currentProvider = next.provider;
+                currentProviderSlug = nextSlug;
+                resolvedProviderSlug = nextSlug;
+                currentBreakerKey = next.breakerKey;
+                resolvedBreakerKey = currentBreakerKey;
               }
             },
             { manualStatus: true }

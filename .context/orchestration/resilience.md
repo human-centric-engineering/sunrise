@@ -54,7 +54,9 @@ Circuit breaker state is exposed via the admin API:
 - **Dedicated health endpoint** (`GET /providers/:id/health`): detailed breaker status for a single provider.
 - **Manual reset** (`POST /providers/:id/health`): resets the breaker to closed (rate-limited).
 
-Public getters on `CircuitBreaker`: `failureCount` (prunes window first), `currentConfig` (copy), `openedAtTimestamp`. Module-level helpers: `getCircuitBreakerStatus(slug)` → status snapshot or `null`, `getAllBreakerSlugs()` → all registered slugs.
+Public getters on `CircuitBreaker`: `failureCount` (prunes window first), `currentConfig` (copy), `openedAtTimestamp`. Module-level helpers: `getCircuitBreakerStatus(key)` → status snapshot or `null`, `getAllBreakerSlugs()` → every key that has a breaker, `peekBreaker(key)` → a breaker without creating one.
+
+**Breakers are keyed per credential, not per provider (§120 t-744).** A key is `credentialKey(slug, identity)`: the bare slug for the install's shared credential — every key while no credential resolver is registered — and `slug#identity` for a key a fork's resolver gives one org. So `getAllBreakerSlugs()` can return keys that are not slugs and that name an org's credential identity; map them with `slugOfCredentialKey` before treating them as provider slugs, and do not render the identity. For a provider, read `getCircuitBreakerStatusForProvider(slug)` (the worst of its credentials) and reset with `resetBreakersForProvider(slug)`. Callers that pick a provider fetch it through `getProviderIfBreakerClosed`, which checks the right credential's breaker.
 
 ## Provider Fallback Chain
 

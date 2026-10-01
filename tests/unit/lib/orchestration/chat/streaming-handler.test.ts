@@ -383,6 +383,18 @@ beforeEach(() => {
 // Tests
 // ---------------------------------------------------------------------------
 
+/**
+ * Put back the provider-manager mock's default failover helper, which
+ * delegates to `getProvider` — `clearAllMocks` does not restore
+ * implementations, so a test that overrides it must.
+ */
+function restoreFailoverHelper(): void {
+  vi.mocked(getProviderIfBreakerClosed).mockImplementation(async (slug, context) => ({
+    provider: await vi.mocked(getProvider)(slug, context as never),
+    breakerKey: slug,
+  }));
+}
+
 describe('StreamingChatHandler', () => {
   // 1 -----------------------------------------------------------------------
   it('yields error event with agent_not_found when agent does not exist', async () => {
@@ -2292,7 +2304,9 @@ describe('StreamingChatHandler', () => {
       }
     });
 
-    it("does not fail over onto a fallback whose credential's breaker is open", async () => {
+    it("skips a fallback whose credential's breaker is open and serves the turn from the next", async () => {
+      // §120 t-744: one unusable fallback must not end a turn a later one could
+      // serve — the skip-and-continue getProviderWithFallbacks already does.
       const failingProvider = {
         name: 'failing',
         isLocal: false,
@@ -2305,21 +2319,84 @@ describe('StreamingChatHandler', () => {
           throw new Error('Provider down');
         }),
       };
+      const healthy = mockProvider([
+        [
+          { type: 'text', content: 'From groq' },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+        ],
+      ]);
       (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
-        makeAgent({ fallbackProviders: ['openai'] })
+        makeAgent({ fallbackProviders: ['openai', 'groq'] })
       );
       (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
         provider: failingProvider,
         usedSlug: 'anthropic',
       });
-      vi.mocked(getProviderIfBreakerClosed).mockResolvedValueOnce(null);
+      vi.mocked(getProviderIfBreakerClosed).mockImplementation(async (slug: string) =>
+        slug === 'openai' ? null : { provider: healthy as never, breakerKey: slug }
+      );
 
-      const events = await collect(streamChat(baseRequest));
+      try {
+        const events = (await collect(streamChat(baseRequest))) as Array<{
+          type: string;
+          delta?: string;
+        }>;
 
-      expect(getProvider).not.toHaveBeenCalled();
-      expect((events as Array<{ type: string }>).some((e) => e.type === 'error')).toBe(true);
+        expect(events.some((e) => e.type === 'content' && e.delta === 'From groq')).toBe(true);
+        expect(events.some((e) => e.type === 'error')).toBe(false);
+        expect(vi.mocked(getProviderIfBreakerClosed).mock.calls.map((c) => c[0])).toEqual([
+          'openai',
+          'groq',
+        ]);
+      } finally {
+        restoreFailoverHelper();
+      }
     });
 
+    it('never retries the provider that just failed, even when it is also in the fallback list', async () => {
+      // getProviderWithFallbacks may have served the turn FROM a fallback; that
+      // slug is still in the list it copies, and must not be re-chosen.
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new Error('Provider down');
+        }),
+      };
+      const healthy = mockProvider([
+        [
+          { type: 'text', content: 'From B' },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+        ],
+      ]);
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: ['fallback-a', 'fallback-b'] })
+      );
+      // The primary's breaker was open, so fallback-a served first, and failed.
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'fallback-a',
+      });
+      vi.mocked(getProviderIfBreakerClosed).mockImplementation(async (slug: string) => ({
+        provider: (slug === 'fallback-a' ? failingProvider : healthy) as never,
+        breakerKey: slug,
+      }));
+
+      try {
+        await collect(streamChat(baseRequest));
+
+        expect(vi.mocked(getProviderIfBreakerClosed).mock.calls.map((c) => c[0])).toEqual([
+          'fallback-b',
+        ]);
+      } finally {
+        restoreFailoverHelper();
+      }
+    });
     it('does not fail over or trip the breaker on a request-fault provider error', async () => {
       // A truncation is about the agent's `maxTokens`, not the provider's
       // health: the cap travels with the request, so every fallback rejects

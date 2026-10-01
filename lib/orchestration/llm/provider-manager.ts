@@ -29,7 +29,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { AnthropicProvider } from '@/lib/orchestration/llm/anthropic';
-import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
+import { getBreaker, peekBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { credentialKey } from '@/lib/orchestration/llm/credential-key';
 import {
   hasProviderCredentialResolver,
@@ -714,20 +714,27 @@ export async function getProviderWithFallbacks(
  * is the slug, so the breaker is checked first and an open one skips the
  * fetch entirely, as it always did.
  *
+ * `origin` is the call's provenance, as `getProvider`'s `context`, or
+ * `{ unrecordedFallbackOf: primarySlug }` for a fallback with none recorded —
+ * which `getProviderWithFallbacks` passes too, so a fallback is gated as one
+ * whichever path picked it.
+ *
  * @throws whatever `getProvider` throws (not found, disabled, no credential).
  */
 export async function getProviderIfBreakerClosed(
   slug: string,
-  context?: ProviderEligibilityContext
+  origin?: CallOrigin
 ): Promise<{ provider: LlmProvider; breakerKey: string } | null> {
-  return acquireIfBreakerClosed(slug, context);
+  return acquireIfBreakerClosed(slug, origin);
 }
 
 async function acquireIfBreakerClosed(
   slug: string,
   origin: CallOrigin
 ): Promise<{ provider: LlmProvider; breakerKey: string } | null> {
-  if (!hasProviderCredentialResolver() && !getBreaker(slug).canAttempt()) return null;
+  // Peek, never create: `slug` may be a row NAME, and getBreaker would leave a
+  // breaker under a key that is no credential's.
+  if (!hasProviderCredentialResolver() && peekBreaker(slug)?.canAttempt() === false) return null;
   const provider = await acquireProvider(slug, origin);
   const breakerKey = breakerKeyOf(provider) ?? slug;
   if (!getBreaker(breakerKey).canAttempt()) return null;
