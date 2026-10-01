@@ -117,7 +117,7 @@
  */
 
 import { logger } from '@/lib/logging';
-import { ProviderError } from '@/lib/orchestration/llm/provider';
+import { PROVIDER_NOT_PERMITTED, ProviderError } from '@/lib/orchestration/llm/provider';
 import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 import type { TaskType } from '@/types/orchestration';
 
@@ -168,7 +168,8 @@ export interface ProviderEligibilityContext {
    * `'primary'`, because that is the choice being made; for `'explicit'` and
    * `'system'` it is always set. At the call-time gate, a call to the primary
    * itself under one of those sources (an explicit `agent.provider`, or an
-   * unrecorded call checked under every source) carries its own slug here.
+   * unrecorded primary-position call asked as `'explicit'`) carries its own
+   * slug here; an unrecorded fallback carries the real primary's.
    *
    * NOT guaranteed absent from `candidates`. The system fill excludes it, but
    * an agent's own `fallbackProviders` list is passed through as the operator
@@ -473,10 +474,12 @@ export class ProviderCallRefusedError extends ProviderError {
    */
   readonly reason: 'policy' | 'no_org_scope';
   constructor(providerSlug: string, reason: 'policy' | 'no_org_scope' = 'policy') {
-    super('The provider for this call is not permitted by this deployment’s provider policy', {
-      code: 'provider_not_permitted',
-      retriable: false,
-    });
+    super(
+      reason === 'policy'
+        ? 'The provider for this call is not permitted by this deployment’s provider policy'
+        : 'This call ran outside any organisation scope, so no provider policy could permit it',
+      { code: PROVIDER_NOT_PERMITTED, retriable: false }
+    );
     this.name = 'ProviderCallRefusedError';
     this.providerSlug = providerSlug;
     this.reason = reason;
@@ -500,6 +503,20 @@ function withPrimarySlug(
 }
 
 /**
+ * A call whose caller recorded no provenance, made in a FALLBACK position:
+ * `getProviderWithFallbacks` without a binding provenance, reaching past the
+ * primary. Distinct from `undefined` (an unrecorded call in the primary
+ * position) because a fallback is asked as a fallback — as `'explicit'` or
+ * `'system'`, with the real primary — which a lone call cannot be.
+ */
+export interface UnrecordedFallback {
+  unrecordedFallbackOf: string;
+}
+
+/** Everything the call-time gate can know about where a provider came from. */
+export type CallOrigin = ProviderEligibilityContext | UnrecordedFallback | undefined;
+
+/**
  * The sources an unrecorded call is asked under. An unrecorded call is one
  * provider fetched by name, which is a call in the PRIMARY position, and a
  * primary is either Sunrise's pick (`'primary'`) or an operator's (`'explicit'`).
@@ -511,6 +528,17 @@ function withPrimarySlug(
 const PRIMARY_POSITION_SOURCES: readonly ProviderEligibilityContext['source'][] = [
   'primary',
   'explicit',
+];
+
+/**
+ * The sources an unrecorded FALLBACK is asked under: the two a fallback can
+ * be, the agent's own list or the system fill, each with the real primary.
+ * Without `'system'` here a rule that refuses a provider only as the silent
+ * fill would be skipped whenever a caller left provenance out.
+ */
+const FALLBACK_POSITION_SOURCES: readonly ProviderEligibilityContext['source'][] = [
+  'explicit',
+  'system',
 ];
 
 /**
@@ -558,9 +586,12 @@ const PRIMARY_POSITION_SOURCES: readonly ProviderEligibilityContext['source'][] 
  */
 export async function assertProviderCallPermitted(
   slug: string,
-  context: ProviderEligibilityContext | undefined,
+  origin: CallOrigin,
   task: TaskType
 ): Promise<void> {
+  const context = origin && 'source' in origin ? origin : undefined;
+  const fallbackOf =
+    origin && 'unrecordedFallbackOf' in origin ? origin.unrecordedFallbackOf : null;
   const tenant = getTenantContext();
   if (isMultiTenant() && (tenant === null || tenant.orgId === null)) {
     logger.error('Refusing a provider call made outside any org scope', {
@@ -573,12 +604,14 @@ export async function assertProviderCallPermitted(
   }
 
   // The contexts the rule is asked, exactly as it sees them: one for a recorded
-  // call, both primary-position sources for an unrecorded one.
+  // call and, for an unrecorded one, every source its position can have.
   const asked = context
     ? [withPrimarySlug(context, slug)]
-    : PRIMARY_POSITION_SOURCES.map((source) =>
-        withPrimarySlug({ task, source, primarySlug: null }, slug)
-      );
+    : fallbackOf !== null
+      ? FALLBACK_POSITION_SOURCES.map((source) => ({ task, source, primarySlug: fallbackOf }))
+      : PRIMARY_POSITION_SOURCES.map((source) =>
+          withPrimarySlug({ task, source, primarySlug: null }, slug)
+        );
   for (const askedContext of asked) {
     if (await isProviderEligible(slug, askedContext)) continue;
     logger.error('Refusing a provider call the eligibility rule does not permit', {

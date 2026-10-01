@@ -101,6 +101,15 @@ describe('ExecutorError — a provider-policy refusal in the cause chain', () =>
     );
   });
 
+  it("keeps the engine's executor_threw code, whose raw message is never shown, but stops the retry", () => {
+    const thrown = new Error('embedding failed for http://internal/doc-1', {
+      cause: new ProviderCallRefusedError('b'),
+    });
+    const err = new ExecutorError('s1', 'executor_threw', thrown.message, thrown, true);
+    expect(err.code).toBe('executor_threw');
+    expect(err.retriable).toBe(false);
+  });
+
   it('leaves any other cause alone', () => {
     const err = new ExecutorError('s1', 'search_failed', 'x', new Error('pgvector error'), true);
     expect(err.code).toBe('search_failed');

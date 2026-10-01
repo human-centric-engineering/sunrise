@@ -6,6 +6,8 @@
  * without string-matching on error messages.
  */
 
+import { PROVIDER_NOT_PERMITTED } from '@/lib/orchestration/llm/provider';
+
 /**
  * Thrown by the `human_approval` executor. The engine catches this
  * specifically, transitions the execution row to `paused_for_approval`,
@@ -62,15 +64,19 @@ export class BudgetExceeded extends Error {
   }
 }
 
-/** The code a provider-policy refusal carries, here and on `ProviderCallRefusedError`. */
-export const PROVIDER_NOT_PERMITTED = 'provider_not_permitted';
-
 /**
  * Whether `cause`, or anything it wraps, is a provider-policy refusal: the
  * call-time gate's `ProviderCallRefusedError`, or an `ExecutorError` already
- * coded for one (§120 t-741). Read by duck type on `code` so this module keeps
- * no imports; bounded, because a `cause` chain is caller-built.
+ * coded for one (§120 t-741). Read by duck type on `code`, so it needs nothing
+ * from the provider classes but the constant; bounded at ten levels of
+ * `cause`, because a chain is caller-built and can be cyclic.
  */
+/**
+ * The engine's code for an executor that threw something other than an
+ * `ExecutorError`; its raw message is never shown to the client.
+ */
+const EXECUTOR_THREW = 'executor_threw';
+
 function isPolicyRefusal(cause: unknown): boolean {
   let current: unknown = cause;
   for (let depth = 0; depth < 10 && current instanceof Error; depth++) {
@@ -120,8 +126,13 @@ export class ExecutorError extends Error {
     // missed the orchestrator and `rag_retrieve`, and would miss a fork's. A
     // refusal is the same answer on every attempt, so it is never retriable,
     // and traces and alerts filter on the one code.
+    //
+    // Except the code of the engine's own `executor_threw` wrapper: the engine
+    // shows that code's generic message instead of the raw one, because the raw
+    // message is whatever an executor threw. Recoding it would forward that
+    // message to the client. It still becomes non-retriable.
     const refused = isPolicyRefusal(cause);
-    this.code = refused ? PROVIDER_NOT_PERMITTED : code;
+    this.code = refused && code !== EXECUTOR_THREW ? PROVIDER_NOT_PERMITTED : code;
     this.cause = cause;
     this.retriable = refused ? false : retriable;
     this.tokensUsed = tokensUsed;

@@ -46,8 +46,11 @@ export interface ResolvedAgentBinding {
    * `getProviderWithFallbacks` (or `primaryCallContext` / `fallbackCallContext`
    * for `getProvider`) so the call-time gate gives the eligibility rule the
    * right `source`. Always set by this resolver; optional so a binding built
-   * elsewhere still type-checks, and a call made without it is evaluated as
-   * unrecorded, which is the strict answer (§120 t-741).
+   * elsewhere still type-checks. A call made without it is evaluated as
+   * unrecorded for its position — the primary as both kinds of primary, a
+   * fallback as both kinds of fallback — which a rule cannot answer more
+   * leniently than the recorded source, but which no longer tells the rule
+   * which of the two it is (§120 t-741). Pass it.
    */
   provenance?: BindingProvenance;
 }

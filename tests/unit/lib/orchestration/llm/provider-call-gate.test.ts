@@ -334,6 +334,35 @@ describe('what the rule is told', () => {
     expect(seen.map((s) => s.context.source)).toEqual(['primary', 'explicit']);
   });
 
+  it('asks an unrecorded FALLBACK as both kinds of fallback, with the real primary', async () => {
+    // getProviderWithFallbacks with no provenance, reaching past the primary.
+    // A rule that refuses a provider only as the silent fill must still apply.
+    const x = fakeProvider('x');
+    registerProviderInstance('x', x.provider);
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(null);
+    const seen: ProviderEligibilityContext[] = [];
+    registerProviderEligibility((candidates, ctx) => {
+      seen.push(ctx);
+      return ctx.source === 'system' ? [] : candidates;
+    });
+
+    const { provider, usedSlug } = await getProviderWithFallbacks('gone', ['x']);
+    expect(usedSlug).toBe('x');
+    await expect(provider.chat([], { model: 'm' })).rejects.toBeInstanceOf(
+      ProviderCallRefusedError
+    );
+    expect(x.chat).not.toHaveBeenCalled();
+    expect(seen).toEqual([
+      { task: 'chat', source: 'explicit', primarySlug: 'gone' },
+      { task: 'chat', source: 'system', primarySlug: 'gone' },
+    ]);
+  });
+
+  it('says why a refusal for want of an org scope is not a policy answer', () => {
+    expect(new ProviderCallRefusedError('x', 'no_org_scope').message).toMatch(/organisation scope/);
+    expect(new ProviderCallRefusedError('x').message).toMatch(/provider policy/);
+  });
+
   it('logs the context the rule was actually asked, so the refusal can be reproduced', async () => {
     registerProviderInstance('x', fakeProvider('x').provider);
     registerProviderEligibility(refuseRule('x').rule);

@@ -1428,6 +1428,35 @@ describe('config defaults and prompt formatting', () => {
     });
   });
 
+  it('re-wraps a failed planner RETRY call with its own verdict and billing, not as a parse failure', async () => {
+    vi.mocked(runLlmCall)
+      .mockResolvedValueOnce({
+        content: 'not valid json {{{',
+        tokensUsed: 100,
+        costUsd: 0.002,
+        model: 'gpt-4o',
+      })
+      .mockRejectedValueOnce(
+        new ExecutorError(
+          's1',
+          'llm_call_failed',
+          'hit max_completion_tokens',
+          undefined,
+          false,
+          2048,
+          0.05
+        )
+      );
+
+    await expect(executeOrchestrator(makeStep(), makeCtx())).rejects.toMatchObject({
+      name: 'ExecutorError',
+      code: 'planner_call_failed',
+      retriable: false,
+      tokensUsed: 2048,
+      costUsd: 0.05,
+    });
+  });
+
   it('keeps a transient planner failure retriable', async () => {
     // The other half — an ordinary failure must not become non-retriable.
     vi.mocked(runLlmCall).mockRejectedValueOnce(new Error('connection reset'));

@@ -494,16 +494,17 @@ describe('POST …/review — provider eligibility', () => {
     expect(vi.mocked(prisma.aiWorkflowExecution.update)).not.toHaveBeenCalled();
   });
 
-  it('does not tell the admin to pick another judge when the refusal was for want of an org scope', async () => {
+  it('answers a refusal for want of an org scope as a server fault, not a judge choice', async () => {
     vi.mocked(runSupervisorAssessment).mockRejectedValue(
       new ProviderCallRefusedError('anthropic', 'no_org_scope')
     );
 
     const res = await POST(makeRequest({ modelOverride: 'operator-picked-judge' }), makeContext());
 
-    expect(res.status).toBe(403);
+    // A server fault, not a policy answer: no judge choice would fix it.
+    expect(res.status).toBe(500);
     const body = (await res.json()) as { error: { code: string; message: string } };
-    expect(body.error.code).toBe('provider_not_permitted');
+    expect(body.error.code).toBe('tenant_scope_missing');
     expect(body.error.message).not.toContain('Choose a judge model');
   });
 

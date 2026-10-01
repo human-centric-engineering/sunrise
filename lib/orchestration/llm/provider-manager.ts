@@ -34,6 +34,7 @@ import {
   isProviderEligible,
   primaryCallContext,
   type BindingProvenance,
+  type CallOrigin,
   type ProviderEligibilityContext,
 } from '@/lib/orchestration/llm/provider-eligibility';
 import { track, trackStream } from '@/lib/orchestration/llm/in-flight-counter';
@@ -108,15 +109,16 @@ function newEntry(instance: LlmProvider, slug: string): CachedProvider {
   return entry;
 }
 
-/** The gated, in-flight-tracked view of `entry` for one call provenance. */
-function viewOf(
-  entry: CachedProvider,
-  context: ProviderEligibilityContext | undefined
-): LlmProvider {
-  const key = context ? `${context.task}|${context.source}|${context.primarySlug ?? ''}` : '';
+/** The gated, in-flight-tracked view of `entry` for one call origin. */
+function viewOf(entry: CachedProvider, origin: CallOrigin): LlmProvider {
+  const key = !origin
+    ? ''
+    : 'source' in origin
+      ? `${origin.task}|${origin.source}|${origin.primarySlug ?? ''}`
+      : `unrecorded-fallback|${origin.unrecordedFallbackOf}`;
   let view = entry.views.get(key);
   if (!view) {
-    view = withInFlightTracking(entry.instance, entry.slug, context);
+    view = withInFlightTracking(entry.instance, entry.slug, origin);
     entry.views.set(key, view);
   }
   return view;
@@ -135,7 +137,8 @@ function viewOf(
  * `context` is where the caller got this provider from — see
  * `assertProviderCallPermitted`, which every vendor call on the returned
  * object passes through. Pass it wherever it is known: without it a call is
- * permitted only if the eligibility rule permits it under every source.
+ * permitted only if the eligibility rule permits it both as an auto-picked and
+ * as an operator-chosen primary.
  *
  * A slug match wins over a name match. The two used to be one
  * `findFirst({ OR: [...] })` with no ordering, so a caller holding row A's slug
@@ -147,6 +150,11 @@ export async function getProvider(
   slugOrName: string,
   context?: ProviderEligibilityContext
 ): Promise<LlmProvider> {
+  return acquireProvider(slugOrName, context);
+}
+
+/** `getProvider` for any call origin, including an unrecorded fallback. */
+async function acquireProvider(slugOrName: string, context: CallOrigin): Promise<LlmProvider> {
   const cached = instanceCache.get(slugOrName);
   if (cached && Date.now() - cached.cachedAt < CACHE_TTL_MS) return viewOf(cached, context);
 
@@ -340,7 +348,7 @@ function dispositionOf(prop: string): MethodDisposition | undefined {
 function withInFlightTracking(
   provider: LlmProvider,
   slug: string,
-  context: ProviderEligibilityContext | undefined
+  context: CallOrigin
 ): LlmProvider {
   // Refuse rather than return the bare instance. This used to be
   // `if (!slug) return provider;`, described as defensive — but the callers are
@@ -427,7 +435,7 @@ function withInFlightTracking(
  */
 async function* gatedStream(
   slug: string,
-  context: ProviderEligibilityContext | undefined,
+  context: CallOrigin,
   task: TaskType,
   open: () => AsyncIterable<unknown>
 ): AsyncGenerator<unknown> {
@@ -538,7 +546,8 @@ export async function testProvider(slugOrName: string): Promise<ProviderTestResu
  * `provenance` is the resolved binding's (`ResolvedAgentBinding.provenance`):
  * the primary is fetched with its primary context and each fallback with its
  * fallback context, so the call-time gate tells the rule which one it is.
- * Without it every call here is evaluated as unrecorded.
+ * Without it each call is evaluated as unrecorded for its position: the
+ * primary as both kinds of primary, a fallback as both kinds of fallback.
  */
 export async function getProviderWithFallbacks(
   primarySlug: string,
@@ -555,10 +564,14 @@ export async function getProviderWithFallbacks(
     }
 
     try {
-      const provider = await getProvider(
-        slug,
-        index === 0 ? primaryCallContext(provenance) : fallbackCallContext(provenance, primarySlug)
-      );
+      // Without a binding provenance a fallback is still asked AS a fallback
+      // (`'explicit'` and `'system'`, with the real primary), so a rule that
+      // refuses a provider only as the silent fill is not skipped.
+      const origin: CallOrigin =
+        index === 0
+          ? primaryCallContext(provenance)
+          : (fallbackCallContext(provenance, primarySlug) ?? { unrecordedFallbackOf: primarySlug });
+      const provider = await acquireProvider(slug, origin);
       if (slug !== primarySlug) {
         logger.info('Using fallback provider', {
           primary: primarySlug,

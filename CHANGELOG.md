@@ -119,8 +119,9 @@ release process.
   chat does not fail over from it, a workflow step does not retry it and fails
   with code `provider_not_permitted` (as a refused task default already did)
   whichever executor wraps it, a fork's included — `ExecutorError` now takes
-  that code and a non-retriable verdict from a refusal anywhere in its
-  `cause` chain,
+  that code and a non-retriable verdict from a refusal within ten levels of
+  its `cause` chain (the engine's `executor_threw` wrapper keeps its code and
+  only becomes non-retriable),
   no circuit breaker records it, and the retroactive-review route answers 403
   `provider_not_permitted` for a refused `modelOverride` or
   `EVALUATION_JUDGE_MODEL`.

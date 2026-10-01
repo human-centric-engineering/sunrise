@@ -245,6 +245,15 @@ export class ProviderError extends Error {
 }
 
 /**
+ * The code every provider-policy refusal carries: the call-time gate's
+ * `ProviderCallRefusedError`, a workflow step's pre-check, and the
+ * `ExecutorError` that wraps either (§120 t-741). One constant, because the
+ * engine recognises a refusal by this code alone — a second spelling would
+ * quietly make a refusal retriable again.
+ */
+export const PROVIDER_NOT_PERMITTED = 'provider_not_permitted';
+
+/**
  * `ProviderError` codes describing a fault in the REQUEST rather than in the
  * provider — the same cap, the same schema, the same rejection at any vendor.
  *
@@ -273,7 +282,7 @@ export class ProviderError extends Error {
 // provider is the reroute the gate exists to rule out. It is also not evidence
 // about the provider's health, so it must never reach a circuit breaker — at
 // `multi`, one org's refusal would otherwise open the circuit for every org.
-const REQUEST_FAULT_CODES = new Set(['truncated_no_output', 'provider_not_permitted']);
+const REQUEST_FAULT_CODES = new Set(['truncated_no_output', PROVIDER_NOT_PERMITTED]);
 
 /**
  * Whether `err` is a {@link REQUEST_FAULT_CODES} `ProviderError` — i.e. a
