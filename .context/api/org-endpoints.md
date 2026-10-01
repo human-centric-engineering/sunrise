@@ -23,16 +23,17 @@ the per-admin export sub-cap noted below.
 
 ## Who may call what
 
-| Route                                      | Guard           | Admitted                                                                                                                                               |
-| ------------------------------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GET /api/v1/orgs`                         | `withAuth`      | Any signed-in user (their own memberships). Does **not** enter the session's org.                                                                      |
-| `POST /api/v1/orgs/switch`                 | `withAuth`      | Any member of the target org, browser session only. Does **not** enter the session's org.                                                              |
-| `GET /api/v1/orgs/[id]`                    | `withAuth`      | Any member of that org (keyed on the caller's own membership).                                                                                         |
-| `GET/POST /api/v1/orgs/[id]/members`       | `withAuth`      | The org's OWNER/ADMIN **while acting in it**, or a platform admin — the policy's org arm. Browser session only (`GET` included: the roster is people). |
-| `PATCH/DELETE …/members/[userId]`          | `withAuth`      | As above. Granting `OWNER`, or changing / removing an `OWNER`, needs an OWNER (or platform admin).                                                     |
-| `GET/POST /api/v1/admin/orgs`              | `withAdminAuth` | Platform admins.                                                                                                                                       |
-| `GET/PATCH/DELETE /api/v1/admin/orgs/[id]` | `withAdminAuth` | Platform admins.                                                                                                                                       |
-| `GET /api/v1/admin/orgs/[id]/export`       | `withAdminAuth` | Platform admins; per-admin sub-cap.                                                                                                                    |
+| Route                                       | Guard           | Admitted                                                                                                                                               |
+| ------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /api/v1/orgs`                          | `withAuth`      | Any signed-in user (their own memberships). Does **not** enter the session's org.                                                                      |
+| `POST /api/v1/orgs/switch`                  | `withAuth`      | Any member of the target org, browser session only. Does **not** enter the session's org.                                                              |
+| `GET /api/v1/orgs/[id]`                     | `withAuth`      | Any member of that org (keyed on the caller's own membership).                                                                                         |
+| `GET/POST /api/v1/orgs/[id]/members`        | `withAuth`      | The org's OWNER/ADMIN **while acting in it**, or a platform admin — the policy's org arm. Browser session only (`GET` included: the roster is people). |
+| `PATCH/DELETE …/members/[userId]`           | `withAuth`      | As above. Granting `OWNER`, or changing / removing an `OWNER`, needs an OWNER (or platform admin).                                                     |
+| `GET/POST /api/v1/admin/orgs`               | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET/PATCH/DELETE /api/v1/admin/orgs/[id]`  | `withAdminAuth` | Platform admins.                                                                                                                                       |
+| `GET /api/v1/admin/orgs/[id]/export`        | `withAdminAuth` | Platform admins; per-admin sub-cap.                                                                                                                    |
+| `GET/PUT /api/v1/admin/orgs/[id]/providers` | `withAdminAuth` | Platform admins.                                                                                                                                       |
 
 "While acting in it" is t-671's rule: the policy compares the org the guard
 _entered_ for the request — the session's active org, or the proxy's
@@ -376,6 +377,25 @@ The bundle `exportOrgData()` builds — see
 [Org Data Export](../privacy/org-export.md). Served as a download
 (`Content-Disposition: attachment`), never cached, under the same per-admin
 sub-cap as the subject export. `404` for a missing org.
+
+### An org's approved providers
+
+```
+GET /api/v1/admin/orgs/[id]/providers
+PUT /api/v1/admin/orgs/[id]/providers
+```
+
+Which AI providers the org may use at `TENANCY_MODE=multi` (§120 t-742). A
+`PUT` replaces the whole policy, `{ approved: string[], jurisdictions?: string[] | null }`,
+and writes an `org.providers.replace` audit row. `[]` revokes every grant.
+Both return `{ orgId, unrestricted, enforced, approved, jurisdictions }`. See
+[LLM providers → Per-org approved providers](../orchestration/llm-providers.md#per-org-approved-providers-core-at-multi)
+for what it governs.
+
+**Error Responses**: `400 VALIDATION_ERROR` (an unknown provider slug, named
+in `details.unknownProviders`, or a malformed body) · `400 INSTALL_ORG_IMMUTABLE`
+(a `PUT` naming the install org, which may use every provider) ·
+`404 ORG_NOT_FOUND`.
 
 ### Erase an org
 
