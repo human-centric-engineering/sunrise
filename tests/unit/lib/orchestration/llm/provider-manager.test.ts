@@ -553,6 +553,19 @@ describe('getProviderWithFallbacks', () => {
     });
     breaker.recordFailure(); // open
 
+    // The primary is resolvable, so only its open breaker can turn it down:
+    // the breaker is checked once the provider is fetched (§120 t-744), because
+    // the credential it is keyed on is only known then.
+    registerProviderInstance('cb-primary-2', {
+      name: 'cb-primary-2',
+      isLocal: false,
+      chat: vi.fn(),
+      chatStream: vi.fn(),
+      embed: vi.fn(),
+      listModels: vi.fn(),
+      testConnection: vi.fn(),
+    });
+
     // Register a working fallback in-memory (no DB needed)
     const fallbackProvider = {
       name: 'cb-fallback-2',

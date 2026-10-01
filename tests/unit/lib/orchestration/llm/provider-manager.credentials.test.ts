@@ -165,6 +165,33 @@ describe('with a resolver that gives each org its own key', () => {
     ).resolves.toMatchObject({ usedSlug: 'anthropic', breakerKey: `anthropic#org:${ORG_B}` });
   });
 
+  it("does not let the shared credential's open breaker block an org with its own key", async () => {
+    // Org A has its own key; everyone else is on the shared one ('').
+    registerProviderCredentialResolver((_config, { orgId }) =>
+      orgId === ORG_A
+        ? { apiKey: 'key-for-a', identity: `org:${ORG_A}` }
+        : { apiKey: 'shared-key', identity: '' }
+    );
+    const shared = getBreaker('anthropic');
+    for (let i = 0; i < 10; i++) shared.recordFailure();
+
+    await expect(
+      runAsOrg(ORG_B, () => getProviderWithFallbacks('anthropic', []))
+    ).rejects.toMatchObject({ code: 'all_providers_exhausted' });
+    await expect(
+      runAsOrg(ORG_A, () => getProviderWithFallbacks('anthropic', []))
+    ).resolves.toMatchObject({ breakerKey: `anthropic#org:${ORG_A}` });
+  });
+
+  it('names the resolver, not the env var, when a registered resolver gives a row no key', async () => {
+    registerProviderCredentialResolver(() => ({ apiKey: undefined, identity: 'org:none' }));
+
+    await expect(runAsOrg(ORG_A, () => getProvider('anthropic'))).rejects.toMatchObject({
+      code: 'missing_api_key',
+      message: expect.stringContaining('credential resolver returned none'),
+    });
+  });
+
   it('shows an admin the worst breaker for the provider, and resets every credential', () => {
     const tripped = getBreaker(`anthropic#org:${ORG_A}`);
     for (let i = 0; i < 10; i++) tripped.recordFailure();

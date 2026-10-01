@@ -1872,7 +1872,11 @@ export class StreamingChatHandler {
             });
           }
 
-          getBreaker(usedBreakerKey).recordSuccess();
+          // The provider that SERVED the turn, which after a mid-stream failover is
+          // not the one first resolved (§120 t-744 review). Crediting the primary
+          // cleared the failure it had just recorded, so a primary failing every
+          // first attempt never tripped its breaker.
+          getBreaker(currentBreakerKey).recordSuccess();
           if (citations.length > 0) {
             yield { type: 'citations', citations };
           }
@@ -2289,7 +2293,11 @@ export class StreamingChatHandler {
           }
 
           if (result.skipFollowup) {
-            getBreaker(usedBreakerKey).recordSuccess();
+            // The provider that SERVED the turn, which after a mid-stream failover is
+            // not the one first resolved (§120 t-744 review). Crediting the primary
+            // cleared the failure it had just recorded, so a primary failing every
+            // first attempt never tripped its breaker.
+            getBreaker(currentBreakerKey).recordSuccess();
             if (citations.length > 0) {
               yield { type: 'citations', citations };
             }
@@ -2583,7 +2591,11 @@ export class StreamingChatHandler {
           }
 
           if (anySkipFollowup) {
-            getBreaker(usedBreakerKey).recordSuccess();
+            // The provider that SERVED the turn, which after a mid-stream failover is
+            // not the one first resolved (§120 t-744 review). Crediting the primary
+            // cleared the failure it had just recorded, so a primary failing every
+            // first attempt never tripped its breaker.
+            getBreaker(currentBreakerKey).recordSuccess();
             if (citations.length > 0) {
               yield { type: 'citations', citations };
             }

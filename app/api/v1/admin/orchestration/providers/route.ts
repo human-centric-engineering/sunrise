@@ -17,10 +17,8 @@ import { ConflictError } from '@/lib/api/errors';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
-import {
-  isApiKeyEnvVarSet,
-  clearCache as clearProviderCache,
-} from '@/lib/orchestration/llm/provider-manager';
+import { clearCache as clearProviderCache } from '@/lib/orchestration/llm/provider-manager';
+import { hasProviderKey } from '@/lib/orchestration/llm/provider-credentials';
 import { getCircuitBreakerStatusForProvider } from '@/lib/orchestration/llm/circuit-breaker';
 import { listProvidersQuerySchema, providerConfigSchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -56,9 +54,12 @@ export const GET = withAdminAuth(async (request, _session) => {
     prisma.aiProviderConfig.count({ where }),
   ]);
 
-  const data = rows.map((config) => ({
+  // `apiKeyPresent` asks the credential seam (§120 t-744): with a fork
+  // resolver registered the env var may be deliberately empty.
+  const keyPresent = await Promise.all(rows.map((config) => hasProviderKey(config)));
+  const data = rows.map((config, index) => ({
     ...config,
-    apiKeyPresent: isApiKeyEnvVarSet(config.apiKeyEnvVar),
+    apiKeyPresent: keyPresent[index],
     circuitBreaker: getCircuitBreakerStatusForProvider(config.slug) ?? {
       state: 'closed' as const,
       failureCount: 0,
@@ -111,7 +112,7 @@ export const POST = withAdminAuth(async (request, session) => {
     });
 
     return successResponse(
-      { ...provider, apiKeyPresent: isApiKeyEnvVarSet(provider.apiKeyEnvVar) },
+      { ...provider, apiKeyPresent: await hasProviderKey(provider) },
       undefined,
       { status: 201 }
     );

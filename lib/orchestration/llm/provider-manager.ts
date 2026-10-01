@@ -31,7 +31,12 @@ import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { AnthropicProvider } from '@/lib/orchestration/llm/anthropic';
 import { getBreaker } from '@/lib/orchestration/llm/circuit-breaker';
 import { credentialKey } from '@/lib/orchestration/llm/credential-key';
-import { resolveProviderCredential } from '@/lib/orchestration/llm/provider-credentials';
+import {
+  hasProviderCredentialResolver,
+  hasProviderKey,
+  readEnvKey,
+  resolveProviderCredential,
+} from '@/lib/orchestration/llm/provider-credentials';
 import {
   assertProviderCallPermitted,
   fallbackCallContext,
@@ -66,8 +71,9 @@ export interface ProviderStatus {
  * Row shape returned by `listProvidersWithStatus`. Hydrates an
  * `AiProviderConfig` with runtime metadata the admin API needs:
  *
- *   - `apiKeyPresent` — whether `process.env[row.apiKeyEnvVar]` is set to
- *     a non-empty string. The env var *value* is never returned.
+ *   - `apiKeyPresent` — whether the credential seam gives the row a key in
+ *     this context (`hasProviderKey`; by default, whether
+ *     `process.env[row.apiKeyEnvVar]` is set). The value is never returned.
  *   - `status` — last-known health; always `'unknown'` unless the caller
  *     has already invoked `testProvider` for this slug in-process.
  *
@@ -256,6 +262,14 @@ async function acquireProvider(slugOrName: string, context: CallOrigin): Promise
   const credential = await resolveProviderCredential(row.config);
   let built = row.byIdentity.get(credential.identity);
   if (!built) {
+    // Once per client build, as before the seam — not on every reachability
+    // check, which now runs the same credential read every turn.
+    if (!credential.apiKey && row.config.apiKeyEnvVar && !hasProviderCredentialResolver()) {
+      logger.warn('Provider apiKeyEnvVar is set but process.env value is empty', {
+        provider: row.config.slug,
+        envVar: row.config.apiKeyEnvVar,
+      });
+    }
     built = newBuilt(
       buildProviderFromConfig(row.config, credential.apiKey),
       row.config.slug,
@@ -587,11 +601,15 @@ export async function listProvidersWithStatus(
     ...where,
     orderBy: where?.orderBy ?? { createdAt: 'asc' },
   });
-  return rows.map((config) => ({
-    config,
-    apiKeyPresent: isApiKeyEnvVarSet(config.apiKeyEnvVar),
-    status: 'unknown' as const,
-  }));
+  // Through the credential seam (§120 t-744): with a resolver registered the
+  // env var may be deliberately empty, and "API key missing" would be wrong.
+  return Promise.all(
+    rows.map(async (config) => ({
+      config,
+      apiKeyPresent: await hasProviderKey(config),
+      status: 'unknown' as const,
+    }))
+  );
 }
 
 /**
@@ -600,9 +618,7 @@ export async function listProvidersWithStatus(
  * response the same way `listProvidersWithStatus` does.
  */
 export function isApiKeyEnvVarSet(apiKeyEnvVar: string | null): boolean {
-  if (!apiKeyEnvVar) return false;
-  const value = process.env[apiKeyEnvVar];
-  return typeof value === 'string' && value.length > 0;
+  return readEnvKey(apiKeyEnvVar) !== undefined;
 }
 
 /**
@@ -644,12 +660,6 @@ export async function getProviderWithFallbacks(
   const candidates = [primarySlug, ...fallbackSlugs];
 
   for (const [index, slug] of candidates.entries()) {
-    const breaker = getBreaker(slug);
-    if (!breaker.canAttempt()) {
-      logger.info('Skipping provider — circuit breaker open', { provider: slug });
-      continue;
-    }
-
     try {
       // Without a binding provenance a fallback is still asked AS a fallback
       // (`'explicit'` and `'system'`, with the real primary), so a rule that
@@ -659,15 +669,15 @@ export async function getProviderWithFallbacks(
           ? primaryCallContext(provenance)
           : (fallbackCallContext(provenance, primarySlug) ?? { unrecordedFallbackOf: primarySlug });
       const provider = await acquireProvider(slug, origin);
-      // The breaker that matters is the CREDENTIAL's (§120 t-744). With the
-      // shared credential its key is the slug, already checked above; with a
-      // per-org one it is its own breaker, so one org's failing key does not
-      // pause another org's healthy one.
+      // The breaker is the CREDENTIAL's (§120 t-744), so it is checked after
+      // the provider is fetched — which is what says which credential this org
+      // gets. The bare slug for the shared credential, slug + identity for a
+      // per-org one: one org's failing key never pauses another org's healthy
+      // one. Checking the slug first, as this used to, let the shared
+      // credential's breaker block orgs with keys of their own.
       const breakerKey = breakerKeyOf(provider) ?? slug;
-      if (breakerKey !== slug && !getBreaker(breakerKey).canAttempt()) {
-        logger.info('Skipping provider — circuit breaker open for this credential', {
-          provider: slug,
-        });
+      if (!getBreaker(breakerKey).canAttempt()) {
+        logger.info('Skipping provider — circuit breaker open', { provider: slug });
         continue;
       }
       if (slug !== primarySlug) {
@@ -752,16 +762,6 @@ async function tryAudioRow(
     return null;
   }
 
-  const breaker = getBreaker(row.providerSlug);
-  if (!breaker.canAttempt()) {
-    logger.info('Skipping audio provider — circuit breaker open', {
-      providerSlug: row.providerSlug,
-      modelId: row.modelId,
-      source,
-    });
-    return null;
-  }
-
   let provider: LlmProvider;
   try {
     // The call-time gate is told the same thing the check above was.
@@ -775,10 +775,10 @@ async function tryAudioRow(
     return null;
   }
 
-  // The credential's own breaker, when it is not the slug's (§120 t-744).
-  const credentialBreakerKey = breakerKeyOf(provider) ?? row.providerSlug;
-  if (credentialBreakerKey !== row.providerSlug && !getBreaker(credentialBreakerKey).canAttempt()) {
-    logger.info('Skipping audio provider — circuit breaker open for this credential', {
+  // The CREDENTIAL's breaker (§120 t-744), checked once the provider is
+  // fetched and the credential known — see getProviderWithFallbacks.
+  if (!getBreaker(breakerKeyOf(provider) ?? row.providerSlug).canAttempt()) {
+    logger.info('Skipping audio provider — circuit breaker open', {
       providerSlug: row.providerSlug,
       modelId: row.modelId,
       source,
@@ -996,6 +996,17 @@ export function clearCache(slugOrName?: string): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * Why a row has no key. The env var by default; with a credential resolver
+ * registered the env var may be deliberately empty, so saying only "set the env
+ * var" would send an operator to the wrong place.
+ */
+function missingKeyMessage(config: AiProviderConfig): string {
+  return hasProviderCredentialResolver()
+    ? `Provider "${config.slug}" has no API key: the registered credential resolver returned none`
+    : `Provider "${config.slug}" requires env var "${config.apiKeyEnvVar ?? '<unset>'}" to be set`;
+}
+
+/**
  * Build a client from a row and the key the credential seam resolved for it.
  * The key is passed in, never read here: `provider-credentials.ts` is the one
  * place a provider credential is resolved.
@@ -1006,10 +1017,10 @@ function buildProviderFromConfig(
 ): LlmProvider {
   if (config.providerType === 'anthropic') {
     if (!apiKey) {
-      throw new ProviderError(
-        `Provider "${config.slug}" requires env var "${config.apiKeyEnvVar ?? '<unset>'}" to be set`,
-        { code: 'missing_api_key', retriable: false }
-      );
+      throw new ProviderError(missingKeyMessage(config), {
+        code: 'missing_api_key',
+        retriable: false,
+      });
     }
     return new AnthropicProvider({
       name: config.name,
@@ -1023,10 +1034,10 @@ function buildProviderFromConfig(
 
   if (config.providerType === 'voyage') {
     if (!apiKey) {
-      throw new ProviderError(
-        `Provider "${config.slug}" requires env var "${config.apiKeyEnvVar ?? '<unset>'}" to be set`,
-        { code: 'missing_api_key', retriable: false }
-      );
+      throw new ProviderError(missingKeyMessage(config), {
+        code: 'missing_api_key',
+        retriable: false,
+      });
     }
     // A configured `baseUrl` is where knowledge text is posted
     // (`VoyageProvider.embedMany`) and where chat would go, so it gets the
@@ -1095,10 +1106,10 @@ function buildProviderFromConfig(
       );
     }
     if (!config.isLocal && !apiKey) {
-      throw new ProviderError(
-        `Provider "${config.slug}" requires env var "${config.apiKeyEnvVar ?? '<unset>'}" to be set`,
-        { code: 'missing_api_key', retriable: false }
-      );
+      throw new ProviderError(missingKeyMessage(config), {
+        code: 'missing_api_key',
+        retriable: false,
+      });
     }
     return new OpenAiCompatibleProvider({
       name: config.name,

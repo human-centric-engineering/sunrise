@@ -11,8 +11,9 @@
  * Authentication: Admin role required.
  *
  * Secret safety: the env-var *value* is never returned or logged. Only
- * `apiKeyPresent: boolean` is exposed, derived from
- * `isApiKeyEnvVarSet(row.apiKeyEnvVar)`.
+ * `apiKeyPresent: boolean` is exposed, from `hasProviderKey(row)` — the
+ * credential seam's answer (§120 t-744), by default whether the row's env var
+ * is set.
  */
 
 import { Prisma } from '@prisma/client';
@@ -23,10 +24,8 @@ import { ConflictError, NotFoundError, ValidationError } from '@/lib/api/errors'
 import { validatePathParam, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
-import {
-  clearCache as clearProviderCache,
-  isApiKeyEnvVarSet,
-} from '@/lib/orchestration/llm/provider-manager';
+import { clearCache as clearProviderCache } from '@/lib/orchestration/llm/provider-manager';
+import { hasProviderKey } from '@/lib/orchestration/llm/provider-credentials';
 import { updateProviderConfigSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -42,7 +41,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   log.info('Provider fetched', { providerId: id });
   return successResponse({
     ...provider,
-    apiKeyPresent: isApiKeyEnvVarSet(provider.apiKeyEnvVar),
+    apiKeyPresent: await hasProviderKey(provider),
   });
 });
 
@@ -95,7 +94,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
     return successResponse({
       ...updated,
-      apiKeyPresent: isApiKeyEnvVarSet(updated.apiKeyEnvVar),
+      apiKeyPresent: await hasProviderKey(updated),
     });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {

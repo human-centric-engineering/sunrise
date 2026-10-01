@@ -42,8 +42,12 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
+// `apiKeyPresent` is the credential seam's answer (§120 t-744), not the env var's.
+vi.mock('@/lib/orchestration/llm/provider-credentials', () => ({
+  hasProviderKey: vi.fn(async () => false),
+}));
+
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
-  isApiKeyEnvVarSet: vi.fn(() => false),
   clearCache: vi.fn(),
 }));
 
@@ -56,7 +60,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { isApiKeyEnvVarSet } from '@/lib/orchestration/llm/provider-manager';
+import { hasProviderKey } from '@/lib/orchestration/llm/provider-credentials';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -144,7 +148,7 @@ describe('GET /api/v1/admin/orchestration/providers', () => {
   describe('Successful retrieval', () => {
     it('returns paginated providers list with apiKeyPresent field', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+      vi.mocked(hasProviderKey).mockResolvedValue(true);
       const providers = [
         makeProvider(),
         makeProvider({ id: 'cmjbv4i3x00003wsloputgwu2', slug: 'openai' }),
@@ -169,7 +173,7 @@ describe('GET /api/v1/admin/orchestration/providers', () => {
 
     it('returns apiKeyPresent: true when env var is set', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+      vi.mocked(hasProviderKey).mockResolvedValue(true);
       vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
       vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(1);
 
@@ -182,7 +186,7 @@ describe('GET /api/v1/admin/orchestration/providers', () => {
 
     it('returns apiKeyPresent: false when env var is not set', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(false);
+      vi.mocked(hasProviderKey).mockResolvedValue(false);
       vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([makeProvider()] as never);
       vi.mocked(prisma.aiProviderConfig.count).mockResolvedValue(1);
 
@@ -274,7 +278,7 @@ describe('POST /api/v1/admin/orchestration/providers', () => {
   describe('Successful creation', () => {
     it('creates provider and returns 201 with apiKeyPresent field', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(isApiKeyEnvVarSet).mockReturnValue(true);
+      vi.mocked(hasProviderKey).mockResolvedValue(true);
       const created = makeProvider();
       vi.mocked(prisma.aiProviderConfig.create).mockResolvedValue(created);
 

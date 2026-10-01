@@ -100,6 +100,20 @@ function makeOpenAiConfigRow(): never {
   } as never;
 }
 
+/**
+ * Each slug resolves to its own row, as the real lookup does. The breaker is
+ * checked after the fetch, on the BUILT row's key (§120 t-744), so a mock that
+ * answers every slug with one row would test that row's breaker instead.
+ */
+function rowPerSlug(): void {
+  vi.mocked(prisma.aiProviderConfig.findFirst).mockImplementation((async (args: {
+    where: { slug?: string };
+  }) =>
+    args.where.slug
+      ? { ...(makeOpenAiConfigRow() as object), slug: args.where.slug }
+      : null) as never);
+}
+
 function makeAudioModelRow(overrides: Record<string, unknown> = {}): never {
   return {
     id: 'm-whisper',
@@ -173,7 +187,7 @@ describe('getAudioProvider', () => {
       makeAudioModelRow({ providerSlug: 'broken-provider', modelId: 'whisper-x' }),
       makeAudioModelRow({ providerSlug: 'openai', modelId: 'whisper-1' }),
     ]);
-    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeOpenAiConfigRow());
+    rowPerSlug();
 
     // Force the first slug's breaker open by recording enough failures.
     const breaker = getBreaker('broken-provider');
@@ -191,6 +205,7 @@ describe('getAudioProvider', () => {
       makeAudioModelRow({ providerSlug: 'a' }),
       makeAudioModelRow({ providerSlug: 'b' }),
     ]);
+    rowPerSlug();
 
     const ba = getBreaker('a');
     const bb = getBreaker('b');
@@ -302,6 +317,7 @@ describe('getAudioProvider', () => {
         },
       } as never);
 
+      rowPerSlug();
       const breaker = getBreaker('broken');
       for (let i = 0; i < 10; i++) breaker.recordFailure();
 

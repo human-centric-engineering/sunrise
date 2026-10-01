@@ -153,16 +153,21 @@ export function hasProviderCredentialResolver(): boolean {
 
 /** The env-var default: exactly what the provider manager did before the seam. */
 function credentialFromEnv(config: ProviderCredentialConfig): ProviderCredential {
-  if (!config.apiKeyEnvVar) return { apiKey: undefined, identity: '' };
-  const value = process.env[config.apiKeyEnvVar];
-  if (!value) {
-    logger.warn('Provider apiKeyEnvVar is set but process.env value is empty', {
-      provider: config.slug,
-      envVar: config.apiKeyEnvVar,
-    });
-    return { apiKey: undefined, identity: '' };
-  }
-  return { apiKey: value, identity: '' };
+  return { apiKey: readEnvKey(config.apiKeyEnvVar), identity: '' };
+}
+
+/**
+ * The value of a named env var, or `undefined` when it is unset or empty. The
+ * one place a provider key is read from the environment: the seam's default
+ * uses it, and so does `isApiKeyEnvVarSet` (the admin "env var present" flag),
+ * so the two cannot disagree. Silent: it runs on reachability checks every
+ * turn, and the provider manager warns about a missing key once, when it
+ * builds a client.
+ */
+export function readEnvKey(apiKeyEnvVar: string | null): string | undefined {
+  if (!apiKeyEnvVar) return undefined;
+  const value = process.env[apiKeyEnvVar];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 /** The org a credential is resolved for, from the async context. */
@@ -241,8 +246,24 @@ export async function resolveProviderCredential(
  * every provider looking unconfigured. A resolver failure answers `false`.
  */
 export async function hasProviderCredential(config: ProviderCredentialConfig): Promise<boolean> {
-  appInit.ensure(); // before reading `registrationFailed`, which the init sets
-  if (config.isLocal && !registrationFailed) return true;
+  // A local row is asked too, because `getProvider` asks the resolver for every
+  // row: a resolver that throws for it makes the row unbuildable, and calling
+  // it reachable would bind an agent to a provider that always fails. It just
+  // does not need a key.
+  try {
+    const { apiKey } = await resolveProviderCredential(config);
+    return config.isLocal || (typeof apiKey === 'string' && apiKey.length > 0);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether the credential seam gives `config` a KEY in this context — what the
+ * admin "API key present" flag reports. Unlike {@link hasProviderCredential}
+ * a local row without one answers `false`, as the flag always has.
+ */
+export async function hasProviderKey(config: ProviderCredentialConfig): Promise<boolean> {
   try {
     const { apiKey } = await resolveProviderCredential(config);
     return typeof apiKey === 'string' && apiKey.length > 0;

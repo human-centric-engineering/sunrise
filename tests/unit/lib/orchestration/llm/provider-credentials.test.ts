@@ -28,6 +28,7 @@ import {
   filterProvidersWithCredential,
   hasProviderCredential,
   hasProviderCredentialResolver,
+  hasProviderKey,
   registerProviderCredentialResolver,
   resetProviderCredentialResolver,
   resolveProviderCredential,
@@ -91,6 +92,18 @@ describe('with nothing registered', () => {
     await expect(hasProviderCredential(row({ apiKeyEnvVar: null, isLocal: true }))).resolves.toBe(
       true
     );
+  });
+
+  it('reports a key, not reachability, for the admin flag: a local row without one has none', async () => {
+    await expect(hasProviderKey(row())).resolves.toBe(true);
+    await expect(
+      hasProviderKey(row({ isLocal: true, apiKeyEnvVar: 'CRED_TEST_UNSET' }))
+    ).resolves.toBe(false);
+  });
+
+  it('checks reachability silently: the missing-key warning belongs to building a client', async () => {
+    await hasProviderCredential(row({ apiKeyEnvVar: 'CRED_TEST_UNSET' }));
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it('keeps the order of the rows it keeps', async () => {
@@ -163,6 +176,23 @@ describe('a registered resolver', () => {
       identity: 'x',
     });
     await expect(hasProviderCredential(row())).resolves.toBe(false);
+  });
+
+  it('asks the resolver about a local row too: one it cannot answer for is not reachable', async () => {
+    // getProvider asks the resolver for every row, local or not, so a row the
+    // resolver throws for can never be built — reachability must agree.
+    registerProviderCredentialResolver((config) => {
+      if (config.slug === 'ollama') throw new Error('unknown slug');
+      return { apiKey: undefined, identity: '' };
+    });
+
+    await expect(
+      hasProviderCredential(row({ slug: 'ollama', isLocal: true, apiKeyEnvVar: null }))
+    ).resolves.toBe(false);
+    // A local row the resolver answers needs no key.
+    await expect(
+      hasProviderCredential(row({ slug: 'lmstudio', isLocal: true, apiKeyEnvVar: null }))
+    ).resolves.toBe(true);
   });
 
   it('is one rule: the same function again is a no-op, a different one throws', () => {
