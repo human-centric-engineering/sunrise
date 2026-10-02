@@ -17,7 +17,7 @@
  * - Handles notFound when user is not found
  * - Generates correct metadata
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise-tweaks/app/admin/users/[id]/page.tsx
+ * @see app/admin/users/[id]/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

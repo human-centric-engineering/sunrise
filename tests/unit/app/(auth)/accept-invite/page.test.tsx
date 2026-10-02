@@ -18,7 +18,7 @@
  * - Renders Card components (Card, CardHeader, CardContent)
  * - Suspense boundary renders fallback during loading
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/app/(auth)/accept-invite/page.tsx
+ * @see app/(auth)/accept-invite/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

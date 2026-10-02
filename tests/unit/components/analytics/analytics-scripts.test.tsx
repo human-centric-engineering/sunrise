@@ -17,7 +17,7 @@
  * - External scripts do not receive nonce prop
  * - Nonce is optional (existing behaviour preserved when omitted)
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/analytics/analytics-scripts.tsx
+ * @see components/analytics/analytics-scripts.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

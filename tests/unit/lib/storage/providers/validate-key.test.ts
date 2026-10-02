@@ -10,7 +10,7 @@
  *
  * And accepts valid relative keys with normal path separators.
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/storage/providers/validate-key.ts
+ * @see lib/storage/providers/validate-key.ts
  */
 
 import { describe, it, expect } from 'vitest';

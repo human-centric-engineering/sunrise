@@ -20,7 +20,7 @@
  * Note: The SignupForm component itself has its own separate test file.
  * These tests focus on the server component wrapper and page-level concerns.
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/app/(auth)/signup/page.tsx
+ * @see app/(auth)/signup/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

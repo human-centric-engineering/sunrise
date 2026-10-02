@@ -279,6 +279,13 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'entry, which is why the list is written rather than derived.',
   },
   {
+    path: 'tests/unit/test-see-paths.test.ts',
+    reason:
+      'reads the header of every file under tests/ and fails on a `@see` that ' +
+      'is an absolute path (`/Users/…`, `/home/…`, `C:\\…`) rather than ' +
+      'repo-relative. The input is the whole test tree, which nothing imports.',
+  },
+  {
     path: 'tests/unit/vitest-environment-directives.test.ts',
     reason:
       'reads every test file to check its environment directive is a single ' +

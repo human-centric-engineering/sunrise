@@ -5,7 +5,7 @@
  *
  * Tests the invitation acceptance form with password setting and OAuth support.
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/forms/accept-invite-form.tsx
+ * @see components/forms/accept-invite-form.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

@@ -13,7 +13,7 @@
  * - Double-fire prevention (same tab doesn't re-track)
  * - No tracking when tracking option is omitted
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/hooks/use-tracked-url-tabs.ts
+ * @see lib/hooks/use-tracked-url-tabs.ts
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

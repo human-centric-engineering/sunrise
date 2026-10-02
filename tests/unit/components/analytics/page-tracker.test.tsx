@@ -14,7 +14,7 @@
  * - Hook return value is discarded (wrapper is intentional no-op)
  * - No post-unmount hook calls
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/analytics/page-tracker.tsx
+ * @see components/analytics/page-tracker.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

@@ -12,7 +12,7 @@
  * - Error and isPending pass-through
  * - Full session data handling
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/auth/client.ts
+ * @see lib/auth/client.ts
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

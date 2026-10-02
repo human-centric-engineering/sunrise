@@ -24,7 +24,7 @@
  * Note: These are thin wrappers around Radix UI. Tests focus on our customizations
  * (className props, inset variants, icons) rather than Radix UI functionality.
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/ui/dropdown-menu.tsx
+ * @see components/ui/dropdown-menu.tsx
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';

@@ -9,7 +9,7 @@
  * - Avatar upload validation
  * - Configuration schemas (S3, Vercel Blob, Storage)
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/validations/storage.ts
+ * @see lib/validations/storage.ts
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
