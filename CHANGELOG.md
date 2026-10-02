@@ -520,6 +520,17 @@ release process.
   also makes shared settings editable only from the install org). Nothing
   else changes at `single`.
 
+- **`npm run test:changed:coverage` now holds each changed file to 80%, as
+  documented** (t-749). It passed `--coverage.thresholds.perFile=true`, which
+  vitest's CLI reads as the string `"true"`, so per-file mode never switched on
+  and the floor applied to the **average** of the changed files. A file at 75%
+  branches passed beside a well-covered one. It now passes the bare flag. The
+  self-test checks the parsed value with vitest's `parseCLI`, and an integration
+  test runs a real vitest over a thin file and a well-covered one. **Fork
+  note:** a PR whose changed files only cleared 80% on average now fails
+  `/pre-pr`, which is what the gate always claimed to do. The failure names the
+  file.
+
 ## [0.13.0] — 2026-09-24
 
 > **Alpha release.** Nineteenth tagged Sunrise release. **MINOR bump**. It

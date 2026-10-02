@@ -188,6 +188,12 @@ If there are no TypeScript files and no documentation files, report "No changes 
 rather than being averaged away. If Step 1 passed, every changed file is at or
 above 80% on all four metrics and there is nothing to re-derive here.
 
+Still glance down the per-file numbers you record below. Until t-749 this gate
+passed `--coverage.thresholds.perFile=true`, which vitest reads as the string
+`"true"`, and so it silently checked the average. A file under 80% sitting in a
+report that says PASS means the gate has stopped doing its job, and that is a
+finding.
+
 What is left for this step is reading the report, not recomputing the verdict.
 Parse `coverage/coverage-summary.json` — now scoped to the changed files, not
 the whole repo — and record the per-file numbers in the Step 6 summary so the

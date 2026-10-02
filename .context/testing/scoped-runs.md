@@ -99,6 +99,16 @@ a file Sunrise never edits, so your list and Sunrise's never conflict.
 `--coverage.include` is limited to the changed source files and
 `thresholds.perFile` puts the 80% floor on each of them individually.
 
+**Pass it as the bare flag, `--coverage.thresholds.perFile`.** Vitest's CLI reads
+`--coverage.thresholds.perFile=true` as the string `"true"`, and per-file mode only
+switches on for the boolean, so that spelling quietly gated the average of the
+changed files. Until t-749 this runner used it: a changed file at 75% branches
+passed beside one at 100%. The runner's self-test now asks vitest's own
+`parseCLI` what the flags mean, and
+`tests/integration/scripts/ci/coverage-floor.test.ts` runs the argv through a
+real vitest over two fixture files whose average clears 80%, and expects the run
+to fail on the thin one.
+
 This is a different question from the one the old full-suite gate asked. A
 project-wide 80% average clears comfortably while a newly added file sits at 0%;
 per-file, that file fails. A changed file with no test at all is reported **as
