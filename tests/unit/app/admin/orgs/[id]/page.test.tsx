@@ -45,15 +45,22 @@ const ORG_PATH = `/api/v1/admin/orgs/${ID}`;
 const POLICY_PATH = `/api/v1/admin/orgs/${ID}/providers`;
 const PROVIDERS_PATH = '/api/v1/admin/orchestration/providers?page=1&limit=100';
 
-/** Answer each path with its body; a path mapped to `null` is refused. */
-function serve(bodies: Record<string, unknown>) {
-  vi.mocked(serverFetch).mockImplementation(
-    async (path: string) =>
-      ({ ok: bodies[path] !== null && bodies[path] !== undefined, path }) as unknown as Response
-  );
+/**
+ * Answer each path with its body. A path mapped to `null` (or not mapped) is a
+ * 404; one mapped to a number is that HTTP status. `metas` gives a path's
+ * pagination meta.
+ */
+function serve(bodies: Record<string, unknown>, metas: Record<string, unknown> = {}) {
+  vi.mocked(serverFetch).mockImplementation(async (path: string) => {
+    const body = bodies[path];
+    const status =
+      typeof body === 'number' ? body : body === null || body === undefined ? 404 : 200;
+    return { ok: status === 200, status, path } as unknown as Response;
+  });
   vi.mocked(parseApiResponse).mockImplementation((async (res: { path: string }) => ({
     success: true,
     data: bodies[res.path],
+    meta: metas[res.path],
   })) as never);
 }
 
@@ -123,6 +130,47 @@ describe('OrgPage', () => {
     serve({ [ORG_PATH]: null, [POLICY_PATH]: null, [PROVIDERS_PATH]: PROVIDERS });
 
     await expect(OrgPage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
+  });
+
+  it('sends any other failure to load the org to the error boundary, not to a 404', async () => {
+    serve({ [ORG_PATH]: 500, [POLICY_PATH]: POLICY, [PROVIDERS_PATH]: PROVIDERS });
+
+    await expect(OrgPage({ params })).rejects.toThrow(
+      'Organisation could not be loaded (HTTP 500)'
+    );
+  });
+
+  it('lists providers from every page, so each can be granted or revoked', async () => {
+    const PAGE_2 = '/api/v1/admin/orchestration/providers?page=2&limit=100';
+    serve(
+      {
+        [ORG_PATH]: ORG,
+        [POLICY_PATH]: POLICY,
+        [PROVIDERS_PATH]: PROVIDERS,
+        [PAGE_2]: [{ id: 'id-far', slug: 'far', name: 'Far', isActive: true, jurisdiction: null }],
+      },
+      {
+        [PROVIDERS_PATH]: { page: 1, limit: 100, total: 101, totalPages: 2 },
+        [PAGE_2]: { page: 2, limit: 100, total: 101, totalPages: 2 },
+      }
+    );
+
+    render(await OrgPage({ params }));
+
+    expect(screen.getByRole('checkbox', { name: /Anthropic/ })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Far/ })).toBeInTheDocument();
+  });
+
+  it('withholds the form when a later page of providers fails', async () => {
+    serve(
+      { [ORG_PATH]: ORG, [POLICY_PATH]: POLICY, [PROVIDERS_PATH]: PROVIDERS },
+      { [PROVIDERS_PATH]: { page: 1, limit: 100, total: 101, totalPages: 2 } }
+    );
+
+    render(await OrgPage({ params }));
+
+    expect(screen.getByText(/approved providers could not be loaded/)).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   });
 
   it('says the providers could not be loaded rather than offering an empty set to save', async () => {

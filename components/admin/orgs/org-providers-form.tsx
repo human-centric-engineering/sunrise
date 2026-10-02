@@ -103,15 +103,16 @@ export function OrgProvidersForm({ orgId, policy: initial, providers }: OrgProvi
   // providers by slug) drops it.
   const orphaned = policy.approved.filter((grant) => grant.slug === null).length;
   // A save replaces the whole policy, so a grant for a provider this list
-  // does not show (it loads one page of providers) is carried over by slug
+  // does not show (one created since the page loaded) is carried over by slug
   // rather than silently revoked.
   const listed = new Set(providers.map((p) => p.id));
   const unlisted = policy.approved.flatMap((grant) =>
     grant.slug !== null && !listed.has(grant.id) ? [grant.slug] : []
   );
-  const allowed = restricted
-    ? new Set(parseJurisdictions(jurisdictionText).map((code) => code.toUpperCase()))
-    : null;
+  // Nothing typed yet is not "restricted to nothing": the save refuses an
+  // empty list, so no provider is flagged as outside it until a code is named.
+  const codes = restricted ? parseJurisdictions(jurisdictionText) : [];
+  const allowed = codes.length > 0 ? new Set(codes.map((code) => code.toUpperCase())) : null;
 
   const toggle = (id: string, on: boolean) => {
     setSaved(false);

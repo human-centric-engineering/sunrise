@@ -99,7 +99,8 @@ export const GET = withAdminAuth(async (request, _session) => {
   ]);
 
   // Agents naming a provider their org is no longer approved for (§120 t-745);
-  // `null` per row when the policy could not be read. Started now so it runs
+  // `null` per row when that is unknown (no org in scope, or the policy could
+  // not be read). Started now so it runs
   // alongside the budget reads; it never rejects.
   const strandedLookup = rawAgents.length > 0 ? strandedAgentProviders(rawAgents) : null;
 

@@ -183,7 +183,8 @@ release process.
   `GET /api/v1/admin/orchestration/providers`, and
   `_unapprovedProviders: string[] | null` on each agent from
   `GET /agents` and `GET /agents/:id` (on `AiAgentListItem` too; `null` when
-  the policy could not be read). New helper `strandedAgentProviders` in
+  that is unknown: no org in scope, or the policy could not be read). New
+  helpers `strandedAgentProviders` and `refusedProvidersOrUnknown` in
   `lib/orchestration/agents/provider-approval.ts`. At `single` every provider
   is approved and nothing is disabled.
 

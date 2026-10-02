@@ -223,7 +223,7 @@ describe('AgentsTable', () => {
               _unapprovedProviders: ['openai'],
             }),
             makeAgent({ id: 'agent-2', name: 'Beta', _unapprovedProviders: [] }),
-            // Unknown (the policy could not be read): no claim either way.
+            // Unknown (no org in scope, or the policy could not be read): no claim.
             makeAgent({ id: 'agent-3', name: 'Gamma', _unapprovedProviders: null }),
           ]}
           initialMeta={MOCK_META}

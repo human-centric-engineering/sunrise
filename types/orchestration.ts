@@ -1317,7 +1317,7 @@ export type AiAgentListItem = AiAgent & {
   /**
    * Providers the agent names that its org is no longer approved for — its
    * calls are refused until a platform admin grants them (§120 t-745). `[]`
-   * when none; `null` when the org's provider policy could not be read.
+   * when none; `null` when unknown: no org in scope, or the org's provider policy could not be read.
    */
   _unapprovedProviders: string[] | null;
   creator?: { name: string | null };

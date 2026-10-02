@@ -5,7 +5,10 @@
  * org's provider policy (§120 t-745): it names a provider the org is no
  * longer approved for, so the runtime refuses every call to it. Without the
  * banner the agent looks healthy until a conversation fails. Hidden when the
- * agent names none — the absence of a banner is the "all clear" signal.
+ * agent names none. That is "no provider it names is refused", not "it will
+ * respond": an agent that inherits its provider picks one per turn among what
+ * the org may use, and fails only when the org may use none, which the
+ * runtime refusal reports.
  *
  * Server component: no client state, just rendering.
  */

@@ -193,6 +193,14 @@ describe('OrgProvidersForm', () => {
     );
   });
 
+  it('flags no provider as outside the jurisdictions until one is named', async () => {
+    const user = renderForm();
+
+    await user.click(screen.getByRole('switch', { name: /Restrict to jurisdictions/ }));
+
+    expect(screen.queryByText(/outside the jurisdictions/)).not.toBeInTheDocument();
+  });
+
   it('says the policy is not enforced at single, and still lets it be edited', () => {
     renderForm(policy({ enforced: false }));
     expect(screen.getByText(/Provider policy is not enforced on this install/)).toBeInTheDocument();

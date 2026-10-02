@@ -5,8 +5,8 @@
  *      is hydrated with `apiKeyPresent: boolean` via `listProvidersWithStatus`.
  *      The env var *value* is NEVER returned or logged. Each row also carries
  *      `approvedForOrg`: whether the org in context may use it (§120 t-745) —
- *      always `true` at `single` and for the install org, `null` when the
- *      org's policy could not be read.
+ *      always `true` at `single` and for the install org, `null` when it is
+ *      unknown (no org in scope, or the policy could not be read).
  * POST /api/v1/admin/orchestration/providers — create a new provider row.
  *
  * Authentication: Admin role required.
@@ -22,8 +22,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { clearCache as clearProviderCache } from '@/lib/orchestration/llm/provider-manager';
 import { hasProviderKey } from '@/lib/orchestration/llm/provider-credentials';
-import { unapprovedProviders } from '@/lib/orchestration/llm/org-provider-policy';
-import { logger } from '@/lib/logging';
+import { refusedProvidersOrUnknown } from '@/lib/orchestration/agents/provider-approval';
 import { getCircuitBreakerStatusForProvider } from '@/lib/orchestration/llm/circuit-breaker';
 import { listProvidersQuerySchema, providerConfigSchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -61,8 +60,10 @@ export const GET = withAdminAuth(async (request, _session) => {
 
   // `apiKeyPresent` asks the credential seam (§120 t-744): with a fork
   // resolver registered the env var may be deliberately empty.
-  const keyPresent = await Promise.all(rows.map((config) => hasProviderKey(config)));
-  const refused = await refusedForOrg(rows.map((config) => config.slug));
+  const [keyPresent, refused] = await Promise.all([
+    Promise.all(rows.map((config) => hasProviderKey(config))),
+    refusedProvidersOrUnknown(rows.map((config) => config.slug)),
+  ]);
   const data = rows.map((config, index) => ({
     ...config,
     apiKeyPresent: keyPresent[index],
@@ -77,22 +78,6 @@ export const GET = withAdminAuth(async (request, _session) => {
 
   return paginatedResponse(data, { page, limit, total });
 });
-
-/**
- * The slugs the org in context may not use, by core's policy — what the agent
- * form disables (§120 t-745). `null` when the policy cannot be read: the list
- * still loads, and the form leaves the choice to the save, which refuses.
- */
-async function refusedForOrg(slugs: string[]): Promise<Set<string> | null> {
-  try {
-    return new Set(await unapprovedProviders(slugs));
-  } catch (error) {
-    logger.warn('Providers listed without checking the org provider policy', {
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  }
-}
 
 export const POST = withAdminAuth(async (request, session) => {
   const clientIP = getClientIP(request);

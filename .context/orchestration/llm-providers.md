@@ -684,8 +684,9 @@ the reason, as primary and as fallback — unless the agent already holds it.
 An agent stranded by a later change shows a "Not approved" badge in the agents
 list and a banner on its edit page. The data comes from the list endpoints:
 `approvedForOrg` on each row of `GET /providers`, and `_unapprovedProviders`
-on each agent from `GET /agents` and `GET /agents/:id` (`null` when the
-policy could not be read — a read is decorated, never failed, by it).
+on each agent from `GET /agents` and `GET /agents/:id` (`null` when that is
+unknown — no org in scope, or a policy that could not be read; a read is
+decorated, never failed, by it).
 
 How it is applied:
 

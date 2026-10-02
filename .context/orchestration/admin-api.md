@@ -112,7 +112,7 @@ Validation schemas for every payload live in `lib/validations/orchestration.ts`.
 GET /api/v1/admin/orchestration/agents?page=1&limit=20&isActive=true&provider=anthropic&q=support
 ```
 
-Filters: `isActive` (coerced bool), `provider` (exact match), `q` (case-insensitive `OR` across `name` / `slug` / `description`). Response uses `paginatedResponse` — `{ success, data, meta: { page, limit, total, totalPages } }`. Each item includes `_count: { capabilities, conversations }`, `_budget: BudgetSummary | null` (batch-computed via `groupBy` — not per-row) and `_unapprovedProviders: string[] | null` — the providers the agent names that its org is no longer approved for (§120 t-745; one policy read for the page, `null` when it could not be read). `GET /agents/:id` carries the same field. Types: `AiAgentListItem` in `types/orchestration.ts`.
+Filters: `isActive` (coerced bool), `provider` (exact match), `q` (case-insensitive `OR` across `name` / `slug` / `description`). Response uses `paginatedResponse` — `{ success, data, meta: { page, limit, total, totalPages } }`. Each item includes `_count: { capabilities, conversations }`, `_budget: BudgetSummary | null` (batch-computed via `groupBy` — not per-row) and `_unapprovedProviders: string[] | null` — the providers the agent names that its org is no longer approved for (§120 t-745; one policy read for the page, `null` when unknown: no org in scope, or the policy could not be read). `GET /agents/:id` carries the same field. Types: `AiAgentListItem` in `types/orchestration.ts`.
 
 ### Create agent
 
@@ -474,7 +474,7 @@ No DNS resolution happens at validate-time — defending against DNS rebinding w
 curl '/api/v1/admin/orchestration/providers?isActive=true&providerType=anthropic&q=claude'
 ```
 
-Filters: `isActive` (coerced bool), `providerType` (`anthropic` / `openai-compatible`), `isLocal` (coerced bool), `q` (case-insensitive match on `name` / `slug`). Response is paginated; each row carries `apiKeyPresent`, `approvedForOrg` (whether the org in context may use it, §120 t-745: always `true` at `single` and for the install org, `null` when the policy could not be read) and `circuitBreaker: { state, failureCount, openedAt, config }` (from in-memory breaker state, defaults to `{ state: 'closed', failureCount: 0 }` if no breaker exists).
+Filters: `isActive` (coerced bool), `providerType` (`anthropic` / `openai-compatible`), `isLocal` (coerced bool), `q` (case-insensitive match on `name` / `slug`). Response is paginated; each row carries `apiKeyPresent`, `approvedForOrg` (whether the org in context may use it, §120 t-745: always `true` at `single` and for the install org, `null` when unknown: no org in scope, or the policy could not be read) and `circuitBreaker: { state, failureCount, openedAt, config }` (from in-memory breaker state, defaults to `{ state: 'closed', failureCount: 0 }` if no breaker exists).
 
 ```bash
 curl -X POST /api/v1/admin/orchestration/providers \

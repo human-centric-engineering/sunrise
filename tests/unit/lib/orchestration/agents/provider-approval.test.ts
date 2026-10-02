@@ -37,6 +37,7 @@ import {
   assertAgentProvidersApproved,
   findUnapprovedAgentProviders,
   importedAgentProviderWarnings,
+  refusedProvidersOrUnknown,
   strandedAgentProviders,
 } from '@/lib/orchestration/agents/provider-approval';
 import {
@@ -255,6 +256,12 @@ describe('strandedAgentProviders', () => {
     expect(await inOrg(() => strandedAgentProviders([{ id: 'a1', provider: 'openai' }]))).toEqual(
       new Map([['a1', []]])
     );
+  });
+
+  it('answers null with no organisation in scope, rather than calling every provider refused', async () => {
+    expect(await strandedAgentProviders([{ id: 'a1', provider: 'anthropic' }])).toBeNull();
+    expect(await refusedProvidersOrUnknown(['anthropic'])).toBeNull();
+    expect(prisma.org.findUnique).not.toHaveBeenCalled();
   });
 
   it('answers null, not "all clear", when the policy cannot be read', async () => {

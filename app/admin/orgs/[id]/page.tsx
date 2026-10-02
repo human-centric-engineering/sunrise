@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import { parsePaginationMeta } from '@/lib/validations/common';
 
 export const metadata: Metadata = {
   title: 'Organisation',
@@ -38,24 +39,64 @@ async function fetchData<T>(path: string, what: string): Promise<T | null> {
 }
 
 /**
+ * The org, or `null` when there is no such org. Any other failure throws to
+ * the admin error boundary: a database blip is not "this organisation does
+ * not exist".
+ */
+async function getOrg(id: string): Promise<OrgDetail | null> {
+  const res = await serverFetch(API.ADMIN.orgById(id));
+  // 400 is an id that cannot name an org (it fails the id schema).
+  if (res.status === 404 || res.status === 400) return null;
+  if (!res.ok) throw new Error(`Organisation could not be loaded (HTTP ${res.status})`);
+  const body = await parseApiResponse<OrgDetail>(res);
+  if (!body.success) throw new Error('Organisation could not be loaded');
+  return body.data;
+}
+
+/** The most providers the list endpoint returns per page. */
+const PROVIDER_PAGE = 100;
+
+/**
+ * Every provider, across pages: a provider the form does not list can be
+ * neither granted nor revoked, so one page is not enough. `null` if any page
+ * fails, so the form is not offered over a partial list.
+ */
+async function getAllProviders(): Promise<OrgProviderOption[] | null> {
+  const all: OrgProviderOption[] = [];
+  for (let page = 1; ; page++) {
+    try {
+      const res = await serverFetch(
+        `${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=${page}&limit=${PROVIDER_PAGE}`
+      );
+      if (!res.ok) return null;
+      const body = await parseApiResponse<OrgProviderOption[]>(res);
+      if (!body.success) return null;
+      all.push(...body.data);
+      const meta = parsePaginationMeta(body.meta);
+      if (!meta || page >= meta.totalPages || body.data.length === 0) return all;
+    } catch (err) {
+      logger.error('org page: providers fetch failed', err, { page });
+      return null;
+    }
+  }
+}
+
+/**
  * Admin — one organisation (§120 t-745).
  *
  * Server shell: the org (`GET /api/v1/admin/orgs/[id]`), its provider policy
  * (`GET …/providers`) and the provider list, in parallel. Only the approved
  * providers are editable here; rename, suspend and members stay API-only. A
- * missing org is a 404; a policy or provider fetch that fails says so in
- * place of the form, rather than offering an empty set to save over the real
- * one.
+ * missing org is a 404, and any other failure to load it goes to the error
+ * boundary. A policy or provider fetch that fails says so in place of the
+ * form, rather than offering a partial set to save over the real one.
  */
 export default async function OrgPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const [org, policy, providers] = await Promise.all([
-    fetchData<OrgDetail>(API.ADMIN.orgById(id), 'org'),
+    getOrg(id),
     fetchData<OrgProviderPolicyView>(API.ADMIN.orgProviders(id), 'provider policy'),
-    fetchData<OrgProviderOption[]>(
-      `${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=100`,
-      'providers'
-    ),
+    getAllProviders(),
   ]);
 
   if (!org) notFound();

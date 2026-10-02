@@ -202,7 +202,7 @@ export type AgentWithGrants = AiAgent & {
   } | null;
   /**
    * Providers the agent names that its org is no longer approved for (§120
-   * t-745), from `GET /agents/:id`. `null` when the policy could not be read.
+   * t-745), from `GET /agents/:id`. `null` when unknown (no org in scope, or the policy could not be read).
    */
   _unapprovedProviders?: string[] | null;
 };

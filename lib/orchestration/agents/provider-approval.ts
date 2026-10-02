@@ -106,30 +106,52 @@ export interface StoredAgentProviders extends AgentProviderFields {
 }
 
 /**
- * For the admin reads (§120 t-745): per agent, the providers it names that its
- * org is no longer approved for — an agent stranded by a policy change, whose
- * calls the runtime refuses. Keyed by agent id; an agent naming none is `[]`.
+ * For admin reads that decorate a list with the org's provider policy (§120
+ * t-745): the slugs among `slugs` the org in context may not use, or `null`
+ * when that is unknown.
  *
- * One policy read for the whole page. `null` when the policy cannot be read:
- * this decorates a list, so it says "unknown" rather than failing the read or
- * reporting every agent healthy.
+ * Unknown is two cases. With no org in scope (`multi`, a platform credential
+ * outside any org) there is no org to judge against: the policy would refuse
+ * everything, and saying "this organisation is not approved" of every
+ * provider would be false. And a policy that cannot be read is logged and
+ * reported as unknown rather than failing the read or reporting all clear.
  */
-export async function strandedAgentProviders(
-  agents: readonly StoredAgentProviders[]
-): Promise<Map<string, string[]> | null> {
-  let refused: Set<string>;
+export async function refusedProvidersOrUnknown(
+  slugs: readonly string[]
+): Promise<Set<string> | null> {
+  if (orgProviderPolicyScope() === 'no-org') return null;
   try {
-    refused = new Set(
-      await unapprovedProviders(
-        agents.flatMap((agent) => [agent.provider ?? '', ...(agent.fallbackProviders ?? [])])
-      )
-    );
+    return new Set(await unapprovedProviders(slugs));
   } catch (error) {
-    logger.warn('Could not check agents against the org provider policy', {
+    logger.warn('Could not read the org provider policy for an admin read', {
       error: error instanceof Error ? error.message : String(error),
     });
     return null;
   }
+}
+
+/**
+ * For the admin reads (§120 t-745): per agent, the providers it names that its
+ * org is no longer approved for — an agent stranded by a policy change, whose
+ * calls the runtime refuses. Keyed by agent id; an agent naming none is `[]`.
+ *
+ * One policy read for the whole page; the read is scoped to the org in
+ * context, as the list is. `null` when that is unknown (see
+ * {@link refusedProvidersOrUnknown}).
+ *
+ * An agent that names no provider of its own (`provider: ''`) inherits one
+ * per turn, chosen among what the org may use, so it is never stranded by a
+ * provider it names. It can still fail when the org may use no reachable
+ * provider at all; that is the org's state, not the agent's, and the runtime
+ * refusal names the org's approved providers.
+ */
+export async function strandedAgentProviders(
+  agents: readonly StoredAgentProviders[]
+): Promise<Map<string, string[]> | null> {
+  const refused = await refusedProvidersOrUnknown(
+    agents.flatMap((agent) => [agent.provider ?? '', ...(agent.fallbackProviders ?? [])])
+  );
+  if (refused === null) return null;
   return new Map(
     agents.map((agent) => [
       agent.id,

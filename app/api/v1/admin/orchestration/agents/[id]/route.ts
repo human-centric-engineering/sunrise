@@ -106,7 +106,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   // findUnique with a partial shape from blowing up at runtime.
   const { grantedTags, grantedDocuments, ...rest } = agent;
   // What the edit page's stranded-agent banner reads (§120 t-745); `null`
-  // when the org's provider policy could not be read.
+  // when that is unknown (no org in scope, or the policy could not be read).
   const stranded = await strandedAgentProviders([agent]);
   const response = {
     ...rest,
