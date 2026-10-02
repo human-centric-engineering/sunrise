@@ -598,6 +598,20 @@ describe('listMcpResourceTemplates', () => {
     expect(result).toEqual([]);
   });
 
+  it('serves the cached snapshot until clearMcpResourceCache, then re-reads', async () => {
+    vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValueOnce([
+      makeResourceRow({ uri: 'app://project/{slug}' }),
+    ] as never);
+    vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValueOnce([] as never);
+
+    expect(await listMcpResourceTemplates()).toHaveLength(1);
+    // Still cached — the row an admin just disabled stays until the cache clears.
+    expect(await listMcpResourceTemplates()).toHaveLength(1);
+    clearMcpResourceCache();
+    expect(await listMcpResourceTemplates()).toEqual([]);
+    expect(prisma.mcpExposedResource.findMany).toHaveBeenCalledTimes(2);
+  });
+
   it('returns templates for resources whose URI contains {param} placeholders', async () => {
     vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([
       makeResourceRow({

@@ -445,7 +445,12 @@ release process.
   `resources/list` and `resources/templates/list`, and a client reading the
   first sent the literal `{slug}`. It now leaves those rows out, the inverse of
   the filter `listMcpResourceTemplates()` applies, so each row lists in exactly
-  one. `isRegisteredMcpResourceUri()` still matches concrete instances of a
+  one. Both lists now read the same 5-minute cached snapshot, so
+  `listMcpResourceTemplates()` is cached where it used to query on every call;
+  the admin routes already clear that cache on every change, and a fork that
+  writes `McpExposedResource` rows directly should call
+  `clearMcpResourceCache()` as it already had to for `listMcpResources()`.
+  `isRegisteredMcpResourceUri()` still matches concrete instances of a
   template. Sunrise's own seeded resources are all concrete and are unaffected.
 - **Backup import no longer overwrites a system workflow** (t-729). The
   provider-model audit (`tpl-provider-model-audit`, `isSystem: true`) was
