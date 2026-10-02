@@ -26,7 +26,13 @@
 import { NextRequest } from 'next/server';
 import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
-import { UnauthorizedError, ForbiddenError, handleAPIError } from '@/lib/api/errors';
+import {
+  APIError,
+  ErrorCodes,
+  UnauthorizedError,
+  ForbiddenError,
+  handleAPIError,
+} from '@/lib/api/errors';
 import {
   resolveApiKey,
   hasScope,
@@ -54,6 +60,11 @@ import {
   type OrgRefusal,
 } from '@/lib/tenancy/entry';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
+import {
+  canChangeSharedSettings,
+  SHARED_SETTINGS_REFUSAL,
+  SHARED_SETTINGS_REFUSAL_REASON,
+} from '@/lib/tenancy/shared-settings';
 
 /**
  * Session type from better-auth (matches AuthSession in utils.ts)
@@ -370,6 +381,17 @@ export interface WithAdminAuthOptions<TParams = Record<string, string>> {
    * are the routes that start asking for one.
    */
   ownership?: RouteOwnership;
+  /**
+   * This route creates, changes or deletes a shared setting — a row of one of
+   * the `GLOBAL_CONFIG_MODELS`, which every org reads (§107 t-751). At
+   * `multi`, a session entered into any org but the install org is refused
+   * with a 403 telling the admin to switch to the install org; an unbound
+   * admin API key, which enters no org, is allowed. At `single` it changes
+   * nothing. Set it on the write handlers only: the same admin in a customer
+   * org keeps reading these pages. `tests/unit/scripts/ci/shared-settings-writes.test.ts`
+   * fails naming any route that writes one of those models without it.
+   */
+  writesSharedSettings?: true;
 }
 
 /**
@@ -1282,6 +1304,19 @@ export function withAdminAuth(
             credential: principal.credential,
           });
           throw new ForbiddenError('Admin access required');
+        }
+
+        // After the policy, so a caller who may not administer at all still
+        // gets the ordinary refusal rather than learning about the install org.
+        if (options?.writesSharedSettings && !canChangeSharedSettings()) {
+          logger.warn('tenancy: refused a shared-settings write outside the install org', {
+            path: (request as NextRequest).nextUrl?.pathname,
+            userId: principal.userId,
+            orgId: entry?.orgId,
+          });
+          throw new APIError(SHARED_SETTINGS_REFUSAL, ErrorCodes.FORBIDDEN, 403, {
+            reason: SHARED_SETTINGS_REFUSAL_REASON,
+          });
         }
 
         return runHandler({

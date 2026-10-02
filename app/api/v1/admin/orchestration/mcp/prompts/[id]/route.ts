@@ -19,66 +19,72 @@ import { clearMcpPromptCache, MAX_ENABLED_PROMPTS } from '@/lib/orchestration/mc
 import { updatePromptSchema } from '@/lib/validations/mcp';
 import { cuidSchema } from '@/lib/validations/common';
 
-export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const { id } = await params;
-  cuidSchema.parse(id);
+export const PATCH = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const { id } = await params;
+    cuidSchema.parse(id);
 
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, updatePromptSchema);
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, updatePromptSchema);
 
-  const existing = await prisma.mcpExposedPrompt.findUnique({ where: { id } });
-  if (!existing) throw new NotFoundError('Prompt not found');
+    const existing = await prisma.mcpExposedPrompt.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundError('Prompt not found');
 
-  // Re-enabling a disabled prompt must also respect the cap.
-  if (body.isEnabled === true && !existing.isEnabled) {
-    const enabledCount = await prisma.mcpExposedPrompt.count({ where: { isEnabled: true } });
-    if (enabledCount >= MAX_ENABLED_PROMPTS) {
-      return errorResponse(
-        `Cannot enable another prompt — the limit of ${String(MAX_ENABLED_PROMPTS)} has been reached.`,
-        { code: 'PROMPT_CAP_EXCEEDED', status: 409 }
-      );
+    // Re-enabling a disabled prompt must also respect the cap.
+    if (body.isEnabled === true && !existing.isEnabled) {
+      const enabledCount = await prisma.mcpExposedPrompt.count({ where: { isEnabled: true } });
+      if (enabledCount >= MAX_ENABLED_PROMPTS) {
+        return errorResponse(
+          `Cannot enable another prompt — the limit of ${String(MAX_ENABLED_PROMPTS)} has been reached.`,
+          { code: 'PROMPT_CAP_EXCEEDED', status: 409 }
+        );
+      }
     }
-  }
 
-  const { argumentsSpec, ...rest } = body;
-  const data: Record<string, unknown> = { ...rest };
-  if (argumentsSpec !== undefined) {
-    data.argumentsSpec = argumentsSpec;
-  }
+    const { argumentsSpec, ...rest } = body;
+    const data: Record<string, unknown> = { ...rest };
+    if (argumentsSpec !== undefined) {
+      data.argumentsSpec = argumentsSpec;
+    }
 
-  const updated = await prisma.mcpExposedPrompt.update({
-    where: { id },
-    data,
-  });
+    const updated = await prisma.mcpExposedPrompt.update({
+      where: { id },
+      data,
+    });
 
-  clearMcpPromptCache();
+    clearMcpPromptCache();
 
-  log.info('MCP prompt updated', {
-    adminId: session.user.id,
-    promptId: id,
-    changedKeys: Object.keys(body),
-  });
+    log.info('MCP prompt updated', {
+      adminId: session.user.id,
+      promptId: id,
+      changedKeys: Object.keys(body),
+    });
 
-  return successResponse(updated);
-});
+    return successResponse(updated);
+  },
+  { writesSharedSettings: true }
+);
 
-export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const { id } = await params;
-  cuidSchema.parse(id);
+export const DELETE = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const { id } = await params;
+    cuidSchema.parse(id);
 
-  const log = await getRouteLogger(request);
+    const log = await getRouteLogger(request);
 
-  const existing = await prisma.mcpExposedPrompt.findUnique({ where: { id } });
-  if (!existing) throw new NotFoundError('Prompt not found');
+    const existing = await prisma.mcpExposedPrompt.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundError('Prompt not found');
 
-  await prisma.mcpExposedPrompt.delete({ where: { id } });
-  clearMcpPromptCache();
+    await prisma.mcpExposedPrompt.delete({ where: { id } });
+    clearMcpPromptCache();
 
-  log.info('MCP prompt deleted', {
-    adminId: session.user.id,
-    promptId: id,
-    name: existing.name,
-  });
+    log.info('MCP prompt deleted', {
+      adminId: session.user.id,
+      promptId: id,
+      name: existing.name,
+    });
 
-  return successResponse({ id, deleted: true });
-});
+    return successResponse({ id, deleted: true });
+  },
+  { writesSharedSettings: true }
+);

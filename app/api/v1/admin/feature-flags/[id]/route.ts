@@ -65,45 +65,48 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
  * @throws ForbiddenError if not admin
  * @throws NotFoundError if flag doesn't exist
  */
-export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
+export const PATCH = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
 
-  // Await params (Next.js 16 requirement)
-  const { id: flagId } = await params;
+    // Await params (Next.js 16 requirement)
+    const { id: flagId } = await params;
 
-  log.info('Updating feature flag', { flagId });
+    log.info('Updating feature flag', { flagId });
 
-  // Validate flag ID parameter
-  const { id } = validateQueryParams(new URLSearchParams({ id: flagId }), featureFlagIdSchema);
+    // Validate flag ID parameter
+    const { id } = validateQueryParams(new URLSearchParams({ id: flagId }), featureFlagIdSchema);
 
-  // Check if flag exists
-  const existingFlag = await prisma.featureFlag.findUnique({
-    where: { id },
-  });
+    // Check if flag exists
+    const existingFlag = await prisma.featureFlag.findUnique({
+      where: { id },
+    });
 
-  if (!existingFlag) {
-    throw new NotFoundError('Feature flag not found');
-  }
+    if (!existingFlag) {
+      throw new NotFoundError('Feature flag not found');
+    }
 
-  // Validate request body
-  const body = await validateRequestBody(request, updateFeatureFlagSchema);
+    // Validate request body
+    const body = await validateRequestBody(request, updateFeatureFlagSchema);
 
-  // Update the flag
-  const flag = await updateFlag(id, {
-    description: body.description,
-    enabled: body.enabled,
-    metadata: body.metadata,
-  });
+    // Update the flag
+    const flag = await updateFlag(id, {
+      description: body.description,
+      enabled: body.enabled,
+      metadata: body.metadata,
+    });
 
-  log.info('Feature flag updated', {
-    flagId: id,
-    name: flag.name,
-    adminId: session.user.id,
-    changes: body,
-  });
+    log.info('Feature flag updated', {
+      flagId: id,
+      name: flag.name,
+      adminId: session.user.id,
+      changes: body,
+    });
 
-  return successResponse(flag);
-});
+    return successResponse(flag);
+  },
+  { writesSharedSettings: true }
+);
 
 /**
  * DELETE /api/v1/admin/feature-flags/:id
@@ -116,34 +119,37 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
  * @throws ForbiddenError if not admin
  * @throws NotFoundError if flag doesn't exist
  */
-export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
+export const DELETE = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
 
-  // Await params (Next.js 16 requirement)
-  const { id: flagId } = await params;
+    // Await params (Next.js 16 requirement)
+    const { id: flagId } = await params;
 
-  log.info('Deleting feature flag', { flagId });
+    log.info('Deleting feature flag', { flagId });
 
-  // Validate flag ID parameter
-  const { id } = validateQueryParams(new URLSearchParams({ id: flagId }), featureFlagIdSchema);
+    // Validate flag ID parameter
+    const { id } = validateQueryParams(new URLSearchParams({ id: flagId }), featureFlagIdSchema);
 
-  // Check if flag exists
-  const existingFlag = await prisma.featureFlag.findUnique({
-    where: { id },
-  });
+    // Check if flag exists
+    const existingFlag = await prisma.featureFlag.findUnique({
+      where: { id },
+    });
 
-  if (!existingFlag) {
-    throw new NotFoundError('Feature flag not found');
-  }
+    if (!existingFlag) {
+      throw new NotFoundError('Feature flag not found');
+    }
 
-  // Delete the flag
-  await deleteFlag(id);
+    // Delete the flag
+    await deleteFlag(id);
 
-  log.info('Feature flag deleted', {
-    flagId: id,
-    name: existingFlag.name,
-    adminId: session.user.id,
-  });
+    log.info('Feature flag deleted', {
+      flagId: id,
+      name: existingFlag.name,
+      adminId: session.user.id,
+    });
 
-  return successResponse({ id, deleted: true });
-});
+    return successResponse({ id, deleted: true });
+  },
+  { writesSharedSettings: true }
+);

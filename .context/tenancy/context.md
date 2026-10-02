@@ -174,6 +174,15 @@ org starts in the active one; a user whose every org is suspended starts in
 the most recent of them and is refused at entry, which is what suspension
 means.
 
+**A shared-settings write is refused outside the install org** (§107 t-751).
+`withAdminAuth(handler, { writesSharedSettings: true })` enters the session's
+org as usual, then, after the policy has admitted the caller, refuses a write
+at `multi` from any org but the install org, with a 403 that says to switch
+to the install org. An admin API key enters no org and passes. It is the
+one guard check that reads which org was entered rather than whether the
+caller may enter it; the rule and the routes that declare it are in
+[isolation.md](./isolation.md#the-policy).
+
 **Then the guard carries the org two ways:** on the principal (`viewer.orgId`,
 `viewer.orgRole`) for the policy, and as the tenant context that the
 route's `resource` resolver, the policy call and the handler all run inside

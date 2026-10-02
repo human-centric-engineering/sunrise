@@ -40,30 +40,33 @@ export const GET = withAdminAuth(async (request) => {
   return paginatedResponse(items, { page, limit, total });
 });
 
-export const POST = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, createExposedToolSchema);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, createExposedToolSchema);
 
-  const tool = await prisma.mcpExposedTool.create({
-    data: {
-      capabilityId: body.capabilityId,
-      isEnabled: body.isEnabled,
-      customName: body.customName ?? null,
-      customDescription: body.customDescription ?? null,
-      rateLimitPerKey: body.rateLimitPerKey ?? null,
-      requiresScope: body.requiresScope ?? null,
-    },
-    include: { capability: true },
-  });
+    const tool = await prisma.mcpExposedTool.create({
+      data: {
+        capabilityId: body.capabilityId,
+        isEnabled: body.isEnabled,
+        customName: body.customName ?? null,
+        customDescription: body.customDescription ?? null,
+        rateLimitPerKey: body.rateLimitPerKey ?? null,
+        requiresScope: body.requiresScope ?? null,
+      },
+      include: { capability: true },
+    });
 
-  clearMcpToolCache();
+    clearMcpToolCache();
 
-  log.info('MCP exposed tool created', {
-    adminId: session.user.id,
-    toolId: tool.id,
-    capabilitySlug: tool.capability.slug,
-    isEnabled: tool.isEnabled,
-  });
+    log.info('MCP exposed tool created', {
+      adminId: session.user.id,
+      toolId: tool.id,
+      capabilitySlug: tool.capability.slug,
+      isEnabled: tool.isEnabled,
+    });
 
-  return successResponse(tool, undefined, { status: 201 });
-});
+    return successResponse(tool, undefined, { status: 201 });
+  },
+  { writesSharedSettings: true }
+);

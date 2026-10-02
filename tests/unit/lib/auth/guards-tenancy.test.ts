@@ -55,6 +55,10 @@ import {
 } from '@/lib/auth/authorization';
 import { getTenantContext, type TenantContext } from '@/lib/tenancy/context';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
+import {
+  SHARED_SETTINGS_REFUSAL,
+  SHARED_SETTINGS_REFUSAL_REASON,
+} from '@/lib/tenancy/shared-settings';
 
 const OTHER = 'cmorg000000000000000other';
 const NOT_ABOUT_OWNERSHIP = {
@@ -488,5 +492,94 @@ describe('the scope', () => {
 
     expect(askedWith[0]).toEqual({ orgId: OTHER, orgRole: ORG_ADMIN_ROLE, scope: { org: OTHER } });
     expect(seen[0].context?.orgId).toBe(OTHER);
+  });
+});
+
+describe('a route that writes shared settings (§107 t-751)', () => {
+  const SHARED = { writesSharedSettings: true } as const;
+
+  /** A write handler that records each time it actually runs. */
+  function sharedWrite() {
+    const ran: (string | null | undefined)[] = [];
+    const handler = withAdminAuth(() => {
+      ran.push(getTenantContext()?.orgId);
+      return ok();
+    }, SHARED);
+    return { handler, ran };
+  }
+
+  it('at multi refuses a platform admin switched into a customer org, naming the install org', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', OTHER));
+    memberOf(ORG_OWNER_ROLE);
+    const { handler, ran } = sharedWrite();
+
+    const res = await handler(request());
+    const body = (await res.json()) as {
+      success: boolean;
+      error: { code: string; message: string; details?: Record<string, unknown> };
+    };
+
+    expect(res.status).toBe(403);
+    expect(body.error.code).toBe('FORBIDDEN');
+    expect(body.error.message).toBe(SHARED_SETTINGS_REFUSAL);
+    expect(body.error.details).toEqual({ reason: SHARED_SETTINGS_REFUSAL_REASON });
+    expect(ran).toEqual([]);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'tenancy: refused a shared-settings write outside the install org',
+      expect.objectContaining({ userId: 'user_1', orgId: OTHER })
+    );
+  });
+
+  it('control: the same session reaches a route that does not declare it — reads stay open', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', OTHER));
+    memberOf(ORG_OWNER_ROLE);
+
+    const res = await withAdminAuth(() => ok())(request());
+
+    expect(res.status).toBe(200);
+  });
+
+  it('at multi allows the install org', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', INSTALL_ORG_ID));
+    memberOf(ORG_OWNER_ROLE);
+    const { handler, ran } = sharedWrite();
+
+    expect((await handler(request())).status).toBe(200);
+    expect(ran).toEqual([INSTALL_ORG_ID]);
+  });
+
+  it('at multi allows an unbound admin API key, which enters no org', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    vi.mocked(resolveApiKey).mockResolvedValue(apiKey(['admin'], null));
+    const { handler, ran } = sharedWrite();
+
+    expect((await handler(request())).status).toBe(200);
+    expect(ran).toEqual([undefined]);
+  });
+
+  it('changes nothing at single, whatever org the session names', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN', OTHER));
+    memberOf(ORG_OWNER_ROLE);
+    const { handler, ran } = sharedWrite();
+
+    expect((await handler(request())).status).toBe(200);
+    expect(ran).toEqual([OTHER]);
+  });
+
+  it('answers a caller who may not administer with the ordinary refusal, not the install-org one', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER', OTHER));
+    memberOf(ORG_ADMIN_ROLE);
+    const { handler, ran } = sharedWrite();
+
+    const res = await handler(request());
+    const body = (await res.json()) as { error: { message: string } };
+
+    expect(res.status).toBe(403);
+    expect(body.error.message).toBe('Admin access required');
+    expect(ran).toEqual([]);
   });
 });

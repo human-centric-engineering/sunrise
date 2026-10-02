@@ -46,33 +46,36 @@ export const GET = withAdminAuth(async (request, _session) => {
  * @throws ForbiddenError if not admin
  * @throws ConflictError if flag name already exists
  */
-export const POST = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  log.info('Creating feature flag');
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    log.info('Creating feature flag');
 
-  // Validate request body
-  const body = await validateRequestBody(request, createFeatureFlagSchema);
+    // Validate request body
+    const body = await validateRequestBody(request, createFeatureFlagSchema);
 
-  // Check if flag with same name already exists
-  const existingFlag = await getFlag(body.name);
-  if (existingFlag) {
-    throw new ConflictError(`Feature flag '${body.name}' already exists`);
-  }
+    // Check if flag with same name already exists
+    const existingFlag = await getFlag(body.name);
+    if (existingFlag) {
+      throw new ConflictError(`Feature flag '${body.name}' already exists`);
+    }
 
-  // Create the flag
-  const flag = await createFlag({
-    name: body.name,
-    description: body.description,
-    enabled: body.enabled,
-    metadata: body.metadata,
-    createdBy: session.user.id,
-  });
+    // Create the flag
+    const flag = await createFlag({
+      name: body.name,
+      description: body.description,
+      enabled: body.enabled,
+      metadata: body.metadata,
+      createdBy: session.user.id,
+    });
 
-  log.info('Feature flag created', {
-    flagId: flag.id,
-    name: flag.name,
-    adminId: session.user.id,
-  });
+    log.info('Feature flag created', {
+      flagId: flag.id,
+      name: flag.name,
+      adminId: session.user.id,
+    });
 
-  return successResponse(flag, undefined, { status: 201 });
-});
+    return successResponse(flag, undefined, { status: 201 });
+  },
+  { writesSharedSettings: true }
+);

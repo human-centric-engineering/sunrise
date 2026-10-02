@@ -156,55 +156,58 @@ export const GET = withAdminAuth(async (request, _session) => {
   return paginatedResponse(data, { page, limit, total });
 });
 
-export const POST = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, createProviderModelSchema);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, createProviderModelSchema);
 
-  try {
-    const model = await prisma.aiProviderModel.create({
-      data: {
-        name: body.name,
-        slug: body.slug,
-        providerSlug: body.providerSlug,
-        modelId: body.modelId,
-        description: body.description,
-        capabilities: body.capabilities,
-        tierRole: body.tierRole,
-        reasoningDepth: body.reasoningDepth,
-        latency: body.latency,
-        costEfficiency: body.costEfficiency,
-        contextLength: body.contextLength,
-        toolUse: body.toolUse,
-        paramProfile: body.paramProfile ?? null,
-        bestRole: body.bestRole,
-        dimensions: body.dimensions ?? null,
-        schemaCompatible: body.schemaCompatible ?? null,
-        costPerMillionTokens: body.costPerMillionTokens ?? null,
-        hasFreeTier: body.hasFreeTier ?? null,
-        local: body.local,
-        quality: body.quality ?? null,
-        strengths: body.strengths ?? null,
-        setup: body.setup ?? null,
-        isDefault: false, // admin-created models are never re-seedable
-        isActive: body.isActive,
-        metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-        createdBy: session.user.id,
-      },
-    });
+    try {
+      const model = await prisma.aiProviderModel.create({
+        data: {
+          name: body.name,
+          slug: body.slug,
+          providerSlug: body.providerSlug,
+          modelId: body.modelId,
+          description: body.description,
+          capabilities: body.capabilities,
+          tierRole: body.tierRole,
+          reasoningDepth: body.reasoningDepth,
+          latency: body.latency,
+          costEfficiency: body.costEfficiency,
+          contextLength: body.contextLength,
+          toolUse: body.toolUse,
+          paramProfile: body.paramProfile ?? null,
+          bestRole: body.bestRole,
+          dimensions: body.dimensions ?? null,
+          schemaCompatible: body.schemaCompatible ?? null,
+          costPerMillionTokens: body.costPerMillionTokens ?? null,
+          hasFreeTier: body.hasFreeTier ?? null,
+          local: body.local,
+          quality: body.quality ?? null,
+          strengths: body.strengths ?? null,
+          setup: body.setup ?? null,
+          isDefault: false, // admin-created models are never re-seedable
+          isActive: body.isActive,
+          metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          createdBy: session.user.id,
+        },
+      });
 
-    invalidateModelCache();
+      invalidateModelCache();
 
-    log.info('Provider model created', {
-      modelId: model.id,
-      slug: model.slug,
-      adminId: session.user.id,
-    });
+      log.info('Provider model created', {
+        modelId: model.id,
+        slug: model.slug,
+        adminId: session.user.id,
+      });
 
-    return successResponse(model, undefined, { status: 201 });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      throw new ConflictError(`Provider model with slug '${body.slug}' already exists`);
+      return successResponse(model, undefined, { status: 201 });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictError(`Provider model with slug '${body.slug}' already exists`);
+      }
+      throw err;
     }
-    throw err;
-  }
-});
+  },
+  { writesSharedSettings: true }
+);

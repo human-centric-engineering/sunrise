@@ -68,45 +68,48 @@ export const GET = withAdminAuth(async (request, _session) => {
   return paginatedResponse(data, { page, limit, total });
 });
 
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, agentProfileFormSchema);
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, agentProfileFormSchema);
 
-  try {
-    const profile = await prisma.aiAgentProfile.create({
-      data: {
-        name: body.name,
-        slug: body.slug,
-        description: body.description ?? null,
-        persona: body.persona ?? null,
-        brandVoiceInstructions: body.brandVoiceInstructions ?? null,
-        guardrails: body.guardrails ?? null,
-        createdBy: session.user.id,
-      },
-    });
+    try {
+      const profile = await prisma.aiAgentProfile.create({
+        data: {
+          name: body.name,
+          slug: body.slug,
+          description: body.description ?? null,
+          persona: body.persona ?? null,
+          brandVoiceInstructions: body.brandVoiceInstructions ?? null,
+          guardrails: body.guardrails ?? null,
+          createdBy: session.user.id,
+        },
+      });
 
-    log.info('Agent profile created', {
-      profileId: profile.id,
-      slug: profile.slug,
-      adminId: session.user.id,
-    });
+      log.info('Agent profile created', {
+        profileId: profile.id,
+        slug: profile.slug,
+        adminId: session.user.id,
+      });
 
-    logAdminAction({
-      userId: session.user.id,
-      action: 'agent_profile.create',
-      entityType: 'agent_profile',
-      entityId: profile.id,
-      entityName: profile.name,
-      clientIp: clientIP,
-    });
+      logAdminAction({
+        userId: session.user.id,
+        action: 'agent_profile.create',
+        entityType: 'agent_profile',
+        entityId: profile.id,
+        entityName: profile.name,
+        clientIp: clientIP,
+      });
 
-    return successResponse({ ...profile, agentCount: 0 }, undefined, { status: 201 });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      throw new ConflictError(`Agent profile with slug '${body.slug}' already exists`);
+      return successResponse({ ...profile, agentCount: 0 }, undefined, { status: 201 });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictError(`Agent profile with slug '${body.slug}' already exists`);
+      }
+      throw err;
     }
-    throw err;
-  }
-});
+  },
+  { writesSharedSettings: true }
+);

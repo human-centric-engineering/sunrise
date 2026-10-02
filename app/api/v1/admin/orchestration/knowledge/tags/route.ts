@@ -66,41 +66,44 @@ export const GET = withAdminAuth(async (request, _session) => {
   return paginatedResponse(tags, { page, limit, total });
 });
 
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, createKnowledgeTagSchema);
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, createKnowledgeTagSchema);
 
-  try {
-    const tag = await prisma.knowledgeTag.create({
-      data: {
-        slug: body.slug,
-        name: body.name,
-        description: body.description ?? null,
-      },
-    });
+    try {
+      const tag = await prisma.knowledgeTag.create({
+        data: {
+          slug: body.slug,
+          name: body.name,
+          description: body.description ?? null,
+        },
+      });
 
-    log.info('Knowledge tag created', {
-      tagId: tag.id,
-      slug: tag.slug,
-      adminId: session.user.id,
-    });
+      log.info('Knowledge tag created', {
+        tagId: tag.id,
+        slug: tag.slug,
+        adminId: session.user.id,
+      });
 
-    logAdminAction({
-      userId: session.user.id,
-      action: 'knowledge_tag.create',
-      entityType: 'knowledge_tag',
-      entityId: tag.id,
-      entityName: tag.name,
-      clientIp: clientIP,
-    });
+      logAdminAction({
+        userId: session.user.id,
+        action: 'knowledge_tag.create',
+        entityType: 'knowledge_tag',
+        entityId: tag.id,
+        entityName: tag.name,
+        clientIp: clientIP,
+      });
 
-    return successResponse(tag, undefined, { status: 201 });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      throw new ConflictError(`Knowledge tag with slug '${body.slug}' already exists`);
+      return successResponse(tag, undefined, { status: 201 });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictError(`Knowledge tag with slug '${body.slug}' already exists`);
+      }
+      throw err;
     }
-    throw err;
-  }
-});
+  },
+  { writesSharedSettings: true }
+);

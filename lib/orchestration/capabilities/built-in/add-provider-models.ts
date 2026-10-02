@@ -23,6 +23,7 @@ import type {
   CapabilityFunctionDefinition,
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
+import { canChangeSharedSettings, SHARED_SETTINGS_REFUSAL } from '@/lib/tenancy/shared-settings';
 
 const newModelSchema = z.object({
   name: z.string().min(1).max(100).trim(),
@@ -182,6 +183,13 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
   protected readonly schema = schema;
 
   async execute(args: Args, context: CapabilityContext): Promise<CapabilityResult<Data>> {
+    // Provider models are shared settings: at `multi` they change only from the
+    // install org (§107 t-751). Any org's workflow can reach this through a
+    // `tool_call` step, so the check is here rather than on a route.
+    if (!canChangeSharedSettings()) {
+      return this.error(SHARED_SETTINGS_REFUSAL, 'shared_settings_install_org_only');
+    }
+
     // Empty array — nothing to add (e.g. approval payload had no new models)
     if (args.newModels.length === 0) {
       return this.success(

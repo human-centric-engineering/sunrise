@@ -74,53 +74,56 @@ export const GET = withAdminAuth(async (request, _session) => {
   return paginatedResponse(capabilities, { page, limit, total });
 });
 
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, createCapabilitySchema);
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, createCapabilitySchema);
 
-  try {
-    const capability = await prisma.aiCapability.create({
-      data: {
-        name: body.name,
-        slug: body.slug,
-        description: body.description,
-        category: body.category,
-        functionDefinition: body.functionDefinition as unknown as Prisma.InputJsonValue,
-        executionType: body.executionType,
-        executionHandler: body.executionHandler,
-        executionConfig: (body.executionConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-        requiresApproval: body.requiresApproval,
-        approvalTimeoutMs: body.approvalTimeoutMs ?? null,
-        rateLimit: body.rateLimit ?? null,
-        isActive: body.isActive,
-        metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-      },
-    });
+    try {
+      const capability = await prisma.aiCapability.create({
+        data: {
+          name: body.name,
+          slug: body.slug,
+          description: body.description,
+          category: body.category,
+          functionDefinition: body.functionDefinition as unknown as Prisma.InputJsonValue,
+          executionType: body.executionType,
+          executionHandler: body.executionHandler,
+          executionConfig: (body.executionConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          requiresApproval: body.requiresApproval,
+          approvalTimeoutMs: body.approvalTimeoutMs ?? null,
+          rateLimit: body.rateLimit ?? null,
+          isActive: body.isActive,
+          metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+        },
+      });
 
-    capabilityDispatcher.clearCache();
+      capabilityDispatcher.clearCache();
 
-    log.info('Capability created', {
-      capabilityId: capability.id,
-      slug: capability.slug,
-      adminId: session.user.id,
-    });
+      log.info('Capability created', {
+        capabilityId: capability.id,
+        slug: capability.slug,
+        adminId: session.user.id,
+      });
 
-    logAdminAction({
-      userId: session.user.id,
-      action: 'capability.create',
-      entityType: 'capability',
-      entityId: capability.id,
-      entityName: capability.name,
-      clientIp: clientIP,
-    });
+      logAdminAction({
+        userId: session.user.id,
+        action: 'capability.create',
+        entityType: 'capability',
+        entityId: capability.id,
+        entityName: capability.name,
+        clientIp: clientIP,
+      });
 
-    return successResponse(capability, undefined, { status: 201 });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      throw new ConflictError(`Capability with slug '${body.slug}' already exists`);
+      return successResponse(capability, undefined, { status: 201 });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictError(`Capability with slug '${body.slug}' already exists`);
+      }
+      throw err;
     }
-    throw err;
-  }
-});
+  },
+  { writesSharedSettings: true }
+);

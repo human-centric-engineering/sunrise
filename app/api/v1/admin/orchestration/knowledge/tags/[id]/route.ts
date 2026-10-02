@@ -89,132 +89,138 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   });
 });
 
-export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
+export const PATCH = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = validatePathParam(rawId, cuidSchema, { label: 'tag id' });
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = validatePathParam(rawId, cuidSchema, { label: 'tag id' });
 
-  const current = await prisma.knowledgeTag.findUnique({ where: { id } });
-  if (!current) throw new NotFoundError(`Knowledge tag ${id} not found`);
+    const current = await prisma.knowledgeTag.findUnique({ where: { id } });
+    if (!current) throw new NotFoundError(`Knowledge tag ${id} not found`);
 
-  const body = await validateRequestBody(request, updateKnowledgeTagSchema);
+    const body = await validateRequestBody(request, updateKnowledgeTagSchema);
 
-  const data: Prisma.KnowledgeTagUpdateInput = {};
-  if (body.slug !== undefined) data.slug = body.slug;
-  if (body.name !== undefined) data.name = body.name;
-  if (body.description !== undefined) data.description = body.description ?? null;
+    const data: Prisma.KnowledgeTagUpdateInput = {};
+    if (body.slug !== undefined) data.slug = body.slug;
+    if (body.name !== undefined) data.name = body.name;
+    if (body.description !== undefined) data.description = body.description ?? null;
 
-  try {
-    const tag = await prisma.knowledgeTag.update({ where: { id }, data });
+    try {
+      const tag = await prisma.knowledgeTag.update({ where: { id }, data });
 
-    // Renaming a tag doesn't change grants, but a slug change can affect
-    // backup/export keying. Invalidate the resolver cache to be safe.
+      // Renaming a tag doesn't change grants, but a slug change can affect
+      // backup/export keying. Invalidate the resolver cache to be safe.
+      invalidateAllAgentAccess();
+
+      log.info('Knowledge tag updated', {
+        tagId: id,
+        adminId: session.user.id,
+        fieldsChanged: Object.keys(data),
+      });
+
+      logAdminAction({
+        userId: session.user.id,
+        action: 'knowledge_tag.update',
+        entityType: 'knowledge_tag',
+        entityId: id,
+        entityName: tag.name,
+        changes: computeChanges(current, tag, { ignoreKeys: ['updatedAt', 'createdAt'] }),
+        clientIp: clientIP,
+      });
+
+      return successResponse(tag);
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictError(`Knowledge tag with slug '${body.slug}' already exists`);
+      }
+      throw err;
+    }
+  },
+  { writesSharedSettings: true }
+);
+
+export const DELETE = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
+
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = validatePathParam(rawId, cuidSchema, { label: 'tag id' });
+
+    const { searchParams } = new URL(request.url);
+    const force = searchParams.get('force') === 'true';
+
+    const current = await prisma.knowledgeTag.findUnique({ where: { id } });
+    if (!current) throw new NotFoundError(`Knowledge tag ${id} not found`);
+
+    // In every org (t-731): the tag is global config, and a grant or a
+    // document link in another org is as real as one in the caller's. The
+    // caller's granted agents are named (at most 50, which the dialog lists as
+    // links); another org's are a count.
+    const usage = await knowledgeTagUsage(id);
+
+    // Agent grants are sacred: deleting a tag that's actively granting an
+    // agent access would silently shrink that agent's knowledge scope.
+    // Block unconditionally — the operator must remove the grant from
+    // each agent first. `force=true` does NOT bypass this guard; it only
+    // bypasses the document-only path below.
+    if (usage.agentGrants > 0) {
+      const elsewhere =
+        usage.otherOrgAgentGrants > 0
+          ? ` (${usage.otherOrgAgentGrants} of them in other organisations)`
+          : '';
+      throw new ConflictError(
+        `Tag "${current.name}" is granted to ${usage.agentGrants} agent(s)${elsewhere}. Remove the grant from each agent before deleting this tag.`,
+        {
+          agentCount: usage.agentGrants,
+          documentCount: usage.documentLinks,
+          otherOrgAgentCount: usage.otherOrgAgentGrants,
+          agents: usage.agents,
+        }
+      );
+    }
+
+    // A forced delete strips the tag from every org's documents, so the
+    // operator is told how many of them are another org's before forcing.
+    if (usage.documentLinks > 0 && !force) {
+      const elsewhere =
+        usage.otherOrgDocumentLinks > 0
+          ? ` (${usage.otherOrgDocumentLinks} of them in other organisations)`
+          : '';
+      throw new ConflictError(
+        `Tag "${current.name}" is applied to ${usage.documentLinks} document(s)${elsewhere}. Re-send with ?force=true to delete the tag and strip it from those documents.`,
+        {
+          documentCount: usage.documentLinks,
+          otherOrgDocumentCount: usage.otherOrgDocumentLinks,
+          agentCount: 0,
+        }
+      );
+    }
+
+    await prisma.knowledgeTag.delete({ where: { id } });
     invalidateAllAgentAccess();
 
-    log.info('Knowledge tag updated', {
+    log.info('Knowledge tag deleted', {
       tagId: id,
+      slug: current.slug,
+      force,
+      documentLinks: usage.documentLinks,
+      agentLinks: usage.agentGrants,
       adminId: session.user.id,
-      fieldsChanged: Object.keys(data),
     });
 
     logAdminAction({
       userId: session.user.id,
-      action: 'knowledge_tag.update',
+      action: 'knowledge_tag.delete',
       entityType: 'knowledge_tag',
       entityId: id,
-      entityName: tag.name,
-      changes: computeChanges(current, tag, { ignoreKeys: ['updatedAt', 'createdAt'] }),
+      entityName: current.name,
       clientIp: clientIP,
     });
 
-    return successResponse(tag);
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      throw new ConflictError(`Knowledge tag with slug '${body.slug}' already exists`);
-    }
-    throw err;
-  }
-});
-
-export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
-
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = validatePathParam(rawId, cuidSchema, { label: 'tag id' });
-
-  const { searchParams } = new URL(request.url);
-  const force = searchParams.get('force') === 'true';
-
-  const current = await prisma.knowledgeTag.findUnique({ where: { id } });
-  if (!current) throw new NotFoundError(`Knowledge tag ${id} not found`);
-
-  // In every org (t-731): the tag is global config, and a grant or a
-  // document link in another org is as real as one in the caller's. The
-  // caller's granted agents are named (at most 50, which the dialog lists as
-  // links); another org's are a count.
-  const usage = await knowledgeTagUsage(id);
-
-  // Agent grants are sacred: deleting a tag that's actively granting an
-  // agent access would silently shrink that agent's knowledge scope.
-  // Block unconditionally — the operator must remove the grant from
-  // each agent first. `force=true` does NOT bypass this guard; it only
-  // bypasses the document-only path below.
-  if (usage.agentGrants > 0) {
-    const elsewhere =
-      usage.otherOrgAgentGrants > 0
-        ? ` (${usage.otherOrgAgentGrants} of them in other organisations)`
-        : '';
-    throw new ConflictError(
-      `Tag "${current.name}" is granted to ${usage.agentGrants} agent(s)${elsewhere}. Remove the grant from each agent before deleting this tag.`,
-      {
-        agentCount: usage.agentGrants,
-        documentCount: usage.documentLinks,
-        otherOrgAgentCount: usage.otherOrgAgentGrants,
-        agents: usage.agents,
-      }
-    );
-  }
-
-  // A forced delete strips the tag from every org's documents, so the
-  // operator is told how many of them are another org's before forcing.
-  if (usage.documentLinks > 0 && !force) {
-    const elsewhere =
-      usage.otherOrgDocumentLinks > 0
-        ? ` (${usage.otherOrgDocumentLinks} of them in other organisations)`
-        : '';
-    throw new ConflictError(
-      `Tag "${current.name}" is applied to ${usage.documentLinks} document(s)${elsewhere}. Re-send with ?force=true to delete the tag and strip it from those documents.`,
-      {
-        documentCount: usage.documentLinks,
-        otherOrgDocumentCount: usage.otherOrgDocumentLinks,
-        agentCount: 0,
-      }
-    );
-  }
-
-  await prisma.knowledgeTag.delete({ where: { id } });
-  invalidateAllAgentAccess();
-
-  log.info('Knowledge tag deleted', {
-    tagId: id,
-    slug: current.slug,
-    force,
-    documentLinks: usage.documentLinks,
-    agentLinks: usage.agentGrants,
-    adminId: session.user.id,
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'knowledge_tag.delete',
-    entityType: 'knowledge_tag',
-    entityId: id,
-    entityName: current.name,
-    clientIp: clientIP,
-  });
-
-  return successResponse({ id, deleted: true });
-});
+    return successResponse({ id, deleted: true });
+  },
+  { writesSharedSettings: true }
+);

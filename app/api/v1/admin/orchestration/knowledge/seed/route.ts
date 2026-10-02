@@ -24,27 +24,30 @@ import { getClientIP } from '@/lib/security/ip';
 import { seedChunks } from '@/lib/orchestration/knowledge/seeder';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
+    const log = await getRouteLogger(request);
 
-  const chunksPath = path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json');
+    const chunksPath = path.join(process.cwd(), 'prisma/seeds/data/chunks/chunks.json');
 
-  log.info('Knowledge seed started', { chunksPath, adminId: session.user.id });
+    log.info('Knowledge seed started', { chunksPath, adminId: session.user.id });
 
-  await seedChunks(chunksPath);
+    await seedChunks(chunksPath);
 
-  log.info('Knowledge seed completed', { adminId: session.user.id });
+    log.info('Knowledge seed completed', { adminId: session.user.id });
 
-  logAdminAction({
-    userId: session.user.id,
-    action: 'knowledge_seed.create',
-    entityType: 'knowledge_base',
-    entityId: 'knowledge-seed',
-    metadata: { chunksPath },
-    clientIp: clientIP,
-  });
+    logAdminAction({
+      userId: session.user.id,
+      action: 'knowledge_seed.create',
+      entityType: 'knowledge_base',
+      entityId: 'knowledge-seed',
+      metadata: { chunksPath },
+      clientIp: clientIP,
+    });
 
-  return successResponse({ seeded: true, lastSeededAt: new Date().toISOString() });
-});
+    return successResponse({ seeded: true, lastSeededAt: new Date().toISOString() });
+  },
+  { writesSharedSettings: true }
+);

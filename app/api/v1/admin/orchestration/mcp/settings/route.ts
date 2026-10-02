@@ -24,47 +24,50 @@ export const GET = withAdminAuth(async (request) => {
   return successResponse(config);
 });
 
-export const PATCH = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
+export const PATCH = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, updateMcpSettingsSchema);
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, updateMcpSettingsSchema);
 
-  const existing = await prisma.mcpServerConfig.findUnique({ where: { slug: 'global' } });
+    const existing = await prisma.mcpServerConfig.findUnique({ where: { slug: 'global' } });
 
-  const row = await prisma.mcpServerConfig.upsert({
-    where: { slug: 'global' },
-    create: {
-      slug: 'global',
-      isEnabled: false,
-      serverName: 'Sunrise MCP Server',
-      // serverVersion tracks SUNRISE_VERSION — see lib/orchestration/mcp/config.ts
-      // for the rationale (Sunrise IS the MCP server implementation here).
-      serverVersion: SUNRISE_VERSION,
-      globalRateLimit: 60,
-      auditRetentionDays: 90,
-      ...body,
-    },
-    update: body,
-  });
+    const row = await prisma.mcpServerConfig.upsert({
+      where: { slug: 'global' },
+      create: {
+        slug: 'global',
+        isEnabled: false,
+        serverName: 'Sunrise MCP Server',
+        // serverVersion tracks SUNRISE_VERSION — see lib/orchestration/mcp/config.ts
+        // for the rationale (Sunrise IS the MCP server implementation here).
+        serverVersion: SUNRISE_VERSION,
+        globalRateLimit: 60,
+        auditRetentionDays: 90,
+        ...body,
+      },
+      update: body,
+    });
 
-  invalidateMcpConfigCache();
+    invalidateMcpConfigCache();
 
-  logAdminAction({
-    userId: session.user.id,
-    action: 'mcp_settings.update',
-    entityType: 'mcp_settings',
-    entityId: 'global',
-    changes: computeChanges(existing ?? {}, row, { ignoreKeys: ['updatedAt', 'createdAt'] }),
-    metadata: { changedKeys: Object.keys(body) },
-    clientIp: clientIP,
-  });
+    logAdminAction({
+      userId: session.user.id,
+      action: 'mcp_settings.update',
+      entityType: 'mcp_settings',
+      entityId: 'global',
+      changes: computeChanges(existing ?? {}, row, { ignoreKeys: ['updatedAt', 'createdAt'] }),
+      metadata: { changedKeys: Object.keys(body) },
+      clientIp: clientIP,
+    });
 
-  log.info('MCP settings updated', {
-    adminId: session.user.id,
-    changedKeys: Object.keys(body),
-    isEnabled: row.isEnabled,
-  });
+    log.info('MCP settings updated', {
+      adminId: session.user.id,
+      changedKeys: Object.keys(body),
+      isEnabled: row.isEnabled,
+    });
 
-  return successResponse(row);
-});
+    return successResponse(row);
+  },
+  { writesSharedSettings: true }
+);

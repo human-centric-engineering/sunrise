@@ -394,6 +394,25 @@ release process.
     `embedMany` with the model under test. It used to call `embed`, which
     ignored that model and, on Voyage, the row's `baseUrl`.
 
+- **At `multi`, shared settings change only from the install org** (§107
+  t-751). Providers, provider models, capabilities, agent profiles, knowledge
+  tags, feature flags, MCP exposure and server config, and orchestration
+  settings are one row serving every org, so a change made by a platform
+  admin switched into a customer's org landed in every org. The 33 write
+  handlers on those routes now declare the new `withAdminAuth` option
+  `{ writesSharedSettings: true }`, and at `multi` the guard refuses a session
+  entered into any org but the install org with a 403 whose
+  `details.reason` is `shared-settings-install-org-only`. An unbound admin
+  API key, which enters no org, is still allowed. Reads are unchanged. The
+  built-in capabilities `add_provider_models`, `deactivate_provider_models`
+  and `apply_audit_changes`, which any org's workflow can call, refuse the
+  same way with the error code `shared_settings_install_org_only`. The rule
+  is `canChangeSharedSettings()` in the new `lib/tenancy/shared-settings.ts`.
+  **Forks:** a route of yours that writes one of the `GLOBAL_CONFIG_MODELS`
+  must declare the option. The always-run
+  `tests/unit/scripts/ci/shared-settings-writes.test.ts` names any that
+  doesn't. Nothing changes at `single`.
+
 ### Deprecated
 
 - **`LlmProvider.embed`** (t-740). It cannot choose a model or dimension or

@@ -14,7 +14,7 @@ counterpart is [Account Deletion & Right to Erasure](./data-erasure.md).
 | The export that precedes it    | [Org Data Export](./org-export.md)                                   |
 | Suspend instead of erase       | `PATCH /api/v1/admin/orgs/[id]` with `{ status: "SUSPENDED" }`       |
 | Proving it against a database  | `npm run smoke:tenancy`                                              |
-| …at `multi`, holding documents | `scripts/smoke/tenancy-isolation.ts` section [17] (CI `smoke-multi`) |
+| …at `multi`, holding documents | `scripts/smoke/tenancy-isolation.ts` section [18] (CI `smoke-multi`) |
 
 ### Anti-Pattern
 

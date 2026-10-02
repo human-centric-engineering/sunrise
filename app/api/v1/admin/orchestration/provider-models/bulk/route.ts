@@ -43,99 +43,102 @@ interface ConflictRow {
   reason: 'already_in_matrix' | 'already_in_matrix_inactive';
 }
 
-export const POST = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, bulkCreateProviderModelsSchema);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, bulkCreateProviderModelsSchema);
 
-  // Pre-flight: which of these (providerSlug, modelId) pairs already
-  // exist? Used to label conflicts in the response. createMany +
-  // skipDuplicates would silently drop them, but the dialog needs
-  // to surface "you tried to add X, but it's already in the matrix"
-  // with the modelId — not just a count.
-  //
-  // Fetch active + inactive separately so the response can
-  // distinguish "deactivated and needs reactivating" from
-  // "actively curated already". The discovery dialog uses the
-  // distinction to point operators at the matrix list for
-  // reactivation instead of asking them to retry the same add.
-  const requestedModelIds = body.models.map((m) => m.modelId);
-  const existing = await prisma.aiProviderModel.findMany({
-    where: { providerSlug: body.providerSlug, modelId: { in: requestedModelIds } },
-    select: { modelId: true, isActive: true },
-  });
-  const existingInactive = new Set(existing.filter((r) => !r.isActive).map((r) => r.modelId));
-  const existingSet = new Set(existing.map((r) => r.modelId));
+    // Pre-flight: which of these (providerSlug, modelId) pairs already
+    // exist? Used to label conflicts in the response. createMany +
+    // skipDuplicates would silently drop them, but the dialog needs
+    // to surface "you tried to add X, but it's already in the matrix"
+    // with the modelId — not just a count.
+    //
+    // Fetch active + inactive separately so the response can
+    // distinguish "deactivated and needs reactivating" from
+    // "actively curated already". The discovery dialog uses the
+    // distinction to point operators at the matrix list for
+    // reactivation instead of asking them to retry the same add.
+    const requestedModelIds = body.models.map((m) => m.modelId);
+    const existing = await prisma.aiProviderModel.findMany({
+      where: { providerSlug: body.providerSlug, modelId: { in: requestedModelIds } },
+      select: { modelId: true, isActive: true },
+    });
+    const existingInactive = new Set(existing.filter((r) => !r.isActive).map((r) => r.modelId));
+    const existingSet = new Set(existing.map((r) => r.modelId));
 
-  const rowsToInsert = body.models
-    .filter((m) => !existingSet.has(m.modelId))
-    .map((m) => ({
-      name: m.name,
-      slug: deriveMatrixSlug(body.providerSlug, m.modelId),
+    const rowsToInsert = body.models
+      .filter((m) => !existingSet.has(m.modelId))
+      .map((m) => ({
+        name: m.name,
+        slug: deriveMatrixSlug(body.providerSlug, m.modelId),
+        providerSlug: body.providerSlug,
+        modelId: m.modelId,
+        description: m.description,
+        capabilities: m.capabilities,
+        tierRole: m.tierRole,
+        reasoningDepth: m.reasoningDepth,
+        latency: m.latency,
+        costEfficiency: m.costEfficiency,
+        contextLength: m.contextLength,
+        toolUse: m.toolUse,
+        paramProfile: m.paramProfile ?? null,
+        bestRole: m.bestRole,
+        dimensions: m.dimensions ?? null,
+        schemaCompatible: m.schemaCompatible ?? null,
+        costPerMillionTokens: m.costPerMillionTokens ?? null,
+        hasFreeTier: m.hasFreeTier ?? null,
+        local: m.local,
+        quality: m.quality ?? null,
+        strengths: m.strengths ?? null,
+        setup: m.setup ?? null,
+        isDefault: false,
+        isActive: true,
+        createdBy: session.user.id,
+      }));
+
+    // skipDuplicates handles the rare race where two operators bulk-
+    // add overlapping models concurrently — the second insert is
+    // silently dropped instead of throwing P2002 mid-batch.
+    const createResult = await prisma.aiProviderModel.createMany({
+      data: rowsToInsert,
+      skipDuplicates: true,
+    });
+
+    invalidateModelCache();
+
+    const conflicts: ConflictRow[] = body.models
+      .filter((m) => existingSet.has(m.modelId))
+      .map((m) => ({
+        modelId: m.modelId,
+        reason: existingInactive.has(m.modelId)
+          ? ('already_in_matrix_inactive' as const)
+          : ('already_in_matrix' as const),
+      }));
+
+    // Use createResult.count as the source of truth — it covers the
+    // race-condition path where another operator concurrently added
+    // a row we hadn't pre-detected. The skipped count then captures
+    // both pre-detected conflicts and any silent skip-duplicates.
+    const skippedCount = body.models.length - createResult.count;
+
+    log.info('Provider models bulk-created', {
       providerSlug: body.providerSlug,
-      modelId: m.modelId,
-      description: m.description,
-      capabilities: m.capabilities,
-      tierRole: m.tierRole,
-      reasoningDepth: m.reasoningDepth,
-      latency: m.latency,
-      costEfficiency: m.costEfficiency,
-      contextLength: m.contextLength,
-      toolUse: m.toolUse,
-      paramProfile: m.paramProfile ?? null,
-      bestRole: m.bestRole,
-      dimensions: m.dimensions ?? null,
-      schemaCompatible: m.schemaCompatible ?? null,
-      costPerMillionTokens: m.costPerMillionTokens ?? null,
-      hasFreeTier: m.hasFreeTier ?? null,
-      local: m.local,
-      quality: m.quality ?? null,
-      strengths: m.strengths ?? null,
-      setup: m.setup ?? null,
-      isDefault: false,
-      isActive: true,
-      createdBy: session.user.id,
-    }));
-
-  // skipDuplicates handles the rare race where two operators bulk-
-  // add overlapping models concurrently — the second insert is
-  // silently dropped instead of throwing P2002 mid-batch.
-  const createResult = await prisma.aiProviderModel.createMany({
-    data: rowsToInsert,
-    skipDuplicates: true,
-  });
-
-  invalidateModelCache();
-
-  const conflicts: ConflictRow[] = body.models
-    .filter((m) => existingSet.has(m.modelId))
-    .map((m) => ({
-      modelId: m.modelId,
-      reason: existingInactive.has(m.modelId)
-        ? ('already_in_matrix_inactive' as const)
-        : ('already_in_matrix' as const),
-    }));
-
-  // Use createResult.count as the source of truth — it covers the
-  // race-condition path where another operator concurrently added
-  // a row we hadn't pre-detected. The skipped count then captures
-  // both pre-detected conflicts and any silent skip-duplicates.
-  const skippedCount = body.models.length - createResult.count;
-
-  log.info('Provider models bulk-created', {
-    providerSlug: body.providerSlug,
-    requested: body.models.length,
-    created: createResult.count,
-    skipped: skippedCount,
-    adminId: session.user.id,
-  });
-
-  return successResponse(
-    {
+      requested: body.models.length,
       created: createResult.count,
       skipped: skippedCount,
-      conflicts,
-    },
-    undefined,
-    { status: 201 }
-  );
-});
+      adminId: session.user.id,
+    });
+
+    return successResponse(
+      {
+        created: createResult.count,
+        skipped: skippedCount,
+        conflicts,
+      },
+      undefined,
+      { status: 201 }
+    );
+  },
+  { writesSharedSettings: true }
+);

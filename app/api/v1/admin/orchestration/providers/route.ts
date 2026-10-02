@@ -79,58 +79,61 @@ export const GET = withAdminAuth(async (request, _session) => {
   return paginatedResponse(data, { page, limit, total });
 });
 
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, providerConfigSchema);
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, providerConfigSchema);
 
-  try {
-    const provider = await prisma.aiProviderConfig.create({
-      data: {
-        name: body.name,
-        slug: body.slug,
-        providerType: body.providerType,
-        baseUrl: body.baseUrl ?? null,
-        apiKeyEnvVar: body.apiKeyEnvVar ?? null,
-        isLocal: body.isLocal,
-        isActive: body.isActive,
-        jurisdiction: body.jurisdiction ?? null,
-        metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-        timeoutMs: body.timeoutMs ?? null,
-        maxRetries: body.maxRetries ?? null,
-        createdBy: session.user.id,
-      },
-    });
+    try {
+      const provider = await prisma.aiProviderConfig.create({
+        data: {
+          name: body.name,
+          slug: body.slug,
+          providerType: body.providerType,
+          baseUrl: body.baseUrl ?? null,
+          apiKeyEnvVar: body.apiKeyEnvVar ?? null,
+          isLocal: body.isLocal,
+          isActive: body.isActive,
+          jurisdiction: body.jurisdiction ?? null,
+          metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          timeoutMs: body.timeoutMs ?? null,
+          maxRetries: body.maxRetries ?? null,
+          createdBy: session.user.id,
+        },
+      });
 
-    clearProviderCache(provider.slug);
+      clearProviderCache(provider.slug);
 
-    log.info('Provider created', {
-      providerId: provider.id,
-      slug: provider.slug,
-      adminId: session.user.id,
-    });
+      log.info('Provider created', {
+        providerId: provider.id,
+        slug: provider.slug,
+        adminId: session.user.id,
+      });
 
-    logAdminAction({
-      userId: session.user.id,
-      action: 'provider.create',
-      entityType: 'provider',
-      entityId: provider.id,
-      entityName: provider.name,
-      clientIp: clientIP,
-    });
+      logAdminAction({
+        userId: session.user.id,
+        action: 'provider.create',
+        entityType: 'provider',
+        entityId: provider.id,
+        entityName: provider.name,
+        clientIp: clientIP,
+      });
 
-    return successResponse(
-      { ...provider, apiKeyPresent: await hasProviderKey(provider) },
-      undefined,
-      { status: 201 }
-    );
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      throw new ConflictError(
-        `Provider with slug '${body.slug}' or name '${body.name}' already exists`
+      return successResponse(
+        { ...provider, apiKeyPresent: await hasProviderKey(provider) },
+        undefined,
+        { status: 201 }
       );
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictError(
+          `Provider with slug '${body.slug}' or name '${body.name}' already exists`
+        );
+      }
+      throw err;
     }
-    throw err;
-  }
-});
+  },
+  { writesSharedSettings: true }
+);

@@ -52,6 +52,11 @@
  *   - global config in use (§107 t-731): an agent in B using a provider, a
  *     model, a tag and a profile is counted by the in-use checks asked from
  *     A, which name none of B's rows;
+ *   - shared settings change only from the install org (§107 t-751): the
+ *     three built-in capabilities that write provider models, dispatched as
+ *     B's workflow would, refuse and change nothing; from the install org
+ *     and from no org they write; and the guard's option, called with an
+ *     unbound admin API key, lets a write through from no org;
  *   - the org export and erasure (§106 t-735, t-730): B's export, asked
  *     from inside A (an admin's session) and from no org (an admin API key),
  *     holds B's rows and none of A's; B, holding a knowledge base with
@@ -120,6 +125,10 @@ import { searchConversationEmbeddings } from '@/lib/orchestration/chat/conversat
 import { getCostBreakdown, getCostSummary } from '@/lib/orchestration/llm/cost-reports';
 import { signHookPayload } from '@/lib/orchestration/hooks/signing';
 import { POST as inboundPost } from '@/app/api/v1/inbound/[channel]/[slug]/route';
+import { withAdminAuth } from '@/lib/auth/guards';
+import { createFlag } from '@/lib/feature-flags';
+import { AddProviderModelsCapability } from '@/lib/orchestration/capabilities/built-in/add-provider-models';
+import { DeactivateProviderModelsCapability } from '@/lib/orchestration/capabilities/built-in/deactivate-provider-models';
 import { PLATFORM_JOBS } from '@/lib/orchestration/maintenance/platform-jobs';
 import { createDocumentForCleanup } from '@/lib/orchestration/knowledge/document-manager';
 import { callMcpTool, clearMcpToolCache } from '@/lib/orchestration/mcp/tool-registry';
@@ -1561,10 +1570,144 @@ async function main(): Promise<void> {
       `agentProfileUsage, asked from A, counts B’s attached agent (${profileSeen.get(profile.id) ?? 0})`
     );
 
-    // ── [16] Org export: the target org's rows, whoever is asking ─────────
+    // ── [16] Shared settings: changed only from the install org ──────────
+    // Any org's workflow reaches these through a `tool_call` step, which
+    // dispatches as `workflow:<id>` and skips the agent binding (§107 t-751).
+    console.log(
+      '\n[16] shared settings: refused from B, written from the install org and from no org'
+    );
+    registerBuiltInCapabilities();
+    const smokeModelSlug = `${PREFIX}-model-${stamp}`;
+    const newModel: Parameters<AddProviderModelsCapability['execute']>[0]['newModels'][number] = {
+      name: `${PREFIX} model`,
+      slug: smokeModelSlug,
+      providerSlug: `${PREFIX}-provider-${stamp}`,
+      modelId: `${PREFIX}-model-${stamp}`,
+      description: 'smoke fixture',
+      capabilities: ['chat'],
+      tierRole: 'worker',
+      deploymentProfiles: ['hosted'],
+      bestRole: 'smoke fixture',
+      reasoningDepth: 'medium',
+      latency: 'fast',
+      costEfficiency: 'high',
+      contextLength: 'medium',
+      toolUse: 'moderate',
+    };
+    const asWorkflowIn = (orgId: string, slug: string, args: Record<string, unknown>) =>
+      runAsOrg(
+        orgId,
+        () =>
+          capabilityDispatcher.dispatch(slug, args, {
+            userId: b.ownerId,
+            agentId: `workflow:${b.workflowId}`,
+          }),
+        { source: 'job' }
+      );
+    const modelRow = () =>
+      runAsSystem('smoke: read the shared model', () =>
+        prisma.aiProviderModel.findUnique({
+          where: { slug: smokeModelSlug },
+          select: { id: true, isActive: true, costEfficiency: true },
+        })
+      );
+    const refusedCode = (r: { success: boolean; error?: { code: string } }) =>
+      !r.success && r.error?.code === 'shared_settings_install_org_only';
+
+    const addFromB = await asWorkflowIn(b.orgId, 'add_provider_models', { newModels: [newModel] });
+    check(
+      refusedCode(addFromB) && (await modelRow()) === null,
+      `add_provider_models, dispatched by B’s workflow, is refused and creates nothing (${JSON.stringify(addFromB.error ?? addFromB.data)})`
+    );
+    const addFromInstall = await runAsOrg(INSTALL_ORG_ID, () =>
+      new AddProviderModelsCapability().execute(
+        { newModels: [newModel] },
+        {
+          userId: a.ownerId,
+          agentId: 'smoke',
+        }
+      )
+    );
+    const created = await modelRow();
+    check(
+      addFromInstall.success && created !== null,
+      `add_provider_models from the install org creates the model (${JSON.stringify(addFromInstall.error ?? addFromInstall.data)})`
+    );
+    if (created) {
+      const auditFromB = await asWorkflowIn(b.orgId, 'apply_audit_changes', {
+        model_id: created.id,
+        changes: [
+          {
+            field: 'costEfficiency',
+            currentValue: 'high',
+            proposedValue: 'medium',
+            reason: 'smoke fixture',
+            confidence: 'high',
+          },
+        ],
+      });
+      const deactivateFromB = await asWorkflowIn(b.orgId, 'deactivate_provider_models', {
+        deactivateModels: [{ modelId: created.id, reason: 'smoke fixture' }],
+      });
+      const afterB = await modelRow();
+      check(
+        refusedCode(auditFromB) &&
+          refusedCode(deactivateFromB) &&
+          afterB?.isActive === true &&
+          afterB.costEfficiency === 'high',
+        `apply_audit_changes and deactivate_provider_models, dispatched by B’s workflow, are refused and change nothing (${JSON.stringify([auditFromB.error, deactivateFromB.error, afterB])})`
+      );
+      const deactivateFromNowhere = await new DeactivateProviderModelsCapability().execute(
+        { deactivateModels: [{ modelId: created.id, reason: 'smoke fixture' }] },
+        { userId: a.ownerId, agentId: 'smoke' }
+      );
+      check(
+        deactivateFromNowhere.success && (await modelRow())?.isActive === false,
+        'deactivate_provider_models from no org deactivates it'
+      );
+    }
+
+    // The guard with the option, called with an unbound admin API key: no
+    // org is entered, and it lets the write through (ruling, 2026-10-02).
+    // The key is resolved from the database; the handler is `createFlag`
+    // itself, because the feature-flags route's own logger reads Next's
+    // request headers, which exist only inside a request.
+    const rawAdminKey = `sk_${PREFIX}_${stamp}_${'a'.repeat(40)}`;
+    await runAsSystem('smoke: mint an unbound admin key', () =>
+      prisma.aiApiKey.create({
+        data: {
+          userId: a.ownerId,
+          name: `${PREFIX} admin key`,
+          keyHash: hashApiKey(rawAdminKey),
+          keyPrefix: rawAdminKey.slice(0, 8),
+          scopes: ['admin'],
+          orgId: null,
+        },
+      })
+    );
+    const smokeFlag = `SMOKE_ISO_${stamp}`;
+    const flagResponse = await withAdminAuth(
+      async () => {
+        await createFlag({ name: smokeFlag, enabled: false });
+        return Response.json({ success: true }, { status: 201 });
+      },
+      { writesSharedSettings: true }
+    )(
+      new NextRequest('http://localhost:3000/api/v1/admin/feature-flags', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${rawAdminKey}` },
+      })
+    );
+    const flagRow = await prisma.featureFlag.findUnique({ where: { name: smokeFlag } });
+    check(
+      flagResponse.status === 201 && flagRow !== null,
+      `a write declaring writesSharedSettings, with an unbound admin key, from no org, creates the flag (${flagResponse.status})`
+    );
+
+    // ── [17] Org export: the target org's rows, whoever is asking ─────────
     // A platform admin exports from inside their own active org (the session
     // guard enters it), and an admin API key enters none (§106 t-735).
-    console.log('\n[16] org export: B’s bundle, asked from inside A and from no org at all');
+    console.log('\n[17] org export: B’s bundle, asked from inside A and from no org at all');
     const rowIds = (rows: unknown[] | undefined): string[] =>
       (rows ?? []).flatMap((r) =>
         typeof r === 'object' && r !== null && 'id' in r && typeof r.id === 'string' ? [r.id] : []
@@ -1616,10 +1759,10 @@ async function main(): Promise<void> {
       check(leaked.length === 0, `B’s export ${label} holds none of A’s`);
     }
 
-    // ── [17] Org erasure: from inside another org, with knowledge documents ─
+    // ── [18] Org erasure: from inside another org, with knowledge documents ─
     // `ai_knowledge_document.knowledgeBaseId` is ON DELETE RESTRICT, and both
     // rows also cascade from the org: erasure must still go through (t-730).
-    console.log('\n[17] org erasure: B, holding documents and chunks, erased from inside A');
+    console.log('\n[18] org erasure: B, holding documents and chunks, erased from inside A');
     // Every tenant-owned table, counted by the org's id, as the bypass. A
     // `SetNull` relation (`AiCostLog`, a billing record) keeps its row with the
     // org detached, so "no row carries the org" is the claim, not "no row".
@@ -1704,6 +1847,8 @@ async function main(): Promise<void> {
       await prisma.knowledgeTag.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
       await prisma.aiAgentProfile.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
       await prisma.aiProviderConfig.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
+      await prisma.aiProviderModel.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
+      await prisma.featureFlag.deleteMany({ where: { name: { startsWith: 'SMOKE_ISO_' } } });
       if (mcpExposureCapabilityId) {
         if (mcpExposure) {
           await prisma.mcpExposedTool.update({
@@ -1718,7 +1863,7 @@ async function main(): Promise<void> {
       }
     }).catch((err: unknown) => {
       // A failed cleanup fails the run (t-730): `org.deleteMany` here erases
-      // whatever org [17] did not, and an org that could not be erased is a
+      // whatever org [18] did not, and an org that could not be erased is a
       // finding, not housekeeping. Set rather than thrown, so a run that has
       // already failed keeps its own error as the one reported.
       console.error('✗ cleanup failed — remove the smoke-iso rows by hand', err);

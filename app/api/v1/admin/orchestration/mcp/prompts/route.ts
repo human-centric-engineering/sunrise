@@ -39,41 +39,44 @@ export const GET = withAdminAuth(async (request) => {
   return paginatedResponse(items, { page, limit, total });
 });
 
-export const POST = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, createPromptSchema);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, createPromptSchema);
 
-  // Enforce the global enabled-prompt cap. The check is racy in principle
-  // (two admins POSTing at the same instant could both pass), but the cap
-  // exists to prevent client list-bloat — a one-prompt overshoot is fine.
-  if (body.isEnabled) {
-    const enabledCount = await prisma.mcpExposedPrompt.count({ where: { isEnabled: true } });
-    if (enabledCount >= MAX_ENABLED_PROMPTS) {
-      return errorResponse(
-        `Cannot create another enabled prompt — the limit of ${String(MAX_ENABLED_PROMPTS)} has been reached. Disable an existing prompt first or create this one disabled.`,
-        { code: 'PROMPT_CAP_EXCEEDED', status: 409 }
-      );
+    // Enforce the global enabled-prompt cap. The check is racy in principle
+    // (two admins POSTing at the same instant could both pass), but the cap
+    // exists to prevent client list-bloat — a one-prompt overshoot is fine.
+    if (body.isEnabled) {
+      const enabledCount = await prisma.mcpExposedPrompt.count({ where: { isEnabled: true } });
+      if (enabledCount >= MAX_ENABLED_PROMPTS) {
+        return errorResponse(
+          `Cannot create another enabled prompt — the limit of ${String(MAX_ENABLED_PROMPTS)} has been reached. Disable an existing prompt first or create this one disabled.`,
+          { code: 'PROMPT_CAP_EXCEEDED', status: 409 }
+        );
+      }
     }
-  }
 
-  const prompt = await prisma.mcpExposedPrompt.create({
-    data: {
-      name: body.name,
-      description: body.description,
-      template: body.template,
-      argumentsSpec: body.argumentsSpec,
-      isEnabled: body.isEnabled,
-      createdBy: session.user.id,
-    },
-  });
+    const prompt = await prisma.mcpExposedPrompt.create({
+      data: {
+        name: body.name,
+        description: body.description,
+        template: body.template,
+        argumentsSpec: body.argumentsSpec,
+        isEnabled: body.isEnabled,
+        createdBy: session.user.id,
+      },
+    });
 
-  clearMcpPromptCache();
+    clearMcpPromptCache();
 
-  log.info('MCP prompt created', {
-    adminId: session.user.id,
-    promptId: prompt.id,
-    name: prompt.name,
-  });
+    log.info('MCP prompt created', {
+      adminId: session.user.id,
+      promptId: prompt.id,
+      name: prompt.name,
+    });
 
-  return successResponse(prompt, undefined, { status: 201 });
-});
+    return successResponse(prompt, undefined, { status: 201 });
+  },
+  { writesSharedSettings: true }
+);
