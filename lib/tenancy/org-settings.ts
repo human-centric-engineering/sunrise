@@ -278,6 +278,13 @@ export function readOrgProviderPolicy(
  * Through {@link writeSettingsSlice}: a clash with a concurrent settings write
  * throws `P2034`, which the route answers with a 409.
  *
+ * **It does not clear the policy cache.** `org-provider-policy.ts` caches each
+ * org's policy for 60 seconds, so a caller in a running process calls
+ * `forgetOrgProviderPolicy(orgId)` after the write, as the grant route does;
+ * otherwise a policy read before the write (creating an org reads it, for the
+ * cleanup agent's pick) answers for up to a minute. It is not done here
+ * because `org-provider-policy.ts` imports this module.
+ *
  * @returns the previous and the stored policy, or `null` when the org does
  *   not exist.
  */

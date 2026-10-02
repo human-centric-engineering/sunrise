@@ -75,6 +75,7 @@ import {
 } from '@/lib/tenancy/context';
 import { createOrg } from '@/lib/tenancy/lifecycle';
 import { writeOrgProviderPolicy } from '@/lib/tenancy/org-settings';
+import { forgetOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
 import { hashApiKey } from '@/lib/auth/api-keys';
 import { resolveApiKey } from '@/lib/auth/api-keys';
 import { resolveEmbedToken } from '@/lib/embed/auth';
@@ -301,8 +302,12 @@ async function seedOrg(
     ownerUserId: owner.id,
   });
   // At multi a new org may call no provider until it is granted one (§120
-  // t-742). Both orgs get the smoke's local provider, as an operator would.
+  // t-742). Both orgs get the smoke's local provider, as an operator would —
+  // and, as the grant route does, the cached policy is dropped after the
+  // write: `createOrg`'s reconcile has already read (and cached) this org's
+  // policy while it had no grants (t-746's cleanup-agent pick).
   await writeOrgProviderPolicy(org.id, { approved: [providerId] });
+  forgetOrgProviderPolicy(org.id);
   const topic = label === 'a' ? 'alpha aardvark accounting' : 'bravo bison billing';
   const costUsd = label === 'a' ? 0.013 : 0.031;
 
