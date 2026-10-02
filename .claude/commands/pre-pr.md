@@ -529,6 +529,7 @@ Output a clear summary in this format:
 - [ ] Bare fetch() instead of serverFetch(): {count found or CLEAN}
 - [ ] Direct Prisma outside API routes: {count found or CLEAN}
 - [ ] Hand-rolled router mocks: {count found or CLEAN}
+- [ ] Absolute `@see` paths: {`see-tag-paths.test.ts` exit code — CLEAN (0), or the `file:line` list}
 
 ### Documentation Check
 - [ ] Stale content in changed docs: {CLEAN or issues found}
