@@ -39,7 +39,10 @@ interface ModelsResponse {
 
 export async function getProviders(): Promise<AiProviderConfig[] | null> {
   try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.PROVIDERS);
+    // The endpoint's default page is 10; the agent form offers every
+    // provider (and marks which the org may use), so ask for the most one
+    // page allows.
+    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.PROVIDERS}?page=1&limit=100`);
     if (!res.ok) return null;
     const body = await parseApiResponse<AiProviderConfig[]>(res);
     return body.success ? body.data : null;

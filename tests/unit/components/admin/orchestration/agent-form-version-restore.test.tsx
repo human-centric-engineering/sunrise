@@ -31,10 +31,12 @@ import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
+const mockRefresh = vi.hoisted(() => vi.fn());
+
 vi.mock('next/navigation', async () => {
   const { createMockRouter } = await import('@/tests/types/mocks');
   return {
-    useRouter: () => createMockRouter(),
+    useRouter: () => createMockRouter({ refresh: mockRefresh }),
     useSearchParams: () => ({ get: () => null }),
   };
 });
@@ -173,6 +175,18 @@ describe('AgentForm — save after a version restore', () => {
     await user.click(screen.getByRole('button', { name: /save changes/i }));
     return { apiClient, user };
   }
+
+  it('re-renders the server page after a restore, so its banner and held providers follow it (§120 t-745)', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue(makeAgent({ provider: 'openai' }));
+    const user = userEvent.setup();
+    render(<AgentForm mode="edit" agent={makeAgent()} providers={PROVIDERS} models={MODELS} />);
+
+    await user.click(screen.getByRole('tab', { name: /versions/i }));
+    await user.click(screen.getByRole('button', { name: /simulate restore/i }));
+
+    await waitFor(() => expect(mockRefresh).toHaveBeenCalledTimes(1));
+  });
 
   it('a restored agent can still be saved', async () => {
     // The regression: `reset()` omitted ten fields, seven of them required

@@ -99,6 +99,10 @@ describe('getProviders', () => {
     const result = await getProviders();
 
     expect(result).toEqual(PROVIDERS);
+    // The endpoint's default page is 10; the agent form wants every provider.
+    expect(serverFetch).toHaveBeenCalledWith(
+      '/api/v1/admin/orchestration/providers?page=1&limit=100'
+    );
   });
 
   it('returns null when res.ok is false', async () => {

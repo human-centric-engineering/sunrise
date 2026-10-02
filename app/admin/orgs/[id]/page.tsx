@@ -71,9 +71,15 @@ async function getAllProviders(): Promise<OrgProviderOption[] | null> {
       if (!res.ok) return null;
       const body = await parseApiResponse<OrgProviderOption[]>(res);
       if (!body.success) return null;
-      all.push(...body.data);
+      for (const provider of body.data) {
+        // Offset pages over a live table: a provider created between two
+        // requests shifts a row onto the next page as well.
+        if (!all.some((seen) => seen.id === provider.id)) all.push(provider);
+      }
+      // Without the page count there is no telling whether this is all of it.
       const meta = parsePaginationMeta(body.meta);
-      if (!meta || page >= meta.totalPages || body.data.length === 0) return all;
+      if (!meta) return null;
+      if (page >= meta.totalPages || body.data.length === 0) return all;
     } catch (err) {
       logger.error('org page: providers fetch failed', err, { page });
       return null;

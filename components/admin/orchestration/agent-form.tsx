@@ -2265,6 +2265,10 @@ export function AgentForm({
                     // defect this form exists to prevent, arriving through the
                     // restore path.
                     setAuthored({ provider: false, model: false });
+                    // A restore can change the provider and fallbacks, so the
+                    // server page re-derives the stranded-provider banner and
+                    // the held set, as after a save (§120 t-745).
+                    router.refresh();
                   } catch {
                     // Silent — the version tab already shows its own error state.
                   }
