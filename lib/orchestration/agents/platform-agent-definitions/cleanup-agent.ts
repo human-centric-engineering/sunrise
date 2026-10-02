@@ -4,6 +4,8 @@
  * capabilities. Cleanup conversations edit one document directly and never
  * query the knowledge base.
  */
+import { logger } from '@/lib/logging';
+import { applyOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
 import { filterProvidersWithCredential } from '@/lib/orchestration/llm/provider-credentials';
 import type { TenancyClient } from '@/lib/db/tenancy-extension';
 import type {
@@ -72,6 +74,16 @@ const CLEANUP_CAPABILITY_SLUGS = [
  * `apiKeyEnvVar` is set, or one marked local. Pinning a provider with no key
  * would be worse than inheriting — it would break a path that currently works.
  *
+ * "Can actually reach" also means the org may use it (§120 t-746). The
+ * reconcile runs inside `runAsOrg(orgId)`, so core's org provider policy
+ * judges the org being reconciled: at `multi` a new org starts with no grants,
+ * and pinning it to a provider it may never be granted left an agent whose
+ * every call is refused. With nothing approved this returns null and the agent
+ * inherits, choosing per turn among what the org may use; the reconcile
+ * consults this again while the agent is still unpinned, so a later grant can
+ * pin it. A policy that cannot be read is treated as nothing approved. At
+ * `single`, and for the install org, the policy changes nothing.
+ *
  * Preference order: worker tier before thinking tier (a whole-document rewrite
  * on a thinking-tier model is expensive and no better at choosing a regex),
  * then deepest reasoning, then model id for a stable tie-break. Returns null
@@ -95,7 +107,17 @@ export async function pickCleanupBinding(
   });
   // Through the credential seam (§120 t-744): by default the row's env var, as
   // this read directly before; a fork's resolver otherwise.
-  const reachable = await filterProvidersWithCredential(providers);
+  const withCredential = await filterProvidersWithCredential(providers);
+  let permitted: ReadonlySet<string>;
+  try {
+    permitted = new Set(await applyOrgProviderPolicy(withCredential.map((p) => p.slug)));
+  } catch (error) {
+    logger.warn('Cleanup agent left unpinned: the org provider policy could not be read', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+  const reachable = withCredential.filter((p) => permitted.has(p.slug));
   if (reachable.length === 0) return null;
 
   const models = await prisma.aiProviderModel.findMany({
