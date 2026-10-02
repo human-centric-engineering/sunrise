@@ -1024,5 +1024,57 @@ describe('ProviderModelsMatrix', () => {
       const deleteBtn = screen.getByRole('button', { name: /^delete$/i });
       expect(deleteBtn).toBeDisabled();
     });
+
+    it('counts other orgs’ users beside the caller’s, and keeps Delete disabled (t-731)', async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError(
+          'Cannot delete model "GPT-5" — 3 active agents still reference it (2 of them in other organisations).',
+          'MODEL_IN_USE',
+          409,
+          {
+            agents: [{ id: 'agent-3', name: 'Late Bound', slug: 'late-bound' }],
+            workflows: [],
+            otherOrgAgentCount: 2,
+            otherOrgWorkflowCount: 0,
+          }
+        )
+      );
+
+      const user = userEvent.setup();
+      render(<ProviderModelsMatrix initialModels={[makeModel({ name: 'GPT-5', agents: [] })]} />);
+
+      await user.click(screen.getByRole('button', { name: /^delete GPT-5$/i }));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      expect(await screen.findByText('Late Bound')).toBeInTheDocument();
+      expect(
+        screen.getByText(/2 agents or workflows in other organisations also use this model/)
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^delete$/i })).toBeDisabled();
+    });
+
+    it('blocks the delete when only other orgs use the model', async () => {
+      const { apiClient, APIClientError } = await import('@/lib/api/client');
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError('in use elsewhere', 'MODEL_IN_USE', 409, {
+          agents: [],
+          workflows: [],
+          otherOrgAgentCount: 0,
+          otherOrgWorkflowCount: 1,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<ProviderModelsMatrix initialModels={[makeModel({ name: 'GPT-5', agents: [] })]} />);
+
+      await user.click(screen.getByRole('button', { name: /^delete GPT-5$/i }));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      expect(
+        await screen.findByText(/1 agent or workflow in other organisations also uses this model/)
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^delete$/i })).toBeDisabled();
+    });
   });
 });

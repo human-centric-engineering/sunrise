@@ -286,7 +286,7 @@ Create. Body validated by `agentProfileFormSchema` — `name` and `slug` require
 
 ### `GET /agent-profiles/:id`
 
-Detail. Response includes `agents: [{ id, slug, name, isActive }]` so the edit page can show every agent currently inheriting from this profile.
+Detail. Response includes `agents: [{ id, slug, name, isActive }]`, the caller's org's agents inheriting from this profile, so the edit page can list them. It also includes `otherOrgAgentCount`: a profile is global config, so changes reach other orgs' inheriting agents too, and they are counted but not listed (§107 t-731).
 
 ### `PATCH /agent-profiles/:id`
 

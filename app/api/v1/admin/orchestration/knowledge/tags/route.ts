@@ -12,6 +12,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { knowledgeTagCounts } from '@/lib/orchestration/admin/global-config-usage';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse, successResponse } from '@/lib/api/responses';
@@ -47,19 +48,17 @@ export const GET = withAdminAuth(async (request, _session) => {
       orderBy: { name: 'asc' },
       skip,
       take: limit,
-      include: {
-        _count: {
-          select: { documents: true, agents: true },
-        },
-      },
     }),
     prisma.knowledgeTag.count({ where }),
   ]);
 
-  const tags = rawTags.map(({ _count, ...rest }) => ({
-    ...rest,
-    documentCount: _count.documents,
-    agentCount: _count.agents,
+  // Every org's grants and document links (t-731): a tag is global config,
+  // and "unused" (the bulk delete's test) must mean unused by any org.
+  const counts = await knowledgeTagCounts(rawTags.map((t) => t.id));
+  const tags = rawTags.map((tag) => ({
+    ...tag,
+    documentCount: counts.get(tag.id)?.documents ?? 0,
+    agentCount: counts.get(tag.id)?.agents ?? 0,
   }));
 
   log.info('Knowledge tags listed', { count: tags.length, total, page, limit });

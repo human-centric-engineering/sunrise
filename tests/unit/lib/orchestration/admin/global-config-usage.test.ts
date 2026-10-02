@@ -1,10 +1,10 @@
 /**
  * Tests: lib/orchestration/admin/global-config-usage.ts (§107 t-731)
  *
- * What is pinned: every read runs under the system scope (so another org's
- * rows count); at `multi` only the entered org's rows come back by name and
- * the rest as a number; with no org entered none are named; at `single`
- * every row is the caller's. The policy itself is proven by the two-org
+ * What is pinned: at `multi` every read runs under the system scope (so
+ * another org's rows count), only the entered org's rows come back by name
+ * and the rest as a number, and with no org entered none are named; at
+ * `single` no system scope is entered and every row is the caller's. The policy itself is proven by the two-org
  * smoke against Postgres.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -26,8 +26,8 @@ const db = vi.hoisted(() => ({
   aiAgent: { count: vi.fn(), findMany: vi.fn(), groupBy: vi.fn() },
   aiCostLog: { count: vi.fn() },
   aiWorkflow: { findMany: vi.fn() },
-  aiAgentKnowledgeTag: { findMany: vi.fn() },
-  aiKnowledgeDocumentTag: { count: vi.fn() },
+  aiAgentKnowledgeTag: { findMany: vi.fn(), count: vi.fn(), groupBy: vi.fn() },
+  aiKnowledgeDocumentTag: { count: vi.fn(), groupBy: vi.fn() },
 }));
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
 vi.mock('@/lib/logging', () => ({
@@ -36,6 +36,7 @@ vi.mock('@/lib/logging', () => ({
 
 import {
   agentProfileUsage,
+  knowledgeTagCounts,
   knowledgeTagUsage,
   MAX_NAMED_TAG_AGENTS,
   providerModelUsage,
@@ -173,36 +174,107 @@ describe('providerModelUsage', () => {
 });
 
 describe('knowledgeTagUsage', () => {
+  /** Grant and link counts: every org's, then the filtered (caller's) one. */
+  function counts(grants: [number, number], links: [number, number]) {
+    db.aiAgentKnowledgeTag.count
+      .mockImplementationOnce(answering(grants[0]))
+      .mockImplementationOnce(answering(grants[1]));
+    db.aiKnowledgeDocumentTag.count
+      .mockImplementationOnce(answering(links[0]))
+      .mockImplementationOnce(answering(links[1]));
+  }
+
   it('counts grants and document links in every org, naming only the entered org’s agents', async () => {
+    counts([3, 1], [6, 1]);
     db.aiAgentKnowledgeTag.findMany.mockImplementation(
-      answering([{ agent: agent('a1', ORG_A) }, { agent: agent('b1', ORG_B) }])
+      answering([{ agent: { id: 'a1', name: 'Agent a1', slug: 'agent-a1' } }])
     );
-    db.aiKnowledgeDocumentTag.count.mockImplementation(answering(5));
 
     const usage = await runAsOrg(ORG_A, () => knowledgeTagUsage('tag-1'));
 
     expect(usage).toEqual({
-      agentGrants: 2,
-      documentLinks: 5,
+      agentGrants: 3,
+      documentLinks: 6,
       agents: [{ id: 'a1', name: 'Agent a1', slug: 'agent-a1' }],
-      otherOrgAgentGrants: 1,
+      otherOrgAgentGrants: 2,
+      otherOrgDocumentLinks: 5,
     });
-    expect(scopes.seen).toEqual(['system', 'system']);
-    expect(db.aiKnowledgeDocumentTag.count).toHaveBeenCalledWith({ where: { tagId: 'tag-1' } });
+    expect(scopes.seen).toEqual(['system', 'system', 'system', 'system', 'system']);
+    expect(db.aiAgentKnowledgeTag.count).toHaveBeenCalledWith({ where: { tagId: 'tag-1' } });
+    expect(db.aiAgentKnowledgeTag.count).toHaveBeenCalledWith({
+      where: { tagId: 'tag-1', orgId: ORG_A },
+    });
+    expect(db.aiKnowledgeDocumentTag.count).toHaveBeenCalledWith({
+      where: { tagId: 'tag-1', orgId: ORG_A },
+    });
+    expect(db.aiAgentKnowledgeTag.findMany).toHaveBeenCalledWith({
+      where: { tagId: 'tag-1', orgId: ORG_A },
+      select: { agent: { select: { id: true, name: true, slug: true } } },
+      orderBy: { createdAt: 'asc' },
+      take: MAX_NAMED_TAG_AGENTS,
+    });
   });
 
-  it(`names at most ${MAX_NAMED_TAG_AGENTS} agents, and still counts them all`, async () => {
-    const many = Array.from({ length: MAX_NAMED_TAG_AGENTS + 5 }, (_, i) => ({
-      agent: agent(`a${i}`, ORG_A),
-    }));
-    db.aiAgentKnowledgeTag.findMany.mockImplementation(answering(many));
-    db.aiKnowledgeDocumentTag.count.mockImplementation(answering(0));
+  it('names nothing and counts it all as elsewhere with no org entered', async () => {
+    db.aiAgentKnowledgeTag.count.mockImplementationOnce(answering(2));
+    db.aiKnowledgeDocumentTag.count.mockImplementationOnce(answering(4));
 
-    const usage = await runAsOrg(ORG_A, () => knowledgeTagUsage('tag-1'));
+    const usage = await knowledgeTagUsage('tag-1');
 
-    expect(usage.agents).toHaveLength(MAX_NAMED_TAG_AGENTS);
-    expect(usage.agentGrants).toBe(MAX_NAMED_TAG_AGENTS + 5);
+    expect(usage).toEqual({
+      agentGrants: 2,
+      documentLinks: 4,
+      agents: [],
+      otherOrgAgentGrants: 2,
+      otherOrgDocumentLinks: 4,
+    });
+    expect(db.aiAgentKnowledgeTag.findMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — no org, so no row is the caller's to name
+  });
+
+  it('at single, reads without the system scope and treats every row as the caller’s', async () => {
+    mockMode.value = 'single';
+    counts([2, 2], [1, 1]);
+    db.aiAgentKnowledgeTag.findMany.mockImplementation(answering([]));
+
+    const usage = await knowledgeTagUsage('tag-1');
+
     expect(usage.otherOrgAgentGrants).toBe(0);
+    expect(usage.otherOrgDocumentLinks).toBe(0);
+    expect(scopes.seen).not.toContain('system');
+    expect(db.aiAgentKnowledgeTag.count).toHaveBeenCalledWith({ where: { tagId: 'tag-1' } });
+    expect(db.aiAgentKnowledgeTag.count).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('knowledgeTagCounts', () => {
+  it('groups every org’s grants and links by tag, under the system scope', async () => {
+    db.aiAgentKnowledgeTag.groupBy.mockImplementation(
+      answering([{ tagId: 't1', _count: { _all: 2 } }])
+    );
+    db.aiKnowledgeDocumentTag.groupBy.mockImplementation(
+      answering([
+        { tagId: 't1', _count: { _all: 5 } },
+        { tagId: 't2', _count: { _all: 1 } },
+      ])
+    );
+
+    const counts = await runAsOrg(ORG_A, () => knowledgeTagCounts(['t1', 't2', 't3']));
+
+    expect([...counts]).toEqual([
+      ['t1', { agents: 2, documents: 5 }],
+      ['t2', { agents: 0, documents: 1 }],
+    ]);
+    expect(scopes.seen).toEqual(['system', 'system']);
+    expect(db.aiAgentKnowledgeTag.groupBy).toHaveBeenCalledWith({
+      by: ['tagId'],
+      where: { tagId: { in: ['t1', 't2', 't3'] } },
+      _count: { _all: true },
+    });
+  });
+
+  it('reads nothing for no tags', async () => {
+    expect([...(await knowledgeTagCounts([]))]).toEqual([]);
+    expect(db.aiAgentKnowledgeTag.groupBy).not.toHaveBeenCalled(); // test-review:accept no_arg_called — an empty page needs no query
   });
 });
 

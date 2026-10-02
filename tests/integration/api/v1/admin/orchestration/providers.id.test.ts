@@ -65,9 +65,17 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
+// The real count runs (against the mocked client, at single); a test
+// overrides one answer to stand in for another org's references (t-731).
+vi.mock('@/lib/orchestration/admin/global-config-usage', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/admin/global-config-usage')>();
+  return { ...actual, providerUsage: vi.fn(actual.providerUsage) };
+});
+
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
-import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
+import { providerUsage } from '@/lib/orchestration/admin/global-config-usage';
 import { clearCache } from '@/lib/orchestration/llm/provider-manager';
 import { hasProviderKey } from '@/lib/orchestration/llm/provider-credentials';
 
@@ -545,29 +553,23 @@ describe('DELETE /api/v1/admin/orchestration/providers/:id?permanent=true', () =
     expect(prisma.aiCostLog.count).toHaveBeenCalledWith({ where: { provider: 'anthropic' } });
   });
 
-  it('counts every org’s references, under the system scope, from inside one org (t-731)', async () => {
-    // The provider is global config; at multi a count in the caller's org
-    // would miss another org's agents. Each count must run as `system`.
-    const scopes: Array<string | undefined> = [];
-    const record = () => {
-      scopes.push(getTenantContext()?.source);
-    };
+  it('refuses on every org’s references, as providerUsage counts them (t-731)', async () => {
+    // providerUsage counts in every org (its own tests run it at multi);
+    // here only another org's agents reference the provider.
     vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
-    vi.mocked(prisma.aiAgent.count).mockImplementation((async () => {
-      record();
-      return 1;
-    }) as never);
-    vi.mocked(prisma.aiCostLog.count).mockImplementation((async () => {
-      record();
-      return 0;
-    }) as never);
+    vi.mocked(providerUsage).mockResolvedValueOnce({
+      primaryAgents: 0,
+      fallbackAgents: 2,
+      costLogRows: 0,
+    });
 
-    const response = await runAsOrg('cmorg0000000000000000orga', () =>
-      DELETE(makeRequest('DELETE', undefined, { permanent: 'true' }), makeParams(PROVIDER_ID))
+    const response = await DELETE(
+      makeRequest('DELETE', undefined, { permanent: 'true' }),
+      makeParams(PROVIDER_ID)
     );
 
     expect(response.status).toBe(409);
-    expect(scopes).toEqual(['system', 'system', 'system']);
+    expect(providerUsage).toHaveBeenCalledWith('anthropic');
     expect(prisma.aiProviderConfig.delete).not.toHaveBeenCalled();
   });
 

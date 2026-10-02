@@ -488,10 +488,21 @@ release process.
   `agentCount` (list) and `detachedAgentCount` (delete) were short too. The
   checks now go through the new `lib/orchestration/admin/global-config-usage.ts`
   (`providerUsage`, `providerModelUsage`, `knowledgeTagUsage`,
-  `agentProfileUsage`), which counts under the system scope. A refusal names
-  only the caller's own rows. Other orgs' usage is a count, in the new
-  `otherOrgAgentCount` / `otherOrgWorkflowCount` details fields and in the
-  message. Nothing changes at `single`.
+  `agentProfileUsage`, `knowledgeTagCounts`), which counts under the system
+  scope at `multi`. A refusal names only the caller's own rows. Other orgs'
+  usage is a count, in the new `otherOrgAgentCount` / `otherOrgWorkflowCount`
+  / `otherOrgDocumentCount` details fields and in the message. A forced tag
+  delete, which strips the tag from every org's documents, is now told how
+  many of them are another org's first. The read surfaces count every org
+  too:
+  - the tag list's `documentCount` / `agentCount`, so "unused" and the bulk
+    delete mean unused by any org;
+  - `GET /knowledge/tags/:id` and `GET /agent-profiles/:id`, which add
+    `otherOrgDocumentCount` / `otherOrgAgentCount` beside the caller's own
+    lists.
+
+  The tag-delete dialog, the tag drill-down, the model-delete dialog and the
+  profile edit form show those counts. Nothing changes at `single`.
 
 ## [0.13.0] — 2026-09-24
 

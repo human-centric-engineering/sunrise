@@ -59,12 +59,22 @@ vi.mock('@/lib/orchestration/knowledge/resolveAgentDocumentAccess', () => ({
 }));
 
 vi.mock('@/lib/orchestration/admin/global-config-usage', () => ({
-  knowledgeTagUsage: vi.fn(),
+  knowledgeTagUsage: vi.fn(async () => ({
+    agentGrants: 0,
+    documentLinks: 0,
+    agents: [],
+    otherOrgAgentGrants: 0,
+    otherOrgDocumentLinks: 0,
+  })),
+  knowledgeTagCounts: vi.fn(async () => new Map()),
 }));
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
-import { knowledgeTagUsage } from '@/lib/orchestration/admin/global-config-usage';
+import {
+  knowledgeTagCounts,
+  knowledgeTagUsage,
+} from '@/lib/orchestration/admin/global-config-usage';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -157,10 +167,12 @@ describe('GET /api/v1/admin/orchestration/knowledge/tags', () => {
 
   it('returns paginated tags with document/agent counts', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.knowledgeTag.findMany).mockResolvedValue([
-      makeTag({}, { documents: 3, agents: 2 }),
-    ] as never);
+    vi.mocked(prisma.knowledgeTag.findMany).mockResolvedValue([makeTag()] as never);
     vi.mocked(prisma.knowledgeTag.count).mockResolvedValue(1);
+    // Every org's counts (t-731), from knowledgeTagCounts, not a _count include.
+    vi.mocked(knowledgeTagCounts).mockResolvedValue(
+      new Map([[TAG_ID, { agents: 2, documents: 3 }]])
+    );
 
     const response = await listGet(makeListRequest());
 
@@ -175,6 +187,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/tags', () => {
     expect(data.data[0].documentCount).toBe(3);
     expect(data.data[0].agentCount).toBe(2);
     expect(data.meta).toBeDefined();
+    expect(knowledgeTagCounts).toHaveBeenCalledWith([TAG_ID]);
   });
 
   it('passes search query to prisma when q is set', async () => {
@@ -254,9 +267,8 @@ describe('GET /api/v1/admin/orchestration/knowledge/tags/:id', () => {
 
   it('returns the tag with link counts', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.knowledgeTag.findUnique).mockResolvedValue(
-      makeTag({}, { documents: 5, agents: 1 })
-    );
+    vi.mocked(prisma.knowledgeTag.findUnique).mockResolvedValue(makeTag());
+    tagUsage(1, 5);
 
     const response = await getById(makeByIdRequest('GET'), makeParams(TAG_ID));
 
@@ -328,13 +340,15 @@ function tagUsage(
   agentGrants: number,
   documentLinks: number,
   agents: Array<{ id: string; name: string; slug: string }> = [],
-  otherOrgAgentGrants = 0
+  otherOrgAgentGrants = 0,
+  otherOrgDocumentLinks = 0
 ) {
   vi.mocked(knowledgeTagUsage).mockResolvedValue({
     agentGrants,
     documentLinks,
     agents,
     otherOrgAgentGrants,
+    otherOrgDocumentLinks,
   });
 }
 

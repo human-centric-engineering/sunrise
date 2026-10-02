@@ -9,11 +9,12 @@
  * tag that another org's agents still depend on, and an agent profile's
  * "attached agents" count was too low.
  *
- * So every count here runs under the system scope, the audited bypass. The
- * answer to "is it in use?" includes every org. Only the caller's own rows
- * are ever returned by name; another org's usage leaves this module as a
- * number. At `single` there is one org and every row is the caller's, so
- * the answers are what the plain reads gave.
+ * So at `multi` every count here runs under the system scope, the audited
+ * bypass. The answer to "is it in use?" includes every org. Only the
+ * caller's own rows are ever returned by name; another org's usage leaves
+ * this module as a number. At `single` there is one org, no policy to
+ * bypass, and every row is the caller's, so the reads run as they are. That
+ * keeps the bypass's info line out of every single-tenant page load.
  *
  * Platform-agnostic: no Next.js imports.
  */
@@ -22,6 +23,23 @@ import { prisma } from '@/lib/db/client';
 import { getTenantContext, isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 
 const REASON = 'in-use check on global config (counted across orgs)';
+
+/** `fn` reading every org: the system scope at `multi`, as it is at `single`. */
+function acrossOrgs<T>(fn: () => Promise<T>): Promise<T> {
+  return isMultiTenant() ? runAsSystem(REASON, fn) : fn();
+}
+
+/**
+ * The `where` that narrows a tenant-owned row to the caller's own, read
+ * BEFORE entering the system scope: `{}` at `single` (every row, `NULL`-org
+ * ones included), the entered org at `multi`, and `null` (none) at `multi`
+ * with no org entered.
+ */
+function callersWhere(): { orgId?: string } | null {
+  if (!isMultiTenant()) return {};
+  const current = getTenantContext()?.orgId;
+  return current ? { orgId: current } : null;
+}
 
 /** A row the caller may see named: one of its own org's. */
 export interface NamedRef {
@@ -66,7 +84,7 @@ export interface ProviderUsage {
 
 /** What still references a provider's slug, in every org. Counts only. */
 export function providerUsage(slug: string): Promise<ProviderUsage> {
-  return runAsSystem(REASON, async () => {
+  return acrossOrgs(async () => {
     const [primaryAgents, fallbackAgents, costLogRows] = await Promise.all([
       prisma.aiAgent.count({ where: { provider: slug } }),
       prisma.aiAgent.count({ where: { fallbackProviders: { has: slug } } }),
@@ -132,7 +150,7 @@ export function providerModelUsage(
   modelId: string
 ): Promise<ProviderModelUsage> {
   const isCallers = callersRows();
-  return runAsSystem(REASON, async () => {
+  return acrossOrgs(async () => {
     const [agentRows, workflowRows] = await Promise.all([
       prisma.aiAgent.findMany({
         where: { isActive: true, provider: providerSlug, model: modelId },
@@ -182,30 +200,65 @@ export interface KnowledgeTagUsage {
   agents: NamedRef[];
   /** Agents in other orgs granted the tag. */
   otherOrgAgentGrants: number;
+  /** Documents in other orgs carrying the tag. A forced delete strips these too. */
+  otherOrgDocumentLinks: number;
 }
 
-/** Grants and document links on a knowledge tag, in every org. */
+/**
+ * Grants and document links on a knowledge tag, in every org. Both join
+ * tables carry their own `orgId`, so the caller's share is a filtered count,
+ * and only the caller's first {@link MAX_NAMED_TAG_AGENTS} grants are read
+ * by row.
+ */
 export function knowledgeTagUsage(tagId: string): Promise<KnowledgeTagUsage> {
-  const isCallers = callersRows();
-  return runAsSystem(REASON, async () => {
-    const [grants, documentLinks] = await Promise.all([
-      prisma.aiAgentKnowledgeTag.findMany({
-        where: { tagId },
-        select: { agent: { select: { id: true, name: true, slug: true, orgId: true } } },
-        orderBy: { createdAt: 'asc' },
-      }),
+  const own = callersWhere();
+  return acrossOrgs(async () => {
+    const [agentGrants, documentLinks, ownGrants, ownDocumentLinks, ownNamed] = await Promise.all([
+      prisma.aiAgentKnowledgeTag.count({ where: { tagId } }),
       prisma.aiKnowledgeDocumentTag.count({ where: { tagId } }),
+      own ? prisma.aiAgentKnowledgeTag.count({ where: { tagId, ...own } }) : 0,
+      own ? prisma.aiKnowledgeDocumentTag.count({ where: { tagId, ...own } }) : 0,
+      own
+        ? prisma.aiAgentKnowledgeTag.findMany({
+            where: { tagId, ...own },
+            select: { agent: { select: { id: true, name: true, slug: true } } },
+            orderBy: { createdAt: 'asc' },
+            take: MAX_NAMED_TAG_AGENTS,
+          })
+        : [],
     ]);
-    const agents = named(
-      grants.map((g) => g.agent),
-      isCallers
-    );
     return {
-      agentGrants: grants.length,
+      agentGrants,
       documentLinks,
-      agents: agents.own.slice(0, MAX_NAMED_TAG_AGENTS),
-      otherOrgAgentGrants: agents.elsewhere,
+      agents: ownNamed.map((g) => g.agent),
+      otherOrgAgentGrants: agentGrants - ownGrants,
+      otherOrgDocumentLinks: documentLinks - ownDocumentLinks,
     };
+  });
+}
+
+/** Grants and document links on each tag, in every org, for a list page. A tag with none is absent. */
+export function knowledgeTagCounts(
+  tagIds: string[]
+): Promise<Map<string, { agents: number; documents: number }>> {
+  if (tagIds.length === 0) {
+    return Promise.resolve(new Map<string, { agents: number; documents: number }>());
+  }
+  return acrossOrgs(async () => {
+    const where = { tagId: { in: tagIds } };
+    const [grants, links] = await Promise.all([
+      prisma.aiAgentKnowledgeTag.groupBy({ by: ['tagId'], where, _count: { _all: true } }),
+      prisma.aiKnowledgeDocumentTag.groupBy({ by: ['tagId'], where, _count: { _all: true } }),
+    ]);
+    const counts = new Map<string, { agents: number; documents: number }>();
+    const entry = (tagId: string) => {
+      const found = counts.get(tagId) ?? { agents: 0, documents: 0 };
+      counts.set(tagId, found);
+      return found;
+    };
+    for (const g of grants) entry(g.tagId).agents = g._count._all;
+    for (const l of links) entry(l.tagId).documents = l._count._all;
+    return counts;
   });
 }
 
@@ -214,7 +267,7 @@ export function knowledgeTagUsage(tagId: string): Promise<KnowledgeTagUsage> {
 /** Agents attached to each profile, in every org. A profile with none is absent. */
 export function agentProfileUsage(profileIds: string[]): Promise<Map<string, number>> {
   if (profileIds.length === 0) return Promise.resolve(new Map<string, number>());
-  return runAsSystem(REASON, async () => {
+  return acrossOrgs(async () => {
     const groups = await prisma.aiAgent.groupBy({
       by: ['profileId'],
       where: { profileId: { in: profileIds } },

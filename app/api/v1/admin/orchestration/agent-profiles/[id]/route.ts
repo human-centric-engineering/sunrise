@@ -43,9 +43,15 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
     },
   });
   if (!profile) throw new NotFoundError(`Agent profile ${id} not found`);
+  // `agents` are the caller's org's; a profile is global config, so changing
+  // it reaches other orgs' agents too, and they are counted here (t-731).
+  const attached = (await agentProfileUsage([id])).get(id) ?? 0;
 
   log.info('Agent profile fetched', { profileId: id });
-  return successResponse(profile);
+  return successResponse({
+    ...profile,
+    otherOrgAgentCount: Math.max(0, attached - profile.agents.length),
+  });
 });
 
 export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {

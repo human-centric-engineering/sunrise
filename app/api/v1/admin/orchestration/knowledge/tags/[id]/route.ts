@@ -47,7 +47,6 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   const tag = await prisma.knowledgeTag.findUnique({
     where: { id },
     include: {
-      _count: { select: { documents: true, agents: true } },
       documents: {
         include: {
           document: {
@@ -69,14 +68,20 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
     },
   });
   if (!tag) throw new NotFoundError(`Knowledge tag ${id} not found`);
+  // The lists are the caller's org's; the counts are every org's, as the
+  // tag list and the delete check count them (t-731), with the share that is
+  // another org's alongside.
+  const usage = await knowledgeTagUsage(id);
 
   log.info('Knowledge tag fetched', { tagId: id });
 
-  const { _count, documents, agents, ...rest } = tag;
+  const { documents, agents, ...rest } = tag;
   return successResponse({
     ...rest,
-    documentCount: _count.documents,
-    agentCount: _count.agents,
+    documentCount: usage.documentLinks,
+    agentCount: usage.agentGrants,
+    otherOrgDocumentCount: usage.otherOrgDocumentLinks,
+    otherOrgAgentCount: usage.otherOrgAgentGrants,
     documents: documents.map((d) => d.document),
     agents: agents.map((a) => a.agent),
   });
@@ -171,11 +176,18 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     );
   }
 
+  // A forced delete strips the tag from every org's documents, so the
+  // operator is told how many of them are another org's before forcing.
   if (usage.documentLinks > 0 && !force) {
+    const elsewhere =
+      usage.otherOrgDocumentLinks > 0
+        ? ` (${usage.otherOrgDocumentLinks} of them in other organisations)`
+        : '';
     throw new ConflictError(
-      `Tag "${current.name}" is applied to ${usage.documentLinks} document(s). Re-send with ?force=true to delete the tag and strip it from those documents.`,
+      `Tag "${current.name}" is applied to ${usage.documentLinks} document(s)${elsewhere}. Re-send with ?force=true to delete the tag and strip it from those documents.`,
       {
         documentCount: usage.documentLinks,
+        otherOrgDocumentCount: usage.otherOrgDocumentLinks,
         agentCount: 0,
       }
     );

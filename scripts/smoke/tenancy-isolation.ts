@@ -89,6 +89,7 @@ import {
 import { createOrg } from '@/lib/tenancy/lifecycle';
 import {
   agentProfileUsage,
+  knowledgeTagCounts,
   knowledgeTagUsage,
   providerModelUsage,
   providerUsage,
@@ -1541,6 +1542,18 @@ async function main(): Promise<void> {
     check(
       tagSeen.agentGrants === 1 && tagSeen.otherOrgAgentGrants === 1 && tagSeen.agents.length === 0,
       `knowledgeTagUsage, asked from A, counts B’s grant and names none of B’s rows (${JSON.stringify(tagSeen)})`
+    );
+    // The fixture tag is on one document in each org: A's delete check and
+    // the tag list count both, and the check says one is another org's.
+    const fixtureTagSeen = await asA(() => knowledgeTagUsage(tag.id));
+    check(
+      fixtureTagSeen.documentLinks === 2 && fixtureTagSeen.otherOrgDocumentLinks === 1,
+      `knowledgeTagUsage, asked from A, counts both orgs’ documents and says one is B’s (${fixtureTagSeen.documentLinks}/${fixtureTagSeen.otherOrgDocumentLinks})`
+    );
+    const listCounts = await asA(() => knowledgeTagCounts([tag.id, sharedTag.id]));
+    check(
+      listCounts.get(tag.id)?.documents === 2 && listCounts.get(sharedTag.id)?.agents === 1,
+      `knowledgeTagCounts, asked from A, counts every org for the tag list (${JSON.stringify([...listCounts])})`
     );
     const profileSeen = await asA(() => agentProfileUsage([profile.id]));
     check(

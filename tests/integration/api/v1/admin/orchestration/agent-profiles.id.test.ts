@@ -168,6 +168,25 @@ describe('GET /api/v1/admin/orchestration/agent-profiles/[id]', () => {
       })
     );
   });
+
+  it('counts the agents in other orgs that inherit from it, without listing them (t-731)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgentProfile.findUnique).mockResolvedValue({
+      ...makeProfile(),
+      agents: [{ id: 'agent_a', slug: 'support', name: 'Support', isActive: true }],
+    } as never);
+    // Three attached in every org; the caller's org lists one of them.
+    vi.mocked(agentProfileUsage).mockResolvedValue(new Map([[PROFILE_ID, 3]]));
+
+    const response = await GET(makeGetRequest(PROFILE_ID), paramsOf(PROFILE_ID));
+
+    const data = await parseJson<{
+      data: { agents: Array<{ slug: string }>; otherOrgAgentCount: number };
+    }>(response);
+    expect(data.data.agents).toHaveLength(1);
+    expect(data.data.otherOrgAgentCount).toBe(2);
+    expect(vi.mocked(agentProfileUsage)).toHaveBeenCalledWith([PROFILE_ID]);
+  });
 });
 
 describe('PATCH /api/v1/admin/orchestration/agent-profiles/[id]', () => {

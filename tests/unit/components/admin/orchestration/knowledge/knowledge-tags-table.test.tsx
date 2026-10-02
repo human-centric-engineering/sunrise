@@ -257,6 +257,48 @@ describe('KnowledgeTagsTable', () => {
       });
     });
 
+    it('counts, without listing, other orgs’ use of the tag (t-731)', async () => {
+      vi.mocked(apiClient.get).mockResolvedValue({
+        documents: [],
+        agents: [],
+        otherOrgDocumentCount: 3,
+        otherOrgAgentCount: 1,
+      });
+
+      const user = userEvent.setup();
+      render(<KnowledgeTagsTable initialTags={[TAG_WITH_USE]} initialMeta={MOCK_META} />);
+
+      await user.click(screen.getByText('Used Tag').closest('tr')!);
+
+      expect(
+        await screen.findByText(
+          /Also used in other organisations: 3 documents and\s+1 agent grant, not listed here\./
+        )
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/Nothing references this tag yet/)).not.toBeInTheDocument();
+    });
+
+    it('shows other orgs’ use beside the caller’s own lists', async () => {
+      vi.mocked(apiClient.get).mockResolvedValue({
+        documents: [
+          { id: 'd1', name: 'Sales Guide', fileName: 'sales.pdf', scope: 'app', status: 'ready' },
+        ],
+        agents: [],
+        otherOrgDocumentCount: 1,
+        otherOrgAgentCount: 0,
+      });
+
+      const user = userEvent.setup();
+      render(<KnowledgeTagsTable initialTags={[TAG_WITH_USE]} initialMeta={MOCK_META} />);
+
+      await user.click(screen.getByText('Used Tag').closest('tr')!);
+
+      expect(await screen.findByText('Sales Guide')).toBeInTheDocument();
+      expect(
+        screen.getByText(/Also used in other organisations: 1 document and/)
+      ).toBeInTheDocument();
+    });
+
     it('shows inactive badge for inactive agents in usage panel', async () => {
       vi.mocked(apiClient.get).mockResolvedValue({
         documents: [],
@@ -580,6 +622,51 @@ describe('KnowledgeTagsTable', () => {
       await waitFor(() => {
         expect(apiClient.delete).toHaveBeenLastCalledWith(expect.stringContaining('?force=true'));
       });
+    });
+
+    it('says how many grants other orgs hold when only they block the delete (t-731)', async () => {
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError('Agent blocked', 'CONFLICT', 409, {
+          agentCount: 2,
+          agents: [],
+          otherOrgAgentCount: 2,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<KnowledgeTagsTable initialTags={[TAG_WITH_USE]} initialMeta={MOCK_META} />);
+
+      await user.click(screen.getByRole('button', { name: /delete used tag/i }));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      expect(
+        await screen.findByText(
+          '2 agents in other organisations also hold this grant. They are not listed here: remove those grants from inside each organisation.'
+        )
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^delete$/i })).not.toBeInTheDocument();
+    });
+
+    it('warns before a forced delete strips the tag from other orgs’ documents (t-731)', async () => {
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError('Tag in use', 'CONFLICT', 409, {
+          agentCount: 0,
+          documentCount: 6,
+          otherOrgDocumentCount: 1,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<KnowledgeTagsTable initialTags={[TAG_WITH_USE]} initialMeta={MOCK_META} />);
+
+      await user.click(screen.getByRole('button', { name: /delete used tag/i }));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      expect(
+        await screen.findByText(
+          '1 of these documents is in another organisation. Deleting the tag strips it from theirs too.'
+        )
+      ).toBeInTheDocument();
     });
 
     it('shows agent-blocked phase on 409 with agents', async () => {

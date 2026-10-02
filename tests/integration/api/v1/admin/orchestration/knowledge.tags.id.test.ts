@@ -60,7 +60,14 @@ vi.mock('@/lib/orchestration/knowledge/resolveAgentDocumentAccess', () => ({
 }));
 
 vi.mock('@/lib/orchestration/admin/global-config-usage', () => ({
-  knowledgeTagUsage: vi.fn(),
+  knowledgeTagUsage: vi.fn(async () => ({
+    agentGrants: 0,
+    documentLinks: 0,
+    agents: [],
+    otherOrgAgentGrants: 0,
+    otherOrgDocumentLinks: 0,
+  })),
+  knowledgeTagCounts: vi.fn(async () => new Map()),
 }));
 
 vi.mock('@/lib/api/context', () => ({
@@ -158,6 +165,7 @@ describe('GET /api/v1/admin/orchestration/knowledge/tags/:id', () => {
       vi.mocked(prisma.knowledgeTag.findUnique).mockResolvedValue(
         makeTag({ _count: { documents: 3, agents: 1 } })
       );
+      tagUsage(1, 3, [], 1, 2);
 
       const response = await GET(makeRequest('GET'), makeParams(TAG_ID));
 
@@ -177,6 +185,8 @@ describe('GET /api/v1/admin/orchestration/knowledge/tags/:id', () => {
       expect(data.data.id).toBe(TAG_ID);
       expect(data.data.documentCount).toBe(3);
       expect(data.data.agentCount).toBe(1);
+      // Every org's counts, with the other orgs' share alongside (t-731).
+      expect(data.data).toMatchObject({ otherOrgDocumentCount: 2, otherOrgAgentCount: 1 });
       // Arrays from join rows are flattened to the nested object
       expect(Array.isArray(data.data.documents)).toBe(true);
       expect(Array.isArray(data.data.agents)).toBe(true);
@@ -387,13 +397,15 @@ function tagUsage(
   agentGrants: number,
   documentLinks: number,
   agents: Array<{ id: string; name: string; slug: string }> = [],
-  otherOrgAgentGrants = 0
+  otherOrgAgentGrants = 0,
+  otherOrgDocumentLinks = 0
 ) {
   vi.mocked(knowledgeTagUsage).mockResolvedValue({
     agentGrants,
     documentLinks,
     agents,
     otherOrgAgentGrants,
+    otherOrgDocumentLinks,
   });
 }
 
@@ -485,6 +497,27 @@ describe('DELETE /api/v1/admin/orchestration/knowledge/tags/:id', () => {
         documentCount: 0,
         otherOrgAgentCount: 2,
         agents: [],
+      });
+    });
+
+    it('says how many linked documents are another org’s before a forced delete (t-731)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.knowledgeTag.findUnique).mockResolvedValue(makeTag());
+      tagUsage(0, 6, [], 0, 5);
+
+      const response = await DELETE(makeRequest('DELETE'), makeParams(TAG_ID));
+
+      expect(response.status).toBe(409);
+      const body = await parseJson<{
+        error: { message: string; details: Record<string, unknown> };
+      }>(response);
+      expect(body.error.message).toBe(
+        'Tag "Support" is applied to 6 document(s) (5 of them in other organisations). Re-send with ?force=true to delete the tag and strip it from those documents.'
+      );
+      expect(body.error.details).toEqual({
+        documentCount: 6,
+        otherOrgDocumentCount: 5,
+        agentCount: 0,
       });
     });
 

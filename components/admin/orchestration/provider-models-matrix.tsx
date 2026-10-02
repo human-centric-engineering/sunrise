@@ -336,6 +336,9 @@ export function ProviderModelsMatrix({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteBlockedAgents, setDeleteBlockedAgents] = useState<ModelRowAgentRef[]>([]);
   const [deleteBlockedWorkflows, setDeleteBlockedWorkflows] = useState<ModelRowWorkflowRef[]>([]);
+  // Agents and workflows in other orgs still using the model: counted by the
+  // server, never named (a model is global config; t-731).
+  const [deleteBlockedElsewhere, setDeleteBlockedElsewhere] = useState(0);
 
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteTarget) return;
@@ -346,6 +349,7 @@ export function ProviderModelsMatrix({
       setDeleteTarget(null);
       setDeleteBlockedAgents([]);
       setDeleteBlockedWorkflows([]);
+      setDeleteBlockedElsewhere(0);
       router.refresh();
     } catch (err) {
       // 409 → in-use guard tripped. Pull the blocking-ref lists out of
@@ -359,6 +363,13 @@ export function ProviderModelsMatrix({
           if (Array.isArray(err.details?.workflows)) {
             setDeleteBlockedWorkflows(err.details.workflows as ModelRowWorkflowRef[]);
           }
+          const elsewhere = (key: string) => {
+            const n = err.details?.[key];
+            return typeof n === 'number' ? n : 0;
+          };
+          setDeleteBlockedElsewhere(
+            elsewhere('otherOrgAgentCount') + elsewhere('otherOrgWorkflowCount')
+          );
         }
         setDeleteError(err.message);
       } else {
@@ -374,9 +385,11 @@ export function ProviderModelsMatrix({
     setDeleteError(null);
     setDeleteBlockedAgents([]);
     setDeleteBlockedWorkflows([]);
+    setDeleteBlockedElsewhere(0);
   }, []);
 
-  const deleteBlocked = deleteBlockedAgents.length + deleteBlockedWorkflows.length > 0;
+  const deleteBlocked =
+    deleteBlockedAgents.length + deleteBlockedWorkflows.length + deleteBlockedElsewhere > 0;
 
   // Aggregate per-provider state for the strip above the filter bar.
   // `configured` and `configuredActive` come from the row's enrichment
@@ -1056,6 +1069,15 @@ export function ProviderModelsMatrix({
                 )}
               </ul>
             </div>
+          )}
+
+          {deleteBlockedElsewhere > 0 && (
+            <p className="text-sm text-amber-700 dark:text-amber-400">
+              {deleteBlockedElsewhere} agent{deleteBlockedElsewhere === 1 ? '' : 's'} or workflow
+              {deleteBlockedElsewhere === 1 ? '' : 's'} in other organisations also{' '}
+              {deleteBlockedElsewhere === 1 ? 'uses' : 'use'} this model. They are not listed here:
+              re-point them from inside each organisation.
+            </p>
           )}
 
           {deleteError && !deleteBlocked && (
