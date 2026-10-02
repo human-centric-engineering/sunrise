@@ -57,7 +57,7 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import {
   SHARED_SETTINGS_REFUSAL,
-  SHARED_SETTINGS_REFUSAL_REASON,
+  SHARED_SETTINGS_REFUSAL_CODE,
 } from '@/lib/tenancy/shared-settings';
 import { mockAdminUser } from '@/tests/helpers/auth';
 
@@ -160,7 +160,7 @@ describe.each(FAMILIES)('%s: %s', (_family, method, path, handler) => {
 
     expect(status).toBe(403);
     expect(body.error?.message).toBe(SHARED_SETTINGS_REFUSAL);
-    expect(body.error?.details?.reason).toBe(SHARED_SETTINGS_REFUSAL_REASON);
+    expect(body.error?.details?.reason).toBe(SHARED_SETTINGS_REFUSAL_CODE);
     expect(writesMade()).toEqual([]);
   });
 
@@ -171,7 +171,7 @@ describe.each(FAMILIES)('%s: %s', (_family, method, path, handler) => {
     const { status, body } = await send(method, path, handler);
 
     expect(status).not.toBe(403);
-    expect(body.error?.details?.reason).not.toBe(SHARED_SETTINGS_REFUSAL_REASON);
+    expect(body.error?.details?.reason).not.toBe(SHARED_SETTINGS_REFUSAL_CODE);
   });
 
   it('at single, changes nothing: the same customer-org session reaches the handler', async () => {
@@ -181,6 +181,6 @@ describe.each(FAMILIES)('%s: %s', (_family, method, path, handler) => {
     const { status, body } = await send(method, path, handler);
 
     expect(status).not.toBe(403);
-    expect(body.error?.details?.reason).not.toBe(SHARED_SETTINGS_REFUSAL_REASON);
+    expect(body.error?.details?.reason).not.toBe(SHARED_SETTINGS_REFUSAL_CODE);
   });
 });

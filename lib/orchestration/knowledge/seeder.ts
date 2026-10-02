@@ -264,7 +264,10 @@ export async function materialisePatternsKnowledge(
 /**
  * Seed the patterns knowledge into the org this runs in, from a chunk file:
  * the `007-knowledge-chunks` seed unit (the install org) and
- * `POST /knowledge/seed` (the admin's org). See
+ * `POST /knowledge/seed` (the admin's org — at `multi`, the install org only:
+ * the route declares `writesSharedSettings`, because the `lastSeededAt` stamp
+ * below is on the shared settings row; §107 t-751). Every org gets its own
+ * copy from the platform-agent reconcile anyway. See
  * {@link materialisePatternsKnowledge}.
  *
  * @param chunksJsonPath - Absolute path to the chunks.json file

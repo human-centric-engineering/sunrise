@@ -63,7 +63,7 @@ import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import {
   canChangeSharedSettings,
   SHARED_SETTINGS_REFUSAL,
-  SHARED_SETTINGS_REFUSAL_REASON,
+  SHARED_SETTINGS_REFUSAL_CODE,
 } from '@/lib/tenancy/shared-settings';
 
 /**
@@ -1318,7 +1318,7 @@ export function withAdminAuth(
             orgId: entry?.orgId,
           });
           throw new APIError(SHARED_SETTINGS_REFUSAL, ErrorCodes.FORBIDDEN, 403, {
-            reason: SHARED_SETTINGS_REFUSAL_REASON,
+            reason: SHARED_SETTINGS_REFUSAL_CODE,
           });
         }
 

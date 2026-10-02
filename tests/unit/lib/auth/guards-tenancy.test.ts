@@ -57,7 +57,7 @@ import { getTenantContext, type TenantContext } from '@/lib/tenancy/context';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import {
   SHARED_SETTINGS_REFUSAL,
-  SHARED_SETTINGS_REFUSAL_REASON,
+  SHARED_SETTINGS_REFUSAL_CODE,
 } from '@/lib/tenancy/shared-settings';
 
 const OTHER = 'cmorg000000000000000other';
@@ -523,7 +523,7 @@ describe('a route that writes shared settings (§107 t-751)', () => {
     expect(res.status).toBe(403);
     expect(body.error.code).toBe('FORBIDDEN');
     expect(body.error.message).toBe(SHARED_SETTINGS_REFUSAL);
-    expect(body.error.details).toEqual({ reason: SHARED_SETTINGS_REFUSAL_REASON });
+    expect(body.error.details).toEqual({ reason: SHARED_SETTINGS_REFUSAL_CODE });
     expect(ran).toEqual([]);
     expect(logger.warn).toHaveBeenCalledWith(
       'tenancy: refused a shared-settings write outside the install org',

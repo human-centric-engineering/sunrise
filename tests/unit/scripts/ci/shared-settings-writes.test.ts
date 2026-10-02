@@ -47,6 +47,10 @@ const APP = tracked('app');
 const ROUTES = APP.filter(isRoute).map(read);
 const SOURCES = [...tracked('lib'), ...APP.filter((p) => !isRoute(p))].map(read);
 const WRITERS = libWriters(SOURCES);
+const ROUTE_HANDLERS = ROUTES.flatMap((r) =>
+  analyzeRoute(r, WRITERS).map((h) => ({ ...h, at: `${r.path}#${h.method}` }))
+);
+const CAPABILITIES = SOURCES.flatMap((f) => analyzeCapabilities(f, WRITERS));
 
 const route = (source: string, path = 'app/api/v1/fixture/route.ts'): SourceFile => ({
   path,
@@ -64,11 +68,9 @@ describe('the tree', () => {
     for (const name of ['createFlag', 'updateFlag', 'deleteFlag', 'seedChunks']) {
       expect(WRITERS).toContain(name);
     }
-    const declared = ROUTES.flatMap((r) => analyzeRoute(r, WRITERS).filter((h) => h.declares));
-    expect(declared.length).toBeGreaterThanOrEqual(34);
-    const capabilities = SOURCES.flatMap((f) => analyzeCapabilities(f, WRITERS));
-    expect(capabilities.length).toBeGreaterThan(20);
-    expect(capabilities.filter((c) => c.writes).map((c) => c.name.split('#')[1])).toEqual(
+    expect(ROUTE_HANDLERS.filter((h) => h.declares).length).toBeGreaterThanOrEqual(34);
+    expect(CAPABILITIES.length).toBeGreaterThan(20);
+    expect(CAPABILITIES.filter((c) => c.writes).map((c) => c.name.split('#')[1])).toEqual(
       expect.arrayContaining([
         'AddProviderModelsCapability',
         'ApplyAuditChangesCapability',
@@ -81,16 +83,8 @@ describe('the tree', () => {
     // A declaration on code that changes nothing refuses honest work from a
     // customer's org — a read, say — for no reason.
     const needless = [
-      ...ROUTES.flatMap((r) =>
-        analyzeRoute(r, WRITERS)
-          .filter((h) => h.declares && !h.writes)
-          .map((h) => `${r.path}#${h.method}`)
-      ),
-      ...SOURCES.flatMap((f) =>
-        analyzeCapabilities(f, WRITERS)
-          .filter((c) => c.declares && !c.writes)
-          .map((c) => c.name)
-      ),
+      ...ROUTE_HANDLERS.filter((h) => h.declares && !h.writes).map((h) => h.at),
+      ...CAPABILITIES.filter((c) => c.declares && !c.writes).map((c) => c.name),
     ];
     expect(needless).toEqual([]);
   });
@@ -106,14 +100,8 @@ describe('the tree', () => {
     const stripped = real!.source.replace(/,\s*\{\s*writesSharedSettings: true\s*\}/, '');
     expect(stripped).not.toContain('writesSharedSettings');
 
-    const others = ROUTES.filter((r) => r.path !== path);
     expect(
-      findUndeclaredSharedSettingsWrites(
-        [...others, { path, source: stripped }],
-        SOURCES,
-        undefined,
-        WRITERS
-      )
+      findUndeclaredSharedSettingsWrites([{ path, source: stripped }], [], {}, WRITERS)
     ).toEqual([{ handler: `${path}#POST`, problem: expect.stringContaining('without') }]);
   });
 
@@ -123,14 +111,8 @@ describe('the tree', () => {
     expect(real?.source).toContain('readonly writesSharedSettings = true;');
     const stripped = real!.source.replace('readonly writesSharedSettings = true;', '');
 
-    const others = SOURCES.filter((f) => f.path !== path);
     expect(
-      findUndeclaredSharedSettingsWrites(
-        ROUTES,
-        [...others, { path, source: stripped }],
-        undefined,
-        WRITERS
-      )
+      findUndeclaredSharedSettingsWrites([], [{ path, source: stripped }], {}, WRITERS)
     ).toEqual([
       {
         handler: `${path}#AddProviderModelsCapability`,
@@ -227,6 +209,21 @@ describe('what counts as a write', () => {
       new Set()
     );
     expect(handler.writes).toBe(true);
+  });
+
+  it('follows a call through a namespace import, and no other method call', () => {
+    const judged = (body: string) =>
+      analyzeRoute(
+        route(
+          "import * as flags from '@/lib/feature-flags';\n" +
+            `export const POST = withAdminAuth(async () => { ${body} });`
+        ),
+        new Set(['createFlag', 'update'])
+      )[0].writes;
+    expect(judged('await flags.createFlag({});')).toBe(true);
+    // A writer that happened to be called `update` must not turn every
+    // Prisma `.update(` in the tree into a shared-settings write.
+    expect(judged('await prisma.aiAgent.update({});')).toBe(false);
   });
 
   it('follows a writer in a non-route module, as the test hands it app/ helpers', () => {

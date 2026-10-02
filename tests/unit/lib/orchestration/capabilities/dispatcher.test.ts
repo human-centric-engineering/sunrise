@@ -380,6 +380,8 @@ describe('CapabilityDispatcher', () => {
       expect(result).toEqual({
         success: false,
         error: { code: SHARED_SETTINGS_REFUSAL_CODE, message: SHARED_SETTINGS_REFUSAL },
+        // Permanent in this org: the tool loop stops rather than retrying.
+        skipFollowup: true,
       });
       expect(capability.runs).toBe(0);
     });

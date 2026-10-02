@@ -306,9 +306,12 @@ class CapabilityDispatcher {
         agentId: context.agentId,
         orgId: getTenantContext()?.orgId,
       });
+      // Permanent for this org, as a hard quarantine is: stop the tool loop
+      // rather than let the model retry a call that cannot succeed here.
       return {
         success: false,
         error: { code: SHARED_SETTINGS_REFUSAL_CODE, message: SHARED_SETTINGS_REFUSAL },
+        skipFollowup: true,
       };
     }
 

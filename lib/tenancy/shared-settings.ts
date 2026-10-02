@@ -19,7 +19,9 @@
  * state `requireTenantContext()` treats as a bug, not a credential. The one
  * credential that legitimately enters no org — an unbound admin API key,
  * which acts as the install org (owner ruling, 2026-10-02) — is allowed by
- * the route guard, the one place that can tell it apart.
+ * the route guard, the one place that can tell it apart. A capability is
+ * never reached from that key with no org: at `multi` a workflow or chat run
+ * with no org entered fails on its own tenant-owned reads first.
  *
  * The rule reads the tenant context rather than taking an org, so the route
  * guard (`withAdminAuth({ writesSharedSettings: true })`) and the capability
@@ -35,11 +37,12 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 export const SHARED_SETTINGS_REFUSAL =
   'Shared settings apply to every organisation and can only be changed from the install organisation. Switch to the install organisation to make this change.';
 
-/** The capability dispatcher's error code for the same refusal. */
+/**
+ * The refusal's one machine-readable name: the route guard's
+ * `error.details.reason` and the dispatcher's error `code` alike, so a client
+ * recognises it whichever surface refused.
+ */
 export const SHARED_SETTINGS_REFUSAL_CODE = 'shared_settings_install_org_only';
-
-/** Machine-readable reason on the refusal, so a client can tell it from any other 403. */
-export const SHARED_SETTINGS_REFUSAL_REASON = 'shared-settings-install-org-only';
 
 /**
  * Whether the current call stack may change shared settings. At `multi`:

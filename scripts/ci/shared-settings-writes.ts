@@ -33,10 +33,12 @@
  *   given (the test gives it `lib/` and the non-route files under `app/`), or
  *   in the route file itself, that writes, directly or by calling another
  *   writer. A function passed by name — `withAdminAuth(createThing)`,
- *   `items.map(save)` — counts as called. Found by a fixpoint over the call
- *   graph, by name. That over-approximates — two functions of the same name
- *   are one to it — and errs towards asking for a declaration, which is the
- *   safe direction.
+ *   `items.map(save)` — counts as called, and so does `ns.fn()` through a
+ *   namespace import (`import * as ns`). Any other `x.method()` does not: a
+ *   method name like `update` would otherwise match every Prisma call in the
+ *   tree. Found by a fixpoint over the call graph, by name. That
+ *   over-approximates — two functions of the same name are one to it — and
+ *   errs towards asking for a declaration, which is the safe direction.
  *
  * ## What it still cannot see, said plainly
  *
@@ -115,14 +117,29 @@ export interface SourceFile {
   source: string;
 }
 
-function parse(file: SourceFile): ts.SourceFile {
-  return ts.createSourceFile(
+/** A file parsed once, with the namespace imports its `ns.fn()` calls resolve through. */
+interface Parsed {
+  path: string;
+  sf: ts.SourceFile;
+  namespaces: ReadonlySet<string>;
+}
+
+function parse(file: SourceFile): Parsed {
+  const sf = ts.createSourceFile(
     file.path,
     file.source,
     ts.ScriptTarget.Latest,
     true,
     file.path.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS
   );
+  const namespaces = new Set<string>();
+  for (const statement of sf.statements) {
+    const bindings = ts.isImportDeclaration(statement)
+      ? statement.importClause?.namedBindings
+      : undefined;
+    if (bindings && ts.isNamespaceImport(bindings)) namespaces.add(bindings.name.text);
+  }
+  return { path: file.path, sf, namespaces };
 }
 
 /** The name an access expression reaches: `a.b` → `b`, `a['b']` → `b`. */
@@ -158,7 +175,7 @@ interface BodyFacts {
   calls: Set<string>;
 }
 
-function factsOf(body: ts.Node): BodyFacts {
+function factsOf(body: ts.Node, namespaces: ReadonlySet<string>): BodyFacts {
   const facts: BodyFacts = { writes: false, changes: false, calls: new Set() };
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
@@ -170,11 +187,13 @@ function factsOf(body: ts.Node): BodyFacts {
       }
       const method = accessedName(callee);
       if (method) {
-        facts.calls.add(method);
         const receiver =
           ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)
             ? callee.expression
             : null;
+        if (receiver && ts.isIdentifier(receiver) && namespaces.has(receiver.text)) {
+          facts.calls.add(method);
+        }
         const model = receiver ? accessedName(receiver) : null;
         if (model && WRITE_METHODS.has(method) && GLOBAL_CONFIG_ACCESSORS.has(model)) {
           facts.writes = true;
@@ -226,11 +245,11 @@ function topLevelFunctions(sf: ts.SourceFile): Map<string, ts.Node> {
  * own writes dropped — only while they only add. Same name in two files: one
  * node, the union of both (see the header).
  */
-function graphOf(files: readonly SourceFile[]): Map<string, BodyFacts> {
+function graphOf(files: readonly Parsed[]): Map<string, BodyFacts> {
   const graph = new Map<string, BodyFacts>();
   for (const file of files) {
-    for (const [name, body] of topLevelFunctions(parse(file))) {
-      const facts = factsOf(body);
+    for (const [name, body] of topLevelFunctions(file.sf)) {
+      const facts = factsOf(body, file.namespaces);
       const own =
         `${file.path}#${name}` in NON_CHANGING_WRITERS && !facts.changes
           ? { ...facts, writes: false }
@@ -273,7 +292,7 @@ function closeOver(graph: ReadonlyMap<string, BodyFacts>, seed: ReadonlySet<stri
 
 /** Every top-level function in `files` that changes a shared setting, directly or through another. */
 export function libWriters(files: readonly SourceFile[]): Set<string> {
-  return closeOver(graphOf(files), new Set());
+  return closeOver(graphOf(files.map(parse)), new Set());
 }
 
 /**
@@ -288,12 +307,13 @@ export function staleNonChangingWriters(
   for (const key of Object.keys(entries)) {
     const [path, name] = key.split('#');
     const file = files.find((f) => f.path === path);
-    const body = file ? topLevelFunctions(parse(file)).get(name) : undefined;
-    if (!body) {
+    const parsed = file ? parse(file) : undefined;
+    const body = parsed ? topLevelFunctions(parsed.sf).get(name) : undefined;
+    if (!parsed || !body) {
       problems.push(`${key}: no such function`);
       continue;
     }
-    const facts = factsOf(body);
+    const facts = factsOf(body, parsed.namespaces);
     if (!facts.writes) problems.push(`${key}: writes no shared setting — remove the entry`);
     else if (facts.changes) {
       problems.push(`${key}: changes or deletes an existing row, so it is a writer like any other`);
@@ -327,12 +347,13 @@ function declaresOption(call: ts.CallExpression): boolean {
 
 /** Each exported HTTP handler in a route file: does it write, and does it declare? */
 export function analyzeRoute(file: SourceFile, writers: ReadonlySet<string>): RouteHandler[] {
-  const sf = parse(file);
-  const reachable = closeOver(graphOf([file]), writers);
+  const parsed = parse(file);
+  const { sf } = parsed;
+  const reachable = closeOver(graphOf([parsed]), writers);
 
   const handlers: RouteHandler[] = [];
   const judge = (method: string, body: ts.Node, declares: boolean): void => {
-    const facts = factsOf(body);
+    const facts = factsOf(body, parsed.namespaces);
     handlers.push({
       method,
       writes: facts.writes || [...facts.calls].some((called) => reachable.has(called)),
@@ -385,13 +406,14 @@ export function analyzeCapabilities(
   writers: ReadonlySet<string>
 ): CapabilityClass[] {
   if (!file.source.includes('BaseCapability')) return [];
-  const sf = parse(file);
-  const reachable = closeOver(graphOf([file]), writers);
+  const parsed = parse(file);
+  const { sf } = parsed;
+  const reachable = closeOver(graphOf([parsed]), writers);
   const out: CapabilityClass[] = [];
   for (const statement of sf.statements) {
     if (!ts.isClassDeclaration(statement) || !statement.name) continue;
     if (!extendsBaseCapability(statement)) continue;
-    const facts = factsOf(statement);
+    const facts = factsOf(statement, parsed.namespaces);
     const declares = statement.members.some(
       (m) =>
         ts.isPropertyDeclaration(m) &&

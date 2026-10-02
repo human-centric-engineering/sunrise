@@ -86,7 +86,7 @@ CREATE POLICY "org_isolation" ON "ai_agent"
   - **Routes.** A handler that creates, changes or deletes one of these rows
     is `withAdminAuth(handler, { writesSharedSettings: true })`. The guard
     refuses a session entered into any other org with a 403 whose
-    `details.reason` is `shared-settings-install-org-only` and whose message
+    `details.reason` is `shared_settings_install_org_only` and whose message
     says to switch to the install org. An unbound admin API key enters no org
     and the guard admits it, as the install org. The same admin keeps read
     access from a customer's org: only the write handlers declare it. The

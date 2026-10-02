@@ -406,7 +406,7 @@ release process.
     `{ writesSharedSettings: true }`, and 34 write handlers declare it. At
     `multi` the guard refuses a session entered into any org but the install
     org with a 403 whose `details.reason` is
-    `shared-settings-install-org-only`. An unbound admin API key, which
+    `shared_settings_install_org_only`. An unbound admin API key, which
     enters no org, is still allowed. Reads are unchanged.
   - **The backup import** (`POST …/backup/import`) is one of them. At `multi`
     it now runs from the install org only, until §109 t-738 splits a
