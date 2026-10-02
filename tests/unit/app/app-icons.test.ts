@@ -25,7 +25,9 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { config } from '@/proxy';
+import { getAppPageStaticInfo } from 'next/dist/build/analysis/get-page-static-info';
+import { loadBindings } from 'next/dist/build/swc';
+import type { PAGE_TYPES } from 'next/dist/lib/page-types';
 
 const root = process.cwd();
 
@@ -69,15 +71,31 @@ describe('app icons use the App Router file convention', () => {
     ).toEqual([]);
   });
 
-  it('the proxy matcher skips the icon routes', () => {
+  it('the proxy matcher skips the icon routes', async () => {
     // Static app icons are served at /favicon.ico and /icon.<ext> (the link adds
     // a ?<hash> query, which the matcher never sees). A matcher that ran the
     // proxy on them would add a session lookup to every tab-icon fetch.
-    const matchers = [config.matcher].flat();
-    const runs = (path: string): boolean => matchers.some((m) => new RegExp(`^${m}$`).test(path));
+    //
+    // The matcher is read the way `next build` reads it: parsed out of the
+    // proxy.ts SOURCE and compiled with Next's own path-to-regexp handling. So
+    // this neither executes proxy.ts (and everything it imports) nor guesses at
+    // how Next interprets the pattern. If Next moves these internals, the import
+    // fails loudly; it cannot pass silently.
+    await loadBindings();
+    const info = await getAppPageStaticInfo({
+      pageFilePath: join(root, 'proxy.ts'),
+      nextConfig: {},
+      isDev: false,
+      page: '/proxy',
+      // A const enum, which isolatedModules cannot import as a value.
+      pageType: 'app' as PAGE_TYPES,
+    });
+    const matchers = info.middleware?.matchers ?? [];
+    expect(matchers.length, 'Next found no config.matcher in proxy.ts').toBeGreaterThan(0);
+    const runs = (path: string): boolean => matchers.some((m) => new RegExp(m.regexp).test(path));
 
     // CONTROL: the matcher still matches an ordinary page, so a `false` below
-    // means "exempted", not "the matcher is unreadable as a regex".
+    // means "exempted", not "the matcher matches nothing".
     expect(runs('/dashboard')).toBe(true);
     expect(runs('/favicon.ico')).toBe(false);
     for (const icon of appIcons()) expect(runs(`/${icon.slice('app/'.length)}`), icon).toBe(false);
