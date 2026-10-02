@@ -25,6 +25,7 @@ import { dirname, join, resolve } from 'node:path';
 import { alwaysRunPaths } from '@/scripts/ci/scoped-tests';
 import {
   authoredPaths,
+  cliMain,
   changedPaths,
   countOverlap,
   gitErrorMessage,
@@ -445,6 +446,13 @@ describe('main', () => {
     // `ci-status` had when it tested for `failure` and let `cancelled` through.
     process.env.SCOPED_STUB_SIGNAL = '1';
     expect(main(['--base', head(), '--no-fetch'], repo)).toBe(1);
+  });
+
+  it('runs as the CLI with vitest’s parser behind the self-test (t-749)', async () => {
+    // cliMain is what the npm script runs; it loads vitest's parseCLI and the
+    // self-test asks it what the coverage flags mean.
+    expect(await cliMain(['--base', head(), '--no-fetch', '--coverage'], repo)).toBe(0);
+    expect(runArgv()).toContain('--coverage.thresholds.perFile');
   });
 
   it('gates coverage on the changed sources, per file', () => {

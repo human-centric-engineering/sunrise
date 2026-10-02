@@ -436,7 +436,8 @@ describe('validateAlwaysRun', () => {
 });
 
 describe('selfTestFailure', () => {
-  it('passes on the module as shipped', () => {
+  it('passes on the module as shipped, with vitest’s parser and without it', () => {
+    expect(selfTestFailure({ parse: parseCLI })).toBeNull();
     expect(selfTestFailure()).toBeNull();
   });
 
@@ -463,6 +464,9 @@ describe('selfTestFailure', () => {
   });
 
   it('catches buildVitestArgv dropping the per-file threshold', () => {
+    expect(selfTestFailure({ build: () => ['run'], parse: parseCLI })).toContain(
+      'per-file coverage'
+    );
     expect(selfTestFailure({ build: () => ['run'] })).toContain('per-file coverage');
   });
 
@@ -471,15 +475,19 @@ describe('selfTestFailure', () => {
       buildVitestArgv(plan).map((a) =>
         a === '--coverage.thresholds.perFile' ? '--coverage.thresholds.perFile=true' : a
       );
-    expect(selfTestFailure({ build })).toBe(
+    expect(selfTestFailure({ build, parse: parseCLI })).toBe(
       'buildVitestArgv\'s per-file coverage threshold parses as "true", not true: vitest would gate the average.'
+    );
+    // Without the parser, the spelling itself is refused.
+    expect(selfTestFailure({ build })).toBe(
+      'buildVitestArgv stopped asking for per-file coverage thresholds.'
     );
   });
 
   it('fails when a metric floor is missing from the argv', () => {
     const build: typeof buildVitestArgv = (plan) =>
       buildVitestArgv(plan).filter((a) => !a.startsWith('--coverage.thresholds.branches'));
-    expect(selfTestFailure({ build })).toBe(
+    expect(selfTestFailure({ build, parse: parseCLI })).toBe(
       "buildVitestArgv's branches threshold parses as undefined, not 80."
     );
   });

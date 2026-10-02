@@ -65,9 +65,14 @@
 // carry a reason of at least 20 characters, be a test file vitest would
 // actually collect, and be something the runner can pass to `vitest` as an
 // argument. Nothing here needs pinning when you fill the seam.
-import { parseCLI } from 'vitest/node';
-
 import { appAlwaysRunTests } from '@/lib/app/ci';
+
+/**
+ * Vitest's own CLI parser. A type only: `vitest/node` cannot be imported
+ * statically under `tsx` (a nested dependency has no CommonJS entry), so the
+ * CLI loads it with a dynamic `import()` and hands it to {@link selfTestFailure}.
+ */
+export type ParseCli = typeof import('vitest/node').parseCLI;
 
 /** One test that must run regardless of what the module graph says. */
 export interface AlwaysRunEntry {
@@ -527,7 +532,7 @@ export interface ScopedRunPlan {
  * the boolean, so that spelling silently gated the average (t-749, measured on
  * vitest 5.0.2: a changed file at 75% branches passed beside one at 100%).
  * {@link selfTestFailure} parses this argv with vitest's own `parseCLI` and
- * checks the value, not the spelling.
+ * checks the value, not the spelling (the CLI always hands it the parser).
  */
 export function buildVitestArgv(plan: ScopedRunPlan): string[] {
   const files = [...new Set([...plan.selected, ...plan.alwaysRun])].sort();
@@ -622,6 +627,12 @@ export interface SelfTestDeps {
   detect: typeof undeclaredRepoRootedTests;
   targets: typeof coverageTargets;
   build: typeof buildVitestArgv;
+  /**
+   * Vitest's `parseCLI`, to ask what the coverage flags MEAN. The CLI always
+   * passes it (`cliMain` in run-scoped-tests.ts). Without it, only the spelling
+   * that silently failed (t-749) is refused.
+   */
+  parse: ParseCli;
 }
 
 /**
@@ -645,6 +656,7 @@ export function selfTestFailure(deps: Partial<SelfTestDeps> = {}): string | null
     detect = undeclaredRepoRootedTests,
     targets = coverageTargets,
     build = buildVitestArgv,
+    parse,
   } = deps;
 
   const shape = validateAlwaysRun(entries);
@@ -688,7 +700,13 @@ export function selfTestFailure(deps: Partial<SelfTestDeps> = {}): string | null
   // present: `--coverage.thresholds.perFile=true` was present for months and
   // parsed to the string "true", which vitest does not treat as on (t-749).
   const argv = build({ selected: [], alwaysRun: [], coverage: ['lib/a.ts'], threshold: 80 });
-  const { thresholds } = parseCLI(['vitest', ...argv]).options.coverage ?? {};
+  if (!parse) {
+    if (!argv.includes('--coverage.thresholds.perFile')) {
+      return 'buildVitestArgv stopped asking for per-file coverage thresholds.';
+    }
+    return null;
+  }
+  const { thresholds } = parse(['vitest', ...argv]).options.coverage ?? {};
   if (thresholds?.perFile !== true) {
     return `buildVitestArgv's per-file coverage threshold parses as ${JSON.stringify(thresholds?.perFile)}, not true: vitest would gate the average.`;
   }

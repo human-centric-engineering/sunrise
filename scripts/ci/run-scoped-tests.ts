@@ -594,7 +594,20 @@ export function reportUndeclared(root: string): void {
   if (undeclared.length > 10) console.log(`    (+${undeclared.length - 10} more)`);
 }
 
+/**
+ * The CLI: {@link main}, with the self-test given vitest's own CLI parser so it
+ * checks what the coverage flags mean rather than how they are spelled (t-749).
+ * Loaded dynamically because `vitest/node` cannot be imported statically under
+ * `tsx`.
+ */
+export async function cliMain(argv: string[], root: string = process.cwd()): Promise<number> {
+  const { parseCLI } = await import('vitest/node');
+  return main(argv, root, () => selfTestFailure({ parse: parseCLI }));
+}
+
 // Only when run as a CLI — see the same guard on `check-missing-tests.ts`.
 if (process.argv[1] !== undefined && process.argv[1].endsWith('run-scoped-tests.ts')) {
-  process.exitCode = main(process.argv.slice(2));
+  void cliMain(process.argv.slice(2)).then((code) => {
+    process.exitCode = code;
+  });
 }
