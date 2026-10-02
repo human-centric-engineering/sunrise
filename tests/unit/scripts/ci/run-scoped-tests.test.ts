@@ -453,7 +453,9 @@ describe('main', () => {
     expect(argv).toContain('--coverage');
     expect(argv).toContain('--coverage.include=lib-a.ts');
     expect(argv).toContain('--coverage.include=lib-b.ts');
-    expect(argv).toContain('--coverage.thresholds.perFile=true');
+    // The bare flag: `=true` parses to the string "true", not on (t-749).
+    expect(argv).toContain('--coverage.thresholds.perFile');
+    expect(argv).not.toContain('--coverage.thresholds.perFile=true');
     expect(argv).toContain('--coverage.thresholds.lines=80');
   });
 

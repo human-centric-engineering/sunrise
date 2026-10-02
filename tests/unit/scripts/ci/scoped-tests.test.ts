@@ -19,6 +19,7 @@
  * @see scripts/ci/scoped-tests.ts
  */
 
+import { parseCLI } from 'vitest/node';
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -289,11 +290,27 @@ describe('buildVitestArgv', () => {
     expect(argv).toContain('--coverage.include=lib/a.ts');
     expect(argv).toContain('--coverage.include=lib/b.ts');
     // Without perFile the floor is an average over the included set, which one
-    // well-covered file carries for a bare one.
-    expect(argv).toContain('--coverage.thresholds.perFile=true');
-    for (const metric of ['lines', 'functions', 'branches', 'statements']) {
-      expect(argv).toContain(`--coverage.thresholds.${metric}=80`);
-    }
+    // well-covered file carries for a bare one. Asked of vitest's own parser:
+    // the `=true` spelling parses to the string "true", which is not on (t-749).
+    const { thresholds } = parseCLI(['vitest', ...argv]).options.coverage ?? {};
+    expect(thresholds).toEqual({
+      perFile: true,
+      lines: 80,
+      functions: 80,
+      branches: 80,
+      statements: 80,
+    });
+  });
+
+  it('never spells the per-file flag `=true`, which vitest reads as the string "true"', () => {
+    const argv = buildVitestArgv(plan({ coverage: ['lib/a.ts'], threshold: 80 }));
+    expect(argv).not.toContain('--coverage.thresholds.perFile=true');
+    // The premise, pinned against the installed vitest: if this stops holding,
+    // the spelling stops mattering, and this test should say so.
+    expect(
+      parseCLI(['vitest', 'run', '--coverage.thresholds.perFile=true']).options.coverage?.thresholds
+        ?.perFile
+    ).toBe('true');
   });
 
   it('glob-escapes a route group, which would otherwise gate nothing', () => {
@@ -447,6 +464,24 @@ describe('selfTestFailure', () => {
 
   it('catches buildVitestArgv dropping the per-file threshold', () => {
     expect(selfTestFailure({ build: () => ['run'] })).toContain('per-file coverage');
+  });
+
+  it('fails when the per-file flag is spelled the way vitest reads as a string (t-749)', () => {
+    const build: typeof buildVitestArgv = (plan) =>
+      buildVitestArgv(plan).map((a) =>
+        a === '--coverage.thresholds.perFile' ? '--coverage.thresholds.perFile=true' : a
+      );
+    expect(selfTestFailure({ build })).toBe(
+      'buildVitestArgv\'s per-file coverage threshold parses as "true", not true: vitest would gate the average.'
+    );
+  });
+
+  it('fails when a metric floor is missing from the argv', () => {
+    const build: typeof buildVitestArgv = (plan) =>
+      buildVitestArgv(plan).filter((a) => !a.startsWith('--coverage.thresholds.branches'));
+    expect(selfTestFailure({ build })).toBe(
+      "buildVitestArgv's branches threshold parses as undefined, not 80."
+    );
   });
 
   it('passes for a caller injecting its own valid entries list', () => {
