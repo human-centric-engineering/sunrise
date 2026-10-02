@@ -46,6 +46,9 @@
  *     `createOrg` lists all twelve, served from code; one org's custom
  *     template is not in another's list; and a workflow created from a
  *     built-in, with its first version, carries the creating org.
+ *   - a workflow slug (§107 t-728): a slug only A holds is invisible to a
+ *     plain read in B, but `isWorkflowSlugTaken` / `findFreeWorkflowSlug`
+ *     see it, and B creates on the slug it is given;
  *   - the org export and erasure (§106 t-735, t-730): B's export, asked
  *     from inside A (an admin's session) and from no org (an admin API key),
  *     holds B's rows and none of A's; B, holding a knowledge base with
@@ -81,6 +84,10 @@ import {
   runAsSystem,
 } from '@/lib/tenancy/context';
 import { createOrg } from '@/lib/tenancy/lifecycle';
+import {
+  findFreeWorkflowSlug,
+  isWorkflowSlugTaken,
+} from '@/lib/orchestration/workflows/slug-availability';
 import { tenantOwnedModels } from '@/lib/tenancy/classification';
 import { exportOrgData } from '@/lib/privacy/export-org';
 import { eraseOrg } from '@/lib/privacy/erase-org';
@@ -1420,10 +1427,57 @@ async function main(): Promise<void> {
     );
     check(seenFromA.length === 0, 'A cannot see it');
 
-    // ── [14] Org export: the target org's rows, whoever is asking ─────────
+    // ── [14] A workflow slug another org holds (§107 t-728) ───────────────
+    // `AiWorkflow.slug` is unique across the install, and the policy hides
+    // A's workflows from B, so a plain read in B calls A's slug free.
+    console.log('\n[14] workflow slugs: B is told the truth about a slug only A holds');
+    const heldByA = `${b.workflowSlug}-template`;
+    await runAsOrg(a.orgId, () =>
+      prisma.aiWorkflow.create({
+        data: { name: `${PREFIX} slug held by a`, slug: heldByA, description: 'smoke fixture' },
+      })
+    );
+    const plainReadInB = await runAsOrg(b.orgId, () =>
+      prisma.aiWorkflow.findUnique({ where: { slug: heldByA }, select: { id: true } })
+    );
+    check(
+      plainReadInB === null,
+      'a plain read in B cannot see A’s slug (the case the fix exists for)'
+    );
+    // What save-as-template did before t-728: trust that read, and create.
+    await rejects(
+      () =>
+        runAsOrg(b.orgId, () =>
+          prisma.aiWorkflow.create({
+            data: { name: `${PREFIX} collides`, slug: heldByA, description: 'smoke fixture' },
+          })
+        ),
+      /Unique constraint/,
+      'so B creating on the slug that read called free fails on the unique index'
+    );
+    check(
+      await runAsOrg(b.orgId, () => isWorkflowSlugTaken(heldByA)),
+      'isWorkflowSlugTaken, asked from B, says A’s slug is taken'
+    );
+    const freeForB = await runAsOrg(b.orgId, () => findFreeWorkflowSlug(heldByA));
+    check(freeForB === `${heldByA}-1`, `B is given a slug no org holds (${freeForB})`);
+    let createdInB = false;
+    try {
+      await runAsOrg(b.orgId, () =>
+        prisma.aiWorkflow.create({
+          data: { name: `${PREFIX} template b`, slug: freeForB, description: 'smoke fixture' },
+        })
+      );
+      createdInB = true;
+    } catch (err) {
+      console.log(`    create failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    check(createdInB, 'B creates its workflow on that slug without a unique-index failure');
+
+    // ── [15] Org export: the target org's rows, whoever is asking ─────────
     // A platform admin exports from inside their own active org (the session
     // guard enters it), and an admin API key enters none (§106 t-735).
-    console.log('\n[14] org export: B’s bundle, asked from inside A and from no org at all');
+    console.log('\n[15] org export: B’s bundle, asked from inside A and from no org at all');
     const rowIds = (rows: unknown[] | undefined): string[] =>
       (rows ?? []).flatMap((r) =>
         typeof r === 'object' && r !== null && 'id' in r && typeof r.id === 'string' ? [r.id] : []
@@ -1475,10 +1529,10 @@ async function main(): Promise<void> {
       check(leaked.length === 0, `B’s export ${label} holds none of A’s`);
     }
 
-    // ── [15] Org erasure: from inside another org, with knowledge documents ─
+    // ── [16] Org erasure: from inside another org, with knowledge documents ─
     // `ai_knowledge_document.knowledgeBaseId` is ON DELETE RESTRICT, and both
     // rows also cascade from the org: erasure must still go through (t-730).
-    console.log('\n[15] org erasure: B, holding documents and chunks, erased from inside A');
+    console.log('\n[16] org erasure: B, holding documents and chunks, erased from inside A');
     // Every tenant-owned table, counted by the org's id, as the bypass. A
     // `SetNull` relation (`AiCostLog`, a billing record) keeps its row with the
     // org detached, so "no row carries the org" is the claim, not "no row".
@@ -1576,7 +1630,7 @@ async function main(): Promise<void> {
       }
     }).catch((err: unknown) => {
       // A failed cleanup fails the run (t-730): `org.deleteMany` here erases
-      // whatever org [15] did not, and an org that could not be erased is a
+      // whatever org [16] did not, and an org that could not be erased is a
       // finding, not housekeeping. Set rather than thrown, so a run that has
       // already failed keeps its own error as the one reported.
       console.error('✗ cleanup failed — remove the smoke-iso rows by hand', err);

@@ -19,6 +19,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
+import { findFreeWorkflowSlug } from '@/lib/orchestration/workflows/slug-availability';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { z } from 'zod';
@@ -77,13 +78,9 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   // approved for, whatever the source workflow was allowed to keep.
   await assertWorkflowProvidersApproved(sourceDefinition);
 
-  // Generate a unique slug for the template
-  const baseSlug = `${workflow.slug}-template`;
-  let slug = baseSlug;
-  let suffix = 1;
-  while (await prisma.aiWorkflow.findUnique({ where: { slug }, select: { id: true } })) {
-    slug = `${baseSlug}-${suffix++}`;
-  }
+  // A slug no org holds: the column is unique across the install, and at
+  // `multi` a plain read cannot see another org's workflows (t-728).
+  const slug = await findFreeWorkflowSlug(`${workflow.slug}-template`);
 
   // Clone workflow + initial version atomically so the new template is
   // immediately runnable and has a clean version chain (no inherited history).
