@@ -446,8 +446,9 @@ release process.
     - `GET /capabilities/:id/agents` keeps its array and adds
       `meta.otherOrgAgentCount`.
   - The pages' counts, "has agent" filters, sort and the matrix's
-    delete-disabled state use the sum. The capability page's "used by",
-    delete warning and quarantine blast radius count every org too.
+    delete-disabled state use the sum. So do the capability page's "used by"
+    card and quarantine blast radius, and the capabilities list's delete
+    warning.
   - The counts run in the new `runAsCrossOrgCount()` (`lib/tenancy/context.ts`).
     It is the `runAsSystem` bypass logged at debug, because these pages ask on
     every load, and an always-run test confines it to
