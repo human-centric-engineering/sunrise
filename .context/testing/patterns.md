@@ -31,7 +31,7 @@ Every test file should follow this structure:
  * - Feature 2
  * - Edge cases and error handling
  *
- * @see [path to source file]
+ * @see lib/module/file.ts — repo-relative, never an absolute path
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

@@ -397,7 +397,8 @@ Nothing type-checks a `vi.mock` factory, so neither form fails the build — thi
 
 **4n. `@see` paths that are absolute, not repo-relative**
 
-Already run: `tests/unit/see-tag-paths.test.ts` is in `ALWAYS_RUN_TESTS`, so
+Repo-wide, not per changed file: a violation in a file this branch never
+touched still counts. `tests/unit/see-tag-paths.test.ts` is in `ALWAYS_RUN_TESTS`, so
 Step 1's `npm run test:changed:coverage` ran it. Read its result there. It
 scans `app/`, `components/`, `emails/`, `hooks/`, `lib/`, `prisma/`,
 `scripts/`, `tests/`, `types/` and the root tool configs, and on failure lists

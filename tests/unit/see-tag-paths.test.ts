@@ -8,9 +8,12 @@
  * this repo, and every fork inherited them (#749).
  *
  * The matcher flags a `@see` whose target starts with `/`, `~`, or a Windows
- * drive letter, including when it is wrapped in `{@link …}` or written as a
- * `file://` URL. A repo-relative path, an `https://` URL, or a symbol name does
- * not match. Paths relative to the file (`./`, `../`) are out of scope here.
+ * drive letter, including when it is wrapped in backticks or `{@link…}`, or
+ * written as a `file:` or `vscode://file` URL. `~` counts: it is outside the
+ * repo, so it cannot be what a test or module header points at. A
+ * repo-relative path, an `https://` URL, or a symbol name does not match.
+ * Paths relative to the file (`./`, `../`) are out of scope here, and so are
+ * absolute paths in comments that are not `@see` tags.
  * If you need to point at a route, name its file (`app/api/v1/…/route.ts`),
  * not its URL path.
  *
@@ -19,30 +22,44 @@
  * reaches this test.
  */
 
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { globSync } from 'tinyglobby';
+import { existsSync, globSync, readFileSync } from 'node:fs';
+import { join, relative, resolve, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /** `@see` followed by an absolute or home-relative target. */
-const ABSOLUTE_SEE = /@see\s+(?:\{@link\s+)?(?:file:\/\/)?(?:\/|~|[A-Za-z]:[\\/])/;
+const ABSOLUTE_SEE =
+  /@see\s+`?(?:\{@link\w*\s+)?`?(?:file:\/{0,2}|vscode:\/\/file)?(?:\/|~|[A-Za-z]:[\\/])/;
 
 const ROOT = process.cwd();
 
+/** Source roots a fork inherits. A root a fork has deleted matches nothing. */
+const ROOTS = [
+  'app',
+  'components',
+  'emails',
+  'hooks',
+  'lib',
+  'prisma',
+  'scripts',
+  'tests',
+  'types',
+];
+
 /**
- * Code a fork inherits: the source roots plus the tool configs at the repo
- * root. A root a fork has deleted simply matches nothing.
+ * The source roots plus the tool configs at the repo root. Files only: a route
+ * folder can carry a file extension (`app/api/v1/embed/widget.js/`).
  */
 const FILES = globSync(
-  [
-    '{app,components,emails,hooks,lib,prisma,scripts,tests,types}/**/*.{ts,tsx,js,jsx,mjs,cjs,prisma}',
-    '*.{ts,tsx,js,jsx,mjs,cjs}',
-  ],
-  { cwd: ROOT, ignore: ['**/node_modules/**'] }
-).sort();
+  [`{${ROOTS.join(',')}}/**/*.{ts,tsx,js,jsx,mjs,cjs,prisma}`, '*.{ts,tsx,js,jsx,mjs,cjs}'],
+  { cwd: ROOT, withFileTypes: true, exclude: (entry) => entry.name === 'node_modules' }
+)
+  .filter((entry) => entry.isFile())
+  .map((entry) => relative(ROOT, join(entry.parentPath, entry.name)).split(sep).join('/'))
+  .sort();
 
 function findAbsoluteSeeTags(source: string): number[] {
   const lines: number[] = [];
+  if (!source.includes('@see')) return lines;
   source.split('\n').forEach((line, i) => {
     if (ABSOLUTE_SEE.test(line)) lines.push(i + 1);
   });
@@ -61,6 +78,11 @@ describe('@see paths', () => {
       `C:\\Users\\someone\\lib\\x.ts`,
       `{@link /Users/someone/sunrise/lib/x.ts}`,
       `file:///Users/someone/sunrise/lib/x.ts`,
+      `file:/Users/someone/sunrise/lib/x.ts`,
+      `vscode://file/Users/someone/sunrise/lib/x.ts`,
+      '`/Users/someone/sunrise/lib/x.ts`',
+      `{@linkcode /Users/someone/sunrise/lib/x.ts}`,
+      `{@linkplain /Users/someone/sunrise/lib/x.ts}`,
     ];
     for (const target of flagged) {
       expect(findAbsoluteSeeTags(` * ${at} ${target}`), target).toEqual([1]);
@@ -72,6 +94,7 @@ describe('@see paths', () => {
       '.context/testing/scoped-runs.md',
       'https://example.com/docs',
       '{@link findRateLimitRule}',
+      '`.context/auth/authorization.md`',
     ];
     for (const target of allowed) {
       expect(findAbsoluteSeeTags(` * ${at} ${target}`), target).toEqual([]);
@@ -81,6 +104,14 @@ describe('@see paths', () => {
   it('scans a non-empty tree', () => {
     // A scan that read nothing would pass; make sure it read the tree.
     expect(FILES.length).toBeGreaterThan(1000);
+    // Every root that exists on disk must contribute, so a pattern bug cannot
+    // quietly drop a whole directory from the scan.
+    for (const root of ROOTS.filter((r) => existsSync(resolve(ROOT, r)))) {
+      expect(
+        FILES.some((f) => f.startsWith(`${root}/`)),
+        root
+      ).toBe(true);
+    }
     expect(FILES).toContain('proxy.ts');
     expect(FILES.some((f) => f.endsWith('.prisma'))).toBe(true);
   });
