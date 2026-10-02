@@ -119,6 +119,11 @@ function isCurrentlyQuarantined(cap: {
   return state;
 }
 
+/** Agents using a capability in every org: this org's, listed, plus other orgs', counted (§107 t-752). */
+function agentsUsing(cap: AiCapabilityListItem): number {
+  return cap._agents.length + cap._otherOrgAgentCount;
+}
+
 export function CapabilitiesTable({
   initialCapabilities,
   initialMeta,
@@ -479,19 +484,19 @@ export function CapabilitiesTable({
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{cap.rateLimit ?? '—'}</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {cap._agents.length + cap._otherOrgAgentCount === 0 ? (
+                    {agentsUsing(cap) === 0 ? (
                       '0'
                     ) : (
                       <Popover>
                         <PopoverTrigger asChild>
                           <button className="cursor-pointer tabular-nums hover:underline">
-                            {cap._agents.length + cap._otherOrgAgentCount} →
+                            {agentsUsing(cap)} →
                           </button>
                         </PopoverTrigger>
                         <PopoverContent className="w-64 p-0" align="end">
                           <div className="border-b px-3 py-2">
                             <p className="text-sm font-medium">
-                              {agentCount(cap._agents.length + cap._otherOrgAgentCount)} using{' '}
+                              {agentCount(agentsUsing(cap))} using{' '}
                               <span className="font-semibold">{cap.name}</span>
                             </p>
                           </div>

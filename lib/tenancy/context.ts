@@ -188,6 +188,15 @@ export function runAsOrg<T>(
 }
 
 /**
+ * The null-org system scope — the one body behind {@link runAsSystem},
+ * {@link runAsCredentialLookup} and {@link runAsCrossOrgCount}, which differ
+ * only in what they log. At `multi` the data layer reads it as the bypass.
+ */
+function inSystemScope<T>(fn: () => Promise<T>): Promise<T> {
+  return tenantContext.run({ orgId: null, source: 'system' }, () => settleInside(fn));
+}
+
+/**
  * Run `fn` with the audited platform bypass — no org.
  *
  * For genuinely global work only: a sweep that must see every org's rows at
@@ -198,7 +207,7 @@ export function runAsOrg<T>(
  */
 export function runAsSystem<T>(reason: string, fn: () => Promise<T>): Promise<T> {
   logger.info('Entering system tenant scope', { reason });
-  return tenantContext.run({ orgId: null, source: 'system' }, () => settleInside(fn));
+  return inSystemScope(fn);
 }
 
 /**
@@ -221,7 +230,7 @@ export function runAsSystem<T>(reason: string, fn: () => Promise<T>): Promise<T>
  */
 export function runAsCredentialLookup<T>(credential: string, fn: () => Promise<T>): Promise<T> {
   logger.debug('Entering system tenant scope for a credential lookup', { credential });
-  return tenantContext.run({ orgId: null, source: 'system' }, () => settleInside(fn));
+  return inSystemScope(fn);
 }
 
 /**
@@ -246,7 +255,7 @@ export function runAsCredentialLookup<T>(credential: string, fn: () => Promise<T
  */
 export function runAsCrossOrgCount<T>(reason: string, fn: () => Promise<T>): Promise<T> {
   logger.debug('Entering system tenant scope for a cross-org usage count', { reason });
-  return tenantContext.run({ orgId: null, source: 'system' }, () => settleInside(fn));
+  return inSystemScope(fn);
 }
 
 /**

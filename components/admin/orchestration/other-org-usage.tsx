@@ -27,9 +27,11 @@ export function agentCount(count: number): string {
 }
 
 /**
- * Agents using a shared setting in every org: the caller's, which a row
- * lists, plus other orgs', which it counts. The one sum behind every count,
- * "in use" filter, sort and delete-disabled state on these pages.
+ * Agents using a provider model in every org: the caller's, which a row
+ * lists, plus other orgs', which it counts. The one sum behind the models
+ * matrix's and a provider's model list's count, "in use" filter, sort and
+ * delete-disabled state. (The capability surfaces take the two numbers as
+ * separate props and add them where they show them.)
  */
 export function agentsInEveryOrg(row: { agents?: unknown[]; otherOrgAgentCount?: number }): number {
   return (row.agents?.length ?? 0) + (row.otherOrgAgentCount ?? 0);

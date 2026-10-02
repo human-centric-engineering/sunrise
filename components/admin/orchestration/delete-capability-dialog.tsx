@@ -86,7 +86,9 @@ export function DeleteCapabilityDialog({
             )}
             <OtherOrgUsage
               count={otherOrgAgentCount}
-              afterList={usedBy.length > 0}
+              // After a truncated list ("…and 2 more") it stands as its own
+              // sentence, so the two counts don't read as one.
+              afterList={usedBy.length > 0 && usedBy.length <= 8}
               className="mt-1"
             />
           </div>

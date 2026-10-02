@@ -245,11 +245,14 @@ export function modelAgentUsage(
             orderBy: { name: 'asc' },
           })
         : [],
-      prisma.aiAgent.groupBy({
-        by: ['provider', 'model', 'orgId'],
-        where,
-        _count: { _all: true },
-      }),
+      // At `single` every row is the caller's and already read above.
+      isMultiTenant()
+        ? prisma.aiAgent.groupBy({
+            by: ['provider', 'model', 'orgId'],
+            where,
+            _count: { _all: true },
+          })
+        : [],
     ]);
     const usage = new Map<string, ModelAgentUsage>();
     const entry = (provider: string, model: string) => {
@@ -283,7 +286,7 @@ export interface CapabilityAgentRef extends NamedRef {
 export interface CapabilityAgentUsage {
   /** The caller's agents with the capability attached, by name, active or not (each says which). */
   agents: CapabilityAgentRef[];
-  /** ACTIVE agents in other orgs with it attached. */
+  /** Agents in other orgs with it attached, active or not, as {@link agents} is. */
   otherOrgAgents: number;
 }
 
@@ -291,7 +294,7 @@ export interface CapabilityAgentUsage {
  * Agents with each capability attached, in every org — for the capabilities
  * list and its delete warning, and a capability's page (§107 t-752). The
  * pivot carries its own `orgId`: the caller's links are read by row, every
- * other org's active ones only counted. A capability with no agent is absent.
+ * other org's only counted. A capability with no agent is absent.
  */
 export function capabilityAgentUsage(
   capabilityIds: string[]
@@ -312,13 +315,16 @@ export function capabilityAgentUsage(
             orderBy: { agent: { name: 'asc' } },
           })
         : [],
-      // Active agents only: a deactivated agent cannot call the tool, and a
-      // count of another org's agents carries no flag to say which are.
-      prisma.aiAgentCapability.groupBy({
-        by: ['capabilityId', 'orgId'],
-        where: { capabilityId: { in: capabilityIds }, agent: { isActive: true } },
-        _count: { _all: true },
-      }),
+      // Every attached agent, active or not, as the caller's own list is: a
+      // soft delete strips the tool from a dormant agent too, and the two
+      // numbers are added together on every page that shows them.
+      isMultiTenant()
+        ? prisma.aiAgentCapability.groupBy({
+            by: ['capabilityId', 'orgId'],
+            where: { capabilityId: { in: capabilityIds } },
+            _count: { _all: true },
+          })
+        : [],
     ]);
     const usage = new Map<string, CapabilityAgentUsage>();
     const entry = (capabilityId: string) => {

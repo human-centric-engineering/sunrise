@@ -287,4 +287,27 @@ describe('DeleteCapabilityDialog', () => {
       expect(screen.queryByText(/other organisations/i)).not.toBeInTheDocument();
     });
   });
+
+  it('after a truncated list, states other orgs as their own sentence, not a second "…and"', () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({
+      id: `agent-${i}`,
+      name: `Agent ${i}`,
+      slug: `agent-${i}`,
+    }));
+    render(
+      <DeleteCapabilityDialog
+        target={TARGET}
+        usedBy={many}
+        otherOrgAgentCount={3}
+        error={null}
+        isDeleting={false}
+        onCancel={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('…and 2 more')).toBeInTheDocument();
+    expect(screen.getByText(/^3 agents in other organisations use it\./)).toBeInTheDocument();
+    expect(screen.queryByText(/…and 3 agents/)).not.toBeInTheDocument();
+  });
 });

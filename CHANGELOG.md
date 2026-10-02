@@ -188,6 +188,20 @@ release process.
   `lib/orchestration/agents/provider-approval.ts`. At `single` every provider
   is approved and nothing is disabled.
 
+- **Every-org usage on the shared-settings read API, and the scope that
+  counts it** (§107 t-752). The new fields name the caller's org's agents and
+  count other orgs' without naming them. All are `0` at `single`.
+  - `GET /provider-models` and `GET /providers/:id/models` add
+    `otherOrgAgentCount` per model.
+  - `GET /capabilities` adds `_otherOrgAgentCount` per item.
+  - `GET /capabilities/:id/agents` keeps its array and adds
+    `meta.otherOrgAgentCount`.
+  - The counts run in the new `runAsCrossOrgCount()`
+    (`lib/tenancy/context.ts`). It is the `runAsSystem` bypass logged at
+    debug, because the admin pages ask on every load. The always-run
+    `tests/unit/lib/tenancy/cross-org-count-sites.test.ts` confines it to
+    `lib/orchestration/admin/global-config-usage.ts`.
+
 ### Changed
 
 - **The browser-tab icons moved from `public/` to `app/favicon.ico` and
@@ -433,31 +447,6 @@ release process.
   the flag. The always-run `tests/unit/scripts/ci/shared-settings-writes.test.ts`
   names any that doesn't. Nothing changes at `single`.
 
-- **The models matrix, a provider's model list and the capabilities pages
-  count every org's agents at `multi`** (§107 t-752). These read surfaces
-  counted only the entered org, so from the install org a model or
-  capability another org relied on looked unused, and the matrix offered to
-  delete it.
-  - Each now names the caller's org's agents and counts other orgs' without
-    naming them:
-    - `GET /provider-models` and `GET /providers/:id/models` add
-      `otherOrgAgentCount` per model;
-    - `GET /capabilities` adds `_otherOrgAgentCount` per item (other orgs'
-      active agents);
-    - `GET /capabilities/:id/agents` keeps its array and adds
-      `meta.otherOrgAgentCount`.
-  - The pages' counts, "has agent" filters, sort and the matrix's
-    delete-disabled state use the sum. So do the capability page's "used by"
-    card and quarantine blast radius, and the capabilities list's delete
-    warning.
-  - The counts run in the new `runAsCrossOrgCount()` (`lib/tenancy/context.ts`).
-    It is the `runAsSystem` bypass logged at debug, because these pages ask on
-    every load, and an always-run test confines it to
-    `lib/orchestration/admin/global-config-usage.ts`.
-  - The workflow-pin check reads only workflows whose JSON could pin the
-    model, and the knowledge-tag check makes three queries instead of five.
-  - All new counts are `0` at `single`.
-
 ### Deprecated
 
 - **`LlmProvider.embed`** (t-740). It cannot choose a model or dimension or
@@ -500,6 +489,19 @@ release process.
   provider" banner. Existing embeddings are untouched. A fork eligibility rule naming `env:openai` now matches nothing.
 
 ### Fixed
+
+- **At `multi`, the models matrix, a provider's model list and the
+  capabilities pages no longer call a shared model or capability unused while
+  another org uses it** (§107 t-752). They counted only the entered org, so
+  from the install org the matrix offered to delete a model another org's
+  agents relied on.
+  - Their counts, "has agent" filters, sort and the matrix's delete-disabled
+    state now add other orgs' agents (the new fields under Added).
+  - So do the capability page's "used by" card and quarantine blast radius,
+    and the capabilities list's delete warning.
+  - Other orgs' rows are counted with `groupBy`, never read.
+  - The workflow-pin check reads only workflows whose JSON could pin the
+    model, and the knowledge-tag check makes three queries instead of five.
 
 - **Backup import no longer overwrites a system workflow** (t-729). The
   provider-model audit (`tpl-provider-model-audit`, `isSystem: true`) was

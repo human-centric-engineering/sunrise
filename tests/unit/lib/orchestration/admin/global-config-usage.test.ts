@@ -364,18 +364,12 @@ describe('modelAgentUsage', () => {
     );
   });
 
-  it('treats every row as the caller’s at single, and skips an agent with no model', async () => {
+  it('treats every row as the caller’s at single, skips an agent with no model, and counts nothing else', async () => {
     mockMode.value = 'single';
     db.aiAgent.findMany.mockImplementation(
       answering([
         { ...agent('a1', null), provider: 'openai', model: 'gpt-5' },
         { ...agent('a2', null), provider: 'openai', model: null },
-      ])
-    );
-    db.aiAgent.groupBy.mockImplementation(
-      answering([
-        group('openai', 'gpt-5', null, 1),
-        group('openai', null as unknown as string, null, 1),
       ])
     );
 
@@ -387,6 +381,7 @@ describe('modelAgentUsage', () => {
     expect(db.aiAgent.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { isActive: true, provider: { in: ['openai'] } } })
     );
+    expect(db.aiAgent.groupBy).not.toHaveBeenCalled(); // test-review:accept no_arg_called — one org, nothing elsewhere
   });
 
   it('reads nothing for no providers or an empty model list', async () => {
@@ -408,7 +403,7 @@ describe('capabilityAgentUsage', () => {
     _count: { _all: n },
   });
 
-  it('names the entered org’s agents, and counts other orgs’ ACTIVE agents only', async () => {
+  it('names the entered org’s agents, and counts every other org’s, active or not', async () => {
     db.aiAgentCapability.findMany.mockImplementation(answering([ownLink('c1', 'a1', false)]));
     db.aiAgentCapability.groupBy.mockImplementation(
       answering([group('c1', ORG_A, 0), group('c1', ORG_B, 2), group('c2', ORG_B, 1)])
@@ -431,7 +426,9 @@ describe('capabilityAgentUsage', () => {
     );
     expect(db.aiAgentCapability.groupBy).toHaveBeenCalledWith({
       by: ['capabilityId', 'orgId'],
-      where: { capabilityId: { in: ['c1', 'c2'] }, agent: { isActive: true } },
+      // No `isActive` filter: the caller's list includes dormant agents, and
+      // the two numbers are added together.
+      where: { capabilityId: { in: ['c1', 'c2'] } },
       _count: { _all: true },
     });
   });
@@ -439,13 +436,14 @@ describe('capabilityAgentUsage', () => {
   it('treats every row as the caller’s at single, without the system scope', async () => {
     mockMode.value = 'single';
     db.aiAgentCapability.findMany.mockImplementation(answering([ownLink('c1', 'a1')]));
-    db.aiAgentCapability.groupBy.mockImplementation(answering([group('c1', null, 1)]));
 
     const usage = await capabilityAgentUsage(['c1']);
 
     expect(usage.get('c1')?.otherOrgAgents).toBe(0);
     expect(usage.get('c1')?.agents).toHaveLength(1);
     expect(scopes.seen).not.toContain('system');
+    // There is no other org to count at single.
+    expect(db.aiAgentCapability.groupBy).not.toHaveBeenCalled(); // test-review:accept no_arg_called — one org, nothing elsewhere
   });
 
   it('reads nothing for no capabilities', async () => {

@@ -366,7 +366,7 @@ function ActiveView({
               </ul>
               <OtherOrgUsage
                 count={otherOrgAffectedCount}
-                afterList={affectedAgents.length > 0}
+                afterList={affectedAgents.length > 0 && affectedAgents.length <= 8}
                 className="mt-2"
               />
             </div>
