@@ -40,7 +40,6 @@ vi.mock('@/lib/logging', () => ({
 
 import { prisma } from '@/lib/db/client';
 import type { TenancyClient } from '@/lib/db/tenancy-extension';
-import { logger } from '@/lib/logging';
 import {
   CLEANUP_AGENT,
   pickCleanupBinding,
@@ -49,6 +48,10 @@ import {
   forgetOrgProviderPolicy,
   forgetProviderRow,
 } from '@/lib/orchestration/llm/org-provider-policy';
+import {
+  registerProviderEligibility,
+  resetProviderEligibility,
+} from '@/lib/orchestration/llm/provider-eligibility';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { runAsOrg } from '@/lib/tenancy/context';
 
@@ -228,6 +231,7 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
     mockMode.value = 'multi';
     forgetOrgProviderPolicy();
     forgetProviderRow();
+    resetProviderEligibility();
     process.env.OPENAI_API_KEY = 'test-key';
     process.env.ANTHROPIC_API_KEY = 'test-key';
     vi.mocked(prisma.aiProviderConfig.findMany).mockImplementation((async (args: {
@@ -242,6 +246,7 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
   });
   afterEach(() => {
     mockMode.value = 'single';
+    resetProviderEligibility();
     for (const [name, value] of [
       ['OPENAI_API_KEY', saved.openai],
       ['ANTHROPIC_API_KEY', saved.anthropic],
@@ -269,15 +274,31 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
     expect(modelFindMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing usable, so no model read at all
   });
 
-  it('pins nothing, and says why, when the policy cannot be read', async () => {
+  it('throws when the policy cannot be read, so the reconcile fails and is retried', async () => {
+    // Answering null here would be recorded as done: the reconcile writes its
+    // marker and never asks again.
     vi.mocked(prisma.org.findUnique).mockRejectedValue(new Error('connection reset'));
     const { client } = reachableBoth();
 
-    expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toBeNull();
-    expect(logger.warn).toHaveBeenCalledWith(
-      'Cleanup agent left unpinned: the org provider policy could not be read',
-      { error: 'connection reset' }
+    await expect(runAsOrg(ORG, () => pickCleanupBinding(client))).rejects.toThrow(
+      'connection reset'
     );
+  });
+
+  it("does not pin a provider a fork's eligibility rule refuses to an explicit provider", async () => {
+    const contexts: unknown[] = [];
+    registerProviderEligibility((candidates, context) => {
+      contexts.push(context);
+      return candidates.filter((slug) => slug !== 'openai');
+    });
+    const { client } = reachableBoth();
+
+    expect(await runAsOrg(INSTALL_ORG_ID, () => pickCleanupBinding(client))).toEqual({
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+    });
+    // Asked as the call-time gate asks it of a pinned provider.
+    expect(contexts).toEqual([{ task: 'chat', source: 'explicit', primarySlug: null }]);
   });
 
   it('pins nothing with no org in scope', async () => {

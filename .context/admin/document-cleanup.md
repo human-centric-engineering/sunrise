@@ -51,17 +51,21 @@ vs `join_wrapped_lines`, `strip_lines_matching` vs `strip_matches`), and a weak
 model picks the wrong one and reports success. `pickCleanupBinding()` in the
 definition chooses among models that are `toolUse: 'strong'` on a provider the install can
 actually reach — active, and with its `apiKeyEnvVar` set or marked local,
-mirroring `pickActiveProviderCandidates()` — **and that the org may use** (§120
-t-746: at `TENANCY_MODE=multi` the org's approved providers; at `single`, and for
-the install org, every provider) — preferring worker tier over
+mirroring `pickActiveProviderCandidates()` — **and that the org may call** (§120
+t-746: core's org provider policy, which at `TENANCY_MODE=multi` means the org's
+approved providers and at `single`, or for the install org, every provider; then a
+fork's eligibility rule, asked as the call-time gate asks it of a pinned provider)
+— preferring worker tier over
 thinking tier (a whole-document rewrite on a thinking-tier model costs far more
 and is no better at picking a regex), then deepest reasoning, then model id for
 a stable tie-break. Nothing reachable → both fields stay empty and the runtime
 resolver fills them, exactly as before. That is what a new org at `multi` gets,
-since it starts with no approved providers; a policy that cannot be read is
-treated the same way. The pin is applied when the org's
+since it starts with no approved providers. A policy that cannot be read fails
+the reconcile instead, so the maintenance job retries the org. The pin is applied when the org's
 instance is created, and again on any later reconcile while **both** fields are
-still empty. An admin's own choice is never overwritten: provider and model
+still empty. Granting the org a provider does not by itself start a reconcile
+(one runs when the platform-agent registry changes, or for an org with no
+marker), so until then an org admin picks the cleanup agent's provider. An admin's own choice is never overwritten: provider and model
 belong to the org.
 
 The system prompt tells the agent to read before it acts and verify after,
