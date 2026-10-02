@@ -71,7 +71,8 @@ export default async function McpResourcesPage() {
               An MCP client like Claude Desktop calls{' '}
               <code className="text-xs">resources/list</code> to discover available resources, then{' '}
               <code className="text-xs">resources/read</code> with a URI to fetch data. A URI with a{' '}
-              <code className="text-xs">{'{param}'}</code> placeholder is listed by{' '}
+              <code className="text-xs">{'{param}'}</code> placeholder or a{' '}
+              <code className="text-xs">?</code> query string is listed by{' '}
               <code className="text-xs">resources/templates/list</code> instead, and the client
               fills in the placeholder before reading. The client needs a key with{' '}
               <code className="text-xs">resources:read</code> scope.
