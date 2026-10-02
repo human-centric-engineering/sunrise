@@ -323,9 +323,16 @@ let cachedResources: McpResourceDefinition[] | null = null;
 let cachedAt = 0;
 
 /**
- * List all MCP-exposed resources that are enabled.
+ * A row is a template when its URI carries a `{param}` placeholder or a query
+ * string. The one test behind both listings, so a row lands in exactly one of
+ * `resources/list` and `resources/templates/list`.
  */
-export async function listMcpResources(): Promise<McpResourceDefinition[]> {
+function isTemplateUri(uri: string): boolean {
+  return /\{[^}]+\}/.test(uri) || uri.includes('?');
+}
+
+/** Every enabled row, templates included, behind the 5-minute cache. */
+async function loadEnabledResources(): Promise<McpResourceDefinition[]> {
   const now = Date.now();
   if (cachedResources && now - cachedAt < CACHE_TTL_MS) {
     return cachedResources;
@@ -344,6 +351,17 @@ export async function listMcpResources(): Promise<McpResourceDefinition[]> {
 
   cachedAt = Date.now();
   return cachedResources;
+}
+
+/**
+ * List the concrete MCP-exposed resources that are enabled — the rows a client
+ * can read as-is. Templated rows (`{param}` placeholders or a query string) are
+ * left to {@link listMcpResourceTemplates}: listing one here offers an entry
+ * that can only be read with the literal `{param}` in it.
+ */
+export async function listMcpResources(): Promise<McpResourceDefinition[]> {
+  const all = await loadEnabledResources();
+  return all.filter((r) => !isTemplateUri(r.uri));
 }
 
 /**
@@ -476,7 +494,7 @@ export async function listMcpResourceTemplates(): Promise<McpResourceTemplate[]>
   });
 
   return rows
-    .filter((r) => /\{[^}]+\}/.test(r.uri) || r.uri.includes('?'))
+    .filter((r) => isTemplateUri(r.uri))
     .map((r) => ({
       uriTemplate: r.uri,
       name: r.name,
@@ -510,7 +528,8 @@ export function clearMcpResourceCache(): void {
  *     `sunrise://knowledge/patterns/{number}`).
  */
 export async function isRegisteredMcpResourceUri(uri: string): Promise<boolean> {
-  const all = await listMcpResources();
+  // Unfiltered: the prefix match below needs the template rows.
+  const all = await loadEnabledResources();
   for (const r of all) {
     if (r.uri === uri) return true;
     // Strip template params + query suffix from the registered URI to get

@@ -172,6 +172,26 @@ describe('listMcpResources', () => {
     expect(result).toHaveLength(2);
     expect(result.map((r) => r.uri)).toEqual(['sunrise://knowledge/search', 'sunrise://agents']);
   });
+
+  it('leaves templated rows to resources/templates/list, keeping concrete ones', async () => {
+    // A row is a template when its URI has a `{param}` placeholder or a query
+    // string — the same test listMcpResourceTemplates() applies. It must appear
+    // in exactly one of the two lists.
+    vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([
+      makeResourceRow({ uri: 'sunrise://agents', name: 'Agents' }),
+      makeResourceRow({ id: 'res-2', uri: 'fork://project/{slug}', name: 'Project' }),
+      makeResourceRow({ id: 'res-3', uri: 'sunrise://knowledge/search?q={query}', name: 'Search' }),
+    ] as never);
+
+    const concrete = await listMcpResources();
+    expect(concrete.map((r) => r.uri)).toEqual(['sunrise://agents']);
+
+    const templates = await listMcpResourceTemplates();
+    expect(templates.map((t) => t.uriTemplate)).toEqual([
+      'fork://project/{slug}',
+      'sunrise://knowledge/search?q={query}',
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
