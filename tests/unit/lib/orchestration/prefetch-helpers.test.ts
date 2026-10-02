@@ -297,6 +297,43 @@ describe('getAgentModels', () => {
     expect(tierOf('m-sovereign')).toBe('local');
   });
 
+  it('reads rows wrapped as { data: [...] }, and maps missing matrix metadata to undefined', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(okRes());
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: {
+        data: [
+          {
+            providerSlug: 'openai',
+            modelId: 'gpt-4o',
+            capabilities: null,
+            tierRole: null,
+            deploymentProfiles: null,
+          },
+        ],
+      },
+    } as never);
+
+    expect(await getAgentModels()).toEqual([
+      { provider: 'openai', id: 'gpt-4o', tier: undefined, capabilities: undefined },
+    ]);
+  });
+
+  it('keeps the rows of one capability when the other response is refused or unreadable', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(okRes());
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: true, data: [makeMatrixRow()] } as never)
+      .mockResolvedValueOnce({ success: false, error: { code: 'X', message: 'no' } } as never);
+
+    expect((await getAgentModels())?.map((m) => m.id)).toEqual(['claude-3-5-sonnet']);
+
+    vi.mocked(parseApiResponse)
+      .mockResolvedValueOnce({ success: true, data: [makeMatrixRow()] } as never)
+      .mockResolvedValueOnce({ success: true, data: { unexpected: true } } as never);
+
+    expect((await getAgentModels())?.map((m) => m.id)).toEqual(['claude-3-5-sonnet']);
+  });
+
   it('fetches /provider-models with capability=chat AND capability=reasoning in parallel', async () => {
     // Two URLs in flight at once — the API's `capability` filter is a
     // single value, so reasoning-only models (e.g. `o1-mini` with
