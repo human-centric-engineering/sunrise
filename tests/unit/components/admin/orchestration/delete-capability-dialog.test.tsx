@@ -230,4 +230,61 @@ describe('DeleteCapabilityDialog', () => {
       });
     });
   });
+
+  // ── Other orgs (§107 t-752) ────────────────────────────────────────────────
+
+  describe('agents in other organisations', () => {
+    it('counts them into the warning and says so after the caller’s list, never naming them', () => {
+      render(
+        <DeleteCapabilityDialog
+          target={TARGET}
+          usedBy={AGENTS_USING}
+          otherOrgAgentCount={3}
+          error={null}
+          isDeleting={false}
+          onCancel={vi.fn()}
+          onConfirm={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText(/5 agents currently using this capability/i)).toBeInTheDocument();
+      expect(screen.getByText('Support Bot', { exact: false })).toBeInTheDocument();
+      expect(screen.getByText(/…and 3 agents in other organisations/i)).toBeInTheDocument();
+    });
+
+    it('warns when only other orgs use it, with no list', () => {
+      render(
+        <DeleteCapabilityDialog
+          target={TARGET}
+          usedBy={[]}
+          otherOrgAgentCount={1}
+          error={null}
+          isDeleting={false}
+          onCancel={vi.fn()}
+          onConfirm={vi.fn()}
+        />
+      );
+
+      expect(screen.getByText(/1 agent currently using this capability\./i)).toBeInTheDocument();
+      expect(screen.getByText(/1 agent in other organisations uses it/i)).toBeInTheDocument();
+      expect(screen.queryByRole('list')).not.toBeInTheDocument();
+    });
+
+    it('shows no warning when nobody anywhere uses it', () => {
+      render(
+        <DeleteCapabilityDialog
+          target={TARGET}
+          usedBy={[]}
+          otherOrgAgentCount={0}
+          error={null}
+          isDeleting={false}
+          onCancel={vi.fn()}
+          onConfirm={vi.fn()}
+        />
+      );
+
+      expect(screen.queryByText(/currently using this capability/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/other organisations/i)).not.toBeInTheDocument();
+    });
+  });
 });

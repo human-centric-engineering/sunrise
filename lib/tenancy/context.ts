@@ -225,6 +225,30 @@ export function runAsCredentialLookup<T>(credential: string, fn: () => Promise<T
 }
 
 /**
+ * Run `fn` as the system scope for a read-only count of who uses a piece of
+ * global config, across every org (§107 t-752).
+ *
+ * A provider, model, capability, tag or profile is one row every org shares,
+ * and the agents, workflows and grants that use it are tenant-owned, so the
+ * question "is it in use?" has to see every org: the same scope as
+ * {@link runAsSystem}, the same `app.bypass_rls` setter. The admin pages ask
+ * it on every load — the models matrix, the capabilities list, each delete
+ * check — so an info line per entry would bury the one
+ * {@link runAsSystem} keeps for an unexplained bypass.
+ *
+ * Logged at debug, as {@link runAsCredentialLookup} is, and for its reason:
+ * what an audit needs is that the sites are few and known. There is one —
+ * `lib/orchestration/admin/global-config-usage.ts`, which returns another
+ * org's rows only as numbers — and `tests/unit/lib/tenancy/context.test.ts`
+ * fails naming any other caller. Nothing here makes the scope read-only; the
+ * module's queries do, and that is why it is confined to one module.
+ */
+export function runAsCrossOrgCount<T>(reason: string, fn: () => Promise<T>): Promise<T> {
+  logger.debug('Entering system tenant scope for a cross-org usage count', { reason });
+  return tenantContext.run({ orgId: null, source: 'system' }, () => settleInside(fn));
+}
+
+/**
  * Run `fn` outside every tenant scope, whatever the caller is inside.
  *
  * **For arming something whose lifetime is the PROCESS's from inside a

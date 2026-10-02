@@ -370,6 +370,42 @@ describe('CapabilityForm — Safety tab', () => {
       expect(screen.queryByText(/used by/i)).not.toBeInTheDocument();
     });
 
+    it('counts agents in other orgs into the heading, naming only the caller’s (§107 t-752)', async () => {
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability()}
+          usedBy={USED_BY}
+          otherOrgUsedByCount={2}
+          availableCategories={['api']}
+        />
+      );
+
+      await openSafetyTab(user);
+
+      expect(screen.getByText(/used by 5 agents/i)).toBeInTheDocument();
+      expect(screen.getByText(/…and 2 agents in other organisations/i)).toBeInTheDocument();
+    });
+
+    it('renders the card for other orgs’ agents alone, with no chips', async () => {
+      const user = userEvent.setup();
+      render(
+        <CapabilityForm
+          mode="edit"
+          capability={makeCapability()}
+          usedBy={[]}
+          otherOrgUsedByCount={1}
+          availableCategories={['api']}
+        />
+      );
+
+      await openSafetyTab(user);
+
+      expect(screen.getByText(/used by 1 agent$/i)).toBeInTheDocument();
+      expect(screen.getByText(/1 agent in other organisations uses it/i)).toBeInTheDocument();
+    });
+
     it('does NOT render chip card in create mode', async () => {
       const user = userEvent.setup();
       render(<CapabilityForm mode="create" availableCategories={['api']} />);

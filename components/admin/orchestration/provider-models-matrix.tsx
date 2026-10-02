@@ -55,6 +55,7 @@ import {
   type TaskType,
   type TierRole,
 } from '@/types/orchestration';
+import { OtherOrgUsage } from '@/components/admin/orchestration/other-org-usage';
 
 // Short human labels for the four `TaskType` slots resolved via
 // `OrchestrationSettings.defaultModels`. Surfaced as per-row badges
@@ -166,6 +167,9 @@ export interface ModelRow {
   // currently references the row. Source: GET /provider-models LEFT
   // JOIN against AiAgent on the (provider, model) string pair.
   agents?: ModelRowAgentRef[];
+  // Active agents in OTHER orgs bound to it: counted, never named (§107
+  // t-752). In use, filtered and delete-blocked on the sum with `agents`.
+  otherOrgAgentCount?: number;
   // TaskType slots this model fills as the effective system default
   // (routing/chat/reasoning/embeddings). Distinct from `agents` —
   // tracks inheritance via the default-models settings rather than
@@ -300,6 +304,11 @@ function SortableHead({
       </span>
     </TableHead>
   );
+}
+
+/** Active agents using a model in every org: the caller's, named, and other orgs', counted (§107 t-752). */
+function usedBy(row: { agents?: unknown[]; otherOrgAgentCount?: number }): number {
+  return (row.agents?.length ?? 0) + (row.otherOrgAgentCount ?? 0);
 }
 
 export function ProviderModelsMatrix({
@@ -456,7 +465,7 @@ export function ProviderModelsMatrix({
       );
     }
     if (inUseOnly) {
-      rows = rows.filter((m) => (m.agents?.length ?? 0) > 0);
+      rows = rows.filter((m) => usedBy(m) > 0);
     }
     const term = search.trim().toLowerCase();
     if (term.length > 0) {
@@ -868,7 +877,7 @@ export function ProviderModelsMatrix({
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {(() => {
-                      const agentCount = model.agents?.length ?? 0;
+                      const agentCount = usedBy(model);
                       const defaultRoles = model.defaultFor ?? [];
                       // Empty state — render an explicit "Not in use"
                       // so the operator gets a clear signal rather
@@ -919,6 +928,11 @@ export function ProviderModelsMatrix({
                                     </li>
                                   ))}
                                 </ul>
+                                <OtherOrgUsage
+                                  count={model.otherOrgAgentCount ?? 0}
+                                  afterList={(model.agents?.length ?? 0) > 0}
+                                  className="px-3 py-2"
+                                />
                               </PopoverContent>
                             </Popover>
                           ) : (
@@ -948,11 +962,13 @@ export function ProviderModelsMatrix({
                     })()}
                   </TableCell>
                   <TableCell className="text-right">
-                    {(model.agents?.length ?? 0) > 0 ? (
+                    {usedBy(model) > 0 ? (
                       <Tip
-                        label={`Cannot delete — ${model.agents?.length} agent${
-                          model.agents?.length === 1 ? '' : 's'
-                        } still ${model.agents?.length === 1 ? 'uses' : 'use'} this model.`}
+                        label={`Cannot delete — ${usedBy(model)} agent${
+                          usedBy(model) === 1 ? '' : 's'
+                        } still ${usedBy(model) === 1 ? 'uses' : 'use'} this model${
+                          (model.otherOrgAgentCount ?? 0) > 0 ? ', counting every organisation' : ''
+                        }.`}
                       >
                         <span className="inline-flex">
                           <Button

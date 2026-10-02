@@ -32,6 +32,7 @@ import {
   requireTenantContext,
   requireOrgId,
   runAsCredentialLookup,
+  runAsCrossOrgCount,
   runAsOrg,
   runAsSystem,
   runDetached,
@@ -209,6 +210,20 @@ describe('runAsCredentialLookup — the one read that learns the org', () => {
     await expect(runAsCredentialLookup('x', async () => requireOrgId())).rejects.toThrow(
       /system scope/
     );
+  });
+});
+
+describe('runAsCrossOrgCount — a read-only usage count across orgs (§107 t-752)', () => {
+  it('is the same null-org system scope, logged at debug rather than info', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    const seen = await runAsCrossOrgCount('in-use check', async () => getTenantContext());
+    expect(seen).toEqual({ orgId: null, source: 'system' });
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      'Entering system tenant scope for a cross-org usage count',
+      { reason: 'in-use check' }
+    );
+    expect(mockLogger.info).not.toHaveBeenCalled();
+    expect(getTenantContext()).toBeNull();
   });
 });
 

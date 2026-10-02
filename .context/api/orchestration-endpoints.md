@@ -304,7 +304,7 @@ Hard delete. The FK on `ai_agent.profileId` is `ON DELETE SET NULL`, so attached
 
 List. Query: `page`, `limit`, `isActive`, `q`.
 
-Each item includes `_agents: Array<{ id, name, slug, isActive }>` — the agents currently using this capability, flattened from the `AiAgentCapability` pivot. Types: `AiCapabilityListItem` in `types/orchestration.ts`.
+Each item includes `_agents: Array<{ id, name, slug, isActive }>` — the caller's org's agents currently using this capability, flattened from the `AiAgentCapability` pivot — and `_otherOrgAgentCount`, agents in other orgs, counted and never named (§107 t-752; `0` at `single`). Types: `AiCapabilityListItem` in `types/orchestration.ts`.
 
 ### `POST /capabilities`
 

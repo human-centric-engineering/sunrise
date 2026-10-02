@@ -24,6 +24,7 @@ import {
   listCapabilitiesQuerySchema,
 } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { capabilityAgentUsage } from '@/lib/orchestration/admin/global-config-usage';
 
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
@@ -53,20 +54,18 @@ export const GET = withAdminAuth(async (request, _session) => {
       orderBy: { category: 'asc' },
       skip,
       take: limit,
-      include: {
-        agents: {
-          include: {
-            agent: { select: { id: true, name: true, slug: true, isActive: true } },
-          },
-        },
-      },
     }),
     prisma.aiCapability.count({ where }),
   ]);
 
-  const capabilities = rawCapabilities.map(({ agents: links, ...rest }) => ({
-    ...rest,
-    _agents: links.map((l) => l.agent),
+  // Agents using each capability, in every org (§107 t-752): the caller's
+  // by name in `_agents`, other orgs' as `_otherOrgAgentCount`. A plain
+  // `include` read only the caller's org at `multi`.
+  const usage = await capabilityAgentUsage(rawCapabilities.map((c) => c.id));
+  const capabilities = rawCapabilities.map((capability) => ({
+    ...capability,
+    _agents: usage.get(capability.id)?.agents ?? [],
+    _otherOrgAgentCount: usage.get(capability.id)?.otherOrgAgents ?? 0,
   }));
 
   log.info('Capabilities listed', { count: capabilities.length, total, page, limit });

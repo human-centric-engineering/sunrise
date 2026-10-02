@@ -77,6 +77,7 @@ function makeCapability(overrides: Partial<AiCapabilityListItem> = {}): AiCapabi
     deletedAt: null,
     metadata: {},
     _agents: [],
+    _otherOrgAgentCount: 0,
     ...overrides,
   } as AiCapabilityListItem;
 }
@@ -641,6 +642,45 @@ describe('CapabilitiesTable', () => {
       expect(zeros.length).toBeGreaterThanOrEqual(3);
 
       expect(screen.queryByRole('button', { name: /→/ })).not.toBeInTheDocument();
+    });
+
+    it('counts other orgs’ agents into the trigger and says so in the popover, unnamed (§107 t-752)', async () => {
+      const user = userEvent.setup();
+      const capabilities = makeCapabilitiesWithAgents(ONE_AGENT);
+      capabilities[0] = { ...capabilities[0], _otherOrgAgentCount: 2 };
+      render(
+        <CapabilitiesTable
+          initialCapabilities={capabilities}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /3 →/ }));
+      await waitFor(() => {
+        expect(screen.getByText(/3 agents using/)).toBeInTheDocument();
+      });
+      expect(screen.getByText('Solo Bot')).toBeInTheDocument();
+      expect(screen.getByText(/…and 2 agents in other organisations/)).toBeInTheDocument();
+    });
+
+    it('opens a popover for a capability only other orgs use, with no list', async () => {
+      const user = userEvent.setup();
+      const capabilities = makeCapabilitiesWithAgents([]);
+      capabilities[0] = { ...capabilities[0], _otherOrgAgentCount: 1 };
+      render(
+        <CapabilitiesTable
+          initialCapabilities={capabilities}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /1 →/ }));
+      await waitFor(() => {
+        expect(screen.getByText(/1 agent in other organisations uses it/)).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('link', { name: /agent/i })).not.toBeInTheDocument();
     });
   });
 

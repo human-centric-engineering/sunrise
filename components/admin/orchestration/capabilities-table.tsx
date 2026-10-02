@@ -69,6 +69,7 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import type { PaginationMeta } from '@/types/api';
+import { agentCount, OtherOrgUsage } from '@/components/admin/orchestration/other-org-usage';
 
 export interface CapabilitiesTableProps {
   initialCapabilities: AiCapabilityListItem[];
@@ -478,37 +479,44 @@ export function CapabilitiesTable({
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{cap.rateLimit ?? '—'}</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {cap._agents.length === 0 ? (
+                    {cap._agents.length + cap._otherOrgAgentCount === 0 ? (
                       '0'
                     ) : (
                       <Popover>
                         <PopoverTrigger asChild>
                           <button className="cursor-pointer tabular-nums hover:underline">
-                            {cap._agents.length} →
+                            {cap._agents.length + cap._otherOrgAgentCount} →
                           </button>
                         </PopoverTrigger>
                         <PopoverContent className="w-64 p-0" align="end">
                           <div className="border-b px-3 py-2">
                             <p className="text-sm font-medium">
-                              {cap._agents.length} agent{cap._agents.length !== 1 ? 's' : ''} using{' '}
+                              {agentCount(cap._agents.length + cap._otherOrgAgentCount)} using{' '}
                               <span className="font-semibold">{cap.name}</span>
                             </p>
                           </div>
-                          <ul className="max-h-48 overflow-y-auto py-1">
-                            {cap._agents.map((agent) => (
-                              <li key={agent.id}>
-                                <Link
-                                  href={`/admin/orchestration/agents/${agent.id}`}
-                                  className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
-                                >
-                                  <span className="truncate">{agent.name}</span>
-                                  <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
-                                    {agent.slug}
-                                  </span>
-                                </Link>
-                              </li>
-                            ))}
-                          </ul>
+                          {cap._agents.length > 0 && (
+                            <ul className="max-h-48 overflow-y-auto py-1">
+                              {cap._agents.map((agent) => (
+                                <li key={agent.id}>
+                                  <Link
+                                    href={`/admin/orchestration/agents/${agent.id}`}
+                                    className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                                  >
+                                    <span className="truncate">{agent.name}</span>
+                                    <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
+                                      {agent.slug}
+                                    </span>
+                                  </Link>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          <OtherOrgUsage
+                            count={cap._otherOrgAgentCount}
+                            afterList={cap._agents.length > 0}
+                            className="px-3 py-2"
+                          />
                         </PopoverContent>
                       </Popover>
                     )}
@@ -591,6 +599,7 @@ export function CapabilitiesTable({
       <DeleteCapabilityDialog
         target={deleteTarget}
         usedBy={deleteTarget?._agents ?? []}
+        otherOrgAgentCount={deleteTarget?._otherOrgAgentCount ?? 0}
         error={null}
         isDeleting={isLoading}
         onCancel={() => {

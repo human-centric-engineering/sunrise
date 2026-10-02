@@ -72,15 +72,27 @@ async function getCapability(id: string): Promise<AiCapability | null> {
   }
 }
 
-async function getUsedBy(id: string): Promise<UsedByAgentSummary[]> {
+/**
+ * The caller's org's agents using it, by name, and other orgs' as a count
+ * (`meta.otherOrgAgentCount`, §107 t-752).
+ */
+async function getUsedBy(
+  id: string
+): Promise<{ agents: UsedByAgentSummary[]; otherOrgAgentCount: number }> {
+  const none = { agents: [], otherOrgAgentCount: 0 };
   try {
     const res = await serverFetch(API.ADMIN.ORCHESTRATION.capabilityAgents(id));
-    if (!res.ok) return [];
+    if (!res.ok) return none;
     const body = await parseApiResponse<UsedByAgentSummary[]>(res);
-    return body.success ? body.data : [];
+    if (!body.success) return none;
+    const other = body.meta && 'otherOrgAgentCount' in body.meta ? body.meta.otherOrgAgentCount : 0;
+    return {
+      agents: body.data,
+      otherOrgAgentCount: typeof other === 'number' && other > 0 ? other : 0,
+    };
   } catch (err) {
     logger.error('edit capability page: used-by fetch failed', err, { id });
-    return [];
+    return none;
   }
 }
 
@@ -136,7 +148,8 @@ export default async function EditCapabilityPage({ params }: { params: Promise<{
         quarantineUntil: quarantineUntilDate ? quarantineUntilDate.toISOString() : null,
       }}
       attribution={quarantineAttribution}
-      affectedAgents={usedBy.map((a) => ({ id: a.id, name: a.name, slug: a.slug }))}
+      affectedAgents={usedBy.agents.map((a) => ({ id: a.id, name: a.name, slug: a.slug }))}
+      otherOrgAffectedCount={usedBy.otherOrgAgentCount}
     />
   );
 
@@ -161,7 +174,8 @@ export default async function EditCapabilityPage({ params }: { params: Promise<{
       <CapabilityForm
         mode="edit"
         capability={capability}
-        usedBy={usedBy}
+        usedBy={usedBy.agents}
+        otherOrgUsedByCount={usedBy.otherOrgAgentCount}
         availableCategories={availableCategories}
       />
 

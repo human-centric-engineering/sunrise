@@ -400,7 +400,9 @@ has the numbers.
 - **The bypass is total.** `runAsSystem(reason)` sets `app.bypass_rls` and
   sees every org's rows; it is logged at `info` per entry so the audit can
   count them. `runAsCredentialLookup` is the same bypass for one credential
-  read, logged at `debug`. Nothing else should run inside either.
+  read, logged at `debug`, and `runAsCrossOrgCount` the same for a read-only
+  global-config usage count, also at `debug` and confined to one module
+  (§107 t-752). Nothing else should run inside any of them.
 - **Nested creates are stamped; raw inserts are not.** The injection walks
   every write and stamps create-shaped nodes at any depth. A raw `INSERT`
   stamps itself from the parent row (above). An update payload is never

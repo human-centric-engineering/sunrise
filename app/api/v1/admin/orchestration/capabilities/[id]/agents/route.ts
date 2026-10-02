@@ -2,8 +2,11 @@
  * Admin Orchestration — Capability → agents reverse lookup
  *
  * GET /api/v1/admin/orchestration/capabilities/:id/agents
- *   Returns the minimal agent projections for every agent that has
- *   this capability attached via the `AiAgentCapability` pivot.
+ *   Returns the minimal agent projections for every agent IN THE CALLER'S
+ *   ORG that has this capability attached via the `AiAgentCapability`
+ *   pivot, and `meta.otherOrgAgentCount`: agents in other orgs with it
+ *   attached, counted and never named (§107 t-752). The array keeps its
+ *   shape, so a caller that ignores `meta` reads what it always read.
  *
  *   Used by the admin Capabilities list (for the "agents using it"
  *   count) and the Capability edit page (to warn before delete).
@@ -21,6 +24,7 @@ import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { cuidSchema } from '@/lib/validations/common';
+import { capabilityAgentUsage } from '@/lib/orchestration/admin/global-config-usage';
 
 export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
   const log = await getRouteLogger(request);
@@ -37,15 +41,9 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   });
   if (!capability) throw new NotFoundError(`Capability ${capabilityId} not found`);
 
-  const links = await prisma.aiAgentCapability.findMany({
-    where: { capabilityId },
-    include: {
-      agent: { select: { id: true, name: true, slug: true, isActive: true } },
-    },
-    orderBy: { agent: { name: 'asc' } },
-  });
-
-  const agents = links.map((l) => l.agent);
-  log.info('Capability agents listed', { capabilityId, count: agents.length });
-  return successResponse(agents);
+  const usage = (await capabilityAgentUsage([capabilityId])).get(capabilityId);
+  const agents = usage?.agents ?? [];
+  const otherOrgAgentCount = usage?.otherOrgAgents ?? 0;
+  log.info('Capability agents listed', { capabilityId, count: agents.length, otherOrgAgentCount });
+  return successResponse(agents, { otherOrgAgentCount });
 });

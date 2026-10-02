@@ -95,8 +95,11 @@ import {
 import { createOrg } from '@/lib/tenancy/lifecycle';
 import {
   agentProfileUsage,
+  capabilityAgentUsage,
   knowledgeTagCounts,
   knowledgeTagUsage,
+  modelAgentUsage,
+  modelUsageKey,
   providerModelUsage,
   providerUsage,
 } from '@/lib/orchestration/admin/global-config-usage';
@@ -1567,6 +1570,77 @@ async function main(): Promise<void> {
     check(
       profileSeen.get(profile.id) === 1,
       `agentProfileUsage, asked from A, counts B’s attached agent (${profileSeen.get(profile.id) ?? 0})`
+    );
+
+    // The read surfaces (§107 t-752): the models matrix, a provider's model
+    // list and the capabilities pages count every org, naming only the
+    // caller's agents.
+    const matrixFromA = await asA(() => modelAgentUsage([sharedProvider], [sharedModel]));
+    const matrixRow = matrixFromA.get(modelUsageKey(sharedProvider, sharedModel));
+    check(
+      matrixRow?.agents.length === 0 && matrixRow.otherOrgAgents === 1,
+      `modelAgentUsage, asked from A, counts B’s agent on the model and names none (${JSON.stringify(matrixRow)})`
+    );
+    const providerFromB = await runAsOrg(b.orgId, () => modelAgentUsage([sharedProvider]));
+    check(
+      providerFromB.get(modelUsageKey(sharedProvider, sharedModel))?.agents[0]?.id ===
+        userOfShared.id,
+      'asked from B for the whole provider, the same read names B’s own agent'
+    );
+    const capabilityFromA = (await asA(() => capabilityAgentUsage([capability.id]))).get(
+      capability.id
+    );
+    const namedFromA = capabilityFromA?.agents.map((x) => x.id) ?? [];
+    check(
+      namedFromA.includes(a.agentId) &&
+        !namedFromA.includes(b.agentId) &&
+        (capabilityFromA?.otherOrgAgents ?? 0) >= 1,
+      `capabilityAgentUsage, asked from A, names A’s agent, not B’s, and counts B’s (${namedFromA.length} named, ${capabilityFromA?.otherOrgAgents ?? 0} elsewhere)`
+    );
+    // The workflow-pin prefilter is JSON containment, which only Postgres
+    // can answer: a draft pin in B and a published pin in A must both match.
+    const pinning = (model: string) => ({
+      steps: [
+        {
+          id: 'llm-1',
+          name: 'LLM',
+          type: 'llm_call',
+          config: { prompt: 'smoke', modelOverride: model },
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'llm-1',
+      errorStrategy: 'fail',
+    });
+    await runAsOrg(b.orgId, () =>
+      prisma.aiWorkflow.create({
+        data: {
+          name: `${PREFIX} pins the model (draft)`,
+          slug: `${PREFIX}-pin-draft-${stamp}`,
+          description: 'smoke fixture',
+          draftDefinition: pinning(sharedModel),
+        },
+      })
+    );
+    await runAsOrg(a.orgId, async () => {
+      const pinned = await prisma.aiWorkflow.create({
+        data: {
+          name: `${PREFIX} pins the model (published)`,
+          slug: `${PREFIX}-pin-published-${stamp}`,
+          description: 'smoke fixture',
+          versions: { create: { version: 1, snapshot: pinning(sharedModel) } },
+        },
+        include: { versions: true },
+      });
+      await prisma.aiWorkflow.update({
+        where: { id: pinned.id },
+        data: { publishedVersionId: pinned.versions[0].id },
+      });
+    });
+    const pinsSeen = await asA(() => providerModelUsage(sharedProvider, sharedModel));
+    check(
+      pinsSeen.workflows.length === 1 && pinsSeen.otherOrgWorkflows === 1,
+      `providerModelUsage's JSON prefilter finds A’s published pin (named) and B’s draft pin (counted) (${pinsSeen.workflows.length}/${pinsSeen.otherOrgWorkflows})`
     );
 
     // ── [16] Shared settings: changed only from the install org ──────────

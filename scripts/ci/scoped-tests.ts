@@ -170,6 +170,13 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'new model with `orgId`, or a migration, reaches no test through the module graph.',
   },
   {
+    path: 'tests/unit/lib/tenancy/cross-org-count-sites.test.ts',
+    reason:
+      'greps app/, lib/, components/, scripts/ and prisma/ for `runAsCrossOrgCount`, the ' +
+      'debug-logged system bypass, and fails naming any caller but the global-config usage ' +
+      'module. A new caller is a file no import chain connects to this test (§107 t-752).',
+  },
+  {
     path: 'tests/unit/scripts/ci/shared-settings-writes.test.ts',
     reason:
       'parses every route and module under app/ and lib/ and fails naming any route ' +

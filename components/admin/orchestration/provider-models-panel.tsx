@@ -62,6 +62,7 @@ import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
 import type { TaskType } from '@/types/orchestration';
+import { OtherOrgUsage } from '@/components/admin/orchestration/other-org-usage';
 
 // Short human labels for the four `TaskType` slots resolved via
 // `OrchestrationSettings.defaultModels`. Surfaced as per-row badges
@@ -100,6 +101,9 @@ export interface ProviderModelInfo {
   // Active agents bound to (provider, modelId). Empty when no agent
   // currently references the model.
   agents?: ProviderModelAgentRef[];
+  // Active agents in OTHER orgs bound to it: counted, never named (§107
+  // t-752). In use, filtered and delete-blocked on the sum with `agents`.
+  otherOrgAgentCount?: number;
   // TaskType slots this model fills as the effective system default
   // (routing/chat/reasoning/embeddings). Distinct from `agents` —
   // tracks inheritance via the default-models settings rather than
@@ -265,6 +269,11 @@ function bucketFor(cap: Capability): FilterBucket {
   return cap;
 }
 
+/** Active agents using a model in every org: the caller's, named, and other orgs', counted (§107 t-752). */
+function usedBy(row: { agents?: unknown[]; otherOrgAgentCount?: number }): number {
+  return (row.agents?.length ?? 0) + (row.otherOrgAgentCount ?? 0);
+}
+
 export function ProviderModelsPanel({
   providerId,
   providerName,
@@ -353,7 +362,7 @@ export function ProviderModelsPanel({
       // Substring search on id + name. Empty string matches everything.
       if (q && !`${m.id} ${m.name}`.toLowerCase().includes(q)) return false;
       // "In use" toggle — only show models with at least one bound agent.
-      if (inUseOnly && (m.agents?.length ?? 0) === 0) return false;
+      if (inUseOnly && usedBy(m) === 0) return false;
       // Empty filter set means "all" — only narrow when the operator
       // has selected at least one chip.
       if (activeBuckets.size === 0) return true;
@@ -377,7 +386,7 @@ export function ProviderModelsPanel({
           break;
         case 'inUse':
           // Sort by agent count. Default `desc` surfaces in-use rows first.
-          primary = (a.agents?.length ?? 0) - (b.agents?.length ?? 0);
+          primary = usedBy(a) - usedBy(b);
           break;
         case 'tier':
           primary = a.tier.localeCompare(b.tier);
@@ -650,7 +659,7 @@ export function ProviderModelsPanel({
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {(() => {
-                            const agentCount = m.agents?.length ?? 0;
+                            const agentCount = usedBy(m);
                             const defaultRoles = m.defaultFor ?? [];
                             // Empty state — render an explicit "Not in
                             // use" so the operator gets a clear signal
@@ -702,6 +711,11 @@ export function ProviderModelsPanel({
                                           </li>
                                         ))}
                                       </ul>
+                                      <OtherOrgUsage
+                                        count={m.otherOrgAgentCount ?? 0}
+                                        afterList={(m.agents?.length ?? 0) > 0}
+                                        className="px-3 py-2"
+                                      />
                                     </PopoverContent>
                                   </Popover>
                                 ) : (

@@ -28,6 +28,7 @@ import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
 import { TASK_TYPES, type TaskType } from '@/types/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
+import { modelAgentUsage, modelUsageKey } from '@/lib/orchestration/admin/global-config-usage';
 
 export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
   const log = await getRouteLogger(request);
@@ -61,7 +62,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
     }
 
     const provider = await getProvider(row.slug);
-    const [liveModels, matrixRows, agentRows, settings] = await Promise.all([
+    const [liveModels, matrixRows, usage, settings] = await Promise.all([
       provider.listModels(),
       // LEFT JOIN — annotate live SDK output with our curated matrix.
       // Matrix rows are the source of truth for capabilities + tier
@@ -75,15 +76,12 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
           tierRole: true,
         },
       }),
-      // LEFT JOIN — list active agents bound to this provider so the
-      // panel can surface "which agents use this model". Match is by
+      // LEFT JOIN — active agents bound to this provider, in every org
+      // (§107 t-752), so the panel can surface "which agents use this
+      // model": the caller's by name, other orgs' counted. Match is by
       // (provider, model) string pair since AiAgent stores both as
       // free-text rather than FKs.
-      prisma.aiAgent.findMany({
-        where: { provider: row.slug, isActive: true },
-        select: { id: true, name: true, slug: true, model: true },
-        orderBy: { name: 'asc' },
-      }),
+      modelAgentUsage([row.slug]),
       // Resolve effective default-models map so each row can advertise
       // any TaskType slot it currently fills (routing/chat/reasoning/
       // embeddings). Agents with empty provider/model fall back to
@@ -94,13 +92,6 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
     ]);
 
     const matrixByModelId = new Map(matrixRows.map((m) => [m.modelId, m]));
-    const agentsByModelId = new Map<string, Array<{ id: string; name: string; slug: string }>>();
-    for (const a of agentRows) {
-      if (!a.model) continue;
-      const list = agentsByModelId.get(a.model) ?? [];
-      list.push({ id: a.id, name: a.name, slug: a.slug });
-      agentsByModelId.set(a.model, list);
-    }
 
     // Per-task matching rule. The `audio` slot stores a
     // `${providerSlug}::${modelId}` composite (see
@@ -139,7 +130,9 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
         matrixId: matrix?.id ?? null,
         capabilities,
         tierRole: matrix?.tierRole ?? null,
-        agents: agentsByModelId.get(m.id) ?? [],
+        agents: usage.get(modelUsageKey(row.slug, m.id))?.agents ?? [],
+        // Active agents in other orgs bound to it: counted, never named.
+        otherOrgAgentCount: usage.get(modelUsageKey(row.slug, m.id))?.otherOrgAgents ?? 0,
         // Task slots this model serves as the effective system
         // default. Distinct from `agents` — the former tracks direct
         // assignment, this tracks inheritance via the system defaults.
@@ -152,7 +145,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
       slug: row.slug,
       modelCount: enriched.length,
       matrixMatched: enriched.filter((m) => m.inMatrix).length,
-      modelsInUse: enriched.filter((m) => m.agents.length > 0).length,
+      modelsInUse: enriched.filter((m) => m.agents.length + m.otherOrgAgentCount > 0).length,
       modelsServingDefaults: enriched.filter((m) => m.defaultFor.length > 0).length,
     });
     return successResponse({ providerId: id, slug: row.slug, models: enriched });

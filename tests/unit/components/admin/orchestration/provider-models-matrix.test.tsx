@@ -1078,3 +1078,53 @@ describe('ProviderModelsMatrix', () => {
     });
   });
 });
+
+describe('ProviderModelsMatrix — agents in other organisations (§107 t-752)', () => {
+  it('counts them into the cell and says so in the popover, never naming them', async () => {
+    const user = userEvent.setup();
+    render(
+      <ProviderModelsMatrix
+        initialModels={[
+          makeModel({
+            name: 'GPT-5',
+            agents: [{ id: 'agent-1', name: 'Triage Bot', slug: 'triage-bot' }],
+            otherOrgAgentCount: 2,
+          }),
+        ]}
+      />
+    );
+
+    await user.click(
+      screen.getByRole('button', { name: /show 3 agents directly assigned to GPT-5/i })
+    );
+
+    expect(await screen.findByRole('link', { name: /Triage Bot/ })).toBeInTheDocument();
+    expect(screen.getByText(/…and 2 agents in other organisations/)).toBeInTheDocument();
+  });
+
+  it('treats a model only other orgs use as in use: listed, filtered in, and delete-blocked', async () => {
+    const user = userEvent.setup();
+    render(
+      <ProviderModelsMatrix
+        initialModels={[
+          makeModel({ id: 'm1', name: 'Unused Model', agents: [] }),
+          makeModel({ id: 'm2', name: 'Elsewhere Model', agents: [], otherOrgAgentCount: 1 }),
+        ]}
+      />
+    );
+
+    expect(
+      screen.getByRole('button', { name: /show 1 agent directly assigned to Elsewhere Model/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /Delete Elsewhere Model disabled — model is in use/i })
+    ).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Delete Unused Model/i })).toBeEnabled();
+
+    await user.click(
+      screen.getByRole('button', { name: /show only models with at least one bound agent/i })
+    );
+    expect(screen.getByText('Elsewhere Model')).toBeInTheDocument();
+    expect(screen.queryByText('Unused Model')).not.toBeInTheDocument();
+  });
+});
