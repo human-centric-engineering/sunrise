@@ -323,12 +323,14 @@ let cachedResources: McpResourceDefinition[] | null = null;
 let cachedAt = 0;
 
 /**
- * A row is a template when its URI carries a `{param}` placeholder or a query
- * string. The one test behind both listings, so a row lands in exactly one of
- * `resources/list` and `resources/templates/list`.
+ * A row is a template when its URI carries a `{param}` expression — RFC 6570's
+ * only marker of a variable, `{?q}` included. A query string with no
+ * expression is a fixed URI and is read as-is. The one test behind both
+ * listings, so a row lands in exactly one of `resources/list` and
+ * `resources/templates/list`.
  */
 function isTemplateUri(uri: string): boolean {
-  return /\{[^}]+\}/.test(uri) || uri.includes('?');
+  return /\{[^}]+\}/.test(uri);
 }
 
 /** Every enabled row, templates included, behind the 5-minute cache. */
@@ -355,7 +357,7 @@ async function loadEnabledResources(): Promise<McpResourceDefinition[]> {
 
 /**
  * List the concrete MCP-exposed resources that are enabled — the rows a client
- * can read as-is. Templated rows (`{param}` placeholders or a query string) are
+ * can read as-is. Templated rows (those with a `{param}` expression) are
  * left to {@link listMcpResourceTemplates}: listing one here offers an entry
  * that can only be read with the literal `{param}` in it.
  */
