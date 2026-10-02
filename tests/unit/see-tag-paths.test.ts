@@ -8,8 +8,9 @@
  * this repo, and every fork inherited them (#749).
  *
  * The matcher flags a `@see` whose target starts with `/`, `~`, or a Windows
- * drive letter, including when it is wrapped in backticks or `{@link…}`, or
- * written as a `file:` or `vscode://file` URL. `~` counts: it is outside the
+ * drive letter, or with `$HOME`, including when it is quoted, wrapped in
+ * backticks, `<…>` or `{@link…}`, or written as a `file:` or `vscode://file`
+ * URL. `~` counts: it is outside the
  * repo, so it cannot be what a test or module header points at. A
  * repo-relative path, an `https://` URL, or a symbol name does not match.
  * Paths relative to the file (`./`, `../`) are out of scope here, and so are
@@ -28,7 +29,7 @@ import { describe, expect, it } from 'vitest';
 
 /** `@see` followed by an absolute or home-relative target. */
 const ABSOLUTE_SEE =
-  /@see\s+`?(?:\{@link\w*\s+)?`?(?:file:\/{0,2}|vscode:\/\/file)?(?:\/|~|[A-Za-z]:[\\/])/;
+  /@see:?\s+["'`<]?(?:\{@link\w*\s+)?["'`<]?(?:file:\/{0,2}|vscode:\/\/file)?(?:\/|~|\$\{?HOME\b|[A-Za-z]:[\\/])/;
 
 const ROOT = process.cwd();
 
@@ -83,11 +84,17 @@ describe('@see paths', () => {
       '`/Users/someone/sunrise/lib/x.ts`',
       `{@linkcode /Users/someone/sunrise/lib/x.ts}`,
       `{@linkplain /Users/someone/sunrise/lib/x.ts}`,
+      `"/Users/someone/sunrise/lib/x.ts"`,
+      `'/home/someone/sunrise/lib/x.ts'`,
+      `<file:///Users/someone/sunrise/lib/x.ts>`,
+      `$HOME/sunrise/lib/x.ts`,
+      `\${HOME}/sunrise/lib/x.ts`,
     ];
     for (const target of flagged) {
       expect(findAbsoluteSeeTags(` * ${at} ${target}`), target).toEqual([1]);
     }
     expect(findAbsoluteSeeTags(`/// ${at} /home/someone/lib/x.ts`)).toEqual([1]);
+    expect(findAbsoluteSeeTags(` * ${at}: /home/someone/lib/x.ts`)).toEqual([1]);
 
     const allowed = [
       'lib/api/client.ts',
@@ -102,8 +109,9 @@ describe('@see paths', () => {
   });
 
   it('scans a non-empty tree', () => {
-    // A scan that read nothing would pass; make sure it read the tree.
-    expect(FILES.length).toBeGreaterThan(1000);
+    // A scan that read nothing would pass; make sure it read the tree. The
+    // floor stays small so a fork that drops a whole subsystem still passes.
+    expect(FILES.length).toBeGreaterThan(100);
     // Every root that exists on disk must contribute, so a pattern bug cannot
     // quietly drop a whole directory from the scan.
     for (const root of ROOTS.filter((r) => existsSync(resolve(ROOT, r)))) {
