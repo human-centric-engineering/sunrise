@@ -336,8 +336,8 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
   {
     path: 'tests/unit/see-tag-paths.test.ts',
     reason:
-      'walks app/, components/, emails/, lib/, prisma/, scripts/, tests/ and ' +
-      'types/ for any `@see` naming an absolute path (a home directory on one ' +
+      'walks the source roots and root tool configs ' +
+      'for any `@see` naming an absolute path (a home directory on one ' +
       'machine, #749). A new header comment in a far-off file is exactly the ' +
       'change no import chain connects to this test.',
   },

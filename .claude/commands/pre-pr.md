@@ -397,17 +397,14 @@ Nothing type-checks a `vi.mock` factory, so neither form fails the build — thi
 
 **4n. `@see` paths that are absolute, not repo-relative**
 
-```bash
-npx vitest run tests/unit/see-tag-paths.test.ts
-```
-
-Repo-wide, like 4m. Exit `0` means every `@see` under `app/`, `components/`,
-`emails/`, `lib/`, `prisma/`, `scripts/`, `tests/` and `types/` names a
-repo-relative path; non-zero lists each `file:line` whose `@see` starts with
-`/`, `~` or a drive letter (`@see /Users/…`, `@see /home/…`). A path into one
-machine's home directory resolves for nobody else and ships to every fork
-(#749). Fix the comment to `@see lib/…`; never widen the matcher's exclusions
-to pass. It is also in `ALWAYS_RUN_TESTS`, so `npm run test:changed` runs it.
+Already run: `tests/unit/see-tag-paths.test.ts` is in `ALWAYS_RUN_TESTS`, so
+Step 1's `npm run test:changed:coverage` ran it. Read its result there. It
+scans `app/`, `components/`, `emails/`, `hooks/`, `lib/`, `prisma/`,
+`scripts/`, `tests/`, `types/` and the root tool configs, and on failure lists
+each `file:line` whose `@see` names a path starting with `/`, `~` or a drive
+letter (`@see /Users/…`, `@see /home/…`). A path into one machine's home
+directory resolves for nobody else and ships to every fork (#749). Fix the
+comment to `@see lib/…`; never widen the matcher's exclusions to pass.
 
 ### Step 5: Check .context/ documentation
 
@@ -529,7 +526,7 @@ Output a clear summary in this format:
 - [ ] Bare fetch() instead of serverFetch(): {count found or CLEAN}
 - [ ] Direct Prisma outside API routes: {count found or CLEAN}
 - [ ] Hand-rolled router mocks: {count found or CLEAN}
-- [ ] Absolute `@see` paths: {`see-tag-paths.test.ts` exit code — CLEAN (0), or the `file:line` list}
+- [ ] Absolute `@see` paths: {`see-tag-paths.test.ts` result from Step 1 — CLEAN, or the `file:line` list}
 
 ### Documentation Check
 - [ ] Stale content in changed docs: {CLEAN or issues found}
