@@ -16,6 +16,12 @@
  * The org is not a data subject, so no receipt is written and no `reason` is
  * required — the actor is logged, which is what an operator action needs.
  *
+ * **It authorises nothing.** It reads the org it is given, as that org
+ * (`runAsOrg`, t-735), whoever calls it, so the caller decides who may export
+ * which org. Today that is one route, platform admins only. A caller for an
+ * org's own owner (§111) must check the requester administers the org it was
+ * asked for, not just their active one, or this becomes a cross-tenant read.
+ *
  * @see lib/privacy/org-sources.ts — the manifest and its coverage guard
  * @see lib/privacy/erase-org.ts — the deletion this precedes
  * @see lib/privacy/export-user.ts — the per-person shape this mirrors
