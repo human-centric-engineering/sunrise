@@ -38,6 +38,7 @@ vi.mock('next/link', () => ({
 
 import OrgPage from '@/app/admin/orgs/[id]/page';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { logger } from '@/lib/logging';
 
 const ID = 'cmorg00000000000000grant';
 const ORG_PATH = `/api/v1/admin/orgs/${ID}`;
@@ -85,6 +86,37 @@ describe('OrgPage', () => {
     expect(screen.getByText(/1 member$/)).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /Anthropic/ })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: /OpenAI/ })).not.toBeChecked();
+  });
+
+  it('marks a suspended org, and counts its members', async () => {
+    serve({
+      [ORG_PATH]: { ...ORG, status: 'SUSPENDED', members: [{ id: 'u1' }, { id: 'u2' }] },
+      [POLICY_PATH]: POLICY,
+      [PROVIDERS_PATH]: PROVIDERS,
+    });
+
+    render(await OrgPage({ params }));
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('suspended');
+    expect(screen.getByText(/2 members$/)).toBeInTheDocument();
+  });
+
+  it('treats a fetch that throws as not loaded, and logs which one', async () => {
+    serve({ [ORG_PATH]: ORG, [PROVIDERS_PATH]: PROVIDERS });
+    const answer = vi.mocked(serverFetch).getMockImplementation()!;
+    vi.mocked(serverFetch).mockImplementation(async (path: string) => {
+      if (path === POLICY_PATH) throw new Error('network');
+      return answer(path);
+    });
+
+    render(await OrgPage({ params }));
+
+    expect(screen.getByText(/approved providers could not be loaded/)).toBeInTheDocument();
+    expect(logger.error).toHaveBeenCalledWith(
+      'org page: provider policy fetch failed',
+      expect.any(Error),
+      { path: POLICY_PATH }
+    );
   });
 
   it('is a 404 when the org does not exist', async () => {
