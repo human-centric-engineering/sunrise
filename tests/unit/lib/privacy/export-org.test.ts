@@ -109,6 +109,23 @@ describe('exportOrgData', () => {
     expect(seen).toEqual([ORG, ORG, ORG, ORG]);
   });
 
+  it('reads one source at a time, so an export never queues its reads behind the pool', async () => {
+    let releaseMembers: (rows: unknown[]) => void = () => {};
+    sources.members.mockReturnValue(
+      new Promise<unknown[]>((resolve) => {
+        releaseMembers = resolve;
+      })
+    );
+
+    const pending = exportOrgData({ orgId: ORG, actorUserId: ADMIN });
+    await vi.waitFor(() => expect(sources.members).toHaveBeenCalled());
+    expect(sources.keys).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the second read must not start while the first is open
+
+    releaseMembers([]);
+    await pending;
+    expect(sources.keys).toHaveBeenCalledWith({ orgId: ORG });
+  });
+
   it('reports an empty section as delivered with zero rows, not as absent', async () => {
     sources.keys.mockResolvedValue([]);
     const bundle = await exportOrgData({ orgId: ORG, actorUserId: ADMIN });

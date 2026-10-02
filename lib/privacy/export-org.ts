@@ -109,11 +109,20 @@ export async function exportOrgData(params: ExportOrgParams): Promise<OrgExport>
   // admin API key enters no org at all, and the reads threw. Entering the
   // target here, rather than in the route, means any caller gets it — §111's
   // planned owner self-service export is meant to sit on this same service.
-  const results = await runAsOrg(orgId, () =>
-    Promise.all(
-      ORG_DATA_SOURCES.map(async (source) => ({ source, rows: await source.fetch(query) }))
-    )
-  );
+  //
+  // One source at a time, not all at once. At `multi` the data layer runs
+  // each read as its own transaction (the org setter, then the query), and
+  // each holds a pooled connection for as long as its query runs. Starting
+  // all 42 together against a pool of 10 (1 on a serverless deploy) leaves
+  // the rest waiting for a connection, where a large org's reads can time out
+  // and fail the whole export.
+  const results = await runAsOrg(orgId, async () => {
+    const fetched: Array<{ source: (typeof ORG_DATA_SOURCES)[number]; rows: unknown[] }> = [];
+    for (const source of ORG_DATA_SOURCES) {
+      fetched.push({ source, rows: await source.fetch(query) });
+    }
+    return fetched;
+  });
 
   const data: Record<string, unknown[]> = {};
   const attributions: Record<string, unknown[]> = {};

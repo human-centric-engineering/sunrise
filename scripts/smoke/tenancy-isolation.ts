@@ -49,8 +49,9 @@
  *   - the org export and erasure (§106 t-735, t-730): B's export, asked
  *     from inside A (an admin's session) and from no org (an admin API key),
  *     holds B's rows and none of A's; B, holding a knowledge base with
- *     documents and chunks, is erased from inside A with every row it held,
- *     A's rows untouched; A is then erased from no org the same way.
+ *     documents and chunks, is erased from inside A, and no row in any
+ *     tenant-owned table carries its org afterwards, A's rows untouched; A is
+ *     then erased from no org the same way.
  *
  * Run it against a THROWAWAY database, never the dev one — it creates two
  * orgs and enables nothing itself; the sequence around it is the CI job's
@@ -80,6 +81,7 @@ import {
   runAsSystem,
 } from '@/lib/tenancy/context';
 import { createOrg } from '@/lib/tenancy/lifecycle';
+import { tenantOwnedModels } from '@/lib/tenancy/classification';
 import { exportOrgData } from '@/lib/privacy/export-org';
 import { eraseOrg } from '@/lib/privacy/erase-org';
 import { writeOrgProviderPolicy } from '@/lib/tenancy/org-settings';
@@ -1456,7 +1458,17 @@ async function main(): Promise<void> {
         missing.length === 0,
         `B’s export ${label} holds B’s rows${missing.length ? ` — missing: ${missing.map(([s]) => s).join(', ')}` : ''}`
       );
-      const aIds = new Set([a.agentId, a.kbId, a.documentId, ...a.chunkIds, a.conversationId]);
+      const aIds = new Set([
+        a.agentId,
+        a.kbId,
+        a.documentId,
+        ...a.chunkIds,
+        a.conversationId,
+        ...a.messageIds,
+        a.workflowId,
+        a.executionId,
+        a.costLogId,
+      ]);
       const leaked = Object.values(bundle.data).flatMap((rows) =>
         rowIds(rows).filter((id) => aIds.has(id))
       );
@@ -1467,19 +1479,30 @@ async function main(): Promise<void> {
     // `ai_knowledge_document.knowledgeBaseId` is ON DELETE RESTRICT, and both
     // rows also cascade from the org: erasure must still go through (t-730).
     console.log('\n[15] org erasure: B, holding documents and chunks, erased from inside A');
+    // Every tenant-owned table, counted by the org's id, as the bypass. A
+    // `SetNull` relation (`AiCostLog`, a billing record) keeps its row with the
+    // org detached, so "no row carries the org" is the claim, not "no row".
+    const tenantTables = [...tenantOwnedModels(prisma).values()];
     const tenantRowsOf = (orgId: string) =>
-      runAsSystem('smoke: count an org’s rows', async () => ({
-        agents: await prisma.aiAgent.count({ where: { orgId } }),
-        knowledgeBases: await prisma.aiKnowledgeBase.count({ where: { orgId } }),
-        documents: await prisma.aiKnowledgeDocument.count({ where: { orgId } }),
-        chunks: await prisma.aiKnowledgeChunk.count({ where: { orgId } }),
-        conversations: await prisma.aiConversation.count({ where: { orgId } }),
-        workflows: await prisma.aiWorkflow.count({ where: { orgId } }),
-      }));
+      runAsSystem('smoke: count an org’s rows', async () => {
+        const counts: Record<string, number> = {};
+        for (const table of tenantTables) {
+          const [row] = await prisma.$queryRawUnsafe<Array<{ n: bigint }>>(
+            `SELECT count(*) AS n FROM "${table}" WHERE "orgId" = $1`,
+            orgId
+          );
+          counts[table] = Number(row.n);
+        }
+        return counts;
+      });
+    const nonZero = (counts: Record<string, number>) =>
+      Object.entries(counts).filter(([, n]) => n > 0);
     const beforeB = await tenantRowsOf(b.orgId);
     check(
-      beforeB.documents > 0 && beforeB.chunks > 0 && beforeB.knowledgeBases > 0,
-      `B holds a knowledge base, documents and chunks before erasure (${beforeB.documents} documents, ${beforeB.chunks} chunks)`
+      beforeB.ai_knowledge_document > 0 &&
+        beforeB.ai_knowledge_chunk > 0 &&
+        beforeB.ai_knowledge_base > 0,
+      `B holds a knowledge base, documents and chunks before erasure (${beforeB.ai_knowledge_document} documents, ${beforeB.ai_knowledge_chunk} chunks)`
     );
     const beforeA = await tenantRowsOf(a.orgId);
     try {
@@ -1498,13 +1521,13 @@ async function main(): Promise<void> {
     const afterB = await tenantRowsOf(b.orgId);
     const orgLeft = await prisma.org.findUnique({ where: { id: b.orgId }, select: { id: true } });
     check(
-      orgLeft === null && Object.values(afterB).every((n) => n === 0),
-      `B and every row it held are gone (${JSON.stringify(afterB)})`
+      orgLeft === null && nonZero(afterB).length === 0,
+      `B is gone, and no row in any of the ${tenantTables.length} tenant-owned tables carries its org${nonZero(afterB).length ? ` — left: ${JSON.stringify(nonZero(afterB))}` : ''}`
     );
     const afterA = await tenantRowsOf(a.orgId);
     check(
       JSON.stringify(afterA) === JSON.stringify(beforeA),
-      `A’s rows are untouched (${JSON.stringify(afterA)})`
+      `A’s rows are untouched, in every tenant-owned table (${nonZero(afterA).length} hold some)`
     );
     // An admin API key enters no org: the same erasure, of A, from nowhere.
     try {
@@ -1518,8 +1541,8 @@ async function main(): Promise<void> {
     const afterErasingA = await tenantRowsOf(a.orgId);
     check(
       (await prisma.org.findUnique({ where: { id: a.orgId }, select: { id: true } })) === null &&
-        Object.values(afterErasingA).every((n) => n === 0),
-      `A, erased from no org (an admin API key), is gone with every row it held`
+        nonZero(afterErasingA).length === 0,
+      `A, erased from no org (an admin API key), is gone, and no row carries its org${nonZero(afterErasingA).length ? ` — left: ${JSON.stringify(nonZero(afterErasingA))}` : ''}`
     );
 
     if (failures > 0) throw new Error(`${failures} check(s) failed`);
