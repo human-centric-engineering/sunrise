@@ -190,6 +190,20 @@ describe('GET /api/v1/admin/orchestration/knowledge/tags', () => {
     expect(knowledgeTagCounts).toHaveBeenCalledWith([TAG_ID]);
   });
 
+  it('reports zero for a tag no org has granted or applied', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.knowledgeTag.findMany).mockResolvedValue([makeTag()] as never);
+    vi.mocked(prisma.knowledgeTag.count).mockResolvedValue(1);
+    vi.mocked(knowledgeTagCounts).mockResolvedValue(new Map());
+
+    const response = await listGet(makeListRequest());
+
+    const data = await parseJson<{ data: Array<{ documentCount: number; agentCount: number }> }>(
+      response
+    );
+    expect(data.data[0]).toMatchObject({ documentCount: 0, agentCount: 0 });
+  });
+
   it('passes search query to prisma when q is set', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.knowledgeTag.findMany).mockResolvedValue([]);
