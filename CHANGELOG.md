@@ -190,6 +190,16 @@ release process.
 
 ### Changed
 
+- **The browser-tab icons moved from `public/` to `app/favicon.ico` and
+  `app/icon.svg`** (#640). Next links both from `<head>` itself, so the SVG
+  (vector, and the only kind that can follow `prefers-color-scheme`) is now
+  actually served; before, nothing linked `public/favicon.svg`. Rebranding is
+  replacing those two files, with no `app/layout.tsx` edit. **A fork that
+  replaced `public/favicon.ico` gets a modify/delete conflict on merge**: move
+  its icon to `app/favicon.ico` (and any SVG to `app/icon.svg`) and delete the
+  `public/` copies. Keeping `public/favicon.ico` next to `app/favicon.ico` makes
+  `/favicon.ico` a 500 in dev ("conflicting public file and page file"). If you
+  wrote a `metadata.icons` block into `app/layout.tsx` for this, drop it.
 - **At `TENANCY_MODE=multi`, an org other than the install org can no longer
   call any AI provider until it is granted one** (§120 t-742). An install
   that is already at `multi` with customer orgs must grant each one its

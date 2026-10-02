@@ -266,10 +266,16 @@ NEXT_PUBLIC_APP_URL=https://app.example.com
 
 ## Icons and Favicons
 
-Sunrise does not include favicon setup by default. To add icons:
+Sunrise ships two icons on the App Router file convention, and Next emits the
+`<link rel="icon">` tags for them — the root `metadata` declares no `icons`:
 
-1. **Static icons**: Place `favicon.ico` in the `app/` directory
-2. **Generated icons**: Create `app/icon.tsx` for dynamic generation
+- `app/favicon.ico` — raster fallback (Safari has no SVG-favicon support)
+- `app/icon.svg` — vector icon; may use `@media (prefers-color-scheme: dark)`
+
+To rebrand, replace the two files. To generate an icon in code instead, swap
+`app/icon.svg` for `app/icon.tsx`. Don't put icons in `public/`:
+`public/favicon.ico` beside `app/favicon.ico` is a dev-server conflict, and
+`tests/unit/app/app-icons.test.ts` fails on either.
 
 See [Next.js Icons documentation](https://nextjs.org/docs/app/api-reference/file-conventions/metadata/app-icons) for details.
 

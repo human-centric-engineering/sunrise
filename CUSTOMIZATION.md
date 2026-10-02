@@ -380,9 +380,11 @@ sync-safe.
 
 **Logo & favicon:**
 
-- Replace `public/favicon.ico`
+- Replace `app/favicon.ico` and `app/icon.svg` — Next links both from
+  `<head>` automatically, so no `app/layout.tsx` edit is needed. Keep the
+  names; don't put icons back in `public/` (a `public/favicon.ico` next to
+  `app/favicon.ico` is a dev-server error)
 - Add logo images to `public/`
-- Update `app/layout.tsx` → `metadata.icons`
 - Update the landing page hero via the thin-shim ([§6](#6-landing-page--routes)),
   not by editing `app/(public)/page.tsx` in place
 

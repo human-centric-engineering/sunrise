@@ -149,6 +149,7 @@ covered by the version contract.
   - the ESLint app-boundary rule governing `lib/app/**` (root `eslint.config.mjs`)
   - brand mark component (`components/brand/brand-mark.tsx` — fork-owned scaffold; the default returns `BRAND.name` as a bare string, so a fork replaces markup rather than filling a blank)
   - fork theme (`app/brand-theme.css` — per-surface CSS-variable overrides, ships empty, imported by `app/layout.tsx`)
+  - browser-tab icons (`app/favicon.ico`, `app/icon.svg` — fork-replaced assets on the Next file convention, linked by Next with no `layout.tsx` entry)
   - fork schema tier (`prisma/schema/app.prisma` — ships empty; the reserved `/app` and `/framework` tiers generally, see [`CUSTOMIZATION.md`](./CUSTOMIZATION.md#the-appplatform-model))
 
 - **Documented public APIs** —

@@ -1,0 +1,4 @@
+Kept so the directory exists: the Dockerfile copies public/ into the image.
+
+Browser-tab icons do not go here — they are app/favicon.ico and app/icon.svg,
+which Next links automatically (see CUSTOMIZATION.md §2, "Logo & favicon").
