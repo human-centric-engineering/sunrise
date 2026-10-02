@@ -40,6 +40,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
+import { cn } from '@/lib/utils';
 import { fieldLabels, fieldToTab } from '@/lib/orchestration/agents/agent-field-registry';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -691,6 +692,11 @@ export function AgentForm({
         // Authorship describes edits made since the form was last seeded. The
         // save re-seeds it, so the slate is clean again.
         setAuthored({ provider: false, model: false });
+        // Re-render the server page with the saved row, so what it derives
+        // from the agent follows the save: the stranded-provider banner, and
+        // which providers this form treats as held (§120 t-745). Form state
+        // is seeded from `defaultValues` only, so this does not reset it.
+        router.refresh();
         setSaved(true);
         schedule(() => setSaved(false), 2500);
       } else {
@@ -1167,7 +1173,10 @@ export function AgentForm({
                     return (
                       <label
                         key={p.id}
-                        className={`flex items-center gap-2 text-sm${disabled ? 'text-muted-foreground' : ''}`}
+                        className={cn(
+                          'flex items-center gap-2 text-sm',
+                          disabled && 'text-muted-foreground'
+                        )}
                       >
                         <input
                           type="checkbox"

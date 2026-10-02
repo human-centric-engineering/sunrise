@@ -102,6 +102,13 @@ export function OrgProvidersForm({ orgId, policy: initial, providers }: OrgProvi
   // A grant whose provider row was deleted is inert; a save (which names
   // providers by slug) drops it.
   const orphaned = policy.approved.filter((grant) => grant.slug === null).length;
+  // A save replaces the whole policy, so a grant for a provider this list
+  // does not show (it loads one page of providers) is carried over by slug
+  // rather than silently revoked.
+  const listed = new Set(providers.map((p) => p.id));
+  const unlisted = policy.approved.flatMap((grant) =>
+    grant.slug !== null && !listed.has(grant.id) ? [grant.slug] : []
+  );
   const allowed = restricted
     ? new Set(parseJurisdictions(jurisdictionText).map((code) => code.toUpperCase()))
     : null;
@@ -123,7 +130,10 @@ export function OrgProvidersForm({ orgId, policy: initial, providers }: OrgProvi
     try {
       const updated = await apiClient.put<OrgProviderPolicyView>(API.ADMIN.orgProviders(orgId), {
         body: {
-          approved: providers.filter((p) => approvedIds.has(p.id)).map((p) => p.slug),
+          approved: [
+            ...providers.filter((p) => approvedIds.has(p.id)).map((p) => p.slug),
+            ...unlisted,
+          ],
           jurisdictions: restricted ? parseJurisdictions(jurisdictionText) : null,
         },
       });
@@ -171,7 +181,7 @@ export function OrgProvidersForm({ orgId, policy: initial, providers }: OrgProvi
               const outside =
                 allowed !== null &&
                 approvedIds.has(p.id) &&
-                (p.jurisdiction === null || !allowed.has(p.jurisdiction));
+                (p.jurisdiction === null || !allowed.has(p.jurisdiction.toUpperCase()));
               return (
                 <label key={p.id} className="flex flex-wrap items-center gap-2 text-sm">
                   <input

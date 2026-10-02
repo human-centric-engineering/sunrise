@@ -111,6 +111,11 @@ describe('AgentForm — providers the org is not approved for', () => {
     const openai = screen.getByRole('checkbox', { name: /OpenAI/ });
     expect(openai).toBeDisabled();
     expect(openai.closest('label')).toHaveTextContent('not approved for this organisation');
+    // Greyed, and the same size as its neighbours.
+    expect(openai.closest('label')).toHaveClass('text-sm', 'text-muted-foreground');
+    expect(screen.getByRole('checkbox', { name: /Voyage/ }).closest('label')).not.toHaveClass(
+      'text-muted-foreground'
+    );
     expect(screen.getByRole('checkbox', { name: /Voyage/ })).toBeEnabled();
     expect(
       screen.getByRole('button', { name: 'Why some providers are unavailable' })

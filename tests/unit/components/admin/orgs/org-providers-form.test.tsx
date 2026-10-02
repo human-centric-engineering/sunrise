@@ -154,6 +154,45 @@ describe('OrgProvidersForm', () => {
     expect(screen.queryByText('Saved')).not.toBeInTheDocument();
   });
 
+  it('keeps a grant for a provider the list does not show, rather than revoking it', async () => {
+    vi.mocked(apiClient.put).mockResolvedValue(policy());
+    const user = renderForm(
+      policy({
+        approved: [
+          { id: 'id-anthropic', slug: 'anthropic' },
+          // Approved, but past the page of providers the form loaded.
+          { id: 'id-far', slug: 'far-provider' },
+          // Deleted: nothing to carry over.
+          { id: 'id-gone', slug: null },
+        ],
+      })
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Save approved providers' }));
+
+    expect(apiClient.put).toHaveBeenCalledWith(`/api/v1/admin/orgs/${ORG}/providers`, {
+      body: { approved: ['anthropic', 'far-provider'], jurisdictions: null },
+    });
+  });
+
+  it('matches a provider’s jurisdiction case-insensitively, as the runtime does', async () => {
+    const user = userEvent.setup();
+    render(
+      <OrgProvidersForm
+        orgId={ORG}
+        policy={policy({ approved: [{ id: 'id-old', slug: 'old' }] })}
+        providers={[{ id: 'id-old', slug: 'old', name: 'Old', isActive: true, jurisdiction: 'eu' }]}
+      />
+    );
+
+    await user.click(screen.getByRole('switch', { name: /Restrict to jurisdictions/ }));
+    await user.type(screen.getByRole('textbox', { name: 'Jurisdictions' }), 'EU');
+
+    expect(screen.getByRole('checkbox', { name: /Old/ }).closest('label')).not.toHaveTextContent(
+      'outside the jurisdictions'
+    );
+  });
+
   it('says the policy is not enforced at single, and still lets it be edited', () => {
     renderForm(policy({ enforced: false }));
     expect(screen.getByText(/Provider policy is not enforced on this install/)).toBeInTheDocument();

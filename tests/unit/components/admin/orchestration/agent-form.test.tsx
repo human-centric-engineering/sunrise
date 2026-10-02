@@ -35,11 +35,12 @@ import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
 const mockPush = vi.fn();
+const mockRefresh = vi.fn();
 
 vi.mock('next/navigation', async () => {
   const { createMockRouter } = await import('@/tests/types/mocks');
   return {
-    useRouter: () => createMockRouter({ push: mockPush }),
+    useRouter: () => createMockRouter({ push: mockPush, refresh: mockRefresh }),
     useSearchParams: () => ({ get: () => null }),
   };
 });
@@ -224,6 +225,26 @@ describe('AgentForm — function coverage gaps', () => {
         // Button changes to show "Saved" with check icon
         expect(screen.getByRole('button', { name: /saved/i })).toBeInTheDocument();
       });
+    });
+
+    it('re-renders the server page after a successful PATCH, so its banner and held providers follow the save (§120 t-745)', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ id: 'agent-1', name: 'Test Agent' });
+      render(
+        <AgentForm
+          mode="edit"
+          agent={makeAgent()}
+          providers={MOCK_PROVIDERS}
+          models={MOCK_MODELS}
+        />
+      );
+
+      const form = screen.getByRole('button', { name: /save changes/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      await waitFor(() => expect(mockRefresh).toHaveBeenCalledTimes(1));
     });
 
     it('shows inline error banner on PATCH APIClientError', async () => {
