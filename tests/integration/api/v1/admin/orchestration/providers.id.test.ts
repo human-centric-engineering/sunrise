@@ -67,6 +67,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 import { clearCache } from '@/lib/orchestration/llm/provider-manager';
 import { hasProviderKey } from '@/lib/orchestration/llm/provider-credentials';
 
@@ -542,6 +543,32 @@ describe('DELETE /api/v1/admin/orchestration/providers/:id?permanent=true', () =
       where: { fallbackProviders: { has: 'anthropic' } },
     });
     expect(prisma.aiCostLog.count).toHaveBeenCalledWith({ where: { provider: 'anthropic' } });
+  });
+
+  it('counts every org’s references, under the system scope, from inside one org (t-731)', async () => {
+    // The provider is global config; at multi a count in the caller's org
+    // would miss another org's agents. Each count must run as `system`.
+    const scopes: Array<string | undefined> = [];
+    const record = () => {
+      scopes.push(getTenantContext()?.source);
+    };
+    vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
+    vi.mocked(prisma.aiAgent.count).mockImplementation((async () => {
+      record();
+      return 1;
+    }) as never);
+    vi.mocked(prisma.aiCostLog.count).mockImplementation((async () => {
+      record();
+      return 0;
+    }) as never);
+
+    const response = await runAsOrg('cmorg0000000000000000orga', () =>
+      DELETE(makeRequest('DELETE', undefined, { permanent: 'true' }), makeParams(PROVIDER_ID))
+    );
+
+    expect(response.status).toBe(409);
+    expect(scopes).toEqual(['system', 'system', 'system']);
+    expect(prisma.aiProviderConfig.delete).not.toHaveBeenCalled();
   });
 
   it('returns 409 when agents reference the slug as primary provider', async () => {

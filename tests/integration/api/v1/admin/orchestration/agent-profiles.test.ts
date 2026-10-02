@@ -5,8 +5,8 @@
  * POST /api/v1/admin/orchestration/agent-profiles
  *
  * Key assertions:
- *   - GET list returns profiles with `agentCount` derived from the
- *     _count.agents relation include.
+ *   - GET list returns profiles with `agentCount`: attached agents in every
+ *     org, from `agentProfileUsage` (t-731), not a `_count` include.
  *   - POST creates a profile and returns 201.
  *   - Duplicate slug -> 409.
  *   - Auth: 401 unauthenticated, 403 non-admin, 429 rate-limited.
@@ -46,10 +46,15 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   computeChanges: vi.fn(() => null),
 }));
 
+vi.mock('@/lib/orchestration/admin/global-config-usage', () => ({
+  agentProfileUsage: vi.fn(async () => new Map<string, number>()),
+}));
+
 import { GET, POST } from '@/app/api/v1/admin/orchestration/agent-profiles/route';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { agentProfileUsage } from '@/lib/orchestration/admin/global-config-usage';
 
 const PROFILE_ID = 'cmjbv4i3x00003wsloputgwul';
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
@@ -67,7 +72,6 @@ function makeProfile(overrides: Record<string, unknown> = {}) {
     createdBy: ADMIN_ID,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
-    _count: { agents: 0 },
     ...overrides,
   };
 }
@@ -118,32 +122,39 @@ describe('GET /api/v1/admin/orchestration/agent-profiles', () => {
     expect(response.status).toBe(403);
   });
 
-  it('returns paginated profiles with agentCount projected from _count', async () => {
+  it('returns paginated profiles with agentCount counted in every org (t-731)', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiAgentProfile.findMany).mockResolvedValue([
-      makeProfile({ _count: { agents: 3 } }),
-      makeProfile({
-        id: 'cmjbv4i3x00003wsloputgwu2',
-        slug: 'vip',
-        name: 'VIP Concierge',
-        _count: { agents: 1 },
-      }),
+      makeProfile(),
+      makeProfile({ id: 'cmjbv4i3x00003wsloputgwu2', slug: 'vip', name: 'VIP Concierge' }),
+      makeProfile({ id: 'cmjbv4i3x00003wsloputgwu3', slug: 'unused', name: 'Unused' }),
     ] as never);
-    vi.mocked(prisma.aiAgentProfile.count).mockResolvedValue(2);
+    vi.mocked(prisma.aiAgentProfile.count).mockResolvedValue(3);
+    vi.mocked(agentProfileUsage).mockResolvedValue(
+      new Map([
+        [PROFILE_ID, 3],
+        ['cmjbv4i3x00003wsloputgwu2', 1],
+      ])
+    );
 
     const response = await GET(makeGetRequest());
 
     expect(response.status).toBe(200);
     const data = await parseJson<{
       success: boolean;
-      data: Array<{ slug: string; agentCount: number; _count?: unknown }>;
+      data: Array<{ slug: string; agentCount: number }>;
     }>(response);
     expect(data.success).toBe(true);
-    expect(data.data).toHaveLength(2);
-    expect(data.data[0].agentCount).toBe(3);
-    expect(data.data[1].agentCount).toBe(1);
-    // _count should be projected away — callers see a flat shape.
-    expect(data.data[0]).not.toHaveProperty('_count');
+    expect(data.data.map((p) => [p.slug, p.agentCount])).toEqual([
+      ['support-family', 3],
+      ['vip', 1],
+      ['unused', 0],
+    ]);
+    expect(vi.mocked(agentProfileUsage)).toHaveBeenCalledWith([
+      PROFILE_ID,
+      'cmjbv4i3x00003wsloputgwu2',
+      'cmjbv4i3x00003wsloputgwu3',
+    ]);
   });
 
   it('passes the search query as a name/slug OR filter to Prisma', async () => {
@@ -156,7 +167,6 @@ describe('GET /api/v1/admin/orchestration/agent-profiles', () => {
     expect(vi.mocked(prisma.aiAgentProfile.findMany)).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ OR: expect.any(Array) }),
-        include: { _count: { select: { agents: true } } },
       })
     );
   });

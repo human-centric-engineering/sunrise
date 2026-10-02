@@ -1,0 +1,229 @@
+/**
+ * Who uses a piece of global config, counted across every org (§107 t-731).
+ *
+ * Providers, provider models, knowledge tags and agent profiles are global
+ * config: one row serves every org. What uses them is tenant-owned: agents,
+ * workflows, cost rows, grants. At `TENANCY_MODE=multi` the `org_isolation`
+ * policy hides other orgs' rows, so an in-use check written as a plain count
+ * saw only the caller's org. An admin could then delete a provider, model or
+ * tag that another org's agents still depend on, and an agent profile's
+ * "attached agents" count was too low.
+ *
+ * So every count here runs under the system scope, the audited bypass. The
+ * answer to "is it in use?" includes every org. Only the caller's own rows
+ * are ever returned by name; another org's usage leaves this module as a
+ * number. At `single` there is one org and every row is the caller's, so
+ * the answers are what the plain reads gave.
+ *
+ * Platform-agnostic: no Next.js imports.
+ */
+
+import { prisma } from '@/lib/db/client';
+import { getTenantContext, isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
+
+const REASON = 'in-use check on global config (counted across orgs)';
+
+/** A row the caller may see named: one of its own org's. */
+export interface NamedRef {
+  id: string;
+  name: string;
+  slug: string;
+}
+
+/**
+ * Which rows the caller may see by name, decided from the caller's scope.
+ * Read BEFORE entering the system scope, which has no org of its own. At
+ * `single` every row is the caller's, `NULL`-org rows included. At `multi`
+ * only the entered org's rows are, and with no org entered (an admin API
+ * key) none are.
+ */
+function callersRows(): (orgId: string | null) => boolean {
+  if (!isMultiTenant()) return () => true;
+  const current = getTenantContext()?.orgId;
+  return (orgId) => current != null && orgId === current;
+}
+
+function named(
+  rows: Array<NamedRef & { orgId: string | null }>,
+  isCallers: (orgId: string | null) => boolean
+): { own: NamedRef[]; elsewhere: number } {
+  const own = rows
+    .filter((r) => isCallers(r.orgId))
+    .map(({ id, name, slug }) => ({ id, name, slug }));
+  return { own, elsewhere: rows.length - own.length };
+}
+
+// ── Providers ───────────────────────────────────────────────────────────────
+
+export interface ProviderUsage {
+  /** Agents with this provider as primary, in every org. */
+  primaryAgents: number;
+  /** Agents with it in `fallbackProviders`, in every org. */
+  fallbackAgents: number;
+  /** Cost rows recorded against it, in every org. */
+  costLogRows: number;
+}
+
+/** What still references a provider's slug, in every org. Counts only. */
+export function providerUsage(slug: string): Promise<ProviderUsage> {
+  return runAsSystem(REASON, async () => {
+    const [primaryAgents, fallbackAgents, costLogRows] = await Promise.all([
+      prisma.aiAgent.count({ where: { provider: slug } }),
+      prisma.aiAgent.count({ where: { fallbackProviders: { has: slug } } }),
+      prisma.aiCostLog.count({ where: { provider: slug } }),
+    ]);
+    return { primaryAgents, fallbackAgents, costLogRows };
+  });
+}
+
+// ── Provider models ─────────────────────────────────────────────────────────
+
+/**
+ * Step types whose `config.modelOverride` pins a model. Mirrors the
+ * LLM_STEP_TYPES set in lib/orchestration/workflows/semantic-validator.ts;
+ * kept in sync by hand because exporting from the validator would pull its
+ * runtime deps (the model registry) in for no benefit. Moved here from the
+ * provider-models route with the check it serves.
+ */
+const LLM_STEP_TYPES = new Set([
+  'llm_call',
+  'route',
+  'reflect',
+  'guard',
+  'evaluate',
+  'plan',
+  'orchestrator',
+]);
+
+function definitionPinsModel(definition: unknown, modelId: string): boolean {
+  if (!definition || typeof definition !== 'object') return false;
+  const steps = (definition as { steps?: unknown }).steps;
+  if (!Array.isArray(steps)) return false;
+  for (const step of steps) {
+    if (!step || typeof step !== 'object') continue;
+    const type = (step as { type?: unknown }).type;
+    if (typeof type !== 'string' || !LLM_STEP_TYPES.has(type)) continue;
+    const config = (step as { config?: unknown }).config;
+    if (!config || typeof config !== 'object') continue;
+    const override = (config as { modelOverride?: unknown }).modelOverride;
+    if (typeof override === 'string' && override === modelId) return true;
+  }
+  return false;
+}
+
+export interface ProviderModelUsage {
+  /** The caller's active agents bound to the model, by name. */
+  agents: NamedRef[];
+  /** The caller's active workflows pinning it (draft or published), by name. */
+  workflows: NamedRef[];
+  /** Active agents in other orgs bound to it. */
+  otherOrgAgents: number;
+  /** Active workflows in other orgs pinning it. */
+  otherOrgWorkflows: number;
+}
+
+/**
+ * Active agents bound to `(providerSlug, modelId)` and active workflows
+ * pinning `modelId` in a step's `modelOverride`, in every org. The caller's
+ * are named, other orgs' are counted.
+ */
+export function providerModelUsage(
+  providerSlug: string,
+  modelId: string
+): Promise<ProviderModelUsage> {
+  const isCallers = callersRows();
+  return runAsSystem(REASON, async () => {
+    const [agentRows, workflowRows] = await Promise.all([
+      prisma.aiAgent.findMany({
+        where: { isActive: true, provider: providerSlug, model: modelId },
+        select: { id: true, name: true, slug: true, orgId: true },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.aiWorkflow.findMany({
+        where: { isActive: true },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          orgId: true,
+          draftDefinition: true,
+          publishedVersion: { select: { snapshot: true } },
+        },
+        orderBy: { name: 'asc' },
+      }),
+    ]);
+    const pinning = workflowRows.filter(
+      (w) =>
+        definitionPinsModel(w.draftDefinition, modelId) ||
+        definitionPinsModel(w.publishedVersion?.snapshot, modelId)
+    );
+    const agents = named(agentRows, isCallers);
+    const workflows = named(pinning, isCallers);
+    return {
+      agents: agents.own,
+      workflows: workflows.own,
+      otherOrgAgents: agents.elsewhere,
+      otherOrgWorkflows: workflows.elsewhere,
+    };
+  });
+}
+
+// ── Knowledge tags ──────────────────────────────────────────────────────────
+
+/** How many of the caller's granted agents a tag's usage names. */
+export const MAX_NAMED_TAG_AGENTS = 50;
+
+export interface KnowledgeTagUsage {
+  /** Agents granted the tag, in every org. */
+  agentGrants: number;
+  /** Documents carrying the tag, in every org. */
+  documentLinks: number;
+  /** The caller's granted agents, by name, oldest grant first, at most {@link MAX_NAMED_TAG_AGENTS}. */
+  agents: NamedRef[];
+  /** Agents in other orgs granted the tag. */
+  otherOrgAgentGrants: number;
+}
+
+/** Grants and document links on a knowledge tag, in every org. */
+export function knowledgeTagUsage(tagId: string): Promise<KnowledgeTagUsage> {
+  const isCallers = callersRows();
+  return runAsSystem(REASON, async () => {
+    const [grants, documentLinks] = await Promise.all([
+      prisma.aiAgentKnowledgeTag.findMany({
+        where: { tagId },
+        select: { agent: { select: { id: true, name: true, slug: true, orgId: true } } },
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.aiKnowledgeDocumentTag.count({ where: { tagId } }),
+    ]);
+    const agents = named(
+      grants.map((g) => g.agent),
+      isCallers
+    );
+    return {
+      agentGrants: grants.length,
+      documentLinks,
+      agents: agents.own.slice(0, MAX_NAMED_TAG_AGENTS),
+      otherOrgAgentGrants: agents.elsewhere,
+    };
+  });
+}
+
+// ── Agent profiles ──────────────────────────────────────────────────────────
+
+/** Agents attached to each profile, in every org. A profile with none is absent. */
+export function agentProfileUsage(profileIds: string[]): Promise<Map<string, number>> {
+  if (profileIds.length === 0) return Promise.resolve(new Map<string, number>());
+  return runAsSystem(REASON, async () => {
+    const groups = await prisma.aiAgent.groupBy({
+      by: ['profileId'],
+      where: { profileId: { in: profileIds } },
+      _count: { _all: true },
+    });
+    const counts = new Map<string, number>();
+    for (const g of groups) {
+      if (g.profileId) counts.set(g.profileId, g._count._all);
+    }
+    return counts;
+  });
+}

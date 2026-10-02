@@ -15,6 +15,7 @@
  * Authentication: Admin role required.
  */
 
+import { agentProfileUsage } from '@/lib/orchestration/admin/global-config-usage';
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
@@ -96,11 +97,11 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   const { id: rawId } = await params;
   const id = validatePathParam(rawId, cuidSchema, { label: 'agent profile id' });
 
-  const current = await prisma.aiAgentProfile.findUnique({
-    where: { id },
-    include: { _count: { select: { agents: true } } },
-  });
+  const current = await prisma.aiAgentProfile.findUnique({ where: { id } });
   if (!current) throw new NotFoundError(`Agent profile ${id} not found`);
+  // Every org's attached agents are detached, so every org's are counted
+  // (t-731); a plain `_count` at `multi` sees only the caller's org.
+  const detachedAgentCount = (await agentProfileUsage([id])).get(id) ?? 0;
 
   // Hard delete — FK on ai_agent.profileId is ON DELETE SET NULL, so the
   // attached agents are detached cleanly. Their own override texts (if
@@ -112,7 +113,7 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     profileId: id,
     slug: current.slug,
     adminId: session.user.id,
-    detachedAgentCount: current._count.agents,
+    detachedAgentCount,
   });
 
   logAdminAction({
@@ -122,8 +123,8 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     entityId: id,
     entityName: current.name,
     clientIp: clientIP,
-    metadata: { detachedAgentCount: current._count.agents },
+    metadata: { detachedAgentCount },
   });
 
-  return successResponse({ id, deleted: true, detachedAgentCount: current._count.agents });
+  return successResponse({ id, deleted: true, detachedAgentCount });
 });

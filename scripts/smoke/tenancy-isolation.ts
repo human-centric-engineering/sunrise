@@ -49,6 +49,9 @@
  *   - a workflow slug (§107 t-728): a slug only A holds is invisible to a
  *     plain read in B, but `isWorkflowSlugTaken` / `findFreeWorkflowSlug`
  *     see it, and B creates on the slug it is given;
+ *   - global config in use (§107 t-731): an agent in B using a provider, a
+ *     model, a tag and a profile is counted by the in-use checks asked from
+ *     A, which name none of B's rows;
  *   - the org export and erasure (§106 t-735, t-730): B's export, asked
  *     from inside A (an admin's session) and from no org (an admin API key),
  *     holds B's rows and none of A's; B, holding a knowledge base with
@@ -84,6 +87,12 @@ import {
   runAsSystem,
 } from '@/lib/tenancy/context';
 import { createOrg } from '@/lib/tenancy/lifecycle';
+import {
+  agentProfileUsage,
+  knowledgeTagUsage,
+  providerModelUsage,
+  providerUsage,
+} from '@/lib/orchestration/admin/global-config-usage';
 import {
   findFreeWorkflowSlug,
   isWorkflowSlugTaken,
@@ -1474,10 +1483,75 @@ async function main(): Promise<void> {
     }
     check(createdInB, 'B creates its workflow on that slug without a unique-index failure');
 
-    // ── [15] Org export: the target org's rows, whoever is asking ─────────
+    // ── [15] Global config in use by another org (§107 t-731) ────────────
+    // Providers, models, tags and profiles are global; what uses them is
+    // tenant-owned. A count in A's scope misses B's agent, so A could delete
+    // what B depends on. The checks count every org and name only A's rows.
+    console.log('\n[15] global config: B’s usage counts in A’s delete checks, unnamed');
+    const sharedProvider = `${PREFIX}-shared-provider-${stamp}`;
+    const sharedModel = `${PREFIX}-shared-model-${stamp}`;
+    const profile = await prisma.aiAgentProfile.create({
+      data: { name: `${PREFIX} shared profile`, slug: `${PREFIX}-profile-${stamp}` },
+    });
+    const sharedTag = await prisma.knowledgeTag.create({
+      data: { slug: `${PREFIX}-shared-tag-${stamp}`, name: `${PREFIX} shared tag` },
+    });
+    const userOfShared = await runAsOrg(b.orgId, async () => {
+      const agent = await prisma.aiAgent.create({
+        data: {
+          name: `${PREFIX} uses shared config`,
+          slug: `${PREFIX}-uses-shared-${stamp}`,
+          description: 'smoke fixture',
+          systemInstructions: 'smoke fixture',
+          provider: sharedProvider,
+          model: sharedModel,
+          profileId: profile.id,
+        },
+      });
+      await prisma.aiAgentKnowledgeTag.create({ data: { agentId: agent.id, tagId: sharedTag.id } });
+      return agent;
+    });
+    const plainCountInA = await runAsOrg(a.orgId, () =>
+      prisma.aiAgent.count({ where: { provider: sharedProvider } })
+    );
+    check(
+      plainCountInA === 0,
+      'a plain count in A cannot see B’s agent (the case the fix exists for)'
+    );
+    const asA = <T>(fn: () => Promise<T>) => runAsOrg(a.orgId, fn, { source: 'session' });
+    const providerSeen = await asA(() => providerUsage(sharedProvider));
+    check(
+      providerSeen.primaryAgents === 1,
+      `providerUsage, asked from A, counts B’s agent (${providerSeen.primaryAgents}), so the permanent delete is refused`
+    );
+    const modelSeen = await asA(() => providerModelUsage(sharedProvider, sharedModel));
+    check(
+      modelSeen.otherOrgAgents === 1 && modelSeen.agents.length === 0,
+      `providerModelUsage, asked from A, counts B’s agent and names none of B’s rows (${JSON.stringify(modelSeen)})`
+    );
+    const modelSeenByB = await runAsOrg(b.orgId, () =>
+      providerModelUsage(sharedProvider, sharedModel)
+    );
+    check(
+      modelSeenByB.agents.map((r) => r.id).join() === userOfShared.id &&
+        modelSeenByB.otherOrgAgents === 0,
+      'asked from B, the same check names B’s own agent'
+    );
+    const tagSeen = await asA(() => knowledgeTagUsage(sharedTag.id));
+    check(
+      tagSeen.agentGrants === 1 && tagSeen.otherOrgAgentGrants === 1 && tagSeen.agents.length === 0,
+      `knowledgeTagUsage, asked from A, counts B’s grant and names none of B’s rows (${JSON.stringify(tagSeen)})`
+    );
+    const profileSeen = await asA(() => agentProfileUsage([profile.id]));
+    check(
+      profileSeen.get(profile.id) === 1,
+      `agentProfileUsage, asked from A, counts B’s attached agent (${profileSeen.get(profile.id) ?? 0})`
+    );
+
+    // ── [16] Org export: the target org's rows, whoever is asking ─────────
     // A platform admin exports from inside their own active org (the session
     // guard enters it), and an admin API key enters none (§106 t-735).
-    console.log('\n[15] org export: B’s bundle, asked from inside A and from no org at all');
+    console.log('\n[16] org export: B’s bundle, asked from inside A and from no org at all');
     const rowIds = (rows: unknown[] | undefined): string[] =>
       (rows ?? []).flatMap((r) =>
         typeof r === 'object' && r !== null && 'id' in r && typeof r.id === 'string' ? [r.id] : []
@@ -1529,10 +1603,10 @@ async function main(): Promise<void> {
       check(leaked.length === 0, `B’s export ${label} holds none of A’s`);
     }
 
-    // ── [16] Org erasure: from inside another org, with knowledge documents ─
+    // ── [17] Org erasure: from inside another org, with knowledge documents ─
     // `ai_knowledge_document.knowledgeBaseId` is ON DELETE RESTRICT, and both
     // rows also cascade from the org: erasure must still go through (t-730).
-    console.log('\n[16] org erasure: B, holding documents and chunks, erased from inside A');
+    console.log('\n[17] org erasure: B, holding documents and chunks, erased from inside A');
     // Every tenant-owned table, counted by the org's id, as the bypass. A
     // `SetNull` relation (`AiCostLog`, a billing record) keeps its row with the
     // org detached, so "no row carries the org" is the claim, not "no row".
@@ -1615,6 +1689,7 @@ async function main(): Promise<void> {
       await prisma.org.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
       await prisma.user.deleteMany({ where: { email: { startsWith: `${PREFIX}-` } } });
       await prisma.knowledgeTag.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
+      await prisma.aiAgentProfile.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
       await prisma.aiProviderConfig.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
       if (mcpExposureCapabilityId) {
         if (mcpExposure) {
@@ -1630,7 +1705,7 @@ async function main(): Promise<void> {
       }
     }).catch((err: unknown) => {
       // A failed cleanup fails the run (t-730): `org.deleteMany` here erases
-      // whatever org [16] did not, and an org that could not be erased is a
+      // whatever org [17] did not, and an org that could not be erased is a
       // finding, not housekeeping. Set rather than thrown, so a run that has
       // already failed keeps its own error as the one reported.
       console.error('✗ cleanup failed — remove the smoke-iso rows by hand', err);

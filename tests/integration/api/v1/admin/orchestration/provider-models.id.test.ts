@@ -60,8 +60,17 @@ vi.mock('@/lib/orchestration/llm/provider-selector', () => ({
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
+// The real in-use check runs (against the mocked client, at single); a test
+// overrides one answer to stand in for another org's usage at multi (t-731).
+vi.mock('@/lib/orchestration/admin/global-config-usage', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/admin/global-config-usage')>();
+  return { ...actual, providerModelUsage: vi.fn(actual.providerModelUsage) };
+});
+
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { providerModelUsage } from '@/lib/orchestration/admin/global-config-usage';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -504,6 +513,38 @@ describe('DELETE /api/v1/admin/orchestration/provider-models/:id', () => {
         where: { isActive: true, provider: 'openai', model: 'gpt-4o-mini' },
       })
     );
+  });
+
+  it('returns 409 when only another org uses the model, naming none of its rows (t-731)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModel({ name: 'GPT-4o mini', providerSlug: 'openai', modelId: 'gpt-4o-mini' }) as never
+    );
+    vi.mocked(providerModelUsage).mockResolvedValueOnce({
+      agents: [],
+      workflows: [],
+      otherOrgAgents: 1,
+      otherOrgWorkflows: 2,
+    });
+
+    const response = await DELETE(makeDeleteRequest(MODEL_ID), routeContext(MODEL_ID));
+
+    expect(response.status).toBe(409);
+    expect(providerModelUsage).toHaveBeenCalledWith('openai', 'gpt-4o-mini');
+    expect(prisma.aiProviderModel.delete).not.toHaveBeenCalled();
+    const body = await parseJson<{
+      error: { code: string; message: string; details: Record<string, unknown> };
+    }>(response);
+    expect(body.error.code).toBe('MODEL_IN_USE');
+    expect(body.error.message).toBe(
+      'Cannot delete model "GPT-4o mini" — 1 active agent and 2 active workflows still reference it (3 of them in other organisations). Re-point them to a different model first.'
+    );
+    expect(body.error.details).toEqual({
+      agents: [],
+      workflows: [],
+      otherOrgAgentCount: 1,
+      otherOrgWorkflowCount: 2,
+    });
   });
 
   it('returns 409 with bound workflows when a workflow pins the model via modelOverride', async () => {

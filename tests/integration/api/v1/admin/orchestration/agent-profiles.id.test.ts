@@ -8,7 +8,7 @@
  * Key assertions:
  *   - GET returns the profile with its attached agents (id, slug, name).
  *   - PATCH ignores slug changes (slug is not in the update schema).
- *   - DELETE hard-deletes and reports detachedAgentCount; FK SET NULL
+ *   - DELETE hard-deletes and reports detachedAgentCount (every org's, t-731); FK SET NULL
  *     leaves attached agents intact (this test exercises the route's
  *     contract; the FK behaviour is verified at the DB level by the
  *     migration itself).
@@ -47,10 +47,15 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   computeChanges: vi.fn(() => null),
 }));
 
+vi.mock('@/lib/orchestration/admin/global-config-usage', () => ({
+  agentProfileUsage: vi.fn(async () => new Map<string, number>()),
+}));
+
 import { DELETE, GET, PATCH } from '@/app/api/v1/admin/orchestration/agent-profiles/[id]/route';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
+import { agentProfileUsage } from '@/lib/orchestration/admin/global-config-usage';
 
 const PROFILE_ID = 'cmjbv4i3x00003wsloputgwul';
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
@@ -276,12 +281,22 @@ describe('DELETE /api/v1/admin/orchestration/agent-profiles/[id]', () => {
     expect(response.status).toBe(404);
   });
 
-  it('hard-deletes and reports detachedAgentCount', async () => {
+  it('reports zero detached agents when no org attached any', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-    vi.mocked(prisma.aiAgentProfile.findUnique).mockResolvedValue({
-      ...makeProfile(),
-      _count: { agents: 4 },
-    } as never);
+    vi.mocked(prisma.aiAgentProfile.findUnique).mockResolvedValue(makeProfile());
+    vi.mocked(agentProfileUsage).mockResolvedValue(new Map());
+    vi.mocked(prisma.aiAgentProfile.delete).mockResolvedValue(makeProfile());
+
+    const response = await DELETE(makeDeleteRequest(PROFILE_ID), paramsOf(PROFILE_ID));
+
+    const data = await parseJson<{ data: { detachedAgentCount: number } }>(response);
+    expect(data.data.detachedAgentCount).toBe(0);
+  });
+
+  it('hard-deletes and reports detachedAgentCount, counted in every org (t-731)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgentProfile.findUnique).mockResolvedValue(makeProfile());
+    vi.mocked(agentProfileUsage).mockResolvedValue(new Map([[PROFILE_ID, 4]]));
     vi.mocked(prisma.aiAgentProfile.delete).mockResolvedValue(makeProfile());
 
     const response = await DELETE(makeDeleteRequest(PROFILE_ID), paramsOf(PROFILE_ID));
@@ -292,6 +307,7 @@ describe('DELETE /api/v1/admin/orchestration/agent-profiles/[id]', () => {
     );
     expect(data.data.deleted).toBe(true);
     expect(data.data.detachedAgentCount).toBe(4);
+    expect(vi.mocked(agentProfileUsage)).toHaveBeenCalledWith([PROFILE_ID]);
 
     expect(vi.mocked(prisma.aiAgentProfile.delete)).toHaveBeenCalledWith({
       where: { id: PROFILE_ID },

@@ -28,6 +28,7 @@ import {
   listAgentProfilesQuerySchema,
 } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { agentProfileUsage } from '@/lib/orchestration/admin/global-config-usage';
 
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
@@ -50,14 +51,16 @@ export const GET = withAdminAuth(async (request, _session) => {
       orderBy: { updatedAt: 'desc' },
       skip,
       take: limit,
-      include: { _count: { select: { agents: true } } },
     }),
     prisma.aiAgentProfile.count({ where }),
   ]);
 
-  const data = rows.map(({ _count, ...profile }) => ({
+  // Attached agents in every org (t-731): a profile is global config, and a
+  // plain `_count` at `multi` would count only the caller's org's agents.
+  const attached = await agentProfileUsage(rows.map((r) => r.id));
+  const data = rows.map((profile) => ({
     ...profile,
-    agentCount: _count.agents,
+    agentCount: attached.get(profile.id) ?? 0,
   }));
 
   log.info('Agent profiles listed', { count: rows.length, total, page, limit });

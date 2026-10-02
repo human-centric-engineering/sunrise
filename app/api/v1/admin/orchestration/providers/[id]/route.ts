@@ -26,6 +26,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { clearCache as clearProviderCache } from '@/lib/orchestration/llm/provider-manager';
 import { hasProviderKey } from '@/lib/orchestration/llm/provider-credentials';
+import { providerUsage } from '@/lib/orchestration/admin/global-config-usage';
 import { updateProviderConfigSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -127,12 +128,16 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   // valid; hard-delete would orphan them. The operator can either
   // re-point the agents/clear the cost log first, or stick with the
   // soft-delete via the default DELETE.
+  //
+  // Counted in every org (t-731): the provider is global config, and at
+  // `multi` a plain count sees only the caller's org, so another org's
+  // agents would not have stopped the delete. Counts only, never rows.
   if (permanent) {
-    const [primaryAgentCount, fallbackAgentCount, costLogCount] = await Promise.all([
-      prisma.aiAgent.count({ where: { provider: current.slug } }),
-      prisma.aiAgent.count({ where: { fallbackProviders: { has: current.slug } } }),
-      prisma.aiCostLog.count({ where: { provider: current.slug } }),
-    ]);
+    const {
+      primaryAgents: primaryAgentCount,
+      fallbackAgents: fallbackAgentCount,
+      costLogRows: costLogCount,
+    } = await providerUsage(current.slug);
 
     const totalAgentRefs = primaryAgentCount + fallbackAgentCount;
 
