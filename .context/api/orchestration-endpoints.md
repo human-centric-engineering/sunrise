@@ -278,7 +278,7 @@ Reusable library of `persona`, `brandVoiceInstructions`, and `guardrails` text t
 
 ### `GET /agent-profiles`
 
-Paginated list. Query: `page`, `limit`, `q` (matches name + slug). Each row carries `agentCount` derived from `_count.agents` so the list view can show how many agents inherit from each profile before an operator edits it. Ordered by `updatedAt desc`.
+Paginated list. Query: `page`, `limit`, `q` (matches name + slug). Each row carries `agentCount`, the agents attached in **every** org (profiles are global config; §107 t-731, `agentProfileUsage`), so the list view can show how many agents inherit from each profile before an operator edits it. Ordered by `updatedAt desc`.
 
 ### `POST /agent-profiles`
 
@@ -294,7 +294,7 @@ Partial update via `updateAgentProfileSchema`. **Slug is intentionally not in th
 
 ### `DELETE /agent-profiles/:id`
 
-Hard delete. The FK on `ai_agent.profileId` is `ON DELETE SET NULL`, so attached agents are detached cleanly — their own override texts remain unchanged; they just stop inheriting. Response: `{ id, deleted: true, detachedAgentCount }`. Same number is recorded in the `agent_profile.delete` audit log entry's `metadata`.
+Hard delete. The FK on `ai_agent.profileId` is `ON DELETE SET NULL`, so attached agents are detached cleanly — their own override texts remain unchanged; they just stop inheriting. Response: `{ id, deleted: true, detachedAgentCount }`, counted in every org, since every org's attached agents are detached. Same number is recorded in the `agent_profile.delete` audit log entry's `metadata`.
 
 ---
 
@@ -338,7 +338,7 @@ Create. Body validated by `providerConfigSchema` — which runs `checkSafeProvid
 
 ### `GET / PATCH / DELETE /providers/:id`
 
-Standard CRUD. `PATCH` merges the update and re-runs the SSRF guard in `buildProviderFromConfig` as defense-in-depth.
+Standard CRUD. `PATCH` merges the update and re-runs the SSRF guard in `buildProviderFromConfig` as defense-in-depth. `DELETE` deactivates. `DELETE ?permanent=true` removes the row, and is refused with `409` while any agent (primary or fallback) or cost row in **any** org still references the slug. The provider is global config, so the check counts every org (§107 t-731, `providerUsage`) and reports counts only.
 
 ### `POST /providers/:id/test`
 
@@ -401,7 +401,7 @@ Create a model entry. Body validated by `createProviderModelSchema`. Sets `isDef
 
 ### `GET / PATCH / DELETE /provider-models/:id`
 
-Standard CRUD. `PATCH` sets `isDefault: false` on seed-managed rows (opt-out from future seed updates). `DELETE` is a soft delete (`isActive = false`). Both are rate-limited.
+Standard CRUD. `PATCH` sets `isDefault: false` on seed-managed rows (opt-out from future seed updates). `DELETE` removes the row, and is refused with `409 MODEL_IN_USE` while any active agent bound to the `(providerSlug, modelId)` pair, or any active workflow pinning the model in a step's `modelOverride` (draft or published), still references it. The model is global config, so the check counts every org (§107 t-731, `providerModelUsage`). `details.agents` and `details.workflows` name only the caller's org's rows, and `details.otherOrgAgentCount` / `details.otherOrgWorkflowCount` count the rest. Both are rate-limited.
 
 ### `GET /provider-models/recommend?intent=thinking`
 

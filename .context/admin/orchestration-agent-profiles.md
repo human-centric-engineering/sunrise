@@ -76,7 +76,7 @@ to affect.
 
 | Method | Path                                             | Notes                                                        |
 | ------ | ------------------------------------------------ | ------------------------------------------------------------ |
-| GET    | `/api/v1/admin/orchestration/agent-profiles`     | Paginated, `agentCount` derived from `_count.agents`         |
+| GET    | `/api/v1/admin/orchestration/agent-profiles`     | Paginated, `agentCount`: attached agents in every org        |
 | POST   | `/api/v1/admin/orchestration/agent-profiles`     | Validates via `agentProfileFormSchema`                       |
 | GET    | `/api/v1/admin/orchestration/agent-profiles/:id` | Includes `agents: [{ id, slug, name, isActive }]`            |
 | PATCH  | `/api/v1/admin/orchestration/agent-profiles/:id` | Slug is not in `updateAgentProfileSchema` — silently dropped |
@@ -92,7 +92,7 @@ DELETE is **hard**, not soft. The FK on `ai_agent.profileId` is `ON DELETE SET N
 attached agents are cleanly detached — their own override texts (if any) remain unchanged; the
 only effect is that they stop inheriting the profile's persona / voice / guardrails.
 
-The response body includes `detachedAgentCount` so the UI can confirm scope:
+The response body includes `detachedAgentCount` so the UI can confirm scope. A profile is global config, so the count covers every org's attached agents, not just the caller's (§107 t-731):
 
 ```json
 { "success": true, "data": { "id": "…", "deleted": true, "detachedAgentCount": 3 } }

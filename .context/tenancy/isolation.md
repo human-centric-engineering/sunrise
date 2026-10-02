@@ -66,6 +66,15 @@ CREATE POLICY "org_isolation" ON "ai_agent"
   uses it. The backup importer still reads the slug the plain way, so
   importing a slug another org holds fails until §109 t-738 moves it onto
   `isWorkflowSlugTaken`.
+- **Global config is used from every org, so count its users in every org.**
+  A provider, provider model, knowledge tag or agent profile is one row
+  serving every org, but the agents, workflows, grants and cost rows that
+  use it are tenant-owned. A plain count of those in one org misses the
+  rest, so an in-use check written that way lets one org's admin delete
+  what another org depends on. Ask
+  [`lib/orchestration/admin/global-config-usage.ts`](../../lib/orchestration/admin/global-config-usage.ts)
+  (§107 t-731). It counts under the system scope, and returns the caller's
+  own rows by name and every other org's as a number.
 
 The text is defined once, in
 [`lib/tenancy/isolation.ts`](../../lib/tenancy/isolation.ts)

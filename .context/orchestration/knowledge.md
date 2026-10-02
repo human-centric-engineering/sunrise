@@ -68,7 +68,7 @@ Tags have no required semantic meaning — they're labels. "Internal", "HR-confi
 
 **Built-in `agentic-design-patterns` tag.** The patterns document carries a managed tag with slug `agentic-design-patterns`. Writing the first copy of the document creates the tag (tags are global; the document↔tag link is the org's). The `pattern-advisor` and `quiz-master` platform agents declare the tag and run in `restricted` mode. Both are install-only, so the platform-agent reconcile writes the copy and grants the tag in the install org, copy first, so the grant lands on the same run (see [platform agents](./platform-agents.md#the-patterns-knowledge)).
 
-**Tag deletion safety.** When a tag is granted to one or more agents, `DELETE /knowledge/tags/:id` returns 409 unconditionally and includes the agents in `details.agents` — `?force=true` does not bypass this guard. The operator must remove the grant from each agent first. Tag deletion only force-deletes through when the tag is only linked to documents (where strip-on-delete is safe).
+**Tag deletion safety.** When a tag is granted to one or more agents, `DELETE /knowledge/tags/:id` returns 409 unconditionally and includes the agents in `details.agents` — `?force=true` does not bypass this guard. Tags are global config, so grants and document links are counted in every org (§107 t-731, `knowledgeTagUsage`): `details.agents` names only the caller's org's agents, and `details.otherOrgAgentCount` counts the rest. The operator must remove the grant from each agent first. Tag deletion only force-deletes through when the tag is only linked to documents (where strip-on-delete is safe).
 
 ### Indexed Keywords
 

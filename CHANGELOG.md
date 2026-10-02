@@ -479,6 +479,20 @@ release process.
   the same module is for the backup importer, which still fails to import a
   slug another org holds until t-738 moves it onto this check.
 
+- **Deleting global config at `multi` now counts every org's usage**
+  (t-731). Providers, provider models, knowledge tags and agent profiles are
+  shared by every org, but the in-use checks counted through the caller's
+  org only. So `DELETE /providers/:id?permanent=true`,
+  `DELETE /provider-models/:id` and `DELETE /knowledge/tags/:id` could remove
+  something another org's agents or workflows still used. An agent profile's
+  `agentCount` (list) and `detachedAgentCount` (delete) were short too. The
+  checks now go through the new `lib/orchestration/admin/global-config-usage.ts`
+  (`providerUsage`, `providerModelUsage`, `knowledgeTagUsage`,
+  `agentProfileUsage`), which counts under the system scope. A refusal names
+  only the caller's own rows. Other orgs' usage is a count, in the new
+  `otherOrgAgentCount` / `otherOrgWorkflowCount` details fields and in the
+  message. Nothing changes at `single`.
+
 ## [0.13.0] — 2026-09-24
 
 > **Alpha release.** Nineteenth tagged Sunrise release. **MINOR bump**. It
