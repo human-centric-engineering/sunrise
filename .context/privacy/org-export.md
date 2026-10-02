@@ -10,14 +10,25 @@ same discipline with an org as the subject.
 
 ## Quick Reference
 
-| Need                            | Use                                                              |
-| ------------------------------- | ---------------------------------------------------------------- |
-| Export an org (the only way)    | `exportOrgData()` — `lib/privacy/export-org.ts`                  |
-| The vendor exports for a client | `GET /api/v1/admin/orgs/[id]/export` (platform admin, download)  |
-| What counts as the org's data   | `ORG_DATA_SOURCES` — `lib/privacy/org-sources.ts`                |
-| What is deliberately left out   | `ORG_EXCLUDED_SOURCES` — same file, with the reason shown        |
-| The guard on the manifest       | `tests/unit/lib/privacy/org-sources.test.ts` (scans `orgId`)     |
-| Proving it against a database   | `npm run smoke:tenancy` (creates, exports, erases a fixture org) |
+| Need                            | Use                                                                  |
+| ------------------------------- | -------------------------------------------------------------------- |
+| Export an org (the only way)    | `exportOrgData()` — `lib/privacy/export-org.ts`                      |
+| The vendor exports for a client | `GET /api/v1/admin/orgs/[id]/export` (platform admin, download)      |
+| What counts as the org's data   | `ORG_DATA_SOURCES` — `lib/privacy/org-sources.ts`                    |
+| What is deliberately left out   | `ORG_EXCLUDED_SOURCES` — same file, with the reason shown            |
+| The guard on the manifest       | `tests/unit/lib/privacy/org-sources.test.ts` (scans `orgId`)         |
+| Proving it against a database   | `npm run smoke:tenancy` (creates, exports, erases a fixture org)     |
+| …at `multi`, across two orgs    | `scripts/smoke/tenancy-isolation.ts` section [14] (CI `smoke-multi`) |
+
+## Which org it reads as
+
+The org being exported, whoever asks. `exportOrgData()` reads every source
+inside `runAsOrg(orgId)`. That matters at `TENANCY_MODE=multi`: the admin
+route's guard enters the admin's own active org, and the `org_isolation`
+policy would AND each source's `orgId` match with that org, so any other
+org's bundle came back with every tenant section empty and no error. An admin
+API key enters no org, and the same reads threw (§106 t-735). The service
+scopes itself rather than the route, so any caller gets the right answer.
 
 ## The manifest and its guard
 

@@ -7,13 +7,14 @@ counterpart is [Account Deletion & Right to Erasure](./data-erasure.md).
 
 ## Quick Reference
 
-| Need                          | Use                                                            |
-| ----------------------------- | -------------------------------------------------------------- |
-| Erase an org (the only way)   | `eraseOrg()` — `lib/privacy/erase-org.ts`                      |
-| The vendor erases a client    | `DELETE /api/v1/admin/orgs/[id]` (platform admin)              |
-| The export that precedes it   | [Org Data Export](./org-export.md)                             |
-| Suspend instead of erase      | `PATCH /api/v1/admin/orgs/[id]` with `{ status: "SUSPENDED" }` |
-| Proving it against a database | `npm run smoke:tenancy`                                        |
+| Need                           | Use                                                                  |
+| ------------------------------ | -------------------------------------------------------------------- |
+| Erase an org (the only way)    | `eraseOrg()` — `lib/privacy/erase-org.ts`                            |
+| The vendor erases a client     | `DELETE /api/v1/admin/orgs/[id]` (platform admin)                    |
+| The export that precedes it    | [Org Data Export](./org-export.md)                                   |
+| Suspend instead of erase       | `PATCH /api/v1/admin/orgs/[id]` with `{ status: "SUSPENDED" }`       |
+| Proving it against a database  | `npm run smoke:tenancy`                                              |
+| …at `multi`, holding documents | `scripts/smoke/tenancy-isolation.ts` section [15] (CI `smoke-multi`) |
 
 ### Anti-Pattern
 
@@ -59,6 +60,18 @@ One transaction, in this order:
 3. **The org row.** Memberships and the four credential kinds cascade from it
    (`onDelete: Cascade` on each) — nothing here enumerates them, and a model
    that joins the org later joins the cascade by declaring the same policy.
+
+   Two things about the cascade were measured, not assumed (§106 t-730),
+   against Postgres as the restricted role with the policies on. First, an
+   org holding knowledge documents erases cleanly, though
+   `ai_knowledge_document.knowledgeBaseId` is `ON DELETE RESTRICT`. The
+   knowledge base's cascade fires first, but every direct cascade from the org
+   is queued before the RESTRICT check the knowledge base's deletion queues,
+   so the documents are gone by the time it runs. Second, erasure doesn't
+   depend on which org the caller is in. It reads and writes only system
+   tables (`Org`, `OrgMembership`, `Verification`, `Session`), and foreign-key
+   actions bypass row security. So it works from inside another org (an
+   admin's session) and from no org (an admin API key) alike.
 
 **Users are never deleted.** This is ruling a on the feature, and the docblock
 in `erase-org.ts` records the alternatives so it reads as a decision rather
