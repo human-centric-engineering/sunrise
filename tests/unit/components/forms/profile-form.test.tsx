@@ -10,7 +10,7 @@
  * - Success/error states
  * - Router refresh on update
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/forms/profile-form.tsx
+ * @see components/forms/profile-form.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

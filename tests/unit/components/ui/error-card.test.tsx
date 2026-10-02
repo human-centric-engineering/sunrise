@@ -24,7 +24,7 @@
  * - Container and icon className customization
  * - Edge cases (no actions, no error, no footer)
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/ui/error-card.tsx
+ * @see components/ui/error-card.tsx
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';

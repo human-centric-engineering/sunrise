@@ -25,7 +25,7 @@
  * Note: These are thin wrappers around native HTML elements. Tests focus on
  * className merging, ref forwarding, and ensuring semantic HTML is correct.
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/ui/table.tsx
+ * @see components/ui/table.tsx
  */
 
 import { describe, it, expect } from 'vitest';

@@ -17,7 +17,7 @@
  * we test the components by verifying they can be instantiated with the correct props
  * and that the className merging logic works correctly.
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/ui/select.tsx
+ * @see components/ui/select.tsx
  */
 
 import { describe, it, expect } from 'vitest';

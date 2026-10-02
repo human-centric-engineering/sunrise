@@ -8,7 +8,7 @@
  * - User icon with login/signup dropdown when unauthenticated
  * - Avatar with profile/settings/signout dropdown when authenticated
  *
- * @see /components/auth/user-button.tsx
+ * @see components/auth/user-button.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

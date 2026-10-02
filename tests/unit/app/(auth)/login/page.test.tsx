@@ -15,7 +15,7 @@
  * - Suspense boundary for LoginForm
  * - Card structure and layout
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/app/(auth)/login/page.tsx
+ * @see app/(auth)/login/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

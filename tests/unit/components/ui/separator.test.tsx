@@ -23,7 +23,7 @@
  * Coverage Target: 100% statements, 100% branches
  * Current Gap: Line 18 vertical branch (75% branches → 100%)
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/ui/separator.tsx
+ * @see components/ui/separator.tsx
  */
 
 import { describe, it, expect } from 'vitest';

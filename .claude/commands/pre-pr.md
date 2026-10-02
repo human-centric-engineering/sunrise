@@ -220,7 +220,7 @@ If the run reported `no TypeScript sources changed — nothing to gate`, record
 
 ### Step 4: Scan for anti-patterns
 
-Two of these thirteen checks ship an executable scanner — **4f** and **4m**. The
+Three of these fourteen checks ship an executable scanner — **4f**, **4m** and **4n**. The
 other eleven are prose, which means _you_ write the scanner, here, now, in
 whatever shell you happen to have. Three rules before you do. Each one exists
 because it has already cost this project a false CLEAN.
@@ -394,6 +394,20 @@ The **six-member literal** means the author intended a complete router, so it sh
 If you change this scanner, re-test it against those four shapes before trusting a CLEAN.
 
 Nothing type-checks a `vi.mock` factory, so neither form fails the build — this scan is the only thing that catches them. See `.context/testing/mocking.md`.
+
+**4n. `@see` paths that are absolute, not repo-relative**
+
+```bash
+npx vitest run tests/unit/see-tag-paths.test.ts
+```
+
+Repo-wide, like 4m. Exit `0` means every `@see` under `app/`, `components/`,
+`emails/`, `lib/`, `prisma/`, `scripts/`, `tests/` and `types/` names a
+repo-relative path; non-zero lists each `file:line` whose `@see` starts with
+`/`, `~` or a drive letter (`@see /Users/…`, `@see /home/…`). A path into one
+machine's home directory resolves for nobody else and ships to every fork
+(#749). Fix the comment to `@see lib/…`; never widen the matcher's exclusions
+to pass. It is also in `ALWAYS_RUN_TESTS`, so `npm run test:changed` runs it.
 
 ### Step 5: Check .context/ documentation
 

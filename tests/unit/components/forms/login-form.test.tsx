@@ -9,7 +9,7 @@
  * - Unverified email handling with resend option
  * - OAuth error display from URL params
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/forms/login-form.tsx
+ * @see components/forms/login-form.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

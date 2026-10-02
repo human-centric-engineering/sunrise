@@ -12,7 +12,7 @@
  * - Disabled mode when consent is turned off
  * - Modal state management
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/consent/consent-provider.tsx
+ * @see lib/consent/consent-provider.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

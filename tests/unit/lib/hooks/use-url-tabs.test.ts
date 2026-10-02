@@ -11,7 +11,7 @@
  * - Updating URL when tab changes
  * - isActive helper function
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/hooks/use-url-tabs.ts
+ * @see lib/hooks/use-url-tabs.ts
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

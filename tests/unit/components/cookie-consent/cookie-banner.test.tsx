@@ -11,7 +11,7 @@
  * - Accessibility with ARIA attributes
  * - Privacy Policy link
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/cookie-consent/cookie-banner.tsx
+ * @see components/cookie-consent/cookie-banner.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

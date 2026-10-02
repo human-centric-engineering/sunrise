@@ -17,7 +17,7 @@
  *   unchanged by the seam landing, which is the behaviour-neutrality evidence
  *   for the admin tree; the two below prove the seam is not decoration.
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/app/admin/layout.tsx
+ * @see app/admin/layout.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

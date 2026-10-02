@@ -14,7 +14,7 @@
  * - Back to Profile button navigates to `/admin/users/${user.id}`
  * - Cancel button navigates to `/admin/users/${user.id}`
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise-tweaks/components/admin/user-edit-form.tsx
+ * @see components/admin/user-edit-form.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

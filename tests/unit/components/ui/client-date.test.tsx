@@ -30,7 +30,7 @@
  * - Shows placeholder (non-breaking space) until mounted
  * - Prevents hydration mismatches by deferring to client
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/ui/client-date.tsx
+ * @see components/ui/client-date.tsx
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';

@@ -333,6 +333,14 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'favicon (#640). Dropping an icon back into `public/` changes no TypeScript, ' +
       'so no import chain reaches this test — and it is a dev-server 500.',
   },
+  {
+    path: 'tests/unit/see-tag-paths.test.ts',
+    reason:
+      'walks app/, components/, emails/, lib/, prisma/, scripts/, tests/ and ' +
+      'types/ for any `@see` naming an absolute path (a home directory on one ' +
+      'machine, #749). A new header comment in a far-off file is exactly the ' +
+      'change no import chain connects to this test.',
+  },
   // The fork-owned tail. Sunrise ships it empty; everything above is core's.
   //
   // Spread rather than left as a second list every caller must remember to

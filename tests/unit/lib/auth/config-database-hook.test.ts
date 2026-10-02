@@ -43,7 +43,7 @@
  * - Non-blocking error handling (email failures don't break signup)
  * - Non-blocking error handling (invitation failures don't break signup)
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/auth/config.ts
+ * @see lib/auth/config.ts
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
