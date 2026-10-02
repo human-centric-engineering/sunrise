@@ -437,6 +437,16 @@ release process.
 
 ### Fixed
 
+- **A templated MCP resource no longer also lists as a concrete one** (#823).
+  `listMcpResources()`, which backs `resources/list`, returned every enabled
+  `McpExposedResource` row, so a row whose URI carries a `{param}` placeholder
+  or a query string — such as a resource registered through the
+  `lib/app/mcp-resources.ts` seam at `app://project/{slug}` — appeared in both
+  `resources/list` and `resources/templates/list`, and a client reading the
+  first sent the literal `{slug}`. It now leaves those rows out, the inverse of
+  the filter `listMcpResourceTemplates()` applies, so each row lists in exactly
+  one. `isRegisteredMcpResourceUri()` still matches concrete instances of a
+  template. Sunrise's own seeded resources are all concrete and are unaffected.
 - **Backup import no longer overwrites a system workflow** (t-729). The
   provider-model audit (`tpl-provider-model-audit`, `isSystem: true`) was
   exported in every bundle and versioned over on import, so restoring an older

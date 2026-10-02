@@ -338,6 +338,8 @@ The registry calls `initAppMcpResources()` once, lazily, before the first dispat
 
 An app type then flows through `resources/list|read|subscribe`, templates, the 5-minute cache, `resources:read` scoping, `McpExposedResource` gating and audit exactly like a core one. Rows still default to `isEnabled: false`, so this widens what an admin can turn on, not who can turn it on.
 
+A row whose URI carries a `{param}` placeholder or a query string lists under `resources/templates/list` only; every other row lists under `resources/list` only. A per-item resource such as `app://project/{slug}` is therefore offered as a template, never as an entry a client would read with the literal `{slug}`.
+
 Five constraints:
 
 | Constraint                                            | Why                                                                                                                                                                                                                                                                                            |

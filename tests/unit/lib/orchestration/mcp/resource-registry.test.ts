@@ -172,6 +172,23 @@ describe('listMcpResources', () => {
     expect(result).toHaveLength(2);
     expect(result.map((r) => r.uri)).toEqual(['sunrise://knowledge/search', 'sunrise://agents']);
   });
+
+  it('leaves template rows out, so a row lists in only one of resources/list and resources/templates/list (#823)', async () => {
+    vi.mocked(prisma.mcpExposedResource.findMany).mockResolvedValue([
+      makeResourceRow({ uri: 'sunrise://agents', resourceType: 'agent_list' }),
+      makeResourceRow({ id: 'res-2', uri: 'app://project/{slug}', resourceType: 'project' }),
+      makeResourceRow({ id: 'res-3', uri: 'sunrise://knowledge/search?q={query}' }),
+    ] as never);
+
+    const resources = await listMcpResources();
+    const templates = await listMcpResourceTemplates();
+
+    expect(resources.map((r) => r.uri)).toEqual(['sunrise://agents']);
+    expect(templates.map((t) => t.uriTemplate)).toEqual([
+      'app://project/{slug}',
+      'sunrise://knowledge/search?q={query}',
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------

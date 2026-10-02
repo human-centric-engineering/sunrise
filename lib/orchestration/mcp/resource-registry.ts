@@ -323,9 +323,28 @@ let cachedResources: McpResourceDefinition[] | null = null;
 let cachedAt = 0;
 
 /**
- * List all MCP-exposed resources that are enabled.
+ * Is this registered URI a template (`{param}` placeholder or query string)
+ * rather than a concrete resource? Splits `resources/list` from
+ * `resources/templates/list` so a row appears in exactly one of them.
+ */
+function isMcpResourceTemplateUri(uri: string): boolean {
+  return /\{[^}]+\}/.test(uri) || uri.includes('?');
+}
+
+/**
+ * List the concrete MCP-exposed resources that are enabled.
+ *
+ * Template rows are left out — they belong to `listMcpResourceTemplates()`.
+ * Listing one here too would offer clients an entry that can only be read
+ * with its literal `{param}` (#823).
  */
 export async function listMcpResources(): Promise<McpResourceDefinition[]> {
+  const all = await listAllEnabledMcpResources();
+  return all.filter((r) => !isMcpResourceTemplateUri(r.uri));
+}
+
+/** Every enabled row, concrete and template alike — cached. */
+async function listAllEnabledMcpResources(): Promise<McpResourceDefinition[]> {
   const now = Date.now();
   if (cachedResources && now - cachedAt < CACHE_TTL_MS) {
     return cachedResources;
@@ -476,7 +495,7 @@ export async function listMcpResourceTemplates(): Promise<McpResourceTemplate[]>
   });
 
   return rows
-    .filter((r) => /\{[^}]+\}/.test(r.uri) || r.uri.includes('?'))
+    .filter((r) => isMcpResourceTemplateUri(r.uri))
     .map((r) => ({
       uriTemplate: r.uri,
       name: r.name,
@@ -510,7 +529,8 @@ export function clearMcpResourceCache(): void {
  *     `sunrise://knowledge/patterns/{number}`).
  */
 export async function isRegisteredMcpResourceUri(uri: string): Promise<boolean> {
-  const all = await listMcpResources();
+  // Reads template rows too — the prefix match below exists for them.
+  const all = await listAllEnabledMcpResources();
   for (const r of all) {
     if (r.uri === uri) return true;
     // Strip template params + query suffix from the registered URI to get
