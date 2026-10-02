@@ -394,6 +394,17 @@ release process.
     `embedMany` with the model under test. It used to call `embed`, which
     ignored that model and, on Voyage, the row's `baseUrl`.
 
+- **`listMcpResources()` and `resources/list` no longer return templated
+  resources** (#823). A row whose URI has a `{param}` expression (for example
+  `fork://project/{slug}`) used to appear in both `resources/list` and
+  `resources/templates/list`, offering clients an entry that could only be read
+  with the literal `{slug}`. It now appears in `resources/templates/list`
+  only. `listMcpResources()`, exported from `@/lib/orchestration/mcp`, keeps its
+  name and type but returns only concrete rows, so a fork that called it to
+  enumerate every enabled row (templates included) should call
+  `listMcpResourceTemplates()` as well. `isRegisteredMcpResourceUri()` is
+  unchanged: it still matches a concrete URI against template rows.
+
 - **At `multi`, shared settings change only from the install org** (§107
   t-751). Providers, provider models, capabilities, agent profiles, knowledge
   tags, feature flags, MCP exposure and server config, and orchestration

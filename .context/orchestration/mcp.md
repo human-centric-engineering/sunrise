@@ -560,7 +560,7 @@ rule rather than a detail:
 - Protocol versions: `2025-06-18` (latest) and `2024-11-05` (back-compat). Answered at `initialize`, and taken from the `MCP-Protocol-Version` header on every request, since nothing remembers a negotiation ([details](#the-protocol-version-per-request)).
 - Messages: JSON-RPC 2.0 (single and batch requests)
 - Capabilities advertised: `completions`, plus bare `tools` / `resources` / `prompts` objects. No `listChanged`, no `resources.subscribe`, no `logging` — each of those promises a push, and there is no stream to push down ([details](#what-initialize-advertises)). **The server never advertises a capability it cannot serve.**
-- Resource templates: `resources/templates/list` advertises parameterized URI patterns
+- Resource templates: `resources/templates/list` advertises parameterized URI patterns (a URI with a `{param}` expression, `{?q}` included; a fixed URI with a plain query string is not one). A templated row appears there only; `resources/list` carries the concrete rows
 - Pagination: `tools/list` and `resources/list` support cursor-based pagination (50 items/page)
 - Batch requests: JSON-RPC 2.0 array batches (max 20 requests per batch)
 - Server-push: none. `GET` answers `405 Allow: POST`, no notification is ever emitted, and no listener is registered. Revision 2026-07-28 moves push to `subscriptions/listen`, which Sunrise does not implement ([details](#what-went-with-it-and-where-push-lives-now)).
