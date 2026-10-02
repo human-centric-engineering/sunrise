@@ -490,9 +490,9 @@ async function readMcpResourceByPattern(
  * Per MCP spec `resources/templates`.
  */
 export async function listMcpResourceTemplates(): Promise<McpResourceTemplate[]> {
-  const rows = await prisma.mcpExposedResource.findMany({
-    where: { isEnabled: true },
-  });
+  // Same cached snapshot as `listMcpResources()`, so within one TTL window a
+  // row lists in exactly one of the two.
+  const rows = await listAllEnabledMcpResources();
 
   return rows
     .filter((r) => isMcpResourceTemplateUri(r.uri))

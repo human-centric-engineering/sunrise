@@ -188,6 +188,9 @@ describe('listMcpResources', () => {
       'app://project/{slug}',
       'sunrise://knowledge/search?q={query}',
     ]);
+    // Both lists split one snapshot, so a row cannot land in both or neither
+    // while the cache is warm.
+    expect(prisma.mcpExposedResource.findMany).toHaveBeenCalledOnce();
   });
 });
 
@@ -581,6 +584,7 @@ describe('clearMcpResourceCache', () => {
 describe('listMcpResourceTemplates', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearMcpResourceCache();
   });
 
   it('returns empty array when no enabled resources have URI placeholders or query strings', async () => {
