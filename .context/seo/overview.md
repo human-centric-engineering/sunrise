@@ -269,13 +269,16 @@ NEXT_PUBLIC_APP_URL=https://app.example.com
 Sunrise ships two icons on the App Router file convention, and Next emits the
 `<link rel="icon">` tags for them — the root `metadata` declares no `icons`:
 
-- `app/favicon.ico` — raster fallback (Safari has no SVG-favicon support)
+- `app/favicon.ico` — raster fallback for older browsers, and what answers the
+  browser's automatic `/favicon.ico` request
 - `app/icon.svg` — vector icon; may use `@media (prefers-color-scheme: dark)`
 
-To rebrand, replace the two files. To generate an icon in code instead, swap
-`app/icon.svg` for `app/icon.tsx`. Don't put icons in `public/`:
-`public/favicon.ico` beside `app/favicon.ico` is a dev-server conflict, and
-`tests/unit/app/app-icons.test.ts` fails on either.
+To rebrand, replace the two files. The icon may be any static
+`app/icon.{svg,png,ico,jpg,jpeg}`. Don't use a code-generated `app/icon.tsx`:
+it is served at the extensionless `/icon`, which the `proxy.ts` matcher does
+not skip, so every tab-icon fetch would run the proxy. Don't put icons in
+`public/` either: `public/favicon.ico` beside `app/favicon.ico` is a dev-server
+conflict, and `tests/unit/app/app-icons.test.ts` fails on a `favicon.*` there.
 
 See [Next.js Icons documentation](https://nextjs.org/docs/app/api-reference/file-conventions/metadata/app-icons) for details.
 

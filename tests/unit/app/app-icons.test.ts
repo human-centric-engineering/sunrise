@@ -13,8 +13,11 @@
  * an icon left behind in `public/`, and a proxy matcher that stops exempting
  * the icon routes.
  *
- * FORK NOTE — replace the two files' CONTENTS freely; every row here passes
- * with any valid ICO and SVG. Do not move them back to `public/`.
+ * FORK NOTE — replace the two files freely. The icon may be any static
+ * `app/icon.{svg,png,ico,jpg,jpeg}`; `app/favicon.ico` must stay an ICO. Do not
+ * move them back to `public/`. A code-generated `app/icon.tsx` is NOT covered:
+ * it is served at the extensionless `/icon`, which the proxy matcher does not
+ * skip.
  *
  * @see app/favicon.ico · app/icon.svg · proxy.ts (config.matcher)
  */
@@ -26,6 +29,13 @@ import { config } from '@/proxy';
 
 const root = process.cwd();
 
+/** Static image extensions Next accepts for `app/icon.*`. */
+const ICON_EXTENSIONS = ['svg', 'png', 'ico', 'jpg', 'jpeg'] as const;
+
+/** The static `app/icon.*` files present, repo-relative. */
+const appIcons = (): string[] =>
+  ICON_EXTENSIONS.map((ext) => `app/icon.${ext}`).filter((p) => existsSync(join(root, p)));
+
 describe('app icons use the App Router file convention', () => {
   it('ships app/favicon.ico as a real ICO file', () => {
     const path = join(root, 'app/favicon.ico');
@@ -35,10 +45,15 @@ describe('app icons use the App Router file convention', () => {
     expect([...header]).toEqual([0, 0, 1, 0]);
   });
 
-  it('ships app/icon.svg as an SVG, so the vector icon is linked', () => {
-    const path = join(root, 'app/icon.svg');
-    expect(existsSync(path), 'app/icon.svg is missing').toBe(true);
-    expect(readFileSync(path, 'utf8')).toMatch(/<svg[\s>]/);
+  it('ships a static app/icon.* so Next links an icon beside the ICO', () => {
+    const icons = appIcons();
+    expect(
+      icons,
+      `no static app/icon.{${ICON_EXTENSIONS.join(',')}} — Sunrise ships app/icon.svg`
+    ).not.toEqual([]);
+    // An SVG must actually be one, or the browser drops it and falls back to the ICO.
+    for (const icon of icons.filter((p) => p.endsWith('.svg')))
+      expect(readFileSync(join(root, icon), 'utf8'), icon).toMatch(/<svg[\s>]/);
   });
 
   it('leaves no favicon in public/ to shadow or conflict with the app/ files', () => {
@@ -55,7 +70,7 @@ describe('app icons use the App Router file convention', () => {
   });
 
   it('the proxy matcher skips the icon routes', () => {
-    // Static app icons are served at /favicon.ico and /icon.svg (the link adds
+    // Static app icons are served at /favicon.ico and /icon.<ext> (the link adds
     // a ?<hash> query, which the matcher never sees). A matcher that ran the
     // proxy on them would add a session lookup to every tab-icon fetch.
     const matchers = [config.matcher].flat();
@@ -65,6 +80,6 @@ describe('app icons use the App Router file convention', () => {
     // means "exempted", not "the matcher is unreadable as a regex".
     expect(runs('/dashboard')).toBe(true);
     expect(runs('/favicon.ico')).toBe(false);
-    expect(runs('/icon.svg')).toBe(false);
+    for (const icon of appIcons()) expect(runs(`/${icon.slice('app/'.length)}`), icon).toBe(false);
   });
 });
