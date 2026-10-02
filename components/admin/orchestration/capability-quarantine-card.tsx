@@ -313,9 +313,10 @@ function ActiveView({
           <div className="flex items-center justify-between gap-2">
             <p className="text-muted-foreground text-xs">
               Will affect{' '}
-              <strong>{agentCount(affectedAgents.length + otherOrgAffectedCount)}</strong> currently
-              using this capability
-              {otherOrgAffectedCount > 0 ? ', in every organisation' : ''}.
+              <strong>{agentCount(affectedAgents.length + otherOrgAffectedCount)}</strong> with this
+              capability attached
+              {otherOrgAffectedCount > 0 ? ', in every organisation' : ''}. Counts include
+              deactivated agents.
             </p>
             <Button
               type="button"

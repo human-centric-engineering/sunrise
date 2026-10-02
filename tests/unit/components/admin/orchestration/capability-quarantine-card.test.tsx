@@ -88,7 +88,7 @@ describe('CapabilityQuarantineCard — ActiveView', () => {
 
     // The "2 agents" count is in a <strong> so the surrounding text is
     // split — match the unique suffix instead.
-    expect(screen.getByText(/currently using this capability/i)).toBeInTheDocument();
+    expect(screen.getByText(/with this capability attached/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Quarantine$/i })).toBeDisabled();
   });
 

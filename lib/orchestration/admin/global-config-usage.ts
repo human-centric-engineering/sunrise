@@ -22,6 +22,7 @@
  */
 
 import { prisma } from '@/lib/db/client';
+import type { CapabilityAgentRef } from '@/types/orchestration';
 import { getTenantContext, isMultiTenant, runAsCrossOrgCount } from '@/lib/tenancy/context';
 
 const REASON = 'in-use check on global config (counted across orgs)';
@@ -276,11 +277,6 @@ export function modelAgentUsage(
 }
 
 // ── Capabilities ────────────────────────────────────────────────────────────
-
-/** An agent a capability is attached to, as the capabilities pages show it. */
-export interface CapabilityAgentRef extends NamedRef {
-  isActive: boolean;
-}
 
 /** Who uses a capability: the caller's agents by name, other orgs' counted. */
 export interface CapabilityAgentUsage {

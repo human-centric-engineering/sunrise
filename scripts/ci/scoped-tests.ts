@@ -172,9 +172,10 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
   {
     path: 'tests/unit/lib/tenancy/cross-org-count-sites.test.ts',
     reason:
-      'greps app/, lib/, components/, scripts/ and prisma/ for `runAsCrossOrgCount`, the ' +
-      'debug-logged system bypass, and fails naming any caller but the global-config usage ' +
-      'module. A new caller is a file no import chain connects to this test (§107 t-752).',
+      'scans every non-test source file in the checkout, root files included, with the ' +
+      'TypeScript scanner for code that names `runAsCrossOrgCount` (the debug-logged system ' +
+      'bypass) or star-re-exports its module, and fails naming any but the global-config ' +
+      'usage module. A new caller is a file no import chain connects to this test (§107 t-752).',
   },
   {
     path: 'tests/unit/scripts/ci/shared-settings-writes.test.ts',

@@ -106,7 +106,8 @@ export interface ProviderModelInfo {
   // currently references the model.
   agents?: ProviderModelAgentRef[];
   // Active agents in OTHER orgs bound to it: counted, never named (§107
-  // t-752). In use, filtered and delete-blocked on the sum with `agents`.
+  // t-752). The count, the "bound agent" filter and the sort use the sum
+  // with `agents`.
   otherOrgAgentCount?: number;
   // TaskType slots this model fills as the effective system default
   // (routing/chat/reasoning/embeddings). Distinct from `agents` —

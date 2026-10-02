@@ -499,7 +499,9 @@ release process.
     state now add other orgs' agents (the new fields under Added).
   - So do the capability page's "used by" card and quarantine blast radius,
     and the capabilities list's delete warning.
-  - Other orgs' rows are counted with `groupBy`, never read.
+  - On these pages other orgs' rows are counted with `groupBy`, never read.
+    With no org entered (an admin API key) nothing is the caller's, so every
+    agent is in the count.
   - The workflow-pin check reads only workflows whose JSON could pin the
     model, and the knowledge-tag check makes three queries instead of five.
 

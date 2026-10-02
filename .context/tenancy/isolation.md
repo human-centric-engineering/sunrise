@@ -78,8 +78,11 @@ CREATE POLICY "org_isolation" ON "ai_agent"
   t-752): the models matrix and a provider's model list (`agents` plus
   `otherOrgAgentCount` per model), the capabilities list (`_agents` plus
   `_otherOrgAgentCount`) and a capability's agents
-  (`meta.otherOrgAgentCount`). Only the caller's rows are read; other orgs'
-  are counted with `groupBy` (at `multi` only). Their counts, "in use" filters and
+  (`meta.otherOrgAgentCount`). These list reads take only the caller's rows
+  and count the rest with `groupBy` (at `multi` only); t-731's delete checks
+  still read every org's rows and name only the caller's. With no org
+  entered (an admin API key) nothing is the caller's, so every agent is
+  counted as another org's. Their counts, "in use" filters and
   delete-disabled states add the two. Because those pages ask on every
   load, the module counts in `runAsCrossOrgCount`, the same bypass as
   `runAsSystem` logged at `debug`, and a test confines that scope to this
