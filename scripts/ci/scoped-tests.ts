@@ -67,6 +67,13 @@
 // argument. Nothing here needs pinning when you fill the seam.
 import { appAlwaysRunTests } from '@/lib/app/ci';
 
+/**
+ * Vitest's own CLI parser. A type only: `vitest/node` cannot be imported
+ * statically under `tsx` (a nested dependency has no CommonJS entry), so the
+ * CLI loads it with a dynamic `import()` and hands it to {@link selfTestFailure}.
+ */
+export type ParseCli = typeof import('vitest/node').parseCLI;
+
 /** One test that must run regardless of what the module graph says. */
 export interface AlwaysRunEntry {
   /** Repo-relative path, forward slashes. */
@@ -519,6 +526,13 @@ export interface ScopedRunPlan {
  * changed file individually. Without `perFile` the floor is an average across
  * the included set, which one well-covered file can carry for a bare one — the
  * opposite of what a per-PR gate is for.
+ *
+ * **The bare flag, never `--coverage.thresholds.perFile=true`.** Vitest's CLI
+ * parses `=true` as the STRING `"true"`, and per-file mode only switches on for
+ * the boolean, so that spelling silently gated the average (t-749, measured on
+ * vitest 5.0.2: a changed file at 75% branches passed beside one at 100%).
+ * {@link selfTestFailure} parses this argv with vitest's own `parseCLI` and
+ * checks the value, not the spelling (the CLI always hands it the parser).
  */
 export function buildVitestArgv(plan: ScopedRunPlan): string[] {
   const files = [...new Set([...plan.selected, ...plan.alwaysRun])].sort();
@@ -527,7 +541,7 @@ export function buildVitestArgv(plan: ScopedRunPlan): string[] {
   if (plan.coverage.length > 0) {
     argv.push('--coverage');
     for (const path of plan.coverage) argv.push(`--coverage.include=${escapeGlob(path)}`);
-    argv.push('--coverage.thresholds.perFile=true');
+    argv.push('--coverage.thresholds.perFile');
     for (const metric of ['lines', 'functions', 'branches', 'statements']) {
       argv.push(`--coverage.thresholds.${metric}=${plan.threshold}`);
     }
@@ -613,6 +627,12 @@ export interface SelfTestDeps {
   detect: typeof undeclaredRepoRootedTests;
   targets: typeof coverageTargets;
   build: typeof buildVitestArgv;
+  /**
+   * Vitest's `parseCLI`, to ask what the coverage flags MEAN. Required: a
+   * check of the spelling is what silently failed (t-749). The CLI loads it
+   * (`cliMain` in run-scoped-tests.ts).
+   */
+  parse: ParseCli;
 }
 
 /**
@@ -630,12 +650,15 @@ export interface SelfTestDeps {
  *
  * Returns a sentence naming what is broken, or `null`.
  */
-export function selfTestFailure(deps: Partial<SelfTestDeps> = {}): string | null {
+export function selfTestFailure(
+  deps: Partial<Omit<SelfTestDeps, 'parse'>> & Pick<SelfTestDeps, 'parse'>
+): string | null {
   const {
     entries = ALWAYS_RUN_TESTS,
     detect = undeclaredRepoRootedTests,
     targets = coverageTargets,
     build = buildVitestArgv,
+    parse,
   } = deps;
 
   const shape = validateAlwaysRun(entries);
@@ -675,9 +698,21 @@ export function selfTestFailure(deps: Partial<SelfTestDeps> = {}): string | null
     return 'coverageTargets no longer filters tests, declarations and non-TypeScript paths.';
   }
 
+  // Ask vitest's own parser what the argv means, not whether a spelling is
+  // present: `--coverage.thresholds.perFile=true` was present for months and
+  // parsed to the string "true", which vitest does not treat as on (t-749).
   const argv = build({ selected: [], alwaysRun: [], coverage: ['lib/a.ts'], threshold: 80 });
-  if (!argv.includes('--coverage.thresholds.perFile=true')) {
+  const { thresholds } = parse(['vitest', ...argv]).options.coverage ?? {};
+  if (thresholds?.perFile === undefined) {
     return 'buildVitestArgv stopped asking for per-file coverage thresholds.';
+  }
+  if (thresholds.perFile !== true) {
+    return `buildVitestArgv's per-file coverage threshold parses as ${JSON.stringify(thresholds.perFile)}, not true: vitest would gate the average.`;
+  }
+  for (const metric of ['lines', 'functions', 'branches', 'statements'] as const) {
+    if (thresholds[metric] !== 80) {
+      return `buildVitestArgv's ${metric} threshold parses as ${JSON.stringify(thresholds[metric])}, not 80.`;
+    }
   }
 
   return null;

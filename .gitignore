@@ -39,6 +39,9 @@ dist/
 
 # Testing
 coverage/
+# Fixture root for tests/integration/scripts/ci/coverage-floor.test.ts, left
+# behind only if that run is killed before its afterAll removes it.
+.coverage-floor-*/
 # vitest 5 artifact root (attachments, blob reporter, API token)
 .vitest/
 .nyc_output/
