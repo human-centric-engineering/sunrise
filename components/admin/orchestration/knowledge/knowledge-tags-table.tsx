@@ -101,6 +101,8 @@ type DialogState =
        * holds. A tag is global config: those count, but are never named.
        */
       otherOrgCount?: number;
+      /** The caller's own grants, which can exceed the (capped) `blockedAgents` list. */
+      ownGrantCount?: number;
     };
 
 export interface KnowledgeTagsTableProps {
@@ -382,24 +384,28 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
               // Server tells us which guard tripped:
               //   - agent grants exist → `agent-blocked`, no escape hatch
               //   - documents only → `force-confirm`, operator can re-try with ?force
-              const details = (err.details ?? {}) as {
-                agentCount?: number;
-                agents?: Array<{ id: string; name: string; slug: string }>;
-                otherOrgAgentCount?: number;
-                otherOrgDocumentCount?: number;
+              const details = err.details ?? {};
+              const count = (key: string): number => {
+                const value = details[key];
+                return typeof value === 'number' ? value : 0;
               };
-              if ((details.agentCount ?? 0) > 0) {
+              const agentCount = count('agentCount');
+              if (agentCount > 0) {
+                const otherOrgCount = count('otherOrgAgentCount');
                 setDialog({
                   ...dialog,
                   phase: 'agent-blocked',
-                  blockedAgents: details.agents ?? [],
-                  otherOrgCount: details.otherOrgAgentCount ?? 0,
+                  blockedAgents: Array.isArray(details.agents)
+                    ? (details.agents as Array<{ id: string; name: string; slug: string }>)
+                    : [],
+                  otherOrgCount,
+                  ownGrantCount: agentCount - otherOrgCount,
                 });
               } else if (dialog.phase === 'initial') {
                 setDialog({
                   ...dialog,
                   phase: 'force-confirm',
-                  otherOrgCount: details.otherOrgDocumentCount ?? 0,
+                  otherOrgCount: count('otherOrgDocumentCount'),
                 });
               } else {
                 setError(err.message);
@@ -602,7 +608,9 @@ function DeleteDialog({
   onConfirm,
 }: DialogCommonProps & { onConfirm: () => Promise<void> }): React.ReactElement | null {
   if (state.kind !== 'delete') return null;
-  const { tag, phase, blockedAgents, otherOrgCount = 0 } = state;
+  const { tag, phase, blockedAgents, otherOrgCount = 0, ownGrantCount = 0 } = state;
+  // The server names at most 50 of the caller's own grants; say how many more.
+  const unlistedOwnGrants = Math.max(0, ownGrantCount - (blockedAgents?.length ?? 0));
 
   const isAgentBlocked = phase === 'agent-blocked';
   const isForceConfirm = phase === 'force-confirm';
@@ -647,6 +655,11 @@ function DeleteDialog({
                 </li>
               ))}
             </ul>
+            {unlistedOwnGrants > 0 ? (
+              <p className="text-muted-foreground mt-2 text-xs">
+                …and {unlistedOwnGrants} more in this organisation.
+              </p>
+            ) : null}
           </div>
         ) : null}
 

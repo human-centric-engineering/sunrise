@@ -97,11 +97,14 @@ export function providerUsage(slug: string): Promise<ProviderUsage> {
 // ── Provider models ─────────────────────────────────────────────────────────
 
 /**
- * Step types whose `config.modelOverride` pins a model. Mirrors the
- * LLM_STEP_TYPES set in lib/orchestration/workflows/semantic-validator.ts;
- * kept in sync by hand because exporting from the validator would pull its
- * runtime deps (the model registry) in for no benefit. Moved here from the
- * provider-models route with the check it serves.
+ * Step types whose `config.modelOverride` pins a model: the semantic
+ * validator's PROVIDER_CHOOSING_STEP_TYPES (its LLM_STEP_TYPES plus
+ * `supervisor`, which passes its override to the LLM call), in
+ * lib/orchestration/workflows/semantic-validator.ts. Kept in sync by hand
+ * because exporting from the validator would pull its runtime deps (the
+ * model registry) in for no benefit. Moved here from the provider-models
+ * route with the check it serves, which left `supervisor` out until t-731's
+ * review.
  */
 const LLM_STEP_TYPES = new Set([
   'llm_call',
@@ -111,6 +114,7 @@ const LLM_STEP_TYPES = new Set([
   'evaluate',
   'plan',
   'orchestrator',
+  'supervisor',
 ]);
 
 function definitionPinsModel(definition: unknown, modelId: string): boolean {

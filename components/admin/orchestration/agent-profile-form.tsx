@@ -333,29 +333,39 @@ export function AgentProfileForm({ mode, profile }: Props) {
 
       {isEdit && ((profile?.agents?.length ?? 0) > 0 || (profile?.otherOrgAgentCount ?? 0) > 0) && (
         <div className="rounded-md border p-4">
-          <h2 className="text-sm font-medium">
-            Agents using this profile ({profile?.agents?.length ?? 0})
-          </h2>
-          <p className="text-muted-foreground mt-1 text-xs">
-            Changes here affect any inheriting field on each of these agents.
-          </p>
-          <ul className="mt-3 space-y-1 text-sm">
-            {(profile?.agents ?? []).map((a) => (
-              <li key={a.id}>
-                <Link href={`/admin/orchestration/agents/${a.id}/edit`} className="hover:underline">
-                  {a.name}
-                </Link>{' '}
-                <span className="text-muted-foreground font-mono text-xs">({a.slug})</span>
-                {!a.isActive && (
-                  <span className="text-muted-foreground ml-2 text-xs">(inactive)</span>
-                )}
-              </li>
-            ))}
-          </ul>
+          {(profile?.agents?.length ?? 0) > 0 ? (
+            <>
+              <h2 className="text-sm font-medium">
+                Agents using this profile ({profile?.agents?.length ?? 0})
+              </h2>
+              <p className="text-muted-foreground mt-1 text-xs">
+                Changes here affect any inheriting field on each of these agents.
+              </p>
+              <ul className="mt-3 space-y-1 text-sm">
+                {(profile?.agents ?? []).map((a) => (
+                  <li key={a.id}>
+                    <Link
+                      href={`/admin/orchestration/agents/${a.id}/edit`}
+                      className="hover:underline"
+                    >
+                      {a.name}
+                    </Link>{' '}
+                    <span className="text-muted-foreground font-mono text-xs">({a.slug})</span>
+                    {!a.isActive && (
+                      <span className="text-muted-foreground ml-2 text-xs">(inactive)</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <h2 className="text-sm font-medium">Agents using this profile</h2>
+          )}
           {(profile?.otherOrgAgentCount ?? 0) > 0 && (
             <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
-              {profile?.otherOrgAgentCount} more agent
-              {profile?.otherOrgAgentCount === 1 ? '' : 's'} in other organisations also inherit
+              {(profile?.agents?.length ?? 0) > 0 ? 'Also, ' : ''}
+              {profile?.otherOrgAgentCount} agent
+              {profile?.otherOrgAgentCount === 1 ? '' : 's'} in other organisations inherit
               {profile?.otherOrgAgentCount === 1 ? 's' : ''} from this profile. Changes here reach
               them too; they are not listed here.
             </p>

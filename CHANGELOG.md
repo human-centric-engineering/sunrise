@@ -502,7 +502,12 @@ release process.
     lists.
 
   The tag-delete dialog, the tag drill-down, the model-delete dialog and the
-  profile edit form show those counts. Nothing changes at `single`.
+  profile edit form show those counts. The model check now also counts a
+  model pinned through a `supervisor` step, which it used to miss even at
+  `single`. Not yet moved: the provider-models matrix list and
+  `GET /providers/:id/models` still count the caller's org (t-751, which
+  also makes shared settings editable only from the install org). Nothing
+  else changes at `single`.
 
 ## [0.13.0] — 2026-09-24
 

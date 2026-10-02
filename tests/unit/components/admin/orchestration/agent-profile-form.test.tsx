@@ -253,7 +253,7 @@ describe('AgentProfileForm — edit mode', () => {
     expect(screen.getByText('Agents using this profile (1)')).toBeInTheDocument();
     expect(
       screen.getByText(
-        /2 more agents in other organisations also inherit from this profile\. Changes here reach them too/
+        /Also, 2 agents in other organisations inherit from this profile\. Changes here reach them too/
       )
     ).toBeInTheDocument();
   });
@@ -263,9 +263,11 @@ describe('AgentProfileForm — edit mode', () => {
       <AgentProfileForm mode="edit" profile={makeProfile({ agents: [], otherOrgAgentCount: 1 })} />
     );
 
-    expect(screen.getByText('Agents using this profile (0)')).toBeInTheDocument();
+    // No own list, so no own count or "each of these agents" blurb over an empty list.
+    expect(screen.getByRole('heading', { name: 'Agents using this profile' })).toBeInTheDocument();
+    expect(screen.queryByText(/each of these agents/)).not.toBeInTheDocument();
     expect(
-      screen.getByText(/1 more agent in other organisations also inherits from this profile/)
+      screen.getByText(/^1 agent in other organisations inherits from this profile/)
     ).toBeInTheDocument();
   });
 });

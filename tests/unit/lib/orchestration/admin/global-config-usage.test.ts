@@ -148,6 +148,23 @@ describe('providerModelUsage', () => {
     expect(usage.otherOrgWorkflows).toBe(0);
   });
 
+  it('counts a model pinned through a supervisor step', async () => {
+    db.aiWorkflow.findMany.mockImplementation(
+      answering([
+        {
+          ...workflow('ws', ORG_B, 'none'),
+          draftDefinition: {
+            steps: [{ id: 's', type: 'supervisor', config: { modelOverride: 'gpt-x' } }],
+          },
+        },
+      ])
+    );
+
+    const usage = await runAsOrg(ORG_A, () => providerModelUsage('openai', 'gpt-x'));
+
+    expect(usage.otherOrgWorkflows).toBe(1);
+  });
+
   it('ignores a step type that does not pin a model, and a malformed definition', async () => {
     db.aiWorkflow.findMany.mockImplementation(
       answering([

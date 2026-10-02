@@ -647,6 +647,44 @@ describe('KnowledgeTagsTable', () => {
       expect(screen.queryByRole('button', { name: /^delete$/i })).not.toBeInTheDocument();
     });
 
+    it('says how many of the caller’s own grants are beyond the listed ones', async () => {
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError('Agent blocked', 'CONFLICT', 409, {
+          agentCount: 5,
+          agents: [{ id: 'a1', name: 'Support Bot', slug: 'support-bot' }],
+          otherOrgAgentCount: 1,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<KnowledgeTagsTable initialTags={[TAG_WITH_USE]} initialMeta={MOCK_META} />);
+
+      await user.click(screen.getByRole('button', { name: /delete used tag/i }));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      // 5 grants: 1 in another org, 4 here, of which 1 is listed.
+      expect(await screen.findByText('…and 3 more in this organisation.')).toBeInTheDocument();
+    });
+
+    it('ignores a non-numeric count in the error details', async () => {
+      vi.mocked(apiClient.delete).mockRejectedValue(
+        new APIClientError('Agent blocked', 'CONFLICT', 409, {
+          agentCount: 1,
+          agents: 'not a list',
+          otherOrgAgentCount: '3',
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<KnowledgeTagsTable initialTags={[TAG_WITH_USE]} initialMeta={MOCK_META} />);
+
+      await user.click(screen.getByRole('button', { name: /delete used tag/i }));
+      await user.click(screen.getByRole('button', { name: /^delete$/i }));
+
+      expect(await screen.findByRole('heading', { name: /cannot delete/i })).toBeInTheDocument();
+      expect(screen.queryByText(/in other organisations/)).not.toBeInTheDocument();
+    });
+
     it('warns before a forced delete strips the tag from other orgs’ documents (t-731)', async () => {
       vi.mocked(apiClient.delete).mockRejectedValue(
         new APIClientError('Tag in use', 'CONFLICT', 409, {

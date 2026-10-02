@@ -44,34 +44,36 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   // the Tags admin so operators can see exactly which docs/agents a tag
   // covers, not just the count. Capped at 200 each; pagination on this view
   // can come later if a tag ever spans more than that.
-  const tag = await prisma.knowledgeTag.findUnique({
-    where: { id },
-    include: {
-      documents: {
-        include: {
-          document: {
-            select: { id: true, name: true, fileName: true, scope: true, status: true },
-          },
-        },
-        orderBy: { createdAt: 'asc' },
-        take: 200,
-      },
-      agents: {
-        include: {
-          agent: {
-            select: { id: true, name: true, slug: true, isActive: true },
-          },
-        },
-        orderBy: { createdAt: 'asc' },
-        take: 200,
-      },
-    },
-  });
-  if (!tag) throw new NotFoundError(`Knowledge tag ${id} not found`);
   // The lists are the caller's org's; the counts are every org's, as the
   // tag list and the delete check count them (t-731), with the share that is
   // another org's alongside.
-  const usage = await knowledgeTagUsage(id);
+  const [tag, usage] = await Promise.all([
+    prisma.knowledgeTag.findUnique({
+      where: { id },
+      include: {
+        documents: {
+          include: {
+            document: {
+              select: { id: true, name: true, fileName: true, scope: true, status: true },
+            },
+          },
+          orderBy: { createdAt: 'asc' },
+          take: 200,
+        },
+        agents: {
+          include: {
+            agent: {
+              select: { id: true, name: true, slug: true, isActive: true },
+            },
+          },
+          orderBy: { createdAt: 'asc' },
+          take: 200,
+        },
+      },
+    }),
+    knowledgeTagUsage(id),
+  ]);
+  if (!tag) throw new NotFoundError(`Knowledge tag ${id} not found`);
 
   log.info('Knowledge tag fetched', { tagId: id });
 

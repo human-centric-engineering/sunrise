@@ -33,19 +33,22 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
   const { id: rawId } = await params;
   const id = validatePathParam(rawId, cuidSchema, { label: 'agent profile id' });
 
-  const profile = await prisma.aiAgentProfile.findUnique({
-    where: { id },
-    include: {
-      agents: {
-        select: { id: true, slug: true, name: true, isActive: true },
-        orderBy: { name: 'asc' },
-      },
-    },
-  });
-  if (!profile) throw new NotFoundError(`Agent profile ${id} not found`);
   // `agents` are the caller's org's; a profile is global config, so changing
   // it reaches other orgs' agents too, and they are counted here (t-731).
-  const attached = (await agentProfileUsage([id])).get(id) ?? 0;
+  const [profile, attachedByProfile] = await Promise.all([
+    prisma.aiAgentProfile.findUnique({
+      where: { id },
+      include: {
+        agents: {
+          select: { id: true, slug: true, name: true, isActive: true },
+          orderBy: { name: 'asc' },
+        },
+      },
+    }),
+    agentProfileUsage([id]),
+  ]);
+  if (!profile) throw new NotFoundError(`Agent profile ${id} not found`);
+  const attached = attachedByProfile.get(id) ?? 0;
 
   log.info('Agent profile fetched', { profileId: id });
   return successResponse({
