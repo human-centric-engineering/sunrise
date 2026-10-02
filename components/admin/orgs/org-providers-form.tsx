@@ -16,6 +16,7 @@
  */
 
 import { useState } from 'react';
+import { z } from 'zod';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -49,6 +50,23 @@ export interface OrgProvidersFormProps {
   orgId: string;
   policy: OrgProviderPolicyView;
   providers: OrgProviderOption[];
+}
+
+/** A 400's per-field messages, as `validateRequestBody` reports them. */
+const fieldErrorsSchema = z.object({
+  errors: z.array(z.object({ path: z.string(), message: z.string() })),
+});
+
+/**
+ * What a failed save says. A validation error's top-level message is only
+ * "Invalid request body"; the field messages say which code was wrong and what
+ * a valid one looks like, so they are shown instead when present.
+ */
+function describeSaveError(err: unknown): string {
+  if (!(err instanceof APIClientError)) return 'Could not save the approved providers';
+  const parsed = fieldErrorsSchema.safeParse(err.details);
+  if (!parsed.success || parsed.data.errors.length === 0) return err.message;
+  return [...new Set(parsed.data.errors.map((issue) => issue.message))].join(' ');
 }
 
 /** `"eu, us"` → `["eu", "us"]`; the API upper-cases and validates each code. */
@@ -115,9 +133,7 @@ export function OrgProvidersForm({ orgId, policy: initial, providers }: OrgProvi
       setJurisdictionText((updated.jurisdictions ?? []).join(', '));
       setSaved(true);
     } catch (err) {
-      setError(
-        err instanceof APIClientError ? err.message : 'Could not save the approved providers'
-      );
+      setError(describeSaveError(err));
     } finally {
       setSaving(false);
     }

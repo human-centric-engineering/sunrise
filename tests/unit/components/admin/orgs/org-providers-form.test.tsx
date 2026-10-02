@@ -20,7 +20,16 @@ import { apiClient } from '@/lib/api/client';
 
 vi.mock('@/lib/api/client', () => ({
   apiClient: { put: vi.fn() },
-  APIClientError: class APIClientError extends Error {},
+  APIClientError: class APIClientError extends Error {
+    constructor(
+      message: string,
+      public code?: string,
+      public status?: number,
+      public details?: Record<string, unknown>
+    ) {
+      super(message);
+    }
+  },
 }));
 
 const ORG = 'cmorg00000000000000grant';
@@ -102,6 +111,32 @@ describe('OrgProvidersForm', () => {
       body: { approved: ['anthropic'], jurisdictions: ['eu', 'uk'] },
     });
     expect(await screen.findByRole('textbox', { name: 'Jurisdictions' })).toHaveValue('EU, UK');
+  });
+
+  it('shows what was wrong with a refused field, not only "Invalid request body"', async () => {
+    const { APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.put).mockRejectedValue(
+      new APIClientError('Invalid request body', 'VALIDATION_ERROR', 400, {
+        errors: [
+          {
+            path: 'jurisdictions.0',
+            message: 'Jurisdiction must be a short code of letters, digits and hyphens',
+          },
+        ],
+      })
+    );
+    const user = renderForm();
+
+    await user.click(screen.getByRole('switch', { name: /Restrict to jurisdictions/ }));
+    await user.type(screen.getByRole('textbox', { name: 'Jurisdictions' }), '1we');
+    await user.click(screen.getByRole('button', { name: 'Save approved providers' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      'Jurisdiction must be a short code of letters, digits and hyphens'
+    );
+    expect(alert).not.toHaveTextContent('Invalid request body');
+    expect(screen.getByRole('textbox', { name: 'Jurisdictions' })).toHaveValue('1we');
   });
 
   it('shows the API’s refusal and keeps the edit', async () => {
