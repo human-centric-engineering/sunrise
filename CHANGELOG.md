@@ -470,9 +470,14 @@ release process.
   through the org's isolation policy. It called a slug free that another org
   held, and the create was refused with a 400 "please try again" that could
   never succeed. It now picks the slug with the new `findFreeWorkflowSlug()`
-  in `lib/orchestration/workflows/slug-availability.ts`, which (with
-  `isWorkflowSlugTaken()`) checks every org under the system scope and
-  returns only the answer. Nothing changes at `single`.
+  in `lib/orchestration/workflows/slug-availability.ts`, which checks every
+  org under the system scope and returns only the free slug. The slug is also
+  cut to 100 characters (`WORKFLOW_SLUG_MAX_LENGTH`), the cap the workflow
+  API validates against. A longer one was saved, and every later save from
+  the builder then failed validation. That could happen at `single` too,
+  for example by saving a template of a template. `isWorkflowSlugTaken()` in
+  the same module is for the backup importer, which still fails to import a
+  slug another org holds until t-738 moves it onto this check.
 
 ## [0.13.0] — 2026-09-24
 

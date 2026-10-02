@@ -9,9 +9,15 @@
  * retrying fails the same way for ever.
  *
  * These probes ask the question under the system scope, the audited bypass,
- * and return only whether the slug is taken. No other org's row leaves this
- * module. The slug's existence is no secret from the caller: the unique index
- * would refuse the create anyway.
+ * and return only a yes/no answer or a free slug. No other org's row leaves
+ * this module. A free slug of `base-3` does say that `base`, `base-1` and
+ * `base-2` are held somewhere. That is no more than the caller could learn
+ * already, one slug at a time: the unique index refuses a create on any of
+ * them (the create route answers 409).
+ *
+ * `isWorkflowSlugTaken` is for the backup importer, which reads a slug in the
+ * caller's org to decide between versioning and creating, and still has this
+ * bug until §109 t-738 moves it onto this module.
  *
  * Platform-agnostic: no Next.js imports.
  */
@@ -37,16 +43,30 @@ export function isWorkflowSlugTaken(slug: string): Promise<boolean> {
 }
 
 /**
- * The first of `base`, `base-1`, `base-2`, … that no org's workflow holds.
+ * The longest workflow slug the API accepts: `createWorkflowSchema` and
+ * `updateWorkflowSchema` both cap it at 100. A generated slug past it saves,
+ * but the builder sends the slug back on every save and that PATCH fails.
+ */
+export const WORKFLOW_SLUG_MAX_LENGTH = 100;
+
+/** `base` with `suffix`, cut so the whole fits the cap, and no hyphen left dangling. */
+function fit(base: string, suffix: string): string {
+  return base.slice(0, WORKFLOW_SLUG_MAX_LENGTH - suffix.length).replace(/-+$/, '') + suffix;
+}
+
+/**
+ * The first of `base`, `base-1`, `base-2`, … that no org's workflow holds,
+ * each cut to {@link WORKFLOW_SLUG_MAX_LENGTH} (the base is shortened, never
+ * the suffix).
  *
  * A slug can still be taken between this answer and the caller's create, so
  * the caller keeps its P2002 handling.
  */
 export function findFreeWorkflowSlug(base: string): Promise<string> {
   return runAsSystem('workflow slug availability (global unique index)', async () => {
-    let slug = base;
+    let slug = fit(base, '');
     for (let suffix = 1; await heldAnywhere(slug); suffix++) {
-      slug = `${base}-${suffix}`;
+      slug = fit(base, `-${suffix}`);
     }
     return slug;
   });

@@ -109,7 +109,8 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       return tx.aiWorkflow.findUniqueOrThrow({ where: { id: created.id } });
     });
   } catch (err: unknown) {
-    // P2002: unique constraint violation — slug race between findUnique and create
+    // P2002: unique constraint violation — another workflow took the slug
+    // between findFreeWorkflowSlug's probe and this create.
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       throw new ValidationError('Template slug already exists — please try again', {
         slug: ['A template with this slug was just created'],

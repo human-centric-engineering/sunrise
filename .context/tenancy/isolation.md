@@ -62,7 +62,10 @@ CREATE POLICY "org_isolation" ON "ai_agent"
   `isWorkflowSlugTaken` / `findFreeWorkflowSlug`
   ([`lib/orchestration/workflows/slug-availability.ts`](../../lib/orchestration/workflows/slug-availability.ts),
   §107 t-728). Each probe runs under the system scope and returns only a
-  boolean or a slug, never the other org's row.
+  yes/no answer or a free slug, never the other org's row. Save-as-template
+  uses it. The backup importer still reads the slug the plain way, so
+  importing a slug another org holds fails until §109 t-738 moves it onto
+  `isWorkflowSlugTaken`.
 
 The text is defined once, in
 [`lib/tenancy/isolation.ts`](../../lib/tenancy/isolation.ts)

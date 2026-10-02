@@ -18,6 +18,7 @@ vi.mock('@/lib/logging', () => ({
 import {
   findFreeWorkflowSlug,
   isWorkflowSlugTaken,
+  WORKFLOW_SLUG_MAX_LENGTH,
 } from '@/lib/orchestration/workflows/slug-availability';
 import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 
@@ -80,5 +81,28 @@ describe('findFreeWorkflowSlug', () => {
 
     expect(slug).toBe('support-template-2');
     expect(scopes).toEqual(['system', 'system', 'system']);
+  });
+
+  it('cuts a long base so every candidate fits the cap the API validates against', async () => {
+    const base = `${'a'.repeat(95)}-template`; // 104 characters
+    held(base.slice(0, WORKFLOW_SLUG_MAX_LENGTH));
+
+    const slug = await findFreeWorkflowSlug(base);
+
+    expect(slug).toBe(`${'a'.repeat(95)}-te-1`);
+    expect(slug).toHaveLength(WORKFLOW_SLUG_MAX_LENGTH);
+  });
+
+  it('leaves no hyphen dangling where the cut lands', async () => {
+    held();
+
+    // The cut at 100 lands just after a hyphen.
+    expect(await findFreeWorkflowSlug(`${'a'.repeat(99)}-bcd`)).toBe('a'.repeat(99));
+  });
+
+  it('leaves a base within the cap untouched', async () => {
+    held('short-template');
+
+    expect(await findFreeWorkflowSlug('short-template')).toBe('short-template-1');
   });
 });
