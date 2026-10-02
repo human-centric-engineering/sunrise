@@ -1,12 +1,19 @@
 /**
- * Which route handlers change a shared setting, and do they say so (§107 t-751).
+ * Which route handlers and capabilities change a shared setting, and do they
+ * say so (§107 t-751).
  *
  * The rule lives in `lib/tenancy/shared-settings.ts`: at `multi`, shared
  * settings — rows of the `GLOBAL_CONFIG_MODELS` — change only from the install
- * org, and a route that changes one declares
- * `withAdminAuth(handler, { writesSharedSettings: true })` so the guard
- * enforces it. This module finds the routes that should have declared it. **A
- * library, not a CLI**: the always-run test
+ * org. Two places enforce it, and each needs the code to declare itself:
+ *
+ * - a route handler that changes one is
+ *   `withAdminAuth(handler, { writesSharedSettings: true })`, and the guard
+ *   refuses it;
+ * - a capability class that changes one sets `writesSharedSettings = true`,
+ *   and the dispatcher refuses it.
+ *
+ * This module finds the ones that should have declared. **A library, not a
+ * CLI**: the always-run test
  * `tests/unit/scripts/ci/shared-settings-writes.test.ts` runs it over the tree.
  *
  * It uses the TypeScript parser, as `ownerless-surfaces.ts` beside it does and
@@ -22,29 +29,32 @@
  *   derived from `GLOBAL_CONFIG_MODELS`, so a model added there is covered.
  * - SQL text — any string or template piece — that writes one of their tables
  *   (`UPDATE`, `INSERT INTO`, `DELETE FROM`).
- * - A call to a **writer**: a top-level function anywhere under `lib/`, or in
- *   the route file itself, that writes, directly or by calling another writer.
- *   Found by a fixpoint over the call graph, by name. That over-approximates
- *   — two functions of the same name are one to it — and the over-approximation
- *   errs towards asking a route to declare, which is the safe direction.
+ * - A call to a **writer**: a top-level function in any source file it is
+ *   given (the test gives it `lib/` and the non-route files under `app/`), or
+ *   in the route file itself, that writes, directly or by calling another
+ *   writer. A function passed by name — `withAdminAuth(createThing)`,
+ *   `items.map(save)` — counts as called. Found by a fixpoint over the call
+ *   graph, by name. That over-approximates — two functions of the same name
+ *   are one to it — and errs towards asking for a declaration, which is the
+ *   safe direction.
  *
  * ## What it still cannot see, said plainly
  *
  * A write through a **nested relation** (`aiAgent.update({ data: { profile:
  * { create } } })`) names the parent model only. A **dynamic** model name
- * (`prisma[name]`) is not detected. A write reached through a class method or
- * a callback passed as a value is not followed: the built-in capabilities that
- * write provider models are methods, reached through the dispatcher, and carry
- * their own check and their own tests. It raises the floor; it is not a proof.
+ * (`prisma[name]`) is not detected. A **method** of some other class is not
+ * followed by name, and a capability is recognised only when its class
+ * extends `BaseCapability` directly. It raises the floor; it is not a proof.
  */
 
 import ts from 'typescript';
 import { GLOBAL_CONFIG_MODELS } from '@/lib/tenancy/classification';
 
+/** Writes that only add a row; an `upsert` joins them when its `update` is `{}`. */
+const CREATE_METHODS = new Set(['create', 'createMany', 'createManyAndReturn']);
+
 const WRITE_METHODS = new Set([
-  'create',
-  'createMany',
-  'createManyAndReturn',
+  ...CREATE_METHODS,
   'update',
   'updateMany',
   'updateManyAndReturn',
@@ -68,36 +78,37 @@ const SQL_WRITE = new RegExp(
 );
 
 /**
- * Functions that write a global-config model and are still not a change to a
- * shared setting. Each is treated as a non-writer, so its callers are not
- * asked to declare. The reason is the content: an entry here says why a write
- * made from a customer's org changes nothing another org would notice.
+ * Functions whose own writes to a global-config model are still not a change
+ * to a shared setting, keyed `path#name`. Their direct writes are ignored, so
+ * their callers are not asked to declare; what they call is still followed.
+ *
+ * An entry is honoured only while every one of those writes **only adds what
+ * is missing** — a `create`, or an `upsert` whose `update` is `{}` — so a later
+ * edit that makes one of them change an existing row is reported, not hidden.
+ * The reason is the content: it says why a write from a customer's org changes
+ * nothing another org would notice.
  */
 export const NON_CHANGING_WRITERS: Readonly<Record<string, string>> = {
-  createDefaultSettingsRow:
-    'creates the orchestration settings singleton when it is missing (`update: {}`), with the ' +
-    'defaults every org would read anyway; it never changes a value.',
-  getMcpServerConfig:
-    'creates the MCP server singleton when it is missing (`update: {}`), with the defaults; it ' +
-    'never changes a value.',
-  materialisePatternsKnowledge:
+  'lib/orchestration/settings.ts#createDefaultSettingsRow':
+    'creates the orchestration settings singleton when it is missing, with the defaults every ' +
+    'org would read anyway; it never changes a value.',
+  'lib/orchestration/mcp/config.ts#getMcpServerConfig':
+    'creates the MCP server singleton when it is missing, with the defaults; it never changes a ' +
+    'value.',
+  'lib/orchestration/knowledge/seeder.ts#materialisePatternsKnowledge':
     "writes the calling org's own copy of the patterns knowledge; its one shared write creates " +
-    'the built-in patterns tag when it is missing (`update: {}`), identical whoever creates it.',
-  seedDefaultFlags:
+    'the built-in patterns tag when it is missing, identical whoever creates it.',
+  'lib/feature-flags/index.ts#seedDefaultFlags':
     'creates the default feature flags that are missing, never touching one that exists; run ' +
     'by the seed, which acts as the install org.',
 };
 
 /**
  * Route handlers that change a shared setting without declaring it, each with
- * the reason. Keyed `path#METHOD`.
+ * the reason. Keyed `path#METHOD`. Empty in Sunrise: the backup import was the
+ * one candidate, and it declares instead (§109 t-738 will split it).
  */
-export const UNDECLARED_ROUTE_EXCEPTIONS: Readonly<Record<string, string>> = {
-  'app/api/v1/admin/orchestration/backup/import/route.ts#POST':
-    'restores tenant data and shared settings together; §109 t-738 re-scopes the importer to ' +
-    'the importing org and applies the install-org rule to the shared part (note on t-738). ' +
-    'Refusing the whole import here would block an org restoring its own agents.',
-};
+export const UNDECLARED_ROUTE_EXCEPTIONS: Readonly<Record<string, string>> = {};
 
 export interface SourceFile {
   path: string;
@@ -124,19 +135,39 @@ function accessedName(node: ts.Expression): string | null {
   return null;
 }
 
+/** `upsert({ …, update: {} })` — it creates what is missing and changes nothing. */
+function isCreateIfMissing(call: ts.CallExpression): boolean {
+  const arg = call.arguments[0];
+  if (!arg || !ts.isObjectLiteralExpression(arg)) return false;
+  return arg.properties.some(
+    (p) =>
+      ts.isPropertyAssignment(p) &&
+      ts.isIdentifier(p.name) &&
+      p.name.text === 'update' &&
+      ts.isObjectLiteralExpression(p.initializer) &&
+      p.initializer.properties.length === 0
+  );
+}
+
 interface BodyFacts {
   /** It writes a global-config model itself. */
   writes: boolean;
-  /** Every name it calls: identifiers, and the last name of a property call. */
+  /** One of those writes can change or delete an existing row. */
+  changes: boolean;
+  /** Every name it calls or passes on: identifiers, and the last name of a property call. */
   calls: Set<string>;
 }
 
 function factsOf(body: ts.Node): BodyFacts {
-  const facts: BodyFacts = { writes: false, calls: new Set() };
+  const facts: BodyFacts = { writes: false, changes: false, calls: new Set() };
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const callee = node.expression;
       if (ts.isIdentifier(callee)) facts.calls.add(callee.text);
+      // A function handed over by name runs as surely as one called.
+      for (const arg of node.arguments) {
+        if (ts.isIdentifier(arg)) facts.calls.add(arg.text);
+      }
       const method = accessedName(callee);
       if (method) {
         facts.calls.add(method);
@@ -147,6 +178,9 @@ function factsOf(body: ts.Node): BodyFacts {
         const model = receiver ? accessedName(receiver) : null;
         if (model && WRITE_METHODS.has(method) && GLOBAL_CONFIG_ACCESSORS.has(model)) {
           facts.writes = true;
+          const onlyAdds =
+            CREATE_METHODS.has(method) || (method === 'upsert' && isCreateIfMissing(node));
+          if (!onlyAdds) facts.changes = true;
         }
       }
     }
@@ -158,6 +192,7 @@ function factsOf(body: ts.Node): BodyFacts {
       SQL_WRITE.test(node.text)
     ) {
       facts.writes = true;
+      facts.changes = true;
     }
     ts.forEachChild(node, visit);
   };
@@ -186,21 +221,47 @@ function topLevelFunctions(sf: ts.SourceFile): Map<string, ts.Node> {
   return out;
 }
 
-/** Close `seed` over `graph`: every function that calls a writer is a writer. */
-function closeOver(
-  graph: ReadonlyMap<string, BodyFacts>,
-  seed: ReadonlySet<string>,
-  exempt: ReadonlySet<string>
-): Set<string> {
-  const writers = new Set([...seed].filter((name) => !exempt.has(name)));
+/**
+ * Each top-level function's facts, with a {@link NON_CHANGING_WRITERS} entry's
+ * own writes dropped — only while they only add. Same name in two files: one
+ * node, the union of both (see the header).
+ */
+function graphOf(files: readonly SourceFile[]): Map<string, BodyFacts> {
+  const graph = new Map<string, BodyFacts>();
+  for (const file of files) {
+    for (const [name, body] of topLevelFunctions(parse(file))) {
+      const facts = factsOf(body);
+      const own =
+        `${file.path}#${name}` in NON_CHANGING_WRITERS && !facts.changes
+          ? { ...facts, writes: false }
+          : facts;
+      const held = graph.get(name);
+      graph.set(
+        name,
+        held
+          ? {
+              writes: held.writes || own.writes,
+              changes: held.changes || own.changes,
+              calls: new Set([...held.calls, ...own.calls]),
+            }
+          : own
+      );
+    }
+  }
+  return graph;
+}
+
+/** Close over `graph`, starting from `seed`: every function that calls a writer is a writer. */
+function closeOver(graph: ReadonlyMap<string, BodyFacts>, seed: ReadonlySet<string>): Set<string> {
+  const writers = new Set(seed);
   for (const [name, facts] of graph) {
-    if (facts.writes && !exempt.has(name)) writers.add(name);
+    if (facts.writes) writers.add(name);
   }
   let grew = true;
   while (grew) {
     grew = false;
     for (const [name, facts] of graph) {
-      if (writers.has(name) || exempt.has(name)) continue;
+      if (writers.has(name)) continue;
       if ([...facts.calls].some((called) => writers.has(called))) {
         writers.add(name);
         grew = true;
@@ -210,27 +271,35 @@ function closeOver(
   return writers;
 }
 
-/**
- * Every top-level function under `lib/` that changes a shared setting,
- * directly or through another. Names in {@link NON_CHANGING_WRITERS} are left
- * out, and so is everything that reaches a write only through them.
- */
+/** Every top-level function in `files` that changes a shared setting, directly or through another. */
 export function libWriters(files: readonly SourceFile[]): Set<string> {
-  const graph = new Map<string, BodyFacts>();
-  for (const file of files) {
-    for (const [name, body] of topLevelFunctions(parse(file))) {
-      const facts = factsOf(body);
-      const held = graph.get(name);
-      // Same name in two files: one node, the union of both (see the header).
-      graph.set(
-        name,
-        held
-          ? { writes: held.writes || facts.writes, calls: new Set([...held.calls, ...facts.calls]) }
-          : facts
-      );
+  return closeOver(graphOf(files), new Set());
+}
+
+/**
+ * The {@link NON_CHANGING_WRITERS} entries that no longer hold: the function
+ * is gone, writes nothing to excuse, or now changes an existing row.
+ */
+export function staleNonChangingWriters(
+  files: readonly SourceFile[],
+  entries: Readonly<Record<string, string>> = NON_CHANGING_WRITERS
+): string[] {
+  const problems: string[] = [];
+  for (const key of Object.keys(entries)) {
+    const [path, name] = key.split('#');
+    const file = files.find((f) => f.path === path);
+    const body = file ? topLevelFunctions(parse(file)).get(name) : undefined;
+    if (!body) {
+      problems.push(`${key}: no such function`);
+      continue;
+    }
+    const facts = factsOf(body);
+    if (!facts.writes) problems.push(`${key}: writes no shared setting — remove the entry`);
+    else if (facts.changes) {
+      problems.push(`${key}: changes or deletes an existing row, so it is a writer like any other`);
     }
   }
-  return closeOver(graph, new Set(), new Set(Object.keys(NON_CHANGING_WRITERS)));
+  return problems;
 }
 
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
@@ -259,9 +328,7 @@ function declaresOption(call: ts.CallExpression): boolean {
 /** Each exported HTTP handler in a route file: does it write, and does it declare? */
 export function analyzeRoute(file: SourceFile, writers: ReadonlySet<string>): RouteHandler[] {
   const sf = parse(file);
-  const local = new Map<string, BodyFacts>();
-  for (const [name, body] of topLevelFunctions(sf)) local.set(name, factsOf(body));
-  const reachable = closeOver(local, writers, new Set(Object.keys(NON_CHANGING_WRITERS)));
+  const reachable = closeOver(graphOf([file]), writers);
 
   const handlers: RouteHandler[] = [];
   const judge = (method: string, body: ts.Node, declares: boolean): void => {
@@ -292,22 +359,77 @@ export function analyzeRoute(file: SourceFile, writers: ReadonlySet<string>): Ro
   return handlers;
 }
 
+export interface CapabilityClass {
+  /** `path#ClassName`. */
+  name: string;
+  /** A method or property of the class changes a shared setting. */
+  writes: boolean;
+  /** It sets `writesSharedSettings = true`. */
+  declares: boolean;
+}
+
+function extendsBaseCapability(node: ts.ClassDeclaration): boolean {
+  return (node.heritageClauses ?? []).some(
+    (clause) =>
+      clause.token === ts.SyntaxKind.ExtendsKeyword &&
+      clause.types.some((t) => {
+        const expr = t.expression;
+        return ts.isIdentifier(expr) && expr.text === 'BaseCapability';
+      })
+  );
+}
+
+/** Every class in `file` that extends `BaseCapability`: does it write, and does it declare? */
+export function analyzeCapabilities(
+  file: SourceFile,
+  writers: ReadonlySet<string>
+): CapabilityClass[] {
+  if (!file.source.includes('BaseCapability')) return [];
+  const sf = parse(file);
+  const reachable = closeOver(graphOf([file]), writers);
+  const out: CapabilityClass[] = [];
+  for (const statement of sf.statements) {
+    if (!ts.isClassDeclaration(statement) || !statement.name) continue;
+    if (!extendsBaseCapability(statement)) continue;
+    const facts = factsOf(statement);
+    const declares = statement.members.some(
+      (m) =>
+        ts.isPropertyDeclaration(m) &&
+        ts.isIdentifier(m.name) &&
+        m.name.text === 'writesSharedSettings' &&
+        m.initializer?.kind === ts.SyntaxKind.TrueKeyword
+    );
+    out.push({
+      name: `${file.path}#${statement.name.text}`,
+      writes: facts.writes || [...facts.calls].some((called) => reachable.has(called)),
+      declares,
+    });
+  }
+  return out;
+}
+
 export interface SharedSettingsViolation {
-  /** `path#METHOD`. */
+  /** `path#METHOD` for a route, `path#ClassName` for a capability. */
   handler: string;
   problem: string;
 }
 
 /**
- * Every route handler that changes a shared setting without declaring it, and
- * every exception that no longer matches a handler that would need it.
+ * Every route handler and capability class that changes a shared setting
+ * without declaring it, and every route exception that no longer matches a
+ * handler that would need it.
+ *
+ * `sources` is where writers are looked for — `lib/` and the non-route files
+ * under `app/`; capability classes are looked for there too. Pass `writers`
+ * when the caller has already computed {@link libWriters} over the same
+ * sources, so the tree is parsed once.
  */
 export function findUndeclaredSharedSettingsWrites(
   routes: readonly SourceFile[],
-  lib: readonly SourceFile[],
-  exceptions: Readonly<Record<string, string>> = UNDECLARED_ROUTE_EXCEPTIONS
+  sources: readonly SourceFile[],
+  exceptions: Readonly<Record<string, string>> = UNDECLARED_ROUTE_EXCEPTIONS,
+  writers: ReadonlySet<string> = libWriters(sources)
 ): SharedSettingsViolation[] {
-  const writers = libWriters(lib);
   const violations: SharedSettingsViolation[] = [];
   const used = new Set<string>();
   for (const route of routes) {
@@ -321,8 +443,20 @@ export function findUndeclaredSharedSettingsWrites(
       violations.push({
         handler: key,
         problem:
-          'changes a shared setting without `withAdminAuth(…, { writesSharedSettings: true })`',
+          'changes a shared setting without `withAdminAuth(…, { writesSharedSettings: true })` ' +
+          '— only withAdminAuth can declare it; a withAuth route must not write shared settings',
       });
+    }
+  }
+  for (const source of sources) {
+    for (const capability of analyzeCapabilities(source, writers)) {
+      if (capability.writes && !capability.declares) {
+        violations.push({
+          handler: capability.name,
+          problem:
+            'is a capability that changes a shared setting without `writesSharedSettings = true`',
+        });
+      }
     }
   }
   for (const key of Object.keys(exceptions)) {

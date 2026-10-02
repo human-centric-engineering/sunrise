@@ -178,9 +178,11 @@ means.
 `withAdminAuth(handler, { writesSharedSettings: true })` enters the session's
 org as usual, then, after the policy has admitted the caller, refuses a write
 at `multi` from any org but the install org, with a 403 that says to switch
-to the install org. An admin API key enters no org and passes. It is the
-one guard check that reads which org was entered rather than whether the
-caller may enter it; the rule and the routes that declare it are in
+to the install org. An unbound admin API key enters no org, and the guard
+admits it as the install org; `canChangeSharedSettings()` itself refuses an
+empty context, so a capability dispatched with no org entered is refused.
+It is the one guard check that reads which org was entered rather than
+whether the caller may enter it; the rule and what declares it are in
 [isolation.md](./isolation.md#the-policy).
 
 **Then the guard carries the org two ways:** on the principal (`viewer.orgId`,

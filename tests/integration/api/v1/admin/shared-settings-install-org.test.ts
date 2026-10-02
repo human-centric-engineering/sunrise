@@ -71,6 +71,7 @@ import * as mcpTool from '@/app/api/v1/admin/orchestration/mcp/tools/[id]/route'
 import * as mcpSettings from '@/app/api/v1/admin/orchestration/mcp/settings/route';
 import * as settings from '@/app/api/v1/admin/orchestration/settings/route';
 import * as featureFlags from '@/app/api/v1/admin/feature-flags/route';
+import * as backupImport from '@/app/api/v1/admin/orchestration/backup/import/route';
 
 const CUSTOMER = 'cmorg00000000000customer';
 const ID = 'cmjbv4i3x00003wsloputgwul';
@@ -101,6 +102,7 @@ const FAMILIES: Array<[family: string, method: string, path: string, handler: Ha
   ['MCP server config', 'PATCH', 'orchestration/mcp/settings', mcpSettings.PATCH],
   ['orchestration settings', 'PATCH', 'orchestration/settings', settings.PATCH],
   ['feature flags', 'POST', 'feature-flags', featureFlags.POST],
+  ['backup import', 'POST', 'orchestration/backup/import', backupImport.POST],
 ];
 
 const WRITE = /^(create|update|upsert|delete)/;

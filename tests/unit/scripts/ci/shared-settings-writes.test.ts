@@ -1,27 +1,33 @@
 /**
- * Tests: every route that changes a shared setting declares it (§107 t-751).
+ * Tests: every route and capability that changes a shared setting declares it
+ * (§107 t-751).
  *
  * The roster is read out of the tree, not typed: `git ls-files` under `app/`
- * for the routes and under `lib/` for the functions that write. A route that
- * changes a row of a `GLOBAL_CONFIG_MODELS` model, directly or through a
- * writer, must be `withAdminAuth(…, { writesSharedSettings: true })`, so that
- * at `multi` the guard refuses it from a customer's org. If this fails naming
- * your route, add the option. If the write is not really a change to a shared
- * setting, say why in `NON_CHANGING_WRITERS` or `UNDECLARED_ROUTE_EXCEPTIONS`
- * (`scripts/ci/shared-settings-writes.ts`), where the reason is the content.
+ * for the routes, and under `lib/` plus the non-route files of `app/` for the
+ * functions that write and the capability classes. A route that changes a row
+ * of a `GLOBAL_CONFIG_MODELS` model, directly or through a writer, must be
+ * `withAdminAuth(…, { writesSharedSettings: true })`; a capability class that
+ * does must set `writesSharedSettings = true`. At `multi` the guard and the
+ * dispatcher then refuse it from a customer's org. If this fails naming your
+ * route or capability, declare it. If the write is not really a change to a
+ * shared setting, say why in `NON_CHANGING_WRITERS` or
+ * `UNDECLARED_ROUTE_EXCEPTIONS` (`scripts/ci/shared-settings-writes.ts`),
+ * where the reason is the content.
  *
  * Whole-tree: declared in `ALWAYS_RUN_TESTS` because no import chain connects
- * a new route to this file.
+ * a new route to this file. The tree is parsed once, at module scope.
  */
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import {
+  analyzeCapabilities,
   analyzeRoute,
   findUndeclaredSharedSettingsWrites,
   GLOBAL_CONFIG_ACCESSORS,
   libWriters,
   NON_CHANGING_WRITERS,
+  staleNonChangingWriters,
   UNDECLARED_ROUTE_EXCEPTIONS,
   type SourceFile,
 } from '@/scripts/ci/shared-settings-writes';
@@ -36,10 +42,11 @@ function tracked(dir: string): string[] {
 
 const read = (path: string): SourceFile => ({ path, source: readFileSync(path, 'utf8') });
 
-const LIB = tracked('lib').map(read);
-const ROUTES = tracked('app')
-  .filter((p) => /\/route\.tsx?$/.test(p))
-  .map(read);
+const isRoute = (p: string) => /\/route\.tsx?$/.test(p);
+const APP = tracked('app');
+const ROUTES = APP.filter(isRoute).map(read);
+const SOURCES = [...tracked('lib'), ...APP.filter((p) => !isRoute(p))].map(read);
+const WRITERS = libWriters(SOURCES);
 
 const route = (source: string, path = 'app/api/v1/fixture/route.ts'): SourceFile => ({
   path,
@@ -47,35 +54,49 @@ const route = (source: string, path = 'app/api/v1/fixture/route.ts'): SourceFile
 });
 
 describe('the tree', () => {
-  it('has no route that changes a shared setting without declaring it', () => {
-    expect(findUndeclaredSharedSettingsWrites(ROUTES, LIB)).toEqual([]);
+  it('has no route or capability that changes a shared setting without declaring it', () => {
+    expect(findUndeclaredSharedSettingsWrites(ROUTES, SOURCES, undefined, WRITERS)).toEqual([]);
   });
 
-  it('sees the tree it judges: routes, writers and declared handlers are all found', () => {
+  it('sees the tree it judges: routes, writers, declared handlers and capabilities are all found', () => {
     // A check that reads nothing passes everything; these are the floor.
     expect(ROUTES.length).toBeGreaterThan(100);
-    const writers = libWriters(LIB);
     for (const name of ['createFlag', 'updateFlag', 'deleteFlag', 'seedChunks']) {
-      expect(writers).toContain(name);
+      expect(WRITERS).toContain(name);
     }
-    const declared = ROUTES.flatMap((r) =>
-      analyzeRoute(r, writers)
-        .filter((h) => h.declares)
-        .map((h) => `${r.path}#${h.method}`)
+    const declared = ROUTES.flatMap((r) => analyzeRoute(r, WRITERS).filter((h) => h.declares));
+    expect(declared.length).toBeGreaterThanOrEqual(34);
+    const capabilities = SOURCES.flatMap((f) => analyzeCapabilities(f, WRITERS));
+    expect(capabilities.length).toBeGreaterThan(20);
+    expect(capabilities.filter((c) => c.writes).map((c) => c.name.split('#')[1])).toEqual(
+      expect.arrayContaining([
+        'AddProviderModelsCapability',
+        'ApplyAuditChangesCapability',
+        'DeactivateProviderModelsCapability',
+      ])
     );
-    expect(declared.length).toBeGreaterThanOrEqual(33);
   });
 
-  it('declares nothing it does not need: every declared handler is found to write', () => {
-    // A declaration on a handler that changes nothing refuses honest work from
-    // a customer's org — a read, say — for no reason.
-    const writers = libWriters(LIB);
-    const needless = ROUTES.flatMap((r) =>
-      analyzeRoute(r, writers)
-        .filter((h) => h.declares && !h.writes)
-        .map((h) => `${r.path}#${h.method}`)
-    );
+  it('declares nothing it does not need: every declaration is found to write', () => {
+    // A declaration on code that changes nothing refuses honest work from a
+    // customer's org — a read, say — for no reason.
+    const needless = [
+      ...ROUTES.flatMap((r) =>
+        analyzeRoute(r, WRITERS)
+          .filter((h) => h.declares && !h.writes)
+          .map((h) => `${r.path}#${h.method}`)
+      ),
+      ...SOURCES.flatMap((f) =>
+        analyzeCapabilities(f, WRITERS)
+          .filter((c) => c.declares && !c.writes)
+          .map((c) => c.name)
+      ),
+    ];
     expect(needless).toEqual([]);
+  });
+
+  it('holds every NON_CHANGING_WRITERS entry to its claim: it exists, and only adds', () => {
+    expect(staleNonChangingWriters(SOURCES)).toEqual([]);
   });
 
   it('fails on a seeded violation: a real declared route with its option removed', () => {
@@ -87,8 +108,35 @@ describe('the tree', () => {
 
     const others = ROUTES.filter((r) => r.path !== path);
     expect(
-      findUndeclaredSharedSettingsWrites([...others, { path, source: stripped }], LIB)
+      findUndeclaredSharedSettingsWrites(
+        [...others, { path, source: stripped }],
+        SOURCES,
+        undefined,
+        WRITERS
+      )
     ).toEqual([{ handler: `${path}#POST`, problem: expect.stringContaining('without') }]);
+  });
+
+  it('fails on a seeded violation: a real declared capability with its flag removed', () => {
+    const path = 'lib/orchestration/capabilities/built-in/add-provider-models.ts';
+    const real = SOURCES.find((f) => f.path === path);
+    expect(real?.source).toContain('readonly writesSharedSettings = true;');
+    const stripped = real!.source.replace('readonly writesSharedSettings = true;', '');
+
+    const others = SOURCES.filter((f) => f.path !== path);
+    expect(
+      findUndeclaredSharedSettingsWrites(
+        ROUTES,
+        [...others, { path, source: stripped }],
+        undefined,
+        WRITERS
+      )
+    ).toEqual([
+      {
+        handler: `${path}#AddProviderModelsCapability`,
+        problem: expect.stringContaining('writesSharedSettings = true'),
+      },
+    ]);
   });
 
   it('gives every exception a reason worth reading', () => {
@@ -170,16 +218,70 @@ describe('what counts as a write', () => {
     expect(handler.writes).toBe(true);
   });
 
-  it('does not count a writer that only creates what is missing, nor what reaches a write through it', () => {
-    const lib: SourceFile[] = [
+  it('follows a function handed over by name, not only one called', () => {
+    const [handler] = analyzeRoute(
+      route(
+        'async function createThing() { await prisma.aiProviderConfig.create({}); }\n' +
+          'export const POST = withAdminAuth(createThing);'
+      ),
+      new Set()
+    );
+    expect(handler.writes).toBe(true);
+  });
+
+  it('follows a writer in a non-route module, as the test hands it app/ helpers', () => {
+    const writers = libWriters([
       {
-        path: 'lib/mcp.ts',
-        source:
-          'export async function getMcpServerConfig() { return prisma.mcpServerConfig.upsert({}); }\n' +
-          'export async function readsConfig() { return getMcpServerConfig(); }',
+        path: 'app/api/v1/admin/thing/helpers.ts',
+        source: 'export async function save() { await prisma.knowledgeTag.update({}); }',
       },
-    ];
-    expect(libWriters(lib)).toEqual(new Set());
+    ]);
+    expect(writers).toEqual(new Set(['save']));
+  });
+
+  describe('NON_CHANGING_WRITERS', () => {
+    const PATH = 'lib/orchestration/mcp/config.ts';
+    const singleton = (update: string) =>
+      `export async function getMcpServerConfig() { return prisma.mcpServerConfig.upsert({ where, create, update: ${update} }); }\n` +
+      'export async function readsConfig() { return getMcpServerConfig(); }';
+
+    it('excuses an entry that only creates what is missing, and what reaches a write through it', () => {
+      expect(libWriters([{ path: PATH, source: singleton('{}') }])).toEqual(new Set());
+      expect(
+        staleNonChangingWriters([{ path: PATH, source: singleton('{}') }], {
+          [`${PATH}#getMcpServerConfig`]: 'why',
+        })
+      ).toEqual([]);
+    });
+
+    it('stops excusing it the moment it changes an existing row', () => {
+      const changed = singleton('{ isEnabled: true }');
+      expect(libWriters([{ path: PATH, source: changed }])).toEqual(
+        new Set(['getMcpServerConfig', 'readsConfig'])
+      );
+      expect(
+        staleNonChangingWriters([{ path: PATH, source: changed }], {
+          [`${PATH}#getMcpServerConfig`]: 'why',
+        })
+      ).toEqual([expect.stringContaining('changes or deletes an existing row')]);
+    });
+
+    it('excuses only the function at that path, not another of the same name', () => {
+      const elsewhere = { path: 'lib/fork/config.ts', source: singleton('{}') };
+      expect(libWriters([elsewhere])).toEqual(new Set(['getMcpServerConfig', 'readsConfig']));
+    });
+
+    it('reports an entry whose function is gone or writes nothing', () => {
+      expect(
+        staleNonChangingWriters([{ path: PATH, source: 'export function other() {}' }], {
+          [`${PATH}#getMcpServerConfig`]: 'why',
+          [`${PATH}#other`]: 'why',
+        })
+      ).toEqual([
+        expect.stringContaining('no such function'),
+        expect.stringContaining('writes no shared setting'),
+      ]);
+    });
   });
 
   it('judges each handler on its own: a GET beside a declared PATCH needs nothing', () => {
@@ -210,7 +312,8 @@ describe('what satisfies it', () => {
     ).toEqual([]);
     expect(judged(`export const POST = withAdminAuth(${write});`)).toEqual(at);
     expect(judged(`export const POST = withAdminAuth(${write}, { resource });`)).toEqual(at);
-    // `withAuth` admits non-admins; the option means nothing there.
+    // `withAuth` admits non-admins; the option means nothing there, and the
+    // message says so.
     expect(
       judged(`export const POST = withAuth(${write}, { writesSharedSettings: true });`)
     ).toEqual(at);
@@ -230,6 +333,50 @@ describe('what satisfies it', () => {
     expect(findUndeclaredSharedSettingsWrites([undeclared], [], { [key]: 'why' })).toEqual([]);
     expect(findUndeclaredSharedSettingsWrites([declared], [], { [key]: 'why' })).toEqual([
       { handler: key, problem: expect.stringContaining('remove it') },
+    ]);
+  });
+});
+
+describe('capability classes', () => {
+  const capability = (body: string, declare = '') => ({
+    path: 'lib/fork/capabilities/thing.ts',
+    source:
+      `export class ThingCapability extends BaseCapability<A, B> {\n${declare}\n` +
+      `  async execute() { ${body} }\n}\n` +
+      'export class Unrelated { async run() { await prisma.featureFlag.delete({}); } }',
+  });
+
+  it('asks a capability that writes to declare, and only one that extends BaseCapability', () => {
+    expect(
+      analyzeCapabilities(capability('await prisma.aiCapability.update({});'), new Set())
+    ).toEqual([
+      { name: 'lib/fork/capabilities/thing.ts#ThingCapability', writes: true, declares: false },
+    ]);
+  });
+
+  it('follows a writer it calls, and sees the flag set to true', () => {
+    expect(
+      analyzeCapabilities(
+        capability('await createFlag();', '  readonly writesSharedSettings = true;'),
+        new Set(['createFlag'])
+      )
+    ).toEqual([
+      { name: 'lib/fork/capabilities/thing.ts#ThingCapability', writes: true, declares: true },
+    ]);
+  });
+
+  it('reports the undeclared one through the whole check', () => {
+    expect(
+      findUndeclaredSharedSettingsWrites(
+        [],
+        [capability('await prisma.knowledgeTag.create({});')],
+        {}
+      )
+    ).toEqual([
+      {
+        handler: 'lib/fork/capabilities/thing.ts#ThingCapability',
+        problem: expect.stringContaining('capability'),
+      },
     ]);
   });
 });

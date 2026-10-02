@@ -1308,7 +1308,10 @@ export function withAdminAuth(
 
         // After the policy, so a caller who may not administer at all still
         // gets the ordinary refusal rather than learning about the install org.
-        if (options?.writesSharedSettings && !canChangeSharedSettings()) {
+        // `entry === null` here is the unbound admin API key — the only
+        // credential that enters no org — and it acts as the install org
+        // (owner ruling, 2026-10-02); the rule itself refuses an empty context.
+        if (options?.writesSharedSettings && entry !== null && !canChangeSharedSettings()) {
           logger.warn('tenancy: refused a shared-settings write outside the install org', {
             path: (request as NextRequest).nextUrl?.pathname,
             userId: principal.userId,

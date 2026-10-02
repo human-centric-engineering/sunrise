@@ -54,9 +54,10 @@
  *     A, which name none of B's rows;
  *   - shared settings change only from the install org (§107 t-751): the
  *     three built-in capabilities that write provider models, dispatched as
- *     B's workflow would, refuse and change nothing; from the install org
- *     and from no org they write; and the guard's option, called with an
- *     unbound admin API key, lets a write through from no org;
+ *     B's workflow would, refuse and change nothing, and so do they with no
+ *     org entered at all; from the install org and a system scope they
+ *     write; and the guard's option, called with an unbound admin API key,
+ *     lets a write through from no org;
  *   - the org export and erasure (§106 t-735, t-730): B's export, asked
  *     from inside A (an admin's session) and from no org (an admin API key),
  *     holds B's rows and none of A's; B, holding a knowledge base with
@@ -127,8 +128,6 @@ import { signHookPayload } from '@/lib/orchestration/hooks/signing';
 import { POST as inboundPost } from '@/app/api/v1/inbound/[channel]/[slug]/route';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { createFlag } from '@/lib/feature-flags';
-import { AddProviderModelsCapability } from '@/lib/orchestration/capabilities/built-in/add-provider-models';
-import { DeactivateProviderModelsCapability } from '@/lib/orchestration/capabilities/built-in/deactivate-provider-models';
 import { PLATFORM_JOBS } from '@/lib/orchestration/maintenance/platform-jobs';
 import { createDocumentForCleanup } from '@/lib/orchestration/knowledge/document-manager';
 import { callMcpTool, clearMcpToolCache } from '@/lib/orchestration/mcp/tool-registry';
@@ -1574,11 +1573,11 @@ async function main(): Promise<void> {
     // Any org's workflow reaches these through a `tool_call` step, which
     // dispatches as `workflow:<id>` and skips the agent binding (§107 t-751).
     console.log(
-      '\n[16] shared settings: refused from B, written from the install org and from no org'
+      '\n[16] shared settings: refused from B and from nowhere, written from the install org, a system scope and an admin key'
     );
     registerBuiltInCapabilities();
     const smokeModelSlug = `${PREFIX}-model-${stamp}`;
-    const newModel: Parameters<AddProviderModelsCapability['execute']>[0]['newModels'][number] = {
+    const newModel = {
       name: `${PREFIX} model`,
       slug: smokeModelSlug,
       providerSlug: `${PREFIX}-provider-${stamp}`,
@@ -1619,15 +1618,9 @@ async function main(): Promise<void> {
       refusedCode(addFromB) && (await modelRow()) === null,
       `add_provider_models, dispatched by B’s workflow, is refused and creates nothing (${JSON.stringify(addFromB.error ?? addFromB.data)})`
     );
-    const addFromInstall = await runAsOrg(INSTALL_ORG_ID, () =>
-      new AddProviderModelsCapability().execute(
-        { newModels: [newModel] },
-        {
-          userId: a.ownerId,
-          agentId: 'smoke',
-        }
-      )
-    );
+    const addFromInstall = await asWorkflowIn(INSTALL_ORG_ID, 'add_provider_models', {
+      newModels: [newModel],
+    });
     const created = await modelRow();
     check(
       addFromInstall.success && created !== null,
@@ -1657,13 +1650,26 @@ async function main(): Promise<void> {
           afterB.costEfficiency === 'high',
         `apply_audit_changes and deactivate_provider_models, dispatched by B’s workflow, are refused and change nothing (${JSON.stringify([auditFromB.error, deactivateFromB.error, afterB])})`
       );
-      const deactivateFromNowhere = await new DeactivateProviderModelsCapability().execute(
+      // Nobody entered an org: a bug state, not a credential, so refused too.
+      const deactivateFromNowhere = await capabilityDispatcher.dispatch(
+        'deactivate_provider_models',
         { deactivateModels: [{ modelId: created.id, reason: 'smoke fixture' }] },
-        { userId: a.ownerId, agentId: 'smoke' }
+        { userId: a.ownerId, agentId: `workflow:${b.workflowId}` }
       );
       check(
-        deactivateFromNowhere.success && (await modelRow())?.isActive === false,
-        'deactivate_provider_models from no org deactivates it'
+        refusedCode(deactivateFromNowhere) && (await modelRow())?.isActive === true,
+        'deactivate_provider_models with no org entered is refused and changes nothing'
+      );
+      const deactivateAsSystem = await runAsSystem('smoke: the platform deactivates a model', () =>
+        capabilityDispatcher.dispatch(
+          'deactivate_provider_models',
+          { deactivateModels: [{ modelId: created.id, reason: 'smoke fixture' }] },
+          { userId: a.ownerId, agentId: `workflow:${b.workflowId}` }
+        )
+      );
+      check(
+        deactivateAsSystem.success && (await modelRow())?.isActive === false,
+        `deactivate_provider_models in a system scope deactivates it (${JSON.stringify(deactivateAsSystem.error ?? deactivateAsSystem.data)})`
       );
     }
 

@@ -25,7 +25,6 @@ import type {
   CapabilityFunctionDefinition,
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
-import { canChangeSharedSettings, SHARED_SETTINGS_REFUSAL } from '@/lib/tenancy/shared-settings';
 
 const deactivateEntrySchema = z.object({
   modelId: z.string().min(1).max(100),
@@ -61,6 +60,8 @@ interface Data {
 export class DeactivateProviderModelsCapability extends BaseCapability<Args, Data> {
   readonly slug = 'deactivate_provider_models';
   readonly processesPii = false;
+  /** Provider models are shared settings: refused outside the install org at `multi` (§107 t-751). */
+  readonly writesSharedSettings = true;
 
   readonly functionDefinition: CapabilityFunctionDefinition = {
     name: 'deactivate_provider_models',
@@ -98,13 +99,6 @@ export class DeactivateProviderModelsCapability extends BaseCapability<Args, Dat
   protected readonly schema = schema;
 
   async execute(args: Args, context: CapabilityContext): Promise<CapabilityResult<Data>> {
-    // Provider models are shared settings: at `multi` they change only from the
-    // install org (§107 t-751). Any org's workflow can reach this through a
-    // `tool_call` step, so the check is here rather than on a route.
-    if (!canChangeSharedSettings()) {
-      return this.error(SHARED_SETTINGS_REFUSAL, 'shared_settings_install_org_only');
-    }
-
     // Empty array — nothing to deactivate (e.g. approval payload had no deactivations)
     if (args.deactivateModels.length === 0) {
       return this.success(

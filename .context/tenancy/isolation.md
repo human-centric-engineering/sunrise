@@ -76,28 +76,39 @@ CREATE POLICY "org_isolation" ON "ai_agent"
   (§107 t-731). It counts under the system scope, and returns the caller's
   own rows by name and every other org's as a number.
 - **Global config changes only from the install org.** The same one row
-  means a change made from inside a customer's org lands in every org. At
-  `multi`, a route that creates, changes or deletes a `GLOBAL_CONFIG_MODELS`
-  row declares `withAdminAuth(handler, { writesSharedSettings: true })`,
-  and the guard refuses a session entered into any other org with a 403
-  whose `details.reason` is `shared-settings-install-org-only` and whose
-  message says to switch to the install org. An unbound admin API key
-  enters no org and is allowed, as the install org. The same admin keeps
-  read access from a customer's org: only the write handlers declare it. The
+  means a change made from inside a customer's org lands in every org. The
   rule is `canChangeSharedSettings()`
   ([`lib/tenancy/shared-settings.ts`](../../lib/tenancy/shared-settings.ts),
-  §107 t-751), and the three built-in capabilities that write provider
-  models (`add_provider_models`, `deactivate_provider_models`,
-  `apply_audit_changes`) ask it too, because any org's workflow reaches them
-  through a `tool_call` step. A whole-tree test
+  §107 t-751): at `multi`, only the install org or a system scope may change a
+  `GLOBAL_CONFIG_MODELS` row, and a call stack that entered no org at all is
+  refused. Nothing changes at `single`. Two places enforce it, and both need
+  the code to declare itself:
+  - **Routes.** A handler that creates, changes or deletes one of these rows
+    is `withAdminAuth(handler, { writesSharedSettings: true })`. The guard
+    refuses a session entered into any other org with a 403 whose
+    `details.reason` is `shared-settings-install-org-only` and whose message
+    says to switch to the install org. An unbound admin API key enters no org
+    and the guard admits it, as the install org. The same admin keeps read
+    access from a customer's org: only the write handlers declare it. The
+    backup import declares it too, so at `multi` it runs from the install org
+    only until §109 t-738 splits a backup's shared settings from the
+    importing org's own agents and workflows.
+  - **Capabilities.** A capability class that writes one sets
+    `writesSharedSettings = true` (on `BaseCapability`, beside
+    `processesPii`), and the dispatcher refuses it with
+    `shared_settings_install_org_only` before approval or execution, because
+    any org's workflow reaches a capability through a `tool_call` step.
+    `add_provider_models`, `deactivate_provider_models` and
+    `apply_audit_changes` declare it.
+
+  A whole-tree test
   ([`shared-settings-writes.test.ts`](../../tests/unit/scripts/ci/shared-settings-writes.test.ts))
-  parses every route and every `lib/` function, and fails naming a handler
-  that writes one of these models, directly or through a writer, without
-  the option. Two kinds of write are excepted there, each with its reason:
-  writes that only create what is missing (the two settings singletons, the
-  default feature flags, the built-in patterns tag), which change nothing
-  another org would notice; and the backup import, which
-  §109 t-738 re-scopes. Nothing changes at `single`.
+  parses every route, every `lib/` function and every non-route module under
+  `app/`, and fails naming a handler or a capability class that writes one of
+  these models, directly or through a writer, without declaring it. Writes
+  that only create what is missing (the two settings singletons, the default
+  feature flags, the built-in patterns tag) are excepted by path, each with
+  its reason, and only while every write in them still only adds.
 
 The text is defined once, in
 [`lib/tenancy/isolation.ts`](../../lib/tenancy/isolation.ts)

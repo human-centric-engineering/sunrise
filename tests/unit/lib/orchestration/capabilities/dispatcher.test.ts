@@ -59,6 +59,11 @@ const { registerTracer, resetTracer } = await import('@/lib/orchestration/tracin
 const { SPAN_CAPABILITY_DISPATCH, SUNRISE_CAPABILITY_SUCCESS } =
   await import('@/lib/orchestration/tracing/attributes');
 const { MockTracer, findSpan } = await import('@/tests/helpers/mock-tracer');
+const { env } = await import('@/lib/env');
+const { runAsOrg } = await import('@/lib/tenancy/context');
+const { INSTALL_ORG_ID } = await import('@/lib/tenancy/constants');
+const { SHARED_SETTINGS_REFUSAL, SHARED_SETTINGS_REFUSAL_CODE } =
+  await import('@/lib/tenancy/shared-settings');
 
 // ---------------------------------------------------------------------------
 // Inline test capability subclasses
@@ -71,6 +76,20 @@ class OkCapability extends BaseCapability<{ n: number }, { doubled: number }> {
 
   async execute(args: { n: number }) {
     return this.success({ doubled: args.n * 2 });
+  }
+}
+
+/** Declares that it changes a shared setting (§107 t-751); counts its runs. */
+class SharedSettingsCapability extends BaseCapability<Record<string, never>, { ran: true }> {
+  readonly slug = 'shared-write';
+  readonly functionDefinition = { name: 'shared-write', description: '', parameters: {} };
+  protected readonly schema = z.object({}).strict() as unknown as z.ZodType<Record<string, never>>;
+  readonly writesSharedSettings = true;
+  runs = 0;
+
+  async execute() {
+    this.runs += 1;
+    return this.success({ ran: true as const });
   }
 }
 
@@ -334,6 +353,80 @@ describe('CapabilityDispatcher', () => {
       // loadFromDatabase is called but handler lookup short-circuits before
       // any further DB interaction — findMany still fires exactly once.
       expect(mockFindMany).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('shared settings (§107 t-751)', () => {
+    const mode = env.TENANCY_MODE;
+    afterEach(() => {
+      env.TENANCY_MODE = mode;
+    });
+
+    function registered() {
+      const capability = new SharedSettingsCapability();
+      capabilityDispatcher.register(capability);
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'shared-write' })]);
+      return capability;
+    }
+
+    it('at multi refuses a declared capability inside a customer org, before it runs', async () => {
+      env.TENANCY_MODE = 'multi';
+      const capability = registered();
+
+      const result = await runAsOrg('cmorg00000000000customer', () =>
+        capabilityDispatcher.dispatch('shared-write', {}, ctx)
+      );
+
+      expect(result).toEqual({
+        success: false,
+        error: { code: SHARED_SETTINGS_REFUSAL_CODE, message: SHARED_SETTINGS_REFUSAL },
+      });
+      expect(capability.runs).toBe(0);
+    });
+
+    it('at multi refuses it with no org entered at all — that is a bug state, not a credential', async () => {
+      env.TENANCY_MODE = 'multi';
+      const capability = registered();
+
+      const result = await capabilityDispatcher.dispatch('shared-write', {}, ctx);
+
+      expect(result.error?.code).toBe(SHARED_SETTINGS_REFUSAL_CODE);
+      expect(capability.runs).toBe(0);
+    });
+
+    it('at multi runs it inside the install org', async () => {
+      env.TENANCY_MODE = 'multi';
+      const capability = registered();
+
+      const result = await runAsOrg(INSTALL_ORG_ID, () =>
+        capabilityDispatcher.dispatch('shared-write', {}, ctx)
+      );
+
+      expect(result.success).toBe(true);
+      expect(capability.runs).toBe(1);
+    });
+
+    it('runs it in any org at single', async () => {
+      const capability = registered();
+
+      const result = await runAsOrg('cmorg00000000000customer', () =>
+        capabilityDispatcher.dispatch('shared-write', {}, ctx)
+      );
+
+      expect(result.success).toBe(true);
+      expect(capability.runs).toBe(1);
+    });
+
+    it('control: an undeclared capability runs in a customer org at multi', async () => {
+      env.TENANCY_MODE = 'multi';
+      capabilityDispatcher.register(new OkCapability());
+      mockFindMany.mockResolvedValue([makeCapabilityRow({ slug: 'ok' })]);
+
+      const result = await runAsOrg('cmorg00000000000customer', () =>
+        capabilityDispatcher.dispatch('ok', { n: 2 }, ctx)
+      );
+
+      expect(result).toEqual({ success: true, data: { doubled: 4 } });
     });
   });
 

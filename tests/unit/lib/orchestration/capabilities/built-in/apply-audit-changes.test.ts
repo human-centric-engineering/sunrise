@@ -49,21 +49,12 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-// The rule itself is tested in tests/unit/lib/tenancy/shared-settings.test.ts;
-// here only that the capability asks it, and stops when it says no.
-vi.mock('@/lib/tenancy/shared-settings', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/tenancy/shared-settings')>()),
-  canChangeSharedSettings: vi.fn(() => true),
-}));
-
 // ---------------------------------------------------------------------------
 // Dynamic imports (after mocks are in place)
 // ---------------------------------------------------------------------------
 
 const { prisma } = await import('@/lib/db/client');
 const { invalidateModelCache } = await import('@/lib/orchestration/llm/provider-selector');
-const { canChangeSharedSettings, SHARED_SETTINGS_REFUSAL } =
-  await import('@/lib/tenancy/shared-settings');
 const { ApplyAuditChangesCapability, AUDITABLE_FIELDS } =
   await import('@/lib/orchestration/capabilities/built-in/apply-audit-changes');
 const { CapabilityValidationError } =
@@ -394,28 +385,9 @@ describe('ApplyAuditChangesCapability', () => {
     });
   });
 
-  describe('execute() — outside the install org (§107 t-751)', () => {
-    it('refuses, writing nothing, when shared settings may not change here', async () => {
-      vi.mocked(canChangeSharedSettings).mockReturnValueOnce(false);
-      const cap = new ApplyAuditChangesCapability();
-
-      const result = await cap.execute(
-        {
-          model_id: 'model-1',
-          changes: [
-            makeChange({ field: 'costEfficiency', currentValue: 'medium', proposedValue: 'high' }),
-          ],
-        },
-        context
-      );
-
-      expect(result).toEqual({
-        success: false,
-        error: { code: 'shared_settings_install_org_only', message: SHARED_SETTINGS_REFUSAL },
-      });
-      expect(mockFindUnique).not.toHaveBeenCalled();
-      expect(mockUpdate).not.toHaveBeenCalled();
-      expect(mockInvalidateModelCache).not.toHaveBeenCalled();
+  describe('shared settings (§107 t-751)', () => {
+    it('declares that it changes a shared setting, so the dispatcher refuses it outside the install org', () => {
+      expect(new ApplyAuditChangesCapability().writesSharedSettings).toBe(true);
     });
   });
 

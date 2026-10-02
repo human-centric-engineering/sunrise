@@ -398,20 +398,29 @@ release process.
   t-751). Providers, provider models, capabilities, agent profiles, knowledge
   tags, feature flags, MCP exposure and server config, and orchestration
   settings are one row serving every org, so a change made by a platform
-  admin switched into a customer's org landed in every org. The 33 write
-  handlers on those routes now declare the new `withAdminAuth` option
-  `{ writesSharedSettings: true }`, and at `multi` the guard refuses a session
-  entered into any org but the install org with a 403 whose
-  `details.reason` is `shared-settings-install-org-only`. An unbound admin
-  API key, which enters no org, is still allowed. Reads are unchanged. The
-  built-in capabilities `add_provider_models`, `deactivate_provider_models`
-  and `apply_audit_changes`, which any org's workflow can call, refuse the
-  same way with the error code `shared_settings_install_org_only`. The rule
-  is `canChangeSharedSettings()` in the new `lib/tenancy/shared-settings.ts`.
+  admin switched into a customer's org landed in every org. The rule is
+  `canChangeSharedSettings()` in the new `lib/tenancy/shared-settings.ts`:
+  the install org or a system scope only, and never a call stack that entered
+  no org.
+  - **Routes:** `withAdminAuth` takes a new option,
+    `{ writesSharedSettings: true }`, and 34 write handlers declare it. At
+    `multi` the guard refuses a session entered into any org but the install
+    org with a 403 whose `details.reason` is
+    `shared-settings-install-org-only`. An unbound admin API key, which
+    enters no org, is still allowed. Reads are unchanged.
+  - **The backup import** (`POST …/backup/import`) is one of them. At `multi`
+    it now runs from the install org only, until §109 t-738 splits a
+    backup's shared settings from the importing org's own data.
+  - **Capabilities:** `BaseCapability` has a new declarative
+    `writesSharedSettings` flag, set by `add_provider_models`,
+    `deactivate_provider_models` and `apply_audit_changes`. The dispatcher
+    refuses a declared capability, with the error code
+    `shared_settings_install_org_only`, before approval or execution.
+
   **Forks:** a route of yours that writes one of the `GLOBAL_CONFIG_MODELS`
-  must declare the option. The always-run
-  `tests/unit/scripts/ci/shared-settings-writes.test.ts` names any that
-  doesn't. Nothing changes at `single`.
+  must declare the option, and a capability class that writes one must set
+  the flag. The always-run `tests/unit/scripts/ci/shared-settings-writes.test.ts`
+  names any that doesn't. Nothing changes at `single`.
 
 ### Deprecated
 

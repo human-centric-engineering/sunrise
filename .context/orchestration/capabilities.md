@@ -388,6 +388,9 @@ export abstract class BaseCapability<TArgs = unknown, TData = unknown> {
   /** PII declaration — set true if args or results carry personal data. */
   readonly processesPii: boolean; // default: false
 
+  /** Shared-settings declaration — set true if it writes a GLOBAL_CONFIG_MODELS row. */
+  readonly writesSharedSettings: boolean; // default: false
+
   abstract execute(args: TArgs, context: CapabilityContext): Promise<CapabilityResult<TData>>;
 
   validate(rawArgs: unknown): TArgs; // throws CapabilityValidationError
@@ -421,12 +424,17 @@ If your capability handles emails, phone numbers, customer records, free-text us
 
 The registry refuses to register a capability that declares `processesPii = true` without an override — startup fails fast. Six built-ins ship with overrides today: `call_external_api`, `escalate_to_human`, `run_workflow`, `read_user_memory`, `write_user_memory`, `upload_to_storage`. See [`.context/security/pii-redaction.md`](../security/pii-redaction.md) for the full contract, a worked example, and the masking primitives in `lib/security/redact.ts`.
 
+### Shared-settings obligation
+
+If your capability creates, changes or deletes a shared setting — a row of one of the `GLOBAL_CONFIG_MODELS` (providers, provider models, capabilities, agent profiles, knowledge tags, feature flags, MCP config, orchestration settings) — set `readonly writesSharedSettings = true`. At `TENANCY_MODE=multi` the dispatcher then refuses it outside the install org with `{ code: 'shared_settings_install_org_only' }`, before approval or execution: any org's workflow can reach a capability through a `tool_call` step, and one org's change would land in every org (§107 t-751). Three built-ins declare it: `add_provider_models`, `deactivate_provider_models`, `apply_audit_changes`. `tests/unit/scripts/ci/shared-settings-writes.test.ts` fails naming a capability class that writes one of those models without the flag. See [Row Isolation](../tenancy/isolation.md#the-policy).
+
 ## Dispatch Pipeline
 
 `capabilityDispatcher.dispatch(slug, rawArgs, context)` runs this pipeline, returning as soon as any step fails:
 
 1. **Load registry** — `loadFromDatabase()` fetches active `AiCapability` rows into the in-memory map. Deduped via an inflight promise; cached for 5 minutes.
 2. **Handler lookup** — `handlers.get(slug)`. Missing → `{ code: 'unknown_capability' }`.
+   - **Shared settings** — a handler declaring `writesSharedSettings`, at `multi`, outside the install org or a system scope → `{ code: 'shared_settings_install_org_only' }`.
 3. **Registry lookup** — the in-memory `CapabilityRegistryEntry`. Missing → `{ code: 'capability_inactive' }`.
    3a. **Quarantine gate** — `resolveQuarantineState(entry)` resolves the effective state (a past `quarantineUntil` is treated as `active`). Soft → `{ code: 'capability_quarantined', skipFollowup: false, metadata: { mode, reason } }` with a "temporarily unavailable" message the agent can route around. Hard → same code with `skipFollowup: true` and a firm message that stops the model's tool loop. See the [Quarantine](#quarantine-incident-disable) section below.
 4. **Per-agent binding** — `prisma.aiAgentCapability.findMany({ agentId })`, cached per agent for 5 minutes. An explicit row with `isEnabled: false` → `{ code: 'capability_disabled_for_agent' }`. Missing row = default-allow with base-capability defaults.

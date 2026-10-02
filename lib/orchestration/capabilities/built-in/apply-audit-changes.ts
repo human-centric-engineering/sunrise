@@ -23,7 +23,6 @@ import type {
   CapabilityFunctionDefinition,
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
-import { canChangeSharedSettings, SHARED_SETTINGS_REFUSAL } from '@/lib/tenancy/shared-settings';
 
 /**
  * Fields that audits are allowed to modify. Intentionally narrower than
@@ -143,6 +142,8 @@ interface Data {
 export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
   readonly slug = 'apply_audit_changes';
   readonly processesPii = false;
+  /** Provider models are shared settings: refused outside the install org at `multi` (§107 t-751). */
+  readonly writesSharedSettings = true;
 
   readonly functionDefinition: CapabilityFunctionDefinition = {
     name: 'apply_audit_changes',
@@ -211,13 +212,6 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
   protected readonly schema = schema;
 
   async execute(args: Args, context: CapabilityContext): Promise<CapabilityResult<Data>> {
-    // Provider models are shared settings: at `multi` they change only from the
-    // install org (§107 t-751). Any org's workflow can reach this through a
-    // `tool_call` step, so the check is here rather than on a route.
-    if (!canChangeSharedSettings()) {
-      return this.error(SHARED_SETTINGS_REFUSAL, 'shared_settings_install_org_only');
-    }
-
     // Normalise single-model and multi-model input into a uniform list
     const entries = 'models' in args ? args.models : [args];
 
