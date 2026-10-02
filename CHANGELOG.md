@@ -464,6 +464,16 @@ release process.
   org, and checks that afterwards no tenant-owned table holds a row carrying
   that org (a cost row stays, with its org cleared, by design) (t-730).
 
+- **Save as template works at `multi` when another org holds the slug**
+  (t-728). `AiWorkflow.slug` is unique across the install, but the slug loop
+  in `POST /api/v1/admin/orchestration/workflows/:id/save-as-template` read
+  through the org's isolation policy. It called a slug free that another org
+  held, and the create was refused with a 400 "please try again" that could
+  never succeed. It now picks the slug with the new `findFreeWorkflowSlug()`
+  in `lib/orchestration/workflows/slug-availability.ts`, which (with
+  `isWorkflowSlugTaken()`) checks every org under the system scope and
+  returns only the answer. Nothing changes at `single`.
+
 ## [0.13.0] — 2026-09-24
 
 > **Alpha release.** Nineteenth tagged Sunrise release. **MINOR bump**. It
