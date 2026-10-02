@@ -5,7 +5,7 @@
  *
  * Tests the password strength visual indicator component.
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/forms/password-strength.tsx
+ * @see components/forms/password-strength.tsx
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

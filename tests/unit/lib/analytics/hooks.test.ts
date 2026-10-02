@@ -12,7 +12,7 @@
  * - Page property construction
  * - Custom property merging
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/lib/analytics/hooks.ts
+ * @see lib/analytics/hooks.ts
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

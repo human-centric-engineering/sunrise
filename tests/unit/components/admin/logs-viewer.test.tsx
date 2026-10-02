@@ -12,7 +12,7 @@
  * - Loading states
  * - Fixed stale closure bugs for level filtering and search
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/admin/logs-viewer.tsx
+ * @see components/admin/logs-viewer.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

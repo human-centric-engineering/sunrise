@@ -10,7 +10,7 @@
  * - Conditional redirect based on email verification
  * - OAuth error display from URL params
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/components/forms/signup-form.tsx
+ * @see components/forms/signup-form.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

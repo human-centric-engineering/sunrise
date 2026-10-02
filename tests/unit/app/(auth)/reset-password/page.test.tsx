@@ -18,7 +18,7 @@
  * - Card header elements (title, description)
  * - Back to login link
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/app/(auth)/reset-password/page.tsx
+ * @see app/(auth)/reset-password/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';

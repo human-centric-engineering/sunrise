@@ -16,7 +16,7 @@
  * - Production mode hides error details
  * - Component includes required html and body tags
  *
- * @see /Users/simonholmes/Documents/Dev/studio/sunrise/app/global-error.tsx
+ * @see app/global-error.tsx
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
