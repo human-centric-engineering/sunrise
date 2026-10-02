@@ -48,8 +48,9 @@ const TEST_FILES = globSync(['tests/**/*.{ts,tsx}'], {
 
 describe('the scan itself', () => {
   it('finds the test tree, or every assertion below is vacuous', () => {
-    // A glob that matches nothing reports a clean tree.
-    expect(TEST_FILES.length).toBeGreaterThan(900);
+    // A glob that matches nothing reports a clean tree. The floor is a vacuity check, not a
+    // census: low enough that a fork which prunes its tests does not fail it.
+    expect(TEST_FILES.length).toBeGreaterThan(100);
   });
 
   it('flags absolute paths and passes repo-relative ones', () => {
