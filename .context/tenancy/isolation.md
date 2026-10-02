@@ -94,8 +94,9 @@ CREATE POLICY "org_isolation" ON "ai_agent"
   parses every route and every `lib/` function, and fails naming a handler
   that writes one of these models, directly or through a writer, without
   the option. Two kinds of write are excepted there, each with its reason:
-  the create-if-missing singletons and the built-in patterns tag, which
-  change nothing another org would notice; and the backup import, which
+  writes that only create what is missing (the two settings singletons, the
+  default feature flags, the built-in patterns tag), which change nothing
+  another org would notice; and the backup import, which
   §109 t-738 re-scopes. Nothing changes at `single`.
 
 The text is defined once, in
