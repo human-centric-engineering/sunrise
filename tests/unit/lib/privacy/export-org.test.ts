@@ -4,7 +4,8 @@
  * The manifest is mocked at the module so the service is tested against a
  * small known roster of sources — one of each disposition — rather than the
  * real one (`org-sources.test.ts` covers that). What is pinned: every source
- * runs, sections land under the right key by disposition, `meta` describes
+ * runs, as the exported org whatever scope the caller is in (t-735), sections
+ * land under the right key by disposition, `meta` describes
  * exactly what was delivered, one failing source fails the whole export, and
  * a missing org is its own error.
  */
@@ -45,6 +46,7 @@ vi.mock('@/lib/privacy/org-sources', () => ({
   ORG_EXCLUDED_SOURCES: [{ model: 'Ghost', reason: 'Fixture exclusion.' }],
 }));
 
+import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 import {
   exportOrgData,
   OrgNotFoundError,
@@ -85,6 +87,26 @@ describe('exportOrgData', () => {
     await exportOrgData({ orgId: ORG, actorUserId: ADMIN });
     expect(sources.members).toHaveBeenCalledWith({ orgId: ORG });
     expect(sources.keys).toHaveBeenCalledWith({ orgId: ORG });
+  });
+
+  it('reads every source as the exported org, not as the org the caller is in (t-735)', async () => {
+    const seen: Array<string | null | undefined> = [];
+    sources.members.mockImplementation(async () => {
+      seen.push(getTenantContext()?.orgId);
+      return [];
+    });
+    sources.keys.mockImplementation(async () => {
+      seen.push(getTenantContext()?.orgId);
+      return [];
+    });
+
+    // An admin's session enters their own active org; an admin API key enters none.
+    await runAsOrg('cmorg00000000000000active', () =>
+      exportOrgData({ orgId: ORG, actorUserId: ADMIN })
+    );
+    await exportOrgData({ orgId: ORG, actorUserId: ADMIN });
+
+    expect(seen).toEqual([ORG, ORG, ORG, ORG]);
   });
 
   it('reports an empty section as delivered with zero rows, not as absent', async () => {

@@ -24,6 +24,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { runAsOrg } from '@/lib/tenancy/context';
 import {
   ORG_DATA_SOURCES,
   ORG_EXCLUDED_SOURCES,
@@ -94,8 +95,18 @@ export async function exportOrgData(params: ExportOrgParams): Promise<OrgExport>
 
   // A rejection propagates: an export that quietly lost a section would be
   // indistinguishable, to the reader, from one that had nothing to show.
-  const results = await Promise.all(
-    ORG_DATA_SOURCES.map(async (source) => ({ source, rows: await source.fetch(query) }))
+  //
+  // Read as the org being exported, not as whoever is asking (§106 t-735). At
+  // `multi` the admin route runs inside the admin's own active org, and the
+  // `org_isolation` policy would AND every `ownedBy(orgId)` below with that
+  // org, so any other org's export came back with every section empty; an
+  // admin API key enters no org at all, and the reads threw. Entering the
+  // target here, rather than in the route, means any caller gets it — §111's
+  // planned owner self-service export is meant to sit on this same service.
+  const results = await runAsOrg(orgId, () =>
+    Promise.all(
+      ORG_DATA_SOURCES.map(async (source) => ({ source, rows: await source.fetch(query) }))
+    )
   );
 
   const data: Record<string, unknown[]> = {};
