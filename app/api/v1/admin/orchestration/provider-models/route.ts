@@ -93,6 +93,7 @@ export const GET = withAdminAuth(async (request, _session) => {
   // co-located instead of split across population + lookup.
   const data = rows.map((model) => {
     const config = configBySlug.get(model.providerSlug);
+    const used = usage.get(modelUsageKey(model.providerSlug, model.modelId));
     const defaultFor: TaskType[] = [];
     for (const task of TASK_TYPES) {
       const stored = settings.defaultModels[task];
@@ -119,11 +120,10 @@ export const GET = withAdminAuth(async (request, _session) => {
       ...model,
       configured: !!config,
       configuredActive: config?.isActive ?? false,
-      agents: usage.get(modelUsageKey(model.providerSlug, model.modelId))?.agents ?? [],
+      agents: used?.agents ?? [],
       // Active agents in other orgs bound to it. Counted, never named; the
       // delete is refused while this or `agents` is non-zero.
-      otherOrgAgentCount:
-        usage.get(modelUsageKey(model.providerSlug, model.modelId))?.otherOrgAgents ?? 0,
+      otherOrgAgentCount: used?.otherOrgAgents ?? 0,
       // Task slots this model serves as the effective system default
       // (routing/chat/reasoning/embeddings/audio). Agents with empty
       // provider/model inherit these at runtime.

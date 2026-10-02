@@ -55,7 +55,11 @@ import {
   type TaskType,
   type TierRole,
 } from '@/types/orchestration';
-import { OtherOrgUsage } from '@/components/admin/orchestration/other-org-usage';
+import {
+  agentCount,
+  agentsInEveryOrg,
+  OtherOrgUsage,
+} from '@/components/admin/orchestration/other-org-usage';
 
 // Short human labels for the four `TaskType` slots resolved via
 // `OrchestrationSettings.defaultModels`. Surfaced as per-row badges
@@ -306,11 +310,6 @@ function SortableHead({
   );
 }
 
-/** Active agents using a model in every org: the caller's, named, and other orgs', counted (§107 t-752). */
-function usedBy(row: { agents?: unknown[]; otherOrgAgentCount?: number }): number {
-  return (row.agents?.length ?? 0) + (row.otherOrgAgentCount ?? 0);
-}
-
 export function ProviderModelsMatrix({
   initialModels,
   canAuditModels = false,
@@ -465,7 +464,7 @@ export function ProviderModelsMatrix({
       );
     }
     if (inUseOnly) {
-      rows = rows.filter((m) => usedBy(m) > 0);
+      rows = rows.filter((m) => agentsInEveryOrg(m) > 0);
     }
     const term = search.trim().toLowerCase();
     if (term.length > 0) {
@@ -877,57 +876,58 @@ export function ProviderModelsMatrix({
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
                     {(() => {
-                      const agentCount = usedBy(model);
+                      const inUse = agentsInEveryOrg(model);
                       const defaultRoles = model.defaultFor ?? [];
                       // Empty state — render an explicit "Not in use"
                       // so the operator gets a clear signal rather
                       // than guessing what a bare "0" means.
-                      if (agentCount === 0 && defaultRoles.length === 0) {
+                      if (inUse === 0 && defaultRoles.length === 0) {
                         return (
                           <span className="text-muted-foreground text-xs italic">Not in use</span>
                         );
                       }
                       return (
                         <div className="flex flex-col items-end gap-1">
-                          {agentCount > 0 ? (
+                          {inUse > 0 ? (
                             <Popover>
                               <PopoverTrigger asChild>
                                 <button
                                   className="cursor-pointer text-xs tabular-nums hover:underline"
-                                  aria-label={`Show ${agentCount} agent${
-                                    agentCount === 1 ? '' : 's'
-                                  } directly assigned to ${model.name}`}
+                                  aria-label={`Show ${agentCount(inUse)} directly assigned to ${model.name}`}
                                 >
-                                  {agentCount} agent{agentCount === 1 ? '' : 's'} →
+                                  {agentCount(inUse)} →
                                 </button>
                               </PopoverTrigger>
                               <PopoverContent className="w-72 p-0" align="end">
                                 <div className="border-b px-3 py-2">
                                   <p className="text-sm font-medium">
-                                    {agentCount} agent
-                                    {agentCount === 1 ? '' : 's'} directly assigned to{' '}
+                                    {agentCount(inUse)} directly assigned to{' '}
                                     <span className="font-semibold">{model.name}</span>
                                   </p>
-                                  <p className="text-muted-foreground mt-0.5 text-xs">
-                                    These agents pinned this model in their Provider/Model fields.
-                                    Editing the agent re-points it.
-                                  </p>
+                                  {(model.agents?.length ?? 0) > 0 && (
+                                    <p className="text-muted-foreground mt-0.5 text-xs">
+                                      These agents pinned this model in their Provider/Model fields.
+                                      Editing the agent re-points it.
+                                    </p>
+                                  )}
                                 </div>
-                                <ul className="max-h-48 overflow-y-auto py-1">
-                                  {model.agents?.map((agent) => (
-                                    <li key={agent.id}>
-                                      <Link
-                                        href={`/admin/orchestration/agents/${agent.id}`}
-                                        className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
-                                      >
-                                        <span className="truncate">{agent.name}</span>
-                                        <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
-                                          {agent.slug}
-                                        </span>
-                                      </Link>
-                                    </li>
-                                  ))}
-                                </ul>
+                                {(model.agents?.length ?? 0) > 0 && (
+                                  <ul className="max-h-48 overflow-y-auto py-1">
+                                    {model.agents?.map((agent) => (
+                                      <li key={agent.id}>
+                                        <Link
+                                          href={`/admin/orchestration/agents/${agent.id}`}
+                                          className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                                        >
+                                          <span className="truncate">{agent.name}</span>
+                                          <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
+                                            {agent.slug}
+                                          </span>
+                                        </Link>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
                                 <OtherOrgUsage
                                   count={model.otherOrgAgentCount ?? 0}
                                   afterList={(model.agents?.length ?? 0) > 0}
@@ -962,11 +962,11 @@ export function ProviderModelsMatrix({
                     })()}
                   </TableCell>
                   <TableCell className="text-right">
-                    {usedBy(model) > 0 ? (
+                    {agentsInEveryOrg(model) > 0 ? (
                       <Tip
-                        label={`Cannot delete — ${usedBy(model)} agent${
-                          usedBy(model) === 1 ? '' : 's'
-                        } still ${usedBy(model) === 1 ? 'uses' : 'use'} this model${
+                        label={`Cannot delete — ${agentCount(agentsInEveryOrg(model))} still ${
+                          agentsInEveryOrg(model) === 1 ? 'uses' : 'use'
+                        } this model${
                           (model.otherOrgAgentCount ?? 0) > 0 ? ', counting every organisation' : ''
                         }.`}
                       >

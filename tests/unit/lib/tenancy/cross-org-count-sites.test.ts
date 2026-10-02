@@ -1,5 +1,6 @@
 /**
- * Tests: `runAsCrossOrgCount` has one caller (§107 t-752).
+ * Tests: `runAsCrossOrgCount` has one caller (§107 t-752). The whole checkout
+ * is read — root files like `proxy.ts` too — and a re-export counts as a use.
  *
  * The scope is the audited bypass, logged at debug instead of info because
  * the admin pages enter it on every load. That trade is only safe while every
@@ -20,20 +21,21 @@ const ALLOWED = new Set([
   'lib/orchestration/admin/global-config-usage.ts', // the one caller
 ]);
 
+/** Every source file in the checkout — root files like `proxy.ts` included — but tests. */
 function sourceFiles(): string[] {
-  return execSync(
-    'git ls-files --cached --others --exclude-standard -- app lib components scripts prisma',
-    {
-      encoding: 'utf8',
-    }
-  )
+  return execSync('git ls-files --cached --others --exclude-standard', { encoding: 'utf8' })
     .split('\n')
-    .filter((p) => /\.(ts|tsx|mjs|js)$/.test(p) && !/\.test\.tsx?$/.test(p));
+    .filter(
+      (p) =>
+        /\.(ts|tsx|mts|cts|mjs|cjs|js|jsx)$/.test(p) &&
+        !p.startsWith('tests/') &&
+        !/\.(test|spec)\.[cm]?[jt]sx?$/.test(p)
+    );
 }
 
 /** An import of it, or a call — not a mention in prose (an always-run reason names it). */
 const USES =
-  /\bimport\s*\{[^}]*\brunAsCrossOrgCount\b[^}]*\}\s*from\b|\brunAsCrossOrgCount\s*(?:<[^>]*>)?\(/;
+  /\b(?:import|export)\s*(?:type\s*)?\{[^}]*\brunAsCrossOrgCount\b[^}]*\}\s*from\b|\brunAsCrossOrgCount\s*(?:<[^>]*>)?\(/;
 
 function callersIn(
   files: readonly string[],
@@ -46,7 +48,7 @@ describe('runAsCrossOrgCount', () => {
   it('is entered only by the global-config usage module', () => {
     const files = sourceFiles();
     expect(files.length).toBeGreaterThan(500);
-    expect(files).toEqual(expect.arrayContaining([...ALLOWED]));
+    expect(files).toEqual(expect.arrayContaining([...ALLOWED, 'proxy.ts']));
     expect(callersIn(files)).toEqual([]);
   });
 
@@ -61,6 +63,10 @@ describe('runAsCrossOrgCount', () => {
       callersIn([unrelated], () => "import { runAsCrossOrgCount } from '@/lib/tenancy/context';")
     ).toEqual([unrelated]);
     expect(callersIn([unrelated], () => "await runAsCrossOrgCount('r', fn);")).toEqual([unrelated]);
+    // A re-export lets anything call it through a barrel.
+    expect(
+      callersIn([unrelated], () => "export { runAsCrossOrgCount } from '@/lib/tenancy/context';")
+    ).toEqual([unrelated]);
     expect(callersIn([unrelated], () => '// see `runAsCrossOrgCount`, the debug bypass')).toEqual(
       []
     );

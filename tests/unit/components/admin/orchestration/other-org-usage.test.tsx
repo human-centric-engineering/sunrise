@@ -9,13 +9,26 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import { agentCount, OtherOrgUsage } from '@/components/admin/orchestration/other-org-usage';
+import {
+  agentCount,
+  agentsInEveryOrg,
+  OtherOrgUsage,
+} from '@/components/admin/orchestration/other-org-usage';
 
 describe('agentCount', () => {
   it('says "agent" for one and "agents" otherwise', () => {
     expect(agentCount(1)).toBe('1 agent');
     expect(agentCount(0)).toBe('0 agents');
     expect(agentCount(4)).toBe('4 agents');
+  });
+});
+
+describe('agentsInEveryOrg', () => {
+  it('adds the caller’s listed agents to other orgs’ count, treating absent as none', () => {
+    expect(agentsInEveryOrg({ agents: [{}, {}], otherOrgAgentCount: 3 })).toBe(5);
+    expect(agentsInEveryOrg({ agents: [{}] })).toBe(1);
+    expect(agentsInEveryOrg({ otherOrgAgentCount: 2 })).toBe(2);
+    expect(agentsInEveryOrg({})).toBe(0);
   });
 });
 

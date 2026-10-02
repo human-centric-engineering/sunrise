@@ -8,8 +8,9 @@
  *   attached, counted and never named (§107 t-752). The array keeps its
  *   shape, so a caller that ignores `meta` reads what it always read.
  *
- *   Used by the admin Capabilities list (for the "agents using it"
- *   count) and the Capability edit page (to warn before delete).
+ *   Used by the Capability edit page: its Safety tab's "Used by" card and
+ *   the quarantine card's blast radius. The Capabilities list reads the
+ *   same usage inline (`_agents`, `_otherOrgAgentCount`).
  *
  * Mirrors the additive `/agents/:id/capabilities` exception we took
  * in Session 4.2 — Phase 3 is otherwise locked; we only add

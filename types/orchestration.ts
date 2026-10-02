@@ -1351,7 +1351,7 @@ export interface CapabilityAgentRef {
 export type AiCapabilityListItem = AiCapability & {
   /** The caller's org's agents with it attached (every agent at `single`). */
   _agents: CapabilityAgentRef[];
-  /** Agents in other orgs with it attached: counted, never named (§107 t-752). */
+  /** ACTIVE agents in other orgs with it attached: counted, never named (§107 t-752). */
   _otherOrgAgentCount: number;
 };
 

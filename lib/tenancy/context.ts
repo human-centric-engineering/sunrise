@@ -239,8 +239,9 @@ export function runAsCredentialLookup<T>(credential: string, fn: () => Promise<T
  * Logged at debug, as {@link runAsCredentialLookup} is, and for its reason:
  * what an audit needs is that the sites are few and known. There is one —
  * `lib/orchestration/admin/global-config-usage.ts`, which returns another
- * org's rows only as numbers — and `tests/unit/lib/tenancy/context.test.ts`
- * fails naming any other caller. Nothing here makes the scope read-only; the
+ * org's rows only as numbers — and
+ * `tests/unit/lib/tenancy/cross-org-count-sites.test.ts` (always-run) fails
+ * naming any other caller. Nothing here makes the scope read-only; the
  * module's queries do, and that is why it is confined to one module.
  */
 export function runAsCrossOrgCount<T>(reason: string, fn: () => Promise<T>): Promise<T> {

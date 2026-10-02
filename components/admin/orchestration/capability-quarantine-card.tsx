@@ -520,30 +520,30 @@ function AffectedAgentsPopover({
             type="button"
             className="text-muted-foreground hover:text-foreground text-xs underline-offset-2 hover:underline"
           >
-            {count} agent{count === 1 ? '' : 's'} affected →
+            {agentCount(count)} affected →
           </button>
         </PopoverTrigger>
         <PopoverContent className="w-72 p-0" align="start">
           <div className="border-b px-3 py-2">
-            <p className="text-sm font-medium">
-              {count} agent{count === 1 ? '' : 's'} affected
-            </p>
+            <p className="text-sm font-medium">{agentCount(count)} affected</p>
           </div>
-          <ul className="max-h-64 overflow-y-auto py-1">
-            {affectedAgents.map((agent) => (
-              <li key={agent.id}>
-                <Link
-                  href={`/admin/orchestration/agents/${agent.id}`}
-                  className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
-                >
-                  <span className="truncate">{agent.name}</span>
-                  <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
-                    {agent.slug}
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          {affectedAgents.length > 0 && (
+            <ul className="max-h-64 overflow-y-auto py-1">
+              {affectedAgents.map((agent) => (
+                <li key={agent.id}>
+                  <Link
+                    href={`/admin/orchestration/agents/${agent.id}`}
+                    className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                  >
+                    <span className="truncate">{agent.name}</span>
+                    <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
+                      {agent.slug}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
           <OtherOrgUsage
             count={otherOrgAffectedCount}
             afterList={affectedAgents.length > 0}

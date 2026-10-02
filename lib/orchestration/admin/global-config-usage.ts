@@ -215,8 +215,9 @@ export function modelUsageKey(providerSlug: string, modelId: string): string {
 
 /**
  * Active agents bound to each `(provider, model)` pair among `providerSlugs`
- * and, when given, `modelIds`, in every org, in one read — for the models
- * matrix and a provider's model list (§107 t-752). Keyed by
+ * and, when given, `modelIds`, in every org — for the models matrix and a
+ * provider's model list (§107 t-752): the caller's read by row, every other
+ * org's only counted. Keyed by
  * {@link modelUsageKey}; a pair with no agent is absent.
  */
 export function modelAgentUsage(
@@ -226,25 +227,46 @@ export function modelAgentUsage(
   if (providerSlugs.length === 0 || modelIds?.length === 0) {
     return Promise.resolve(new Map<string, ModelAgentUsage>());
   }
+  // The caller's rows are read by row; every other org's are only counted,
+  // so their names never leave the database.
+  const own = callersWhere();
   const isCallers = callersRows();
   return acrossOrgs(async () => {
-    const rows = await prisma.aiAgent.findMany({
-      where: {
-        isActive: true,
-        provider: { in: providerSlugs },
-        ...(modelIds ? { model: { in: modelIds } } : {}),
-      },
-      select: { id: true, name: true, slug: true, orgId: true, provider: true, model: true },
-      orderBy: { name: 'asc' },
-    });
+    const where = {
+      isActive: true,
+      provider: { in: providerSlugs },
+      ...(modelIds ? { model: { in: modelIds } } : {}),
+    };
+    const [ownRows, groups] = await Promise.all([
+      own
+        ? prisma.aiAgent.findMany({
+            where: { ...where, ...own },
+            select: { id: true, name: true, slug: true, provider: true, model: true },
+            orderBy: { name: 'asc' },
+          })
+        : [],
+      prisma.aiAgent.groupBy({
+        by: ['provider', 'model', 'orgId'],
+        where,
+        _count: { _all: true },
+      }),
+    ]);
     const usage = new Map<string, ModelAgentUsage>();
-    for (const row of rows) {
-      if (!row.provider || !row.model) continue;
-      const key = modelUsageKey(row.provider, row.model);
+    const entry = (provider: string, model: string) => {
+      const key = modelUsageKey(provider, model);
       const found = usage.get(key) ?? { agents: [], otherOrgAgents: 0 };
-      if (isCallers(row.orgId)) found.agents.push({ id: row.id, name: row.name, slug: row.slug });
-      else found.otherOrgAgents += 1;
       usage.set(key, found);
+      return found;
+    };
+    for (const row of ownRows) {
+      if (row.provider && row.model) {
+        entry(row.provider, row.model).agents.push({ id: row.id, name: row.name, slug: row.slug });
+      }
+    }
+    for (const g of groups) {
+      if (g.provider && g.model && !isCallers(g.orgId)) {
+        entry(g.provider, g.model).otherOrgAgents += g._count._all;
+      }
     }
     return usage;
   });
@@ -259,39 +281,54 @@ export interface CapabilityAgentRef extends NamedRef {
 
 /** Who uses a capability: the caller's agents by name, other orgs' counted. */
 export interface CapabilityAgentUsage {
-  /** The caller's agents with the capability attached, by name, active or not. */
+  /** The caller's agents with the capability attached, by name, active or not (each says which). */
   agents: CapabilityAgentRef[];
-  /** Agents in other orgs with it attached. */
+  /** ACTIVE agents in other orgs with it attached. */
   otherOrgAgents: number;
 }
 
 /**
- * Agents with each capability attached, in every org, in one read — for the
- * capabilities list, a capability's page and its delete warning (§107
- * t-752). The pivot carries its own `orgId`. A capability with no agent is
- * absent.
+ * Agents with each capability attached, in every org — for the capabilities
+ * list and its delete warning, and a capability's page (§107 t-752). The
+ * pivot carries its own `orgId`: the caller's links are read by row, every
+ * other org's active ones only counted. A capability with no agent is absent.
  */
 export function capabilityAgentUsage(
   capabilityIds: string[]
 ): Promise<Map<string, CapabilityAgentUsage>> {
   if (capabilityIds.length === 0) return Promise.resolve(new Map<string, CapabilityAgentUsage>());
+  // The caller's links are read by row; every other org's are only counted.
+  const own = callersWhere();
   const isCallers = callersRows();
   return acrossOrgs(async () => {
-    const links = await prisma.aiAgentCapability.findMany({
-      where: { capabilityId: { in: capabilityIds } },
-      select: {
-        capabilityId: true,
-        orgId: true,
-        agent: { select: { id: true, name: true, slug: true, isActive: true } },
-      },
-      orderBy: { agent: { name: 'asc' } },
-    });
+    const [ownLinks, groups] = await Promise.all([
+      own
+        ? prisma.aiAgentCapability.findMany({
+            where: { capabilityId: { in: capabilityIds }, ...own },
+            select: {
+              capabilityId: true,
+              agent: { select: { id: true, name: true, slug: true, isActive: true } },
+            },
+            orderBy: { agent: { name: 'asc' } },
+          })
+        : [],
+      // Active agents only: a deactivated agent cannot call the tool, and a
+      // count of another org's agents carries no flag to say which are.
+      prisma.aiAgentCapability.groupBy({
+        by: ['capabilityId', 'orgId'],
+        where: { capabilityId: { in: capabilityIds }, agent: { isActive: true } },
+        _count: { _all: true },
+      }),
+    ]);
     const usage = new Map<string, CapabilityAgentUsage>();
-    for (const link of links) {
-      const found = usage.get(link.capabilityId) ?? { agents: [], otherOrgAgents: 0 };
-      if (isCallers(link.orgId)) found.agents.push(link.agent);
-      else found.otherOrgAgents += 1;
-      usage.set(link.capabilityId, found);
+    const entry = (capabilityId: string) => {
+      const found = usage.get(capabilityId) ?? { agents: [], otherOrgAgents: 0 };
+      usage.set(capabilityId, found);
+      return found;
+    };
+    for (const link of ownLinks) entry(link.capabilityId).agents.push(link.agent);
+    for (const g of groups) {
+      if (!isCallers(g.orgId)) entry(g.capabilityId).otherOrgAgents += g._count._all;
     }
     return usage;
   });

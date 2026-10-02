@@ -442,7 +442,8 @@ release process.
     naming them:
     - `GET /provider-models` and `GET /providers/:id/models` add
       `otherOrgAgentCount` per model;
-    - `GET /capabilities` adds `_otherOrgAgentCount` per item;
+    - `GET /capabilities` adds `_otherOrgAgentCount` per item (other orgs'
+      active agents);
     - `GET /capabilities/:id/agents` keeps its array and adds
       `meta.otherOrgAgentCount`.
   - The pages' counts, "has agent" filters, sort and the matrix's

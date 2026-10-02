@@ -45,6 +45,7 @@ vi.mock('@/lib/db/client', () => ({
       findMany: vi.fn(),
     },
     aiAgent: {
+      groupBy: vi.fn(() => Promise.resolve([])),
       findMany: vi.fn(() => Promise.resolve([])),
     },
   },

@@ -1127,4 +1127,21 @@ describe('ProviderModelsMatrix — agents in other organisations (§107 t-752)',
     expect(screen.getByText('Elsewhere Model')).toBeInTheDocument();
     expect(screen.queryByText('Unused Model')).not.toBeInTheDocument();
   });
+
+  it('does not tell the admin to edit agents it cannot list when only other orgs use it', async () => {
+    const user = userEvent.setup();
+    render(
+      <ProviderModelsMatrix
+        initialModels={[makeModel({ name: 'GPT-5', agents: [], otherOrgAgentCount: 2 })]}
+      />
+    );
+
+    await user.click(
+      screen.getByRole('button', { name: /show 2 agents directly assigned to GPT-5/i })
+    );
+
+    expect(await screen.findByText(/2 agents in other organisations use it/)).toBeInTheDocument();
+    expect(screen.queryByText(/Editing the agent re-points it/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('list')).not.toBeInTheDocument();
+  });
 });

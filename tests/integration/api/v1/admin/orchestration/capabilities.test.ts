@@ -57,7 +57,10 @@ vi.mock('@/lib/db/client', () => {
       mcpExposedTool,
       // Agents using each capability, read across orgs by
       // `capabilityAgentUsage` (§107 t-752).
-      aiAgentCapability: { findMany: vi.fn().mockResolvedValue([]) },
+      aiAgentCapability: {
+        findMany: vi.fn().mockResolvedValue([]),
+        groupBy: vi.fn().mockResolvedValue([]),
+      },
       // The guard's membership check when a test runs at multi.
       orgMembership: { findUnique: vi.fn() },
       // PATCH pins the MCP tool name and updates the capability in one
@@ -335,11 +338,11 @@ describe('GET /api/v1/admin/orchestration/capabilities', () => {
             orgId: INSTALL_ORG_ID,
             agent: { id: 'agent-1', name: 'Ours', slug: 'ours', isActive: true },
           },
-          {
-            capabilityId: CAPABILITY_ID,
-            orgId: 'cmorg00000000000customer',
-            agent: { id: 'agent-2', name: 'Theirs', slug: 'theirs', isActive: true },
-          },
+        ] as never);
+        // Other orgs come back as counts only: their rows are never read.
+        vi.mocked(prisma.aiAgentCapability.groupBy).mockResolvedValue([
+          { capabilityId: CAPABILITY_ID, orgId: INSTALL_ORG_ID, _count: { _all: 1 } },
+          { capabilityId: CAPABILITY_ID, orgId: 'cmorg00000000000customer', _count: { _all: 1 } },
         ] as never);
 
         const response = await listGet(makeListRequest());
@@ -350,7 +353,11 @@ describe('GET /api/v1/admin/orchestration/capabilities', () => {
         expect(response.status).toBe(200);
         expect(body.data[0]._agents.map((a) => a.id)).toEqual(['agent-1']);
         expect(body.data[0]._otherOrgAgentCount).toBe(1);
-        expect(JSON.stringify(body)).not.toContain('Theirs');
+        expect(vi.mocked(prisma.aiAgentCapability.findMany)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { capabilityId: { in: [CAPABILITY_ID] }, orgId: INSTALL_ORG_ID },
+          })
+        );
       } finally {
         env.TENANCY_MODE = mode;
       }

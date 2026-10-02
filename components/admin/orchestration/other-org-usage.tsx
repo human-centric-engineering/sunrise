@@ -26,6 +26,15 @@ export function agentCount(count: number): string {
   return `${count} agent${count === 1 ? '' : 's'}`;
 }
 
+/**
+ * Agents using a shared setting in every org: the caller's, which a row
+ * lists, plus other orgs', which it counts. The one sum behind every count,
+ * "in use" filter, sort and delete-disabled state on these pages.
+ */
+export function agentsInEveryOrg(row: { agents?: unknown[]; otherOrgAgentCount?: number }): number {
+  return (row.agents?.length ?? 0) + (row.otherOrgAgentCount ?? 0);
+}
+
 export function OtherOrgUsage({ count, afterList = false, className }: OtherOrgUsageProps) {
   if (count <= 0) return null;
   return (

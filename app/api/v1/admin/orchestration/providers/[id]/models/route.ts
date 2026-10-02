@@ -103,6 +103,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
     // here, which is the bug the matrix-wide route was tripping on.
     const enriched = liveModels.map((m) => {
       const matrix = matrixByModelId.get(m.id);
+      const used = usage.get(modelUsageKey(row.slug, m.id));
       // Matrix capabilities take precedence; fall back to inference
       // so unmatched models still get a meaningful badge + a routed
       // Test button rather than a generic chat call that 404s.
@@ -130,9 +131,9 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
         matrixId: matrix?.id ?? null,
         capabilities,
         tierRole: matrix?.tierRole ?? null,
-        agents: usage.get(modelUsageKey(row.slug, m.id))?.agents ?? [],
+        agents: used?.agents ?? [],
         // Active agents in other orgs bound to it: counted, never named.
-        otherOrgAgentCount: usage.get(modelUsageKey(row.slug, m.id))?.otherOrgAgents ?? 0,
+        otherOrgAgentCount: used?.otherOrgAgents ?? 0,
         // Task slots this model serves as the effective system
         // default. Distinct from `agents` — the former tracks direct
         // assignment, this tracks inheritance via the system defaults.
