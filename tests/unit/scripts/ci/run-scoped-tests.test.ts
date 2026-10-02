@@ -30,11 +30,18 @@ import {
   countOverlap,
   gitErrorMessage,
   lines,
-  main,
+  main as runnerMain,
   reportUndeclared,
   selectChangedTests,
   vitestEntry,
 } from '@/scripts/ci/run-scoped-tests';
+import { buildVitestArgv, selfTestFailure } from '@/scripts/ci/scoped-tests';
+import { parseCLI } from 'vitest/node';
+
+/** The runner with the CLI's sentinel: the self-test with vitest's own parser. */
+function main(argv: string[], root: string): number {
+  return runnerMain(argv, root, () => selfTestFailure({ parse: parseCLI }));
+}
 
 /** Two entries from the real always-run list, materialised in the scratch repo. */
 const ALWAYS_RUN_FIXTURES = [
@@ -307,8 +314,8 @@ describe('main', () => {
     // that reported a plan built by a selector it had just found broken would
     // be worse than one that did not check.
     const broken = (): string => 'the detector returned nothing';
-    expect(main(['--self-test'], repo, broken)).toBe(1);
-    expect(main(['--base', head(), '--no-fetch'], repo, broken)).toBe(1);
+    expect(runnerMain(['--self-test'], repo, broken)).toBe(1);
+    expect(runnerMain(['--base', head(), '--no-fetch'], repo, broken)).toBe(1);
     expect(existsSync(join(repo, RUN_LOG))).toBe(false);
   });
 
@@ -453,6 +460,15 @@ describe('main', () => {
     // self-test asks it what the coverage flags mean.
     expect(await cliMain(['--base', head(), '--no-fetch', '--coverage'], repo)).toBe(0);
     expect(runArgv()).toContain('--coverage.thresholds.perFile');
+  });
+
+  it('refuses to run when the parsed coverage floor is wrong, which only the parser can see', async () => {
+    // The flag is present, so a spelling check passes; the branches floor is
+    // gone, which only asking vitest's parser reveals.
+    const build: typeof buildVitestArgv = (plan) =>
+      buildVitestArgv(plan).filter((a) => !a.startsWith('--coverage.thresholds.branches'));
+
+    expect(await cliMain(['--base', head(), '--no-fetch', '--coverage'], repo, { build })).toBe(1);
   });
 
   it('gates coverage on the changed sources, per file', () => {

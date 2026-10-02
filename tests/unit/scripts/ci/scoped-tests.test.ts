@@ -436,19 +436,18 @@ describe('validateAlwaysRun', () => {
 });
 
 describe('selfTestFailure', () => {
-  it('passes on the module as shipped, with vitest’s parser and without it', () => {
+  it('passes on the module as shipped', () => {
     expect(selfTestFailure({ parse: parseCLI })).toBeNull();
-    expect(selfTestFailure()).toBeNull();
   });
 
   it('reports a broken list before it reports anything else', () => {
-    expect(selfTestFailure({ entries: [] })).toContain('empty');
+    expect(selfTestFailure({ entries: [], parse: parseCLI })).toContain('empty');
   });
 
   it('catches a detector that has stopped matching', () => {
     // The failure mode the sentinel exists for: `[]` from a dead regex reads
     // as "nothing new to declare" at every call site.
-    expect(selfTestFailure({ detect: () => [] })).toContain('detector matched');
+    expect(selfTestFailure({ detect: () => [], parse: parseCLI })).toContain('detector matched');
   });
 
   it('catches a detector that stopped subtracting the declared list', () => {
@@ -456,18 +455,19 @@ describe('selfTestFailure', () => {
     // so the first check passes and only the second can see the fault.
     const detect = (files: readonly string[]): string[] =>
       files.filter((path) => path !== 'tests/c.test.ts');
-    expect(selfTestFailure({ detect })).toContain('still reported as undeclared');
+    expect(selfTestFailure({ detect, parse: parseCLI })).toContain('still reported as undeclared');
   });
 
   it('catches coverageTargets letting a test file through', () => {
-    expect(selfTestFailure({ targets: (changed) => [...changed] })).toContain('coverageTargets');
+    expect(selfTestFailure({ targets: (changed) => [...changed], parse: parseCLI })).toContain(
+      'coverageTargets'
+    );
   });
 
   it('catches buildVitestArgv dropping the per-file threshold', () => {
     expect(selfTestFailure({ build: () => ['run'], parse: parseCLI })).toContain(
       'per-file coverage'
     );
-    expect(selfTestFailure({ build: () => ['run'] })).toContain('per-file coverage');
   });
 
   it('fails when the per-file flag is spelled the way vitest reads as a string (t-749)', () => {
@@ -477,10 +477,6 @@ describe('selfTestFailure', () => {
       );
     expect(selfTestFailure({ build, parse: parseCLI })).toBe(
       'buildVitestArgv\'s per-file coverage threshold parses as "true", not true: vitest would gate the average.'
-    );
-    // Without the parser, the spelling itself is refused.
-    expect(selfTestFailure({ build })).toBe(
-      'buildVitestArgv stopped asking for per-file coverage thresholds.'
     );
   });
 
@@ -499,6 +495,6 @@ describe('selfTestFailure', () => {
     // list — however correct — was reported as broken. A self-test that fails
     // on good input is the same defect as one that passes on bad input.
     const fork = [{ path: 'tests/unit/fork-thing.test.ts', reason: 'x'.repeat(30) }];
-    expect(selfTestFailure({ entries: fork })).toBeNull();
+    expect(selfTestFailure({ entries: fork, parse: parseCLI })).toBeNull();
   });
 });

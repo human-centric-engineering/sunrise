@@ -11,7 +11,8 @@
  * parses to the string "true", which vitest does not treat as on, and the run
  * exited 0. The unit tests ask vitest's parser; this asks vitest.
  *
- * The fixture is written under the repo root (removed afterwards) so the child
+ * The fixture is written under the repo root (removed afterwards, and
+ * the `.coverage-floor-` prefix is gitignored for a run killed before that) so the child
  * resolves `@vitest/coverage-v8` from the repo's own `node_modules`. It runs
  * with its own minimal config, so the repo's coverage excludes don't apply.
  */
@@ -90,13 +91,24 @@ describe('the scoped coverage floor, under a real vitest run', () => {
     const run = spawnSync(
       process.execPath,
       [entry, ...argv, '--root', dir, '--config', join(dir, 'vitest.config.mjs')],
-      { cwd: dir, encoding: 'utf8', env: { ...process.env, CI: '1' } }
+      // Shorter than the test's own timeout: spawnSync blocks the worker's
+      // event loop, so vitest's timer could not fire on a hung child.
+      { cwd: dir, encoding: 'utf8', env: { ...process.env, CI: '1' }, timeout: 50_000 }
     );
+    expect(run.error).toBeUndefined();
+    expect(run.signal).toBeNull();
     const output = `${run.stdout}\n${run.stderr}`;
 
-    // The premise: the fixture's test itself passed, and the average clears 80.
+    // The premise: the fixture's test itself passed, and the average clears 80
+    // on all four metrics, so only a per-file floor can fail this run.
     expect(output).toMatch(/1 passed/);
-    expect(output).toMatch(/All files\s*\|\s*(9\d|100)(\.\d+)?\s*\|\s*(8\d|9\d|100)/);
+    const allFiles = /All files\s*\|([^\n]*)/.exec(output)?.[1] ?? '';
+    const averages = allFiles
+      .split('|')
+      .slice(0, 4)
+      .map((cell) => Number(cell.trim()));
+    expect(averages).toHaveLength(4);
+    for (const average of averages) expect(average).toBeGreaterThanOrEqual(80);
     // The floor: the run fails, on the thin file, for branches.
     expect(run.status).toBe(1);
     expect(output).toMatch(/Coverage for branches \(50%\) does not meet .* for .*thin\.mjs/);

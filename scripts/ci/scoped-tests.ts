@@ -628,9 +628,9 @@ export interface SelfTestDeps {
   targets: typeof coverageTargets;
   build: typeof buildVitestArgv;
   /**
-   * Vitest's `parseCLI`, to ask what the coverage flags MEAN. The CLI always
-   * passes it (`cliMain` in run-scoped-tests.ts). Without it, only the spelling
-   * that silently failed (t-749) is refused.
+   * Vitest's `parseCLI`, to ask what the coverage flags MEAN. Required: a
+   * check of the spelling is what silently failed (t-749). The CLI loads it
+   * (`cliMain` in run-scoped-tests.ts).
    */
   parse: ParseCli;
 }
@@ -650,7 +650,9 @@ export interface SelfTestDeps {
  *
  * Returns a sentence naming what is broken, or `null`.
  */
-export function selfTestFailure(deps: Partial<SelfTestDeps> = {}): string | null {
+export function selfTestFailure(
+  deps: Partial<Omit<SelfTestDeps, 'parse'>> & Pick<SelfTestDeps, 'parse'>
+): string | null {
   const {
     entries = ALWAYS_RUN_TESTS,
     detect = undeclaredRepoRootedTests,
@@ -700,15 +702,12 @@ export function selfTestFailure(deps: Partial<SelfTestDeps> = {}): string | null
   // present: `--coverage.thresholds.perFile=true` was present for months and
   // parsed to the string "true", which vitest does not treat as on (t-749).
   const argv = build({ selected: [], alwaysRun: [], coverage: ['lib/a.ts'], threshold: 80 });
-  if (!parse) {
-    if (!argv.includes('--coverage.thresholds.perFile')) {
-      return 'buildVitestArgv stopped asking for per-file coverage thresholds.';
-    }
-    return null;
-  }
   const { thresholds } = parse(['vitest', ...argv]).options.coverage ?? {};
-  if (thresholds?.perFile !== true) {
-    return `buildVitestArgv's per-file coverage threshold parses as ${JSON.stringify(thresholds?.perFile)}, not true: vitest would gate the average.`;
+  if (thresholds?.perFile === undefined) {
+    return 'buildVitestArgv stopped asking for per-file coverage thresholds.';
+  }
+  if (thresholds.perFile !== true) {
+    return `buildVitestArgv's per-file coverage threshold parses as ${JSON.stringify(thresholds.perFile)}, not true: vitest would gate the average.`;
   }
   for (const metric of ['lines', 'functions', 'branches', 'statements'] as const) {
     if (thresholds[metric] !== 80) {
