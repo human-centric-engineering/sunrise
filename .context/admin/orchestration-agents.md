@@ -131,6 +131,8 @@ Both are thin server shells that parallel-fetch the provider list and the aggreg
 
 The edit page additionally fetches the agent itself via `GET /agents/:id`. A `null` response triggers `notFound()`, which renders the stock Next.js 404 page.
 
+When the agent names a provider its org is no longer approved for (§120 t-745), the edit page shows `<UnapprovedProvidersBanner>` at the top, from `GET /agents/:id`'s `_unapprovedProviders`. It says whether the agent cannot respond at all (its primary is refused) or only loses failover (a fallback is), and where a platform admin grants providers. It is hidden when the agent names none, or when the policy could not be read (`null`).
+
 The edit page also prefetches the agent's evaluation-quality trend via `GET /agents/:id/evaluation-trend` and renders an `EvaluationTrendChart` (recharts `LineChart`) above the form. The chart hides itself when fewer than 2 completed evaluations exist for the agent — a single point isn't a trend. See [`evaluation-metrics.md`](../orchestration/evaluation-metrics.md) for the per-metric rubric and the noisy-scores caveat.
 
 ## Related
