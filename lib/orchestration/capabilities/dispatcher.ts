@@ -63,7 +63,7 @@ import {
 import { getTenantContext } from '@/lib/tenancy/context';
 import {
   canChangeSharedSettings,
-  SHARED_SETTINGS_REFUSAL,
+  SHARED_SETTINGS_CAPABILITY_REFUSAL,
   SHARED_SETTINGS_REFUSAL_CODE,
 } from '@/lib/tenancy/shared-settings';
 
@@ -296,25 +296,6 @@ class CapabilityDispatcher {
       };
     }
 
-    // 2a. Shared settings (§107 t-751). A capability that changes one changes
-    //     it for every org, so at `multi` it runs only from the install org
-    //     (or a system scope) — refused here, before approval, for every
-    //     caller: a chat agent, a workflow's `tool_call` step, an MCP tool.
-    if (handler.writesSharedSettings && !canChangeSharedSettings()) {
-      logger.warn('Capability dispatch: shared-settings write refused outside the install org', {
-        slug,
-        agentId: context.agentId,
-        orgId: getTenantContext()?.orgId,
-      });
-      // Permanent for this org, as a hard quarantine is: stop the tool loop
-      // rather than let the model retry a call that cannot succeed here.
-      return {
-        success: false,
-        error: { code: SHARED_SETTINGS_REFUSAL_CODE, message: SHARED_SETTINGS_REFUSAL },
-        skipFollowup: true,
-      };
-    }
-
     // 3. Registry lookup — only active rows land in the map.
     const entry = this.registry.get(slug);
     if (!entry) {
@@ -516,6 +497,26 @@ class CapabilityDispatcher {
           keys: folded.unpinned,
         });
       }
+    }
+
+    // 4c. Shared settings (§107 t-751). A capability that changes one changes
+    //     it for every org, so at `multi` it runs only from the install org
+    //     (or a system scope) — refused here, before the rate limit and
+    //     approval, for every caller: a chat agent, a workflow step, an MCP
+    //     tool. After the registry, quarantine and binding checks, so a call
+    //     those would refuse keeps their answer. No `skipFollowup`: the
+    //     `agent_call` executor reads that flag as the step's final answer,
+    //     and a refused write must fail the step, not complete it.
+    if (handler.writesSharedSettings && !canChangeSharedSettings()) {
+      logger.warn('Capability dispatch: shared-settings write refused outside the install org', {
+        slug,
+        agentId: context.agentId,
+        orgId: getTenantContext()?.orgId,
+      });
+      return {
+        success: false,
+        error: { code: SHARED_SETTINGS_REFUSAL_CODE, message: SHARED_SETTINGS_CAPABILITY_REFUSAL },
+      };
     }
 
     // 5. Rate limit. Effective limit is the binding override, else the

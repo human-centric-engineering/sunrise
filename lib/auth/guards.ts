@@ -1315,7 +1315,7 @@ export function withAdminAuth(
           logger.warn('tenancy: refused a shared-settings write outside the install org', {
             path: (request as NextRequest).nextUrl?.pathname,
             userId: principal.userId,
-            orgId: entry?.orgId,
+            orgId: entry.orgId,
           });
           throw new APIError(SHARED_SETTINGS_REFUSAL, ErrorCodes.FORBIDDEN, 403, {
             reason: SHARED_SETTINGS_REFUSAL_CODE,

@@ -33,9 +33,17 @@
 import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
-/** The words a refused caller sees — the route's 403 and the capability's error alike. */
+/** The words an admin sees on the route's 403. */
 export const SHARED_SETTINGS_REFUSAL =
   'Shared settings apply to every organisation and can only be changed from the install organisation. Switch to the install organisation to make this change.';
+
+/**
+ * The capability dispatcher's words for the same refusal. A tool result can
+ * reach an end user through an agent's reply, where "switch organisation" is
+ * an instruction they cannot act on, so it names the rule and not the remedy.
+ */
+export const SHARED_SETTINGS_CAPABILITY_REFUSAL =
+  'This tool changes settings shared by every organisation, and it cannot run from this organisation.';
 
 /**
  * The refusal's one machine-readable name: the route guard's

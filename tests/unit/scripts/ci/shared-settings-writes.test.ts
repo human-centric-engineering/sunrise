@@ -15,7 +15,8 @@
  * where the reason is the content.
  *
  * Whole-tree: declared in `ALWAYS_RUN_TESTS` because no import chain connects
- * a new route to this file. The tree is parsed once, at module scope.
+ * a new route to this file. Each file is parsed once (the scanner caches by
+ * file object), and the tree's results are computed once, at module scope.
  */
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'node:child_process';
@@ -224,6 +225,17 @@ describe('what counts as a write', () => {
     // A writer that happened to be called `update` must not turn every
     // Prisma `.update(` in the tree into a shared-settings write.
     expect(judged('await prisma.aiAgent.update({});')).toBe(false);
+  });
+
+  it('follows a writer wrapped in another call', () => {
+    const writers = libWriters([
+      {
+        path: 'lib/providers.ts',
+        source:
+          "export const updateProvider = withSpan('x', async () => prisma.aiProviderConfig.update({}));",
+      },
+    ]);
+    expect(writers).toEqual(new Set(['updateProvider']));
   });
 
   it('follows a writer in a non-route module, as the test hands it app/ helpers', () => {

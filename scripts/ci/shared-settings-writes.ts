@@ -44,9 +44,13 @@
  *
  * A write through a **nested relation** (`aiAgent.update({ data: { profile:
  * { create } } })`) names the parent model only. A **dynamic** model name
- * (`prisma[name]`) is not detected. A **method** of some other class is not
- * followed by name, and a capability is recognised only when its class
- * extends `BaseCapability` directly. It raises the floor; it is not a proof.
+ * (`prisma[name]`), and a write through a **stored model reference**
+ * (`const m = prisma.aiCapability; m.update()`), are not detected. A
+ * **method** of some other class or of an object literal is not followed by
+ * name, an anonymous `export default` function is not a writer anyone can
+ * call by name, and a capability is recognised only when its class extends
+ * `BaseCapability` directly. It raises the floor; it is not a proof — the
+ * data-layer alternative is Hub idea #21.
  */
 
 import ts from 'typescript';
@@ -124,7 +128,12 @@ interface Parsed {
   namespaces: ReadonlySet<string>;
 }
 
+/** Parsed once per file object, however many analyses read it. */
+const PARSED = new WeakMap<SourceFile, Parsed>();
+
 function parse(file: SourceFile): Parsed {
+  const held = PARSED.get(file);
+  if (held) return held;
   const sf = ts.createSourceFile(
     file.path,
     file.source,
@@ -139,7 +148,9 @@ function parse(file: SourceFile): Parsed {
       : undefined;
     if (bindings && ts.isNamespaceImport(bindings)) namespaces.add(bindings.name.text);
   }
-  return { path: file.path, sf, namespaces };
+  const parsed = { path: file.path, sf, namespaces };
+  PARSED.set(file, parsed);
+  return parsed;
 }
 
 /** The name an access expression reaches: `a.b` → `b`, `a['b']` → `b`. */
@@ -219,7 +230,11 @@ function factsOf(body: ts.Node, namespaces: ReadonlySet<string>): BodyFacts {
   return facts;
 }
 
-/** Top-level named functions: declarations, and `const f = () => …` / `function () …`. */
+/**
+ * Top-level named functions: declarations, and every `const f = …` — an arrow
+ * or function expression, and equally a wrapped one
+ * (`const f = withSpan('x', async () => …)`), whose whole initialiser is read.
+ */
 function topLevelFunctions(sf: ts.SourceFile): Map<string, ts.Node> {
   const out = new Map<string, ts.Node>();
   for (const statement of sf.statements) {
@@ -227,12 +242,12 @@ function topLevelFunctions(sf: ts.SourceFile): Map<string, ts.Node> {
       out.set(statement.name.text, statement.body);
     } else if (ts.isVariableStatement(statement)) {
       for (const decl of statement.declarationList.declarations) {
-        if (
-          ts.isIdentifier(decl.name) &&
-          decl.initializer &&
-          (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))
-        ) {
-          out.set(decl.name.text, decl.initializer.body);
+        if (ts.isIdentifier(decl.name) && decl.initializer) {
+          const init = decl.initializer;
+          out.set(
+            decl.name.text,
+            ts.isArrowFunction(init) || ts.isFunctionExpression(init) ? init.body : init
+          );
         }
       }
     }

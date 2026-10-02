@@ -62,7 +62,7 @@ const { MockTracer, findSpan } = await import('@/tests/helpers/mock-tracer');
 const { env } = await import('@/lib/env');
 const { runAsOrg } = await import('@/lib/tenancy/context');
 const { INSTALL_ORG_ID } = await import('@/lib/tenancy/constants');
-const { SHARED_SETTINGS_REFUSAL, SHARED_SETTINGS_REFUSAL_CODE } =
+const { SHARED_SETTINGS_CAPABILITY_REFUSAL, SHARED_SETTINGS_REFUSAL_CODE } =
   await import('@/lib/tenancy/shared-settings');
 
 // ---------------------------------------------------------------------------
@@ -379,10 +379,11 @@ describe('CapabilityDispatcher', () => {
 
       expect(result).toEqual({
         success: false,
-        error: { code: SHARED_SETTINGS_REFUSAL_CODE, message: SHARED_SETTINGS_REFUSAL },
-        // Permanent in this org: the tool loop stops rather than retrying.
-        skipFollowup: true,
+        error: { code: SHARED_SETTINGS_REFUSAL_CODE, message: SHARED_SETTINGS_CAPABILITY_REFUSAL },
       });
+      // No `skipFollowup`: an `agent_call` step reads it as the step's final
+      // answer, and a refused write must fail the step instead.
+      expect(result).not.toHaveProperty('skipFollowup');
       expect(capability.runs).toBe(0);
     });
 
@@ -406,6 +407,37 @@ describe('CapabilityDispatcher', () => {
 
       expect(result.success).toBe(true);
       expect(capability.runs).toBe(1);
+    });
+
+    it('leaves an unbound agent its own refusal, not the install-org one', async () => {
+      env.TENANCY_MODE = 'multi';
+      const capability = registered();
+      mockAgentFindMany.mockResolvedValue([
+        {
+          id: 'aac-1',
+          agentId: 'agent-1',
+          capabilityId: 'cap-1',
+          isEnabled: false,
+          customRateLimit: null,
+          capability: {
+            id: 'cap-1',
+            slug: 'shared-write',
+            name: 'shared-write',
+            category: 'test',
+            isActive: true,
+            requiresApproval: false,
+            rateLimit: null,
+            functionDefinition: { name: 'shared-write', description: '', parameters: {} },
+          },
+        },
+      ]);
+
+      const result = await runAsOrg('cmorg00000000000customer', () =>
+        capabilityDispatcher.dispatch('shared-write', {}, ctx)
+      );
+
+      expect(result.error?.code).toBe('capability_disabled_for_agent');
+      expect(capability.runs).toBe(0);
     });
 
     it('runs it in any org at single', async () => {
