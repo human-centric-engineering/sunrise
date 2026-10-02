@@ -319,6 +319,13 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'own version of the guard, rather than carry a red suite about a file it ' +
       'no longer shares.',
   },
+  {
+    path: 'tests/unit/app/app-icons.test.ts',
+    reason:
+      'checks `app/favicon.ico` / `app/icon.svg` exist and that `public/` holds no ' +
+      'favicon (#640). Dropping an icon back into `public/` changes no TypeScript, ' +
+      'so no import chain reaches this test — and it is a dev-server 500.',
+  },
   // The fork-owned tail. Sunrise ships it empty; everything above is core's.
   //
   // Spread rather than left as a second list every caller must remember to
