@@ -199,12 +199,19 @@ describe('NewAgentPage (server component)', () => {
   it('starts the form on the effective-defaults preview the page resolved', async () => {
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     const { getEffectiveAgentDefaults } = await import('@/lib/orchestration/prefetch-helpers');
+    // Two providers, previewing the second, so a selection can only have come
+    // from the preview — not from the form defaulting to the first or only one.
     setupServerFetch(serverFetch as never, parseApiResponse as never, {
       '/provider-models': { data: MOCK_MODELS },
-      '/providers': { data: MOCK_PROVIDERS },
+      '/providers': {
+        data: [
+          ...MOCK_PROVIDERS,
+          { ...MOCK_PROVIDERS[0], id: 'prov-2', name: 'OpenAI', slug: 'openai' },
+        ],
+      },
     });
     vi.mocked(getEffectiveAgentDefaults).mockResolvedValue({
-      provider: 'anthropic',
+      provider: 'openai',
       model: 'claude-opus-4-6',
       inheritedProvider: true,
       inheritedModel: true,
@@ -221,7 +228,7 @@ describe('NewAgentPage (server component)', () => {
     // whatever the test machine's database holds — selects the provider.
     const user = userEvent.setup();
     await user.click(screen.getByRole('tab', { name: /model/i }));
-    expect(screen.getByRole('combobox', { name: /provider/i })).toHaveTextContent(/anthropic/i);
+    expect(screen.getByRole('combobox', { name: /provider/i })).toHaveTextContent(/openai/i);
   });
 
   it('renders with free-text fallback when provider fetch fails', async () => {
