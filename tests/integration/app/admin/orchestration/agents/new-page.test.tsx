@@ -9,12 +9,14 @@
  * Test Coverage:
  * - Renders create form with provider/model data hydrated
  * - Form renders in create mode with free-text fallback when fetches fail
+ * - The effective-defaults preview seeds the provider on create
  *
  * @see app/admin/orchestration/agents/new/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -62,6 +64,24 @@ vi.mock('next/navigation', () => ({
 
   useSearchParams: () => ({ get: () => null }),
 }));
+
+// `getEffectiveAgentDefaults` reads Prisma directly (provider + default-model
+// lookups) and swallows every failure, so left unmocked it silently waits on
+// whatever database the machine has — or previews that developer's real rows.
+// Stub it so each test fixes the preview it asserts on; the serverFetch-backed
+// helpers in the same module stay real.
+vi.mock('@/lib/orchestration/prefetch-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/prefetch-helpers')>()),
+  getEffectiveAgentDefaults: vi.fn(),
+}));
+
+/** The documented "nothing to inherit" preview. */
+const NOTHING_TO_INHERIT = {
+  provider: '',
+  model: '',
+  inheritedProvider: true,
+  inheritedModel: true,
+};
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -134,8 +154,10 @@ function setupServerFetch(
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('NewAgentPage (server component)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const { getEffectiveAgentDefaults } = await import('@/lib/orchestration/prefetch-helpers');
+    vi.mocked(getEffectiveAgentDefaults).mockResolvedValue(NOTHING_TO_INHERIT);
   });
 
   afterEach(() => {
@@ -172,6 +194,50 @@ describe('NewAgentPage (server component)', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /create agent/i })).toBeInTheDocument();
     });
+  });
+
+  it('starts the form on the effective-defaults preview the page resolved', async () => {
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    const { getEffectiveAgentDefaults } = await import('@/lib/orchestration/prefetch-helpers');
+    // Two providers, previewing the second, so a selection can only have come
+    // from the preview — not from the form defaulting to the first or only one.
+    setupServerFetch(serverFetch as never, parseApiResponse as never, {
+      '/provider-models': { data: MOCK_MODELS },
+      '/providers': {
+        data: [
+          ...MOCK_PROVIDERS,
+          {
+            ...MOCK_PROVIDERS[0],
+            id: 'prov-2',
+            name: 'OpenAI',
+            slug: 'openai',
+            apiKeyEnvVar: 'OPENAI_API_KEY',
+          },
+        ],
+      },
+    });
+    vi.mocked(getEffectiveAgentDefaults).mockResolvedValue({
+      provider: 'openai',
+      model: 'claude-opus-4-6',
+      inheritedProvider: true,
+      inheritedModel: true,
+    });
+
+    const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
+
+    render(await NewAgentPage());
+
+    // A new agent has nothing of its own, so the page asks for both.
+    expect(getEffectiveAgentDefaults).toHaveBeenCalledWith({ provider: '', model: '' });
+
+    // On create the preview is the starting value, so the fixture — not
+    // whatever the test machine's database holds — selects the provider.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: /model/i }));
+    expect(screen.getByRole('combobox', { name: /provider/i })).toHaveTextContent(/openai/i);
+    // The model is seeded too. MOCK_MODELS is not in the provider-matrix shape,
+    // so the form falls back to a free-text model input holding the form value.
+    expect(screen.getByRole('textbox', { name: /^model/i })).toHaveValue('claude-opus-4-6');
   });
 
   it('renders with free-text fallback when provider fetch fails', async () => {

@@ -9,12 +9,14 @@
  * Test Coverage:
  * - Renders form pre-filled with agent data in edit mode
  * - Calls notFound() when agent is null
+ * - An inheriting agent shows the effective-defaults preview, not a selection
  *
  * @see app/admin/orchestration/agents/[id]/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -67,6 +69,29 @@ vi.mock('@/lib/api/client', () => ({
     }
   },
 }));
+
+// `getEffectiveAgentDefaults` reads Prisma directly (provider + default-model
+// lookups) and swallows every failure, so left unmocked it silently waits on
+// whatever database the machine has — or previews that developer's real rows.
+// Stub it so each test fixes the preview it asserts on; the serverFetch-backed
+// helpers in the same module stay real.
+vi.mock('@/lib/orchestration/prefetch-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/prefetch-helpers')>()),
+  getEffectiveAgentDefaults: vi.fn(),
+}));
+
+/**
+ * Default stub: the real contract for set fields (returned as-is, not
+ * inherited) and the documented "nothing to inherit" result for empty ones.
+ */
+async function echoAgentDefaults(agent: { provider: string; model: string }) {
+  return {
+    provider: agent.provider,
+    model: agent.model,
+    inheritedProvider: agent.provider.length === 0,
+    inheritedModel: agent.model.length === 0,
+  };
+}
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -163,8 +188,10 @@ function setupServerFetch(
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('EditAgentPage (server component)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const { getEffectiveAgentDefaults } = await import('@/lib/orchestration/prefetch-helpers');
+    vi.mocked(getEffectiveAgentDefaults).mockImplementation(echoAgentDefaults);
   });
 
   afterEach(() => {
@@ -222,6 +249,42 @@ describe('EditAgentPage (server component)', () => {
       expect((slugInput as HTMLInputElement).value).toBe('my-edit-agent');
       expect(slugInput).toBeDisabled();
     });
+  });
+
+  it('previews the resolved provider and model for an agent that inherits them', async () => {
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    const { getEffectiveAgentDefaults } = await import('@/lib/orchestration/prefetch-helpers');
+    setupServerFetch(serverFetch as never, parseApiResponse as never, {
+      '/agents/agent-edit-id': { data: { ...MOCK_AGENT, provider: '', model: '' } },
+      '/providers': { data: MOCK_PROVIDERS },
+      '/provider-models': { data: MOCK_MODELS },
+    });
+    vi.mocked(getEffectiveAgentDefaults).mockResolvedValue({
+      provider: 'anthropic',
+      model: 'claude-opus-4-6',
+      inheritedProvider: true,
+      inheritedModel: true,
+    });
+
+    const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
+
+    render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
+
+    // The page asks with the agent's own (empty) values…
+    expect(getEffectiveAgentDefaults).toHaveBeenCalledWith({ provider: '', model: '' });
+
+    // …and the hint shows the fixture's resolution, not the test machine's rows.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: /model/i }));
+    expect(screen.getByText(/no provider of its own/i)).toHaveTextContent(/anthropic/i);
+    expect(screen.getByText(/no model of its own/i)).toHaveTextContent(/claude-opus-4-6/i);
+    // On edit the preview is shown, never selected — so picking it is a change.
+    expect(screen.getByRole('combobox', { name: /provider/i })).toHaveTextContent(
+      /pick a provider/i
+    );
+    // Same for the model. MOCK_MODELS is not in the provider-matrix shape, so
+    // the form falls back to a free-text model input holding the form value.
+    expect(screen.getByRole('textbox', { name: /^model/i })).toHaveValue('');
   });
 
   it('calls notFound() when agent fetch returns null', async () => {
