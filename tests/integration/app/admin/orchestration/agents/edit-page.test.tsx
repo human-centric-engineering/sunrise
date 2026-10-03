@@ -15,6 +15,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -67,6 +68,24 @@ vi.mock('@/lib/api/client', () => ({
     }
   },
 }));
+
+// `getEffectiveAgentDefaults` reads Prisma directly (provider + default-model
+// lookups) and swallows every failure, so left unmocked it silently waits on
+// whatever database the machine has — or previews that developer's real rows.
+// Stub it so each test fixes the preview it asserts on; the serverFetch-backed
+// helpers in the same module stay real.
+vi.mock('@/lib/orchestration/prefetch-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/prefetch-helpers')>()),
+  getEffectiveAgentDefaults: vi.fn(),
+}));
+
+/** The documented "nothing to inherit" preview. */
+const NOTHING_TO_INHERIT = {
+  provider: '',
+  model: '',
+  inheritedProvider: true,
+  inheritedModel: true,
+};
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -163,8 +182,10 @@ function setupServerFetch(
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('EditAgentPage (server component)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const { getEffectiveAgentDefaults } = await import('@/lib/orchestration/prefetch-helpers');
+    vi.mocked(getEffectiveAgentDefaults).mockResolvedValue(NOTHING_TO_INHERIT);
   });
 
   afterEach(() => {
@@ -222,6 +243,35 @@ describe('EditAgentPage (server component)', () => {
       expect((slugInput as HTMLInputElement).value).toBe('my-edit-agent');
       expect(slugInput).toBeDisabled();
     });
+  });
+
+  it('previews the resolved provider and model for an agent that inherits them', async () => {
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    const { getEffectiveAgentDefaults } = await import('@/lib/orchestration/prefetch-helpers');
+    setupServerFetch(serverFetch as never, parseApiResponse as never, {
+      '/agents/agent-edit-id': { data: { ...MOCK_AGENT, provider: '', model: '' } },
+      '/providers': { data: MOCK_PROVIDERS },
+      '/provider-models': { data: MOCK_MODELS },
+    });
+    vi.mocked(getEffectiveAgentDefaults).mockResolvedValue({
+      provider: 'anthropic',
+      model: 'claude-opus-4-6',
+      inheritedProvider: true,
+      inheritedModel: true,
+    });
+
+    const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
+
+    render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
+
+    // The page asks with the agent's own (empty) values…
+    expect(getEffectiveAgentDefaults).toHaveBeenCalledWith({ provider: '', model: '' });
+
+    // …and the hint shows the fixture's resolution, not the test machine's rows.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: /model/i }));
+    expect(screen.getByText(/no provider of its own/i)).toHaveTextContent(/anthropic/i);
+    expect(screen.getByText(/no model of its own/i)).toHaveTextContent(/claude-opus-4-6/i);
   });
 
   it('calls notFound() when agent fetch returns null', async () => {
