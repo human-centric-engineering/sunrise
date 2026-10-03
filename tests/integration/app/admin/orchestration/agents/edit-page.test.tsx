@@ -9,6 +9,8 @@
  * Test Coverage:
  * - Renders form pre-filled with agent data in edit mode
  * - Calls notFound() when agent is null
+ * - Previews the provider/model the stubbed effective-defaults helper resolves for an
+ *   agent with none of its own
  *
  * @see app/admin/orchestration/agents/[id]/page.tsx
  */
