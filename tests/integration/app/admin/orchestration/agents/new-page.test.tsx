@@ -9,6 +9,7 @@
  * Test Coverage:
  * - Renders create form with provider/model data hydrated
  * - Form renders in create mode with free-text fallback when fetches fail
+ * - The effective-defaults preview seeds the provider on create
  *
  * @see app/admin/orchestration/agents/new/page.tsx
  */

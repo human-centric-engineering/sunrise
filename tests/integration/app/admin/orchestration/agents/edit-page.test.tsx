@@ -9,6 +9,7 @@
  * Test Coverage:
  * - Renders form pre-filled with agent data in edit mode
  * - Calls notFound() when agent is null
+ * - An inheriting agent shows the effective-defaults preview, not a selection
  *
  * @see app/admin/orchestration/agents/[id]/page.tsx
  */
@@ -79,13 +80,18 @@ vi.mock('@/lib/orchestration/prefetch-helpers', async (importOriginal) => ({
   getEffectiveAgentDefaults: vi.fn(),
 }));
 
-/** The documented "nothing to inherit" preview. */
-const NOTHING_TO_INHERIT = {
-  provider: '',
-  model: '',
-  inheritedProvider: true,
-  inheritedModel: true,
-};
+/**
+ * Default stub: the real contract for set fields (returned as-is, not
+ * inherited) and the documented "nothing to inherit" result for empty ones.
+ */
+async function echoAgentDefaults(agent: { provider: string; model: string }) {
+  return {
+    provider: agent.provider,
+    model: agent.model,
+    inheritedProvider: agent.provider.length === 0,
+    inheritedModel: agent.model.length === 0,
+  };
+}
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -185,7 +191,7 @@ describe('EditAgentPage (server component)', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     const { getEffectiveAgentDefaults } = await import('@/lib/orchestration/prefetch-helpers');
-    vi.mocked(getEffectiveAgentDefaults).mockResolvedValue(NOTHING_TO_INHERIT);
+    vi.mocked(getEffectiveAgentDefaults).mockImplementation(echoAgentDefaults);
   });
 
   afterEach(() => {
@@ -272,6 +278,10 @@ describe('EditAgentPage (server component)', () => {
     await user.click(screen.getByRole('tab', { name: /model/i }));
     expect(screen.getByText(/no provider of its own/i)).toHaveTextContent(/anthropic/i);
     expect(screen.getByText(/no model of its own/i)).toHaveTextContent(/claude-opus-4-6/i);
+    // On edit the preview is shown, never selected — so picking it is a change.
+    expect(screen.getByRole('combobox', { name: /provider/i })).toHaveTextContent(
+      /pick a provider/i
+    );
   });
 
   it('calls notFound() when agent fetch returns null', async () => {
