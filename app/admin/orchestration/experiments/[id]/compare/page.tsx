@@ -104,8 +104,13 @@ export default async function ExperimentComparePage({
   if (!data) notFound();
 
   const noRunsYet = data.variants.every((v) => v.evaluationRunId === null);
+  // Only in-flight runs warrant "refresh later" — a `failed` or `cancelled`
+  // run is terminal and will never finish.
   const someRunsStillQueued = data.variants.some(
-    (v) => v.evaluationRunId !== null && v.runStatus !== 'completed'
+    (v) => v.evaluationRunId !== null && (v.runStatus === 'queued' || v.runStatus === 'running')
+  );
+  const someRunsEnded = data.variants.some(
+    (v) => v.evaluationRunId !== null && (v.runStatus === 'failed' || v.runStatus === 'cancelled')
   );
 
   return (
@@ -146,6 +151,14 @@ export default async function ExperimentComparePage({
                 Some variant runs are still queued or running. Stats below are computed against
                 whatever has completed so far — refresh once all variants finish for the final
                 comparison.
+              </CardContent>
+            </Card>
+          ) : null}
+          {someRunsEnded ? (
+            <Card>
+              <CardContent className="text-muted-foreground py-3 text-sm">
+                Some variant runs failed or were cancelled, so their columns have no scores. Open
+                the run to see why.
               </CardContent>
             </Card>
           ) : null}

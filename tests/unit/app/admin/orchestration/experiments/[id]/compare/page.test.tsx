@@ -320,6 +320,48 @@ describe('ExperimentComparePage', () => {
       // The table still renders against whatever has completed
       expect(screen.getByTestId('variant-compare-table')).toBeInTheDocument();
     });
+
+    it('shows both notices when one variant failed and another is still running', async () => {
+      wireFetches({
+        compareResult: {
+          success: true,
+          data: makeCompareData({
+            variants: [
+              makeVariant({ variantId: 'var-1', evaluationRunId: 'run-1', runStatus: 'failed' }),
+              makeVariant({ variantId: 'var-2', evaluationRunId: 'run-2', runStatus: 'running' }),
+            ],
+          }),
+        },
+        gradersResult: { success: true, data: { judgeAgents: [] } },
+      });
+      const params = Promise.resolve({ id: 'exp-1' });
+
+      render(await ExperimentComparePage({ params }));
+
+      expect(screen.getByText(/Some variant runs are still queued or running/)).toBeInTheDocument();
+      expect(screen.getByText(/Some variant runs failed or were cancelled/)).toBeInTheDocument();
+    });
+
+    it('shows the failed notice, not the "still queued" one, when every run is terminal', async () => {
+      wireFetches({
+        compareResult: {
+          success: true,
+          data: makeCompareData({
+            variants: [
+              makeVariant({ variantId: 'var-1', evaluationRunId: 'run-1', runStatus: 'failed' }),
+              makeVariant({ variantId: 'var-2', evaluationRunId: 'run-2', runStatus: 'cancelled' }),
+            ],
+          }),
+        },
+        gradersResult: { success: true, data: { judgeAgents: [] } },
+      });
+      const params = Promise.resolve({ id: 'exp-1' });
+
+      render(await ExperimentComparePage({ params }));
+
+      expect(screen.queryByText(/Some variant runs are still queued or running/)).toBeNull();
+      expect(screen.getByText(/Some variant runs failed or were cancelled/)).toBeInTheDocument();
+    });
   });
 
   // ── Judge-list tolerance ─────────────────────────────────────────────────────

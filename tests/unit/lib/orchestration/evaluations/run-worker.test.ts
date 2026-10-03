@@ -902,6 +902,98 @@ describe('progress + input shape', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Terminal status when cases fail (#801)
+// ---------------------------------------------------------------------------
+
+describe('terminal status when cases fail', () => {
+  /**
+   * Drive one case per entry: a code makes that case's subject fail with it,
+   * null lets it succeed. The final aggregation read returns the rows the
+   * worker actually wrote, so the status decision is tested against the
+   * worker's own `errorCode` persistence rather than a hand-built fixture.
+   */
+  function driveCases(codes: Array<string | null>) {
+    mockedClaim.mockResolvedValueOnce(makeRun());
+    findManyCases.mockResolvedValueOnce(codes.map((_, i) => makeCase(i + 1)));
+    findAgent.mockResolvedValueOnce({ slug: 'agent-slug' });
+    mockedGetGrader.mockReturnValue(passingGrader());
+    for (const code of codes) {
+      mockedRunAgent.mockResolvedValueOnce(
+        code ? drainOk({ errorCode: code, errorMessage: 'boom', assistantText: '' }) : drainOk()
+      );
+    }
+    // Same array reference: filled by each create, read by the final findMany.
+    const written: unknown[] = [];
+    createResult.mockImplementation((args: { data: unknown }) => {
+      written.push(args.data);
+      return {}; // awaited by the worker; a plain value resolves the same
+    });
+    findManyResults
+      .mockResolvedValueOnce([]) // no case already processed
+      .mockResolvedValueOnce(written);
+  }
+
+  it('marks the run failed, naming the dominant error code, when every case errored', async () => {
+    driveCases([
+      'no_provider_configured',
+      'budget_exceeded_per_turn',
+      'no_provider_configured',
+      'budget_exceeded_per_turn',
+      'no_provider_configured',
+    ]);
+
+    const result = await processPendingEvaluationRuns();
+
+    expect(result).toEqual({ claimed: 1, completed: 0, released: 0, failed: 1, cancelled: 0 });
+    const [runId, status, patch] = mockedMarkTerminal.mock.calls[0];
+    expect(runId).toBe('run-1');
+    expect(status).toBe('failed');
+    expect(patch.summary.note).toBe('all_cases_failed: no_provider_configured');
+    expect(patch.summary.stats.exact_match.scoredCount).toBe(0);
+    // The attempts were paid for — the spend is still recorded.
+    expect(patch.totalCostUsd).toBeCloseTo(0.005);
+    expect(mockedLogCost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: CostOperation.EVALUATION_BATCH,
+        metadata: expect.objectContaining({ evaluationRunId: 'run-1', phase: 'rollup' }),
+      })
+    );
+  });
+
+  it('names the code that reached the top count first when two codes tie', async () => {
+    driveCases([
+      'no_provider_configured',
+      'budget_exceeded_per_turn',
+      'budget_exceeded_per_turn',
+      'no_provider_configured',
+    ]);
+
+    await processPendingEvaluationRuns();
+
+    expect(mockedMarkTerminal.mock.calls[0][2].summary.note).toBe(
+      'all_cases_failed: budget_exceeded_per_turn'
+    );
+    // The tie-break is "first in case order" only because the read is ordered.
+    expect(findManyResults).toHaveBeenLastCalledWith({
+      where: { runId: 'run-1' },
+      orderBy: { casePosition: 'asc' },
+    });
+  });
+
+  it('keeps a run completed, with no note, when only some cases errored', async () => {
+    driveCases(['budget_exceeded_per_turn', null]);
+
+    const result = await processPendingEvaluationRuns();
+
+    expect(result.completed).toBe(1);
+    const [, status, patch] = mockedMarkTerminal.mock.calls[0];
+    expect(status).toBe('completed');
+    expect(patch.summary.note).toBeUndefined();
+    expect(patch.summary.stats.exact_match.scoredCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Aggregation behaviour
 // ---------------------------------------------------------------------------
 

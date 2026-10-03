@@ -120,8 +120,15 @@ Per-tick lifecycle:
    way — `lockedAt` ages past the 5-minute threshold and the next claim
    picks the run up.
 7. When every case has a result row: aggregate per-metric stats into
-   `summary`, log one `CostOperation.EVALUATION_JUDGE` row covering the
-   total judge spend, mark `completed`.
+   `summary`, log one zero-cost `CostOperation.EVALUATION_BATCH`
+   marker row (a join key; subject and judge spend are already logged
+   as `CHAT` rows), mark `completed`. If **every** case's subject
+   errored (case-result `errorCode` set), mark `failed` instead, with
+   `summary.note` set to `all_cases_failed: <most common errorCode>` —
+   a run whose every subject call failed must not read as a finished
+   result. A partial failure stays `completed`; `progress.casesFailed`
+   carries the count. Grader-side failures leave `errorCode` null and
+   show as `scoredCount: 0` in `summary.stats`, not in the status.
 
 Subject chat cost is **not** re-logged by the worker — `streamChat`
 already writes `CostOperation.CHAT` rows for the underlying agent
