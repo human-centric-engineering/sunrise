@@ -15,12 +15,24 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('@/lib/api/server-fetch', () => ({
   serverFetch: vi.fn(),
   parseApiResponse: vi.fn(),
+}));
+
+// `getEffectiveAgentDefaults` reads `aiProviderConfig` and the orchestration
+// settings straight from Prisma. Left real, every render waits on whatever
+// database the machine has (a 10 s connect timeout when there is none, the
+// developer's own provider rows when there is) and swallows the failure. Stub
+// it so each test fixes the preview it asserts on; the other helpers stay real
+// because these tests drive them through `serverFetch`.
+vi.mock('@/lib/orchestration/prefetch-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/prefetch-helpers')>()),
+  getEffectiveAgentDefaults: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -82,6 +94,13 @@ const MOCK_PROVIDERS = [
 
 const MOCK_MODELS = [{ provider: 'anthropic', id: 'claude-opus-4-6', tier: 'frontier' }];
 
+const NOTHING_TO_INHERIT = {
+  provider: '',
+  model: '',
+  inheritedProvider: true,
+  inheritedModel: true,
+};
+
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
 /**
@@ -134,8 +153,11 @@ function setupServerFetch(
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('NewAgentPage (server component)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const { getEffectiveAgentDefaults } = await import('@/lib/orchestration/prefetch-helpers');
+    // The documented "nothing to inherit" case, independent of the machine.
+    vi.mocked(getEffectiveAgentDefaults).mockResolvedValue(NOTHING_TO_INHERIT);
   });
 
   afterEach(() => {
@@ -196,6 +218,32 @@ describe('NewAgentPage (server component)', () => {
     // "Create agent" heading link in some contexts. Match the submit button
     // specifically to avoid false multiples.
     expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
+  });
+
+  it('seeds the form from the effective defaults the helper resolves', async () => {
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    const { getEffectiveAgentDefaults } = await import('@/lib/orchestration/prefetch-helpers');
+    setupServerFetch(serverFetch as never, parseApiResponse as never, {
+      '/provider-models': { data: MOCK_MODELS },
+      '/providers': { data: MOCK_PROVIDERS },
+    });
+    vi.mocked(getEffectiveAgentDefaults).mockResolvedValue({
+      provider: 'anthropic',
+      model: 'claude-opus-4-6',
+      inheritedProvider: true,
+      inheritedModel: true,
+    });
+
+    const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
+
+    render(await NewAgentPage());
+
+    // The create page always asks for the defaults of an agent with neither set.
+    expect(getEffectiveAgentDefaults).toHaveBeenCalledWith({ provider: '', model: '' });
+    await userEvent.setup().click(screen.getByRole('tab', { name: /model/i }));
+    // Create mode seeds the provider control from the helper's answer. With the
+    // helper unstubbed this reads "Pick a provider" on a machine with no database.
+    expect(screen.getByRole('combobox', { name: /provider/i })).toHaveTextContent(/anthropic/i);
   });
 
   // ── Fallback branches ──────────────────────────────────────────────────────
