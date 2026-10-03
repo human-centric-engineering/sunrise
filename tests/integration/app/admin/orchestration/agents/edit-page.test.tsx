@@ -268,6 +268,7 @@ describe('EditAgentPage (server component)', () => {
     await userEvent.setup().click(screen.getByRole('tab', { name: /model/i }));
     // The preview is the fixture, not whatever providers the local database holds.
     expect(screen.getByText(/no provider of its own/i)).toHaveTextContent(/fixture-provider/);
+    expect(screen.getByText(/no model of its own/i)).toHaveTextContent(/fixture-model/);
   });
 
   it('calls notFound() when agent fetch returns null', async () => {
