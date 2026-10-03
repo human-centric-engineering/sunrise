@@ -95,6 +95,8 @@ async function loadJudges(): Promise<JudgeOption[]> {
   }
 }
 
+const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'cancelled']);
+
 export default async function ExperimentComparePage({
   params,
 }: PageProps): Promise<React.ReactElement> {
@@ -104,8 +106,13 @@ export default async function ExperimentComparePage({
   if (!data) notFound();
 
   const noRunsYet = data.variants.every((v) => v.evaluationRunId === null);
+  // Terminal statuses are listed, not in-flight ones, so an unrecognised status
+  // errs towards showing the "still running" notice.
   const someRunsStillQueued = data.variants.some(
-    (v) => v.evaluationRunId !== null && v.runStatus !== 'completed'
+    (v) => v.evaluationRunId !== null && !TERMINAL_RUN_STATUSES.has(v.runStatus ?? '')
+  );
+  const someRunsEndedWithoutResult = data.variants.some(
+    (v) => v.runStatus === 'failed' || v.runStatus === 'cancelled'
   );
 
   return (
@@ -146,6 +153,14 @@ export default async function ExperimentComparePage({
                 Some variant runs are still queued or running. Stats below are computed against
                 whatever has completed so far — refresh once all variants finish for the final
                 comparison.
+              </CardContent>
+            </Card>
+          ) : null}
+          {someRunsEndedWithoutResult ? (
+            <Card>
+              <CardContent className="text-muted-foreground py-3 text-sm">
+                Some variant runs failed or were cancelled, so those variants may have no scores
+                below.
               </CardContent>
             </Card>
           ) : null}

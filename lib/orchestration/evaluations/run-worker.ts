@@ -21,7 +21,8 @@
  *      progress. If the budget expires mid-run, release the lease so
  *      the next tick resumes from the next unprocessed case.
  *   6. When every case has a result: compute aggregate summary,
- *      log the run-level cost rollup, mark `status='completed'`.
+ *      log the run-level cost rollup, mark `status='completed'` (or
+ *      `'failed'` with a `summary.note` when every case errored).
  *
  * Concurrency-safe: the worker is single-tick-scoped and the claim
  * step ensures only one worker can hold a run's lease at a time.
@@ -271,7 +272,18 @@ async function driveRun(run: ClaimedRun): Promise<RunOutcome> {
   });
   const summary = aggregateSummary(allResults, metricConfigs);
   const totalCost = allResults.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
-  await markTerminal(run.id, 'completed', { summary, totalCostUsd: totalCost });
+  // A run in which every case failed has no result to read — record it as
+  // `failed` (with the dominant error code in `summary.note`, like the other
+  // failure paths) so consumers branching on `status === 'completed'` are not
+  // handed an empty evaluation. Partial failure stays `completed`: the failed
+  // count is in `progress.casesFailed` and each case row carries its errorCode.
+  const failedCodes = allResults.flatMap((r) => (r.errorCode ? [r.errorCode] : []));
+  const allCasesFailed = allResults.length > 0 && failedCodes.length === allResults.length;
+  const outcome: RunOutcome = allCasesFailed ? 'failed' : 'completed';
+  if (allCasesFailed) {
+    summary.note = `all_cases_failed (${failedCodes.length}/${allResults.length}): ${dominantErrorCode(failedCodes)}`;
+  }
+  await markTerminal(run.id, outcome, { summary, totalCostUsd: totalCost });
 
   // Run-level cost-marker row. Subject + judge spend are already
   // logged: subject by `streamChat` (CHAT rows), judge by `streamChat`
@@ -294,7 +306,7 @@ async function driveRun(run: ClaimedRun): Promise<RunOutcome> {
       error: err instanceof Error ? err.message : String(err),
     });
   });
-  return 'completed';
+  return outcome;
 }
 
 // ---------------------------------------------------------------------------
@@ -539,6 +551,24 @@ function aggregateSummary(
     rawScores,
     completedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Most frequent code (ties go to the alphabetically first, so the note does not
+ * depend on the order the case rows come back in); 'unknown' for an empty list.
+ */
+function dominantErrorCode(codes: string[]): string {
+  const counts = new Map<string, number>();
+  for (const code of codes) counts.set(code, (counts.get(code) ?? 0) + 1);
+  let best = 'unknown';
+  let bestCount = 0;
+  for (const [code, count] of counts) {
+    if (count > bestCount || (count === bestCount && code < best)) {
+      best = code;
+      bestCount = count;
+    }
+  }
+  return best;
 }
 
 function mean(values: number[]): number | null {
