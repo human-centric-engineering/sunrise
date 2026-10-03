@@ -339,7 +339,7 @@ describe('processPendingEvaluationRuns — case failures', () => {
     );
   });
 
-  it('names the first-seen code when failed cases tie on error code', async () => {
+  it('breaks a tie on error code alphabetically, whatever order the rows come back in', async () => {
     setupRun(2);
     findManyResults
       .mockResolvedValueOnce([])
@@ -348,7 +348,7 @@ describe('processPendingEvaluationRuns — case failures', () => {
     await processPendingEvaluationRuns();
 
     expect(mockedMarkTerminal.mock.calls[0][2].summary.note).toBe(
-      'all_cases_failed (2/2): timeout'
+      'all_cases_failed (2/2): no_provider_configured'
     );
   });
 

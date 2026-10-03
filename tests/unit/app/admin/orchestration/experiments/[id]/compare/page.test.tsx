@@ -344,6 +344,27 @@ describe('ExperimentComparePage', () => {
       expect(screen.getByText(/Some variant runs failed or were cancelled/)).toBeInTheDocument();
     });
 
+    it('still shows the "still queued" notice for a run status it does not recognise', async () => {
+      wireFetches({
+        compareResult: {
+          success: true,
+          data: makeCompareData({
+            variants: [
+              makeVariant({ variantId: 'var-1', runStatus: 'completed' }),
+              makeVariant({ variantId: 'var-2', evaluationRunId: 'run-2', runStatus: 'queued' }),
+              makeVariant({ variantId: 'var-3', evaluationRunId: 'run-3', runStatus: 'pending' }),
+            ],
+          }),
+        },
+        gradersResult: { success: true, data: { judgeAgents: [] } },
+      });
+      const params = Promise.resolve({ id: 'exp-1' });
+
+      render(await ExperimentComparePage({ params }));
+
+      expect(screen.getByText(/Some variant runs are still queued or running/)).toBeInTheDocument();
+    });
+
     it('treats a cancelled run as finished, not queued', async () => {
       wireFetches({
         compareResult: {

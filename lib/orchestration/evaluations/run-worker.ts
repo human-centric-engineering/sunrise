@@ -553,13 +553,20 @@ function aggregateSummary(
   };
 }
 
-/** Most frequent code in a non-empty list (first seen wins a tie). */
+/**
+ * Most frequent code (ties go to the alphabetically first, so the note does not
+ * depend on the order the case rows come back in); 'unknown' for an empty list.
+ */
 function dominantErrorCode(codes: string[]): string {
   const counts = new Map<string, number>();
   for (const code of codes) counts.set(code, (counts.get(code) ?? 0) + 1);
-  let best = codes[0];
+  let best = 'unknown';
+  let bestCount = 0;
   for (const [code, count] of counts) {
-    if (count > (counts.get(best) ?? 0)) best = code;
+    if (count > bestCount || (count === bestCount && code < best)) {
+      best = code;
+      bestCount = count;
+    }
   }
   return best;
 }

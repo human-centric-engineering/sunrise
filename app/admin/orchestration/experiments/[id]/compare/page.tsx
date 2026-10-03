@@ -159,8 +159,8 @@ export default async function ExperimentComparePage({
           {someRunsEndedWithoutResult ? (
             <Card>
               <CardContent className="text-muted-foreground py-3 text-sm">
-                Some variant runs failed or were cancelled, so those variants have no scores below.
-                Open the run from the experiment to see why.
+                Some variant runs failed or were cancelled, so those variants may have no scores
+                below.
               </CardContent>
             </Card>
           ) : null}
