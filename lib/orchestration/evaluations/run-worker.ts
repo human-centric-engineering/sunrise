@@ -277,11 +277,11 @@ async function driveRun(run: ClaimedRun): Promise<RunOutcome> {
   // failure paths) so consumers branching on `status === 'completed'` are not
   // handed an empty evaluation. Partial failure stays `completed`: the failed
   // count is in `progress.casesFailed` and each case row carries its errorCode.
-  const failedResults = allResults.filter((r) => r.errorCode);
-  const allCasesFailed = allResults.length > 0 && failedResults.length === allResults.length;
+  const failedCodes = allResults.flatMap((r) => (r.errorCode ? [r.errorCode] : []));
+  const allCasesFailed = allResults.length > 0 && failedCodes.length === allResults.length;
   const outcome: RunOutcome = allCasesFailed ? 'failed' : 'completed';
   if (allCasesFailed) {
-    summary.note = `all_cases_failed (${allResults.length}/${allResults.length}): ${dominantErrorCode(failedResults)}`;
+    summary.note = `all_cases_failed (${failedCodes.length}/${allResults.length}): ${dominantErrorCode(failedCodes)}`;
   }
   await markTerminal(run.id, outcome, { summary, totalCostUsd: totalCost });
 
@@ -553,19 +553,13 @@ function aggregateSummary(
   };
 }
 
-/** Most frequent `errorCode` across the failed case rows (first seen wins a tie). */
-function dominantErrorCode(failed: Array<{ errorCode: string | null }>): string {
+/** Most frequent code in a non-empty list (first seen wins a tie). */
+function dominantErrorCode(codes: string[]): string {
   const counts = new Map<string, number>();
-  for (const r of failed) {
-    if (r.errorCode) counts.set(r.errorCode, (counts.get(r.errorCode) ?? 0) + 1);
-  }
-  let best = 'unknown';
-  let bestCount = 0;
+  for (const code of codes) counts.set(code, (counts.get(code) ?? 0) + 1);
+  let best = codes[0];
   for (const [code, count] of counts) {
-    if (count > bestCount) {
-      best = code;
-      bestCount = count;
-    }
+    if (count > (counts.get(best) ?? 0)) best = code;
   }
   return best;
 }

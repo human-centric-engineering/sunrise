@@ -332,7 +332,10 @@ describe('processPendingEvaluationRuns — case failures', () => {
     expect(markCall[2].summary.stats.exact_match.scoredCount).toBe(0);
     // The attempts were paid for, so the rollup cost marker is still logged.
     expect(mockedLogCost).toHaveBeenCalledWith(
-      expect.objectContaining({ operation: CostOperation.EVALUATION_BATCH })
+      expect.objectContaining({
+        operation: CostOperation.EVALUATION_BATCH,
+        metadata: expect.objectContaining({ evaluationRunId: 'run-1', phase: 'rollup' }),
+      })
     );
   });
 

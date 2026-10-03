@@ -341,6 +341,30 @@ describe('ExperimentComparePage', () => {
         screen.queryByText(/Some variant runs are still queued or running/)
       ).not.toBeInTheDocument();
       expect(screen.getByTestId('variant-compare-table')).toBeInTheDocument();
+      expect(screen.getByText(/Some variant runs failed or were cancelled/)).toBeInTheDocument();
+    });
+
+    it('treats a cancelled run as finished, not queued', async () => {
+      wireFetches({
+        compareResult: {
+          success: true,
+          data: makeCompareData({
+            variants: [
+              makeVariant({ variantId: 'var-1', runStatus: 'completed' }),
+              makeVariant({ variantId: 'var-2', evaluationRunId: 'run-2', runStatus: 'cancelled' }),
+            ],
+          }),
+        },
+        gradersResult: { success: true, data: { judgeAgents: [] } },
+      });
+      const params = Promise.resolve({ id: 'exp-1' });
+
+      render(await ExperimentComparePage({ params }));
+
+      expect(
+        screen.queryByText(/Some variant runs are still queued or running/)
+      ).not.toBeInTheDocument();
+      expect(screen.getByText(/Some variant runs failed or were cancelled/)).toBeInTheDocument();
     });
   });
 
