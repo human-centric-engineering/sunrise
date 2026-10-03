@@ -943,6 +943,34 @@ describe('terminal status when cases fail', () => {
     expect(patch.summary.stats.exact_match.scoredCount).toBe(0);
     // The attempts were paid for — the spend is still recorded.
     expect(patch.totalCostUsd).toBeCloseTo(0.01);
+    expect(mockedLogCost).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: CostOperation.EVALUATION_BATCH,
+        metadata: expect.objectContaining({ evaluationRunId: 'run-1', phase: 'rollup' }),
+      })
+    );
+  });
+
+  it('names the code that reached the top count first when two codes tie', async () => {
+    mockedClaim.mockResolvedValueOnce(makeRun());
+    findManyCases.mockResolvedValueOnce([1, 2, 3, 4].map((p) => makeCase(p)));
+    findAgent.mockResolvedValueOnce({ slug: 'agent-slug' });
+    mockedGetGrader.mockReturnValue(passingGrader());
+    mockedRunAgent.mockResolvedValue(drainOk({ errorCode: 'provider_timeout', assistantText: '' }));
+    findManyResults
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        failedRow('no_provider_configured'),
+        failedRow('provider_timeout'),
+        failedRow('provider_timeout'),
+        failedRow('no_provider_configured'),
+      ]);
+
+    await processPendingEvaluationRuns();
+
+    expect(mockedMarkTerminal.mock.calls[0][2].summary.note).toBe(
+      'all_cases_failed: provider_timeout'
+    );
   });
 
   it('keeps a run completed, with no note, when only some cases errored', async () => {

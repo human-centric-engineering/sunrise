@@ -23,8 +23,8 @@
  *   6. When every case has a result: compute aggregate summary,
  *      log the run-level cost rollup, mark `status='completed'` — or
  *      `status='failed'` with `summary.note = 'all_cases_failed: <code>'`
- *      when every case errored, so a run with nothing in it never reads
- *      as a finished result.
+ *      when every case's subject errored, so a run with no subject output
+ *      never reads as a finished result.
  *
  * Concurrency-safe: the worker is single-tick-scoped and the claim
  * step ensures only one worker can hold a run's lease at a time.
@@ -274,9 +274,11 @@ async function driveRun(run: ClaimedRun): Promise<RunOutcome> {
   });
   const summary = aggregateSummary(allResults, metricConfigs);
   const totalCost = allResults.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
-  // A run where every case errored has no result in it; recording it
-  // `completed` would make it indistinguishable from a clean run (#801).
-  // Partial failures stay `completed` — `progress.casesFailed` carries them.
+  // A run where every case's subject errored has no result in it;
+  // recording it `completed` would make it indistinguishable from a clean
+  // run (#801). Partial failures stay `completed` — `progress.casesFailed`
+  // carries them. `errorCode` is set only for subject failures; grader
+  // failures surface as null scores in `summary.stats`.
   const failedCodes = allResults.flatMap((r) => (r.errorCode ? [r.errorCode] : []));
   const allFailed = allResults.length > 0 && failedCodes.length === allResults.length;
   if (allFailed) {
