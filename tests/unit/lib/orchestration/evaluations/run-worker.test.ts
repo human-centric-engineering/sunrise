@@ -286,6 +286,66 @@ describe('processPendingEvaluationRuns — happy path', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Terminal status when cases error
+// ---------------------------------------------------------------------------
+
+describe('processPendingEvaluationRuns — case failures', () => {
+  function setupRun(caseCount: number) {
+    mockedClaim.mockResolvedValueOnce(makeRun());
+    findManyCases.mockResolvedValueOnce(
+      Array.from({ length: caseCount }, (_, i) => makeCase(i + 1))
+    );
+    findAgent.mockResolvedValueOnce({ slug: 'agent-slug' });
+    mockedGetGrader.mockReturnValue(passingGrader());
+    mockedRunAgent.mockResolvedValue(drainOk());
+  }
+
+  const failedRow = (errorCode: string) => ({
+    metricScores: { exact_match: { score: null } },
+    subjectMetadata: {},
+    costUsd: 0,
+    errorCode,
+  });
+  const okRow = {
+    metricScores: { exact_match: { score: 1, passed: true } },
+    subjectMetadata: {},
+    costUsd: 0,
+    errorCode: null,
+  };
+
+  it('marks the run failed, naming the dominant error code, when every case errored', async () => {
+    setupRun(3);
+    findManyResults
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        failedRow('no_provider_configured'),
+        failedRow('no_provider_configured'),
+        failedRow('timeout'),
+      ]);
+
+    const result = await processPendingEvaluationRuns();
+
+    expect(result).toEqual({ claimed: 1, completed: 0, released: 0, failed: 1, cancelled: 0 });
+    const markCall = mockedMarkTerminal.mock.calls[0];
+    expect(markCall[1]).toBe('failed');
+    expect(markCall[2].summary.note).toBe('all_cases_failed (3/3): no_provider_configured');
+    expect(markCall[2].summary.stats.exact_match.scoredCount).toBe(0);
+  });
+
+  it('keeps a partially failed run completed with no note', async () => {
+    setupRun(2);
+    findManyResults.mockResolvedValueOnce([]).mockResolvedValueOnce([failedRow('timeout'), okRow]);
+
+    const result = await processPendingEvaluationRuns();
+
+    expect(result).toEqual({ claimed: 1, completed: 1, released: 0, failed: 0, cancelled: 0 });
+    const markCall = mockedMarkTerminal.mock.calls[0];
+    expect(markCall[1]).toBe('completed');
+    expect(markCall[2].summary.note).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Hash-pin mismatch
 // ---------------------------------------------------------------------------
 

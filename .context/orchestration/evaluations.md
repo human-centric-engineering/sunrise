@@ -121,7 +121,10 @@ Per-tick lifecycle:
    picks the run up.
 7. When every case has a result row: aggregate per-metric stats into
    `summary`, log one `CostOperation.EVALUATION_JUDGE` row covering the
-   total judge spend, mark `completed`.
+   total judge spend, mark `completed` — or `failed` when **every** case
+   errored (`errorCode` set on all rows), with the dominant error code in
+   `summary.note` (`all_cases_failed (N/N): <code>`). Partial failure stays
+   `completed`; read `progress.casesFailed` and the per-case `errorCode`.
 
 Subject chat cost is **not** re-logged by the worker — `streamChat`
 already writes `CostOperation.CHAT` rows for the underlying agent
