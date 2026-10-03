@@ -320,6 +320,26 @@ describe('ExperimentComparePage', () => {
       // The table still renders against whatever has completed
       expect(screen.getByTestId('variant-compare-table')).toBeInTheDocument();
     });
+
+    it('does not show the "still queued" notice for a terminal failed or cancelled run', async () => {
+      wireFetches({
+        compareResult: {
+          success: true,
+          data: makeCompareData({
+            variants: [
+              makeVariant({ variantId: 'var-1', evaluationRunId: 'run-1', runStatus: 'failed' }),
+              makeVariant({ variantId: 'var-2', evaluationRunId: 'run-2', runStatus: 'cancelled' }),
+            ],
+          }),
+        },
+        gradersResult: { success: true, data: { judgeAgents: [] } },
+      });
+      const params = Promise.resolve({ id: 'exp-1' });
+
+      render(await ExperimentComparePage({ params }));
+
+      expect(screen.queryByText(/Some variant runs are still queued or running/)).toBeNull();
+    });
   });
 
   // ── Judge-list tolerance ─────────────────────────────────────────────────────

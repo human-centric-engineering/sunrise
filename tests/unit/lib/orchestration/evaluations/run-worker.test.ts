@@ -906,32 +906,41 @@ describe('progress + input shape', () => {
 // ---------------------------------------------------------------------------
 
 describe('terminal status when cases fail', () => {
-  function failedRow(errorCode: string) {
-    return {
-      metricScores: { exact_match: { score: null } },
-      subjectMetadata: {},
-      costUsd: 0.002,
-      errorCode,
-    };
+  /**
+   * Drive one case per entry: a code makes that case's subject fail with it,
+   * null lets it succeed. The final aggregation read returns the rows the
+   * worker actually wrote, so the status decision is tested against the
+   * worker's own `errorCode` persistence rather than a hand-built fixture.
+   */
+  function driveCases(codes: Array<string | null>) {
+    mockedClaim.mockResolvedValueOnce(makeRun());
+    findManyCases.mockResolvedValueOnce(codes.map((_, i) => makeCase(i + 1)));
+    findAgent.mockResolvedValueOnce({ slug: 'agent-slug' });
+    mockedGetGrader.mockReturnValue(passingGrader());
+    for (const code of codes) {
+      mockedRunAgent.mockResolvedValueOnce(
+        code ? drainOk({ errorCode: code, errorMessage: 'boom', assistantText: '' }) : drainOk()
+      );
+    }
+    // Same array reference: filled by each create, read by the final findMany.
+    const written: unknown[] = [];
+    createResult.mockImplementation((args: { data: unknown }) => {
+      written.push(args.data);
+      return {}; // awaited by the worker; a plain value resolves the same
+    });
+    findManyResults
+      .mockResolvedValueOnce([]) // no case already processed
+      .mockResolvedValueOnce(written);
   }
 
   it('marks the run failed, naming the dominant error code, when every case errored', async () => {
-    mockedClaim.mockResolvedValueOnce(makeRun());
-    findManyCases.mockResolvedValueOnce([1, 2, 3, 4, 5].map((p) => makeCase(p)));
-    findAgent.mockResolvedValueOnce({ slug: 'agent-slug' });
-    mockedGetGrader.mockReturnValue(passingGrader());
-    mockedRunAgent.mockResolvedValue(
-      drainOk({ errorCode: 'no_provider_configured', assistantText: '' })
-    );
-    findManyResults
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        failedRow('no_provider_configured'),
-        failedRow('provider_timeout'),
-        failedRow('no_provider_configured'),
-        failedRow('provider_timeout'),
-        failedRow('no_provider_configured'),
-      ]);
+    driveCases([
+      'no_provider_configured',
+      'budget_exceeded_per_turn',
+      'no_provider_configured',
+      'budget_exceeded_per_turn',
+      'no_provider_configured',
+    ]);
 
     const result = await processPendingEvaluationRuns();
 
@@ -942,7 +951,7 @@ describe('terminal status when cases fail', () => {
     expect(patch.summary.note).toBe('all_cases_failed: no_provider_configured');
     expect(patch.summary.stats.exact_match.scoredCount).toBe(0);
     // The attempts were paid for — the spend is still recorded.
-    expect(patch.totalCostUsd).toBeCloseTo(0.01);
+    expect(patch.totalCostUsd).toBeCloseTo(0.005);
     expect(mockedLogCost).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: CostOperation.EVALUATION_BATCH,
@@ -952,39 +961,22 @@ describe('terminal status when cases fail', () => {
   });
 
   it('names the code that reached the top count first when two codes tie', async () => {
-    mockedClaim.mockResolvedValueOnce(makeRun());
-    findManyCases.mockResolvedValueOnce([1, 2, 3, 4].map((p) => makeCase(p)));
-    findAgent.mockResolvedValueOnce({ slug: 'agent-slug' });
-    mockedGetGrader.mockReturnValue(passingGrader());
-    mockedRunAgent.mockResolvedValue(drainOk({ errorCode: 'provider_timeout', assistantText: '' }));
-    findManyResults
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        failedRow('no_provider_configured'),
-        failedRow('provider_timeout'),
-        failedRow('provider_timeout'),
-        failedRow('no_provider_configured'),
-      ]);
+    driveCases([
+      'no_provider_configured',
+      'budget_exceeded_per_turn',
+      'budget_exceeded_per_turn',
+      'no_provider_configured',
+    ]);
 
     await processPendingEvaluationRuns();
 
     expect(mockedMarkTerminal.mock.calls[0][2].summary.note).toBe(
-      'all_cases_failed: provider_timeout'
+      'all_cases_failed: budget_exceeded_per_turn'
     );
   });
 
   it('keeps a run completed, with no note, when only some cases errored', async () => {
-    mockedClaim.mockResolvedValueOnce(makeRun());
-    findManyCases.mockResolvedValueOnce([makeCase(1), makeCase(2)]);
-    findAgent.mockResolvedValueOnce({ slug: 'agent-slug' });
-    mockedGetGrader.mockReturnValue(passingGrader());
-    mockedRunAgent.mockResolvedValue(drainOk());
-    findManyResults
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        failedRow('provider_timeout'),
-        { metricScores: { exact_match: { score: 1 } }, subjectMetadata: {}, costUsd: 0 },
-      ]);
+    driveCases(['budget_exceeded_per_turn', null]);
 
     const result = await processPendingEvaluationRuns();
 
@@ -992,6 +984,7 @@ describe('terminal status when cases fail', () => {
     const [, status, patch] = mockedMarkTerminal.mock.calls[0];
     expect(status).toBe('completed');
     expect(patch.summary.note).toBeUndefined();
+    expect(patch.summary.stats.exact_match.scoredCount).toBe(1);
   });
 });
 

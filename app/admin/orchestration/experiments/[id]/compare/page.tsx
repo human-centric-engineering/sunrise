@@ -104,8 +104,10 @@ export default async function ExperimentComparePage({
   if (!data) notFound();
 
   const noRunsYet = data.variants.every((v) => v.evaluationRunId === null);
+  // Only in-flight runs warrant "refresh later" — a `failed` or `cancelled`
+  // run is terminal and will never finish.
   const someRunsStillQueued = data.variants.some(
-    (v) => v.evaluationRunId !== null && v.runStatus !== 'completed'
+    (v) => v.evaluationRunId !== null && (v.runStatus === 'queued' || v.runStatus === 'running')
   );
 
   return (
