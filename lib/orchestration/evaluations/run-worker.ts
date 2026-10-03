@@ -21,7 +21,10 @@
  *      progress. If the budget expires mid-run, release the lease so
  *      the next tick resumes from the next unprocessed case.
  *   6. When every case has a result: compute aggregate summary,
- *      log the run-level cost rollup, mark `status='completed'`.
+ *      log the run-level cost rollup, mark `status='completed'` — or
+ *      `status='failed'` with `summary.note = 'all_cases_failed: <code>'`
+ *      when every case errored, so a run with nothing in it never reads
+ *      as a finished result.
  *
  * Concurrency-safe: the worker is single-tick-scoped and the claim
  * step ensures only one worker can hold a run's lease at a time.
@@ -271,7 +274,16 @@ async function driveRun(run: ClaimedRun): Promise<RunOutcome> {
   });
   const summary = aggregateSummary(allResults, metricConfigs);
   const totalCost = allResults.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
-  await markTerminal(run.id, 'completed', { summary, totalCostUsd: totalCost });
+  // A run where every case errored has no result in it; recording it
+  // `completed` would make it indistinguishable from a clean run (#801).
+  // Partial failures stay `completed` — `progress.casesFailed` carries them.
+  const failedCodes = allResults.flatMap((r) => (r.errorCode ? [r.errorCode] : []));
+  const allFailed = allResults.length > 0 && failedCodes.length === allResults.length;
+  if (allFailed) {
+    summary.note = `all_cases_failed: ${mostCommon(failedCodes)}`;
+  }
+  const outcome = allFailed ? 'failed' : 'completed';
+  await markTerminal(run.id, outcome, { summary, totalCostUsd: totalCost });
 
   // Run-level cost-marker row. Subject + judge spend are already
   // logged: subject by `streamChat` (CHAT rows), judge by `streamChat`
@@ -294,7 +306,7 @@ async function driveRun(run: ClaimedRun): Promise<RunOutcome> {
       error: err instanceof Error ? err.message : String(err),
     });
   });
-  return 'completed';
+  return outcome;
 }
 
 // ---------------------------------------------------------------------------
@@ -539,6 +551,18 @@ function aggregateSummary(
     rawScores,
     completedAt: new Date().toISOString(),
   };
+}
+
+/** Most frequent value; on a tie, the one that reached the count first. */
+function mostCommon(values: string[]): string {
+  const counts = new Map<string, number>();
+  let best = values[0];
+  for (const v of values) {
+    const n = (counts.get(v) ?? 0) + 1;
+    counts.set(v, n);
+    if (n > (counts.get(best) ?? 0)) best = v;
+  }
+  return best;
 }
 
 function mean(values: number[]): number | null {

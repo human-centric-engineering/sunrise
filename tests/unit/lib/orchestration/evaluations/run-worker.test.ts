@@ -902,6 +902,72 @@ describe('progress + input shape', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Terminal status when cases fail (#801)
+// ---------------------------------------------------------------------------
+
+describe('terminal status when cases fail', () => {
+  function failedRow(errorCode: string) {
+    return {
+      metricScores: { exact_match: { score: null } },
+      subjectMetadata: {},
+      costUsd: 0.002,
+      errorCode,
+    };
+  }
+
+  it('marks the run failed, naming the dominant error code, when every case errored', async () => {
+    mockedClaim.mockResolvedValueOnce(makeRun());
+    findManyCases.mockResolvedValueOnce([1, 2, 3, 4, 5].map((p) => makeCase(p)));
+    findAgent.mockResolvedValueOnce({ slug: 'agent-slug' });
+    mockedGetGrader.mockReturnValue(passingGrader());
+    mockedRunAgent.mockResolvedValue(
+      drainOk({ errorCode: 'no_provider_configured', assistantText: '' })
+    );
+    findManyResults
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        failedRow('no_provider_configured'),
+        failedRow('provider_timeout'),
+        failedRow('no_provider_configured'),
+        failedRow('provider_timeout'),
+        failedRow('no_provider_configured'),
+      ]);
+
+    const result = await processPendingEvaluationRuns();
+
+    expect(result).toEqual({ claimed: 1, completed: 0, released: 0, failed: 1, cancelled: 0 });
+    const [runId, status, patch] = mockedMarkTerminal.mock.calls[0];
+    expect(runId).toBe('run-1');
+    expect(status).toBe('failed');
+    expect(patch.summary.note).toBe('all_cases_failed: no_provider_configured');
+    expect(patch.summary.stats.exact_match.scoredCount).toBe(0);
+    // The attempts were paid for — the spend is still recorded.
+    expect(patch.totalCostUsd).toBeCloseTo(0.01);
+  });
+
+  it('keeps a run completed, with no note, when only some cases errored', async () => {
+    mockedClaim.mockResolvedValueOnce(makeRun());
+    findManyCases.mockResolvedValueOnce([makeCase(1), makeCase(2)]);
+    findAgent.mockResolvedValueOnce({ slug: 'agent-slug' });
+    mockedGetGrader.mockReturnValue(passingGrader());
+    mockedRunAgent.mockResolvedValue(drainOk());
+    findManyResults
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        failedRow('provider_timeout'),
+        { metricScores: { exact_match: { score: 1 } }, subjectMetadata: {}, costUsd: 0 },
+      ]);
+
+    const result = await processPendingEvaluationRuns();
+
+    expect(result.completed).toBe(1);
+    const [, status, patch] = mockedMarkTerminal.mock.calls[0];
+    expect(status).toBe('completed');
+    expect(patch.summary.note).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Aggregation behaviour
 // ---------------------------------------------------------------------------
 
