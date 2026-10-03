@@ -122,8 +122,8 @@ Per-tick lifecycle:
 7. When every case has a result row: aggregate per-metric stats into
    `summary`, log one `CostOperation.EVALUATION_JUDGE` row covering the
    total judge spend, mark `completed`. If **every** case errored,
-   mark `failed` instead, with `summary.note =
-'all_cases_failed: <most common case errorCode>'` — a run with
+   mark `failed` instead, with `summary.note` set to
+   `all_cases_failed: <most common case errorCode>` — a run with
    nothing scored must not read as a finished result. A partial
    failure stays `completed`; `progress.casesFailed` carries the count.
 
