@@ -973,6 +973,11 @@ describe('terminal status when cases fail', () => {
     expect(mockedMarkTerminal.mock.calls[0][2].summary.note).toBe(
       'all_cases_failed: budget_exceeded_per_turn'
     );
+    // The tie-break is "first in case order" only because the read is ordered.
+    expect(findManyResults).toHaveBeenLastCalledWith({
+      where: { runId: 'run-1' },
+      orderBy: { casePosition: 'asc' },
+    });
   });
 
   it('keeps a run completed, with no note, when only some cases errored', async () => {

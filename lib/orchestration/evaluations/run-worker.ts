@@ -269,8 +269,10 @@ async function driveRun(run: ClaimedRun): Promise<RunOutcome> {
 
   // 6. Final aggregation
   await writeProgress(run.id, cases.length);
+  // Case order makes `rawScores` and the all-failed tie-break deterministic.
   const allResults = await prisma.aiEvaluationCaseResult.findMany({
     where: { runId: run.id },
+    orderBy: { casePosition: 'asc' },
   });
   const summary = aggregateSummary(allResults, metricConfigs);
   const totalCost = allResults.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
