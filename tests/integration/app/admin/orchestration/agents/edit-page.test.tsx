@@ -282,6 +282,9 @@ describe('EditAgentPage (server component)', () => {
     expect(screen.getByRole('combobox', { name: /provider/i })).toHaveTextContent(
       /pick a provider/i
     );
+    // Same for the model. MOCK_MODELS is not in the provider-matrix shape, so
+    // the form falls back to a free-text model input holding the form value.
+    expect(screen.getByRole('textbox', { name: /^model/i })).toHaveValue('');
   });
 
   it('calls notFound() when agent fetch returns null', async () => {

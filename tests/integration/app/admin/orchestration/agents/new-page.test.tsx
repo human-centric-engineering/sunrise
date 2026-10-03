@@ -206,7 +206,13 @@ describe('NewAgentPage (server component)', () => {
       '/providers': {
         data: [
           ...MOCK_PROVIDERS,
-          { ...MOCK_PROVIDERS[0], id: 'prov-2', name: 'OpenAI', slug: 'openai' },
+          {
+            ...MOCK_PROVIDERS[0],
+            id: 'prov-2',
+            name: 'OpenAI',
+            slug: 'openai',
+            apiKeyEnvVar: 'OPENAI_API_KEY',
+          },
         ],
       },
     });
@@ -229,6 +235,9 @@ describe('NewAgentPage (server component)', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('tab', { name: /model/i }));
     expect(screen.getByRole('combobox', { name: /provider/i })).toHaveTextContent(/openai/i);
+    // The model is seeded too. MOCK_MODELS is not in the provider-matrix shape,
+    // so the form falls back to a free-text model input holding the form value.
+    expect(screen.getByRole('textbox', { name: /^model/i })).toHaveValue('claude-opus-4-6');
   });
 
   it('renders with free-text fallback when provider fetch fails', async () => {
