@@ -557,8 +557,7 @@ function aggregateSummary(
 function dominantErrorCode(failed: Array<{ errorCode: string | null }>): string {
   const counts = new Map<string, number>();
   for (const r of failed) {
-    const code = r.errorCode ?? 'unknown';
-    counts.set(code, (counts.get(code) ?? 0) + 1);
+    if (r.errorCode) counts.set(r.errorCode, (counts.get(r.errorCode) ?? 0) + 1);
   }
   let best = 'unknown';
   let bestCount = 0;

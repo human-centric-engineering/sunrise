@@ -105,7 +105,7 @@ export default async function ExperimentComparePage({
 
   const noRunsYet = data.variants.every((v) => v.evaluationRunId === null);
   const someRunsStillQueued = data.variants.some(
-    (v) => v.evaluationRunId !== null && v.runStatus !== 'completed'
+    (v) => v.runStatus === 'queued' || v.runStatus === 'running'
   );
 
   return (

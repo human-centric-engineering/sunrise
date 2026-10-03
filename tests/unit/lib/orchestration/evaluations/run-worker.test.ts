@@ -330,6 +330,23 @@ describe('processPendingEvaluationRuns — case failures', () => {
     expect(markCall[1]).toBe('failed');
     expect(markCall[2].summary.note).toBe('all_cases_failed (3/3): no_provider_configured');
     expect(markCall[2].summary.stats.exact_match.scoredCount).toBe(0);
+    // The attempts were paid for, so the rollup cost marker is still logged.
+    expect(mockedLogCost).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: CostOperation.EVALUATION_BATCH })
+    );
+  });
+
+  it('names the first-seen code when failed cases tie on error code', async () => {
+    setupRun(2);
+    findManyResults
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([failedRow('timeout'), failedRow('no_provider_configured')]);
+
+    await processPendingEvaluationRuns();
+
+    expect(mockedMarkTerminal.mock.calls[0][2].summary.note).toBe(
+      'all_cases_failed (2/2): timeout'
+    );
   });
 
   it('keeps a partially failed run completed with no note', async () => {

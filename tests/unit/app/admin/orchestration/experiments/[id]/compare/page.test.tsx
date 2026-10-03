@@ -9,7 +9,7 @@
  * - notFound() path — compare data missing (res 404, res.ok false, success false, fetch throws)
  * - Happy path — renders heading, variant/metric counts, PairwiseVerdictCard + VariantCompareTable
  * - "No comparison data yet" branch when no variant has an evaluation run
- * - "Some variant runs still queued" notice when a run is not yet completed
+ * - "Some variant runs still queued" notice when a run is still queued or running
  * - Judge-list fetch tolerance — page still renders with an empty judge list on failure
  * - serverFetch called with the correct compare endpoint
  *
@@ -318,6 +318,28 @@ describe('ExperimentComparePage', () => {
 
       expect(screen.getByText(/Some variant runs are still queued or running/)).toBeInTheDocument();
       // The table still renders against whatever has completed
+      expect(screen.getByTestId('variant-compare-table')).toBeInTheDocument();
+    });
+    it('does not show the "still queued" notice for a variant run that ended failed', async () => {
+      wireFetches({
+        compareResult: {
+          success: true,
+          data: makeCompareData({
+            variants: [
+              makeVariant({ variantId: 'var-1', runStatus: 'completed' }),
+              makeVariant({ variantId: 'var-2', evaluationRunId: 'run-2', runStatus: 'failed' }),
+            ],
+          }),
+        },
+        gradersResult: { success: true, data: { judgeAgents: [] } },
+      });
+      const params = Promise.resolve({ id: 'exp-1' });
+
+      render(await ExperimentComparePage({ params }));
+
+      expect(
+        screen.queryByText(/Some variant runs are still queued or running/)
+      ).not.toBeInTheDocument();
       expect(screen.getByTestId('variant-compare-table')).toBeInTheDocument();
     });
   });
