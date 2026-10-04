@@ -12,6 +12,8 @@
  * - No session → redirect('/login')
  * - Authenticated non-admin → redirect(AUTH_LANDING_ROUTE)
  * - Authenticated admin → renders children
+ * - Shared settings read-only outside the install org at `multi` (§107
+ *   t-753) — the layout reads it once and every page below asks its provider
  * - A registered app authorization policy decides instead — the third
  *   chokepoint. The three tests above run on Sunrise's default policy and are
  *   unchanged by the seam landing, which is the behaviour-neutrality evidence
@@ -26,6 +28,9 @@ import { render, screen } from '@testing-library/react';
 import AdminLayout from '@/app/admin/layout';
 import { createMockSession } from '@/tests/types/mocks';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
+import { env } from '@/lib/env';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 vi.mock('next/navigation', () => ({
   redirect: vi.fn((path: string) => {
@@ -141,5 +146,41 @@ describe('AdminLayout defers to a registered authorization policy', () => {
     await expect(AdminLayout({ children: <div>protected</div> })).rejects.toThrow(
       `NEXT_REDIRECT:${AUTH_LANDING_ROUTE}`
     );
+  });
+});
+
+describe('AdminLayout tells every page whether shared settings are read-only (§107 t-753)', () => {
+  function Probe() {
+    return <p data-testid="probe">{useSharedSettingsReadOnly() ? 'read-only' : 'editable'}</p>;
+  }
+
+  async function renderedFor(mode: 'single' | 'multi', activeOrgId: string): Promise<string> {
+    const previous = env.TENANCY_MODE;
+    env.TENANCY_MODE = mode;
+    try {
+      vi.mocked(getServerSession).mockResolvedValue(
+        createMockSession({ user: { role: 'ADMIN' }, session: { activeOrgId } })
+      );
+      const { unmount } = render(await AdminLayout({ children: <Probe /> }));
+      const text = screen.getByTestId('probe').textContent ?? '';
+      unmount();
+      return text;
+    } finally {
+      env.TENANCY_MODE = previous;
+    }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetAuthorizationPolicyForTests();
+  });
+
+  it('is read-only in a customer org at multi', async () => {
+    expect(await renderedFor('multi', 'cmorg00000000000customer')).toBe('read-only');
+  });
+
+  it('is editable in the install org at multi, and in any org at single', async () => {
+    expect(await renderedFor('multi', INSTALL_ORG_ID)).toBe('editable');
+    expect(await renderedFor('single', 'cmorg00000000000customer')).toBe('editable');
   });
 });
