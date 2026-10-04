@@ -23,6 +23,8 @@ import {
   SettingsForm,
   type OrchestrationSettings,
 } from '@/components/admin/orchestration/settings-form';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
+import { apiClient } from '@/lib/api/client';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -804,6 +806,40 @@ describe('SettingsForm', () => {
       // Assert: both pre-loaded emails are shown as tags
       expect(screen.getByText('pre@example.com')).toBeInTheDocument();
       expect(screen.getByText('loaded@example.com')).toBeInTheDocument();
+    });
+  });
+
+  // ── Read-only outside the install org ───────────────────────────────────
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    it('keeps Save disabled after the form is made dirty, where the editable form enables it, and never PATCHes', async () => {
+      const user = userEvent.setup();
+
+      // Contrast: same fixture and same edit, no provider -> Save enabled
+      const editable = render(<SettingsForm initialSettings={FULL_SETTINGS} />);
+      const editableBudget = document.getElementById('globalMonthlyBudgetUsd') as HTMLInputElement;
+      await user.clear(editableBudget);
+      await user.type(editableBudget, '1000');
+      expect(screen.getByRole('button', { name: /save settings/i })).toBeEnabled();
+      editable.unmount();
+
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <SettingsForm initialSettings={FULL_SETTINGS} />
+        </SharedSettingsAccessProvider>
+      );
+      const budget = document.getElementById('globalMonthlyBudgetUsd') as HTMLInputElement;
+      await user.clear(budget);
+      await user.type(budget, '1000');
+      // Dirty, so `!hasChanges` cannot be why Save is disabled
+      expect(budget).toHaveValue(1000);
+
+      const save = screen.getByRole('button', { name: /save settings/i });
+      expect(save).toBeDisabled();
+      await user.click(save);
+      expect(apiClient.patch).not.toHaveBeenCalled();
+      // The settings themselves stay visible
+      expect(screen.getByText('Safety')).toBeInTheDocument();
     });
   });
 });

@@ -24,6 +24,7 @@ import { render, screen, waitFor, within, act, fireEvent } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 
 import { CapabilityForm } from '@/components/admin/orchestration/capability-form';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import type { AiCapability } from '@/types/prisma';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
@@ -929,6 +930,86 @@ describe('CapabilityForm — Basic tab', () => {
       render(<CapabilityForm mode="create" availableCategories={['api']} />);
 
       expect(screen.queryByText(bannerMatcher)).not.toBeInTheDocument();
+    });
+  });
+
+  // ── Read-only outside the install org ─────────────────────────────────────
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    const editableCapability = () =>
+      makeCapability({
+        functionDefinition: {
+          name: 'existing_capability',
+          description: 'Does something',
+          parameters: { type: 'object', properties: {} },
+        },
+      });
+
+    it('disables Save changes after the form is edited and never PATCHes, where the editable form saves', async () => {
+      const user = userEvent.setup();
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({});
+
+      // Contrast: same fixture and same edit, no provider -> Save enabled and PATCH fires
+      const editable = render(
+        <CapabilityForm
+          mode="edit"
+          capability={editableCapability()}
+          availableCategories={['api']}
+        />
+      );
+      await user.type(screen.getByRole('textbox', { name: /^name/i }), ' v2');
+      expect(screen.getByRole('button', { name: /save changes/i })).toBeEnabled();
+      await user.click(screen.getByRole('button', { name: /save changes/i }));
+      await waitFor(() => expect(apiClient.patch).toHaveBeenCalledTimes(1));
+      editable.unmount();
+      vi.mocked(apiClient.patch).mockClear();
+
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <CapabilityForm
+            mode="edit"
+            capability={editableCapability()}
+            availableCategories={['api']}
+          />
+        </SharedSettingsAccessProvider>
+      );
+      await user.type(screen.getByRole('textbox', { name: /^name/i }), ' v2');
+      expect(screen.getByRole<HTMLInputElement>('textbox', { name: /^name/i }).value).toBe(
+        'Existing Capability v2'
+      );
+
+      const save = screen.getByRole('button', { name: /save changes/i });
+      expect(save).toBeDisabled();
+      await user.click(save);
+      expect(apiClient.patch).not.toHaveBeenCalled();
+      // The Cancel link survives
+      expect(screen.getByRole('link', { name: /cancel/i })).toBeInTheDocument();
+    });
+
+    it('disables Create capability even with every required field filled, and never POSTs', async () => {
+      const user = userEvent.setup();
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.post).mockResolvedValue({ id: 'new-cap' });
+
+      // Contrast: the fully filled create form POSTs when editable
+      const editable = render(
+        <CapabilityForm mode="create" availableCategories={['knowledge', 'api']} />
+      );
+      await fillAndSubmit(user);
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(1));
+      editable.unmount();
+      vi.mocked(apiClient.post).mockClear();
+
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <CapabilityForm mode="create" availableCategories={['knowledge', 'api']} />
+        </SharedSettingsAccessProvider>
+      );
+      await fillAndSubmit(user);
+
+      expect(screen.getByRole('button', { name: /create capability/i })).toBeDisabled();
+      expect(apiClient.post).not.toHaveBeenCalled();
     });
   });
 });

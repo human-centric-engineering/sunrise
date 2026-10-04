@@ -26,6 +26,7 @@ import {
   ActiveEmbeddingModelForm,
   type ActiveEmbeddingModelOption,
 } from '@/components/admin/orchestration/active-embedding-model-form';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -448,6 +449,36 @@ describe('ActiveEmbeddingModelForm', () => {
       // Verify the URL is exactly the SETTINGS endpoint
       const [calledUrl] = mockedPatch.mock.calls[0] as [string, unknown];
       expect(calledUrl).toBe('/api/v1/admin/orchestration/settings');
+    });
+  });
+
+  // ── Read-only outside the install org ──────────────────────────────────────
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    it('keeps Save disabled after the selection is made dirty, where the editable form enables it', async () => {
+      const user = userEvent.setup();
+
+      // Contrast: same fixture and same interaction, no provider -> Save enabled
+      const editable = render(
+        <ActiveEmbeddingModelForm initialActiveEmbeddingModelId={null} options={OPTIONS} />
+      );
+      await openAndSelect(user, 'Text Embedding 3 Small');
+      expect(screen.getByRole('button', { name: /save/i })).toBeEnabled();
+      editable.unmount();
+
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <ActiveEmbeddingModelForm initialActiveEmbeddingModelId={null} options={OPTIONS} />
+        </SharedSettingsAccessProvider>
+      );
+      // Make it dirty so `!dirty` cannot be the reason Save is disabled
+      await openAndSelect(user, 'Text Embedding 3 Small');
+      expect(screen.getByRole('combobox')).toHaveTextContent(/Text Embedding 3 Small/i);
+
+      const save = screen.getByRole('button', { name: /save/i });
+      expect(save).toBeDisabled();
+      await user.click(save);
+      expect(mockedPatch).not.toHaveBeenCalled();
     });
   });
 });

@@ -20,6 +20,8 @@ import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { CapabilitiesTable } from '@/components/admin/orchestration/capabilities-table';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
+import { apiClient } from '@/lib/api/client';
 import { createMockFetchResponse } from '@/tests/helpers/mocks';
 import type { PaginationMeta } from '@/types/api';
 import type { AiCapabilityListItem } from '@/types/orchestration';
@@ -1197,5 +1199,80 @@ describe('CapabilitiesTable', () => {
 
     expect(await screen.findByText(/Couldn't update ".*"\. Try again\./)).toBeInTheDocument();
     expect(screen.getAllByRole('switch')[0]).toBeChecked();
+  });
+
+  // ── Read-only outside the install org ──────────────────────────────────────
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    const tableProps = {
+      initialCapabilities: THREE_CAPABILITIES,
+      initialMeta: MOCK_META,
+      availableCategories: ['knowledge', 'api', 'webhook'],
+    };
+
+    function renderReadOnly() {
+      return render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <CapabilitiesTable {...tableProps} />
+        </SharedSettingsAccessProvider>
+      );
+    }
+
+    it('hides the New capability link while the rows and search stay, where the editable table shows it', () => {
+      // Contrast: same fixture, no provider -> link present
+      const editable = render(<CapabilitiesTable {...tableProps} />);
+      expect(screen.getByRole('link', { name: /new capability/i })).toBeInTheDocument();
+      editable.unmount();
+
+      renderReadOnly();
+
+      expect(screen.queryByRole('link', { name: /new capability/i })).not.toBeInTheDocument();
+      // Survives: the list itself
+      expect(screen.getByPlaceholderText('Search capabilities...')).toBeInTheDocument();
+      expect(screen.getByText('Alpha Search')).toBeInTheDocument();
+      expect(screen.getByText('Beta Webhook')).toBeInTheDocument();
+      expect(screen.getByText('Gamma Hook')).toBeInTheDocument();
+    });
+
+    it('disables every status switch and never PATCHes on click, where the editable switches are enabled', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+      // Contrast: same (non-system) fixture, no provider -> every switch enabled
+      const editable = render(<CapabilitiesTable {...tableProps} />);
+      const editableSwitches = screen.getAllByRole('switch');
+      expect(editableSwitches).toHaveLength(3);
+      editableSwitches.forEach((sw) => expect(sw).toBeEnabled());
+      editable.unmount();
+
+      renderReadOnly();
+      const switches = screen.getAllByRole('switch');
+      expect(switches).toHaveLength(3);
+      switches.forEach((sw) => expect(sw).toBeDisabled());
+      // Switch state still reports isActive (Beta Webhook is inactive)
+      expect(switches[0]).toBeChecked();
+      expect(switches[1]).not.toBeChecked();
+
+      await user.click(switches[0]);
+      expect(apiClient.patch).not.toHaveBeenCalled();
+    });
+
+    it('shows View instead of Edit and no Delete item in the row menu, where the editable menu has Edit and Delete', async () => {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+      // Contrast: same fixture, no provider -> Edit + Delete
+      const editable = render(<CapabilitiesTable {...tableProps} />);
+      await user.click(screen.getAllByRole('button', { name: /row actions/i })[0]);
+      expect(await screen.findByRole('menuitem', { name: /^edit$/i, hidden: true })).toBeVisible();
+      expect(screen.getByRole('menuitem', { name: /delete/i, hidden: true })).toBeInTheDocument();
+      editable.unmount();
+
+      renderReadOnly();
+      await user.click(screen.getAllByRole('button', { name: /row actions/i })[0]);
+
+      expect(await screen.findByRole('menuitem', { name: /^view$/i, hidden: true })).toBeVisible();
+      expect(screen.queryByRole('menuitem', { name: /^edit$/i, hidden: true })).toBeNull();
+      expect(screen.queryByRole('menuitem', { name: /delete/i, hidden: true })).toBeNull();
+      expect(apiClient.delete).not.toHaveBeenCalled();
+    });
   });
 });

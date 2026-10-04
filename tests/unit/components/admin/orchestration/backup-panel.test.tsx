@@ -21,6 +21,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, createEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { BackupPanel } from '@/components/admin/orchestration/settings/backup-panel';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -385,6 +386,36 @@ describe('BackupPanel', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/settings updated/i)).toBeInTheDocument();
+    });
+  });
+  // ── Read-only outside the install org ──────────────────────────────────────
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    it('replaces the import drop zone with an explanation, keeps export, and the editable panel shows the zone', async () => {
+      // Contrast: same component, no provider -> import UI present
+      const editable = render(<BackupPanel />);
+      expect(screen.getByText('Import Configuration')).toBeInTheDocument();
+      expect(screen.getByText(/drop a backup json file here/i)).toBeInTheDocument();
+      expect(editable.container.querySelector('input[type="file"]')).not.toBeNull();
+      editable.unmount();
+
+      const { container } = render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <BackupPanel />
+        </SharedSettingsAccessProvider>
+      );
+
+      // Gated: import heading, drop zone, file input
+      expect(screen.queryByText('Import Configuration')).not.toBeInTheDocument();
+      expect(screen.queryByText(/drop a backup json file here/i)).not.toBeInTheDocument();
+      expect(container.querySelector('input[type="file"]')).toBeNull();
+      // Survives: replacement text and export
+      expect(
+        screen.getByText(/importing replaces shared settings too, so it runs from the install/i)
+      ).toBeInTheDocument();
+      expect(screen.getByText('Export Configuration')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /download backup/i })).toBeEnabled();
+      expect(mockPost).not.toHaveBeenCalled();
     });
   });
 });

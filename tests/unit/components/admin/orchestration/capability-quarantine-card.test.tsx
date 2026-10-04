@@ -18,6 +18,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { CapabilityQuarantineCard } from '@/components/admin/orchestration/capability-quarantine-card';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) => (
@@ -524,5 +525,90 @@ describe('CapabilityQuarantineCard — agents in other organisations (§107 t-75
     expect(screen.queryByText(/No agents currently use this capability/i)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /2 agents affected/i }));
     expect(await screen.findByText(/2 agents in other organisations use it/i)).toBeInTheDocument();
+  });
+});
+
+describe('CapabilityQuarantineCard — read-only outside the install org (§107 t-753)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiPost.mockResolvedValue({});
+  });
+
+  it('renders nothing for an active capability, where the editable card shows the Emergency disable view', () => {
+    const activeState = {
+      quarantineState: 'active' as const,
+      quarantineReason: null,
+      quarantineUntil: null,
+    };
+
+    // Contrast: same fixture without the provider -> the active view is rendered
+    const editable = render(
+      <CapabilityQuarantineCard
+        capabilityId="cap-1"
+        capabilityName="Stripe Charge"
+        state={activeState}
+        affectedAgents={AFFECTED}
+      />
+    );
+    expect(screen.getByRole('button', { name: /Emergency disable/i })).toBeInTheDocument();
+    editable.unmount();
+
+    const { container } = render(
+      <SharedSettingsAccessProvider readOnly canSwitch>
+        <CapabilityQuarantineCard
+          capabilityId="cap-1"
+          capabilityName="Stripe Charge"
+          state={activeState}
+          affectedAgents={AFFECTED}
+        />
+      </SharedSettingsAccessProvider>
+    );
+
+    expect(screen.queryByText(/Emergency disable/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Quarantine$/i })).not.toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('still reports an existing quarantine but hides Lift quarantine, where the editable card offers it', async () => {
+    const user = userEvent.setup();
+    const quarantinedState = {
+      quarantineState: 'quarantined-hard' as const,
+      quarantineReason: 'Vendor 5xx',
+      quarantineUntil: null,
+    };
+
+    // Contrast: same fixture without the provider -> Lift is present and enabled
+    const editable = render(
+      <CapabilityQuarantineCard
+        capabilityId="cap-1"
+        capabilityName="Stripe Charge"
+        state={quarantinedState}
+        affectedAgents={AFFECTED}
+      />
+    );
+    expect(screen.getByRole('button', { name: /Lift quarantine/i })).toBeEnabled();
+    editable.unmount();
+
+    render(
+      <SharedSettingsAccessProvider readOnly canSwitch>
+        <CapabilityQuarantineCard
+          capabilityId="cap-1"
+          capabilityName="Stripe Charge"
+          state={quarantinedState}
+          affectedAgents={AFFECTED}
+        />
+      </SharedSettingsAccessProvider>
+    );
+
+    // Survives: the state report
+    expect(screen.getByText('Quarantined')).toBeInTheDocument();
+    expect(screen.getByText('Hard')).toBeInTheDocument();
+    expect(screen.getByText('Vendor 5xx')).toBeInTheDocument();
+    // Gated: the only way to change it
+    expect(screen.queryByRole('button', { name: /Lift quarantine/i })).not.toBeInTheDocument();
+    // The agents popover (read-only information) is still reachable
+    await user.click(screen.getByRole('button', { name: /2 agents affected/i }));
+    expect(await screen.findByRole('link', { name: /Support Bot/i })).toBeInTheDocument();
+    expect(apiPost).not.toHaveBeenCalled();
   });
 });

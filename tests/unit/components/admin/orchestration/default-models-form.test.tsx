@@ -21,6 +21,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DefaultModelsForm } from '@/components/admin/orchestration/default-models-form';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import type { OrchestrationSettings } from '@/types/orchestration';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 
@@ -857,6 +858,56 @@ describe('DefaultModelsForm', () => {
       );
 
       expect(screen.getByText('Not set — pick a model')).toBeInTheDocument();
+    });
+  });
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    it('keeps the header Save disabled after the form is made dirty, where the editable form enables it, and never PATCHes', async () => {
+      const user = userEvent.setup();
+      const props = {
+        settings: MOCK_SETTINGS,
+        models: MOCK_MODELS,
+        providers: MOCK_PROVIDERS,
+        embeddingModels: MOCK_EMBEDDING_MODELS,
+      };
+
+      // Contrast: same fixture and same edit (Clear a saved slot), no provider -> Save enabled
+      const editable = render(<DefaultModelsForm {...props} />);
+      await user.click(screen.getAllByRole('button', { name: /Clear \(use suggestion\)/i })[1]);
+      expect(screen.getByRole('button', { name: /save changes/i })).toBeEnabled();
+      editable.unmount();
+
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <DefaultModelsForm {...props} />
+        </SharedSettingsAccessProvider>
+      );
+      await user.click(screen.getAllByRole('button', { name: /Clear \(use suggestion\)/i })[1]);
+      // The edit took effect (dirty), so `!isDirty` cannot be why Save is disabled
+      expect(screen.getByText(/Suggested:/i)).toBeInTheDocument();
+
+      const save = screen.getByRole('button', { name: /save changes/i });
+      expect(save).toBeDisabled();
+      await user.click(save);
+      expect(mockedPatch).not.toHaveBeenCalled();
+    });
+
+    it('does not gate the wizard footer submit (the wizard is hidden when read-only)', () => {
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <DefaultModelsForm
+            settings={MOCK_SETTINGS}
+            models={MOCK_MODELS}
+            providers={MOCK_PROVIDERS}
+            embeddingModels={MOCK_EMBEDDING_MODELS}
+            wizardMode={{ onComplete: vi.fn() }}
+          />
+        </SharedSettingsAccessProvider>
+      );
+
+      // Header Save is replaced by the footer's Continue in wizard mode
+      expect(screen.queryByRole('button', { name: /save changes/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^continue$/i })).toBeEnabled();
     });
   });
 });
