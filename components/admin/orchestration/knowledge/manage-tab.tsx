@@ -24,6 +24,7 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -247,6 +248,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   }, [onRefresh, fetchDocuments, listMeta.page]);
 
   const [seeding, setSeeding] = useState(false);
+  const readOnly = useSharedSettingsReadOnly();
   const [seedError, setSeedError] = useState<string | null>(null);
   const [embedding, setEmbedding] = useState(false);
   const [embedError, setEmbedError] = useState<string | null>(null);
@@ -478,33 +480,42 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
             Generate embeddings to enable vector search (requires an embedding provider).
           </p>
           <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-1.5">
-              <Button
-                onClick={() => void handleSeed()}
-                disabled={seeding}
-                variant="outline"
-                size="sm"
-              >
-                <Sprout className="mr-1 h-4 w-4" />
-                {seeding ? 'Loading...' : 'Load Agentic Design Patterns'}
-              </Button>
-              <FieldHelp
-                title="Load Agentic Design Patterns"
-                ariaLabel="What does Load Patterns do?"
-              >
-                <p>
-                  Inserts all pre-chunked content from the built-in <em>Agentic Design Patterns</em>{' '}
-                  guide into the database. The Learning Patterns page works immediately — no
-                  embedding provider needed.
-                </p>
-                <p className="mt-2">
-                  Adapted from <em>Agentic Design Patterns</em> by Antonio Gullí.
-                </p>
-                <p className="mt-2">
-                  If the patterns are already loaded, clicking again has no effect.
-                </p>
-              </FieldHelp>
-            </div>
+            {readOnly ? (
+              // Loading writes the shared settings' seeded timestamp, so it is
+              // install-org only at `multi` (§107 t-751); every org already
+              // gets its own copy of the patterns from the platform agents.
+              <p className="text-muted-foreground text-xs">
+                The patterns are loaded from the install organisation.
+              </p>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <Button
+                  onClick={() => void handleSeed()}
+                  disabled={seeding}
+                  variant="outline"
+                  size="sm"
+                >
+                  <Sprout className="mr-1 h-4 w-4" />
+                  {seeding ? 'Loading...' : 'Load Agentic Design Patterns'}
+                </Button>
+                <FieldHelp
+                  title="Load Agentic Design Patterns"
+                  ariaLabel="What does Load Patterns do?"
+                >
+                  <p>
+                    Inserts all pre-chunked content from the built-in{' '}
+                    <em>Agentic Design Patterns</em> guide into the database. The Learning Patterns
+                    page works immediately — no embedding provider needed.
+                  </p>
+                  <p className="mt-2">
+                    Adapted from <em>Agentic Design Patterns</em> by Antonio Gullí.
+                  </p>
+                  <p className="mt-2">
+                    If the patterns are already loaded, clicking again has no effect.
+                  </p>
+                </FieldHelp>
+              </div>
+            )}
             <div className="flex items-center gap-1.5">
               <Button
                 onClick={() => void handleEmbed()}

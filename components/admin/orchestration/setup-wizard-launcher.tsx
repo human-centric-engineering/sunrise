@@ -20,6 +20,7 @@ import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { SetupWizard } from '@/components/admin/orchestration/setup-wizard';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 
 export interface SetupWizardLauncherProps {
   /**
@@ -38,8 +39,12 @@ export interface SetupWizardLauncherProps {
 
 export function SetupWizardLauncher({
   forceOpen = false,
-}: SetupWizardLauncherProps): React.ReactElement {
+}: SetupWizardLauncherProps): React.ReactElement | null {
   const [open, setOpen] = useState(forceOpen);
+  // Every step writes providers or settings, which are shared: outside the
+  // install org at `multi` the wizard has nothing it could save.
+  const readOnly = useSharedSettingsReadOnly();
+  if (readOnly) return null;
 
   return (
     <>

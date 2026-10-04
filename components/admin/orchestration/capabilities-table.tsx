@@ -36,6 +36,7 @@ import {
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tip } from '@/components/ui/tooltip';
 import {
@@ -130,6 +131,7 @@ export function CapabilitiesTable({
   availableCategories,
 }: CapabilitiesTableProps) {
   const router = useRouter();
+  const readOnly = useSharedSettingsReadOnly();
   const [capabilities, setCapabilities] = useState(initialCapabilities);
   const [meta, setMeta] = useState(initialMeta);
   const [search, setSearch] = useState('');
@@ -344,12 +346,14 @@ export function CapabilitiesTable({
             </Button>
           )}
         </div>
-        <Button asChild size="sm">
-          <Link href="/admin/orchestration/capabilities/new">
-            <Plus className="mr-2 h-4 w-4" />
-            New capability
-          </Link>
-        </Button>
+        {!readOnly && (
+          <Button asChild size="sm">
+            <Link href="/admin/orchestration/capabilities/new">
+              <Plus className="mr-2 h-4 w-4" />
+              New capability
+            </Link>
+          </Button>
+        )}
       </div>
 
       {listError && (
@@ -530,7 +534,7 @@ export function CapabilitiesTable({
                     <Switch
                       checked={cap.isActive}
                       onCheckedChange={(v) => void handleToggleStatus(cap, v)}
-                      disabled={cap.isSystem}
+                      disabled={cap.isSystem || readOnly}
                       aria-label={`Toggle ${cap.name} active`}
                     />
                   </TableCell>
@@ -549,9 +553,9 @@ export function CapabilitiesTable({
                           onClick={() => router.push(`/admin/orchestration/capabilities/${cap.id}`)}
                         >
                           <Edit className="mr-2 h-4 w-4" />
-                          Edit
+                          {readOnly ? 'View' : 'Edit'}
                         </DropdownMenuItem>
-                        {!cap.isSystem && (
+                        {!cap.isSystem && !readOnly && (
                           <DropdownMenuItem
                             className="text-red-600"
                             onClick={() => setDeleteTarget(cap)}

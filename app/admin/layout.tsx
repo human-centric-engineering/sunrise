@@ -8,6 +8,8 @@ import { BRAND } from '@/lib/brand';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { canAdminister } from '@/lib/auth/authorization';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { getSharedSettingsAccess } from '@/lib/tenancy/shared-settings-access';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
 export const metadata: Metadata = {
   title: {
@@ -61,6 +63,10 @@ export default async function AdminLayout({
     redirect(AUTH_LANDING_ROUTE);
   }
 
+  // Shared settings are read-only outside the install org at `multi` (§107
+  // t-753); every page below asks the provider rather than working it out.
+  const sharedSettings = await getSharedSettingsAccess();
+
   return (
     <div className="bg-background flex h-screen overflow-hidden">
       <AdminSidebar />
@@ -68,7 +74,14 @@ export default async function AdminLayout({
         <AdminHeader />
         <InFlightExecutionBanner />
         <main className="flex-1 overflow-y-auto overscroll-contain">
-          <div className="p-6">{children}</div>
+          <div className="p-6">
+            <SharedSettingsAccessProvider
+              readOnly={sharedSettings.readOnly}
+              canSwitch={sharedSettings.canSwitch}
+            >
+              {children}
+            </SharedSettingsAccessProvider>
+          </div>
         </main>
       </div>
     </div>

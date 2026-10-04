@@ -4,12 +4,13 @@ import Link from 'next/link';
 import type { ProviderRow } from '@/components/admin/orchestration/providers-list';
 import type { ModelRow } from '@/components/admin/orchestration/provider-models-matrix';
 import { ProvidersTabs } from '@/components/admin/orchestration/providers-tabs';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { KNOWN_PROVIDERS, detectApiKeyEnvVar } from '@/lib/orchestration/llm/known-providers';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { getSharedSettingsAccess } from '@/lib/tenancy/shared-settings-access';
 
 export const metadata: Metadata = {
   title: 'Providers · AI Orchestration',
@@ -42,29 +43,11 @@ async function getModels(): Promise<ModelRow[]> {
   }
 }
 
-/**
- * Whether this request acts for the install org. The provider audit runs the
- * install org's own workflow and agents, which no other org has (they write
- * the provider catalogue every org reads), so its button is shown there only.
- * Any failure hides it: the button does nothing useful anywhere else.
- */
-async function getIsInstallOrg(): Promise<boolean> {
-  try {
-    const res = await serverFetch(API.ORGS.LIST);
-    if (!res.ok) return false;
-    const body = await parseApiResponse<{ activeOrgId: string | null }>(res);
-    return body.success && body.data.activeOrgId === INSTALL_ORG_ID;
-  } catch (err) {
-    logger.error('providers page: active org fetch failed', err);
-    return false;
-  }
-}
-
 export default async function ProvidersListPage() {
-  const [providers, models, isInstallOrg] = await Promise.all([
+  const [providers, models, sharedSettings] = await Promise.all([
     getProviders(),
     getModels(),
-    getIsInstallOrg(),
+    getSharedSettingsAccess(),
   ]);
 
   // Server-side env scan. Hide the "Add provider" CTAs when no hosted
@@ -113,11 +96,16 @@ export default async function ProvidersListPage() {
         </p>
       </header>
 
+      <SharedSettingsReadOnlyNotice />
+
       <ProvidersTabs
         initialProviders={providers}
         initialModels={models}
         hasAnyEnvKey={hasAnyEnvKey}
-        canAuditModels={isInstallOrg}
+        // The provider audit runs the install org's own workflow and agents,
+        // which no other org has, and writes the shared model catalogue — so
+        // its button is offered in the install org only.
+        canAuditModels={sharedSettings.isInstallOrg}
       />
     </div>
   );

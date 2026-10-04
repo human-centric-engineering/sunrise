@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { AgentProfileForm } from '@/components/admin/orchestration/agent-profile-form';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 
 export const metadata: Metadata = {
   title: 'New agent profile · AI Orchestration',
@@ -22,6 +23,8 @@ export default function NewAgentProfilePage() {
         {' / '}
         <span>New</span>
       </nav>
+
+      <SharedSettingsReadOnlyNotice />
 
       <AgentProfileForm mode="create" />
     </div>

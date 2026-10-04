@@ -36,6 +36,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
@@ -96,10 +97,15 @@ export function CapabilityQuarantineCard({
   attribution,
   affectedAgents,
   otherOrgAffectedCount = 0,
-}: QuarantineCapabilityCardProps): React.ReactElement {
+}: QuarantineCapabilityCardProps): React.ReactElement | null {
   const isQuarantined = state.quarantineState !== 'active';
+  // Quarantine is a change to the shared capability (§107 t-753): outside the
+  // install org at `multi` the card only reports a quarantine in place.
+  const readOnly = useSharedSettingsReadOnly();
+  if (readOnly && !isQuarantined) return null;
   return isQuarantined ? (
     <QuarantinedView
+      readOnly={readOnly}
       capabilityId={capabilityId}
       capabilityName={capabilityName}
       state={state}
@@ -387,12 +393,14 @@ function ActiveView({
 // ─── Quarantined view ──────────────────────────────────────────────────────
 
 function QuarantinedView({
+  readOnly,
   capabilityId,
   state,
   attribution,
   affectedAgents,
   otherOrgAffectedCount,
 }: {
+  readOnly: boolean;
   capabilityId: string;
   capabilityName: string;
   state: QuarantineCapabilityState;
@@ -473,16 +481,18 @@ function QuarantinedView({
           otherOrgAffectedCount={otherOrgAffectedCount}
         />
 
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => void lift()}
-          disabled={lifting}
-          className="w-full sm:w-auto"
-        >
-          <ShieldCheck className="mr-1 h-3 w-3" />
-          {lifting ? 'Lifting…' : 'Lift quarantine'}
-        </Button>
+        {!readOnly && (
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void lift()}
+            disabled={lifting}
+            className="w-full sm:w-auto"
+          >
+            <ShieldCheck className="mr-1 h-3 w-3" />
+            {lifting ? 'Lifting…' : 'Lift quarantine'}
+          </Button>
+        )}
       </CardContent>
     </Card>
   );

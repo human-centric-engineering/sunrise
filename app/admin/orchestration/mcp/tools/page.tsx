@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import Link from 'next/link';
 
 import { McpToolsList } from '@/components/admin/orchestration/mcp/mcp-tools-list';
@@ -111,6 +112,8 @@ export default async function McpToolsPage() {
           limiting, and audit logging.
         </p>
       </header>
+
+      <SharedSettingsReadOnlyNotice />
 
       <McpToolsList initialTools={tools} capabilities={capabilities} />
     </div>

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { FieldHelp } from '@/components/ui/field-help';
@@ -41,6 +42,7 @@ const DEFAULT_SETTINGS: McpSettingsResponse = {
 };
 
 export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
+  const readOnly = useSharedSettingsReadOnly();
   const [settings, setSettings] = useState<McpSettingsResponse>(
     initialSettings ?? DEFAULT_SETTINGS
   );
@@ -156,7 +158,7 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
               id="mcp-enabled"
               checked={settings.isEnabled}
               onCheckedChange={(checked) => void handleToggle(checked)}
-              disabled={toggling}
+              disabled={readOnly || toggling}
               aria-label="Enable MCP server"
             />
             <Label htmlFor="mcp-enabled" className="text-sm">

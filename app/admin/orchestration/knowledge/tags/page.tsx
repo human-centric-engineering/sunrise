@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import Link from 'next/link';
 
 import { FieldHelp } from '@/components/ui/field-help';
@@ -79,6 +80,8 @@ export default async function KnowledgeTagsPage(): Promise<React.ReactElement> {
           Define the taxonomy used to scope what each agent can search.
         </p>
       </header>
+
+      <SharedSettingsReadOnlyNotice />
 
       <KnowledgeTagsTable initialTags={tags} initialMeta={meta} />
     </div>

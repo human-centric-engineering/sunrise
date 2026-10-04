@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import Link from 'next/link';
 
 import { CapabilitiesTable } from '@/components/admin/orchestration/capabilities-table';
@@ -117,6 +118,8 @@ export default async function CapabilitiesListPage() {
           more. Each is a piece of server-side code the AI triggers during a conversation.
         </p>
       </header>
+
+      <SharedSettingsReadOnlyNotice />
 
       <CapabilitiesTable
         initialCapabilities={capabilities}

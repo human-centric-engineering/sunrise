@@ -9,6 +9,7 @@ import {
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 
 export const metadata: Metadata = {
   title: 'Edit provider · AI Orchestration',
@@ -45,6 +46,8 @@ export default async function EditProviderPage({ params }: { params: Promise<{ i
         {' / '}
         <span>{provider.name}</span>
       </nav>
+
+      <SharedSettingsReadOnlyNotice />
 
       <ProviderForm mode="edit" provider={provider} />
     </div>

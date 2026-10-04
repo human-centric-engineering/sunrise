@@ -16,6 +16,7 @@ import { ChevronDown, ChevronRight, Loader2, Pencil, Trash2 } from 'lucide-react
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import {
   Dialog,
   DialogContent,
@@ -126,6 +127,7 @@ interface TagUsage {
 
 export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): React.ReactElement {
   const router = useRouter();
+  const readOnly = useSharedSettingsReadOnly();
   const [tags, setTags] = useState<KnowledgeTagListItem[]>(initialTags);
   const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' });
   const [busy, setBusy] = useState(false);
@@ -192,10 +194,12 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
 
   return (
     <>
-      <div className="flex items-center justify-between gap-2">
-        <BulkDeleteUnusedButton tags={tags} onRefresh={() => void refresh()} />
-        <Button onClick={() => setDialog({ kind: 'create' })}>New tag</Button>
-      </div>
+      {!readOnly && (
+        <div className="flex items-center justify-between gap-2">
+          <BulkDeleteUnusedButton tags={tags} onRefresh={() => void refresh()} />
+          <Button onClick={() => setDialog({ kind: 'create' })}>New tag</Button>
+        </div>
+      )}
 
       <div className="rounded-md border">
         <Table>
@@ -255,30 +259,32 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
                         <ClientDate date={tag.updatedAt} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDialog({ kind: 'edit', tag });
-                            }}
-                            aria-label={`Edit ${tag.name}`}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDialog({ kind: 'delete', tag, phase: 'initial' });
-                            }}
-                            aria-label={`Delete ${tag.name}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                        {!readOnly && (
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDialog({ kind: 'edit', tag });
+                              }}
+                              aria-label={`Edit ${tag.name}`}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDialog({ kind: 'delete', tag, phase: 'initial' });
+                              }}
+                              aria-label={`Delete ${tag.name}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        )}
                       </TableCell>
                     </TableRow>
                     {expanded ? (

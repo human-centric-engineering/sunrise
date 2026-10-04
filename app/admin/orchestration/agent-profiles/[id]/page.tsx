@@ -9,6 +9,7 @@ import {
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 
 export const metadata: Metadata = {
   title: 'Edit agent profile · AI Orchestration',
@@ -49,6 +50,8 @@ export default async function EditAgentProfilePage({
         {' / '}
         <span>{profile.name}</span>
       </nav>
+
+      <SharedSettingsReadOnlyNotice />
 
       <AgentProfileForm mode="edit" profile={profile} />
     </div>

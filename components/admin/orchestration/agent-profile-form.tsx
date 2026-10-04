@@ -25,6 +25,7 @@ import { z } from 'zod';
 import { AlertCircle, Check, Loader2, Save } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -68,6 +69,7 @@ function deriveSlug(name: string): string {
 }
 
 export function AgentProfileForm({ mode, profile }: Props) {
+  const readOnly = useSharedSettingsReadOnly();
   const router = useRouter();
   const schedule = useTimeout();
   const isEdit = mode === 'edit';
@@ -166,7 +168,7 @@ export function AgentProfileForm({ mode, profile }: Props) {
           <Button type="button" variant="outline" asChild>
             <Link href="/admin/orchestration/agent-profiles">Cancel</Link>
           </Button>
-          <Button type="submit" disabled={submitting || saved}>
+          <Button type="submit" disabled={readOnly || submitting || saved}>
             {submitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

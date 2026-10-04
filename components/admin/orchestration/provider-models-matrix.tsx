@@ -44,6 +44,7 @@ import { cn } from '@/lib/utils';
 import { FieldHelp } from '@/components/ui/field-help';
 import { AuditModelsDialog } from '@/components/admin/orchestration/audit-models-dialog';
 import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { Input } from '@/components/ui/input';
@@ -315,6 +316,7 @@ export function ProviderModelsMatrix({
   canAuditModels = false,
 }: ProviderModelsMatrixProps): React.ReactElement {
   const router = useRouter();
+  const readOnly = useSharedSettingsReadOnly();
   const [providerFilter, setProviderFilter] = useState<string>('all');
   // Master "narrow to configured providers" toggle. When true, every
   // row from a provider with no AiProviderConfig (or one that's
@@ -709,10 +711,12 @@ export function ProviderModelsMatrix({
               </FieldHelp>
             </>
           )}
-          <Button onClick={() => setDiscoverOpen(true)}>
-            <Sparkles className="mr-2 h-4 w-4" />
-            Discover models
-          </Button>
+          {!readOnly && (
+            <Button onClick={() => setDiscoverOpen(true)}>
+              <Sparkles className="mr-2 h-4 w-4" />
+              Discover models
+            </Button>
+          )}
         </div>
       </div>
 
@@ -962,7 +966,7 @@ export function ProviderModelsMatrix({
                     })()}
                   </TableCell>
                   <TableCell className="text-right">
-                    {agentsInEveryOrg(model) > 0 ? (
+                    {readOnly ? null : agentsInEveryOrg(model) > 0 ? (
                       <Tip
                         label={`Cannot delete — ${agentCount(agentsInEveryOrg(model))} still ${
                           agentsInEveryOrg(model) === 1 ? 'uses' : 'use'

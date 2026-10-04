@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 
 interface ImportResult {
   agents: { created: number; updated: number };
@@ -26,6 +27,7 @@ interface ImportResult {
 }
 
 export function BackupPanel() {
+  const readOnly = useSharedSettingsReadOnly();
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -149,45 +151,52 @@ export function BackupPanel() {
           </Button>
         </div>
 
-        {/* Import */}
-        <div>
-          <h4 className="mb-2 text-sm font-medium">Import Configuration</h4>
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragOver(true);
-            }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={onDrop}
-            className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-6 transition-colors ${
-              dragOver
-                ? 'border-primary bg-primary/5'
-                : 'border-muted-foreground/25 hover:border-muted-foreground/50'
-            }`}
-            onClick={() => fileInputRef.current?.click()}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click();
-            }}
-          >
-            {importing ? (
-              <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
-            ) : (
-              <Upload className="text-muted-foreground h-8 w-8" />
-            )}
-            <p className="text-muted-foreground mt-2 text-sm">
-              {importing ? 'Importing…' : 'Drop a backup JSON file here, or click to browse'}
-            </p>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".json,application/json"
-              className="hidden"
-              onChange={onFileChange}
-            />
+        {/* Import — install org only at `multi` until t-738 splits it into
+            shared and per-org parts (§107 t-751). */}
+        {readOnly ? (
+          <p className="text-muted-foreground text-sm">
+            Importing replaces shared settings too, so it runs from the install organisation.
+          </p>
+        ) : (
+          <div>
+            <h4 className="mb-2 text-sm font-medium">Import Configuration</h4>
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onDrop}
+              className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-6 transition-colors ${
+                dragOver
+                  ? 'border-primary bg-primary/5'
+                  : 'border-muted-foreground/25 hover:border-muted-foreground/50'
+              }`}
+              onClick={() => fileInputRef.current?.click()}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click();
+              }}
+            >
+              {importing ? (
+                <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
+              ) : (
+                <Upload className="text-muted-foreground h-8 w-8" />
+              )}
+              <p className="text-muted-foreground mt-2 text-sm">
+                {importing ? 'Importing…' : 'Drop a backup JSON file here, or click to browse'}
+              </p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={onFileChange}
+              />
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Error */}
         {error && (

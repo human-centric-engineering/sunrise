@@ -36,6 +36,7 @@ import { AlertCircle, Check, Info, Loader2, Plus, Save, Shield, Trash2 } from 'l
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -451,6 +452,7 @@ export function CapabilityForm({
   otherOrgUsedByCount = 0,
   availableCategories = [],
 }: CapabilityFormProps) {
+  const readOnly = useSharedSettingsReadOnly();
   const router = useRouter();
   const isEdit = mode === 'edit';
 
@@ -1009,7 +1011,7 @@ export function CapabilityForm({
           <Button type="button" variant="outline" asChild>
             <Link href="/admin/orchestration/capabilities">Cancel</Link>
           </Button>
-          <Button type="submit" disabled={submitting || saved}>
+          <Button type="submit" disabled={readOnly || submitting || saved}>
             {submitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

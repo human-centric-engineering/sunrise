@@ -23,6 +23,7 @@ import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
 import { getSetupState } from '@/lib/orchestration/setup-state';
+import { getSharedSettingsAccess } from '@/lib/tenancy/shared-settings-access';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
 
 export const metadata: Metadata = {
@@ -249,6 +250,7 @@ export default async function OrchestrationDashboardPage() {
     models,
     setupState,
     activeQuarantines,
+    sharedSettings,
   ] = await Promise.all([
     getCostSummary(),
     getBudgetAlerts(),
@@ -260,6 +262,7 @@ export default async function OrchestrationDashboardPage() {
     getModels(),
     getSetupState(),
     getActiveQuarantines(),
+    getSharedSettingsAccess(),
   ]);
 
   const todayCostUsd = costSummary?.totals.today ?? null;
@@ -280,7 +283,10 @@ export default async function OrchestrationDashboardPage() {
         <SetupWizardLauncher forceOpen={!setupState.hasProvider} />
       </header>
 
-      <SetupRequiredBanner hasProvider={setupState.hasProvider} />
+      <SetupRequiredBanner
+        hasProvider={setupState.hasProvider}
+        readOnly={sharedSettings.readOnly}
+      />
 
       <BudgetAlertsBanner alerts={budgetAlerts} />
 

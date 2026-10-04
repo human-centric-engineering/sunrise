@@ -23,6 +23,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -100,6 +101,7 @@ function previewTemplate(
 }
 
 export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
+  const readOnly = useSharedSettingsReadOnly();
   const [prompts, setPrompts] = useState(initialPrompts);
   const [error, setError] = useState<string | null>(null);
 
@@ -234,11 +236,13 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
           if (!open) setCreateForm(EMPTY_CREATE_FORM);
         }}
       >
-        <DialogTrigger asChild>
-          <Button size="sm" data-testid="create-prompt-trigger">
-            Create Prompt
-          </Button>
-        </DialogTrigger>
+        {!readOnly && (
+          <DialogTrigger asChild>
+            <Button size="sm" data-testid="create-prompt-trigger">
+              Create Prompt
+            </Button>
+          </DialogTrigger>
+        )}
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Create MCP Prompt</DialogTitle>
@@ -373,9 +377,11 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
                 surfaced by MCP clients (e.g. <code>/analyze-pattern</code> in Claude Desktop). End
                 users pick them from a menu — they are <em>not</em> auto-invoked by the model.
               </p>
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
-                Create Your First Prompt
-              </Button>
+              {!readOnly && (
+                <Button size="sm" onClick={() => setCreateOpen(true)}>
+                  Create Your First Prompt
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -418,6 +424,7 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
                     <Switch
                       checked={prompt.isEnabled}
                       onCheckedChange={(checked) => void handleToggle(prompt.id, checked)}
+                      disabled={readOnly}
                       aria-label={`Enable ${prompt.name}`}
                     />
                   </TableCell>
@@ -430,41 +437,46 @@ export function McpPromptsList({ initialPrompts }: McpPromptsListProps) {
                     >
                       Preview
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-xs"
-                      onClick={() => openEdit(prompt)}
-                      data-testid={`edit-prompt-${prompt.id}`}
-                    >
-                      Edit
-                    </Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="sm" className="text-destructive text-xs">
-                          Remove
+                    {!readOnly && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs"
+                          onClick={() => openEdit(prompt)}
+                          data-testid={`edit-prompt-${prompt.id}`}
+                        >
+                          Edit
                         </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Remove prompt?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Connected clients that have bookmarked{' '}
-                            <code className="text-xs">{prompt.name}</code> will get a &quot;prompt
-                            not found&quot; error on next invocation. This action cannot be undone.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                            onClick={() => void handleRemove(prompt.id)}
-                          >
-                            Remove
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="sm" className="text-destructive text-xs">
+                              Remove
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Remove prompt?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Connected clients that have bookmarked{' '}
+                                <code className="text-xs">{prompt.name}</code> will get a
+                                &quot;prompt not found&quot; error on next invocation. This action
+                                cannot be undone.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                onClick={() => void handleRemove(prompt.id)}
+                              >
+                                Remove
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

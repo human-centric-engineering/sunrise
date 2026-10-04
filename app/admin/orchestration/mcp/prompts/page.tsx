@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import Link from 'next/link';
 
 import { McpPromptsList } from '@/components/admin/orchestration/mcp/mcp-prompts-list';
@@ -107,6 +108,8 @@ export default async function McpPromptsPage() {
           <code>{'{{var}}'}</code> placeholders and a list of named arguments.
         </p>
       </header>
+
+      <SharedSettingsReadOnlyNotice />
 
       <McpPromptsList initialPrompts={prompts} />
     </div>

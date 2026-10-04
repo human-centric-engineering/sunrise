@@ -12,6 +12,7 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { resolveQuarantineState } from '@/lib/orchestration/capabilities/dispatcher';
 import { logger } from '@/lib/logging';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import type { AiCapability } from '@/types/prisma';
 
 interface QuarantineAttribution {
@@ -170,6 +171,8 @@ export default async function EditCapabilityPage({ params }: { params: Promise<{
       <CapabilityStatsPanel capabilityId={id} />
 
       {isQuarantined && quarantineCard}
+
+      <SharedSettingsReadOnlyNotice />
 
       <CapabilityForm
         mode="edit"

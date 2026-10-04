@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { AlertCircle, Check, Loader2, Save, Plus, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
@@ -191,6 +192,7 @@ export function SettingsForm({
   initialSettings,
   allowPrivateEscalationWebhook = false,
 }: SettingsFormProps) {
+  const readOnly = useSharedSettingsReadOnly();
   const [error, setError] = React.useState<string | null>(null);
   const [savedAt, setSavedAt] = React.useState<Date | null>(null);
   const [savedEmails, setSavedEmails] = React.useState<string[]>(
@@ -1243,7 +1245,7 @@ export function SettingsForm({
 
       {/* ── Submit ─────────────────────────────────────────────────────── */}
       <div className="sticky bottom-4 flex items-center gap-3">
-        <Button type="submit" disabled={isSubmitting || !hasChanges}>
+        <Button type="submit" disabled={readOnly || isSubmitting || !hasChanges}>
           {isSubmitting ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />

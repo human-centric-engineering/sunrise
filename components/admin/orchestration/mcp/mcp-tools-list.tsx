@@ -21,6 +21,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -100,6 +101,7 @@ interface EditForm {
 }
 
 export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) {
+  const readOnly = useSharedSettingsReadOnly();
   const [tools, setTools] = useState(initialTools);
   const [selectedCapabilityId, setSelectedCapabilityId] = useState<string>('');
   const [adding, setAdding] = useState(false);
@@ -400,7 +402,7 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
       </Dialog>
 
       {/* Add capability */}
-      {availableCapabilities.length > 0 && (
+      {availableCapabilities.length > 0 && !readOnly && (
         <div className="flex items-center gap-3">
           <Select value={selectedCapabilityId} onValueChange={setSelectedCapabilityId}>
             <SelectTrigger className="w-80">
@@ -502,46 +504,55 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
                     <Switch
                       checked={tool.isEnabled}
                       onCheckedChange={(checked) => void handleToggle(tool.id, checked)}
+                      disabled={readOnly}
                       aria-label={`Enable ${tool.capability.name}`}
                     />
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openEdit(tool)}
-                        className="text-xs"
-                        aria-label={`Edit ${tool.capability.name}`}
-                      >
-                        <Pencil className="mr-1 h-3 w-3" />
-                        Edit
-                      </Button>
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button variant="ghost" size="sm" className="text-destructive text-xs">
-                            Remove
+                      {!readOnly && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEdit(tool)}
+                            className="text-xs"
+                            aria-label={`Edit ${tool.capability.name}`}
+                          >
+                            <Pencil className="mr-1 h-3 w-3" />
+                            Edit
                           </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Remove tool?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              This will remove the tool from MCP. Connected clients will no longer
-                              be able to call it.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                              onClick={() => void handleRemove(tool.id)}
-                            >
-                              Remove
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive text-xs"
+                              >
+                                Remove
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Remove tool?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  This will remove the tool from MCP. Connected clients will no
+                                  longer be able to call it.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                  onClick={() => void handleRemove(tool.id)}
+                                >
+                                  Remove
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

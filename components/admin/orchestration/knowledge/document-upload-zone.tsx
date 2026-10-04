@@ -7,6 +7,7 @@ import { BookOpen, FileText, Globe, Loader2, Sparkles, Upload, X } from 'lucide-
 import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { MultiSelect, type MultiSelectOption } from '@/components/ui/multi-select';
@@ -125,6 +126,7 @@ interface DocumentUploadZoneProps {
 }
 
 export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentUploadZoneProps) {
+  const readOnly = useSharedSettingsReadOnly();
   const router = useRouter();
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -511,33 +513,45 @@ export function DocumentUploadZone({ onUploadComplete, onPdfPreview }: DocumentU
               onChange={setTagIds}
               options={tagOptions}
               placeholder={
-                availableTags.length === 0 ? 'No tags yet — type to create one' : 'No tags applied'
+                availableTags.length === 0
+                  ? readOnly
+                    ? 'No tags yet'
+                    : 'No tags yet — type to create one'
+                  : 'No tags applied'
               }
-              emptyText="No matching tags. Type a new name to create one."
+              emptyText={
+                readOnly ? 'No matching tags.' : 'No matching tags. Type a new name to create one.'
+              }
               disabled={uploading}
               ariaLabelledBy="upload-tags-label"
               createSupportsDescription
-              onCreate={async (name, description) => {
-                const created = await apiClient.post<TagRow>(
-                  API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS,
-                  {
-                    body: {
-                      slug: slugifyTagName(name),
-                      name,
-                      ...(description ? { description } : {}),
-                    },
-                  }
-                );
-                // Refresh availableTags so the new row appears in subsequent renders.
-                setAvailableTags((prev) =>
-                  prev.some((t) => t.id === created.id) ? prev : [...prev, created]
-                );
-                return {
-                  value: created.id,
-                  label: created.name,
-                  description: created.description ?? created.slug,
-                };
-              }}
+              // Tags are shared settings: created from the install org only
+              // at `multi` (§107 t-753). Applying an existing tag is this org's.
+              onCreate={
+                readOnly
+                  ? undefined
+                  : async (name, description) => {
+                      const created = await apiClient.post<TagRow>(
+                        API.ADMIN.ORCHESTRATION.KNOWLEDGE_TAGS,
+                        {
+                          body: {
+                            slug: slugifyTagName(name),
+                            name,
+                            ...(description ? { description } : {}),
+                          },
+                        }
+                      );
+                      // Refresh availableTags so the new row appears in subsequent renders.
+                      setAvailableTags((prev) =>
+                        prev.some((t) => t.id === created.id) ? prev : [...prev, created]
+                      );
+                      return {
+                        value: created.id,
+                        label: created.name,
+                        description: created.description ?? created.slug,
+                      };
+                    }
+              }
             />
           </div>
 

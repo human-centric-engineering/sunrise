@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import { AlertTriangle, Sparkles } from 'lucide-react';
 
 import { ProviderForm } from '@/components/admin/orchestration/provider-form';
@@ -92,6 +93,8 @@ export default async function NewProviderPage() {
           </CardContent>
         </Card>
       )}
+
+      <SharedSettingsReadOnlyNotice />
 
       <ProviderForm mode="create" />
     </div>

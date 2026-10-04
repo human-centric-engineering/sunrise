@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import Link from 'next/link';
 
 import { McpSettingsForm } from '@/components/admin/orchestration/mcp/mcp-settings-form';
@@ -48,6 +49,8 @@ export default async function McpSettingsPage() {
           Configure rate limits and audit log retention.
         </p>
       </header>
+
+      <SharedSettingsReadOnlyNotice />
 
       <McpSettingsForm initialSettings={settings} />
     </div>

@@ -59,6 +59,7 @@ import {
 import { Tip } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { apiClient } from '@/lib/api/client';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { API } from '@/lib/api/endpoints';
 import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
 import type { TaskType } from '@/types/orchestration';
@@ -300,6 +301,7 @@ export function ProviderModelsPanel({
   // by setting back to null. After a successful add we refetch so
   // the row's "In matrix" badge appears immediately.
   const [addModelId, setAddModelId] = useState<string | null>(null);
+  const readOnly = useSharedSettingsReadOnly();
 
   const fetchModels = useCallback(async () => {
     setLoading(true);
@@ -856,9 +858,10 @@ export function ProviderModelsPanel({
                           )}
                         </TableCell>
                         <TableCell className="text-right">
-                          {m.inMatrix ? (
-                            // Already curated — nothing to add. Spacer keeps the
-                            // column width stable across rows.
+                          {m.inMatrix || readOnly ? (
+                            // Already curated, or the matrix is read-only here —
+                            // nothing to add. Spacer keeps the column width
+                            // stable across rows.
                             <span className="text-muted-foreground text-xs">—</span>
                           ) : (
                             <Tip

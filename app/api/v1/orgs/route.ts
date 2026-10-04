@@ -18,8 +18,7 @@ import { headers } from 'next/headers';
 import { withAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { isMultiTenant } from '@/lib/tenancy/context';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { sessionActingOrgId } from '@/lib/tenancy/entry';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 
 export const GET = withAuth(
@@ -46,9 +45,7 @@ export const GET = withAuth(
     // stays outside any scope so a refused org still gets its list.
     const activeOrgId =
       session.principal.orgId ??
-      ((await headers()).get(TENANT_HEADER_NAME) ||
-        session.session.activeOrgId ||
-        (isMultiTenant() ? null : INSTALL_ORG_ID));
+      sessionActingOrgId((await headers()).get(TENANT_HEADER_NAME), session.session.activeOrgId);
 
     return successResponse({
       activeOrgId,

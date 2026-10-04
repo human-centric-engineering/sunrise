@@ -19,6 +19,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -114,6 +115,7 @@ const RESOURCE_TYPES = [
 ] as const;
 
 export function McpResourcesList({ initialResources }: McpResourcesListProps) {
+  const readOnly = useSharedSettingsReadOnly();
   const [resources, setResources] = useState(initialResources);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -351,11 +353,13 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
           if (!open) setForm(EMPTY_RESOURCE_FORM);
         }}
       >
-        <DialogTrigger asChild>
-          <Button size="sm" data-testid="create-resource-trigger">
-            Create Resource
-          </Button>
-        </DialogTrigger>
+        {!readOnly && (
+          <DialogTrigger asChild>
+            <Button size="sm" data-testid="create-resource-trigger">
+              Create Resource
+            </Button>
+          </DialogTrigger>
+        )}
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Create MCP Resource</DialogTitle>
@@ -481,9 +485,11 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                   </div>
                 ))}
               </div>
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
-                Create Your First Resource
-              </Button>
+              {!readOnly && (
+                <Button size="sm" onClick={() => setCreateOpen(true)}>
+                  Create Your First Resource
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -545,44 +551,49 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                     <Switch
                       checked={resource.isEnabled}
                       onCheckedChange={(checked) => void handleToggle(resource.id, checked)}
+                      disabled={readOnly}
                       aria-label={`Enable ${resource.name}`}
                     />
                   </TableCell>
                   <TableCell className="space-x-1 whitespace-nowrap">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="text-xs"
-                      onClick={() => openEdit(resource)}
-                      data-testid={`edit-resource-${resource.id}`}
-                    >
-                      Edit
-                    </Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="ghost" size="sm" className="text-destructive text-xs">
-                          Remove
+                    {!readOnly && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-xs"
+                          onClick={() => openEdit(resource)}
+                          data-testid={`edit-resource-${resource.id}`}
+                        >
+                          Edit
                         </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Remove resource?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            This will remove the resource from MCP. Connected clients will no longer
-                            be able to read it.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                            onClick={() => void handleRemove(resource.id)}
-                          >
-                            Remove
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="sm" className="text-destructive text-xs">
+                              Remove
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Remove resource?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This will remove the resource from MCP. Connected clients will no
+                                longer be able to read it.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                onClick={() => void handleRemove(resource.id)}
+                              >
+                                Remove
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

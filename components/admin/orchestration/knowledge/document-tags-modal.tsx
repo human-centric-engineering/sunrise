@@ -20,6 +20,7 @@ import { useRouter } from 'next/navigation';
 import { ExternalLink, Plus, Save, Tag as TagIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
@@ -77,6 +78,7 @@ export function DocumentTagsModal({
   onOpenChange,
   onSaved,
 }: DocumentTagsModalProps): React.ReactElement {
+  const readOnly = useSharedSettingsReadOnly();
   const router = useRouter();
   const [allTags, setAllTags] = useState<TagRow[]>([]);
   const [tagIds, setTagIds] = useState<string[]>([]);
@@ -304,17 +306,21 @@ export function DocumentTagsModal({
               (rename, delete, drill-down). New-tab keeps the operator's
               in-progress selections in this modal intact. */}
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => setCreateOpen((v) => !v)}
-              disabled={loading}
-            >
-              <Plus className="mr-1 h-3.5 w-3.5" />
-              {createOpen ? 'Cancel new tag' : 'Create new tag'}
-            </Button>
+            {/* Tags are shared settings: created from the install org only at
+                `multi` (§107 t-753). Applying an existing tag is this org's. */}
+            {!readOnly && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => setCreateOpen((v) => !v)}
+                disabled={loading}
+              >
+                <Plus className="mr-1 h-3.5 w-3.5" />
+                {createOpen ? 'Cancel new tag' : 'Create new tag'}
+              </Button>
+            )}
             <Link
               href="/admin/orchestration/knowledge/tags"
               target="_blank"
@@ -326,7 +332,7 @@ export function DocumentTagsModal({
             </Link>
           </div>
 
-          {createOpen ? (
+          {createOpen && !readOnly ? (
             <div className="space-y-3 rounded-md border p-3">
               <div className="grid gap-1.5">
                 <Label htmlFor="new-tag-name" className="text-xs">

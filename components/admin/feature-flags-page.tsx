@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { FeatureFlagList } from '@/components/admin/feature-flag-list';
 import { FeatureFlagForm } from '@/components/admin/feature-flag-form';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import type { FeatureFlag } from '@/types/prisma';
 import { parseApiResponse } from '@/lib/api/parse-response';
 import { API } from '@/lib/api/endpoints';
@@ -111,6 +112,8 @@ export function FeatureFlagsPage() {
           Toggle features on or off without redeployment.
         </p>
       </div>
+
+      <SharedSettingsReadOnlyNotice />
 
       <FeatureFlagList
         initialFlags={flags}

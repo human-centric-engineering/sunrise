@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import Link from 'next/link';
 
 import { McpResourcesList } from '@/components/admin/orchestration/mcp/mcp-resources-list';
@@ -81,6 +82,8 @@ export default async function McpResourcesPage() {
           app registered in <code>lib/app/mcp-resources.ts</code> under their own scheme.
         </p>
       </header>
+
+      <SharedSettingsReadOnlyNotice />
 
       <McpResourcesList initialResources={resources} />
     </div>

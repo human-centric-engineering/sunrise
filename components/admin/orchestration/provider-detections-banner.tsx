@@ -26,6 +26,7 @@ import Link from 'next/link';
 import { AlertTriangle, CheckCircle2, Loader2, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 import { Card, CardContent } from '@/components/ui/card';
 import { API } from '@/lib/api/endpoints';
 
@@ -68,6 +69,9 @@ export function ProviderDetectionsBanner({
   onProviderCreated,
   showNoKeysWarning = false,
 }: ProviderDetectionsBannerProps): React.ReactElement | null {
+  // Everything this banner offers writes providers and settings, which are
+  // shared: outside the install org at `multi` it has nothing to offer.
+  const readOnly = useSharedSettingsReadOnly();
   const [detected, setDetected] = useState<DetectionRow[] | null>(null);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [errorBySlug, setErrorBySlug] = useState<Record<string, string>>({});
@@ -93,8 +97,9 @@ export function ProviderDetectionsBanner({
   }, []);
 
   useEffect(() => {
+    if (readOnly) return;
     void fetchDetection();
-  }, [fetchDetection]);
+  }, [fetchDetection, readOnly]);
 
   // Best-effort write of suggested chat / embedding models to the
   // settings singleton. Reads `defaultModelsStored` (the raw operator-
@@ -192,7 +197,7 @@ export function ProviderDetectionsBanner({
 
   // Loading path renders nothing — wait until /providers/detect returns
   // before deciding which message (if any) to surface.
-  if (detected === null) return null;
+  if (readOnly || detected === null) return null;
   const unconfigured = detected.filter((d) => d.apiKeyPresent && !d.alreadyConfigured);
 
   // No keys present anywhere AND the caller opted into the warning

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import Link from 'next/link';
 
 import { McpInfoModal } from '@/components/admin/orchestration/mcp/mcp-info-modal';
@@ -108,6 +109,8 @@ export default async function McpDashboardPage() {
           enable it.
         </p>
       </header>
+
+      <SharedSettingsReadOnlyNotice />
 
       <McpDashboard initialSettings={settings} stats={stats} />
     </div>

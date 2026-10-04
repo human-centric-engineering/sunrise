@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import Link from 'next/link';
 
 import {
@@ -282,6 +283,8 @@ export default async function OrchestrationSettingsPage() {
           tuning.
         </p>
       </header>
+
+      <SharedSettingsReadOnlyNotice />
 
       <DefaultModelsForm
         settings={fullSettings}

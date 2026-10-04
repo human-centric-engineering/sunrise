@@ -133,6 +133,21 @@ export async function enterSessionOrg(
 }
 
 /**
+ * The org a cookie session acts for, read without entering it — in
+ * {@link enterSessionOrg}'s precedence: the
+ * resolver header, else the session's choice, else the install org at
+ * `single` and none at `multi`. Unverified: `GET /api/v1/orgs` reports it to a
+ * member of a refused org, and the admin pages decide which buttons to offer
+ * by it; the guard verifies it on every call that acts.
+ */
+export function sessionActingOrgId(
+  headerOrgId: string | null,
+  sessionActiveOrgId: string | null | undefined
+): string | null {
+  return headerOrgId || sessionActiveOrgId || (isMultiTenant() ? null : INSTALL_ORG_ID);
+}
+
+/**
  * The org an API key acts for — or, for an `admin`-scoped key, none.
  *
  * `null` (rather than a refusal) is the platform-credential answer for an
