@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import { ProviderModelsPanel } from '@/components/admin/orchestration/provider-models-panel';
 import type { ProviderModelInfo } from '@/components/admin/orchestration/provider-models-panel';
 
@@ -1375,5 +1376,71 @@ describe('ProviderModelsPanel — agents in other organisations (§107 t-752)', 
 
     expect(screen.getByText('only-theirs')).toBeInTheDocument();
     expect(screen.queryByText('unused')).not.toBeInTheDocument();
+  });
+});
+
+describe('ProviderModelsPanel — read-only outside the install org (§107 t-753)', () => {
+  const CANDIDATES: ProviderModelInfo[] = [
+    {
+      id: 'gpt-4o-mini',
+      name: 'GPT-4o mini',
+      provider: 'openai',
+      tier: 'worker',
+      inputCostPerMillion: 0.15,
+      outputCostPerMillion: 0.6,
+      maxContext: 128000,
+      supportsTools: true,
+      capabilities: ['chat'],
+      inMatrix: false,
+    },
+    {
+      id: 'gpt-4o',
+      name: 'GPT-4o',
+      provider: 'openai',
+      tier: 'frontier',
+      inputCostPerMillion: 2.5,
+      outputCostPerMillion: 10,
+      maxContext: 128000,
+      supportsTools: true,
+      capabilities: ['chat'],
+      inMatrix: true,
+    },
+  ];
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue({
+      providerId: 'prov-2',
+      slug: 'openai',
+      models: CANDIDATES,
+    });
+  });
+
+  it('replaces the per-row Add-to-matrix button with a dash, keeping the rows and Test buttons', async () => {
+    // Contrast: the same fixture without the provider renders the Add button
+    // (see 'renders an Add button on rows that are not in the matrix').
+    const editable = render(
+      <ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />
+    );
+    expect(await screen.findByLabelText(/add gpt-4o mini to matrix/i)).toBeInTheDocument();
+    editable.unmount();
+
+    render(
+      <SharedSettingsAccessProvider readOnly canSwitch>
+        <ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />
+      </SharedSettingsAccessProvider>
+    );
+
+    await screen.findByText('gpt-4o-mini');
+    expect(screen.getByText('gpt-4o')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/add .* to matrix/i)).not.toBeInTheDocument();
+    // The not-in-matrix row's action cell (last column) is now the dash spacer.
+    const miniRow = screen.getByText('gpt-4o-mini').closest('tr')!;
+    const actionCell = miniRow.querySelector('td:last-child')!;
+    expect(actionCell).toHaveTextContent('—');
+    expect(within(actionCell as HTMLElement).queryByRole('button')).not.toBeInTheDocument();
+    // Read-only things survive: the per-model test button.
+    expect(screen.getByRole('button', { name: /^test gpt-4o mini$/i })).toBeEnabled();
   });
 });

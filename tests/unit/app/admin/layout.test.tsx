@@ -158,9 +158,11 @@ describe('AdminLayout tells every page whether shared settings are read-only (§
     const previous = env.TENANCY_MODE;
     env.TENANCY_MODE = mode;
     try {
-      vi.mocked(getServerSession).mockResolvedValue(
-        createMockSession({ user: { role: 'ADMIN' }, session: { activeOrgId } })
-      );
+      const admin = createMockSession({ user: { role: 'ADMIN' } });
+      vi.mocked(getServerSession).mockResolvedValue({
+        ...admin,
+        session: { ...admin.session, activeOrgId },
+      });
       const { unmount } = render(await AdminLayout({ children: <Probe /> }));
       const text = screen.getByTestId('probe').textContent ?? '';
       unmount();

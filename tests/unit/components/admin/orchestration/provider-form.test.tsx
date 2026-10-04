@@ -22,6 +22,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import { ProviderForm } from '@/components/admin/orchestration/provider-form';
 import type { ProviderRowWithStatus } from '@/components/admin/orchestration/provider-form';
 
@@ -777,6 +778,67 @@ describe('ProviderForm', () => {
         expect(body.apiKeyEnvVar).toBeNull();
         expect(body.isLocal).toBe(true);
       });
+    });
+  });
+
+  // ── Read-only (§107 t-753) ────────────────────────────────────────────────
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    it('disables Save changes in edit mode, keeps the data and Cancel, and cannot submit', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const user = userEvent.setup();
+
+      // Contrast: the same fixture without the provider has an enabled Save.
+      const editable = render(
+        <ProviderForm mode="edit" provider={makeProvider({ name: 'My Provider' })} />
+      );
+      expect(screen.getByRole('button', { name: /save changes/i })).toBeEnabled();
+      editable.unmount();
+
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <ProviderForm mode="edit" provider={makeProvider({ name: 'My Provider' })} />
+        </SharedSettingsAccessProvider>
+      );
+
+      const save = screen.getByRole('button', { name: /save changes/i });
+      expect(save).toBeDisabled();
+      await user.click(save);
+      expect(apiClient.patch).not.toHaveBeenCalled();
+      expect(apiClient.post).not.toHaveBeenCalled();
+
+      // The form still shows the provider and a way back.
+      expect(screen.getByRole<HTMLInputElement>('textbox', { name: /^name/i }).value).toBe(
+        'My Provider'
+      );
+      expect(screen.getByRole('link', { name: /cancel/i })).toHaveAttribute(
+        'href',
+        '/admin/orchestration/providers'
+      );
+    });
+
+    it('disables Create provider in create mode', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      const user = userEvent.setup();
+
+      const editable = render(<ProviderForm mode="create" />);
+      expect(screen.getByRole('button', { name: /create provider/i })).toBeEnabled();
+      editable.unmount();
+
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <ProviderForm mode="create" />
+        </SharedSettingsAccessProvider>
+      );
+
+      const create = screen.getByRole('button', { name: /create provider/i });
+      expect(create).toBeDisabled();
+      await user.type(
+        screen.getByRole('textbox', { name: /api key env var/i }),
+        'ANTHROPIC_API_KEY'
+      );
+      await user.click(create);
+      expect(apiClient.post).not.toHaveBeenCalled();
     });
   });
 });

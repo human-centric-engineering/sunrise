@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import { ProviderDetectionsBanner } from '@/components/admin/orchestration/provider-detections-banner';
 
 interface DetectionRow {
@@ -442,6 +443,39 @@ describe('ProviderDetectionsBanner', () => {
       await waitFor(() => {
         expect(screen.getByText(/Existing defaults are never overwritten/i)).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    it('renders nothing and never calls the detect endpoint, for an unconfigured key and for the no-keys warning', async () => {
+      // Contrast: the same fixture without the provider fetches detection and
+      // lists the unconfigured provider.
+      const editableFetch = makeFetchMock({ detected: [makeDetection()] });
+      vi.stubGlobal('fetch', editableFetch);
+      const editable = render(<ProviderDetectionsBanner />);
+      await waitFor(() => {
+        expect(screen.getByTestId('provider-detections-banner')).toBeInTheDocument();
+      });
+      expect(editableFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/providers/detect'),
+        expect.anything()
+      );
+      editable.unmount();
+
+      const readOnlyFetch = makeFetchMock({ detected: [makeDetection()] });
+      vi.stubGlobal('fetch', readOnlyFetch);
+      const { container } = render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <ProviderDetectionsBanner showNoKeysWarning />
+        </SharedSettingsAccessProvider>
+      );
+
+      // Let any effect-driven fetch settle before asserting it never happened.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(container.firstChild).toBeNull();
+      expect(screen.queryByTestId('provider-detections-banner')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /configure/i })).not.toBeInTheDocument();
+      expect(readOnlyFetch).not.toHaveBeenCalled();
     });
   });
 });

@@ -27,6 +27,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import { ProviderModelsMatrix } from '@/components/admin/orchestration/provider-models-matrix';
 import type { ModelRow } from '@/components/admin/orchestration/provider-models-matrix';
 
@@ -1143,5 +1144,66 @@ describe('ProviderModelsMatrix — agents in other organisations (§107 t-752)',
     expect(await screen.findByText(/2 agents in other organisations use it/)).toBeInTheDocument();
     expect(screen.queryByText(/Editing the agent re-points it/)).not.toBeInTheDocument();
     expect(screen.queryByRole('list')).not.toBeInTheDocument();
+  });
+});
+
+describe('ProviderModelsMatrix — read-only outside the install org (§107 t-753)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  function renderReadOnly(models: ModelRow[]) {
+    return render(
+      <SharedSettingsAccessProvider readOnly canSwitch>
+        <ProviderModelsMatrix initialModels={models} />
+      </SharedSettingsAccessProvider>
+    );
+  }
+
+  it('hides "Discover models" but keeps the row and its link', () => {
+    // Contrast: the same fixture without the provider shows the button
+    // (see 'renders a "Discover models" button').
+    const { unmount } = render(<ProviderModelsMatrix initialModels={[makeModel()]} />);
+    expect(screen.getByRole('button', { name: /discover models/i })).toBeInTheDocument();
+    unmount();
+
+    renderReadOnly([makeModel()]);
+
+    expect(screen.queryByRole('button', { name: /discover models/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'GPT-5' })).toHaveAttribute(
+      'href',
+      '/admin/orchestration/provider-models/model-1'
+    );
+  });
+
+  it('hides the row delete button for a deletable model (no agents bound)', () => {
+    const model = makeModel({ name: 'GPT-5', agents: [] });
+    const { unmount } = render(<ProviderModelsMatrix initialModels={[model]} />);
+    expect(screen.getByRole('button', { name: /^delete GPT-5$/i })).toBeEnabled();
+    unmount();
+
+    renderReadOnly([model]);
+
+    expect(screen.getByRole('row', { name: /gpt-5/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^delete GPT-5/i })).not.toBeInTheDocument();
+  });
+
+  it('also hides the disabled "model is in use" delete button', () => {
+    const model = makeModel({
+      name: 'GPT-5',
+      agents: [{ id: 'agent-1', name: 'Triage', slug: 'triage' }],
+    });
+    const { unmount } = render(<ProviderModelsMatrix initialModels={[model]} />);
+    expect(
+      screen.getByRole('button', { name: /delete GPT-5 disabled — model is in use/i })
+    ).toBeDisabled();
+    unmount();
+
+    renderReadOnly([model]);
+
+    expect(screen.getByRole('row', { name: /gpt-5/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /delete GPT-5/i })).not.toBeInTheDocument();
+    // The agent count (read-only information) survives.
+    expect(screen.getByRole('button', { name: /1 agent/i })).toBeInTheDocument();
   });
 });

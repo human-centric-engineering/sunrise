@@ -49,4 +49,29 @@ describe('SetupRequiredBanner', () => {
       expect(body.textContent).toMatch(/\.env/);
     });
   });
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    it('replaces the wizard copy with the install-organisation pointer when readOnly', () => {
+      // Contrast: the same hasProvider=false fixture without readOnly says the
+      // wizard has opened (asserted in "mentions the .env detection" above).
+      const { unmount } = render(<SetupRequiredBanner hasProvider={false} />);
+      expect(screen.getByText(/setup wizard has opened/i)).toBeInTheDocument();
+      unmount();
+
+      render(<SetupRequiredBanner hasProvider={false} readOnly />);
+
+      expect(screen.queryByText(/setup wizard has opened/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/api keys/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/set up from the install\s+organisation/i)).toBeInTheDocument();
+      // The banner itself and its headline survive.
+      expect(screen.getByTestId('setup-required-banner')).toBeInTheDocument();
+      expect(screen.getByText(/no llm provider is configured yet/i)).toBeInTheDocument();
+    });
+
+    it('still renders nothing when a provider exists, even if readOnly', () => {
+      const { container } = render(<SetupRequiredBanner hasProvider={true} readOnly />);
+
+      expect(container.firstChild).toBeNull();
+    });
+  });
 });

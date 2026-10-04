@@ -17,6 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import { SetupWizardLauncher } from '@/components/admin/orchestration/setup-wizard-launcher';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
@@ -112,6 +113,33 @@ describe('SetupWizardLauncher', () => {
         capturedOnOpenChange!(false);
       });
 
+      expect(screen.queryByTestId('setup-wizard')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    it('renders nothing: no Setup Guide button and no wizard, even with forceOpen', () => {
+      // Contrast: the same launcher outside a provider shows the button
+      // (see "renders the Setup Guide button" above) — asserted here too.
+      const { unmount } = render(<SetupWizardLauncher />);
+      expect(screen.getByRole('button', { name: /setup guide/i })).toBeInTheDocument();
+      unmount();
+
+      const { container } = render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <SetupWizardLauncher />
+        </SharedSettingsAccessProvider>
+      );
+      expect(container.firstChild).toBeNull();
+      expect(screen.queryByRole('button', { name: /setup guide/i })).not.toBeInTheDocument();
+      unmount();
+
+      const forced = render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <SetupWizardLauncher forceOpen />
+        </SharedSettingsAccessProvider>
+      );
+      expect(forced.container.firstChild).toBeNull();
       expect(screen.queryByTestId('setup-wizard')).not.toBeInTheDocument();
     });
   });

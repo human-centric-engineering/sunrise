@@ -21,6 +21,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import {
   ProviderModelForm,
   type ProviderModelData,
@@ -759,5 +760,60 @@ describe('ProviderModelForm', () => {
         })
       );
     });
+  });
+});
+
+describe('ProviderModelForm — read-only outside the install org (§107 t-753)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockPost.mockResolvedValue({ id: 'model-new' });
+    mockPatch.mockResolvedValue({});
+  });
+
+  it('disables Save changes in edit mode, keeps the data, and cannot submit', async () => {
+    const user = userEvent.setup();
+
+    // Contrast: the same fixture without the provider has an enabled Save.
+    const editable = render(<ProviderModelForm model={makeModel()} />);
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeEnabled();
+    editable.unmount();
+
+    render(
+      <SharedSettingsAccessProvider readOnly canSwitch>
+        <ProviderModelForm model={makeModel()} />
+      </SharedSettingsAccessProvider>
+    );
+
+    const save = screen.getByRole('button', { name: /save changes/i });
+    expect(save).toBeDisabled();
+    await user.click(save);
+    expect(mockPatch).not.toHaveBeenCalled();
+    expect(mockPost).not.toHaveBeenCalled();
+
+    expect(screen.getByDisplayValue('Claude Opus 4')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /cancel/i })).toHaveAttribute(
+      'href',
+      '/admin/orchestration/providers?tab=models'
+    );
+  });
+
+  it('disables Create model in create mode', async () => {
+    const user = userEvent.setup();
+
+    const editable = render(<ProviderModelForm />);
+    expect(screen.getByRole('button', { name: /create model/i })).toBeEnabled();
+    editable.unmount();
+
+    render(
+      <SharedSettingsAccessProvider readOnly canSwitch>
+        <ProviderModelForm />
+      </SharedSettingsAccessProvider>
+    );
+
+    const create = screen.getByRole('button', { name: /create model/i });
+    expect(create).toBeDisabled();
+    await fillRequiredFields(user);
+    await user.click(create);
+    expect(mockPost).not.toHaveBeenCalled();
   });
 });
