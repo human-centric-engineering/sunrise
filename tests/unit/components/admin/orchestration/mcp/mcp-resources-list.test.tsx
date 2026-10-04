@@ -5,6 +5,7 @@ import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { McpResourcesList } from '@/components/admin/orchestration/mcp/mcp-resources-list';
 import { API } from '@/lib/api/endpoints';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -867,5 +868,64 @@ describe('edit dialog', () => {
     await waitFor(() => {
       expect(screen.getByText(/Failed to update resource/i)).toBeInTheDocument();
     });
+  });
+});
+
+describe('read-only outside the install org (§107 t-753)', () => {
+  function renderReadOnly(resources: ResourceRow[]) {
+    return render(
+      <SharedSettingsAccessProvider readOnly canSwitch>
+        <McpResourcesList initialResources={resources} />
+      </SharedSettingsAccessProvider>
+    );
+  }
+
+  it('hides both create entry points in the empty state', () => {
+    // Contrast: the editable empty state offers both.
+    const { unmount } = render(<McpResourcesList initialResources={[]} />);
+    expect(screen.getByRole('button', { name: 'Create Resource' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create Your First Resource' })).toBeInTheDocument();
+    unmount();
+
+    renderReadOnly([]);
+    // The empty state itself still renders
+    expect(screen.getByText('No resources exposed yet')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create Resource' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Create Your First Resource' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('hides the top-right Create Resource button when rows exist', () => {
+    const { unmount } = render(<McpResourcesList initialResources={[makeResource()]} />);
+    expect(screen.getByRole('button', { name: 'Create Resource' })).toBeInTheDocument();
+    unmount();
+
+    renderReadOnly([makeResource()]);
+    expect(screen.queryByRole('button', { name: 'Create Resource' })).not.toBeInTheDocument();
+  });
+
+  it('hides row Edit and Remove, keeps row data, and disables the switch without writing', async () => {
+    const user = userEvent.setup();
+    const resource = makeResource({ id: 'r-1', isEnabled: false });
+
+    const { unmount } = render(<McpResourcesList initialResources={[resource]} />);
+    expect(screen.getByTestId('edit-resource-r-1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Remove/i })).toBeInTheDocument();
+    expect(screen.getByRole('switch')).toBeEnabled();
+    unmount();
+
+    renderReadOnly([resource]);
+    const row = screen.getByRole('row', { name: /Knowledge Search/i });
+    expect(within(row).getByText('sunrise://knowledge/search')).toBeInTheDocument();
+    expect(screen.queryByTestId('edit-resource-r-1')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Remove/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Edit/i })).not.toBeInTheDocument();
+
+    const toggle = within(row).getByRole('switch');
+    expect(toggle).toBeDisabled();
+    await user.click(toggle);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(toggle).not.toBeChecked();
   });
 });

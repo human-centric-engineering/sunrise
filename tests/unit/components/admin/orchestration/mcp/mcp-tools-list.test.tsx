@@ -32,6 +32,7 @@ vi.mock('@/lib/api/client', () => ({
 
 import { apiClient } from '@/lib/api/client';
 import { McpToolsList } from '@/components/admin/orchestration/mcp/mcp-tools-list';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -371,6 +372,55 @@ describe('McpToolsList', () => {
       await waitFor(() => {
         expect(screen.queryByText(/edit tool: send email/i)).not.toBeInTheDocument();
       });
+    });
+  });
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    function renderReadOnly(ui: React.ReactElement) {
+      return render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          {ui}
+        </SharedSettingsAccessProvider>
+      );
+    }
+
+    it('hides the Add Tool picker that the same fixture shows when editable', () => {
+      const { unmount } = render(
+        <McpToolsList initialTools={[TOOL]} capabilities={[CAPABILITY, UNUSED_CAPABILITY]} />
+      );
+      expect(screen.getByText('Add Tool')).toBeInTheDocument();
+      unmount();
+
+      renderReadOnly(
+        <McpToolsList initialTools={[TOOL]} capabilities={[CAPABILITY, UNUSED_CAPABILITY]} />
+      );
+      expect(screen.queryByText('Add Tool')).not.toBeInTheDocument();
+      expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+      // Row data still renders
+      expect(screen.getByText('Send Email')).toBeInTheDocument();
+    });
+
+    it('hides row Edit and Remove but keeps row data, and the switch is disabled', async () => {
+      const { unmount } = render(<McpToolsList initialTools={[TOOL]} capabilities={[]} />);
+      expect(screen.getByRole('button', { name: /edit send email/i })).toBeInTheDocument();
+      expect(screen.getByText('Remove')).toBeInTheDocument();
+      expect(screen.getByRole('switch', { name: /enable send email/i })).toBeEnabled();
+      unmount();
+
+      renderReadOnly(<McpToolsList initialTools={[TOOL_WITH_OVERRIDES]} capabilities={[]} />);
+      expect(screen.queryByRole('button', { name: /edit/i })).not.toBeInTheDocument();
+      expect(screen.queryByText('Remove')).not.toBeInTheDocument();
+      expect(screen.getByText('custom_send')).toBeInTheDocument();
+      expect(screen.getByText('30/min')).toBeInTheDocument();
+
+      const toggle = screen.getByRole('switch', { name: /enable send email/i });
+      expect(toggle).toBeDisabled();
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+      expect(apiClient.patch).not.toHaveBeenCalled();
+      expect(apiClient.post).not.toHaveBeenCalled();
+      expect(apiClient.delete).not.toHaveBeenCalled();
     });
   });
 });

@@ -5,6 +5,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { McpPromptsList } from '@/components/admin/orchestration/mcp/mcp-prompts-list';
 import { API } from '@/lib/api/endpoints';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import type { PromptRow } from '@/lib/validations/mcp';
 
 // ---------------------------------------------------------------------------
@@ -660,5 +661,67 @@ describe('preview dialog with empty argumentsSpec', () => {
     await user.click(screen.getByRole('button', { name: /Preview/i }));
 
     expect(screen.getByTestId('preview-output').textContent).toBe('static text');
+  });
+});
+
+describe('read-only outside the install org (§107 t-753)', () => {
+  function renderReadOnly(prompts: PromptRow[]) {
+    return render(
+      <SharedSettingsAccessProvider readOnly canSwitch>
+        <McpPromptsList initialPrompts={prompts} />
+      </SharedSettingsAccessProvider>
+    );
+  }
+
+  it('hides both create entry points in the empty state', () => {
+    // Contrast: the editable empty state offers both.
+    const { unmount } = render(<McpPromptsList initialPrompts={[]} />);
+    expect(screen.getByTestId('create-prompt-trigger')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create Your First Prompt' })).toBeInTheDocument();
+    unmount();
+
+    renderReadOnly([]);
+    expect(screen.getByText(/No prompts yet/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('create-prompt-trigger')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create Prompt' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Create Your First Prompt' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('hides Create Prompt, row Edit and Remove when prompts exist, but keeps Preview', async () => {
+    const user = userEvent.setup();
+
+    const { unmount } = render(<McpPromptsList initialPrompts={[makePrompt()]} />);
+    expect(screen.getByTestId('create-prompt-trigger')).toBeInTheDocument();
+    expect(screen.getByTestId('edit-prompt-p-1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
+    unmount();
+
+    renderReadOnly([makePrompt()]);
+    expect(screen.getByText('analyze-pattern')).toBeInTheDocument();
+    expect(screen.queryByTestId('create-prompt-trigger')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('edit-prompt-p-1')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+
+    // Preview is read-only and must survive
+    await user.click(screen.getByRole('button', { name: /Preview/i }));
+    expect(await screen.findByText(/Preview: analyze-pattern/i)).toBeInTheDocument();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('disables the row switch and sends no PATCH when clicked', async () => {
+    const user = userEvent.setup();
+
+    const { unmount } = render(<McpPromptsList initialPrompts={[makePrompt()]} />);
+    expect(screen.getByRole('switch', { name: 'Enable analyze-pattern' })).toBeEnabled();
+    unmount();
+
+    renderReadOnly([makePrompt({ isEnabled: true })]);
+    const toggle = screen.getByRole('switch', { name: 'Enable analyze-pattern' });
+    expect(toggle).toBeDisabled();
+    await user.click(toggle);
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(toggle).toBeChecked();
   });
 });

@@ -22,6 +22,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { FeatureFlagList } from '@/components/admin/feature-flag-list';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import type { FeatureFlag } from '@/types/prisma';
 
 // Mock dependencies
@@ -821,6 +822,78 @@ describe('components/admin/feature-flag-list', () => {
         expect(screen.getByLabelText('Toggle FLAG_A')).toHaveAttribute('aria-checked', 'true');
         expect(screen.getByLabelText('Toggle FLAG_B')).toHaveAttribute('aria-checked', 'false');
       });
+    });
+  });
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    function renderList(flags: FeatureFlag[], readOnly: boolean) {
+      const list = (
+        <FeatureFlagList
+          initialFlags={flags}
+          onCreateClick={mockOnCreateClick}
+          onEditClick={mockOnEditClick}
+        />
+      );
+      return render(
+        readOnly ? (
+          <SharedSettingsAccessProvider readOnly canSwitch>
+            {list}
+          </SharedSettingsAccessProvider>
+        ) : (
+          list
+        )
+      );
+    }
+
+    it('hides Create Flag and the per-row delete button that the editable list shows', () => {
+      const flags = [createMockFlag({ id: 'flag_1', name: 'FLAG_A', enabled: true })];
+
+      const editable = renderList(flags, false);
+      expect(screen.getByRole('button', { name: /create flag/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Delete FLAG_A' })).toBeInTheDocument();
+      editable.unmount();
+
+      renderList(flags, true);
+      // The list itself still renders
+      expect(screen.getByText('FLAG_A')).toBeInTheDocument();
+      expect(screen.getByText('1 feature flag')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /create flag/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Delete FLAG_A' })).not.toBeInTheDocument();
+    });
+
+    it('hides "Create your first flag" in the empty state but keeps the empty message', () => {
+      const editable = renderList([], false);
+      expect(screen.getByRole('button', { name: /create your first flag/i })).toBeInTheDocument();
+      editable.unmount();
+
+      renderList([], true);
+      expect(screen.getByText('No feature flags yet')).toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /create your first flag/i })
+      ).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /create flag/i })).not.toBeInTheDocument();
+    });
+
+    it('disables the enabled switch, sends no PATCH, and still opens a flag for viewing', async () => {
+      const user = userEvent.setup();
+      const { apiClient } = await import('@/lib/api/client');
+      const flag = createMockFlag({ id: 'flag_1', name: 'FLAG_A', enabled: false });
+
+      const editable = renderList([flag], false);
+      expect(screen.getByLabelText('Toggle FLAG_A')).toBeEnabled();
+      editable.unmount();
+
+      renderList([flag], true);
+      const toggle = screen.getByLabelText('Toggle FLAG_A');
+      expect(toggle).toBeDisabled();
+      await user.click(toggle);
+      expect(apiClient.patch).not.toHaveBeenCalled();
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+
+      // Opening the flag (to read it) survives
+      await user.click(screen.getByText('FLAG_A'));
+      expect(mockOnEditClick).toHaveBeenCalledWith(flag);
+      expect(apiClient.delete).not.toHaveBeenCalled();
     });
   });
 });

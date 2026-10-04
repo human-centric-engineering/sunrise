@@ -42,6 +42,7 @@ vi.mock('@/lib/api/client', () => ({
 
 import { apiClient } from '@/lib/api/client';
 import { McpDashboard } from '@/components/admin/orchestration/mcp/mcp-dashboard';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -185,6 +186,34 @@ describe('McpDashboard', () => {
       await waitFor(() => {
         expect(screen.getByText('Disabled')).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    it('disables the enable switch, keeps the status visible, and never writes', async () => {
+      // Contrast: the same fixture without the provider has an enabled switch.
+      const { unmount } = render(
+        <McpDashboard initialSettings={DISABLED_SETTINGS} stats={STATS_WITH_DATA} />
+      );
+      expect(screen.getByRole('switch', { name: /enable mcp server/i })).toBeEnabled();
+      unmount();
+
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <McpDashboard initialSettings={DISABLED_SETTINGS} stats={STATS_WITH_DATA} />
+        </SharedSettingsAccessProvider>
+      );
+      const toggle = screen.getByRole('switch', { name: /enable mcp server/i });
+      expect(toggle).toBeDisabled();
+      // Read-only data survives: the page did render
+      expect(screen.getByText('Server Status')).toBeInTheDocument();
+      expect(screen.getByText('Disabled')).toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.click(toggle);
+      });
+      expect(apiClient.patch).not.toHaveBeenCalled();
+      expect(screen.getByText('Disabled')).toBeInTheDocument();
     });
   });
 });

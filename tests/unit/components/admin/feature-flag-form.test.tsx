@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { FeatureFlagForm } from '@/components/admin/feature-flag-form';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import type { FeatureFlag } from '@/types/prisma';
 
 // Mock dependencies
@@ -725,6 +726,73 @@ describe('components/admin/feature-flag-form', () => {
       await waitFor(() => {
         expect(screen.getByText('An unexpected error occurred')).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    it('disables the create submit button for a valid, filled-in form and never POSTs', async () => {
+      const user = userEvent.setup();
+      const { apiClient } = await import('@/lib/api/client');
+
+      // Contrast: the identical valid input enables the submit button editable.
+      const editable = render(
+        <FeatureFlagForm open={true} onOpenChange={mockOnOpenChange} onSuccess={mockOnSuccess} />
+      );
+      await user.type(screen.getByLabelText('Name'), 'NEW_FLAG');
+      expect(screen.getByRole('button', { name: /create flag/i })).toBeEnabled();
+      editable.unmount();
+
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <FeatureFlagForm open={true} onOpenChange={mockOnOpenChange} onSuccess={mockOnSuccess} />
+        </SharedSettingsAccessProvider>
+      );
+      await user.type(screen.getByLabelText('Name'), 'NEW_FLAG');
+      expect(screen.getByLabelText('Name')).toHaveValue('NEW_FLAG');
+
+      const submit = screen.getByRole('button', { name: /create flag/i });
+      expect(submit).toBeDisabled();
+      await user.click(submit);
+      expect(apiClient.post).not.toHaveBeenCalled();
+      // Cancel is not a write and stays usable
+      expect(screen.getByRole('button', { name: /cancel/i })).toBeEnabled();
+    });
+
+    it('shows an existing flag with Save Changes disabled even after an edit, and never PATCHes', async () => {
+      const user = userEvent.setup();
+      const { apiClient } = await import('@/lib/api/client');
+      const flag = createMockFlag({ enabled: false });
+
+      const editable = render(
+        <FeatureFlagForm
+          open={true}
+          onOpenChange={mockOnOpenChange}
+          onSuccess={mockOnSuccess}
+          flag={flag}
+        />
+      );
+      await user.click(screen.getByLabelText('Enabled'));
+      expect(screen.getByRole('button', { name: /save changes/i })).toBeEnabled();
+      editable.unmount();
+
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <FeatureFlagForm
+            open={true}
+            onOpenChange={mockOnOpenChange}
+            onSuccess={mockOnSuccess}
+            flag={flag}
+          />
+        </SharedSettingsAccessProvider>
+      );
+      // The flag's data is still shown
+      expect(screen.getByLabelText('Description')).toHaveValue(flag.description);
+      await user.click(screen.getByLabelText('Enabled'));
+
+      const save = screen.getByRole('button', { name: /save changes/i });
+      expect(save).toBeDisabled();
+      await user.click(save);
+      expect(apiClient.patch).not.toHaveBeenCalled();
     });
   });
 });

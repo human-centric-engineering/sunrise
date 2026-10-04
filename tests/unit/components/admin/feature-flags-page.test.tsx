@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { FeatureFlagsPage } from '@/components/admin/feature-flags-page';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import type { FeatureFlag } from '@/types/prisma';
 
 // Mock child components to test parent's state management without testing children
@@ -650,6 +651,42 @@ describe('components/admin/feature-flags-page', () => {
       // Step 3: Close form
       await user.click(screen.getByTestId('form-close-btn'));
       expect(screen.queryByTestId('feature-flag-form')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    function mockFlagsResponse() {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, data: [createMockFlag({ id: 'flag_1' })] }),
+      } as Response);
+    }
+
+    it('renders the read-only notice above the list with the provider, and none without it', async () => {
+      mockFlagsResponse();
+      const editable = render(<FeatureFlagsPage />);
+      await waitFor(() => expect(screen.getByTestId('feature-flag-list')).toBeInTheDocument());
+      expect(screen.queryByTestId('shared-settings-read-only')).not.toBeInTheDocument();
+      editable.unmount();
+
+      mockFlagsResponse();
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <FeatureFlagsPage />
+        </SharedSettingsAccessProvider>
+      );
+      await waitFor(() => expect(screen.getByTestId('feature-flag-list')).toBeInTheDocument());
+
+      const notice = screen.getByTestId('shared-settings-read-only');
+      expect(notice).toHaveTextContent('Read-only in this organisation');
+      expect(
+        screen.getByRole('button', { name: 'Switch to the install organisation' })
+      ).toBeInTheDocument();
+      // The notice sits before the list in document order
+      expect(
+        notice.compareDocumentPosition(screen.getByTestId('feature-flag-list')) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     });
   });
 });

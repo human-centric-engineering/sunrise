@@ -6,11 +6,12 @@
  * @see components/admin/orchestration/knowledge/document-upload-zone.tsx
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { act, cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { DocumentUploadZone } from '@/components/admin/orchestration/knowledge/document-upload-zone';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -1513,5 +1514,84 @@ describe('DocumentUploadZone', () => {
       // The custom name is sent
       expect(formData.get('name')).toBe('My Custom Name');
     });
+  });
+});
+
+describe('read-only outside the install org (§107 t-753)', () => {
+  const EXISTING_TAG = { id: 'tag-s', slug: 'sales', name: 'Sales', description: null };
+
+  afterEach(async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue([]);
+  });
+
+  /** Render, stage a file (which reveals the tags picker) and open the picker. */
+  async function openTagPicker(readOnly: boolean) {
+    const user = userEvent.setup();
+    const ui = <DocumentUploadZone onUploadComplete={onUploadCompleteRO} />;
+    await act(async () => {
+      render(
+        readOnly ? (
+          <SharedSettingsAccessProvider readOnly canSwitch>
+            {ui}
+          </SharedSettingsAccessProvider>
+        ) : (
+          ui
+        )
+      );
+    });
+    fireEvent.change(screen.getByLabelText(/upload document/i), {
+      target: { files: [new File(['x'], 'test.md', { type: 'text/markdown' })] },
+    });
+    await waitFor(() => expect(screen.getByText('test.md')).toBeInTheDocument());
+    await user.click(screen.getByRole('combobox'));
+    return user;
+  }
+
+  const onUploadCompleteRO = vi.fn();
+
+  it('offers no "Create" option for a new name, where the editable picker does', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue([EXISTING_TAG]);
+
+    // Contrast: the identical interaction editable offers creation.
+    let user = await openTagPicker(false);
+    await user.type(screen.getByLabelText('Search options'), 'Brand new');
+    expect(screen.getByText('Create "Brand new"')).toBeInTheDocument();
+    cleanup();
+
+    user = await openTagPicker(true);
+    await user.type(screen.getByLabelText('Search options'), 'Brand new');
+    expect(screen.queryByText('Create "Brand new"')).not.toBeInTheDocument();
+    // Without a create row, the empty text is shown, minus the create hint
+    expect(screen.getByText('No matching tags.')).toBeInTheDocument();
+    expect(screen.queryByText(/type a new name to create one/i)).not.toBeInTheDocument();
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
+  it('still lets an existing tag be found and applied', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue([EXISTING_TAG]);
+
+    const user = await openTagPicker(true);
+    await user.type(screen.getByLabelText('Search options'), 'Sal');
+    await user.click(screen.getByText('Sales'));
+
+    expect(screen.getByText('1 selected')).toBeInTheDocument();
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
+  it('drops the "type to create one" hint from the empty-tags placeholder', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue([]);
+
+    // Contrast: editable keeps the hint.
+    await openTagPicker(false);
+    expect(screen.getByText('No tags yet — type to create one')).toBeInTheDocument();
+    cleanup();
+
+    await openTagPicker(true);
+    expect(screen.getByText('No tags yet')).toBeInTheDocument();
+    expect(screen.queryByText(/type to create one/i)).not.toBeInTheDocument();
   });
 });

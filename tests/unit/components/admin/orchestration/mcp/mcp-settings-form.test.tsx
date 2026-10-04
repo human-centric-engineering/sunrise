@@ -43,6 +43,7 @@ vi.mock('@/lib/api/client', () => ({
 
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { McpSettingsForm } from '@/components/admin/orchestration/mcp/mcp-settings-form';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -189,5 +190,38 @@ describe('the session cap is gone, not merely inert (§39 t-718)', () => {
 
     expect(document.getElementById('maxSessionsPerKey')).toBeNull();
     expect(screen.queryByText(/max sessions per key/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('read-only outside the install org (§107 t-753)', () => {
+  async function makeDirty() {
+    const user = userEvent.setup();
+    const nameInput = document.getElementById('serverName') as HTMLInputElement;
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Edited Name');
+    return user;
+  }
+
+  it('keeps Save Settings disabled after the form is dirtied, and never PATCHes', async () => {
+    // Contrast: the identical edit enables Save without the provider.
+    const { unmount } = render(<McpSettingsForm initialSettings={FULL_SETTINGS} />);
+    await makeDirty();
+    expect(screen.getByRole('button', { name: /save settings/i })).toBeEnabled();
+    unmount();
+
+    render(
+      <SharedSettingsAccessProvider readOnly canSwitch>
+        <McpSettingsForm initialSettings={FULL_SETTINGS} />
+      </SharedSettingsAccessProvider>
+    );
+    // The form still renders its current values
+    expect(document.getElementById('globalRateLimit')).toHaveValue(60);
+    const user = await makeDirty();
+    expect(document.getElementById('serverName')).toHaveValue('Edited Name');
+
+    const save = screen.getByRole('button', { name: /save settings/i });
+    expect(save).toBeDisabled();
+    await user.click(save);
+    expect(apiClient.patch).not.toHaveBeenCalled();
   });
 });

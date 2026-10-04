@@ -24,6 +24,7 @@ import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 
 import { ManageTab } from '@/components/admin/orchestration/knowledge/manage-tab';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import { DEFAULT_KNOWLEDGE_BASE_ID } from '@/lib/orchestration/knowledge/document-manager';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
@@ -1569,6 +1570,87 @@ describe('ManageTab', () => {
         expect(
           mockFetch.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('page=1'))
         ).toBe(true);
+      });
+    });
+  });
+
+  // ── Read-only outside the install org ──────────────────────────────────────
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    const EMBED_READY = (url: string) => {
+      if (url.includes('/embedding-status')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: { total: 10, embedded: 0, pending: 10, hasActiveProvider: true },
+            }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    };
+
+    it('replaces the seed button and its help with an explanation, and never calls seed', async () => {
+      // Contrast: the same fixture editable shows the seed button, help and no note.
+      const editable = render(<ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />);
+      expect(
+        screen.getByRole('button', { name: /load agentic design patterns/i })
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: /what does load patterns do/i })
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText('The patterns are loaded from the install organisation.')
+      ).not.toBeInTheDocument();
+      editable.unmount();
+
+      await act(async () => {
+        render(
+          <SharedSettingsAccessProvider readOnly canSwitch>
+            <ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />
+          </SharedSettingsAccessProvider>
+        );
+      });
+
+      expect(
+        screen.queryByRole('button', { name: /load agentic design patterns/i })
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole('button', { name: /what does load patterns do/i })
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText('The patterns are loaded from the install organisation.')
+      ).toBeInTheDocument();
+      // The document list still renders
+      expect(screen.getByText('My Custom Doc')).toBeInTheDocument();
+      expect(mockFetch).not.toHaveBeenCalledWith(
+        expect.stringContaining('/knowledge/seed'),
+        expect.anything()
+      );
+    });
+
+    it('keeps the Generate Embeddings button working: it is this org’s action', async () => {
+      const user = userEvent.setup();
+      mockFetch.mockImplementation(EMBED_READY);
+
+      await act(async () => {
+        render(
+          <SharedSettingsAccessProvider readOnly canSwitch>
+            <ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />
+          </SharedSettingsAccessProvider>
+        );
+      });
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('button', { name: /generate embeddings/i })[0]).toBeEnabled();
+      });
+      await user.click(screen.getAllByRole('button', { name: /generate embeddings/i })[0]);
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/knowledge/embed'),
+          expect.objectContaining({ method: 'POST' })
+        );
       });
     });
   });

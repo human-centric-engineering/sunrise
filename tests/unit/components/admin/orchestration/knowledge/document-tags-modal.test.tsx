@@ -33,6 +33,7 @@ import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { DocumentTagsModal } from '@/components/admin/orchestration/knowledge/document-tags-modal';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -725,6 +726,56 @@ describe('DocumentTagsModal', () => {
       await waitFor(() => {
         expect(screen.getByText('Sales team content')).toBeInTheDocument();
       });
+    });
+  });
+
+  // ── Read-only outside the install org ──────────────────────────────────────
+
+  describe('read-only outside the install org (§107 t-753)', () => {
+    it('hides "Create new tag" but keeps the picker, the manage link and applying existing tags', async () => {
+      setupDefaultGetMocks({ allTags: [TAG_A, TAG_B], tagIds: ['tag-a'] });
+      vi.mocked(apiClient.patch).mockResolvedValue({});
+
+      // Contrast: the same fixture editable offers the create button.
+      const editable = render(<DocumentTagsModal {...BASE_PROPS} />);
+      await waitFor(() => screen.getByText('Sales'));
+      expect(screen.getByRole('button', { name: /create new tag/i })).toBeInTheDocument();
+      editable.unmount();
+
+      const user = userEvent.setup();
+      await act(async () => {
+        render(
+          <SharedSettingsAccessProvider readOnly canSwitch>
+            <DocumentTagsModal {...BASE_PROPS} />
+          </SharedSettingsAccessProvider>
+        );
+      });
+      await waitFor(() => screen.getByText('Sales'));
+
+      // Hidden: neither the open nor the cancel form of the toggle, nor the form
+      expect(screen.queryByRole('button', { name: /create new tag/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /cancel new tag/i })).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/^name$/i)).not.toBeInTheDocument();
+
+      // Survives: existing-tag selection, the manage link, applying a tag
+      expect(screen.getByRole('link', { name: /manage all tags/i })).toHaveAttribute(
+        'href',
+        '/admin/orchestration/knowledge/tags'
+      );
+      expect(screen.getByRole('checkbox', { name: /remove tag sales/i })).toBeChecked();
+      await user.click(screen.getByRole('checkbox', { name: /apply tag billing/i }));
+      await user.click(screen.getByRole('button', { name: /save tags/i }));
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalledWith(
+          expect.stringContaining('/knowledge/documents/doc-1'),
+          expect.objectContaining({
+            body: expect.objectContaining({ tagIds: expect.arrayContaining(['tag-a', 'tag-b']) }),
+          })
+        );
+      });
+      // No tag was created
+      expect(apiClient.post).not.toHaveBeenCalled();
     });
   });
 });
