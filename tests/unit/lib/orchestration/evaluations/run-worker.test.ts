@@ -328,7 +328,11 @@ describe('processPendingEvaluationRuns — case failures', () => {
     expect(result).toEqual({ claimed: 1, completed: 0, released: 0, failed: 1, cancelled: 0 });
     const markCall = mockedMarkTerminal.mock.calls[0];
     expect(markCall[1]).toBe('failed');
-    expect(markCall[2].summary.note).toBe('all_cases_failed (3/3): no_provider_configured');
+    expect(markCall[2].summary).toMatchObject({
+      note: 'all_cases_failed',
+      casesFailed: 3,
+      dominantErrorCode: 'no_provider_configured',
+    });
     expect(markCall[2].summary.stats.exact_match.scoredCount).toBe(0);
     // The attempts were paid for, so the rollup cost marker is still logged.
     expect(mockedLogCost).toHaveBeenCalledWith(
@@ -347,9 +351,10 @@ describe('processPendingEvaluationRuns — case failures', () => {
 
     await processPendingEvaluationRuns();
 
-    expect(mockedMarkTerminal.mock.calls[0][2].summary.note).toBe(
-      'all_cases_failed (2/2): no_provider_configured'
-    );
+    expect(mockedMarkTerminal.mock.calls[0][2].summary).toMatchObject({
+      note: 'all_cases_failed',
+      dominantErrorCode: 'no_provider_configured',
+    });
   });
 
   it('keeps a partially failed run completed with no note', async () => {
@@ -362,6 +367,7 @@ describe('processPendingEvaluationRuns — case failures', () => {
     const markCall = mockedMarkTerminal.mock.calls[0];
     expect(markCall[1]).toBe('completed');
     expect(markCall[2].summary.note).toBeUndefined();
+    expect(markCall[2].summary.dominantErrorCode).toBeUndefined();
   });
 });
 

@@ -22,7 +22,7 @@
  *      the next tick resumes from the next unprocessed case.
  *   6. When every case has a result: compute aggregate summary,
  *      log the run-level cost rollup, mark `status='completed'` (or
- *      `'failed'` with a `summary.note` when every case errored).
+ *      `'failed'` with `summary.note = 'all_cases_failed'` when every case errored).
  *
  * Concurrency-safe: the worker is single-tick-scoped and the claim
  * step ensures only one worker can hold a run's lease at a time.
@@ -273,15 +273,18 @@ async function driveRun(run: ClaimedRun): Promise<RunOutcome> {
   const summary = aggregateSummary(allResults, metricConfigs);
   const totalCost = allResults.reduce((sum, r) => sum + (r.costUsd ?? 0), 0);
   // A run in which every case failed has no result to read — record it as
-  // `failed` (with the dominant error code in `summary.note`, like the other
-  // failure paths) so consumers branching on `status === 'completed'` are not
-  // handed an empty evaluation. Partial failure stays `completed`: the failed
-  // count is in `progress.casesFailed` and each case row carries its errorCode.
+  // `failed` so consumers branching on `status === 'completed'` are not handed
+  // an empty evaluation. As on the other failure paths, `summary.note` is a
+  // fixed token and the detail sits in its own fields. Partial failure stays
+  // `completed`: the failed count is in `progress.casesFailed` and each case
+  // row carries its errorCode.
   const failedCodes = allResults.flatMap((r) => (r.errorCode ? [r.errorCode] : []));
   const allCasesFailed = allResults.length > 0 && failedCodes.length === allResults.length;
   const outcome: RunOutcome = allCasesFailed ? 'failed' : 'completed';
   if (allCasesFailed) {
-    summary.note = `all_cases_failed (${failedCodes.length}/${allResults.length}): ${dominantErrorCode(failedCodes)}`;
+    summary.note = 'all_cases_failed';
+    summary.casesFailed = failedCodes.length;
+    summary.dominantErrorCode = dominantErrorCode(failedCodes);
   }
   await markTerminal(run.id, outcome, { summary, totalCostUsd: totalCost });
 
@@ -514,6 +517,10 @@ interface RunSummary {
   rawScores: Record<string, number[]>;
   completedAt: string;
   note?: string;
+  /** Set with `note: 'all_cases_failed'`: how many cases failed (all of them). */
+  casesFailed?: number;
+  /** Set with `note: 'all_cases_failed'`: the most frequent case `errorCode`. */
+  dominantErrorCode?: string;
 }
 
 function aggregateSummary(

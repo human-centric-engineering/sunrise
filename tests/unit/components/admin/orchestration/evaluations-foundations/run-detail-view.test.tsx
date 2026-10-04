@@ -454,6 +454,28 @@ describe('RunDetailView', () => {
       expect(screen.getByText(/Five cases excluded/)).toBeInTheDocument();
     });
 
+    it('shows the dominant error code beside an all_cases_failed note', async () => {
+      makeFetchMock(() =>
+        buildRun({
+          status: 'failed',
+          summary: {
+            metricSlugs: ['exact_match'],
+            stats: {
+              exact_match: { mean: null, median: null, p95: null, passRate: null, scoredCount: 0 },
+            },
+            note: 'all_cases_failed',
+            casesFailed: 5,
+            dominantErrorCode: 'no_provider_configured',
+          },
+        })
+      );
+      render(<RunDetailView runId="run-1" />);
+      await screen.findByText(/^Summary$/);
+      expect(
+        screen.getByText(/Note: all_cases_failed \(no_provider_configured\)/)
+      ).toBeInTheDocument();
+    });
+
     it('shows an empty-cases hint when there are no case results', async () => {
       makeFetchMock(
         () => buildRun({ status: 'completed' }),

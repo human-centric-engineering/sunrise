@@ -67,6 +67,7 @@ interface RunSummary {
   completedAt?: string;
   totalJudgeTokens?: { input: number; output: number };
   note?: string;
+  dominantErrorCode?: string;
 }
 
 interface CaseResult {
@@ -359,7 +360,10 @@ export function RunDetailView({ runId }: { runId: string }): React.ReactElement 
               </TableBody>
             </Table>
             {run.summary.note ? (
-              <p className="text-muted-foreground mt-3 text-xs">Note: {run.summary.note}</p>
+              <p className="text-muted-foreground mt-3 text-xs">
+                Note: {run.summary.note}
+                {run.summary.dominantErrorCode ? ` (${run.summary.dominantErrorCode})` : ''}
+              </p>
             ) : null}
           </CardContent>
         </Card>
