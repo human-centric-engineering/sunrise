@@ -56,6 +56,7 @@ import { capabilityFunctionDefinitionSchema } from '@/lib/validations/orchestrat
 import { jsonEquals } from '@/lib/utils/json-equal';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import type { AiCapability } from '@/types/prisma';
+import { agentCount, OtherOrgUsage } from '@/components/admin/orchestration/other-org-usage';
 
 /**
  * Narrow an untrusted JSON blob (API response or Prisma JSON field) to a
@@ -164,6 +165,8 @@ export interface CapabilityFormProps {
   mode: 'create' | 'edit';
   capability?: AiCapability;
   usedBy?: UsedByAgentSummary[];
+  /** Agents in other orgs with it attached: counted, never named (§107 t-752). */
+  otherOrgUsedByCount?: number;
   availableCategories?: string[];
 }
 
@@ -445,6 +448,7 @@ export function CapabilityForm({
   mode,
   capability,
   usedBy = [],
+  otherOrgUsedByCount = 0,
   availableCategories = [],
 }: CapabilityFormProps) {
   const router = useRouter();
@@ -1668,10 +1672,10 @@ export function CapabilityForm({
             )}
           </div>
 
-          {isEdit && usedBy.length > 0 && (
+          {isEdit && usedBy.length + otherOrgUsedByCount > 0 && (
             <div className="rounded-md border p-4">
               <p className="text-sm font-medium">
-                Used by {usedBy.length} agent{usedBy.length === 1 ? '' : 's'}
+                Used by {agentCount(usedBy.length + otherOrgUsedByCount)}
               </p>
               <p className="text-muted-foreground mb-3 text-xs">
                 Changes to this capability&apos;s safety settings apply to every agent that has it
@@ -1684,6 +1688,11 @@ export function CapabilityForm({
                   </Badge>
                 ))}
               </div>
+              <OtherOrgUsage
+                count={otherOrgUsedByCount}
+                afterList={usedBy.length > 0}
+                className="mt-2"
+              />
             </div>
           )}
         </TabsContent>

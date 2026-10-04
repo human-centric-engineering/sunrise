@@ -30,7 +30,9 @@ vi.mock('next/headers', () => ({
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiCapability: { findUnique: vi.fn() },
-    aiAgentCapability: { findMany: vi.fn() },
+    aiAgentCapability: { findMany: vi.fn(), groupBy: vi.fn(() => Promise.resolve([])) },
+    // The guard's membership check when a test runs at multi.
+    orgMembership: { findUnique: vi.fn() },
   },
 }));
 
@@ -38,6 +40,8 @@ vi.mock('@/lib/db/client', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { env } from '@/lib/env';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -215,7 +219,7 @@ describe('GET /api/v1/admin/orchestration/capabilities/:id/agents', () => {
       expect(agent).toHaveProperty('isActive');
     });
 
-    it('calls findMany with include.agent and orderBy agent.name asc', async () => {
+    it('reads the pivot for this capability, ordered by agent name', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(makeCapability() as never);
       vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue([] as never);
@@ -224,11 +228,70 @@ describe('GET /api/v1/admin/orchestration/capabilities/:id/agents', () => {
 
       expect(vi.mocked(prisma.aiAgentCapability.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { capabilityId: CAPABILITY_ID },
-          include: { agent: expect.any(Object) },
+          where: { capabilityId: { in: [CAPABILITY_ID] } },
+          select: expect.objectContaining({ agent: expect.any(Object) }),
           orderBy: { agent: { name: 'asc' } },
         })
       );
+    });
+
+    it('reports other orgs’ agents in meta, never named; zero at single (§107 t-752)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(makeCapability() as never);
+      vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue([] as never);
+
+      const response = await GET(makeRequest(CAPABILITY_ID), makeParams(CAPABILITY_ID));
+      const body = (await response.json()) as { data: unknown[]; meta?: Record<string, unknown> };
+
+      // The array keeps its shape; the count rides alongside.
+      expect(Array.isArray(body.data)).toBe(true);
+      expect(body.meta).toEqual({ otherOrgAgentCount: 0 });
+    });
+
+    it('at multi, names the entered org’s agents and counts the rest in meta', async () => {
+      const mode = env.TENANCY_MODE;
+      env.TENANCY_MODE = 'multi';
+      try {
+        const admin = mockAdminUser();
+        vi.mocked(auth.api.getSession).mockResolvedValue({
+          ...admin,
+          session: { ...admin.session, activeOrgId: INSTALL_ORG_ID },
+        });
+        vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+          role: 'OWNER',
+          org: { status: 'ACTIVE' },
+        } as never);
+        vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(makeCapability() as never);
+        vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue([
+          {
+            capabilityId: CAPABILITY_ID,
+            orgId: INSTALL_ORG_ID,
+            agent: { id: 'agent-1', name: 'Ours', slug: 'ours', isActive: true },
+          },
+        ] as never);
+        // Other orgs come back as counts only: their rows are never read.
+        vi.mocked(prisma.aiAgentCapability.groupBy).mockResolvedValue([
+          { capabilityId: CAPABILITY_ID, orgId: INSTALL_ORG_ID, _count: { _all: 1 } },
+          { capabilityId: CAPABILITY_ID, orgId: 'cmorg00000000000customer', _count: { _all: 1 } },
+        ] as never);
+
+        const response = await GET(makeRequest(CAPABILITY_ID), makeParams(CAPABILITY_ID));
+        const body = (await response.json()) as {
+          data: Array<{ id: string }>;
+          meta?: Record<string, unknown>;
+        };
+
+        expect(response.status).toBe(200);
+        expect(body.data.map((a) => a.id)).toEqual(['agent-1']);
+        expect(body.meta).toEqual({ otherOrgAgentCount: 1 });
+        expect(vi.mocked(prisma.aiAgentCapability.findMany)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { capabilityId: { in: [CAPABILITY_ID] }, orgId: INSTALL_ORG_ID },
+          })
+        );
+      } finally {
+        env.TENANCY_MODE = mode;
+      }
     });
   });
 

@@ -25,6 +25,7 @@ import {
   listProviderModelsQuerySchema,
   createProviderModelSchema,
 } from '@/lib/validations/orchestration';
+import { modelAgentUsage, modelUsageKey } from '@/lib/orchestration/admin/global-config-usage';
 
 export const GET = withAdminAuth(async (request, _session) => {
   const log = await getRouteLogger(request);
@@ -71,32 +72,14 @@ export const GET = withAdminAuth(async (request, _session) => {
     getOrchestrationSettings(),
   ]);
 
-  // Bound active agents per (provider, modelId) pair. Scope the query
-  // to the slugs in the current page so a 100-row matrix doesn't drag
-  // the entire AiAgent table across the wire.
-  const providerSlugs = [...new Set(rows.map((r) => r.providerSlug))];
-  const modelIds = [...new Set(rows.map((r) => r.modelId))];
-  const agentRows =
-    providerSlugs.length === 0 || modelIds.length === 0
-      ? []
-      : await prisma.aiAgent.findMany({
-          where: {
-            isActive: true,
-            provider: { in: providerSlugs },
-            model: { in: modelIds },
-          },
-          select: { id: true, name: true, slug: true, provider: true, model: true },
-          orderBy: { name: 'asc' },
-        });
-
-  const agentsByKey = new Map<string, Array<{ id: string; name: string; slug: string }>>();
-  for (const a of agentRows) {
-    if (!a.provider || !a.model) continue;
-    const key = `${a.provider}::${a.model}`;
-    const list = agentsByKey.get(key) ?? [];
-    list.push({ id: a.id, name: a.name, slug: a.slug });
-    agentsByKey.set(key, list);
-  }
+  // Bound active agents per (provider, modelId) pair, in every org (§107
+  // t-752): the caller's by name, other orgs' counted. Scoped to the slugs
+  // in the current page so a 100-row matrix doesn't drag the entire
+  // AiAgent table across the wire.
+  const usage = await modelAgentUsage(
+    [...new Set(rows.map((r) => r.providerSlug))],
+    [...new Set(rows.map((r) => r.modelId))]
+  );
 
   const configBySlug = new Map(providerConfigs.map((c) => [c.slug, c]));
 
@@ -110,6 +93,7 @@ export const GET = withAdminAuth(async (request, _session) => {
   // co-located instead of split across population + lookup.
   const data = rows.map((model) => {
     const config = configBySlug.get(model.providerSlug);
+    const used = usage.get(modelUsageKey(model.providerSlug, model.modelId));
     const defaultFor: TaskType[] = [];
     for (const task of TASK_TYPES) {
       const stored = settings.defaultModels[task];
@@ -136,7 +120,10 @@ export const GET = withAdminAuth(async (request, _session) => {
       ...model,
       configured: !!config,
       configuredActive: config?.isActive ?? false,
-      agents: agentsByKey.get(`${model.providerSlug}::${model.modelId}`) ?? [],
+      agents: used?.agents ?? [],
+      // Active agents in other orgs bound to it. Counted, never named; the
+      // delete is refused while this or `agents` is non-zero.
+      otherOrgAgentCount: used?.otherOrgAgents ?? 0,
       // Task slots this model serves as the effective system default
       // (routing/chat/reasoning/embeddings/audio). Agents with empty
       // provider/model inherit these at runtime.
@@ -149,7 +136,7 @@ export const GET = withAdminAuth(async (request, _session) => {
     total,
     page,
     limit,
-    modelsInUse: data.filter((m) => m.agents.length > 0).length,
+    modelsInUse: data.filter((m) => m.agents.length + m.otherOrgAgentCount > 0).length,
     modelsServingDefaults: data.filter((m) => m.defaultFor.length > 0).length,
   });
 

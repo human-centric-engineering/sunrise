@@ -38,6 +38,7 @@ vi.mock('@/lib/db/client', () => ({
       findMany: vi.fn(() => Promise.resolve([])),
     },
     aiAgent: {
+      groupBy: vi.fn(() => Promise.resolve([])),
       findMany: vi.fn(() => Promise.resolve([])),
     },
   },
@@ -368,9 +369,31 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
       );
       vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
       vi.mocked(prisma.aiAgent.findMany).mockResolvedValue([
-        { id: 'agent-1', name: 'Triage Bot', slug: 'triage-bot', model: 'gpt-4o-mini' },
-        { id: 'agent-2', name: 'Researcher', slug: 'researcher', model: 'gpt-4o-mini' },
-        { id: 'agent-3', name: 'Summariser', slug: 'summariser', model: 'gpt-4o' },
+        // At single every agent is the caller's (`orgId` is read, but every row counts).
+        {
+          id: 'agent-1',
+          name: 'Triage Bot',
+          slug: 'triage-bot',
+          provider: 'openai',
+          model: 'gpt-4o-mini',
+          orgId: null,
+        },
+        {
+          id: 'agent-2',
+          name: 'Researcher',
+          slug: 'researcher',
+          provider: 'openai',
+          model: 'gpt-4o-mini',
+          orgId: null,
+        },
+        {
+          id: 'agent-3',
+          name: 'Summariser',
+          slug: 'summariser',
+          provider: 'openai',
+          model: 'gpt-4o',
+          orgId: null,
+        },
       ] as never);
       mockListModels.mockResolvedValue([
         makeModelInfo({ id: 'gpt-4o-mini', name: 'GPT-4o mini' }),
@@ -385,10 +408,13 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
           models: Array<{
             id: string;
             agents: Array<{ id: string; name: string; slug: string }>;
+            otherOrgAgentCount: number;
           }>;
         };
       }>(response);
 
+      // Nothing elsewhere at single (§107 t-752).
+      expect(data.data.models.map((m) => m.otherOrgAgentCount)).toEqual([0, 0, 0]);
       const byId = new Map(data.data.models.map((m) => [m.id, m.agents]));
       expect(byId.get('gpt-4o-mini')).toHaveLength(2);
       expect(
@@ -406,7 +432,7 @@ describe('GET /api/v1/admin/orchestration/providers/:id/models', () => {
       // cross-provider scan.
       expect(vi.mocked(prisma.aiAgent.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { provider: 'openai', isActive: true },
+          where: { isActive: true, provider: { in: ['openai'] } },
         })
       );
     });

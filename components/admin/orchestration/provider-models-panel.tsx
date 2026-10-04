@@ -62,6 +62,11 @@ import { apiClient } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { DiscoverModelsDialog } from '@/components/admin/orchestration/discover-models-dialog';
 import type { TaskType } from '@/types/orchestration';
+import {
+  agentCount,
+  agentsInEveryOrg,
+  OtherOrgUsage,
+} from '@/components/admin/orchestration/other-org-usage';
 
 // Short human labels for the four `TaskType` slots resolved via
 // `OrchestrationSettings.defaultModels`. Surfaced as per-row badges
@@ -100,6 +105,10 @@ export interface ProviderModelInfo {
   // Active agents bound to (provider, modelId). Empty when no agent
   // currently references the model.
   agents?: ProviderModelAgentRef[];
+  // Active agents in OTHER orgs bound to it: counted, never named (§107
+  // t-752). The count, the "bound agent" filter and the sort use the sum
+  // with `agents`.
+  otherOrgAgentCount?: number;
   // TaskType slots this model fills as the effective system default
   // (routing/chat/reasoning/embeddings). Distinct from `agents` —
   // tracks inheritance via the default-models settings rather than
@@ -353,7 +362,7 @@ export function ProviderModelsPanel({
       // Substring search on id + name. Empty string matches everything.
       if (q && !`${m.id} ${m.name}`.toLowerCase().includes(q)) return false;
       // "In use" toggle — only show models with at least one bound agent.
-      if (inUseOnly && (m.agents?.length ?? 0) === 0) return false;
+      if (inUseOnly && agentsInEveryOrg(m) === 0) return false;
       // Empty filter set means "all" — only narrow when the operator
       // has selected at least one chip.
       if (activeBuckets.size === 0) return true;
@@ -377,7 +386,7 @@ export function ProviderModelsPanel({
           break;
         case 'inUse':
           // Sort by agent count. Default `desc` surfaces in-use rows first.
-          primary = (a.agents?.length ?? 0) - (b.agents?.length ?? 0);
+          primary = agentsInEveryOrg(a) - agentsInEveryOrg(b);
           break;
         case 'tier':
           primary = a.tier.localeCompare(b.tier);
@@ -650,13 +659,13 @@ export function ProviderModelsPanel({
                         </TableCell>
                         <TableCell className="text-right tabular-nums">
                           {(() => {
-                            const agentCount = m.agents?.length ?? 0;
+                            const inUse = agentsInEveryOrg(m);
                             const defaultRoles = m.defaultFor ?? [];
                             // Empty state — render an explicit "Not in
                             // use" so the operator gets a clear signal
                             // rather than guessing what a bare "0"
                             // means.
-                            if (agentCount === 0 && defaultRoles.length === 0) {
+                            if (inUse === 0 && defaultRoles.length === 0) {
                               return (
                                 <span className="text-muted-foreground text-xs italic">
                                   Not in use
@@ -665,43 +674,51 @@ export function ProviderModelsPanel({
                             }
                             return (
                               <div className="flex flex-col items-end gap-1">
-                                {agentCount > 0 ? (
+                                {inUse > 0 ? (
                                   <Popover>
                                     <PopoverTrigger asChild>
                                       <button
                                         className="cursor-pointer text-xs tabular-nums hover:underline"
-                                        aria-label={`Show ${agentCount} agent${agentCount === 1 ? '' : 's'} directly assigned to ${m.name}`}
+                                        aria-label={`Show ${agentCount(inUse)} directly assigned to ${m.name}`}
                                       >
-                                        {agentCount} agent{agentCount === 1 ? '' : 's'} →
+                                        {agentCount(inUse)} →
                                       </button>
                                     </PopoverTrigger>
                                     <PopoverContent className="w-72 p-0" align="end">
                                       <div className="border-b px-3 py-2">
                                         <p className="text-sm font-medium">
-                                          {agentCount} agent
-                                          {agentCount === 1 ? '' : 's'} directly assigned to{' '}
+                                          {agentCount(inUse)} directly assigned to{' '}
                                           <span className="font-semibold">{m.name}</span>
                                         </p>
-                                        <p className="text-muted-foreground mt-0.5 text-xs">
-                                          These agents pinned this model in their Provider/Model
-                                          fields. Editing the agent re-points it.
-                                        </p>
+                                        {(m.agents?.length ?? 0) > 0 && (
+                                          <p className="text-muted-foreground mt-0.5 text-xs">
+                                            These agents pinned this model in their Provider/Model
+                                            fields. Editing the agent re-points it.
+                                          </p>
+                                        )}
                                       </div>
-                                      <ul className="max-h-48 overflow-y-auto py-1">
-                                        {m.agents?.map((agent) => (
-                                          <li key={agent.id}>
-                                            <Link
-                                              href={`/admin/orchestration/agents/${agent.id}`}
-                                              className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
-                                            >
-                                              <span className="truncate">{agent.name}</span>
-                                              <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
-                                                {agent.slug}
-                                              </span>
-                                            </Link>
-                                          </li>
-                                        ))}
-                                      </ul>
+                                      {(m.agents?.length ?? 0) > 0 && (
+                                        <ul className="max-h-48 overflow-y-auto py-1">
+                                          {m.agents?.map((agent) => (
+                                            <li key={agent.id}>
+                                              <Link
+                                                href={`/admin/orchestration/agents/${agent.id}`}
+                                                className="hover:bg-muted flex items-center gap-2 px-3 py-1.5 text-sm transition-colors"
+                                              >
+                                                <span className="truncate">{agent.name}</span>
+                                                <span className="text-muted-foreground ml-auto shrink-0 font-mono text-xs">
+                                                  {agent.slug}
+                                                </span>
+                                              </Link>
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      )}
+                                      <OtherOrgUsage
+                                        count={m.otherOrgAgentCount ?? 0}
+                                        afterList={(m.agents?.length ?? 0) > 0}
+                                        className="px-3 py-2"
+                                      />
                                     </PopoverContent>
                                   </Popover>
                                 ) : (

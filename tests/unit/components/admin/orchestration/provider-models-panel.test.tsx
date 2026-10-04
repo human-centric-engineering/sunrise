@@ -1318,3 +1318,62 @@ describe('ProviderModelsPanel', () => {
     });
   });
 });
+
+describe('ProviderModelsPanel — agents in other organisations (§107 t-752)', () => {
+  const model = (id: string, agents: ProviderModelInfo['agents'], otherOrgAgentCount: number) =>
+    ({
+      id,
+      name: id,
+      provider: 'openai',
+      tier: 'worker',
+      inputCostPerMillion: 1,
+      outputCostPerMillion: 2,
+      maxContext: 128000,
+      supportsTools: true,
+      inMatrix: true,
+      matrixId: `matrix-${id}`,
+      capabilities: ['chat'],
+      tierRole: 'worker',
+      agents,
+      otherOrgAgentCount,
+    }) satisfies ProviderModelInfo;
+
+  beforeEach(async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.get).mockResolvedValue({
+      providerId: 'prov-2',
+      slug: 'openai',
+      models: [
+        model('ours-and-theirs', [{ id: 'agent-1', name: 'Triage Bot', slug: 'triage-bot' }], 2),
+        model('only-theirs', [], 1),
+        model('unused', [], 0),
+      ],
+    });
+  });
+
+  it('counts them into the cell and the popover, never naming them', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+
+    await user.click(
+      await screen.findByRole('button', {
+        name: /show 3 agents directly assigned to ours-and-theirs/i,
+      })
+    );
+    expect(await screen.findByRole('link', { name: /Triage Bot/ })).toBeInTheDocument();
+    expect(screen.getByText(/…and 2 agents in other organisations/)).toBeInTheDocument();
+  });
+
+  it('keeps a model only other orgs use under the "bound agent" filter', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelsPanel providerId="prov-2" providerName="OpenAI" isLocal={false} />);
+    await screen.findByText('unused');
+
+    await user.click(
+      screen.getByRole('button', { name: /show only models with at least one bound agent/i })
+    );
+
+    expect(screen.getByText('only-theirs')).toBeInTheDocument();
+    expect(screen.queryByText('unused')).not.toBeInTheDocument();
+  });
+});

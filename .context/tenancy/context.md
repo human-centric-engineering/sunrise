@@ -116,6 +116,15 @@ interface TenantContext {
   sites are enumerable by grep, and what an audit needs is that nothing but
   the lookup — and the credential's last-used touch, which rides with it —
   runs inside one.
+- **`runAsCrossOrgCount(reason, fn)`** (§107 t-752) — the same null-org
+  system scope, for a read-only count of who uses a piece of global config
+  across every org (a provider, model, capability, tag or profile). Logged at
+  `debug` for `runAsCredentialLookup`'s reason: the admin pages ask on every
+  load. It has one caller, `lib/orchestration/admin/global-config-usage.ts`,
+  which names only the caller's own rows and returns another org's as
+  numbers, and `tests/unit/lib/tenancy/cross-org-count-sites.test.ts`
+  (always-run) fails naming any other. Nothing makes the scope itself
+  read-only; that module's queries do, which is why it is confined there.
 - **`runDetached(fn)`** (§108 t-715) — runs `fn` outside every scope, for
   arming something whose lifetime is the **process's** from inside a request.
   Synchronous and unawaited, unlike the runners above: a caller arms a timer

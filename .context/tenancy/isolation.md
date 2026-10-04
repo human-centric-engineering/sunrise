@@ -73,8 +73,20 @@ CREATE POLICY "org_isolation" ON "ai_agent"
   rest, so an in-use check written that way lets one org's admin delete
   what another org depends on. Ask
   [`lib/orchestration/admin/global-config-usage.ts`](../../lib/orchestration/admin/global-config-usage.ts)
-  (§107 t-731). It counts under the system scope, and returns the caller's
-  own rows by name and every other org's as a number.
+  (§107 t-731). It counts across orgs, and returns the caller's own rows by
+  name and every other org's as a number. The read pages use it too (§107
+  t-752): the models matrix and a provider's model list (`agents` plus
+  `otherOrgAgentCount` per model), the capabilities list (`_agents` plus
+  `_otherOrgAgentCount`) and a capability's agents
+  (`meta.otherOrgAgentCount`). These list reads take only the caller's rows
+  and count the rest with `groupBy` (at `multi` only); t-731's delete checks
+  still read every org's rows and name only the caller's. With no org
+  entered (an admin API key) nothing is the caller's, so every agent is
+  counted as another org's. Their counts, "in use" filters and
+  delete-disabled states add the two. Because those pages ask on every
+  load, the module counts in `runAsCrossOrgCount`, the same bypass as
+  `runAsSystem` logged at `debug`, and a test confines that scope to this
+  module.
 - **Global config changes only from the install org.** The same one row
   means a change made from inside a customer's org lands in every org. The
   rule is `canChangeSharedSettings()`

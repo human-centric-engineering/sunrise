@@ -153,7 +153,7 @@ Help: **"Maximum calls per minute across all agents. Leave empty for no limit. D
 
 ### "Used by N agents" panel (edit mode only)
 
-When `mode==='edit'` and `usedBy.length > 0`, the tab renders a non-interactive card listing every agent currently attaching this capability. Serves as a reminder that safety changes ripple to every consumer. Data comes from the `usedBy` prop on `<CapabilityForm>` (which the edit page fetches via `GET /capabilities/:id/agents`).
+When `mode==='edit'` and `usedBy.length + otherOrgUsedByCount > 0`, the tab renders a non-interactive card listing every agent in this org currently attaching this capability, with a line counting other organisations' (§107 t-752). Serves as a reminder that safety changes ripple to every consumer. Data comes from the `usedBy` prop on `<CapabilityForm>` (which the edit page fetches via `GET /capabilities/:id/agents`).
 
 ## Submit flow
 

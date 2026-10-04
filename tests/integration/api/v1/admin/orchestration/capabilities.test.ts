@@ -55,6 +55,14 @@ vi.mock('@/lib/db/client', () => {
     prisma: {
       aiCapability,
       mcpExposedTool,
+      // Agents using each capability, read across orgs by
+      // `capabilityAgentUsage` (§107 t-752).
+      aiAgentCapability: {
+        findMany: vi.fn().mockResolvedValue([]),
+        groupBy: vi.fn().mockResolvedValue([]),
+      },
+      // The guard's membership check when a test runs at multi.
+      orgMembership: { findUnique: vi.fn() },
       // PATCH pins the MCP tool name and updates the capability in one
       // transaction (#509); run the callback against the same doubles.
       $transaction: (fn: (tx: unknown) => unknown) => fn({ aiCapability, mcpExposedTool }),
@@ -85,6 +93,8 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { env } from '@/lib/env';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -120,8 +130,6 @@ function makeCapability(overrides: Record<string, unknown> = {}) {
     metadata: null,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-01-01'),
-    // Raw pivot relation returned by findMany with include: { agents: { include: { agent: ... } } }
-    agents: [],
     ...overrides,
   };
 }
@@ -203,8 +211,9 @@ describe('GET /api/v1/admin/orchestration/capabilities', () => {
       expect(data.success).toBe(true);
       expect(data.data).toHaveLength(1);
       expect(data.meta).toBeDefined();
-      // Route handler flattens pivot relation into _agents array
+      // No agent uses it: an empty list, and nothing elsewhere.
       expect(data.data[0]._agents).toEqual([]);
+      expect(data.data[0]).toMatchObject({ _otherOrgAgentCount: 0 });
     });
 
     it('passes isActive filter to Prisma when set to true', async () => {
@@ -217,7 +226,6 @@ describe('GET /api/v1/admin/orchestration/capabilities', () => {
       expect(vi.mocked(prisma.aiCapability.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ isActive: true }),
-          include: expect.objectContaining({ agents: expect.anything() }),
         })
       );
     });
@@ -232,7 +240,6 @@ describe('GET /api/v1/admin/orchestration/capabilities', () => {
       expect(vi.mocked(prisma.aiCapability.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ category: 'search' }),
-          include: expect.objectContaining({ agents: expect.anything() }),
         })
       );
     });
@@ -247,7 +254,6 @@ describe('GET /api/v1/admin/orchestration/capabilities', () => {
       expect(vi.mocked(prisma.aiCapability.findMany)).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ executionType: 'webhook' }),
-          include: expect.objectContaining({ agents: expect.anything() }),
         })
       );
     });
@@ -280,43 +286,81 @@ describe('GET /api/v1/admin/orchestration/capabilities', () => {
       expect(passedWhere?.OR).toHaveLength(3);
     });
 
-    it('flattens pivot rows into _agents and strips pivot metadata (line 69)', async () => {
+    it('reads agents for the page’s capabilities only, as their projections (§107 t-752)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([
-        makeCapability({
-          agents: [
-            {
-              id: 'pivot-1',
-              customConfig: { secret: 'leak' },
-              agent: { id: 'agent-1', name: 'My Agent', slug: 'my-agent', isActive: true },
-            },
-          ],
-        }),
-      ] as never);
+      vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([makeCapability()] as never);
       vi.mocked(prisma.aiCapability.count).mockResolvedValue(1);
+      vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue([
+        {
+          capabilityId: CAPABILITY_ID,
+          orgId: null,
+          agent: { id: 'agent-1', name: 'My Agent', slug: 'my-agent', isActive: true },
+        },
+      ] as never);
 
       const response = await listGet(makeListRequest());
       expect(response.status).toBe(200);
-
       const body = await parseJson<{
-        success: boolean;
         data: Array<{
           _agents: Array<{ id: string; name: string; slug: string; isActive: boolean }>;
-          agents?: unknown;
+          _otherOrgAgentCount: number;
         }>;
       }>(response);
 
-      // Load-bearing assertion: _agents must contain only the agent sub-object,
-      // not the raw pivot row. If line 69's `.map((l) => l.agent)` were replaced
-      // with just `links`, this assertion would fail because the object would also
-      // have `id: 'pivot-1'` and `customConfig: { secret: 'leak' }`.
+      expect(vi.mocked(prisma.aiAgentCapability.findMany)).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { capabilityId: { in: [CAPABILITY_ID] } } })
+      );
+      // At single every row is the caller's: named, nothing elsewhere.
       expect(body.data[0]._agents).toEqual([
         { id: 'agent-1', name: 'My Agent', slug: 'my-agent', isActive: true },
       ]);
-      // Pivot-row metadata must NOT be present on the extracted agent object.
-      expect(body.data[0]._agents[0]).not.toHaveProperty('customConfig');
-      // The raw `agents` pivot relation must be destructured away — not exposed on the item.
-      expect(body.data[0]).not.toHaveProperty('agents');
+      expect(body.data[0]._otherOrgAgentCount).toBe(0);
+    });
+
+    it('at multi, names the entered org’s agents and counts other orgs’ (§107 t-752)', async () => {
+      const mode = env.TENANCY_MODE;
+      env.TENANCY_MODE = 'multi';
+      try {
+        const admin = mockAdminUser();
+        vi.mocked(auth.api.getSession).mockResolvedValue({
+          ...admin,
+          session: { ...admin.session, activeOrgId: INSTALL_ORG_ID },
+        });
+        vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+          role: 'OWNER',
+          org: { status: 'ACTIVE' },
+        } as never);
+        vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([makeCapability()] as never);
+        vi.mocked(prisma.aiCapability.count).mockResolvedValue(1);
+        vi.mocked(prisma.aiAgentCapability.findMany).mockResolvedValue([
+          {
+            capabilityId: CAPABILITY_ID,
+            orgId: INSTALL_ORG_ID,
+            agent: { id: 'agent-1', name: 'Ours', slug: 'ours', isActive: true },
+          },
+        ] as never);
+        // Other orgs come back as counts only: their rows are never read.
+        vi.mocked(prisma.aiAgentCapability.groupBy).mockResolvedValue([
+          { capabilityId: CAPABILITY_ID, orgId: INSTALL_ORG_ID, _count: { _all: 1 } },
+          { capabilityId: CAPABILITY_ID, orgId: 'cmorg00000000000customer', _count: { _all: 1 } },
+        ] as never);
+
+        const response = await listGet(makeListRequest());
+        const body = await parseJson<{
+          data: Array<{ _agents: Array<{ id: string }>; _otherOrgAgentCount: number }>;
+        }>(response);
+
+        expect(response.status).toBe(200);
+        expect(body.data[0]._agents.map((a) => a.id)).toEqual(['agent-1']);
+        expect(body.data[0]._otherOrgAgentCount).toBe(1);
+        expect(vi.mocked(prisma.aiAgentCapability.findMany)).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { capabilityId: { in: [CAPABILITY_ID] }, orgId: INSTALL_ORG_ID },
+          })
+        );
+      } finally {
+        env.TENANCY_MODE = mode;
+      }
     });
   });
 });

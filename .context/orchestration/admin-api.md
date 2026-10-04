@@ -435,12 +435,12 @@ Capabilities seeded by the platform (e.g. `search_knowledge_base`, `get_pattern_
 GET /api/v1/admin/orchestration/capabilities/:id/agents
 ```
 
-Returns the minimal agent projection for every agent that currently attaches this capability via the `AiAgentCapability` pivot — `[{ id, name, slug, isActive }]`, ordered by agent name. Empty array if nothing attached; 404 on unknown id; 400 on invalid CUID. Mirrors the additive `/agents/:id/capabilities` exception taken in Session 4.2.
+Returns the minimal agent projection for every agent in the caller's org that currently attaches this capability via the `AiAgentCapability` pivot — `[{ id, name, slug, isActive }]`, ordered by agent name — with `meta: { otherOrgAgentCount }` for agents in other orgs (active or not), counted and never named (§107 t-752; `0` at `single`; with no org entered — an admin API key — nothing is the caller's, so the array is empty and every agent is in the count). The array keeps its pre-t-752 shape. Empty array if nothing attached; 404 on unknown id; 400 on invalid CUID. Mirrors the additive `/agents/:id/capabilities` exception taken in Session 4.2.
 
 Consumers:
 
 - **Capabilities list page** — `_agents` array is now returned inline on each capability from `GET /capabilities`, so the list page no longer makes per-row requests. This endpoint is still used by the edit page.
-- **Capability edit page** — the Safety tab's "Used by N agents" card, and the delete confirmation dialog (so admins see exactly who breaks when they soft-delete).
+- **Capability edit page** — the Safety tab's "Used by N agents" card and the quarantine card's blast radius. The soft-delete warning lives on the list page and reads the list's inline `_agents` / `_otherOrgAgentCount`.
 
 ## Providers
 

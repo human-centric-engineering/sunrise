@@ -18,17 +18,17 @@ All three are async server components using `serverFetch()` + `parseApiResponse(
 
 Columns:
 
-| Column       | Source                                 | Notes                                                                 |
-| ------------ | -------------------------------------- | --------------------------------------------------------------------- |
-| Name         | `capability.name`                      | Sort header. Links to edit page                                       |
-| Slug         | `capability.slug`                      | Monospace, muted                                                      |
-| Category     | `capability.category`                  | Sort header. Free-text, shown as plain text                           |
-| Type         | `capability.executionType`             | `<Badge>` — blue/green/purple for `internal`/`api`/`webhook`          |
-| Approval     | `capability.requiresApproval`          | Amber `Approval` badge when true, `—` otherwise                       |
-| Rate / min   | `capability.rateLimit`                 | Right-aligned; `—` when `null` (no limit)                             |
-| Agents using | `capability._agents` (inline from API) | Count + popover with agent names/links. `0` when none attached        |
-| Status       | `capability.isActive`                  | `<Switch>` — optimistic PATCH, reverts on failure, shows inline error |
-| ⋯ Actions    | Dropdown: Edit · Delete                |                                                                       |
+| Column       | Source                                                         | Notes                                                                                                               |
+| ------------ | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Name         | `capability.name`                                              | Sort header. Links to edit page                                                                                     |
+| Slug         | `capability.slug`                                              | Monospace, muted                                                                                                    |
+| Category     | `capability.category`                                          | Sort header. Free-text, shown as plain text                                                                         |
+| Type         | `capability.executionType`                                     | `<Badge>` — blue/green/purple for `internal`/`api`/`webhook`                                                        |
+| Approval     | `capability.requiresApproval`                                  | Amber `Approval` badge when true, `—` otherwise                                                                     |
+| Rate / min   | `capability.rateLimit`                                         | Right-aligned; `—` when `null` (no limit)                                                                           |
+| Agents using | `capability._agents` + `_otherOrgAgentCount` (inline from API) | Count of every org's agents + popover naming this org's, with links; other orgs are a count. `0` when none attached |
+| Status       | `capability.isActive`                                          | `<Switch>` — optimistic PATCH, reverts on failure, shows inline error                                               |
+| ⋯ Actions    | Dropdown: Edit · Delete                                        |                                                                                                                     |
 
 ### Category filter
 
@@ -36,7 +36,7 @@ Header dropdown (`Select`) populated from a `new Set(rows.map(r => r.category))`
 
 ### Agents-using data
 
-The `GET /capabilities` list endpoint returns `_agents: Array<{ id, name, slug, isActive }>` inline on each item (via the `AiAgentCapability` pivot). The table renders the count directly and the popover/delete-dialog use the full array. No per-row fetch required. The standalone `GET /capabilities/:id/agents` endpoint is still used by the capability edit page.
+The `GET /capabilities` list endpoint returns `_agents: Array<{ id, name, slug, isActive }>` inline on each item (via the `AiAgentCapability` pivot) — the caller's org's agents — and `_otherOrgAgentCount`, agents in other orgs (active or not, as `_agents`), counted and never named (§107 t-752; always `0` at `single`). The table renders the count directly and the popover/delete-dialog use the full array. No per-row fetch required. The standalone `GET /capabilities/:id/agents` endpoint is still used by the capability edit page.
 
 ### Status toggle
 
@@ -68,7 +68,7 @@ Both render `<CapabilityForm>` — see [`capability-form.md`](./capability-form.
 
 Session 4.3 adds **one** new route to the otherwise-locked Phase 3 HTTP surface:
 
-**`GET /api/v1/admin/orchestration/capabilities/:id/agents`** — returns the minimal agent projections (`{ id, name, slug, isActive }`) for every agent linked via the `AiAgentCapability` pivot. Mirrors the additive `/agents/:id/capabilities` exception taken in Session 4.2. Used by the list page (agents-using count) and the edit page (delete warning).
+**`GET /api/v1/admin/orchestration/capabilities/:id/agents`** — returns the minimal agent projections (`{ id, name, slug, isActive }`) for every agent in the caller's org linked via the `AiAgentCapability` pivot, and `meta.otherOrgAgentCount` for the other orgs' agents (§107 t-752). Mirrors the additive `/agents/:id/capabilities` exception taken in Session 4.2. Used by the edit page (the Safety tab's "Used by" card and the quarantine card's blast radius); the list page reads the same usage inline.
 
 Documented in [`admin-api.md`](../orchestration/admin-api.md).
 

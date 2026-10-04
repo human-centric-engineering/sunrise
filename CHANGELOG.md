@@ -188,6 +188,20 @@ release process.
   `lib/orchestration/agents/provider-approval.ts`. At `single` every provider
   is approved and nothing is disabled.
 
+- **Every-org usage on the shared-settings read API, and the scope that
+  counts it** (§107 t-752). The new fields name the caller's org's agents and
+  count other orgs' without naming them. All are `0` at `single`.
+  - `GET /provider-models` and `GET /providers/:id/models` add
+    `otherOrgAgentCount` per model.
+  - `GET /capabilities` adds `_otherOrgAgentCount` per item.
+  - `GET /capabilities/:id/agents` keeps its array and adds
+    `meta.otherOrgAgentCount`.
+  - The counts run in the new `runAsCrossOrgCount()`
+    (`lib/tenancy/context.ts`). It is the `runAsSystem` bypass logged at
+    debug, because the admin pages ask on every load. The always-run
+    `tests/unit/lib/tenancy/cross-org-count-sites.test.ts` confines it to
+    `lib/orchestration/admin/global-config-usage.ts`.
+
 ### Changed
 
 - **The browser-tab icons moved from `public/` to `app/favicon.ico` and
@@ -484,6 +498,21 @@ release process.
   `summary.dominantErrorCode`; a run where only some cases failed stays
   `completed`. The experiment compare page no longer reports a failed or
   cancelled variant run as still queued.
+- **At `multi`, the models matrix, a provider's model list and the
+  capabilities pages no longer call a shared model or capability unused while
+  another org uses it** (§107 t-752). They counted only the entered org, so
+  from the install org the matrix offered to delete a model another org's
+  agents relied on.
+  - Their counts, "has agent" filters, sort and the matrix's delete-disabled
+    state now add other orgs' agents (the new fields under Added).
+  - So do the capability page's "used by" card and quarantine blast radius,
+    and the capabilities list's delete warning.
+  - On these pages other orgs' rows are counted with `groupBy`, never read.
+    With no org entered (an admin API key) nothing is the caller's, so every
+    agent is in the count.
+  - The workflow-pin check reads only workflows whose JSON could pin the
+    model, and the knowledge-tag check makes three queries instead of five.
+
 - **Backup import no longer overwrites a system workflow** (t-729). The
   provider-model audit (`tpl-provider-model-audit`, `isSystem: true`) was
   exported in every bundle and versioned over on import, so restoring an older

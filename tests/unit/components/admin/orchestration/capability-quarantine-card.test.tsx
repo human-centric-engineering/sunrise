@@ -88,7 +88,7 @@ describe('CapabilityQuarantineCard — ActiveView', () => {
 
     // The "2 agents" count is in a <strong> so the surrounding text is
     // split — match the unique suffix instead.
-    expect(screen.getByText(/currently using this capability/i)).toBeInTheDocument();
+    expect(screen.getByText(/with this capability attached/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Quarantine$/i })).toBeDisabled();
   });
 
@@ -447,5 +447,82 @@ describe('CapabilityQuarantineCard — QuarantinedView', () => {
     expect(screen.getByText(/No agents currently use this capability/i)).toBeInTheDocument();
     // No popover trigger when there are no agents to list.
     expect(screen.queryByRole('button', { name: /agents affected/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('CapabilityQuarantineCard — agents in other organisations (§107 t-752)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    apiPost.mockResolvedValue({});
+  });
+
+  it('counts them into the blast radius and the confirmation, never naming them', async () => {
+    const user = userEvent.setup();
+    render(
+      <CapabilityQuarantineCard
+        capabilityId="cap-1"
+        capabilityName="Stripe Charge"
+        state={{ quarantineState: 'active', quarantineReason: null, quarantineUntil: null }}
+        affectedAgents={AFFECTED}
+        otherOrgAffectedCount={3}
+      />
+    );
+
+    await expandActiveCard(user);
+    expect(screen.getByText('5 agents')).toBeInTheDocument();
+    expect(screen.getByText(/in every organisation/i)).toBeInTheDocument();
+
+    await user.type(
+      screen.getByPlaceholderText(/Stripe charges returning 500s/i),
+      'Vendor 5xx since 14:32 UTC'
+    );
+    await user.click(screen.getByRole('button', { name: /^Quarantine$/i }));
+
+    expect(await screen.findByText(/5 agents affected/i)).toBeInTheDocument();
+    expect(screen.getByText('Support Bot')).toBeInTheDocument();
+    expect(screen.getByText(/…and 3 agents in other organisations/i)).toBeInTheDocument();
+  });
+
+  it('lists the caller’s agents in the quarantined popover and counts the rest', async () => {
+    const user = userEvent.setup();
+    render(
+      <CapabilityQuarantineCard
+        capabilityId="cap-1"
+        capabilityName="Stripe Charge"
+        state={{
+          quarantineState: 'quarantined-soft',
+          quarantineReason: 'vendor outage',
+          quarantineUntil: null,
+        }}
+        affectedAgents={AFFECTED}
+        otherOrgAffectedCount={1}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /3 agents affected/i }));
+
+    expect(await screen.findByRole('link', { name: /Support Bot/i })).toBeInTheDocument();
+    expect(screen.getByText(/…and 1 agent in other organisations/i)).toBeInTheDocument();
+  });
+
+  it('has a popover even when only other orgs bind it', async () => {
+    const user = userEvent.setup();
+    render(
+      <CapabilityQuarantineCard
+        capabilityId="cap-1"
+        capabilityName="Stripe Charge"
+        state={{
+          quarantineState: 'quarantined-soft',
+          quarantineReason: 'vendor outage',
+          quarantineUntil: null,
+        }}
+        affectedAgents={[]}
+        otherOrgAffectedCount={2}
+      />
+    );
+
+    expect(screen.queryByText(/No agents currently use this capability/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /2 agents affected/i }));
+    expect(await screen.findByText(/2 agents in other organisations use it/i)).toBeInTheDocument();
   });
 });

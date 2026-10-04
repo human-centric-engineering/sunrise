@@ -522,4 +522,38 @@ describe('EditCapabilityPage (server component)', () => {
       expect(nameIndex).toBeLessThan(disableIndex); // form is above the quarantine card
     });
   });
+
+  describe('agents in other organisations (§107 t-752)', () => {
+    async function renderWithUsedByMeta(meta: Record<string, unknown> | undefined) {
+      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+      vi.mocked(parseApiResponse)
+        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY_SOFT_QUARANTINED })
+        .mockResolvedValueOnce({ success: true, data: MOCK_USED_BY, meta })
+        .mockResolvedValueOnce({ success: true, data: [] })
+        .mockResolvedValueOnce({ success: true, data: { attribution: null } });
+
+      const { default: EditCapabilityPage } =
+        await import('@/app/admin/orchestration/capabilities/[id]/page');
+      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+    }
+
+    it('reads meta.otherOrgAgentCount and counts it into the affected agents', async () => {
+      await renderWithUsedByMeta({ otherOrgAgentCount: 2 });
+
+      expect(await screen.findByRole('button', { name: /3 agents affected/i })).toBeInTheDocument();
+    });
+
+    it('treats a missing or malformed count as none', async () => {
+      await renderWithUsedByMeta({ otherOrgAgentCount: 'two' });
+
+      expect(await screen.findByRole('button', { name: /1 agent affected/i })).toBeInTheDocument();
+    });
+
+    it('treats a response with no meta as none', async () => {
+      await renderWithUsedByMeta(undefined);
+
+      expect(await screen.findByRole('button', { name: /1 agent affected/i })).toBeInTheDocument();
+    });
+  });
 });

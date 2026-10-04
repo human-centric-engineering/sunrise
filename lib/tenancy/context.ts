@@ -188,6 +188,15 @@ export function runAsOrg<T>(
 }
 
 /**
+ * The null-org system scope — the one body behind {@link runAsSystem},
+ * {@link runAsCredentialLookup} and {@link runAsCrossOrgCount}, which differ
+ * only in what they log. At `multi` the data layer reads it as the bypass.
+ */
+function inSystemScope<T>(fn: () => Promise<T>): Promise<T> {
+  return tenantContext.run({ orgId: null, source: 'system' }, () => settleInside(fn));
+}
+
+/**
  * Run `fn` with the audited platform bypass — no org.
  *
  * For genuinely global work only: a sweep that must see every org's rows at
@@ -198,7 +207,7 @@ export function runAsOrg<T>(
  */
 export function runAsSystem<T>(reason: string, fn: () => Promise<T>): Promise<T> {
   logger.info('Entering system tenant scope', { reason });
-  return tenantContext.run({ orgId: null, source: 'system' }, () => settleInside(fn));
+  return inSystemScope(fn);
 }
 
 /**
@@ -221,7 +230,32 @@ export function runAsSystem<T>(reason: string, fn: () => Promise<T>): Promise<T>
  */
 export function runAsCredentialLookup<T>(credential: string, fn: () => Promise<T>): Promise<T> {
   logger.debug('Entering system tenant scope for a credential lookup', { credential });
-  return tenantContext.run({ orgId: null, source: 'system' }, () => settleInside(fn));
+  return inSystemScope(fn);
+}
+
+/**
+ * Run `fn` as the system scope for a read-only count of who uses a piece of
+ * global config, across every org (§107 t-752).
+ *
+ * A provider, model, capability, tag or profile is one row every org shares,
+ * and the agents, workflows and grants that use it are tenant-owned, so the
+ * question "is it in use?" has to see every org: the same scope as
+ * {@link runAsSystem}, the same `app.bypass_rls` setter. The admin pages ask
+ * it on every load — the models matrix, the capabilities list, each delete
+ * check — so an info line per entry would bury the one
+ * {@link runAsSystem} keeps for an unexplained bypass.
+ *
+ * Logged at debug, as {@link runAsCredentialLookup} is, and for its reason:
+ * what an audit needs is that the sites are few and known. There is one —
+ * `lib/orchestration/admin/global-config-usage.ts`, which returns another
+ * org's rows only as numbers — and
+ * `tests/unit/lib/tenancy/cross-org-count-sites.test.ts` (always-run) fails
+ * naming any other caller. Nothing here makes the scope read-only; the
+ * module's queries do, and that is why it is confined to one module.
+ */
+export function runAsCrossOrgCount<T>(reason: string, fn: () => Promise<T>): Promise<T> {
+  logger.debug('Entering system tenant scope for a cross-org usage count', { reason });
+  return inSystemScope(fn);
 }
 
 /**

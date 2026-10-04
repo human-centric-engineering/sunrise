@@ -77,6 +77,7 @@ function makeCapability(overrides: Partial<AiCapabilityListItem> = {}): AiCapabi
     deletedAt: null,
     metadata: {},
     _agents: [],
+    _otherOrgAgentCount: 0,
     ...overrides,
   } as AiCapabilityListItem;
 }
@@ -642,6 +643,45 @@ describe('CapabilitiesTable', () => {
 
       expect(screen.queryByRole('button', { name: /→/ })).not.toBeInTheDocument();
     });
+
+    it('counts other orgs’ agents into the trigger and says so in the popover, unnamed (§107 t-752)', async () => {
+      const user = userEvent.setup();
+      const capabilities = makeCapabilitiesWithAgents(ONE_AGENT);
+      capabilities[0] = { ...capabilities[0], _otherOrgAgentCount: 2 };
+      render(
+        <CapabilitiesTable
+          initialCapabilities={capabilities}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /3 →/ }));
+      await waitFor(() => {
+        expect(screen.getByText(/3 agents using/)).toBeInTheDocument();
+      });
+      expect(screen.getByText('Solo Bot')).toBeInTheDocument();
+      expect(screen.getByText(/…and 2 agents in other organisations/)).toBeInTheDocument();
+    });
+
+    it('opens a popover for a capability only other orgs use, with no list', async () => {
+      const user = userEvent.setup();
+      const capabilities = makeCapabilitiesWithAgents([]);
+      capabilities[0] = { ...capabilities[0], _otherOrgAgentCount: 1 };
+      render(
+        <CapabilitiesTable
+          initialCapabilities={capabilities}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /1 →/ }));
+      await waitFor(() => {
+        expect(screen.getByText(/1 agent in other organisations uses it/)).toBeInTheDocument();
+      });
+      expect(screen.queryByRole('link', { name: /agent/i })).not.toBeInTheDocument();
+    });
   });
 
   // ── Sort toggle ────────────────────────────────────────────────────────────
@@ -972,5 +1012,190 @@ describe('CapabilitiesTable', () => {
         expect(fetchUrls.some((u) => u.includes('page=2'))).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
     });
+  });
+
+  // ── Quarantine badges and filter ───────────────────────────────────────────
+
+  describe('quarantine badges and filter', () => {
+    const past = new Date(Date.now() - 60_000);
+    const future = new Date(Date.now() + 3_600_000);
+    const QUARANTINES: AiCapabilityListItem[] = [
+      makeCapability({
+        id: 'q-soft',
+        name: 'Soft One',
+        quarantineState: 'quarantined-soft',
+        quarantineReason: 'vendor outage',
+      }),
+      makeCapability({
+        id: 'q-hard',
+        name: 'Hard One',
+        quarantineState: 'quarantined-hard',
+        quarantineUntil: future,
+      }),
+      // A past auto-lift is treated as active, as the dispatcher does — the
+      // string form the API serialises to, and the Date form alike.
+      makeCapability({
+        id: 'q-lapsed-string',
+        name: 'Lapsed String',
+        quarantineState: 'quarantined-soft',
+        quarantineUntil: past.toISOString() as unknown as Date,
+      }),
+      makeCapability({
+        id: 'q-lapsed-date',
+        name: 'Lapsed Date',
+        quarantineState: 'quarantined-hard',
+        quarantineUntil: past,
+      }),
+      // An unparseable timestamp fails open to the stored state.
+      makeCapability({
+        id: 'q-garbled',
+        name: 'Garbled Until',
+        quarantineState: 'quarantined-soft',
+        quarantineUntil: 'not-a-date' as unknown as Date,
+      }),
+      makeCapability({ id: 'q-active', name: 'Plain Active' }),
+    ];
+
+    it('badges each effective quarantine and counts them, ignoring lapsed ones', () => {
+      render(
+        <CapabilitiesTable
+          initialCapabilities={QUARANTINES}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge']}
+        />
+      );
+
+      expect(screen.getAllByText('Quarantined · soft')).toHaveLength(2);
+      expect(screen.getAllByText('Quarantined · hard')).toHaveLength(1);
+      expect(screen.getByRole('button', { name: /3 quarantined/ })).toHaveAttribute(
+        'aria-pressed',
+        'false'
+      );
+    });
+
+    it('filters to the quarantined rows and back', async () => {
+      const user = userEvent.setup({ delay: null });
+      render(
+        <CapabilitiesTable
+          initialCapabilities={QUARANTINES}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge']}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /3 quarantined/ }));
+
+      expect(screen.getByRole('button', { name: /3 quarantined/ })).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      );
+      expect(screen.getByText('Soft One')).toBeInTheDocument();
+      expect(screen.getByText('Garbled Until')).toBeInTheDocument();
+      expect(screen.queryByText('Lapsed String')).not.toBeInTheDocument();
+      expect(screen.queryByText('Plain Active')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: /3 quarantined/ }));
+      expect(screen.getByText('Plain Active')).toBeInTheDocument();
+    });
+
+    it('offers no filter when nothing is quarantined', () => {
+      render(
+        <CapabilitiesTable
+          initialCapabilities={THREE_CAPABILITIES}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge']}
+        />
+      );
+
+      expect(screen.queryByRole('button', { name: /quarantined/ })).not.toBeInTheDocument();
+    });
+  });
+
+  // ── Sorting the fetched page ───────────────────────────────────────────────
+
+  describe('sorting the fetched page', () => {
+    const rowNames = () =>
+      screen
+        .getAllByRole('link')
+        .filter((l) =>
+          /\/admin\/orchestration\/capabilities\/cap-/.test(l.getAttribute('href') ?? '')
+        )
+        .map((l) => l.textContent);
+
+    it('orders the fetched page by name, ascending then descending', async () => {
+      const user = userEvent.setup({ delay: null });
+      // The server's order is deliberately neither.
+      mockFetch.mockImplementation(() =>
+        Promise.resolve(
+          makeCapabilitiesListResponse([
+            THREE_CAPABILITIES[1],
+            THREE_CAPABILITIES[2],
+            THREE_CAPABILITIES[0],
+          ])
+        )
+      );
+      render(
+        <CapabilitiesTable
+          initialCapabilities={THREE_CAPABILITIES}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
+
+      // Name is the initial field (desc), so the first click flips it to asc.
+      await user.click(screen.getByRole('button', { name: /^Name/ }));
+      await waitFor(() =>
+        expect(rowNames()).toEqual(['Alpha Search', 'Beta Webhook', 'Gamma Hook'])
+      );
+
+      await user.click(screen.getByRole('button', { name: /^Name/ }));
+      await waitFor(() =>
+        expect(rowNames()).toEqual(['Gamma Hook', 'Beta Webhook', 'Alpha Search'])
+      );
+    });
+
+    it('says the list could not load when the API answers success: false', async () => {
+      const user = userEvent.setup({ delay: null });
+      mockFetch.mockImplementation(() =>
+        Promise.resolve(
+          createMockFetchResponse({ success: false, error: { code: 'X', message: 'nope' } })
+        )
+      );
+      render(
+        <CapabilitiesTable
+          initialCapabilities={THREE_CAPABILITIES}
+          initialMeta={MOCK_META}
+          availableCategories={['knowledge', 'api', 'webhook']}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /^Name/ }));
+
+      expect(
+        await screen.findByText('Could not load capabilities. Try refreshing the page.')
+      ).toBeInTheDocument();
+    });
+  });
+
+  // ── A failed status flip that is not an API error ──────────────────────────
+
+  it('rolls back a status flip and says to try again when the failure is not an API error', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockRejectedValue(new Error('network down'));
+    const user = userEvent.setup({ delay: null });
+    render(
+      <CapabilitiesTable
+        initialCapabilities={THREE_CAPABILITIES}
+        initialMeta={MOCK_META}
+        availableCategories={['knowledge', 'api', 'webhook']}
+      />
+    );
+
+    const [firstSwitch] = screen.getAllByRole('switch');
+    expect(firstSwitch).toBeChecked();
+    await user.click(firstSwitch);
+
+    expect(await screen.findByText(/Couldn't update ".*"\. Try again\./)).toBeInTheDocument();
+    expect(screen.getAllByRole('switch')[0]).toBeChecked();
   });
 });
