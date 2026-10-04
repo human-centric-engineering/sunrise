@@ -60,6 +60,8 @@ If you'd prefer guided onboarding, run the [Setup Wizard](./setup-wizard.md) —
 
 The dashboard groups concerns into sidebar sections. Each row below points to the sub-page doc that explains the screen.
 
+**Shared settings are read-only outside the install org at `multi`** (§107 t-753). Providers, models, capabilities, agent profiles, knowledge tags, MCP exposure, feature flags and orchestration settings serve every org, so a page for one of them shows a read-only notice in any other org, with a button to switch to the install org, and hides or disables its create, edit and delete actions. See [`../tenancy/isolation.md`](../tenancy/isolation.md#the-policy).
+
 ### Build
 
 | Page                             | Doc                                                                                                                                                                              | What you do here                                              |

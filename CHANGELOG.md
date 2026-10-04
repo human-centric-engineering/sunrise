@@ -202,6 +202,24 @@ release process.
     `tests/unit/lib/tenancy/cross-org-count-sites.test.ts` confines it to
     `lib/orchestration/admin/global-config-usage.ts`.
 
+- **Shared-settings pages are read-only outside the install org, at `multi`**
+  (§107 t-753). They say so before a write is refused (t-751): a notice with
+  a button that switches the session to the install org, and create, edit,
+  delete and toggle actions hidden or disabled. This covers providers, the
+  model matrix, capabilities, agent profiles, knowledge tags, the MCP pages,
+  feature flags, orchestration settings and its backup import, the setup
+  wizard and the provider-detection banner. The admin layout reads
+  `getSharedSettingsAccess()` (new, `lib/tenancy/shared-settings-access.ts`)
+  once per request and provides it. Components ask
+  `useSharedSettingsReadOnly()` and pages render
+  `<SharedSettingsReadOnlyNotice />`, both from the new
+  `components/admin/shared-settings-access.tsx`; outside the provider both
+  answer "editable". `sessionActingOrgId()` (new, `lib/tenancy/entry.ts`) is
+  the one derivation of a cookie session's org that this and
+  `GET /api/v1/orgs` share. Nothing changes at `single`. **Forks:** an admin
+  component of yours that writes one of the `GLOBAL_CONFIG_MODELS` should ask
+  the hook too; the server refuses the write either way.
+
 ### Changed
 
 - **The browser-tab icons moved from `public/` to `app/favicon.ico` and

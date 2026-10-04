@@ -193,6 +193,11 @@ empty context, so a capability dispatched with no org entered is refused.
 It is the one guard check that reads which org was entered rather than
 whether the caller may enter it; the rule and what declares it are in
 [isolation.md](./isolation.md#the-policy).
+The admin pages show the same rule as read-only before a write is tried
+(§107 t-753): `getSharedSettingsAccess()` reads the request's org with
+`sessionActingOrgId()` (in `lib/tenancy/entry.ts`), the derivation
+`GET /api/v1/orgs` also uses. That derivation is not an entry, so it does not
+verify the membership.
 
 **Then the guard carries the org two ways:** on the principal (`viewer.orgId`,
 `viewer.orgRole`) for the policy, and as the tenant context that the

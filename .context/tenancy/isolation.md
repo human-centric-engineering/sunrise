@@ -122,6 +122,26 @@ CREATE POLICY "org_isolation" ON "ai_agent"
   feature flags, the built-in patterns tag) are excepted by path, each with
   its reason, and only while every write in them still only adds.
 
+  **The admin pages say so first** (§107 t-753). The admin layout reads
+  `getSharedSettingsAccess()`
+  ([`lib/tenancy/shared-settings-access.ts`](../../lib/tenancy/shared-settings-access.ts))
+  once per request: `readOnly` is `multi` and an org other than the install
+  org, derived from the request the way `GET /api/v1/orgs` derives it
+  (`sessionActingOrgId`: the resolver header, else the session's choice). It
+  provides the answer to every page through
+  [`components/admin/shared-settings-access.tsx`](../../components/admin/shared-settings-access.tsx).
+  A component that offers a shared-settings write asks
+  `useSharedSettingsReadOnly()` and hides its create, delete and toggle
+  actions and disables its save. A shared-settings page renders
+  `<SharedSettingsReadOnlyNotice />`, which explains and offers a button that
+  switches the session to the install org. When the resolver header chose the
+  org, a switch would not move the request, so the notice says to use the
+  install org's address instead. The page-side answer is unverified: a page
+  that guessed wrong would only show or hide a button whose request the guard
+  answers either way. Mixed pages (knowledge documents, an agent's
+  capabilities) show no notice and gate only their shared-settings actions:
+  the patterns seed button and creating a new tag inline.
+
 The text is defined once, in
 [`lib/tenancy/isolation.ts`](../../lib/tenancy/isolation.ts)
 (`orgIsolationPolicySql`), and the migration carries it verbatim —
