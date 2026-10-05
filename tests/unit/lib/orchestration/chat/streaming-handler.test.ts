@@ -1205,8 +1205,10 @@ describe('StreamingChatHandler', () => {
     await collect(streamChat(baseRequest));
 
     const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
-    const assistantCall: any = createCalls.find((c: any) => c[0].data.role === 'assistant');
-    expect(assistantCall[0].data.providerSlug).toBe('fallback-provider');
+    const assistantCalls = createCalls.filter((c: any) => c[0].data.role === 'assistant');
+    const terminal: any = assistantCalls[assistantCalls.length - 1];
+    expect(terminal).toBeDefined();
+    expect(terminal[0].data.providerSlug).toBe('fallback-provider');
   });
 
   it('persists the fallback provider slug on the pending-approval message', async () => {
@@ -1243,7 +1245,93 @@ describe('StreamingChatHandler', () => {
     const pending: any = createCalls.find(
       (c: any) => c[0].data.role === 'assistant' && c[0].data.metadata?.pendingApproval
     );
+    expect(pending).toBeDefined();
     expect(pending[0].data.providerSlug).toBe('fallback-provider');
+  });
+
+  it('persists the fallback provider slug on a parallel-batch pending-approval message', async () => {
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-s', name: 'search_knowledge_base', arguments: { query: 'r' } },
+        },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-rw', name: 'run_workflow', arguments: { workflowSlug: 'x' } },
+        },
+        { type: 'done', usage: { inputTokens: 10, outputTokens: 2 }, finishReason: 'tool_use' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'fallback-provider',
+    });
+    vi.mocked(capabilityDispatcher.dispatch).mockImplementation((slug: string) =>
+      Promise.resolve(
+        slug === 'run_workflow'
+          ? {
+              success: true,
+              data: {
+                status: 'pending_approval',
+                executionId: 'exec-par',
+                stepId: 'step-1',
+                prompt: 'Refund?',
+                expiresAt: '2030-01-01T00:00:00.000Z',
+                approveToken: 'ta',
+                rejectToken: 'tr',
+              },
+              skipFollowup: true,
+            }
+          : { success: true, data: { results: [] } }
+      )
+    );
+
+    await collect(streamChat(baseRequest));
+
+    const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+    const pending: any = createCalls.find(
+      (c: any) => c[0].data.role === 'assistant' && c[0].data.metadata?.pendingApproval
+    );
+    expect(pending).toBeDefined();
+    expect(pending[0].data.providerSlug).toBe('fallback-provider');
+  });
+
+  it('persists the failover provider slug on the terminal message after a mid-stream failover', async () => {
+    const failingProvider = {
+      name: 'failing',
+      isLocal: false,
+      chat: vi.fn(),
+      embed: vi.fn(),
+      listModels: vi.fn(),
+      testConnection: vi.fn(),
+      chatStream: vi.fn(async function* () {
+        yield { type: 'text', content: 'partial...' };
+        throw new Error('Connection reset');
+      }),
+    };
+    const fallbackProvider = mockProvider([
+      [
+        { type: 'text', content: 'Recovered response' },
+        { type: 'done', usage: { inputTokens: 5, outputTokens: 3 }, finishReason: 'stop' },
+      ],
+    ]);
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ fallbackProviders: ['openai'] })
+    );
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: failingProvider,
+      usedSlug: 'anthropic',
+    });
+    (getProvider as ReturnType<typeof vi.fn>).mockResolvedValue(fallbackProvider);
+
+    await collect(streamChat(baseRequest));
+
+    const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+    const assistantCalls = createCalls.filter((c: any) => c[0].data.role === 'assistant');
+    const terminal: any = assistantCalls[assistantCalls.length - 1];
+    expect(terminal).toBeDefined();
+    expect(terminal[0].data.providerSlug).toBe('openai');
   });
 
   // 13 ----------------------------------------------------------------------

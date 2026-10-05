@@ -1816,7 +1816,7 @@ export class StreamingChatHandler {
             role: 'assistant',
             content: assistantText,
             modelId: resolvedModel,
-            providerSlug: resolvedProviderSlug ?? resolvedBinding.providerSlug,
+            providerSlug: currentProviderSlug,
             ...(assistantWorkflowExecutionId
               ? { workflowExecutionId: assistantWorkflowExecutionId }
               : {}),
@@ -2313,7 +2313,7 @@ export class StreamingChatHandler {
               role: 'assistant',
               content: '',
               modelId: resolvedModel,
-              providerSlug: resolvedProviderSlug ?? resolvedBinding.providerSlug,
+              providerSlug: currentProviderSlug,
               metadata: { pendingApproval },
             });
             yield { type: 'approval_required', pendingApproval };
@@ -2607,7 +2607,7 @@ export class StreamingChatHandler {
                 role: 'assistant',
                 content: '',
                 modelId: resolvedModel,
-                providerSlug: resolvedProviderSlug ?? resolvedBinding.providerSlug,
+                providerSlug: currentProviderSlug,
                 metadata: { pendingApproval: pa },
               });
               yield { type: 'approval_required', pendingApproval: pa };
