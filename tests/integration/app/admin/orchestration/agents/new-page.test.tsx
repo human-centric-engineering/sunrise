@@ -7,9 +7,9 @@
  * `app/admin/orchestration/agents/new/page.tsx`.
  *
  * Test Coverage:
- * - Renders create form with provider/model data hydrated
+ * - Renders the create form from the prefetched providers and model matrix
  * - Form renders in create mode with free-text fallback when fetches fail
- * - The effective-defaults preview seeds the provider on create
+ * - The effective-defaults preview seeds the provider and model on create
  *
  * @see app/admin/orchestration/agents/new/page.tsx
  */
@@ -65,11 +65,11 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => ({ get: () => null }),
 }));
 
-// `getEffectiveAgentDefaults` reads Prisma directly (provider + default-model
-// lookups) and swallows every failure, so left unmocked it silently waits on
-// whatever database the machine has — or previews that developer's real rows.
-// Stub it so each test fixes the preview it asserts on; the serverFetch-backed
-// helpers in the same module stay real.
+// `getEffectiveAgentDefaults` is the one helper on these pages that reads
+// Prisma directly (provider + default-model lookups) rather than going through
+// the mocked `serverFetch`. Stub it so the tests stay away from Prisma and each
+// one controls the preview it asserts on. The other prefetch-helpers exports
+// stay real.
 vi.mock('@/lib/orchestration/prefetch-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/prefetch-helpers')>()),
   getEffectiveAgentDefaults: vi.fn(),
@@ -98,9 +98,27 @@ const MOCK_PROVIDERS = [
     description: null,
     metadata: {},
   },
+  {
+    id: 'prov-2',
+    name: 'OpenAI',
+    slug: 'openai',
+    apiKeyEnvVar: 'OPENAI_API_KEY',
+    isActive: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    baseUrl: null,
+    description: null,
+    metadata: {},
+  },
 ];
 
-const MOCK_MODELS = [{ provider: 'anthropic', id: 'claude-opus-4-6', tier: 'frontier' }];
+// Provider-matrix rows, the shape `/provider-models` returns and
+// `readProviderMatrixRows` parses — anything else is dropped and the form falls
+// back to a free-text model box.
+const MOCK_MODELS = [
+  { providerSlug: 'anthropic', modelId: 'claude-opus-4-6', capabilities: ['chat'] },
+  { providerSlug: 'openai', modelId: 'gpt-4o', capabilities: ['chat'] },
+];
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -199,26 +217,15 @@ describe('NewAgentPage (server component)', () => {
   it('starts the form on the effective-defaults preview the page resolved', async () => {
     const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     const { getEffectiveAgentDefaults } = await import('@/lib/orchestration/prefetch-helpers');
-    // Two providers, previewing the second, so a selection can only have come
-    // from the preview — not from the form defaulting to the first or only one.
+    // Preview the SECOND provider, so a selection can only have come from the
+    // preview — not from the form defaulting to the first or only one.
     setupServerFetch(serverFetch as never, parseApiResponse as never, {
       '/provider-models': { data: MOCK_MODELS },
-      '/providers': {
-        data: [
-          ...MOCK_PROVIDERS,
-          {
-            ...MOCK_PROVIDERS[0],
-            id: 'prov-2',
-            name: 'OpenAI',
-            slug: 'openai',
-            apiKeyEnvVar: 'OPENAI_API_KEY',
-          },
-        ],
-      },
+      '/providers': { data: MOCK_PROVIDERS },
     });
     vi.mocked(getEffectiveAgentDefaults).mockResolvedValue({
       provider: 'openai',
-      model: 'claude-opus-4-6',
+      model: 'gpt-4o',
       inheritedProvider: true,
       inheritedModel: true,
     });
@@ -230,14 +237,13 @@ describe('NewAgentPage (server component)', () => {
     // A new agent has nothing of its own, so the page asks for both.
     expect(getEffectiveAgentDefaults).toHaveBeenCalledWith({ provider: '', model: '' });
 
-    // On create the preview is the starting value, so the fixture — not
-    // whatever the test machine's database holds — selects the provider.
+    // On create the preview is the starting value, so it selects the provider…
     const user = userEvent.setup();
     await user.click(screen.getByRole('tab', { name: /model/i }));
     expect(screen.getByRole('combobox', { name: /provider/i })).toHaveTextContent(/openai/i);
-    // The model is seeded too. MOCK_MODELS is not in the provider-matrix shape,
-    // so the form falls back to a free-text model input holding the form value.
-    expect(screen.getByRole('textbox', { name: /^model/i })).toHaveValue('claude-opus-4-6');
+    // …and the model with it, as a pair: the model dropdown lists openai's
+    // models and has the previewed one selected.
+    expect(screen.getByRole('combobox', { name: /^model/i })).toHaveTextContent(/gpt-4o/i);
   });
 
   it('renders with free-text fallback when provider fetch fails', async () => {

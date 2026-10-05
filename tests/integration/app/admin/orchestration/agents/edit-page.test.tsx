@@ -70,11 +70,11 @@ vi.mock('@/lib/api/client', () => ({
   },
 }));
 
-// `getEffectiveAgentDefaults` reads Prisma directly (provider + default-model
-// lookups) and swallows every failure, so left unmocked it silently waits on
-// whatever database the machine has — or previews that developer's real rows.
-// Stub it so each test fixes the preview it asserts on; the serverFetch-backed
-// helpers in the same module stay real.
+// `getEffectiveAgentDefaults` is the one helper on these pages that reads
+// Prisma directly (provider + default-model lookups) rather than going through
+// the mocked `serverFetch`. Stub it so the tests stay away from Prisma and each
+// one controls the preview it asserts on. The other prefetch-helpers exports
+// stay real.
 vi.mock('@/lib/orchestration/prefetch-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/prefetch-helpers')>()),
   getEffectiveAgentDefaults: vi.fn(),
@@ -129,7 +129,12 @@ const MOCK_PROVIDERS = [
   },
 ];
 
-const MOCK_MODELS = [{ provider: 'anthropic', id: 'claude-opus-4-6', tier: 'frontier' }];
+// Provider-matrix rows, the shape `/provider-models` returns and
+// `readProviderMatrixRows` parses — anything else is dropped and the form falls
+// back to a free-text model box.
+const MOCK_MODELS = [
+  { providerSlug: 'anthropic', modelId: 'claude-opus-4-6', capabilities: ['chat'] },
+];
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
@@ -273,7 +278,7 @@ describe('EditAgentPage (server component)', () => {
     // The page asks with the agent's own (empty) values…
     expect(getEffectiveAgentDefaults).toHaveBeenCalledWith({ provider: '', model: '' });
 
-    // …and the hint shows the fixture's resolution, not the test machine's rows.
+    // …and the hints show the stubbed resolution.
     const user = userEvent.setup();
     await user.click(screen.getByRole('tab', { name: /model/i }));
     expect(screen.getByText(/no provider of its own/i)).toHaveTextContent(/anthropic/i);
@@ -282,9 +287,13 @@ describe('EditAgentPage (server component)', () => {
     expect(screen.getByRole('combobox', { name: /provider/i })).toHaveTextContent(
       /pick a provider/i
     );
-    // Same for the model. MOCK_MODELS is not in the provider-matrix shape, so
-    // the form falls back to a free-text model input holding the form value.
-    expect(screen.getByRole('textbox', { name: /^model/i })).toHaveValue('');
+    // Same for the model. With no provider in form state the model dropdown is
+    // the disabled no-models Select, and its hint would name any model held in
+    // form state ("Saving now would keep …") — it names none.
+    expect(screen.getByRole('combobox', { name: /^model/i })).toHaveTextContent(
+      /no models registered/i
+    );
+    expect(screen.queryByText(/saving now would keep/i)).not.toBeInTheDocument();
   });
 
   it('calls notFound() when agent fetch returns null', async () => {
