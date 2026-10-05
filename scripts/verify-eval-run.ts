@@ -4,8 +4,6 @@
  *
  * Usage:  DOTENV_CONFIG_PATH=.env.local tsx -r dotenv/config scripts/verify-eval-run.ts
  *
- * Or via the npm helper: npm run verify:eval-run
- *
  * Bypasses HTTP/auth (uses Prisma directly to set up state) so we can
  * exercise the worker on the dev DB without juggling cookies. This is a
  * verification harness, not a test fixture — wipes the run + dataset it

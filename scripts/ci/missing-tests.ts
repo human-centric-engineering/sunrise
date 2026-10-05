@@ -198,6 +198,20 @@ export const NOT_EXEMPT_DESPITE_COVERAGE_EXCLUSION: ReadonlyArray<{
       'the question is answered in review rather than silenced here.',
   },
   {
+    pattern: 'scripts/diagnose-eval-run.ts',
+    reason:
+      'same category as test-knowledge-base.ts above: a diagnostic run by hand ' +
+      'against the dev database with `tsx -r dotenv/config`, imported by ' +
+      'nothing, so its 0% is structural. 4f still asks, and should.',
+  },
+  {
+    pattern: 'scripts/verify-eval-run.ts',
+    reason:
+      'same category: drives one evaluation run end to end against the dev ' +
+      'database and cleans up after itself; imported by nothing, so its 0% is ' +
+      'structural. 4f still asks, and should.',
+  },
+  {
     pattern: 'scripts/spikes/**',
     reason:
       'same category as the smoke harnesses below: `rls-isolation-spike.mjs` ' +
