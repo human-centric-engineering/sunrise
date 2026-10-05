@@ -161,6 +161,7 @@ import {
   PATTERNS_TAG_SLUG,
 } from '@/lib/orchestration/knowledge/patterns-knowledge';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { DEFAULT_ORG_ROLE } from '@/lib/tenancy/roles';
 
 const PREFIX = 'smoke-iso';
 const stamp = Date.now();
@@ -1818,7 +1819,7 @@ async function main(): Promise<void> {
       const rows: Array<{ orgId: string; ids: string[] }> = [];
       for (const f of [a, b]) {
         await prisma.orgMembership.create({
-          data: { orgId: f.orgId, userId: user.id, role: 'MEMBER' },
+          data: { orgId: f.orgId, userId: user.id, role: DEFAULT_ORG_ROLE },
         });
         const ids = await runAsOrg(f.orgId, async () => {
           const conversation = await prisma.aiConversation.create({
