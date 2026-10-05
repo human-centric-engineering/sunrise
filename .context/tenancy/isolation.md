@@ -153,7 +153,7 @@ CREATE POLICY "org_isolation" ON "ai_agent"
   show or hide a button whose request the guard answers either way. It can
   also be stale: App Router keeps a layout across client navigation, so after
   a switch made in another tab, this tab's pages keep the old answer until a
-  refresh (the notice's own switch refreshes). The server refuses the write
+  reload (the notice's own switch reloads the page). The server refuses the write
   regardless. The knowledge base's document pages are the org's own, so they
   show no notice and gate only their two shared-settings actions: the
   patterns seed button, and creating a new tag inline (on upload and in a
