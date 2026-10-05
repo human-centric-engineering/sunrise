@@ -209,12 +209,15 @@ release process.
   model matrix, capabilities, agent profiles, knowledge tags, the MCP pages,
   feature flags, orchestration settings and its backup import, the setup
   wizard and the provider-detection banner. The admin layout reads
-  `getSharedSettingsAccess()` (new, `lib/tenancy/shared-settings-access.ts`)
-  once per request and provides it. Components ask
-  `useSharedSettingsReadOnly()` and pages render
-  `<SharedSettingsReadOnlyNotice />`, both from the new
-  `components/admin/shared-settings-access.tsx`; outside the provider both
-  answer "editable". `sessionActingOrgId()` (new, `lib/tenancy/entry.ts`) is
+  `getSharedSettingsAccess(session)` (new,
+  `lib/tenancy/shared-settings-access.ts`) once per request and provides it;
+  the switch is offered only to a member of the install org. From the new
+  `components/admin/shared-settings-access.tsx`: components ask
+  `useSharedSettingsReadOnly()` (and `useIsInstallOrg()` for install-only
+  actions), pages render `<SharedSettingsReadOnlyNotice />`, a server page
+  wraps its create link in `<SharedSettingsEditOnly>`, and a disabled save
+  gets `<SharedSettingsSaveHint />`. Outside the provider everything answers
+  "editable". `sessionActingOrgId()` (new, `lib/tenancy/entry.ts`) is
   the one derivation of a cookie session's org that this and
   `GET /api/v1/orgs` share. Nothing changes at `single`. **Forks:** an admin
   component of yours that writes one of the `GLOBAL_CONFIG_MODELS` should ask
