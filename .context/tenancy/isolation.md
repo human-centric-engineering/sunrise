@@ -138,9 +138,10 @@ CREATE POLICY "org_isolation" ON "ai_agent"
   org, a switch would not move the request, so the notice says to use the
   install org's address instead. The page-side answer is unverified: a page
   that guessed wrong would only show or hide a button whose request the guard
-  answers either way. Mixed pages (knowledge documents, an agent's
-  capabilities) show no notice and gate only their shared-settings actions:
-  the patterns seed button and creating a new tag inline.
+  answers either way. The knowledge base's document pages are the org's own,
+  so they show no notice and gate only their two shared-settings actions: the
+  patterns seed button, and creating a new tag inline (on upload and in a
+  document's tag picker). Applying an existing tag stays the org's.
 
 The text is defined once, in
 [`lib/tenancy/isolation.ts`](../../lib/tenancy/isolation.ts)
