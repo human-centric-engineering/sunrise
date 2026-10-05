@@ -911,6 +911,8 @@ describe('DefaultModelsForm', () => {
       // Header Save is replaced by the footer's Continue in wizard mode
       expect(screen.queryByRole('button', { name: /save changes/i })).not.toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^continue$/i })).toBeEnabled();
+      // ...and so is the hint that explains it: nothing to explain here.
+      expect(screen.queryByText(/Read-only here/)).not.toBeInTheDocument();
     });
   });
 });

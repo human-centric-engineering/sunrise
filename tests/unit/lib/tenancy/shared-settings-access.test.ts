@@ -18,6 +18,7 @@ vi.mock('@/lib/db/client', () => ({ prisma: { orgMembership: { findUnique: vi.fn
 vi.mock('@/lib/logging', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
+import { logger } from '@/lib/logging';
 
 import { headers } from 'next/headers';
 import { prisma } from '@/lib/db/client';
@@ -109,6 +110,24 @@ describe('getSharedSettingsAccess', () => {
         canSwitch: false,
         installOrgMember: false,
       });
+    });
+
+    it('survives a failed membership read: it logs, and leaves the answer to the switch route', async () => {
+      // The layout asks on every admin page; a failed read must not take the
+      // admin tree down. Offering the switch is safe — the route reads the
+      // same row and refuses a non-member.
+      vi.mocked(prisma.orgMembership.findUnique).mockRejectedValue(new Error('pool exhausted'));
+      expect(await access(CUSTOMER)).toEqual({
+        isInstallOrg: false,
+        readOnly: true,
+        canSwitch: true,
+        installOrgMember: true,
+      });
+      expect(logger.error).toHaveBeenCalledWith(
+        'Shared-settings access: install-org membership read failed',
+        expect.any(Error),
+        { userId: USER_ID }
+      );
     });
 
     it('is read-only when the session names no org — there is none to default to', async () => {

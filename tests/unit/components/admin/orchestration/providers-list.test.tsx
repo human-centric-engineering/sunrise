@@ -858,6 +858,23 @@ describe('ProvidersList', () => {
       expect(screen.queryByRole('link', { name: /add provider/i })).not.toBeInTheDocument();
     });
 
+    it('says where providers are set up, not to edit .env, in the empty state', () => {
+      // Contrast: with no env keys the editable page gives the server-ops
+      // instruction, which an admin in another org cannot act on.
+      const { unmount } = render(<ProvidersList initialProviders={[]} hasAnyEnvKey={false} />);
+      expect(screen.getByText(/add an llm api key to your \.env/i)).toBeInTheDocument();
+      unmount();
+
+      for (const hasAnyEnvKey of [false, true]) {
+        const { unmount: done } = renderReadOnly(
+          <ProvidersList initialProviders={[]} hasAnyEnvKey={hasAnyEnvKey} />
+        );
+        expect(screen.queryByText(/\.env/)).not.toBeInTheDocument();
+        expect(screen.getByText(/set up from the install organisation/i)).toBeInTheDocument();
+        done();
+      }
+    });
+
     it('active provider menu: View replaces Edit, Deactivate and Delete permanently are gone, View models stays', async () => {
       const user = userEvent.setup();
       const { unmount } = render(<ProvidersList initialProviders={[makeProvider()]} />);

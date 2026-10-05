@@ -105,6 +105,9 @@ describe('SharedSettingsReadOnlyNotice', () => {
       body: { orgId: INSTALL_ORG_ID },
     });
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    // Held until the refresh replaces the notice: no second POST meanwhile.
+    expect(screen.getByRole('button', { name: 'Switching…' })).toBeDisabled();
+    expect(apiClient.post).toHaveBeenCalledTimes(1);
   });
 
   it('shows the server’s refusal and does not refresh', async () => {
@@ -175,21 +178,23 @@ describe('useIsInstallOrg', () => {
     expect(screen.getByTestId('install')).toHaveTextContent('other');
   });
 
-  it('reads the provider, and defaults to "editable means install" when not given', () => {
+  it('reads the provider, and is not the install org unless the provider says so', () => {
     const { unmount } = render(
-      <SharedSettingsAccessProvider readOnly={false} canSwitch={false} isInstallOrg={false}>
+      <SharedSettingsAccessProvider readOnly={false} canSwitch={false} isInstallOrg>
         <InstallProbe />
       </SharedSettingsAccessProvider>
     );
-    expect(screen.getByTestId('install')).toHaveTextContent('other');
+    expect(screen.getByTestId('install')).toHaveTextContent('install');
     unmount();
 
+    // Editable is not the same as install: at `single` a session can point
+    // at another org and still edit, but the audit is the install org's.
     render(
       <SharedSettingsAccessProvider readOnly={false} canSwitch={false}>
         <InstallProbe />
       </SharedSettingsAccessProvider>
     );
-    expect(screen.getByTestId('install')).toHaveTextContent('install');
+    expect(screen.getByTestId('install')).toHaveTextContent('other');
   });
 });
 
