@@ -28,7 +28,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { runAsSystem } from '@/lib/tenancy/context';
+import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 import { collectAppSubjectData, type AppSubjectData } from '@/lib/app/data-export';
 import {
   SUBJECT_DATA_SOURCES,
@@ -193,6 +193,12 @@ function countAppRows(value: unknown): number {
   return 1;
 }
 
+/** One manifest source and the rows it returned for the subject. */
+interface SourceResult {
+  source: (typeof SUBJECT_DATA_SOURCES)[number];
+  rows: unknown[];
+}
+
 /**
  * Build one data subject's export bundle.
  *
@@ -219,31 +225,40 @@ export async function exportUserData(params: ExportUserParams): Promise<SubjectE
   // an export that quietly lost a section would be indistinguishable, to the
   // person reading it, from one that had nothing to show.
   //
-  // Read across every org, as the audited system scope (§107 t-748). A person
-  // can belong to several orgs, and leave some, so their data has no one org
-  // to enter. At `multi` the self-service and admin routes run inside the
-  // session's active org, and the `org_isolation` policy ANDed every read
-  // below with it, so the bundle silently held that org's conversations,
-  // memories and executions and no other's; an admin API key enters no org,
-  // and the reads threw. The bypass is safe here because every source is
-  // anchored on the subject (`userId`, `createdBy`, `uploadedBy`, `actorId`,
-  // the account's email) — every `fetch` in `export-sources.ts` filters on one — so it
-  // widens the answer to the person's rows in every org, not to anyone
-  // else's. The app collector runs inside the same scope, for the same reason.
+  // At `multi`, read across every org, as the audited system scope (§107
+  // t-748). A person can belong to several orgs, and leave some, so their
+  // data has no one org to enter. The self-service and admin routes run
+  // inside the session's active org, and the `org_isolation` policy ANDed
+  // every read below with it, so the bundle silently held that org's
+  // conversations, memories and executions and no other's; an admin API key
+  // enters no org, and the reads threw. The bypass is safe here because every
+  // `fetch` in `export-sources.ts` filters on the subject (`userId`,
+  // `createdBy`, `uploadedBy`, `actorId`, the account's email), so it widens
+  // the answer to the person's rows in every org, not to anyone else's. The
+  // app collector runs inside the same scope, for the same reason.
   //
-  // One source at a time, as the org export reads (t-735): at `multi` each
-  // read is its own transaction holding a pooled connection, and starting
-  // every source at once can exhaust the pool.
-  const { results, app } = await runAsSystem(
-    'subject data export: one person’s rows in every org',
-    async () => {
-      const fetched: Array<{ source: (typeof SUBJECT_DATA_SOURCES)[number]; rows: unknown[] }> = [];
-      for (const source of SUBJECT_DATA_SOURCES) {
-        fetched.push({ source, rows: await source.fetch(subject) });
-      }
-      return { results: fetched, app: await collectAppSubjectData(subject) };
-    }
-  );
+  // One source at a time there, as the org export reads (t-735): each read
+  // is its own transaction holding a pooled connection, and starting every
+  // source at once can exhaust the pool. At `single` there is one org and no
+  // policy, so nothing is entered and the sources still run together — a
+  // collector or helper reading the implicit install org keeps working.
+  const { results, app } = isMultiTenant()
+    ? await runAsSystem('subject data export: one person’s rows in every org', async () => {
+        const fetched: SourceResult[] = [];
+        for (const source of SUBJECT_DATA_SOURCES) {
+          fetched.push({ source, rows: await source.fetch(subject) });
+        }
+        return { results: fetched, app: await collectAppSubjectData(subject) };
+      })
+    : {
+        results: await Promise.all(
+          SUBJECT_DATA_SOURCES.map(async (source) => ({
+            source,
+            rows: await source.fetch(subject),
+          }))
+        ),
+        app: await collectAppSubjectData(subject),
+      };
 
   const personalData: Record<string, unknown[]> = {};
   const attributions: Record<string, unknown[]> = {};

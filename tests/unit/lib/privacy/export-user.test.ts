@@ -81,6 +81,9 @@ const mockInitAppSubjectSources = vi.fn();
 vi.mock('@/lib/db/client', () => ({ prisma: mockPrisma }));
 vi.mock('@/lib/logging', () => ({ logger: mockLogger }));
 
+const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'single' }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+
 const mockCollectAppSubjectData = vi.fn().mockResolvedValue({});
 /**
  * Stubbed alongside the collector, not omitted. Leaving it out does not fail —
@@ -138,6 +141,7 @@ function argsTo(delegate: string): Record<string, unknown> {
 beforeEach(() => {
   vi.clearAllMocks();
   resetDelegates();
+  mockEnv.TENANCY_MODE = 'single';
   mockUserFindUnique.mockResolvedValue(SUBJECT);
   mockCollectAppSubjectData.mockResolvedValue({});
   mockInitAppSubjectSources.mockReset();
@@ -279,17 +283,25 @@ describe('exportUserData', () => {
     });
   });
 
-  describe('reading across every org (§107 t-748)', () => {
-    /** Whether `value` holds the subject's id or email anywhere inside it. */
-    function namesSubject(value: unknown): boolean {
+  describe('reading across every org at multi (§107 t-748)', () => {
+    /**
+     * Whether `where` pins the subject: their id or email reached through
+     * plain keys or `AND`, never through `OR` or `NOT`. A subject named in
+     * one branch of an `OR`, or under a `NOT`, does not narrow the read to
+     * them, and under the bypass would read other people's rows in every org.
+     */
+    function pinsSubject(value: unknown): boolean {
       if (value === SUBJECT.id || value === SUBJECT.email) return true;
       if (typeof value !== 'object' || value === null) return false;
-      return Object.values(value).some(namesSubject);
+      return Object.entries(value).some(
+        ([key, inner]) => key !== 'OR' && key !== 'NOT' && pinsSubject(inner)
+      );
     }
 
-    it('reads every source and the app seam in the system scope, whatever org the caller is in', async () => {
-      // A session enters its active org, and the policy would AND every read
-      // with it; an admin API key enters none. Both must read as the bypass.
+    const delegateOf = (model: string) => model.charAt(0).toLowerCase() + model.slice(1);
+
+    /** The tenant context each read saw, recorded from one source and the app seam. */
+    function recordContexts(): Array<{ orgId: string | null; source: string } | null> {
       const seen: Array<{ orgId: string | null; source: string } | null> = [];
       // A plain array, not a promise: the delegate's mock type wants a void
       // return, and the source awaits whatever it is handed.
@@ -301,33 +313,55 @@ describe('exportUserData', () => {
         seen.push(getTenantContext());
         return {};
       });
+      return seen;
+    }
 
-      await runAsOrg('cmorg00000000000000active', () => exportUserData(PARAMS), {
-        source: 'session',
-      });
+    const ACTIVE_ORG = 'cmorg00000000000000active';
+
+    it('reads every source and the app seam in the system scope, whatever org the caller is in', async () => {
+      // A session enters its active org, and the policy would AND every read
+      // with it; an admin API key enters none. Both must read as the bypass.
+      mockEnv.TENANCY_MODE = 'multi';
+      const seen = recordContexts();
+
+      await runAsOrg(ACTIVE_ORG, () => exportUserData(PARAMS), { source: 'session' });
       await exportUserData(PARAMS);
 
       const system = { orgId: null, source: 'system' };
       expect(seen).toEqual([system, system, system, system]);
     });
 
-    it('anchors every source on the subject, so the bypass widens it to their rows alone', async () => {
-      // The safety of the system scope rests on this: a source whose `where`
-      // did not name the person would read every org's rows for them.
+    it('enters no scope at single, where there is one org and no policy', async () => {
+      // A collector or helper reading the implicit install org keeps working.
+      const seen = recordContexts();
+
+      await runAsOrg(ACTIVE_ORG, () => exportUserData(PARAMS), { source: 'session' });
       await exportUserData(PARAMS);
 
-      const unanchored = SUBJECT_DATA_SOURCES.map((source) => source.model).filter((model) => {
-        const delegate = model.charAt(0).toLowerCase() + model.slice(1);
-        const where = (argsTo(delegate) as { where?: unknown }).where;
-        return !namesSubject(where);
-      });
-      expect(unanchored).toEqual([]);
+      const session = { orgId: ACTIVE_ORG, source: 'session', role: undefined };
+      expect(seen).toEqual([session, session, null, null]);
     });
 
-    it('reads one source at a time, so an export never queues its reads behind the pool', async () => {
-      const [first, second] = SUBJECT_DATA_SOURCES.map(
-        (source) => source.model.charAt(0).toLowerCase() + source.model.slice(1)
+    it('pins every source on the subject, so the bypass widens it to their rows alone', async () => {
+      await exportUserData(PARAMS);
+
+      const unpinned = SUBJECT_DATA_SOURCES.map((source) => source.model).filter(
+        (model) => !pinsSubject((argsTo(delegateOf(model)) as { where?: unknown }).where)
       );
+      expect(unpinned).toEqual([]);
+    });
+
+    it('does not count a subject named only under OR or NOT as pinned', () => {
+      // The check above is only worth its pass if it can fail.
+      expect(pinsSubject({ OR: [{ userId: SUBJECT.id }, { isPublic: true }] })).toBe(false);
+      expect(pinsSubject({ NOT: { userId: SUBJECT.id } })).toBe(false);
+      expect(pinsSubject({ AND: [{ userId: SUBJECT.id }, { isPublic: true }] })).toBe(true);
+      expect(pinsSubject({ memberships: { some: { userId: SUBJECT.id } } })).toBe(true);
+    });
+
+    /** Hold the first source's read open; return whether the second started meanwhile. */
+    async function secondStartsWhileFirstIsOpen(): Promise<boolean> {
+      const [first, second] = SUBJECT_DATA_SOURCES.map((source) => delegateOf(source.model));
       let release: (rows: unknown[]) => void = () => {};
       delegateFor(first).findMany.mockReturnValue(
         new Promise<unknown[]>((resolve) => {
@@ -337,11 +371,23 @@ describe('exportUserData', () => {
 
       const pending = exportUserData(PARAMS);
       await vi.waitFor(() => expect(callsTo(first)).toHaveLength(1));
-      expect(callsTo(second)).toHaveLength(0);
+      // Let any reads that were started together reach their delegates.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const started = callsTo(second).length > 0;
 
       release([]);
       await pending;
       expect(callsTo(second)).toHaveLength(1);
+      return started;
+    }
+
+    it('reads one source at a time at multi, so an export never queues its reads behind the pool', async () => {
+      mockEnv.TENANCY_MODE = 'multi';
+      expect(await secondStartsWhileFirstIsOpen()).toBe(false);
+    });
+
+    it('still reads the sources together at single, where no read holds a transaction', async () => {
+      expect(await secondStartsWhileFirstIsOpen()).toBe(true);
     });
   });
 

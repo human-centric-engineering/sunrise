@@ -178,8 +178,9 @@ The bypass is safe because every source is anchored on the subject — its
 `where` names the `userId` or the email. `export-user.test.ts` checks that for
 every core source; it cannot check a fork's collector, so **your collector must
 filter on the subject too**, or at `multi` it reads every org's rows. The
-sources run one at a time, as the org export's do: at `multi` each read is its
-own transaction holding a pooled connection.
+sources run one at a time there, as the org export's do: at `multi` each read is
+its own transaction holding a pooled connection. At `single` there is one org and
+no policy, so no scope is entered and the sources still run together.
 
 `scripts/smoke/tenancy-isolation.ts` ([17]) is the proof, against a real
 database as the restricted role.

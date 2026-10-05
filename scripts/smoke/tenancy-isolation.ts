@@ -566,6 +566,8 @@ async function main(): Promise<void> {
   // put back as it was.
   let mcpExposure: { isEnabled: boolean } | null = null;
   let mcpExposureCapabilityId: string | null = null;
+  /** Receipts [18]'s erasures write: keyed by a subject id, with no FK, so nothing cascades them. */
+  const erasureReceiptIds: string[] = [];
   const tagSlug = `${PREFIX}-tag-${stamp}`;
 
   try {
@@ -1796,10 +1798,17 @@ async function main(): Promise<void> {
       (rows ?? []).flatMap((r) =>
         typeof r === 'object' && r !== null && 'id' in r && typeof r.id === 'string' ? [r.id] : []
       );
-    /** How each section's run is entered: a session in A, and an admin API key (no org). */
+    /**
+     * How each section's run is entered: the person's own session in A, and an
+     * admin API key (no org), as the self-service and admin routes ask.
+     */
     const askers = [
-      ['from inside A', <T>(fn: () => Promise<T>) => runAsOrg(a.orgId, fn, { source: 'session' })],
-      ['from no org (an admin API key)', <T>(fn: () => Promise<T>) => fn()],
+      [
+        'from inside A',
+        <T>(fn: () => Promise<T>) => runAsOrg(a.orgId, fn, { source: 'session' }),
+        'self_service',
+      ],
+      ['from no org (an admin API key)', <T>(fn: () => Promise<T>) => fn(), 'admin_action'],
     ] as const;
 
     // ── [17] A person's export: their rows in every org (§107 t-748) ──────
@@ -1846,22 +1855,17 @@ async function main(): Promise<void> {
       return { userId: user.id, email: user.email, rows };
     };
     const person = await seedPerson('one');
+    // The owners' conversations sit in the same orgs, under the same agents:
+    // any id in the bundle that is not one of the person's is a leak.
     const personIds = person.rows.flatMap((r) => r.ids);
-    // The owners' conversations sit in the same orgs, under the same agents.
-    const otherIds = new Set([
-      a.conversationId,
-      ...a.messageIds,
-      b.conversationId,
-      ...b.messageIds,
-    ]);
-    for (const [label, run] of askers) {
+    for (const [label, run, reason] of askers) {
       let bundle: Awaited<ReturnType<typeof exportUserData>> | null = null;
       try {
         bundle = await run(() =>
           exportUserData({
             userId: person.userId,
-            actorUserId: person.userId,
-            reason: 'self_service',
+            actorUserId: reason === 'self_service' ? person.userId : a.ownerId,
+            reason,
           })
         );
       } catch (err) {
@@ -1886,7 +1890,7 @@ async function main(): Promise<void> {
         missing.length === 0,
         `the person’s export ${label} holds their conversation, message and memory in both orgs${missing.length ? ` — missing the rows in: ${missing.map((r) => r.orgId).join(', ')}` : ''}`
       );
-      const foreign = held.filter((id) => otherIds.has(id) || !personIds.includes(id));
+      const foreign = held.filter((id) => !personIds.includes(id));
       check(foreign.length === 0, `the person’s export ${label} holds no one else’s rows`);
     }
 
@@ -1913,7 +1917,7 @@ async function main(): Promise<void> {
         `person ${i + 1} holds a conversation and a memory in A and in B before erasure (${before.join(', ')})`
       );
       try {
-        await run(() =>
+        const { receiptId } = await run(() =>
           eraseUser({
             userId: who.userId,
             userEmail: who.email,
@@ -1921,6 +1925,7 @@ async function main(): Promise<void> {
             reason: 'admin_action',
           })
         );
+        erasureReceiptIds.push(receiptId);
       } catch (err) {
         check(
           false,
@@ -2074,6 +2079,7 @@ async function main(): Promise<void> {
         await prisma.aiWorkflowExecution.deleteMany({ where: { workflowId: f.workflowId } });
         await prisma.aiCostLog.deleteMany({ where: { id: f.costLogId } });
       }
+      await prisma.dataErasureReceipt.deleteMany({ where: { id: { in: erasureReceiptIds } } });
       await prisma.org.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
       await prisma.user.deleteMany({ where: { email: { startsWith: `${PREFIX}-` } } });
       await prisma.knowledgeTag.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
