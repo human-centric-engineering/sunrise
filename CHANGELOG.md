@@ -512,6 +512,17 @@ release process.
 
 ### Fixed
 
+- **At `multi`, a person's data export holds their rows from every org**
+  (§107 t-748). `exportUserData()` read inside whatever org the caller had
+  entered, so the self-service and admin exports returned only the session's
+  active org's conversations, memories and executions, and an admin API key's
+  export threw. It now reads, one source at a time, as the audited system
+  scope. **For a fork:** `collectAppSubjectData()` (`lib/app/data-export.ts`)
+  and the erasure hooks (`registerErasureCleanupHook`) now run in that scope at
+  `multi`, so they must filter on the subject they are handed — an unanchored
+  query there reads every org's rows. At `single` their reads, updates and
+  deletes behave as before; a row a hook _creates_ is no longer stamped with
+  the install org, since the scope names none.
 - **An evaluation run where every case errored is now `failed`, not `completed`**
   (#801). A run with no scored result (no provider configured, a provider
   outage) used to look the same as a clean one, so a fork polling run `status`

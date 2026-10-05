@@ -163,6 +163,27 @@ from which failure the subject can detect:
 
 So erasure degrades gracefully and access refuses to.
 
+## Every Org, at `multi`
+
+A person can belong to several orgs, and leave some, so their data has no one
+org to read it as. At `TENANCY_MODE=multi`, `exportUserData()` reads every core
+source **and runs `collectAppSubjectData()`** as the audited system scope
+(`runAsSystem`), whatever org the caller entered: the self-service route runs in
+the session's active org and an admin API key enters none, and the bundle holds
+the person's rows from every org either way (§107 t-748). Before that, the
+`org_isolation` policy narrowed the bundle to the active org, and it reported
+success.
+
+The bypass is safe because every source is anchored on the subject — its
+`where` names the `userId` or the email. `export-user.test.ts` checks that for
+every core source; it cannot check a fork's collector, so **your collector must
+filter on the subject too**, or at `multi` it reads every org's rows. The
+sources run one at a time, as the org export's do: at `multi` each read is its
+own transaction holding a pooled connection.
+
+`scripts/smoke/tenancy-isolation.ts` ([17]) is the proof, against a real
+database as the restricted role.
+
 ## When a Row Matches the Subject but Isn't Theirs
 
 `where: { userId }` encodes an assumption — that a row pointing at someone is a

@@ -195,6 +195,15 @@ side effect first, since object storage can't enlist in a DB transaction):
    would make this step a partial delete that still reported success — see
    [`.context/storage/overview.md`](../storage/overview.md#local-provider).
 
+**At `multi`, a person's rows in every org go** (§107 t-748). The cascades are
+FK actions, which row-level security does not filter, so `user.delete` removes
+the person's rows in every org whichever org the caller is in. The hooks and the
+transaction run as the audited system scope (`runAsSystem`), so a fork's hook
+that clears a tenant-owned table reaches the person's rows in every org rather
+than only the caller's, and does not throw when an admin API key entered none.
+A hook is handed the `userId` alone, and must filter on it.
+`scripts/smoke/tenancy-isolation.ts` ([18]) proves it as the restricted role.
+
 Apps and forks extend these same two reach-limits (residual-PII scrub, external
 resource cleanup) via registered hooks — see
 [App / fork tables relating to `User`](#app--fork-tables-relating-to-user).
