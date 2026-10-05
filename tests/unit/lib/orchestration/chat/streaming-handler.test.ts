@@ -1189,6 +1189,63 @@ describe('StreamingChatHandler', () => {
     expect(provider.chatStream).toHaveBeenCalledTimes(1);
   });
 
+  // 12c — fallback provenance (#810) ----------------------------------------
+  it('persists the fallback provider slug on the terminal assistant message', async () => {
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'Hi' },
+        { type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'fallback-provider',
+    });
+
+    await collect(streamChat(baseRequest));
+
+    const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+    const assistantCall: any = createCalls.find((c: any) => c[0].data.role === 'assistant');
+    expect(assistantCall[0].data.providerSlug).toBe('fallback-provider');
+  });
+
+  it('persists the fallback provider slug on the pending-approval message', async () => {
+    const provider = mockProvider([
+      [
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-rw', name: 'run_workflow', arguments: { workflowSlug: 'x' } },
+        },
+        { type: 'done', usage: { inputTokens: 8, outputTokens: 2 }, finishReason: 'tool_use' },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'fallback-provider',
+    });
+    (capabilityDispatcher.dispatch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      success: true,
+      data: {
+        status: 'pending_approval',
+        executionId: 'exec-99',
+        stepId: 'step-approve',
+        prompt: 'Refund?',
+        expiresAt: '2030-01-01T00:00:00.000Z',
+        approveToken: 'a',
+        rejectToken: 'r',
+      },
+      skipFollowup: true,
+    });
+
+    await collect(streamChat(baseRequest));
+
+    const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
+    const pending: any = createCalls.find(
+      (c: any) => c[0].data.role === 'assistant' && c[0].data.metadata?.pendingApproval
+    );
+    expect(pending[0].data.providerSlug).toBe('fallback-provider');
+  });
+
   // 13 ----------------------------------------------------------------------
   it('invalidateContext called after tool call when contextType/contextId are set', async () => {
     (buildContext as ReturnType<typeof vi.fn>).mockResolvedValue('=== LOCKED CONTEXT ===\ndata');
