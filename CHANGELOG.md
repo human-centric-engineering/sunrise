@@ -216,8 +216,9 @@ release process.
   `useSharedSettingsReadOnly()` (and `useIsInstallOrg()` for install-only
   actions), pages render `<SharedSettingsReadOnlyNotice />`, a server page
   wraps its create link in `<SharedSettingsEditOnly>`, and a disabled save
-  gets `<SharedSettingsSaveHint />`. Outside the provider everything answers
-  "editable". `sessionActingOrgId()` (new, `lib/tenancy/entry.ts`) is
+  gets `<SharedSettingsSaveHint />`. Outside the provider the components
+  are editable as before, but `useIsInstallOrg()` answers `false`, so the
+  install-only model audit is hidden until a provider says otherwise. `sessionActingOrgId()` (new, `lib/tenancy/entry.ts`) is
   the one derivation of a cookie session's org that this and
   `GET /api/v1/orgs` share. Nothing changes at `single`. **Forks:** an admin
   component of yours that writes one of the `GLOBAL_CONFIG_MODELS` should ask

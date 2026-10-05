@@ -48,6 +48,12 @@ export default async function AdminLayout({
   // this asks with `resource: null`, where the policy's org arm grants nothing
   // by design (a null resource is a platform-ops surface), so a membership
   // read here would be a query that cannot change the answer.
+  //
+  // Shared settings are read-only outside the install org at `multi` (§107
+  // t-753); every page below asks the provider rather than working it out.
+  // Started now so its one membership read runs alongside the policy's
+  // instead of after it. It never throws.
+  const sharedSettingsRead = getSharedSettingsAccess(session);
   if (
     !(await canAdminister(
       {
@@ -63,9 +69,7 @@ export default async function AdminLayout({
     redirect(AUTH_LANDING_ROUTE);
   }
 
-  // Shared settings are read-only outside the install org at `multi` (§107
-  // t-753); every page below asks the provider rather than working it out.
-  const sharedSettings = await getSharedSettingsAccess(session);
+  const sharedSettings = await sharedSettingsRead;
 
   return (
     <div className="bg-background flex h-screen overflow-hidden">

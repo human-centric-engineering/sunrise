@@ -16,6 +16,7 @@
  */
 import { headers } from 'next/headers';
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
@@ -64,11 +65,21 @@ export async function getSharedSettingsAccess(session: {
  * The switch route's own membership read, asked before offering it. An
  * `OrgMembership` row is a system row (it decides which org a request acts
  * for), so it reads with no org entered, as the switch does.
+ *
+ * A failed read must not take the admin tree down with it (the layout asks
+ * on every admin page, most of which have no shared settings), so it answers
+ * "a member": the button is offered, and the switch route, which reads the
+ * same row, gives the real answer.
  */
 async function isInstallOrgMember(userId: string): Promise<boolean> {
-  const membership = await prisma.orgMembership.findUnique({
-    where: { orgId_userId: { orgId: INSTALL_ORG_ID, userId } },
-    select: { orgId: true },
-  });
-  return membership !== null;
+  try {
+    const membership = await prisma.orgMembership.findUnique({
+      where: { orgId_userId: { orgId: INSTALL_ORG_ID, userId } },
+      select: { orgId: true },
+    });
+    return membership !== null;
+  } catch (err) {
+    logger.error('Shared-settings access: install-org membership read failed', err, { userId });
+    return true;
+  }
 }

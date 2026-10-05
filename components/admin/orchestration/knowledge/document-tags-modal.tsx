@@ -332,6 +332,9 @@ export function DocumentTagsModal({
             </Link>
           </div>
 
+          {/* Not redundant with the hidden toggle: a refresh that flips this
+              page read-only keeps client state, so a form already open must
+              close too. */}
           {createOpen && !readOnly ? (
             <div className="space-y-3 rounded-md border p-3">
               <div className="grid gap-1.5">

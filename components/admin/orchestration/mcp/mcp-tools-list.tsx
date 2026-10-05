@@ -102,6 +102,8 @@ interface EditForm {
 
 export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) {
   const readOnly = useSharedSettingsReadOnly();
+  // The action column is dropped when read-only; spanning rows follow it.
+  const columnCount = 6 + (readOnly ? 0 : 1);
   const [tools, setTools] = useState(initialTools);
   const [selectedCapabilityId, setSelectedCapabilityId] = useState<string>('');
   const [adding, setAdding] = useState(false);
@@ -467,7 +469,7 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
           <TableBody>
             {tools.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={readOnly ? 6 : 7} className="py-8 text-center">
+                <TableCell colSpan={columnCount} className="py-8 text-center">
                   <p className="text-muted-foreground mb-1">No tools exposed yet.</p>
                   <p className="text-muted-foreground text-xs">
                     {readOnly

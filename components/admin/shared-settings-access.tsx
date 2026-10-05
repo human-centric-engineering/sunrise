@@ -51,7 +51,7 @@ export function SharedSettingsAccessProvider({
   readOnly,
   canSwitch,
   installOrgMember = true,
-  isInstallOrg = !readOnly,
+  isInstallOrg = false,
   children,
 }: Pick<SharedSettingsAccessValue, 'readOnly' | 'canSwitch'> &
   Partial<Pick<SharedSettingsAccessValue, 'installOrgMember' | 'isInstallOrg'>> & {
@@ -116,12 +116,14 @@ export function SharedSettingsReadOnlyNotice({ className }: { className?: string
     setError(null);
     try {
       await apiClient.post(API.ORGS.SWITCH, { body: { orgId: INSTALL_ORG_ID } });
+      // Stays "Switching…" on success: the refresh re-renders the layout,
+      // which removes this notice, and the button must not come back for a
+      // second POST in the meantime.
       router.refresh();
     } catch (err) {
       setError(
         err instanceof APIClientError ? err.message : 'Could not switch organisation. Try again.'
       );
-    } finally {
       setSwitching(false);
     }
   }

@@ -128,6 +128,8 @@ interface TagUsage {
 export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): React.ReactElement {
   const router = useRouter();
   const readOnly = useSharedSettingsReadOnly();
+  // The action column is dropped when read-only; spanning rows follow it.
+  const columnCount = 6 + (readOnly ? 0 : 1);
   const [tags, setTags] = useState<KnowledgeTagListItem[]>(initialTags);
   const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' });
   const [busy, setBusy] = useState(false);
@@ -218,7 +220,7 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
             {tags.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={readOnly ? 6 : 7}
+                  colSpan={columnCount}
                   className="text-muted-foreground py-12 text-center text-sm"
                 >
                   {readOnly
@@ -294,7 +296,7 @@ export function KnowledgeTagsTable({ initialTags }: KnowledgeTagsTableProps): Re
                     {expanded ? (
                       <TableRow className="bg-muted/30 hover:bg-muted/30">
                         <TableCell />
-                        <TableCell colSpan={readOnly ? 5 : 6} className="py-3">
+                        <TableCell colSpan={columnCount - 1} className="py-3">
                           <TagUsagePanel
                             loading={isLoadingUsage}
                             error={usageError && expandedId === tag.id ? usageError : null}

@@ -612,9 +612,11 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
       {providers.length === 0 ? (
         <div className="rounded-md border border-dashed py-12 text-center">
           <p className="text-muted-foreground text-sm">
-            {hasAnyEnvKey
-              ? 'No providers configured yet.'
-              : 'No providers configured. Add an LLM API key to your .env and restart the server to get started.'}
+            {readOnly
+              ? 'No providers configured yet. Providers are shared by every organisation and are set up from the install organisation.'
+              : hasAnyEnvKey
+                ? 'No providers configured yet.'
+                : 'No providers configured. Add an LLM API key to your .env and restart the server to get started.'}
           </p>
           {hasAnyEnvKey && !readOnly && (
             <Button asChild className="mt-4">

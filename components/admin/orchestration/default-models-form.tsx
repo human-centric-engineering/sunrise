@@ -530,7 +530,7 @@ export function DefaultModelsForm({
             {/* Wizard mode owns its own Save & Continue button in the
                 card footer, so the header version would be duplicative
                 and confusing about which one advances the flow. */}
-            <SharedSettingsSaveHint />
+            {!wizardMode && <SharedSettingsSaveHint />}
             {!wizardMode && (
               <Button type="submit" size="sm" disabled={readOnly || submitting || !isDirty}>
                 {submitting ? (

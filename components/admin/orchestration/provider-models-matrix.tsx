@@ -317,6 +317,8 @@ export function ProviderModelsMatrix({
 }: ProviderModelsMatrixProps): React.ReactElement {
   const router = useRouter();
   const readOnly = useSharedSettingsReadOnly();
+  // The action column is dropped when read-only; spanning rows follow it.
+  const columnCount = 11 + (readOnly ? 0 : 1);
   const [providerFilter, setProviderFilter] = useState<string>('all');
   // Master "narrow to configured providers" toggle. When true, every
   // row from a provider with no AiProviderConfig (or one that's
@@ -806,10 +808,7 @@ export function ProviderModelsMatrix({
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={readOnly ? 11 : 12}
-                  className="text-muted-foreground py-8 text-center"
-                >
+                <TableCell colSpan={columnCount} className="text-muted-foreground py-8 text-center">
                   No models match the current filters
                 </TableCell>
               </TableRow>

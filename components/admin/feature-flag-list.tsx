@@ -47,6 +47,8 @@ export function FeatureFlagList({
   onEditClick,
 }: FeatureFlagListProps) {
   const readOnly = useSharedSettingsReadOnly();
+  // The action column is dropped when read-only; spanning rows follow it.
+  const columnCount = 4 + (readOnly ? 0 : 1);
   const [flags, setFlags] = useState(initialFlags);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -141,7 +143,7 @@ export function FeatureFlagList({
           <TableBody>
             {flags.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={readOnly ? 4 : 5} className="h-24 text-center">
+                <TableCell colSpan={columnCount} className="h-24 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <Info className="text-muted-foreground h-8 w-8" />
                     <p className="text-muted-foreground">No feature flags yet</p>
