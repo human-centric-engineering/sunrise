@@ -41,101 +41,13 @@
  * });
  * ```
  *
- * ## Sentry Setup Guide
+ * ## Setting Sentry up
  *
- * ### 1. Install Sentry SDK
- * ```bash
- * npm install @sentry/nextjs
- * ```
- *
- * ### 2. Set Environment Variable
- * Add to .env.local:
- * ```
- * NEXT_PUBLIC_SENTRY_DSN="https://[key]@[org].ingest.sentry.io/[project]"
- * SENTRY_AUTH_TOKEN="your-auth-token"  # For source maps (optional)
- * ```
- *
- * ### 3. Create Sentry Config Files
- *
- * **sentry.client.config.ts** (root directory):
- * ```typescript
- * import * as Sentry from '@sentry/nextjs';
- *
- * Sentry.init({
- *   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
- *   environment: process.env.NODE_ENV,
- *   tracesSampleRate: 1.0,
- *   debug: false,
- *   replaysOnErrorSampleRate: 1.0,
- *   replaysSessionSampleRate: 0.1,
- *   integrations: [
- *     Sentry.replayIntegration({
- *       maskAllText: true,
- *       blockAllMedia: true,
- *     }),
- *   ],
- * });
- * ```
- *
- * **sentry.server.config.ts** (root directory):
- * ```typescript
- * import * as Sentry from '@sentry/nextjs';
- *
- * Sentry.init({
- *   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
- *   environment: process.env.NODE_ENV,
- *   tracesSampleRate: 1.0,
- *   debug: false,
- * });
- * ```
- *
- * **sentry.edge.config.ts** (root directory, optional):
- * ```typescript
- * import * as Sentry from '@sentry/nextjs';
- *
- * Sentry.init({
- *   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
- *   environment: process.env.NODE_ENV,
- *   tracesSampleRate: 1.0,
- * });
- * ```
- *
- * ### 4. Update next.config.js
- * ```javascript
- * const { withSentryConfig } = require('@sentry/nextjs');
- *
- * const nextConfig = {
- *   // ... existing config
- * };
- *
- * module.exports = withSentryConfig(
- *   nextConfig,
- *   {
- *     silent: true,
- *     org: 'your-org',
- *     project: 'your-project',
- *   },
- *   {
- *     widenClientFileUpload: true,
- *     transpileClientSDK: true,
- *     tunnelRoute: '/monitoring',
- *     hideSourceMaps: true,
- *     disableLogger: true,
- *   }
- * );
- * ```
- *
- * ### 5. Update .gitignore
- * ```
- * # Sentry
- * .sentryclirc
- * sentry.properties
- * ```
- *
- * ### 6. Restart Development Server
- * ```bash
- * npm run dev
- * ```
+ * See `.context/monitoring/sentry-setup.md`: the wizard, the environment
+ * variables, and, from `@sentry/nextjs` 11, the `dataCollection` block every
+ * `Sentry.init` needs. v11 collects request bodies, headers, cookies and gen-AI
+ * inputs and outputs by default, and Sunrise's agents carry personal data
+ * through all of them.
  *
  * Once configured, error tracking will automatically use Sentry.
  * No code changes needed - the abstraction detects Sentry and uses it.
