@@ -27,6 +27,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Edit,
+  Eye,
   MoreHorizontal,
   Plus,
   Search,
@@ -552,7 +553,11 @@ export function CapabilitiesTable({
                         <DropdownMenuItem
                           onClick={() => router.push(`/admin/orchestration/capabilities/${cap.id}`)}
                         >
-                          <Edit className="mr-2 h-4 w-4" />
+                          {readOnly ? (
+                            <Eye className="mr-2 h-4 w-4" />
+                          ) : (
+                            <Edit className="mr-2 h-4 w-4" />
+                          )}
                           {readOnly ? 'View' : 'Edit'}
                         </DropdownMenuItem>
                         {!cap.isSystem && !readOnly && (

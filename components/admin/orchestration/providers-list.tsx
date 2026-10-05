@@ -43,6 +43,7 @@ import {
   AlertTriangle,
   Cpu,
   MoreHorizontal,
+  Eye,
   Pencil,
   Plus,
   Power,
@@ -687,7 +688,15 @@ export function ProvidersList({ initialProviders, hasAnyEnvKey = true }: Provide
                     <DropdownMenuContent align="end">
                       <DropdownMenuItem asChild>
                         <Link href={`/admin/orchestration/providers/${p.id}`}>
-                          <Pencil className="mr-2 h-4 w-4" /> {readOnly ? 'View' : 'Edit'}
+                          {readOnly ? (
+                            <>
+                              <Eye className="mr-2 h-4 w-4" /> View
+                            </>
+                          ) : (
+                            <>
+                              <Pencil className="mr-2 h-4 w-4" /> Edit
+                            </>
+                          )}
                         </Link>
                       </DropdownMenuItem>
                       {!p.isActive && !readOnly && (

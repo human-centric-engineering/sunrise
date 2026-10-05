@@ -20,7 +20,7 @@ import { logger } from '@/lib/logging';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
-import { sessionActingOrgId } from '@/lib/tenancy/entry';
+import { sessionActingOrgId, verifiedMembership } from '@/lib/tenancy/entry';
 
 export interface SharedSettingsAccess {
   /** This request acts for the install org. Always true at `single` unless the session chose another org. */
@@ -62,7 +62,8 @@ export async function getSharedSettingsAccess(session: {
 }
 
 /**
- * The switch route's own membership read, asked before offering it. An
+ * The membership read the guard's entry rule makes (`verifiedMembership`:
+ * present, and the org active), asked before offering the switch. An
  * `OrgMembership` row is a system row (it decides which org a request acts
  * for), so it reads with no org entered, as the switch does.
  *
@@ -73,11 +74,7 @@ export async function getSharedSettingsAccess(session: {
  */
 async function isInstallOrgMember(userId: string): Promise<boolean> {
   try {
-    const membership = await prisma.orgMembership.findUnique({
-      where: { orgId_userId: { orgId: INSTALL_ORG_ID, userId } },
-      select: { orgId: true },
-    });
-    return membership !== null;
+    return !('refused' in (await verifiedMembership(userId, INSTALL_ORG_ID, prisma)));
   } catch (err) {
     logger.error('Shared-settings access: install-org membership read failed', err, { userId });
     return true;

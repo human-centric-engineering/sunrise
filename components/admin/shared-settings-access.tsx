@@ -19,7 +19,6 @@
  */
 
 import { createContext, useContext, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { Lock } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -105,7 +104,6 @@ export function SharedSettingsSaveHint({ className }: { className?: string }) {
  */
 export function SharedSettingsReadOnlyNotice({ className }: { className?: string }) {
   const { readOnly, canSwitch, installOrgMember } = useContext(SharedSettingsAccessContext);
-  const router = useRouter();
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -116,10 +114,12 @@ export function SharedSettingsReadOnlyNotice({ className }: { className?: string
     setError(null);
     try {
       await apiClient.post(API.ORGS.SWITCH, { body: { orgId: INSTALL_ORG_ID } });
-      // Stays "Switching…" on success: the refresh re-renders the layout,
-      // which removes this notice, and the button must not come back for a
-      // second POST in the meantime.
-      router.refresh();
+      // A full reload, not a router refresh: the layout keeps client state
+      // across a refresh, and if its answer did not change (a cookie that
+      // was not re-issued) this button would sit on "Switching…" for good.
+      // A reload recomputes everything from the session, either way. It
+      // stays "Switching…" until then, so it cannot be sent twice.
+      window.location.reload();
     } catch (err) {
       setError(
         err instanceof APIClientError ? err.message : 'Could not switch organisation. Try again.'

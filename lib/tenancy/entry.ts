@@ -79,7 +79,7 @@ export function isOrgRefusal(result: OrgEntryResult): result is OrgRefusal {
 type MembershipReader = Pick<PrismaClient, 'orgMembership'>;
 
 /** Read and verify one membership: present, and its org active. */
-async function verifiedMembership(
+export async function verifiedMembership(
   userId: string,
   orgId: string,
   db: MembershipReader
