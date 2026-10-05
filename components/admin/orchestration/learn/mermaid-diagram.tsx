@@ -29,6 +29,10 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
             startOnLoad: false,
             theme: 'neutral',
             securityLevel: 'strict',
+            // Labels as SVG <text>, not HTML in <foreignObject>: the
+            // DOMPurify SVG profile below drops <foreignObject> and its
+            // contents, which rendered every node with no label.
+            htmlLabels: false,
           });
           mermaidInitialized = true;
         }
