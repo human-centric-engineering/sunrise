@@ -174,10 +174,13 @@ the person's rows from every org either way (§107 t-748). Before that, the
 `org_isolation` policy narrowed the bundle to the active org, and it reported
 success.
 
-The bypass is safe because every source is anchored on the subject — its
-`where` names the `userId` or the email. `export-user.test.ts` checks that for
-every core source; it cannot check a fork's collector, so **your collector must
-filter on the subject too**, or at `multi` it reads every org's rows. The
+The bypass is safe because every source is pinned on the subject: its `where`
+holds the `userId` or the email on one of the row's own fields, not under `OR`,
+`NOT` or a negation, and every relation it reads through is the subject's own
+(a conversation's messages, a membership's org). `export-user.test.ts` checks
+both for every core source. It cannot check a fork's collector, so **your
+collector must filter on the subject too**, or at `multi` it reads every org's
+rows; and it has no org to ask for, so `requireOrgId()` throws there. The
 sources run one at a time there, as the org export's do: at `multi` each read is
 its own transaction holding a pooled connection. At `single` there is one org and
 no policy, so no scope is entered and the sources still run together.

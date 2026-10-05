@@ -18,7 +18,7 @@ same discipline with an org as the subject.
 | What is deliberately left out   | `ORG_EXCLUDED_SOURCES` — same file, with the reason shown            |
 | The guard on the manifest       | `tests/unit/lib/privacy/org-sources.test.ts` (scans `orgId`)         |
 | Proving it against a database   | `npm run smoke:tenancy` (creates, exports, erases a fixture org)     |
-| …at `multi`, across two orgs    | `scripts/smoke/tenancy-isolation.ts` section [17] (CI `smoke-multi`) |
+| …at `multi`, across two orgs    | `scripts/smoke/tenancy-isolation.ts` section [19] (CI `smoke-multi`) |
 
 ## Which org it reads as
 

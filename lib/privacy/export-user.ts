@@ -242,23 +242,29 @@ export async function exportUserData(params: ExportUserParams): Promise<SubjectE
   // source at once can exhaust the pool. At `single` there is one org and no
   // policy, so nothing is entered and the sources still run together — a
   // collector or helper reading the implicit install org keeps working.
-  const { results, app } = isMultiTenant()
-    ? await runAsSystem('subject data export: one person’s rows in every org', async () => {
-        const fetched: SourceResult[] = [];
-        for (const source of SUBJECT_DATA_SOURCES) {
-          fetched.push({ source, rows: await source.fetch(subject) });
-        }
-        return { results: fetched, app: await collectAppSubjectData(subject) };
-      })
-    : {
-        results: await Promise.all(
-          SUBJECT_DATA_SOURCES.map(async (source) => ({
-            source,
-            rows: await source.fetch(subject),
-          }))
-        ),
-        app: await collectAppSubjectData(subject),
-      };
+  const multi = isMultiTenant();
+  const readAll = async (): Promise<{ results: SourceResult[]; app: AppSubjectData }> => {
+    const fetchOne = async (source: SourceResult['source']): Promise<SourceResult> => ({
+      source,
+      rows: await source.fetch(subject),
+    });
+    const results: SourceResult[] = [];
+    if (multi) {
+      for (const source of SUBJECT_DATA_SOURCES) results.push(await fetchOne(source));
+    } else {
+      results.push(...(await Promise.all(SUBJECT_DATA_SOURCES.map(fetchOne))));
+    }
+    return { results, app: await collectAppSubjectData(subject) };
+  };
+  // The reason names whose rows and who asked: it is the audit line for a
+  // read across every org, and it is logged before the work, so it survives
+  // an export that fails.
+  const { results, app } = multi
+    ? await runAsSystem(
+        `subject data export: user ${userId}'s rows in every org, for ${actorUserId}`,
+        readAll
+      )
+    : await readAll();
 
   const personalData: Record<string, unknown[]> = {};
   const attributions: Record<string, unknown[]> = {};

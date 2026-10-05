@@ -62,7 +62,8 @@
  *     a conversation and a memory in each, exports from inside A (a session)
  *     and from no org (an admin API key), and the bundle holds both orgs'
  *     rows and no one else's; one person erased from inside A and another
- *     from no org leave no conversation or memory in either org;
+ *     from no org leave no conversation or memory in either org, and an
+ *     erasure hook sees the person's rows in both;
  *   - the org export and erasure (§106 t-735, t-730): B's export, asked
  *     from inside A (an admin's session) and from no org (an admin API key),
  *     holds B's rows and none of A's; B, holding a knowledge base with
@@ -117,6 +118,7 @@ import { exportOrgData } from '@/lib/privacy/export-org';
 import { eraseOrg } from '@/lib/privacy/erase-org';
 import { exportUserData } from '@/lib/privacy/export-user';
 import { eraseUser } from '@/lib/privacy/erase-user';
+import { registerErasureCleanupHook } from '@/lib/privacy/erasure-hooks';
 import { writeOrgProviderPolicy } from '@/lib/tenancy/org-settings';
 import { forgetOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
 import { hashApiKey } from '@/lib/auth/api-keys';
@@ -1909,7 +1911,21 @@ async function main(): Promise<void> {
         return [a.orgId, b.orgId].map((orgId) => rows.filter((r) => r.orgId === orgId).length);
       });
     const people = [person, await seedPerson('two')];
-    for (const [i, [label, run]] of askers.entries()) {
+    // A fork's in-transaction hook, as `registerErasureCleanupHook` takes one:
+    // it counts the person's tenant-owned rows it can see before the delete.
+    // The cascades remove both orgs' rows whatever the scope, so this is what
+    // can tell: from inside A a hook used to see A's alone, and from no org
+    // it threw (t-748).
+    const hookSaw = new Map<string, number>();
+    registerErasureCleanupHook({
+      name: `${PREFIX}-scope-probe`,
+      async scrubInTransaction({ tx, userId }) {
+        if (people.some((p) => p.userId === userId)) {
+          hookSaw.set(userId, await tx.aiUserMemory.count({ where: { userId } }));
+        }
+      },
+    });
+    for (const [i, [label, run, reason]] of askers.entries()) {
       const who = people[i];
       const before = await personRowsByOrg(who.userId);
       check(
@@ -1921,8 +1937,8 @@ async function main(): Promise<void> {
           eraseUser({
             userId: who.userId,
             userEmail: who.email,
-            actorUserId: a.ownerId,
-            reason: 'admin_action',
+            actorUserId: reason === 'self_service' ? who.userId : a.ownerId,
+            reason,
           })
         );
         erasureReceiptIds.push(receiptId);
@@ -1933,6 +1949,10 @@ async function main(): Promise<void> {
         );
         continue;
       }
+      check(
+        hookSaw.get(who.userId) === 2,
+        `an erasure hook, run ${label}, sees person ${i + 1}’s memories in both orgs (${hookSaw.get(who.userId) ?? 'none'} of 2)`
+      );
       const after = await personRowsByOrg(who.userId);
       const account = await prisma.user.findUnique({ where: { id: who.userId } });
       check(

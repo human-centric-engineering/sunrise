@@ -18,6 +18,16 @@
  * registration). Hooks are keyed by `name`, so re-registration under HMR or
  * repeated module imports replaces rather than duplicates.
  *
+ * **At `TENANCY_MODE=multi` both phases run as the audited system scope**
+ * (`runAsSystem`, §107 t-748), whatever org the caller is in: a person's rows
+ * can sit in several orgs, so there is no one org to run as. Filter every
+ * query on the `userId` you are handed — an unfiltered one reaches every org's
+ * rows. There is no org to ask for: `requireOrgId()` throws, and a
+ * tenant-owned row a hook creates is not stamped, so write its `orgId`
+ * explicitly, read off the row it relates to. (Not `runAsOrg` inside
+ * `scrubInTransaction`: the transaction was opened as the system scope, and an
+ * op for another org inside it is refused.) At `single` no scope is entered.
+ *
  * This is the seam that keeps seam 6's plain-`String`-FK profile-table pattern
  * GDPR-safe: a `CASCADE` FK is handled automatically by `prisma.user.delete()`,
  * but `SET NULL` retained tables and external blobs need this hook.

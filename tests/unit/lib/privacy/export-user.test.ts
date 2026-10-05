@@ -284,18 +284,77 @@ describe('exportUserData', () => {
   });
 
   describe('reading across every org at multi (§107 t-748)', () => {
+    const isSubject = (value: unknown) => value === SUBJECT.id || value === SUBJECT.email;
+    const isRecord = (value: unknown): value is Record<string, unknown> =>
+      typeof value === 'object' && value !== null && !Array.isArray(value);
+
     /**
-     * Whether `where` pins the subject: their id or email reached through
-     * plain keys or `AND`, never through `OR` or `NOT`. A subject named in
-     * one branch of an `OR`, or under a `NOT`, does not narrow the read to
-     * them, and under the bypass would read other people's rows in every org.
+     * Relation filters a source may pin the subject through — the subject's
+     * id on a RELATED row, which narrows to the subject's rows only where the
+     * relation says so. Named one by one: `Org` is the orgs the subject has a
+     * membership in. A new one is a judgement, so it fails here until named.
      */
-    function pinsSubject(value: unknown): boolean {
-      if (value === SUBJECT.id || value === SUBJECT.email) return true;
-      if (typeof value !== 'object' || value === null) return false;
-      return Object.entries(value).some(
-        ([key, inner]) => key !== 'OR' && key !== 'NOT' && pinsSubject(inner)
-      );
+    const RELATION_PINS = new Set(['Org.memberships']);
+
+    /** Whether one field's filter is the subject exactly: no negation, no list with others. */
+    function fieldPins(value: unknown): boolean {
+      if (isSubject(value)) return true;
+      if (!isRecord(value)) return false;
+      const keys = Object.keys(value);
+      if (keys.every((k) => k === 'equals' || k === 'mode')) return isSubject(value.equals);
+      if (keys.length === 1 && Array.isArray(value.in)) {
+        return value.in.length > 0 && value.in.every(isSubject);
+      }
+      return false;
+    }
+
+    /**
+     * Whether `where` pins `model`'s rows to the subject: their id or email
+     * on one of the row's own fields, at the top level or under `AND` —
+     * never through `OR`, `NOT` or a negating operator (`not`, `notIn`,
+     * `none`, `every`), which do not narrow the read to them and under the
+     * bypass would read other people's rows in every org.
+     */
+    function pinsSubject(model: string, where: unknown): boolean {
+      if (!isRecord(where)) return false;
+      return Object.entries(where).some(([key, value]) => {
+        if (key === 'AND') {
+          const parts = Array.isArray(value) ? value : [value];
+          return parts.some((part) => pinsSubject(model, part));
+        }
+        if (key === 'OR' || key === 'NOT') return false;
+        if (RELATION_PINS.has(`${model}.${key}`)) {
+          return isRecord(value) && isRecord(value.some) && pinsSubject(model, value.some);
+        }
+        return fieldPins(value);
+      });
+    }
+
+    /**
+     * Relations each source reads rows through (`include`, or a nested
+     * `select`). Under the bypass a related row is not held to one org, so
+     * every relation is named here, with why it is still the subject's.
+     */
+    const RELATION_READS: Record<string, string[]> = {
+      // The org row of each of the subject's own memberships: id, slug, name.
+      OrgMembership: ['org'],
+      // The messages and share link of the subject's own conversations.
+      AiConversation: ['messages', 'share'],
+    };
+
+    function relationReads(args: Record<string, unknown>): string[] {
+      const { include, select } = args;
+      const fromInclude = isRecord(include)
+        ? Object.entries(include)
+            .filter(([, v]) => Boolean(v))
+            .map(([k]) => k)
+        : [];
+      const fromSelect = isRecord(select)
+        ? Object.entries(select)
+            .filter(([, v]) => isRecord(v))
+            .map(([k]) => k)
+        : [];
+      return [...fromInclude, ...fromSelect].sort();
     }
 
     const delegateOf = (model: string) => model.charAt(0).toLowerCase() + model.slice(1);
@@ -346,17 +405,49 @@ describe('exportUserData', () => {
       await exportUserData(PARAMS);
 
       const unpinned = SUBJECT_DATA_SOURCES.map((source) => source.model).filter(
-        (model) => !pinsSubject((argsTo(delegateOf(model)) as { where?: unknown }).where)
+        (model) => !pinsSubject(model, argsTo(delegateOf(model)).where)
       );
       expect(unpinned).toEqual([]);
     });
 
-    it('does not count a subject named only under OR or NOT as pinned', () => {
-      // The check above is only worth its pass if it can fail.
-      expect(pinsSubject({ OR: [{ userId: SUBJECT.id }, { isPublic: true }] })).toBe(false);
-      expect(pinsSubject({ NOT: { userId: SUBJECT.id } })).toBe(false);
-      expect(pinsSubject({ AND: [{ userId: SUBJECT.id }, { isPublic: true }] })).toBe(true);
-      expect(pinsSubject({ memberships: { some: { userId: SUBJECT.id } } })).toBe(true);
+    it('reads related rows only through relations named as the subject’s', async () => {
+      await exportUserData(PARAMS);
+
+      const reads = Object.fromEntries(
+        SUBJECT_DATA_SOURCES.map((source) => [
+          source.model,
+          relationReads(argsTo(delegateOf(source.model))),
+        ]).filter(([, relations]) => relations.length > 0)
+      );
+      expect(reads).toEqual(RELATION_READS);
+    });
+
+    it('does not count a subject named under OR, NOT, a negation or a list with others as pinned', () => {
+      // The pinning check is only worth its pass if it can fail.
+      const id = SUBJECT.id;
+      for (const where of [
+        { OR: [{ userId: id }, { isPublic: true }] },
+        { NOT: { userId: id } },
+        { userId: { not: id } },
+        { userId: { notIn: [id] } },
+        { userId: { in: [id, 'someone-else'] } },
+        { memberships: { none: { userId: id } } },
+        { agent: { createdBy: id } },
+      ]) {
+        expect(pinsSubject('AiConversation', where), JSON.stringify(where)).toBe(false);
+      }
+      expect(pinsSubject('Org', { memberships: { every: { userId: id } } })).toBe(false);
+
+      expect(pinsSubject('AiConversation', { AND: [{ userId: id }, { isPublic: true }] })).toBe(
+        true
+      );
+      expect(pinsSubject('AiConversation', { userId: { in: [id] } })).toBe(true);
+      expect(pinsSubject('Org', { memberships: { some: { userId: id, role: 'OWNER' } } })).toBe(
+        true
+      );
+      expect(
+        pinsSubject('ContactSubmission', { email: { equals: SUBJECT.email, mode: 'insensitive' } })
+      ).toBe(true);
     });
 
     /** Hold the first source's read open; return whether the second started meanwhile. */

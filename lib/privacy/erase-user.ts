@@ -73,7 +73,12 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
   // that person's rows in every org. At `single` there is one org and no
   // policy, so nothing is entered: a hook keeps the implicit install org.
   const receipt = isMultiTenant()
-    ? await runAsSystem('subject erasure: one person’s rows in every org', () => eraseRows(params))
+    ? await runAsSystem(
+        // Whose rows, and who asked: logged before the work, so a failed
+        // erasure still leaves its audit line.
+        `subject erasure: user ${userId}'s rows in every org, for ${actorUserId}`,
+        () => eraseRows(params)
+      )
     : await eraseRows(params);
 
   logger.info('User erased', { userId, actorUserId, reason, receiptId: receipt.id });

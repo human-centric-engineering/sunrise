@@ -226,6 +226,16 @@ release process.
 
 ### Changed
 
+- **At `multi`, a fork's erasure hooks and subject-export collector run as the
+  system scope** (§107 t-748). `registerErasureCleanupHook`'s
+  `cleanupExternal` and `scrubInTransaction`, and `collectAppSubjectData()`
+  (`lib/app/data-export.ts`), used to run in whatever org the caller had
+  entered: the session's active org, or none from an admin API key, where a
+  tenant-owned query threw. A person's rows can sit in several orgs, so they now
+  run as `runAsSystem`. Filter every query on the subject you are handed, since
+  an unfiltered one reaches every org's rows. There is no org to ask for:
+  `requireOrgId()` throws, and a tenant-owned row a hook creates is not stamped,
+  so write its `orgId` explicitly. At `single` nothing changes.
 - **The browser-tab icons moved from `public/` to `app/favicon.ico` and
   `app/icon.svg`** (#640). Next links both from `<head>` itself, so the SVG
   (vector, and the only kind that can follow `prefers-color-scheme`) is now
@@ -517,12 +527,7 @@ release process.
   entered, so the self-service and admin exports returned only the session's
   active org's conversations, memories and executions, and an admin API key's
   export threw. At `multi` it now reads, one source at a time, as the audited
-  system scope. **For a fork:** at `multi`, `collectAppSubjectData()`
-  (`lib/app/data-export.ts`) and the erasure hooks
-  (`registerErasureCleanupHook`) now run in that scope, so they must filter on
-  the subject they are handed (an unanchored query there reads every org's
-  rows), and a row they create is stamped with no org. At `single` nothing
-  changes.
+  system scope. A fork's hook and collector change with it; see **Changed**.
 - **An evaluation run where every case errored is now `failed`, not `completed`**
   (#801). A run with no scored result (no provider configured, a provider
   outage) used to look the same as a clean one, so a fork polling run `status`
