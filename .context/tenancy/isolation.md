@@ -146,7 +146,8 @@ CREATE POLICY "org_isolation" ON "ai_agent"
     org, a switch would not move the request, so it says to use the install
     org's address; when the user is not a member of the install org (one
     membership read, only when read-only), it says to ask an install-org
-    admin.
+    admin. A failed read offers the button and leaves the answer to the
+    switch route, so it cannot take the admin tree down.
 
   The page-side answer is unverified: a page that guessed wrong would only
   show or hide a button whose request the guard answers either way. It can
