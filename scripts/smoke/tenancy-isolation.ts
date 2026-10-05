@@ -58,6 +58,11 @@
  *     org entered at all; from the install org and a system scope they
  *     write; and the guard's option, called with an unbound admin API key,
  *     lets a write through from no org;
+ *   - a person's export and erasure (§107 t-748): a member of A and B, with
+ *     a conversation and a memory in each, exports from inside A (a session)
+ *     and from no org (an admin API key), and the bundle holds both orgs'
+ *     rows and no one else's; one person erased from inside A and another
+ *     from no org leave no conversation or memory in either org;
  *   - the org export and erasure (§106 t-735, t-730): B's export, asked
  *     from inside A (an admin's session) and from no org (an admin API key),
  *     holds B's rows and none of A's; B, holding a knowledge base with
@@ -110,6 +115,8 @@ import {
 import { tenantOwnedModels } from '@/lib/tenancy/classification';
 import { exportOrgData } from '@/lib/privacy/export-org';
 import { eraseOrg } from '@/lib/privacy/erase-org';
+import { exportUserData } from '@/lib/privacy/export-user';
+import { eraseUser } from '@/lib/privacy/erase-user';
 import { writeOrgProviderPolicy } from '@/lib/tenancy/org-settings';
 import { forgetOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
 import { hashApiKey } from '@/lib/auth/api-keys';
@@ -1784,18 +1791,162 @@ async function main(): Promise<void> {
       `a write declaring writesSharedSettings, with an unbound admin key, from no org, creates the flag (${flagResponse.status})`
     );
 
-    // ── [17] Org export: the target org's rows, whoever is asking ─────────
-    // A platform admin exports from inside their own active org (the session
-    // guard enters it), and an admin API key enters none (§106 t-735).
-    console.log('\n[17] org export: B’s bundle, asked from inside A and from no org at all');
     const rowIds = (rows: unknown[] | undefined): string[] =>
       (rows ?? []).flatMap((r) =>
         typeof r === 'object' && r !== null && 'id' in r && typeof r.id === 'string' ? [r.id] : []
       );
-    for (const [label, run] of [
+    /** How each section's run is entered: a session in A, and an admin API key (no org). */
+    const askers = [
       ['from inside A', <T>(fn: () => Promise<T>) => runAsOrg(a.orgId, fn, { source: 'session' })],
       ['from no org (an admin API key)', <T>(fn: () => Promise<T>) => fn()],
-    ] as const) {
+    ] as const;
+
+    // ── [17] A person's export: their rows in every org (§107 t-748) ──────
+    // A person belongs to A and B, with a conversation and a memory in each.
+    // The self-service route runs in their session's active org, and an admin
+    // API key enters none; either way the bundle must hold both orgs' rows.
+    console.log(
+      '\n[17] a person in A and B: their export holds both orgs’ rows, and no one else’s'
+    );
+    const seedPerson = async (label: string) => {
+      const user = await prisma.user.create({
+        data: {
+          name: `${PREFIX} person ${label}`,
+          email: `${PREFIX}-person-${label}-${stamp}@example.com`,
+        },
+      });
+      const rows: Array<{ orgId: string; ids: string[] }> = [];
+      for (const f of [a, b]) {
+        await prisma.orgMembership.create({
+          data: { orgId: f.orgId, userId: user.id, role: 'MEMBER' },
+        });
+        const ids = await runAsOrg(f.orgId, async () => {
+          const conversation = await prisma.aiConversation.create({
+            data: {
+              agentId: f.agentId,
+              userId: user.id,
+              title: `${PREFIX} ${label}’s conversation`,
+              messages: { create: [{ role: 'user', content: `${label} asks about ${f.topic}` }] },
+            },
+            include: { messages: true },
+          });
+          const memory = await prisma.aiUserMemory.create({
+            data: {
+              userId: user.id,
+              agentId: f.agentId,
+              key: `${PREFIX}-fact`,
+              value: `${label} works in ${f.topic}`,
+            },
+          });
+          return [conversation.id, ...conversation.messages.map((m) => m.id), memory.id];
+        });
+        rows.push({ orgId: f.orgId, ids });
+      }
+      return { userId: user.id, email: user.email, rows };
+    };
+    const person = await seedPerson('one');
+    const personIds = person.rows.flatMap((r) => r.ids);
+    // The owners' conversations sit in the same orgs, under the same agents.
+    const otherIds = new Set([
+      a.conversationId,
+      ...a.messageIds,
+      b.conversationId,
+      ...b.messageIds,
+    ]);
+    for (const [label, run] of askers) {
+      let bundle: Awaited<ReturnType<typeof exportUserData>> | null = null;
+      try {
+        bundle = await run(() =>
+          exportUserData({
+            userId: person.userId,
+            actorUserId: person.userId,
+            reason: 'self_service',
+          })
+        );
+      } catch (err) {
+        check(
+          false,
+          `the person’s export ${label} — it threw: ${err instanceof Error ? err.message : String(err)}`
+        );
+        continue;
+      }
+      const conversations = bundle.personalData.conversations ?? [];
+      const held = [
+        ...rowIds(conversations),
+        ...conversations.flatMap((c) =>
+          typeof c === 'object' && c !== null && 'messages' in c && Array.isArray(c.messages)
+            ? rowIds(c.messages)
+            : []
+        ),
+        ...rowIds(bundle.personalData.agentMemory),
+      ];
+      const missing = person.rows.filter((r) => !r.ids.every((id) => held.includes(id)));
+      check(
+        missing.length === 0,
+        `the person’s export ${label} holds their conversation, message and memory in both orgs${missing.length ? ` — missing the rows in: ${missing.map((r) => r.orgId).join(', ')}` : ''}`
+      );
+      const foreign = held.filter((id) => otherIds.has(id) || !personIds.includes(id));
+      check(foreign.length === 0, `the person’s export ${label} holds no one else’s rows`);
+    }
+
+    // ── [18] A person's erasure: their rows in every org (§107 t-748) ─────
+    // Asked from inside A, and from no org. The cascades are FK actions, which
+    // RLS does not filter, so both orgs' rows should go either way.
+    console.log(
+      '\n[18] a person in A and B: erased from inside A, and from no org, leaves no row in either'
+    );
+    const personRowsByOrg = (userId: string) =>
+      runAsSystem('smoke: a person’s rows in every org', async () => {
+        const rows = [
+          ...(await prisma.aiConversation.findMany({ where: { userId }, select: { orgId: true } })),
+          ...(await prisma.aiUserMemory.findMany({ where: { userId }, select: { orgId: true } })),
+        ];
+        return [a.orgId, b.orgId].map((orgId) => rows.filter((r) => r.orgId === orgId).length);
+      });
+    const people = [person, await seedPerson('two')];
+    for (const [i, [label, run]] of askers.entries()) {
+      const who = people[i];
+      const before = await personRowsByOrg(who.userId);
+      check(
+        before.every((n) => n === 2),
+        `person ${i + 1} holds a conversation and a memory in A and in B before erasure (${before.join(', ')})`
+      );
+      try {
+        await run(() =>
+          eraseUser({
+            userId: who.userId,
+            userEmail: who.email,
+            actorUserId: a.ownerId,
+            reason: 'admin_action',
+          })
+        );
+      } catch (err) {
+        check(
+          false,
+          `person ${i + 1}’s erasure ${label} — it threw: ${err instanceof Error ? err.message : String(err)}`
+        );
+        continue;
+      }
+      const after = await personRowsByOrg(who.userId);
+      const account = await prisma.user.findUnique({ where: { id: who.userId } });
+      check(
+        account === null && after.every((n) => n === 0),
+        `person ${i + 1}, erased ${label}, is gone, with no conversation or memory left in A or B (${after.join(', ')})`
+      );
+    }
+    const ownersLeft = await runAsSystem('smoke: the owners’ conversations', () =>
+      prisma.aiConversation.count({ where: { id: { in: [a.conversationId, b.conversationId] } } })
+    );
+    check(
+      ownersLeft === 2,
+      `the owners’ conversations in A and B are untouched (${ownersLeft} of 2)`
+    );
+
+    // ── [19] Org export: the target org's rows, whoever is asking ─────────
+    // A platform admin exports from inside their own active org (the session
+    // guard enters it), and an admin API key enters none (§106 t-735).
+    console.log('\n[19] org export: B’s bundle, asked from inside A and from no org at all');
+    for (const [label, run] of askers) {
       let bundle: Awaited<ReturnType<typeof exportOrgData>> | null = null;
       try {
         bundle = await run(() => exportOrgData({ orgId: b.orgId, actorUserId: a.ownerId }));
@@ -1839,10 +1990,10 @@ async function main(): Promise<void> {
       check(leaked.length === 0, `B’s export ${label} holds none of A’s`);
     }
 
-    // ── [18] Org erasure: from inside another org, with knowledge documents ─
+    // ── [20] Org erasure: from inside another org, with knowledge documents ─
     // `ai_knowledge_document.knowledgeBaseId` is ON DELETE RESTRICT, and both
     // rows also cascade from the org: erasure must still go through (t-730).
-    console.log('\n[18] org erasure: B, holding documents and chunks, erased from inside A');
+    console.log('\n[20] org erasure: B, holding documents and chunks, erased from inside A');
     // Every tenant-owned table, counted by the org's id, as the bypass. A
     // `SetNull` relation (`AiCostLog`, a billing record) keeps its row with the
     // org detached, so "no row carries the org" is the claim, not "no row".
@@ -1943,7 +2094,7 @@ async function main(): Promise<void> {
       }
     }).catch((err: unknown) => {
       // A failed cleanup fails the run (t-730): `org.deleteMany` here erases
-      // whatever org [18] did not, and an org that could not be erased is a
+      // whatever org [20] did not, and an org that could not be erased is a
       // finding, not housekeeping. Set rather than thrown, so a run that has
       // already failed keeps its own error as the one reported.
       console.error('✗ cleanup failed — remove the smoke-iso rows by hand', err);
