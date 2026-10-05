@@ -22,6 +22,7 @@
 import { createHash } from 'node:crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { runAsSystem } from '@/lib/tenancy/context';
 import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
 
 export type ErasureReason = 'self_service' | 'admin_action';
@@ -61,6 +62,31 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
     await deleteByPrefix(`avatars/${userId}/`);
   }
 
+  // Everything below runs as the audited system scope (§107 t-748). A person's
+  // rows can sit in several orgs, and the routes call this from inside the
+  // session's active org (or, with an admin API key, from none). Core's own
+  // deletes need no scope — `user.delete`'s cascades are FK actions, which
+  // RLS does not filter, and the audit-log scrub touches a system model — but
+  // a fork's hook that clears a tenant-owned table would otherwise reach only
+  // the caller's org at `multi`, or throw "No tenant context". Every hook is
+  // handed the `userId` and nothing else, so the bypass widens it to that
+  // person's rows in every org.
+  const receipt = await runAsSystem('subject erasure: one person’s rows in every org', () =>
+    eraseInSystemScope(userId, userEmail, actorUserId, reason)
+  );
+
+  logger.info('User erased', { userId, actorUserId, reason, receiptId: receipt.id });
+
+  return { receiptId: receipt.id, erasedAt: receipt.erasedAt };
+}
+
+/** The hooks and the transaction, as {@link eraseUser} runs them in the system scope. */
+async function eraseInSystemScope(
+  userId: string,
+  userEmail: string,
+  actorUserId: string,
+  reason: ErasureReason
+): Promise<{ id: string; erasedAt: Date }> {
   // 1b. App-registered external cleanup (object storage, search indexes, …).
   // Best-effort like the avatar cleanup above: a hook failure is logged and
   // swallowed so app-side trouble can never block the user's erasure.
@@ -78,7 +104,7 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
   }
 
   // 2. Scrub residual PII, write the receipt, and delete — atomically.
-  const receipt = await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
     // Retained admin-audit rows keep their IP after `userId` is SetNull'd.
     await tx.aiAdminAuditLog.updateMany({
       where: { userId },
@@ -107,8 +133,4 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
 
     return created;
   });
-
-  logger.info('User erased', { userId, actorUserId, reason, receiptId: receipt.id });
-
-  return { receiptId: receipt.id, erasedAt: receipt.erasedAt };
 }

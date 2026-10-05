@@ -111,6 +111,7 @@ import {
   EXCLUDED_SOURCES,
   type SubjectDataSource,
 } from '@/lib/privacy/export-sources';
+import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 
 const SUBJECT = {
   id: 'user-1',
@@ -275,6 +276,72 @@ describe('exportUserData', () => {
       expect(argsTo('contactSubmission').where).toEqual({
         email: { equals: 'Subject@Example.com', mode: 'insensitive' },
       });
+    });
+  });
+
+  describe('reading across every org (§107 t-748)', () => {
+    /** Whether `value` holds the subject's id or email anywhere inside it. */
+    function namesSubject(value: unknown): boolean {
+      if (value === SUBJECT.id || value === SUBJECT.email) return true;
+      if (typeof value !== 'object' || value === null) return false;
+      return Object.values(value).some(namesSubject);
+    }
+
+    it('reads every source and the app seam in the system scope, whatever org the caller is in', async () => {
+      // A session enters its active org, and the policy would AND every read
+      // with it; an admin API key enters none. Both must read as the bypass.
+      const seen: Array<{ orgId: string | null; source: string } | null> = [];
+      // A plain array, not a promise: the delegate's mock type wants a void
+      // return, and the source awaits whatever it is handed.
+      delegateFor('aiConversation').findMany.mockImplementation(() => {
+        seen.push(getTenantContext());
+        return [];
+      });
+      mockCollectAppSubjectData.mockImplementation(async () => {
+        seen.push(getTenantContext());
+        return {};
+      });
+
+      await runAsOrg('cmorg00000000000000active', () => exportUserData(PARAMS), {
+        source: 'session',
+      });
+      await exportUserData(PARAMS);
+
+      const system = { orgId: null, source: 'system' };
+      expect(seen).toEqual([system, system, system, system]);
+    });
+
+    it('anchors every source on the subject, so the bypass widens it to their rows alone', async () => {
+      // The safety of the system scope rests on this: a source whose `where`
+      // did not name the person would read every org's rows for them.
+      await exportUserData(PARAMS);
+
+      const unanchored = SUBJECT_DATA_SOURCES.map((source) => source.model).filter((model) => {
+        const delegate = model.charAt(0).toLowerCase() + model.slice(1);
+        const where = (argsTo(delegate) as { where?: unknown }).where;
+        return !namesSubject(where);
+      });
+      expect(unanchored).toEqual([]);
+    });
+
+    it('reads one source at a time, so an export never queues its reads behind the pool', async () => {
+      const [first, second] = SUBJECT_DATA_SOURCES.map(
+        (source) => source.model.charAt(0).toLowerCase() + source.model.slice(1)
+      );
+      let release: (rows: unknown[]) => void = () => {};
+      delegateFor(first).findMany.mockReturnValue(
+        new Promise<unknown[]>((resolve) => {
+          release = resolve;
+        })
+      );
+
+      const pending = exportUserData(PARAMS);
+      await vi.waitFor(() => expect(callsTo(first)).toHaveLength(1));
+      expect(callsTo(second)).toHaveLength(0);
+
+      release([]);
+      await pending;
+      expect(callsTo(second)).toHaveLength(1);
     });
   });
 
