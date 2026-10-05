@@ -181,6 +181,74 @@ describe('McpSettingsForm', () => {
   });
 });
 
+describe('McpSettingsForm validation and saved indicator', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function setField(id: string, value: string) {
+    fireEvent.change(document.getElementById(id) as HTMLInputElement, { target: { value } });
+  }
+
+  async function submit() {
+    const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+    await act(async () => {
+      fireEvent.submit(form!);
+    });
+  }
+
+  it.each([
+    ['serverName', '', 'Required'],
+    ['serverVersion', '', 'Required'],
+    ['globalRateLimit', '0', 'Min 1'],
+    ['globalRateLimit', '10001', 'Max 10,000'],
+    ['auditRetentionDays', '-1', 'Min 0'],
+    ['auditRetentionDays', '3651', 'Max 3,650'],
+  ])('shows "%s" error for invalid value %j: %s', async (id, value, message) => {
+    render(<McpSettingsForm initialSettings={FULL_SETTINGS} />);
+
+    setField(id, value);
+    await submit();
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(apiClient.patch).not.toHaveBeenCalled();
+  });
+
+  it('shows the Saved indicator, then clears it after 3000ms', async () => {
+    vi.mocked(apiClient.patch).mockResolvedValue({});
+    render(<McpSettingsForm initialSettings={FULL_SETTINGS} />);
+    setField('serverName', 'Renamed');
+
+    // Fake only setTimeout so promises and waitFor's polling keep working.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await submit();
+    // Let the mocked PATCH resolve and the post-save state updates flush.
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('Saved')).toBeInTheDocument();
+    expect(apiClient.patch).toHaveBeenCalledWith(
+      expect.stringContaining('/mcp/settings'),
+      expect.objectContaining({ body: expect.objectContaining({ serverName: 'Renamed' }) })
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(2999);
+    });
+    expect(screen.getByText('Saved')).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(screen.queryByText('Saved')).not.toBeInTheDocument();
+  });
+});
+
 describe('the session cap is gone, not merely inert (§39 t-718)', () => {
   it('renders no Max Sessions Per Key field at all', () => {
     // It used to render with a "No effect" caption under the default session

@@ -725,3 +725,215 @@ describe('read-only outside the install org (§107 t-753)', () => {
     expect(toggle).toBeChecked();
   });
 });
+
+describe('create flow: result placement and failure modes', () => {
+  function namesInTableOrder(): string[] {
+    return screen
+      .getAllByRole('row')
+      .slice(1)
+      .map((row) => row.querySelector('code')?.textContent ?? '');
+  }
+
+  it('POSTs the trimmed body without blank arguments, inserts the row in sorted order and closes the dialog', async () => {
+    const user = userEvent.setup();
+    render(
+      <McpPromptsList
+        initialPrompts={[
+          makePrompt({ id: 'p-z', name: 'zeta' }),
+          makePrompt({ id: 'p-a', name: 'alpha' }),
+        ]}
+      />
+    );
+
+    await user.click(screen.getByTestId('create-prompt-trigger'));
+    await user.type(screen.getByTestId('prompt-name-input'), '  middle  ');
+    await user.type(screen.getByLabelText(/^Description/), '  Does a thing  ');
+    await user.type(screen.getByLabelText(/Template/i), 'greet {{{{who}}');
+
+    // One real argument and one left blank (must be filtered from the body).
+    await user.click(screen.getByTestId('add-argument'));
+    await user.type(screen.getByTestId('arg-name-0'), 'who');
+    await user.type(screen.getAllByPlaceholderText('description')[0], 'the person');
+    await user.click(screen.getByText('required'));
+    await user.click(screen.getByTestId('add-argument'));
+
+    mockOk(
+      makePrompt({
+        id: 'p-new',
+        name: 'middle',
+        description: 'Does a thing',
+        template: 'greet {{who}}',
+        argumentsSpec: [{ name: 'who', description: 'the person', required: true }],
+      })
+    );
+    await user.click(screen.getByTestId('create-prompt-submit'));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Create MCP Prompt/i)).not.toBeInTheDocument();
+    });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0] as [string, { method: string; body: string }];
+    expect(url).toBe(API.ADMIN.ORCHESTRATION.MCP_PROMPTS);
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual({
+      name: 'middle',
+      description: 'Does a thing',
+      template: 'greet {{who}}',
+      argumentsSpec: [{ name: 'who', description: 'the person', required: true }],
+      isEnabled: true,
+    });
+
+    expect(namesInTableOrder()).toEqual(['alpha', 'middle', 'zeta']);
+  });
+
+  it('clears the form when the create dialog is dismissed', async () => {
+    const user = userEvent.setup();
+    render(<McpPromptsList initialPrompts={[makePrompt()]} />);
+
+    await user.click(screen.getByTestId('create-prompt-trigger'));
+    await user.type(screen.getByTestId('prompt-name-input'), 'half-typed');
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByText(/Create MCP Prompt/i)).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId('create-prompt-trigger'));
+    expect(await screen.findByTestId('prompt-name-input')).toHaveValue('');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('shows the fallback message when the API error carries no message', async () => {
+    const user = userEvent.setup();
+    render(<McpPromptsList initialPrompts={[]} />);
+
+    await user.click(screen.getByRole('button', { name: /Create Your First Prompt/i }));
+    await user.type(screen.getByTestId('prompt-name-input'), 'my-prompt');
+    await user.type(screen.getByLabelText(/Template/i), 'hello');
+
+    mockNotOk(500, '');
+    await user.click(screen.getByTestId('create-prompt-submit'));
+
+    expect(await screen.findByText('Failed to create prompt.')).toBeInTheDocument();
+    // Dialog stays open and nothing was added to the table.
+    expect(screen.getByText(/Create MCP Prompt/i)).toBeInTheDocument();
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
+
+  it('reports a malformed success payload instead of adding a row', async () => {
+    const user = userEvent.setup();
+    render(<McpPromptsList initialPrompts={[]} />);
+
+    await user.click(screen.getByRole('button', { name: /Create Your First Prompt/i }));
+    await user.type(screen.getByTestId('prompt-name-input'), 'my-prompt');
+    await user.type(screen.getByLabelText(/Template/i), 'hello');
+
+    // Missing every field promptRowSchema requires.
+    mockOk({ id: 'only-an-id' });
+    await user.click(screen.getByTestId('create-prompt-submit'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Create MCP Prompt/i)).toBeInTheDocument();
+      expect(screen.getByText(/invalid/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByRole('table')).not.toBeInTheDocument();
+  });
+});
+
+describe('argument editor: cap and per-row edits', () => {
+  it('refuses a 21st argument and re-enables Add after one is removed', async () => {
+    const user = userEvent.setup();
+    render(<McpPromptsList initialPrompts={[]} />);
+    await user.click(screen.getByRole('button', { name: /Create Your First Prompt/i }));
+
+    const add = screen.getByTestId('add-argument');
+    for (let i = 0; i < 20; i++) await user.click(add);
+
+    expect(screen.getAllByRole('button', { name: /Remove argument/i })).toHaveLength(20);
+    expect(add).toBeDisabled();
+    await user.click(add);
+    expect(screen.getAllByRole('button', { name: /Remove argument/i })).toHaveLength(20);
+
+    await user.click(screen.getAllByRole('button', { name: /Remove argument/i })[0]);
+    expect(screen.getAllByRole('button', { name: /Remove argument/i })).toHaveLength(19);
+    expect(add).toBeEnabled();
+  });
+
+  it('removes only the targeted row and keeps the others edited values', async () => {
+    const user = userEvent.setup();
+    render(<McpPromptsList initialPrompts={[]} />);
+    await user.click(screen.getByRole('button', { name: /Create Your First Prompt/i }));
+
+    await user.click(screen.getByTestId('add-argument'));
+    await user.click(screen.getByTestId('add-argument'));
+    await user.type(screen.getByTestId('arg-name-0'), 'first');
+    await user.type(screen.getByTestId('arg-name-1'), 'second');
+
+    await user.click(screen.getAllByRole('button', { name: /Remove argument/i })[0]);
+
+    expect(screen.queryByTestId('arg-name-1')).not.toBeInTheDocument();
+    expect(screen.getByTestId('arg-name-0')).toHaveValue('second');
+  });
+});
+
+describe('dialog dismissal', () => {
+  it('closing the edit dialog clears a save error so it is not shown on reopen', async () => {
+    const user = userEvent.setup();
+    render(<McpPromptsList initialPrompts={[makePrompt()]} />);
+
+    await user.click(screen.getByTestId('edit-prompt-p-1'));
+    mockNotOk(500, 'server unavailable');
+    await user.click(screen.getByTestId('edit-prompt-save'));
+    expect(await screen.findByText('server unavailable')).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByText(/Edit Prompt:/i)).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId('edit-prompt-p-1'));
+    expect(await screen.findByText(/Edit Prompt: analyze-pattern/i)).toBeInTheDocument();
+    expect(screen.queryByText('server unavailable')).not.toBeInTheDocument();
+  });
+
+  it('closing the preview dialog removes it', async () => {
+    const user = userEvent.setup();
+    render(<McpPromptsList initialPrompts={[makePrompt()]} />);
+
+    await user.click(screen.getByRole('button', { name: /Preview/i }));
+    expect(await screen.findByText(/Preview: analyze-pattern/i)).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByText(/Preview: analyze-pattern/i)).not.toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('preview-output')).not.toBeInTheDocument();
+  });
+});
+
+describe('preview rendering from typed arguments', () => {
+  it('substitutes case-insensitive, spaced placeholders and leaves undeclared ones literal', async () => {
+    const user = userEvent.setup();
+    render(
+      <McpPromptsList
+        initialPrompts={[
+          makePrompt({
+            template: 'Hi {{ Who }}, re {{topic}} / {{ghost}}',
+            argumentsSpec: [
+              { name: 'who', description: 'w', required: false },
+              { name: 'topic', description: 't', required: false },
+            ],
+          }),
+        ]}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /Preview/i }));
+    expect(screen.getByTestId('preview-output').textContent).toBe('Hi , re  / {{ghost}}');
+
+    await user.type(document.getElementById('preview-arg-who') as HTMLInputElement, 'Bob');
+    await user.type(document.getElementById('preview-arg-topic') as HTMLInputElement, 'tax');
+
+    expect(screen.getByTestId('preview-output').textContent).toBe('Hi Bob, re tax / {{ghost}}');
+  });
+});
