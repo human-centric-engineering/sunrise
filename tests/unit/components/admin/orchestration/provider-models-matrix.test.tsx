@@ -1188,6 +1188,21 @@ describe('ProviderModelsMatrix — read-only outside the install org (§107 t-75
     expect(screen.queryByRole('button', { name: /^delete GPT-5/i })).not.toBeInTheDocument();
   });
 
+  it('drops the Actions column, which only ever held delete', () => {
+    const model = makeModel({ name: 'GPT-5', agents: [] });
+    const { unmount } = render(<ProviderModelsMatrix initialModels={[model]} />);
+    expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeInTheDocument();
+    const editableCells = screen.getAllByRole('cell').length;
+    unmount();
+
+    renderReadOnly([model]);
+
+    expect(screen.queryByRole('columnheader', { name: 'Actions' })).not.toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /model/i })).toBeInTheDocument();
+    // The row loses that one cell too, so headers and cells still line up.
+    expect(screen.getAllByRole('cell')).toHaveLength(editableCells - 1);
+  });
+
   it('also hides the disabled "model is in use" delete button', () => {
     const model = makeModel({
       name: 'GPT-5',

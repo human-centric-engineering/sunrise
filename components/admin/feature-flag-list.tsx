@@ -135,13 +135,13 @@ export function FeatureFlagList({
               <TableHead className="hidden md:table-cell">Description</TableHead>
               <TableHead className="text-center">Enabled</TableHead>
               <TableHead className="hidden sm:table-cell">Created</TableHead>
-              <TableHead className="w-12">Actions</TableHead>
+              {!readOnly && <TableHead className="w-12">Actions</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {flags.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center">
+                <TableCell colSpan={readOnly ? 4 : 5} className="h-24 text-center">
                   <div className="flex flex-col items-center gap-2">
                     <Info className="text-muted-foreground h-8 w-8" />
                     <p className="text-muted-foreground">No feature flags yet</p>
@@ -193,8 +193,8 @@ export function FeatureFlagList({
                   <TableCell className="text-muted-foreground hidden sm:table-cell">
                     <ClientDate date={flag.createdAt} />
                   </TableCell>
-                  <TableCell>
-                    {!readOnly && (
+                  {!readOnly && (
+                    <TableCell>
                       <Button
                         variant="ghost"
                         size="icon"
@@ -204,8 +204,8 @@ export function FeatureFlagList({
                         <Trash2 className="h-4 w-4" />
                         <span className="sr-only">Delete {flag.name}</span>
                       </Button>
-                    )}
-                  </TableCell>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))
             )}

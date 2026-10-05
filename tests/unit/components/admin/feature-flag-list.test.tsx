@@ -861,6 +861,20 @@ describe('components/admin/feature-flag-list', () => {
       expect(screen.queryByRole('button', { name: 'Delete FLAG_A' })).not.toBeInTheDocument();
     });
 
+    it('drops the Actions column, which only ever held delete', () => {
+      const flags = [createMockFlag({ id: 'flag_1', name: 'FLAG_A', enabled: true })];
+
+      const editable = renderList(flags, false);
+      expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeInTheDocument();
+      const editableCells = screen.getAllByRole('cell').length;
+      editable.unmount();
+
+      renderList(flags, true);
+      expect(screen.queryByRole('columnheader', { name: 'Actions' })).not.toBeInTheDocument();
+      expect(screen.getByRole('columnheader', { name: 'Name' })).toBeInTheDocument();
+      expect(screen.getAllByRole('cell')).toHaveLength(editableCells - 1);
+    });
+
     it('hides "Create your first flag" in the empty state but keeps the empty message', () => {
       const editable = renderList([], false);
       expect(screen.getByRole('button', { name: /create your first flag/i })).toBeInTheDocument();
