@@ -14,8 +14,11 @@
  *      `subjectMetadata.toolCalls` the worker wrote?
  *
  * Usage:
- *   tsx -r dotenv/config scripts/diagnose-eval-run.ts dotenv_config_path=.env.local
- *   tsx -r dotenv/config scripts/diagnose-eval-run.ts <runId> dotenv_config_path=.env.local
+ *   DOTENV_CONFIG_PATH=.env.local tsx -r dotenv/config scripts/diagnose-eval-run.ts
+ *   DOTENV_CONFIG_PATH=.env.local tsx -r dotenv/config scripts/diagnose-eval-run.ts <runId>
+ *
+ * (dotenv 18 reads the path from DOTENV_CONFIG_PATH only; the old
+ * `dotenv_config_path=` argument is ignored.)
  *
  * Read-only — no writes. Safe to re-run.
  */

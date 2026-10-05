@@ -171,11 +171,13 @@ describe('MermaidDiagram', () => {
     expect(initCallsDuring).toBeLessThanOrEqual(1);
   });
 
-  it('draws labels as SVG text, which the sanitiser keeps, not HTML in foreignObject', async () => {
+  it('asks mermaid for SVG-text labels, so the sanitiser does not strip them', async () => {
     // DOMPurify's SVG profile drops <foreignObject> and its contents, and
     // mermaid puts HTML labels there by default: every node rendered blank
-    // (seen on the Learn page, t-758). Initialisation runs once per module,
-    // so load a fresh copy to see it.
+    // (seen on the Learn page, t-758). This pins the configuration only —
+    // mermaid and DOMPurify are mocked here, so that the labels then survive
+    // was checked by eye in the running app. Initialisation runs once per
+    // module, so load a fresh copy to see it.
     vi.resetModules();
     const { MermaidDiagram: Fresh } =
       await import('@/components/admin/orchestration/learn/mermaid-diagram');
@@ -185,7 +187,12 @@ describe('MermaidDiagram', () => {
 
     await waitFor(() => {
       expect(mockInitialize).toHaveBeenCalledWith(
-        expect.objectContaining({ htmlLabels: false, securityLevel: 'strict' })
+        expect.objectContaining({
+          htmlLabels: false,
+          securityLevel: 'strict',
+          journey: { textPlacement: 'tspan' },
+          timeline: { textPlacement: 'tspan' },
+        })
       );
     });
   });

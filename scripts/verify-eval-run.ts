@@ -2,7 +2,7 @@
  * End-to-end verification: seed a small dataset + run, drive the worker
  * directly, and report what happened.
  *
- * Usage:  tsx -r dotenv/config scripts/verify-eval-run.ts dotenv_config_path=.env.local
+ * Usage:  DOTENV_CONFIG_PATH=.env.local tsx -r dotenv/config scripts/verify-eval-run.ts
  *
  * Or via the npm helper: npm run verify:eval-run
  *

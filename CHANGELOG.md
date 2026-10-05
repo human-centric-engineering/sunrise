@@ -235,7 +235,11 @@ release process.
   [`sentry-setup.md`](./.context/monitoring/sentry-setup.md) shows, and import
   `withSentryConfig` from `@sentry/nextjs/config`. Mermaid 12 lays diagrams out
   with ELK and a new default look. dotenv 18 adds a CLI and an opt-in fast
-  parser; `config({ path })` is unchanged.
+  parser, and `config({ path })` is unchanged, but **its `-r dotenv/config`
+  preload no longer reads `dotenv_config_path=` from the command line**: it
+  loads `.env` and ignores the argument. Set `DOTENV_CONFIG_PATH=.env.local`
+  in the environment instead (`scripts/diagnose-eval-run.ts` and
+  `verify-eval-run.ts` now say so).
 - **At `multi`, a fork's erasure hooks and subject-export collector run as the
   system scope** (§107 t-748). `registerErasureCleanupHook`'s
   `cleanupExternal` and `scrubInTransaction`, and `collectAppSubjectData()`
@@ -654,10 +658,6 @@ release process.
   note:** a PR whose changed files only cleared 80% on average now fails
   `/pre-pr`, which is what the gate always claimed to do. The failure names the
   file.
-
-- **Mermaid diagrams on the Learn pages render their labels** (t-758). Mermaid
-  draws labels as HTML in `<foreignObject>`, which the component's DOMPurify SVG
-  profile removes, so every node rendered blank. It now draws them as SVG text.
 
 ### Security
 
