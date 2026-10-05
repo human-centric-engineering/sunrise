@@ -1190,6 +1190,18 @@ describe('StreamingChatHandler', () => {
   });
 
   // 12c — fallback provenance (#810) ----------------------------------------
+  type PersistedMessage = {
+    data: {
+      role: string;
+      providerSlug?: string;
+      metadata?: { pendingApproval?: unknown };
+    };
+  };
+  const persistedMessages = (): PersistedMessage[] =>
+    (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls.map(
+      (c: unknown[]) => c[0] as PersistedMessage
+    );
+
   it('persists the fallback provider slug on the terminal assistant message', async () => {
     const provider = mockProvider([
       [
@@ -1204,11 +1216,10 @@ describe('StreamingChatHandler', () => {
 
     await collect(streamChat(baseRequest));
 
-    const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
-    const assistantCalls = createCalls.filter((c: any) => c[0].data.role === 'assistant');
-    const terminal: any = assistantCalls[assistantCalls.length - 1];
+    const assistantCalls = persistedMessages().filter((m) => m.data.role === 'assistant');
+    const terminal = assistantCalls[assistantCalls.length - 1];
     expect(terminal).toBeDefined();
-    expect(terminal[0].data.providerSlug).toBe('fallback-provider');
+    expect(terminal.data.providerSlug).toBe('fallback-provider');
   });
 
   it('persists the fallback provider slug on the pending-approval message', async () => {
@@ -1241,12 +1252,11 @@ describe('StreamingChatHandler', () => {
 
     await collect(streamChat(baseRequest));
 
-    const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
-    const pending: any = createCalls.find(
-      (c: any) => c[0].data.role === 'assistant' && c[0].data.metadata?.pendingApproval
+    const pending = persistedMessages().find(
+      (m) => m.data.role === 'assistant' && m.data.metadata?.pendingApproval
     );
     expect(pending).toBeDefined();
-    expect(pending[0].data.providerSlug).toBe('fallback-provider');
+    expect(pending?.data.providerSlug).toBe('fallback-provider');
   });
 
   it('persists the fallback provider slug on a parallel-batch pending-approval message', async () => {
@@ -1289,12 +1299,11 @@ describe('StreamingChatHandler', () => {
 
     await collect(streamChat(baseRequest));
 
-    const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
-    const pending: any = createCalls.find(
-      (c: any) => c[0].data.role === 'assistant' && c[0].data.metadata?.pendingApproval
+    const pending = persistedMessages().find(
+      (m) => m.data.role === 'assistant' && m.data.metadata?.pendingApproval
     );
     expect(pending).toBeDefined();
-    expect(pending[0].data.providerSlug).toBe('fallback-provider');
+    expect(pending?.data.providerSlug).toBe('fallback-provider');
   });
 
   it('persists the failover provider slug on the terminal message after a mid-stream failover', async () => {
@@ -1327,11 +1336,10 @@ describe('StreamingChatHandler', () => {
 
     await collect(streamChat(baseRequest));
 
-    const createCalls = (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls;
-    const assistantCalls = createCalls.filter((c: any) => c[0].data.role === 'assistant');
-    const terminal: any = assistantCalls[assistantCalls.length - 1];
+    const assistantCalls = persistedMessages().filter((m) => m.data.role === 'assistant');
+    const terminal = assistantCalls[assistantCalls.length - 1];
     expect(terminal).toBeDefined();
-    expect(terminal[0].data.providerSlug).toBe('openai');
+    expect(terminal.data.providerSlug).toBe('openai');
   });
 
   // 13 ----------------------------------------------------------------------
