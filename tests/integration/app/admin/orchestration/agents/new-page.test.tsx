@@ -117,6 +117,7 @@ const MOCK_PROVIDERS = [
 // back to a free-text model box.
 const MOCK_MODELS = [
   { providerSlug: 'anthropic', modelId: 'claude-opus-4-6', capabilities: ['chat'] },
+  { providerSlug: 'openai', modelId: 'gpt-4o-mini', capabilities: ['chat'] },
   { providerSlug: 'openai', modelId: 'gpt-4o', capabilities: ['chat'] },
 ];
 
@@ -241,9 +242,11 @@ describe('NewAgentPage (server component)', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('tab', { name: /model/i }));
     expect(screen.getByRole('combobox', { name: /provider/i })).toHaveTextContent(/openai/i);
-    // …and the model with it, as a pair: the model dropdown lists openai's
-    // models and has the previewed one selected.
-    expect(screen.getByRole('combobox', { name: /^model/i })).toHaveTextContent(/gpt-4o/i);
+    // …and the model with it, as a pair. openai's SECOND model, because the form
+    // picks a provider's first model when none is set.
+    const modelSelect = screen.getByRole('combobox', { name: /^model/i });
+    expect(modelSelect).toHaveTextContent(/gpt-4o/i);
+    expect(modelSelect).not.toHaveTextContent(/gpt-4o-mini/i);
   });
 
   it('renders with free-text fallback when provider fetch fails', async () => {
