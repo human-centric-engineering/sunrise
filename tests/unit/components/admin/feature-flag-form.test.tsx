@@ -752,6 +752,9 @@ describe('components/admin/feature-flag-form', () => {
 
       const submit = screen.getByRole('button', { name: /create flag/i });
       expect(submit).toBeDisabled();
+      expect(
+        screen.getByText('Read-only here: changes save from the install organisation.')
+      ).toBeInTheDocument();
       await user.click(submit);
       expect(apiClient.post).not.toHaveBeenCalled();
       // Cancel is not a write and stays usable

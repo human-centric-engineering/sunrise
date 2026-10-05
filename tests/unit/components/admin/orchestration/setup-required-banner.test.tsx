@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 import { SetupRequiredBanner } from '@/components/admin/orchestration/setup-required-banner';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
 describe('SetupRequiredBanner', () => {
   describe('when hasProvider is true', () => {
@@ -51,14 +52,18 @@ describe('SetupRequiredBanner', () => {
   });
 
   describe('read-only outside the install org (§107 t-753)', () => {
-    it('replaces the wizard copy with the install-organisation pointer when readOnly', () => {
+    it('replaces the wizard copy with the install-organisation pointer when read-only', () => {
       // Contrast: the same hasProvider=false fixture without readOnly says the
       // wizard has opened (asserted in "mentions the .env detection" above).
       const { unmount } = render(<SetupRequiredBanner hasProvider={false} />);
       expect(screen.getByText(/setup wizard has opened/i)).toBeInTheDocument();
       unmount();
 
-      render(<SetupRequiredBanner hasProvider={false} readOnly />);
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <SetupRequiredBanner hasProvider={false} />
+        </SharedSettingsAccessProvider>
+      );
 
       expect(screen.queryByText(/setup wizard has opened/i)).not.toBeInTheDocument();
       expect(screen.queryByText(/api keys/i)).not.toBeInTheDocument();
@@ -68,8 +73,12 @@ describe('SetupRequiredBanner', () => {
       expect(screen.getByText(/no llm provider is configured yet/i)).toBeInTheDocument();
     });
 
-    it('still renders nothing when a provider exists, even if readOnly', () => {
-      const { container } = render(<SetupRequiredBanner hasProvider={true} readOnly />);
+    it('still renders nothing when a provider exists, even if read-only', () => {
+      const { container } = render(
+        <SharedSettingsAccessProvider readOnly canSwitch>
+          <SetupRequiredBanner hasProvider={true} />
+        </SharedSettingsAccessProvider>
+      );
 
       expect(container.firstChild).toBeNull();
     });

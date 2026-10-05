@@ -43,6 +43,13 @@ vi.mock('@/lib/auth/utils', () => ({
   getServerSession: vi.fn(),
 }));
 
+// The install-org membership the layout reads before offering a switch.
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    orgMembership: { findUnique: vi.fn(() => Promise.resolve({ orgId: 'install' })) },
+  },
+}));
+
 vi.mock('@/components/admin/admin-sidebar', () => ({
   AdminSidebar: () => <div data-testid="admin-sidebar" />,
 }));

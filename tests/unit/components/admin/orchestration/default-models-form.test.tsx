@@ -888,6 +888,9 @@ describe('DefaultModelsForm', () => {
 
       const save = screen.getByRole('button', { name: /save changes/i });
       expect(save).toBeDisabled();
+      expect(
+        screen.getByText('Read-only here: changes save from the install organisation.')
+      ).toBeInTheDocument();
       await user.click(save);
       expect(mockedPatch).not.toHaveBeenCalled();
     });

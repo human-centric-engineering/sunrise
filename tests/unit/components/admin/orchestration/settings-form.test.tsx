@@ -836,6 +836,9 @@ describe('SettingsForm', () => {
 
       const save = screen.getByRole('button', { name: /save settings/i });
       expect(save).toBeDisabled();
+      expect(
+        screen.getByText('Read-only here: changes save from the install organisation.')
+      ).toBeInTheDocument();
       await user.click(save);
       expect(apiClient.patch).not.toHaveBeenCalled();
       // The settings themselves stay visible

@@ -907,6 +907,39 @@ describe('KnowledgeTagsTable', () => {
       );
     }
 
+    it('drops the action column, so headers and cells still line up', () => {
+      const { unmount } = render(
+        <KnowledgeTagsTable initialTags={[TAG_WITH_USE]} initialMeta={MOCK_META} />
+      );
+      const editableHeaders = screen.getAllByRole('columnheader').length;
+      expect(screen.getAllByRole('row')[1].querySelectorAll('td')).toHaveLength(editableHeaders);
+      unmount();
+
+      renderReadOnly([TAG_WITH_USE]);
+      const headers = screen.getAllByRole('columnheader').length;
+      expect(headers).toBe(editableHeaders - 1);
+      expect(screen.getAllByRole('row')[1].querySelectorAll('td')).toHaveLength(headers);
+    });
+
+    it('says where tags come from in the empty state, instead of pointing at a hidden button', () => {
+      const { unmount } = render(<KnowledgeTagsTable initialTags={[]} initialMeta={MOCK_META} />);
+      expect(screen.getByText(/Create one above/)).toBeInTheDocument();
+      unmount();
+
+      renderReadOnly([]);
+      expect(screen.queryByText(/Create one above/)).not.toBeInTheDocument();
+      expect(
+        screen.getByText(
+          /Tags are shared by every organisation and are created from the install organisation/
+        )
+      ).toBeInTheDocument();
+      // The empty row still spans every column there is.
+      expect(screen.getAllByRole('cell')[0]).toHaveAttribute(
+        'colspan',
+        String(screen.getAllByRole('columnheader').length)
+      );
+    });
+
     it('hides New tag, the bulk-delete control and its "all in use" text', () => {
       // Contrast: the same fixtures editable show both controls.
       const editable = render(

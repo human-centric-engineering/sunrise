@@ -880,6 +880,18 @@ describe('read-only outside the install org (§107 t-753)', () => {
     );
   }
 
+  it('drops the action column, so headers and cells still line up', () => {
+    const { unmount } = render(<McpResourcesList initialResources={[makeResource()]} />);
+    const editableHeaders = screen.getAllByRole('columnheader').length;
+    expect(screen.getAllByRole('row')[1].querySelectorAll('td')).toHaveLength(editableHeaders);
+    unmount();
+
+    renderReadOnly([makeResource()]);
+    const headers = screen.getAllByRole('columnheader').length;
+    expect(headers).toBe(editableHeaders - 1);
+    expect(screen.getAllByRole('row')[1].querySelectorAll('td')).toHaveLength(headers);
+  });
+
   it('hides both create entry points in the empty state', () => {
     // Contrast: the editable empty state offers both.
     const { unmount } = render(<McpResourcesList initialResources={[]} />);

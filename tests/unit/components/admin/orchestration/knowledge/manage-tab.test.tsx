@@ -1600,7 +1600,7 @@ describe('ManageTab', () => {
         screen.getByRole('button', { name: /what does load patterns do/i })
       ).toBeInTheDocument();
       expect(
-        screen.queryByText('The patterns are loaded from the install organisation.')
+        screen.queryByText(/the install organisation's knowledge, loaded and used there/)
       ).not.toBeInTheDocument();
       editable.unmount();
 
@@ -1619,7 +1619,7 @@ describe('ManageTab', () => {
         screen.queryByRole('button', { name: /what does load patterns do/i })
       ).not.toBeInTheDocument();
       expect(
-        screen.getByText('The patterns are loaded from the install organisation.')
+        screen.getByText(/the install organisation's knowledge, loaded and used there/)
       ).toBeInTheDocument();
       // The document list still renders
       expect(screen.getByText('My Custom Doc')).toBeInTheDocument();

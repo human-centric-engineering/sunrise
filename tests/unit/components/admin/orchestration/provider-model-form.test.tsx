@@ -786,6 +786,9 @@ describe('ProviderModelForm — read-only outside the install org (§107 t-753)'
 
     const save = screen.getByRole('button', { name: /save changes/i });
     expect(save).toBeDisabled();
+    expect(
+      screen.getByText('Read-only here: changes save from the install organisation.')
+    ).toBeInTheDocument();
     await user.click(save);
     expect(mockPatch).not.toHaveBeenCalled();
     expect(mockPost).not.toHaveBeenCalled();

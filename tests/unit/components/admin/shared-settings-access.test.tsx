@@ -16,7 +16,10 @@ import userEvent from '@testing-library/user-event';
 
 import {
   SharedSettingsAccessProvider,
+  SharedSettingsEditOnly,
   SharedSettingsReadOnlyNotice,
+  SharedSettingsSaveHint,
+  useIsInstallOrg,
   useSharedSettingsReadOnly,
 } from '@/components/admin/shared-settings-access';
 import { API } from '@/lib/api/endpoints';
@@ -142,5 +145,89 @@ describe('SharedSettingsReadOnlyNotice', () => {
       'open the admin from the install organisation’s address'
     );
     expect(screen.queryByRole('button')).toBeNull();
+  });
+});
+
+describe('SharedSettingsReadOnlyNotice — no membership of the install org', () => {
+  it('offers no switch it could not make, and says who can make the change', () => {
+    render(
+      <SharedSettingsAccessProvider readOnly canSwitch={false} installOrgMember={false}>
+        <SharedSettingsReadOnlyNotice />
+      </SharedSettingsAccessProvider>
+    );
+
+    const notice = screen.getByTestId('shared-settings-read-only');
+    expect(notice).toHaveTextContent('You are not a member of the install organisation');
+    expect(notice).toHaveTextContent('ask one of its admins');
+    // Not the address explanation, which is for a member the header holds back.
+    expect(notice).not.toHaveTextContent('address');
+    expect(screen.queryByRole('button')).toBeNull();
+  });
+});
+
+describe('useIsInstallOrg', () => {
+  function InstallProbe() {
+    return <p data-testid="install">{useIsInstallOrg() ? 'install' : 'other'}</p>;
+  }
+
+  it('is not the install org outside a provider, so install-only actions stay hidden', () => {
+    render(<InstallProbe />);
+    expect(screen.getByTestId('install')).toHaveTextContent('other');
+  });
+
+  it('reads the provider, and defaults to "editable means install" when not given', () => {
+    const { unmount } = render(
+      <SharedSettingsAccessProvider readOnly={false} canSwitch={false} isInstallOrg={false}>
+        <InstallProbe />
+      </SharedSettingsAccessProvider>
+    );
+    expect(screen.getByTestId('install')).toHaveTextContent('other');
+    unmount();
+
+    render(
+      <SharedSettingsAccessProvider readOnly={false} canSwitch={false}>
+        <InstallProbe />
+      </SharedSettingsAccessProvider>
+    );
+    expect(screen.getByTestId('install')).toHaveTextContent('install');
+  });
+});
+
+describe('SharedSettingsEditOnly and SharedSettingsSaveHint', () => {
+  function renderBoth(readOnly: boolean | null) {
+    const tree = (
+      <>
+        <SharedSettingsEditOnly>
+          <a href="/new">New thing</a>
+        </SharedSettingsEditOnly>
+        <SharedSettingsSaveHint />
+      </>
+    );
+    return render(
+      readOnly === null ? (
+        tree
+      ) : (
+        <SharedSettingsAccessProvider readOnly={readOnly} canSwitch>
+          {tree}
+        </SharedSettingsAccessProvider>
+      )
+    );
+  }
+
+  it('shows the action and no hint where settings can be changed', () => {
+    for (const readOnly of [false, null]) {
+      const { unmount } = renderBoth(readOnly);
+      expect(screen.getByRole('link', { name: 'New thing' })).toBeInTheDocument();
+      expect(screen.queryByText(/Read-only here/)).toBeNull();
+      unmount();
+    }
+  });
+
+  it('hides the action and explains the disabled save where they cannot', () => {
+    renderBoth(true);
+    expect(screen.queryByRole('link', { name: 'New thing' })).toBeNull();
+    expect(
+      screen.getByText('Read-only here: changes save from the install organisation.')
+    ).toBeInTheDocument();
   });
 });

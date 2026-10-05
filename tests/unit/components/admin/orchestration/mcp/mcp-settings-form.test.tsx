@@ -289,6 +289,9 @@ describe('read-only outside the install org (§107 t-753)', () => {
 
     const save = screen.getByRole('button', { name: /save settings/i });
     expect(save).toBeDisabled();
+    expect(
+      screen.getByText('Read-only here: changes save from the install organisation.')
+    ).toBeInTheDocument();
     await user.click(save);
     expect(apiClient.patch).not.toHaveBeenCalled();
   });

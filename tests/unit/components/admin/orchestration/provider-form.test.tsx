@@ -803,6 +803,9 @@ describe('ProviderForm', () => {
 
       const save = screen.getByRole('button', { name: /save changes/i });
       expect(save).toBeDisabled();
+      expect(
+        screen.getByText('Read-only here: changes save from the install organisation.')
+      ).toBeInTheDocument();
       await user.click(save);
       expect(apiClient.patch).not.toHaveBeenCalled();
       expect(apiClient.post).not.toHaveBeenCalled();

@@ -384,6 +384,32 @@ describe('McpToolsList', () => {
       );
     }
 
+    it('drops the action column, so headers and cells still line up', () => {
+      const { unmount } = render(<McpToolsList initialTools={[TOOL]} capabilities={[]} />);
+      const editableHeaders = screen.getAllByRole('columnheader').length;
+      expect(screen.getAllByRole('row')[1].querySelectorAll('td')).toHaveLength(editableHeaders);
+      unmount();
+
+      renderReadOnly(<McpToolsList initialTools={[TOOL]} capabilities={[]} />);
+      const headers = screen.getAllByRole('columnheader').length;
+      expect(headers).toBe(editableHeaders - 1);
+      expect(screen.getAllByRole('row')[1].querySelectorAll('td')).toHaveLength(headers);
+    });
+
+    it('says where tools are added in the empty state, instead of pointing at the hidden picker', () => {
+      const { unmount } = render(<McpToolsList initialTools={[]} capabilities={[CAPABILITY]} />);
+      expect(screen.getByText(/Select a capability from the dropdown above/)).toBeInTheDocument();
+      unmount();
+
+      renderReadOnly(<McpToolsList initialTools={[]} capabilities={[CAPABILITY]} />);
+      expect(screen.queryByText(/dropdown above/)).not.toBeInTheDocument();
+      expect(screen.getByText(/tools are added from the install organisation/)).toBeInTheDocument();
+      expect(screen.getAllByRole('cell')[0]).toHaveAttribute(
+        'colspan',
+        String(screen.getAllByRole('columnheader').length)
+      );
+    });
+
     it('hides the Add Tool picker that the same fixture shows when editable', () => {
       const { unmount } = render(
         <McpToolsList initialTools={[TOOL]} capabilities={[CAPABILITY, UNUSED_CAPABILITY]} />

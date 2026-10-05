@@ -29,14 +29,21 @@ vi.mock('@/components/admin/orchestration/providers-list', () => ({
 }));
 
 vi.mock('@/components/admin/orchestration/provider-models-matrix', () => ({
-  ProviderModelsMatrix: ({ initialModels }: { initialModels: unknown[] }) => (
-    <div data-testid="provider-models-matrix">
+  ProviderModelsMatrix: ({
+    initialModels,
+    canAuditModels,
+  }: {
+    initialModels: unknown[];
+    canAuditModels?: boolean;
+  }) => (
+    <div data-testid="provider-models-matrix" data-can-audit={String(canAuditModels)}>
       ProviderModelsMatrix ({initialModels.length} models)
     </div>
   ),
 }));
 
 import { ProvidersTabs } from '@/components/admin/orchestration/providers-tabs';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 import { createMockRouter } from '@/tests/types/mocks';
 import type { ProviderRow } from '@/components/admin/orchestration/providers-list';
 import type { ModelRow } from '@/components/admin/orchestration/provider-models-matrix';
@@ -281,6 +288,45 @@ describe('ProvidersTabs', () => {
 
       // Assert: mock renders the count, confirming the prop was forwarded
       expect(screen.getByTestId('provider-models-matrix')).toHaveTextContent('1 models');
+    });
+  });
+
+  describe('The model audit — install org only (§116 t-725, §107 t-753)', () => {
+    // The audit runs the install org's own workflow and agents and writes the
+    // shared catalogue, so the matrix offers it only when the layout's
+    // provider says this page acts for the install org.
+    function canAuditWith(access: { readOnly: boolean; isInstallOrg: boolean } | null) {
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('tab=models') as ReturnType<typeof useSearchParams>
+      );
+      const tabs = <ProvidersTabs initialProviders={PROVIDERS} initialModels={MODELS} />;
+      const { unmount } = render(
+        access ? (
+          <SharedSettingsAccessProvider canSwitch={false} {...access}>
+            {tabs}
+          </SharedSettingsAccessProvider>
+        ) : (
+          tabs
+        )
+      );
+      const value = screen.getByTestId('provider-models-matrix').getAttribute('data-can-audit');
+      unmount();
+      return value;
+    }
+
+    it('offers it in the install org', () => {
+      expect(canAuditWith({ readOnly: false, isInstallOrg: true })).toBe('true');
+    });
+
+    it('hides it in any other org, read-only or not', () => {
+      // At `multi` another org is read-only; at `single` a session pointing
+      // at another org is not, and the audit is still the install org's.
+      expect(canAuditWith({ readOnly: true, isInstallOrg: false })).toBe('false');
+      expect(canAuditWith({ readOnly: false, isInstallOrg: false })).toBe('false');
+    });
+
+    it('hides it outside a provider, where nothing says this is the install org', () => {
+      expect(canAuditWith(null)).toBe('false');
     });
   });
 

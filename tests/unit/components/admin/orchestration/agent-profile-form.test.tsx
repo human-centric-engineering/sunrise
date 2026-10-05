@@ -295,6 +295,9 @@ describe('AgentProfileForm — read-only outside the install org (§107 t-753)',
     expect(screen.getByRole('textbox', { name: /^slug/i })).toHaveValue('vip-concierge-team');
     const submit = screen.getByRole('button', { name: /create profile/i });
     expect(submit).toBeDisabled();
+    expect(
+      screen.getByText('Read-only here: changes save from the install organisation.')
+    ).toBeInTheDocument();
     await user.click(submit);
     expect(mockPost).not.toHaveBeenCalled();
     // The Cancel link survives
