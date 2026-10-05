@@ -880,7 +880,8 @@ describe('ProvidersList', () => {
       const { unmount } = render(<ProvidersList initialProviders={[makeProvider()]} />);
       await openFirstMenu(user);
       // Contrast: editable menu offers all of them.
-      expect(await screen.findByRole('menuitem', { name: /^edit$/i })).toBeInTheDocument();
+      const edit = await screen.findByRole('menuitem', { name: /^edit$/i });
+      expect(edit.querySelector('svg.lucide-pencil')).not.toBeNull();
       expect(screen.getByRole('menuitem', { name: /^deactivate$/i })).toBeInTheDocument();
       expect(screen.getByRole('menuitem', { name: /delete permanently/i })).toBeInTheDocument();
       unmount();
@@ -890,6 +891,9 @@ describe('ProvidersList', () => {
 
       const view = await screen.findByRole('menuitem', { name: /^view$/i });
       expect(view).toHaveAttribute('href', '/admin/orchestration/providers/prov-1');
+      // An eye, not the edit pencil: the item no longer edits.
+      expect(view.querySelector('svg.lucide-eye')).not.toBeNull();
+      expect(view.querySelector('svg.lucide-pencil')).toBeNull();
       expect(screen.queryByRole('menuitem', { name: /^edit$/i })).not.toBeInTheDocument();
       expect(screen.queryByRole('menuitem', { name: /^deactivate$/i })).not.toBeInTheDocument();
       expect(

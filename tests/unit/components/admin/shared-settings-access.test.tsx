@@ -25,11 +25,6 @@ import {
 import { API } from '@/lib/api/endpoints';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
-const refresh = vi.fn();
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ refresh }),
-}));
-
 vi.mock('@/lib/api/client', () => ({
   apiClient: { post: vi.fn() },
   APIClientError: class APIClientError extends Error {
@@ -58,8 +53,11 @@ function renderIn(access: { readOnly: boolean; canSwitch: boolean } | null) {
   );
 }
 
+// The switch reloads the page, so everything is recomputed from the session.
+let reload: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   vi.clearAllMocks();
+  reload = vi.spyOn(window.location, 'reload').mockImplementation(() => {});
 });
 
 describe('useSharedSettingsReadOnly', () => {
@@ -94,7 +92,7 @@ describe('SharedSettingsReadOnlyNotice', () => {
     ).toBeEnabled();
   });
 
-  it('switches the session to the install org, then re-renders the page', async () => {
+  it('switches the session to the install org, then reloads the page', async () => {
     vi.mocked(apiClient.post).mockResolvedValue({ activeOrgId: INSTALL_ORG_ID });
     const user = userEvent.setup();
     renderIn({ readOnly: true, canSwitch: true });
@@ -104,13 +102,13 @@ describe('SharedSettingsReadOnlyNotice', () => {
     expect(apiClient.post).toHaveBeenCalledWith(API.ORGS.SWITCH, {
       body: { orgId: INSTALL_ORG_ID },
     });
-    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
-    // Held until the refresh replaces the notice: no second POST meanwhile.
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    // Held until the reload replaces the page: no second POST meanwhile.
     expect(screen.getByRole('button', { name: 'Switching…' })).toBeDisabled();
     expect(apiClient.post).toHaveBeenCalledTimes(1);
   });
 
-  it('shows the server’s refusal and does not refresh', async () => {
+  it('shows the server’s refusal and does not reload', async () => {
     vi.mocked(apiClient.post).mockRejectedValue(
       new APIClientError('You are not a member of that organisation')
     );
@@ -122,7 +120,7 @@ describe('SharedSettingsReadOnlyNotice', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'You are not a member of that organisation'
     );
-    expect(refresh).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
     // The button is usable again for a retry.
     expect(
       screen.getByRole('button', { name: 'Switch to the install organisation' })

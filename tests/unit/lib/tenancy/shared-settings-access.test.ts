@@ -39,7 +39,7 @@ function access(activeOrgId: string | null, headerOrgId?: string) {
 
 function installOrgMember(member: boolean) {
   vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue(
-    (member ? { orgId: INSTALL_ORG_ID } : null) as never
+    (member ? { role: 'ADMIN', org: { status: 'ACTIVE' } } : null) as never
   );
 }
 
@@ -96,10 +96,21 @@ describe('getSharedSettingsAccess', () => {
         canSwitch: true,
         installOrgMember: true,
       });
+      // The guard's own entry read: the membership, and its org's status.
       expect(prisma.orgMembership.findUnique).toHaveBeenCalledWith({
         where: { orgId_userId: { orgId: INSTALL_ORG_ID, userId: USER_ID } },
-        select: { orgId: true },
+        select: { role: true, org: { select: { status: true } } },
       });
+    });
+
+    it('offers no switch when the install-org membership is refused at entry (org not active)', async () => {
+      // The guard's rule, not a bare row lookup: a membership whose org is
+      // not ACTIVE is refused by the switch route, so it is not offered.
+      vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+        role: 'ADMIN',
+        org: { status: 'SUSPENDED' },
+      } as never);
+      expect((await access(CUSTOMER)).canSwitch).toBe(false);
     });
 
     it('offers no switch to a user who is not a member of the install org', async () => {

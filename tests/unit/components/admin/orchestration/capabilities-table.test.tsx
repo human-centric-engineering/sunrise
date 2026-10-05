@@ -1262,14 +1262,19 @@ describe('CapabilitiesTable', () => {
       // Contrast: same fixture, no provider -> Edit + Delete
       const editable = render(<CapabilitiesTable {...tableProps} />);
       await user.click(screen.getAllByRole('button', { name: /row actions/i })[0]);
-      expect(await screen.findByRole('menuitem', { name: /^edit$/i, hidden: true })).toBeVisible();
+      const edit = await screen.findByRole('menuitem', { name: /^edit$/i, hidden: true });
+      expect(edit).toBeVisible();
+      expect(edit.querySelector('svg.lucide-eye')).toBeNull();
       expect(screen.getByRole('menuitem', { name: /delete/i, hidden: true })).toBeInTheDocument();
       editable.unmount();
 
       renderReadOnly();
       await user.click(screen.getAllByRole('button', { name: /row actions/i })[0]);
 
-      expect(await screen.findByRole('menuitem', { name: /^view$/i, hidden: true })).toBeVisible();
+      const view = await screen.findByRole('menuitem', { name: /^view$/i, hidden: true });
+      expect(view).toBeVisible();
+      // An eye, not the edit icon: the item no longer edits.
+      expect(view.querySelector('svg.lucide-eye')).not.toBeNull();
       expect(screen.queryByRole('menuitem', { name: /^edit$/i, hidden: true })).toBeNull();
       expect(screen.queryByRole('menuitem', { name: /delete/i, hidden: true })).toBeNull();
       expect(apiClient.delete).not.toHaveBeenCalled();
