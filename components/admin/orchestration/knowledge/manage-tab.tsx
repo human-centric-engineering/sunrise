@@ -482,10 +482,12 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
           <div className="flex flex-wrap items-center gap-3">
             {readOnly ? (
               // Loading writes the shared settings' seeded timestamp, so it is
-              // install-org only at `multi` (§107 t-751); every org already
-              // gets its own copy of the patterns from the platform agents.
+              // install-org only at `multi` (§107 t-751). The patterns are the
+              // install org's own knowledge too (§116 ruling): they serve the
+              // install's admins on the Learn page, and no other org gets a copy.
               <p className="text-muted-foreground text-xs">
-                The patterns are loaded from the install organisation.
+                The built-in patterns are the install organisation&apos;s knowledge, loaded and used
+                there.
               </p>
             ) : (
               <div className="flex items-center gap-1.5">

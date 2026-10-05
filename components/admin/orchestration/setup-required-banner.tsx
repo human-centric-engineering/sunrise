@@ -1,7 +1,9 @@
+'use client';
+
 /**
  * Setup-required banner
  *
- * Server component. Renders nothing once the operator has at least one
+ * Client component (it reads the shared-settings provider). Renders nothing once the operator has at least one
  * provider configured. On a fresh install (no providers yet), shows an
  * informational card pointing the operator at the auto-opened setup
  * wizard in the page header.
@@ -14,20 +16,18 @@
 import { Sparkles } from 'lucide-react';
 
 import { Card, CardContent } from '@/components/ui/card';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 
 export interface SetupRequiredBannerProps {
   hasProvider: boolean;
-  /**
-   * Shared settings are read-only here (§107 t-753): the wizard does not
-   * open, so the banner says where providers are set up instead.
-   */
-  readOnly?: boolean;
 }
 
 export function SetupRequiredBanner({
   hasProvider,
-  readOnly = false,
 }: SetupRequiredBannerProps): React.ReactElement | null {
+  // Shared settings read-only here (§107 t-753): the wizard does not open,
+  // so the banner says where providers are set up instead.
+  const readOnly = useSharedSettingsReadOnly();
   if (hasProvider) return null;
 
   return (

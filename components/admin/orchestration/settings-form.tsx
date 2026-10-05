@@ -17,7 +17,10 @@ import { z } from 'zod';
 import { AlertCircle, Check, Loader2, Save, Plus, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
+import {
+  SharedSettingsSaveHint,
+  useSharedSettingsReadOnly,
+} from '@/components/admin/shared-settings-access';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
@@ -1245,6 +1248,7 @@ export function SettingsForm({
 
       {/* ── Submit ─────────────────────────────────────────────────────── */}
       <div className="sticky bottom-4 flex items-center gap-3">
+        <SharedSettingsSaveHint />
         <Button type="submit" disabled={readOnly || isSubmitting || !hasChanges}>
           {isSubmitting ? (
             <>

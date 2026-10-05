@@ -15,7 +15,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
+import {
+  SharedSettingsSaveHint,
+  useSharedSettingsReadOnly,
+} from '@/components/admin/shared-settings-access';
 import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
@@ -157,6 +160,7 @@ export function McpSettingsForm({ initialSettings }: McpSettingsFormProps) {
           {error && <p className="text-sm text-red-600">{error}</p>}
 
           <div className="flex items-center gap-3">
+            <SharedSettingsSaveHint />
             <Button type="submit" disabled={readOnly || !isDirty || isSubmitting}>
               {isSubmitting ? 'Saving...' : 'Save Settings'}
             </Button>

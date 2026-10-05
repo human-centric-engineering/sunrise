@@ -65,7 +65,7 @@ export default async function AdminLayout({
 
   // Shared settings are read-only outside the install org at `multi` (§107
   // t-753); every page below asks the provider rather than working it out.
-  const sharedSettings = await getSharedSettingsAccess();
+  const sharedSettings = await getSharedSettingsAccess(session);
 
   return (
     <div className="bg-background flex h-screen overflow-hidden">
@@ -78,6 +78,8 @@ export default async function AdminLayout({
             <SharedSettingsAccessProvider
               readOnly={sharedSettings.readOnly}
               canSwitch={sharedSettings.canSwitch}
+              installOrgMember={sharedSettings.installOrgMember}
+              isInstallOrg={sharedSettings.isInstallOrg}
             >
               {children}
             </SharedSettingsAccessProvider>

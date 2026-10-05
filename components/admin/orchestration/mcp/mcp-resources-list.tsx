@@ -526,7 +526,7 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                     <span>Enabled</span>
                   </Tip>
                 </TableHead>
-                <TableHead className="w-[80px]" />
+                {!readOnly && <TableHead className="w-[80px]" />}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -555,8 +555,8 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                       aria-label={`Enable ${resource.name}`}
                     />
                   </TableCell>
-                  <TableCell className="space-x-1 whitespace-nowrap">
-                    {!readOnly && (
+                  {!readOnly && (
+                    <TableCell className="space-x-1 whitespace-nowrap">
                       <>
                         <Button
                           variant="ghost"
@@ -593,8 +593,8 @@ export function McpResourcesList({ initialResources }: McpResourcesListProps) {
                           </AlertDialogContent>
                         </AlertDialog>
                       </>
-                    )}
-                  </TableCell>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>

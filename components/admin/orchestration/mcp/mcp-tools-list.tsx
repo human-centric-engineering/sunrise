@@ -461,18 +461,20 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
                   <span>Enabled</span>
                 </Tip>
               </TableHead>
-              <TableHead className="w-[120px]" />
+              {!readOnly && <TableHead className="w-[120px]" />}
             </TableRow>
           </TableHeader>
           <TableBody>
             {tools.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="py-8 text-center">
+                <TableCell colSpan={readOnly ? 6 : 7} className="py-8 text-center">
                   <p className="text-muted-foreground mb-1">No tools exposed yet.</p>
                   <p className="text-muted-foreground text-xs">
-                    {availableCapabilities.length > 0
-                      ? 'Select a capability from the dropdown above and click "Add Tool" to expose it to MCP clients. Tools are disabled by default — toggle them on when ready.'
-                      : 'Create capabilities in the Capabilities section first, then return here to expose them to MCP clients.'}
+                    {readOnly
+                      ? 'MCP exposure is shared by every organisation, so tools are added from the install organisation.'
+                      : availableCapabilities.length > 0
+                        ? 'Select a capability from the dropdown above and click "Add Tool" to expose it to MCP clients. Tools are disabled by default — toggle them on when ready.'
+                        : 'Create capabilities in the Capabilities section first, then return here to expose them to MCP clients.'}
                   </p>
                 </TableCell>
               </TableRow>
@@ -508,53 +510,47 @@ export function McpToolsList({ initialTools, capabilities }: McpToolsListProps) 
                       aria-label={`Enable ${tool.capability.name}`}
                     />
                   </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      {!readOnly && (
-                        <>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openEdit(tool)}
-                            className="text-xs"
-                            aria-label={`Edit ${tool.capability.name}`}
-                          >
-                            <Pencil className="mr-1 h-3 w-3" />
-                            Edit
-                          </Button>
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-destructive text-xs"
+                  {!readOnly && (
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openEdit(tool)}
+                          className="text-xs"
+                          aria-label={`Edit ${tool.capability.name}`}
+                        >
+                          <Pencil className="mr-1 h-3 w-3" />
+                          Edit
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="sm" className="text-destructive text-xs">
+                              Remove
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Remove tool?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This will remove the tool from MCP. Connected clients will no longer
+                                be able to call it.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                onClick={() => void handleRemove(tool.id)}
                               >
                                 Remove
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Remove tool?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  This will remove the tool from MCP. Connected clients will no
-                                  longer be able to call it.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction
-                                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                  onClick={() => void handleRemove(tool.id)}
-                                >
-                                  Remove
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </>
-                      )}
-                    </div>
-                  </TableCell>
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))
             )}

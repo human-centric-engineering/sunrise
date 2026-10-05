@@ -27,7 +27,10 @@ import { z } from 'zod';
 import { AlertCircle, Check, Loader2, Save, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
+import {
+  SharedSettingsSaveHint,
+  useSharedSettingsReadOnly,
+} from '@/components/admin/shared-settings-access';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Label } from '@/components/ui/label';
@@ -527,6 +530,7 @@ export function DefaultModelsForm({
             {/* Wizard mode owns its own Save & Continue button in the
                 card footer, so the header version would be duplicative
                 and confusing about which one advances the flow. */}
+            <SharedSettingsSaveHint />
             {!wizardMode && (
               <Button type="submit" size="sm" disabled={readOnly || submitting || !isDirty}>
                 {submitting ? (

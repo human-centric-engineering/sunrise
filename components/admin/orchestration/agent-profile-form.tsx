@@ -25,7 +25,10 @@ import { z } from 'zod';
 import { AlertCircle, Check, Loader2, Save } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
+import {
+  SharedSettingsSaveHint,
+  useSharedSettingsReadOnly,
+} from '@/components/admin/shared-settings-access';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -168,6 +171,7 @@ export function AgentProfileForm({ mode, profile }: Props) {
           <Button type="button" variant="outline" asChild>
             <Link href="/admin/orchestration/agent-profiles">Cancel</Link>
           </Button>
+          <SharedSettingsSaveHint />
           <Button type="submit" disabled={readOnly || submitting || saved}>
             {submitting ? (
               <>

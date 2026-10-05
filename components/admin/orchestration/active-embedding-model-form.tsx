@@ -23,7 +23,10 @@ import * as React from 'react';
 import { AlertCircle, Check, Loader2, Save } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
+import {
+  SharedSettingsSaveHint,
+  useSharedSettingsReadOnly,
+} from '@/components/admin/shared-settings-access';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Label } from '@/components/ui/label';
@@ -183,6 +186,7 @@ export function ActiveEmbeddingModelForm({
         )}
 
         <div className="flex items-center gap-2">
+          <SharedSettingsSaveHint />
           <Button
             type="button"
             onClick={() => void handleSave()}

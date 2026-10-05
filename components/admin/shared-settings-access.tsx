@@ -28,23 +28,39 @@ import { API } from '@/lib/api/endpoints';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { cn } from '@/lib/utils';
 
+/** `getSharedSettingsAccess()`'s answer, as the layout hands it down. */
 interface SharedSettingsAccessValue {
   readOnly: boolean;
   canSwitch: boolean;
+  /** Read only when `readOnly`: whether the user could be switched at all. */
+  installOrgMember: boolean;
+  isInstallOrg: boolean;
 }
 
+// Outside a provider: editable, as every component was before this existed —
+// but not the install org, so an install-org-only action (the model audit)
+// stays hidden unless something says otherwise.
 const SharedSettingsAccessContext = createContext<SharedSettingsAccessValue>({
   readOnly: false,
   canSwitch: false,
+  installOrgMember: true,
+  isInstallOrg: false,
 });
 
 export function SharedSettingsAccessProvider({
   readOnly,
   canSwitch,
+  installOrgMember = true,
+  isInstallOrg = !readOnly,
   children,
-}: SharedSettingsAccessValue & { children: React.ReactNode }) {
+}: Pick<SharedSettingsAccessValue, 'readOnly' | 'canSwitch'> &
+  Partial<Pick<SharedSettingsAccessValue, 'installOrgMember' | 'isInstallOrg'>> & {
+    children: React.ReactNode;
+  }) {
   return (
-    <SharedSettingsAccessContext.Provider value={{ readOnly, canSwitch }}>
+    <SharedSettingsAccessContext.Provider
+      value={{ readOnly, canSwitch, installOrgMember, isInstallOrg }}
+    >
       {children}
     </SharedSettingsAccessContext.Provider>
   );
@@ -55,12 +71,40 @@ export function useSharedSettingsReadOnly(): boolean {
   return useContext(SharedSettingsAccessContext).readOnly;
 }
 
+/** This page acts for the install org — for actions only it can take. */
+export function useIsInstallOrg(): boolean {
+  return useContext(SharedSettingsAccessContext).isInstallOrg;
+}
+
+/**
+ * Renders its children only where shared settings can be changed — for a
+ * server page's own create link, so it asks the same provider as everything
+ * else on the page instead of a second server read.
+ */
+export function SharedSettingsEditOnly({ children }: { children: React.ReactNode }) {
+  return useSharedSettingsReadOnly() ? null : <>{children}</>;
+}
+
+/**
+ * Beside a save button the hook disabled: why it is disabled, where the
+ * admin is looking. Renders nothing where the settings can be changed.
+ */
+export function SharedSettingsSaveHint({ className }: { className?: string }) {
+  const readOnly = useSharedSettingsReadOnly();
+  if (!readOnly) return null;
+  return (
+    <p className={cn('text-muted-foreground text-xs', className)}>
+      Read-only here: changes save from the install organisation.
+    </p>
+  );
+}
+
 /**
  * The read-only hint for a shared-settings page. Renders nothing where the
  * settings can be changed.
  */
 export function SharedSettingsReadOnlyNotice({ className }: { className?: string }) {
-  const { readOnly, canSwitch } = useContext(SharedSettingsAccessContext);
+  const { readOnly, canSwitch, installOrgMember } = useContext(SharedSettingsAccessContext);
   const router = useRouter();
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,7 +143,9 @@ export function SharedSettingsReadOnlyNotice({ className }: { className?: string
           install organisation.
           {canSwitch
             ? ''
-            : ' This address decides the organisation, so open the admin from the install organisation’s address to change them.'}
+            : !installOrgMember
+              ? ' You are not a member of the install organisation, so ask one of its admins to make the change.'
+              : ' This address decides the organisation, so open the admin from the install organisation’s address to change them.'}
         </p>
         {error && (
           <p role="alert" className="text-destructive">

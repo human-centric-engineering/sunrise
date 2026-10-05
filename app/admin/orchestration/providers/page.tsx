@@ -10,7 +10,6 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { KNOWN_PROVIDERS, detectApiKeyEnvVar } from '@/lib/orchestration/llm/known-providers';
-import { getSharedSettingsAccess } from '@/lib/tenancy/shared-settings-access';
 
 export const metadata: Metadata = {
   title: 'Providers · AI Orchestration',
@@ -44,11 +43,7 @@ async function getModels(): Promise<ModelRow[]> {
 }
 
 export default async function ProvidersListPage() {
-  const [providers, models, sharedSettings] = await Promise.all([
-    getProviders(),
-    getModels(),
-    getSharedSettingsAccess(),
-  ]);
+  const [providers, models] = await Promise.all([getProviders(), getModels()]);
 
   // Server-side env scan. Hide the "Add provider" CTAs when no hosted
   // provider has a matching env var, since the resulting config row
@@ -102,10 +97,6 @@ export default async function ProvidersListPage() {
         initialProviders={providers}
         initialModels={models}
         hasAnyEnvKey={hasAnyEnvKey}
-        // The provider audit runs the install org's own workflow and agents,
-        // which no other org has, and writes the shared model catalogue — so
-        // its button is offered in the install org only.
-        canAuditModels={sharedSettings.isInstallOrg}
       />
     </div>
   );
