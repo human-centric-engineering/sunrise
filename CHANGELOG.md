@@ -714,6 +714,19 @@ release process.
 
 ### Security
 
+- **`send_message_to_channel` sends only within the conversation being
+  handled** (t-770). It sent on whatever `conversationId` its caller passed, so
+  a model steered by the person chatting, by an inbound message or by content
+  an MCP client was reading could have the operator's number message anyone
+  who had ever written to it, given that conversation's id. Now a `tool_call`
+  workflow step still sends where its definition says; an `agent_call` step
+  (and the orchestrator) only to the conversation that started the run, and
+  only on a run the inbound route started; an interactive chat only to its own
+  conversation; an MCP client never. Anything else is refused with
+  `conversation_not_permitted` before the conversation is read. **For an
+  operator:** an agent-driven workflow that sent to a conversation other than
+  the one that started its run, or an MCP client that sent outbound messages,
+  now gets that refusal; use a `tool_call` step for a deliberate send.
 - **`csvEscape` quotes a lone CR, so free text can no longer start a CSV
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after
   the first character was emitted bare, a spreadsheet read it as a record break,

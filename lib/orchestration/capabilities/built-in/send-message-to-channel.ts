@@ -40,6 +40,7 @@ import {
 } from '@/lib/orchestration/outbound/types';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import type { ConversationChannel } from '@/lib/orchestration/inbound/types';
+import { isInboundTriggerSource } from '@/lib/orchestration/inbound/trigger-source';
 import { CostOperation } from '@/types/orchestration';
 import { redactedString } from '@/lib/security/redact';
 
@@ -136,6 +137,48 @@ function narrowConversationChannel(value: string | null): ConversationChannel | 
   return KNOWN_CONVERSATION_CHANNELS.has(value as ConversationChannel)
     ? (value as ConversationChannel)
     : null;
+}
+
+/** Where an inbound-started run records its own conversation (the inbound route writes it). */
+const runConversationSchema = z.object({
+  triggerMeta: z.object({ conversationId: z.string().min(1) }),
+});
+
+/**
+ * Whether this call may send on `conversationId` (t-770). The model picks that
+ * argument, and whoever steers the model could otherwise have the operator's
+ * number message anyone who ever wrote to it. So a model may send only within
+ * the conversation it is handling:
+ *   - **a `tool_call` step** (dispatched under a workflow label): the id comes
+ *     from the workflow definition an admin wrote, not from a model; allowed
+ *     as before.
+ *   - **an AI-driven workflow step** (`agent_call`, and the orchestrator that
+ *     delegates to it): only the conversation that started the run, the
+ *     execution's `inputData.triggerMeta.conversationId`, and only on a run
+ *     the inbound route started (`triggerSource` `inbound:<channel>`). That
+ *     route writes `triggerMeta` itself and puts a sender's own payload under
+ *     `trigger`, so text in an inbound message cannot redirect the reply. Any
+ *     other run's input was chosen by someone else, `run_workflow`'s model
+ *     included, so a `triggerMeta` there proves nothing and is not read.
+ *   - **a chat turn**: only the chat's own conversation. A web chat is never
+ *     an inbound channel thread, so in practice the tool sends nothing here.
+ *   - **anything else**, an MCP client included: refused. It has no
+ *     conversation of its own, and the model behind it can be reading
+ *     untrusted content too (owner ruling, 2026-10-06).
+ */
+async function mayTarget(conversationId: string, context: CapabilityContext): Promise<boolean> {
+  if (context.workflowExecutionId) {
+    if (isWorkflowAgentId(context.agentId)) return true;
+    const execution = await prisma.aiWorkflowExecution.findUnique({
+      where: { id: context.workflowExecutionId },
+      select: { inputData: true, triggerSource: true },
+    });
+    if (!execution || !isInboundTriggerSource(execution.triggerSource)) return false;
+    const run = runConversationSchema.safeParse(execution.inputData);
+    return run.success && run.data.triggerMeta.conversationId === conversationId;
+  }
+  if (context.conversationId) return context.conversationId === conversationId;
+  return false;
 }
 
 async function loadConversation(conversationId: string): Promise<LoadedConversation | null> {
@@ -266,6 +309,15 @@ export class SendMessageToChannelCapability extends BaseCapability<Args, Data> {
       return this.error(
         'Sending outbound messages is unavailable to anonymous embed widget visitors.',
         'anonymous_visitor'
+      );
+    }
+
+    // Only the conversation this call is handling, before anything is read
+    // or written: the same answer whether or not the named one exists.
+    if (!(await mayTarget(args.conversationId, context))) {
+      return this.error(
+        'This tool can only send within the conversation being handled.',
+        'conversation_not_permitted'
       );
     }
 

@@ -744,6 +744,19 @@ Result `data` is a discriminated union on `status`:
 
 Workflow failure surfaces as a capability error (`code: 'workflow_failed'`) so the LLM treats it as a tool failure rather than a sad-path success. See [Streaming Chat — In-chat approvals](./chat.md#in-chat-approvals) for the full event sequence.
 
+### `send_message_to_channel`
+
+Replies to a person on the channel they contacted you on (SMS, WhatsApp), through the outbound adapter for the conversation's recorded provider. Takes `conversationId` and `message` (plus an optional WhatsApp `template`); the binding's `customConfig` carries the provider credentials by env-var name. Setup, guards (STOP opt-out, WhatsApp 24-hour window, length cap, throttle, idempotency) and the worked example are in the [SMS / WhatsApp inbound-reply recipe](./recipes/sms-whatsapp-inbound-reply.md); adding a provider is in [outbound-adapters.md](./outbound-adapters.md).
+
+**It sends only within the conversation being handled** (t-770). The `conversationId` argument is chosen by whoever drives the call, so an unrestricted one would let a steered model message anyone who ever wrote to the operator's number:
+
+- a `tool_call` workflow step sends where its definition says (no model chooses);
+- an `agent_call` step, or the orchestrator, only to the conversation that started the run, and only on a run the inbound route started (`isInboundTriggerSource`, `lib/orchestration/inbound/trigger-source.ts`);
+- an interactive chat only to its own conversation, which is never a channel thread;
+- an MCP client or an anonymous embed widget visitor, never.
+
+Anything else is refused with `conversation_not_permitted` (an embed visitor with `anonymous_visitor`) before the conversation is read.
+
 ### `upload_to_storage`
 
 Persists a binary artefact (PDF from a renderer, image from a generator, CSV from a report builder) to the configured Sunrise storage backend (S3, Vercel Blob, or local) and returns a URL the user can open. Closes the loop with `call_external_api` for endpoints that return bytes inline as `{ encoding: 'base64', contentType, data }` — the agent can chain render → upload without the LLM having to interpret base64.

@@ -48,6 +48,7 @@ import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 import { bootstrapInboundAdapters } from '@/lib/orchestration/inbound/bootstrap';
 import { getInboundAdapter } from '@/lib/orchestration/inbound/registry';
 import { resolveConversation } from '@/lib/orchestration/inbound/conversation-resolver';
+import { inboundTriggerSource } from '@/lib/orchestration/inbound/trigger-source';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
 import { runAsCredentialLookup, runAsOrg } from '@/lib/tenancy/context';
 import { isOrgRefusal, resolveCredentialOrg } from '@/lib/tenancy/entry';
@@ -339,7 +340,7 @@ async function fireTrigger(
   // Attribution is not lost — `triggerSource` records the channel, and
   // `AiWorkflowTrigger.createdBy` still names the operator on the trigger
   // row itself, which is where "who set this up" belongs.
-  const triggerSource = `inbound:${channel}`;
+  const triggerSource = inboundTriggerSource(channel);
 
   // Conversation enrichment — only for adapters that carry a real end-user
   // identity (Twilio, WhatsApp Cloud) AND a trigger metadata that names the

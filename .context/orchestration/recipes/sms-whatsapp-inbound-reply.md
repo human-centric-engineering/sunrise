@@ -69,6 +69,17 @@ You only need a `providers.<slug>` block for channels you actually use. A bindin
 
 `throttle.perConversationPerHour` caps outbound dispatches per `conversationId` in a trailing hour (default 5). `allowForceProvider` enables the admin `forceProvider` override (false by default — must be explicitly opted in).
 
+**Which conversation a call may send on** (t-770). The `conversationId` argument comes from whoever drives the call, and an unrestricted one would let a steered model message anyone who ever wrote to your number. So the capability sends only within the conversation being handled:
+
+| Called from                                         | May send on                                                                                                                                                                                    |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A `tool_call` workflow step (this recipe's shape)   | Whatever the workflow definition names, usually `{{trigger.conversationId}}`. A model never chooses it.                                                                                        |
+| An `agent_call` step, or the orchestrator           | Only the conversation that started the run (`inputData.triggerMeta.conversationId`), and only on a run the inbound route started. A sender's text cannot redirect the reply to another thread. |
+| An interactive chat (admin, consumer)               | Only the chat's own conversation, which is never an inbound channel thread, so in practice nothing.                                                                                            |
+| An MCP client, or an anonymous embed widget visitor | Nothing: refused.                                                                                                                                                                              |
+
+Anything else is refused with `conversation_not_permitted` before the conversation is read.
+
 ## 6. Inbound trigger setup
 
 For each inbound channel, create an `AiWorkflowTrigger`:
@@ -165,6 +176,7 @@ See [outbound-adapters.md](../outbound-adapters.md) — three-step process: new 
 - **Don't ignore STOP / UNSUBSCRIBE.** TCPA (US) and PECR (UK) require honouring the standard keywords. The conversation-resolver flips `smsOptedOut = true` on first-token match (STOP / UNSUBSCRIBE / CANCEL / END / QUIT) and the outbound capability refuses further dispatches. **Do not** code around this by sending via `call_external_api` directly.
 - **Don't hardcode phone numbers in workflow conditions.** Use `triggerMeta.conversationId` to route — the capability handles the address lookup. Workflows that branch on specific phone numbers don't survive provider swaps and leak PII into workflow definitions (which are versioned, exportable, etc.).
 - **Don't hardcode a provider in workflow conditions either.** The capability dispatches based on `AiConversation.provider`. A workflow that says `if provider === 'twilio'` defeats the point of the OutboundAdapter abstraction.
+- **Don't give this agent to people to chat with.** Keep the agent this capability is bound to internal: an interactive chat cannot send through it (see [§5](#5-capability-binding)), so making the agent public or invite-only on the consumer chat gains nothing and only advertises an outbound tool to strangers. Use a separate agent for web chat.
 - **Don't put credentials in `customConfig`.** Use env-var **names** (`accountSidEnv: 'TWILIO_ACCOUNT_SID'`). The actual secret lives in `process.env`. Rotation = change one env var; no admin form edits.
 
 ## 12. Test plan
