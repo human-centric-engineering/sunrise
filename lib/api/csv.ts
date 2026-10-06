@@ -1,7 +1,8 @@
 /**
  * CSV escaping with formula-injection protection.
  *
- * RFC 4180 quoting rules cover commas, quotes, and newlines — they do
+ * RFC 4180 quoting rules cover commas, quotes, and line breaks — a lone
+ * CR included, since spreadsheets read one as a record break. They do
  * NOT cover the leading characters spreadsheet applications interpret
  * as the start of a formula. Excel, LibreOffice Calc and Google Sheets
  * all evaluate cells that begin with `=`, `+`, `-`, `@`, tab (`\t`) or

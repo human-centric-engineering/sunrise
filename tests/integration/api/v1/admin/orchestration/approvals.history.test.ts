@@ -258,10 +258,11 @@ describe('GET /api/v1/admin/orchestration/approvals/history', () => {
     expect(records).toHaveLength(3);
     const [header, ...rows] = records;
     for (const row of rows) expect(row).toHaveLength(header.length);
-    const notesCol = header.indexOf('notes');
-    const reasonCol = header.indexOf('reason');
-    expect(rows.map((r) => r[notesCol])).toContain(notes);
-    expect(rows.map((r) => r[reasonCol])).toContain(reason);
+    const col = (name: string) => header.indexOf(name);
+    const approved = rows.find((r) => r[col('decision')] === 'approved');
+    const rejected = rows.find((r) => r[col('decision')] === 'rejected');
+    expect(approved?.[col('notes')]).toBe(notes);
+    expect(rejected?.[col('reason')]).toBe(reason);
   });
 
   // ─── Auth / rate-limit guards ─────────────────────────────────────────────
