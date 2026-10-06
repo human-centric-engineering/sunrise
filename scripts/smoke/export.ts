@@ -103,6 +103,8 @@ async function main(): Promise<void> {
     // capitals are too: the contact row is stored lower-cased, so the export
     // only finds it if the source normalises the account address.
     const email = `${PREFIX}_Subject-${stamp}@Example.com`;
+    // The same address with that one `_` swapped for a literal character.
+    const nearMatchEmail = `${PREFIX}xSubject-${stamp}@Example.com`;
 
     // ADMIN so the export also covers an attribution source (a created agent).
     const subject = await prisma.user.create({
@@ -282,7 +284,7 @@ async function main(): Promise<void> {
     const strangerContact = await prisma.contactSubmission.create({
       data: {
         name: `${PREFIX} stranger`,
-        email: email.replace('_', 'x').toLowerCase(),
+        email: nearMatchEmail.toLowerCase(),
         subject: 'smoke',
         message: 'smoke stranger enquiry',
       },
