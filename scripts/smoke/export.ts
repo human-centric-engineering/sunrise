@@ -93,11 +93,14 @@ async function main(): Promise<void> {
   let subjectUserId: string | null = null;
   let agentId: string | null = null;
   let contactId: string | null = null;
+  let strangerContactId: string | null = null;
   let workflowId: string | null = null;
   let costLogId: string | null = null;
 
   try {
-    const email = `${PREFIX}-subject-${stamp}@example.com`;
+    // The `_` is deliberate: an unescaped ILIKE reads it as a one-character
+    // wildcard, which the stranger's contact row below exists to catch.
+    const email = `${PREFIX}_subject-${stamp}@example.com`;
 
     // ADMIN so the export also covers an attribution source (a created agent).
     const subject = await prisma.user.create({
@@ -260,17 +263,29 @@ async function main(): Promise<void> {
       },
     });
 
-    // No FK to User — proves the by-email source resolves against real Postgres,
-    // including the case-insensitive match.
+    // No FK to User — proves the by-email source resolves against real Postgres.
+    // Stored lower-cased, as the contact route's `emailSchema` stores it.
     const contact = await prisma.contactSubmission.create({
       data: {
         name: `${PREFIX} contact`,
-        email: email.toUpperCase(),
+        email: email.toLowerCase(),
         subject: 'smoke',
         message: 'smoke enquiry',
       },
     });
     contactId = contact.id;
+
+    // A stranger whose address differs from the subject's only where the
+    // subject's has `_`. A pattern match would hand this row to the subject.
+    const strangerContact = await prisma.contactSubmission.create({
+      data: {
+        name: `${PREFIX} stranger`,
+        email: email.replace('_', 'x').toLowerCase(),
+        subject: 'smoke',
+        message: 'smoke stranger enquiry',
+      },
+    });
+    strangerContactId = strangerContact.id;
 
     // ---------------------------------------------------------------------
     console.log('\nexporting…');
@@ -319,7 +334,12 @@ async function main(): Promise<void> {
     check(bundle.personalData.apiKeys?.length === 1, 'API key metadata exported');
     check(
       bundle.personalData.contactSubmissions?.length === 1,
-      'contact submission matched by email, case-insensitively'
+      'contact submission matched by email'
+    );
+    const contacts = bundle.personalData.contactSubmissions as Array<{ id: string }> | undefined;
+    check(
+      contacts?.[0]?.id === contact.id,
+      "the exported contact submission is the subject's own, not a near-match"
     );
     check(bundle.attributions.agents?.length === 1, 'created agent exported as attribution');
 
@@ -530,9 +550,10 @@ async function main(): Promise<void> {
     // webhook subscriptions all cascade from the user; the agent, the workflow
     // (and its executions) and the contact submission do not — the workflow is
     // SetNull-retained on the user, so it outlives the delete below.
-    if (contactId)
+    const contactIds = [contactId, strangerContactId].filter((id): id is string => id !== null);
+    if (contactIds.length > 0)
       await prisma.contactSubmission
-        .deleteMany({ where: { id: contactId } })
+        .deleteMany({ where: { id: { in: contactIds } } })
         .catch(() => undefined);
     // Both cost rows: the attributed one is SetNull (survives the user delete)
     // and the unattributed one was never linked, so neither cascades away.
