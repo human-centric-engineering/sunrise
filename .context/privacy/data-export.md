@@ -233,7 +233,7 @@ cascade**. Sunrise has two, both in the manifest by hand:
 
 | Table               | Identified by                    | How it is matched                     |
 | ------------------- | -------------------------------- | ------------------------------------- |
-| `ContactSubmission` | `email` — no user id at all      | `email`, case-insensitively           |
+| `ContactSubmission` | `email` — no user id at all      | `email`, exactly, normalised          |
 | `FeatureFlag`       | `createdBy String?`, no relation | `createdBy`, as an attribution source |
 
 The guard casts **two nets**, because the first one missed both of these:
@@ -260,6 +260,14 @@ If your fork adds a table like this — anything keyed by email, phone number, o
 an external identifier rather than `userId` — **the guard will not find it for
 you.** Add it to your own manifest by hand and write a test row that says why.
 
+**Match such a key exactly, on a value normalised the way its writer stores it**
+— never with `mode: 'insensitive'`. Prisma compiles that to an unescaped
+`ILIKE`, so `_` and `%` in an address match other people's rows: in an export
+that hands the subject a stranger's data, and copied onto an erasure path it
+deletes a stranger's rows. `ContactSubmission`'s only writer stores
+`emailSchema` output (trimmed, lower-cased), so its source matches
+`email.trim().toLowerCase()`.
+
 ## Extending It — the App Seam
 
 Fill in `collectAppSubjectData()` in `lib/app/data-export.ts`. It receives the
@@ -276,7 +284,8 @@ export async function collectAppSubjectData({
 }: AppSubjectQuery): Promise<AppSubjectData> {
   const [invoices, enquiries] = await Promise.all([
     prisma.appInvoice.findMany({ where: { userId }, omit: { gatewayToken: true } }),
-    prisma.appEnquiry.findMany({ where: { email: { equals: email, mode: 'insensitive' } } }),
+    // Exact, on the address as the writer stored it — see "Tables With No `User` FK".
+    prisma.appEnquiry.findMany({ where: { email: email.trim().toLowerCase() } }),
   ]);
 
   return { invoices, enquiries };

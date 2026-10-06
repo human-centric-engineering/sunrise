@@ -272,19 +272,23 @@ describe('exportUserData', () => {
       expect(argsTo('aiWorkflowExecution').where).toEqual({ userId: 'user-1' });
     });
 
-    it('matches contact submissions on the subject email, case-insensitively', async () => {
-      // No FK to User — the public form takes an address. Case matters because
-      // the stored address may differ in case from the account's.
+    it('matches contact submissions exactly on the normalised subject email', async () => {
+      // No FK to User — the public form takes an address, and its only writer
+      // stores it trimmed and lower-cased (`emailSchema`). So the read
+      // normalises the same way and matches exactly. Not `mode: 'insensitive'`:
+      // Prisma compiles that to an unescaped ILIKE, where `_` and `%` in an
+      // address match other people's submissions.
       await exportUserData(PARAMS);
 
-      expect(argsTo('contactSubmission').where).toEqual({
-        email: { equals: 'Subject@Example.com', mode: 'insensitive' },
-      });
+      expect(argsTo('contactSubmission').where).toEqual({ email: 'subject@example.com' });
     });
   });
 
   describe('reading across every org at multi (§107 t-748)', () => {
-    const isSubject = (value: unknown) => value === SUBJECT.id || value === SUBJECT.email;
+    // The email as the contact form stores it: trimmed and lower-cased.
+    const NORMALISED_EMAIL = SUBJECT.email.trim().toLowerCase();
+    const isSubject = (value: unknown) =>
+      value === SUBJECT.id || value === SUBJECT.email || value === NORMALISED_EMAIL;
     const isRecord = (value: unknown): value is Record<string, unknown> =>
       typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -301,7 +305,9 @@ describe('exportUserData', () => {
       if (isSubject(value)) return true;
       if (!isRecord(value)) return false;
       const keys = Object.keys(value);
-      if (keys.every((k) => k === 'equals' || k === 'mode')) return isSubject(value.equals);
+      // `equals` alone. With `mode: 'insensitive'` Prisma emits an unescaped
+      // ILIKE, so `_` or `%` in the value match other people's rows.
+      if (keys.length === 1 && keys[0] === 'equals') return isSubject(value.equals);
       if (keys.length === 1 && Array.isArray(value.in)) {
         return value.in.length > 0 && value.in.every(isSubject);
       }
@@ -445,9 +451,12 @@ describe('exportUserData', () => {
       expect(pinsSubject('Org', { memberships: { some: { userId: id, role: 'OWNER' } } })).toBe(
         true
       );
+      expect(pinsSubject('ContactSubmission', { email: NORMALISED_EMAIL })).toBe(true);
+      expect(pinsSubject('ContactSubmission', { email: { equals: NORMALISED_EMAIL } })).toBe(true);
+      // A case-insensitive match is a pattern match in Postgres, not a pin.
       expect(
         pinsSubject('ContactSubmission', { email: { equals: SUBJECT.email, mode: 'insensitive' } })
-      ).toBe(true);
+      ).toBe(false);
     });
 
     /** Hold the first source's read open; return whether the second started meanwhile. */

@@ -268,9 +268,17 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     // reason the manifest still needs a human deciding what a new table holds.
     // Any table keyed by email, phone number, or an external identifier needs
     // the same treatment; nothing mechanical will find it for you.
+    //
+    // ⚠️ If you copy this, match EXACTLY on a value normalised the way the
+    // writer normalises it — never `mode: 'insensitive'`. Prisma compiles that
+    // to an unescaped `ILIKE`, so `_` and `%` in an address match other
+    // people's rows: here that hands a stranger's message to the subject, and
+    // on an erasure path it deletes a stranger's rows. The contact route is
+    // the only writer and stores `emailSchema` output (trimmed, lower-cased),
+    // so the same normalisation here finds every row of the subject's.
     fetch: ({ email }) =>
       prisma.contactSubmission.findMany({
-        where: { email: { equals: email, mode: 'insensitive' } },
+        where: { email: email.trim().toLowerCase() },
         orderBy: byCreatedAt,
       }),
   },
