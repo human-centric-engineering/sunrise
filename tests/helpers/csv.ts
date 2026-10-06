@@ -1,8 +1,10 @@
 /**
  * Split CSV text into records and cells the way a spreadsheet reads it.
  *
- * Quote-aware: a CR or LF inside a double-quoted cell is data, and `""`
- * inside quotes is one literal quote. Outside quotes, CRLF, a lone LF
+ * Quote-aware: a cell is quoted only when its first character is `"`;
+ * a CR or LF inside a quoted cell is data, and `""` inside it is one
+ * literal quote. A `"` later in an unquoted cell is a literal character,
+ * as spreadsheets read it. Outside quotes, CRLF, a lone LF
  * and a lone CR each end a record — Excel, LibreOffice Calc and Google
  * Sheets all accept a bare CR as a record separator, so a test that
  * splits on `\n` or `\r\n` alone cannot see a record the export split
@@ -13,9 +15,14 @@ export function parseCsvRecords(text: string): string[][] {
   let record: string[] = [];
   let cell = '';
   let inQuotes = false;
+  // Whether the current record has consumed anything, so a last record
+  // holding one empty cell (`""`) is kept rather than dropped.
+  let inRecord = false;
 
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
+    const fieldStart = cell === '' && (i === 0 || /[,\r\n]/.test(text[i - 1]));
+    if (ch !== '\r' && ch !== '\n') inRecord = true;
     if (inQuotes) {
       if (ch === '"' && text[i + 1] === '"') {
         cell += '"';
@@ -25,7 +32,7 @@ export function parseCsvRecords(text: string): string[][] {
       } else {
         cell += ch;
       }
-    } else if (ch === '"') {
+    } else if (ch === '"' && fieldStart) {
       inQuotes = true;
     } else if (ch === ',') {
       record.push(cell);
@@ -36,11 +43,12 @@ export function parseCsvRecords(text: string): string[][] {
       records.push(record);
       record = [];
       cell = '';
+      inRecord = false;
     } else {
       cell += ch;
     }
   }
-  if (cell !== '' || record.length > 0) {
+  if (inRecord) {
     record.push(cell);
     records.push(record);
   }
