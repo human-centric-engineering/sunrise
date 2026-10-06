@@ -77,7 +77,7 @@ context is built to hold nothing a value-blind redactor would miss:
   or mixed case. Short
   readable segments (`v1`, `admin`, `123`) and readable slugs of any length
   (`provider-models`, `how-we-scaled-to-10000-users`) stay.
-- **Every other logged path is collapsed the same way**: the proxy's
+- **Every other server-side logged path is collapsed the same way**: the proxy's
   `http_access` `path` (which covers page routes such as `/s/<token>` as well
   as API routes), the guards' `path` on their refusal and ownership lines
   (`loggablePath()`), the auth catch-all's `authPath` (better-auth serves

@@ -734,7 +734,7 @@ release process.
     logged verbatim, for a dynamic segment the heuristic cannot recognise (a
     short token, a dotted or one-case secret).
     `DELETE /api/v1/admin/invitations/[email]` uses it.
-  - Every other line that logged a request path collapses it the same way:
+  - The other server-side lines that logged a request path collapse it the same way:
     the proxy's `http_access` line (`LOG_HTTP_ACCESS=true`), which covers page
     routes such as a `/s/<token>` share link; the auth guards' `path` on
     their refusal and ownership lines; the auth catch-all's `authPath`
