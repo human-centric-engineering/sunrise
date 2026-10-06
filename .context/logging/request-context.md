@@ -124,7 +124,8 @@ export async function POST(request: NextRequest) {
   const context = await getFullContext(request);
   const contextLogger = logger.withContext(context);
 
-  // Includes: requestId, userId, sessionId, email, method, url, userAgent
+  // Includes: requestId, userId, sessionId, email, method, url (no query
+  // string — it can carry a token or an email, #685), userAgent
   contextLogger.info('Processing request');
 }
 ```

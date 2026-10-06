@@ -118,7 +118,7 @@ export async function getRequestContext(request?: Request): Promise<{
     // platform credential.
     orgId: getTenantContext()?.orgId ?? undefined,
     method: request?.method,
-    url: request?.url,
+    url: request ? stripQuery(request.url) : undefined,
     userAgent: headersList.get('user-agent') || undefined,
   };
 }
@@ -198,6 +198,18 @@ export async function getFullContext(request?: Request): Promise<{
     ...requestContext,
     ...userContext,
   };
+}
+
+/**
+ * Drop the query string and fragment from a URL for logging.
+ *
+ * The request context is bound to every line a route logs, and the sanitizer
+ * redacts by key name only — so a token or an email in a query string would
+ * reach stdout and the admin log buffer verbatim inside `url` (#685). Origin
+ * and path are kept; everything from the first `?` or `#` is not.
+ */
+function stripQuery(url: string): string {
+  return url.split(/[?#]/, 1)[0] ?? url;
 }
 
 /**

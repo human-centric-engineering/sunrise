@@ -679,6 +679,16 @@ release process.
 
 ### Security
 
+- **The request log context no longer carries the query string** (#685).
+  `getRequestContext()` (and so `getFullContext()` and `getRouteLogger()`)
+  bound `url: request.url`, which went to stdout and the admin log buffer on
+  every line a route logged — redaction is by key name, so a token or an email
+  in `?…` was written verbatim beside the redacted fields. `url` is now the
+  origin and path only; the query string and fragment are dropped. A fork that
+  parsed query parameters out of `context.url` in its logs must log the ones it
+  needs explicitly. A credential in a **path** segment (`endpoint`, and
+  `proxy.ts`'s `http_access` `path`) is still logged; that half of #685 is open.
+
 - **`csvEscape` quotes a lone CR, so free text can no longer start a CSV
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after
   the first character was emitted bare, a spreadsheet read it as a record break,

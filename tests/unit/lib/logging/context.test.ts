@@ -186,6 +186,40 @@ describe('Logging Context Utilities', () => {
       expect(context.userAgent).toBeUndefined();
     });
 
+    // #685: the context is bound to every line a route logs, and redaction is by
+    // key name only — a query string in `url` reaches stdout and the admin log
+    // buffer verbatim, whatever the route's own log fields say.
+    it('should drop the query string and fragment from url', async () => {
+      // Arrange
+      const mockRequest = {
+        method: 'GET',
+        url: 'http://localhost:3000/api/v1/invitations/metadata?token=live-secret&email=ada%40example.com#frag',
+      } as Request;
+      vi.mocked(headers).mockResolvedValue(createMockHeaders({ 'x-request-id': 'req-q' }) as any);
+
+      // Act
+      const context = await getRequestContext(mockRequest);
+
+      // Assert
+      expect(context.url).toBe('http://localhost:3000/api/v1/invitations/metadata');
+      const serialised = JSON.stringify(context);
+      expect(serialised).not.toContain('live-secret');
+      expect(serialised).not.toContain('ada%40example.com');
+      expect(serialised).not.toContain('frag');
+    });
+
+    it('should drop the query string from an unparseable url', async () => {
+      // Arrange
+      const mockRequest = { method: 'GET', url: '/relative/path?q=private' } as Request;
+      vi.mocked(headers).mockResolvedValue(createMockHeaders({ 'x-request-id': 'req-r' }) as any);
+
+      // Act
+      const context = await getRequestContext(mockRequest);
+
+      // Assert
+      expect(context.url).toBe('/relative/path');
+    });
+
     it('should generate request ID if not in headers', async () => {
       // Arrange
       const mockRequest = {
