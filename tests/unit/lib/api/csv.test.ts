@@ -7,6 +7,7 @@
 import { describe, it, expect } from 'vitest';
 
 import { csvEscape } from '@/lib/api/csv';
+import { splitCsvRecords } from '@/tests/helpers/csv';
 
 describe('csvEscape', () => {
   describe('RFC 4180 quoting', () => {
@@ -28,6 +29,11 @@ describe('csvEscape', () => {
 
     it('handles empty strings without prefixing', () => {
       expect(csvEscape('')).toBe('');
+    });
+
+    it('wraps values containing a carriage return in double quotes', () => {
+      expect(csvEscape('line1\rline2')).toBe('"line1\rline2"');
+      expect(csvEscape('line1\r\nline2')).toBe('"line1\r\nline2"');
     });
   });
 
@@ -60,12 +66,25 @@ describe('csvEscape', () => {
     });
 
     it('neutralises a leading carriage return', () => {
-      // \r is a formula trigger on its own but the RFC 4180 wrap
-      // doesn't currently watch for it (only \n). Locked in here so
-      // any future widening of the wrapper's trigger set keeps both
-      // behaviours intact.
-      expect(csvEscape('\rfoo')).toBe("'\rfoo");
+      // \r is a formula trigger, and also a line break, so the cell is
+      // both prefixed and quoted.
+      expect(csvEscape('\rfoo')).toBe('"\'\rfoo"');
     });
+
+    it.each(['\r\n', '\r', '\n'])(
+      'does not let an interior line break (%j) start a record of its own',
+      (sep) => {
+        // The prefix only sees the first character of a cell, so a line
+        // break mid-cell would otherwise hand the next record's first
+        // cell to the submitter. Quoting keeps the break as cell data.
+        const cell = csvEscape(`thanks!${sep}=SUM(A1:A2)`);
+        const csv = ['a,b', [cell, 'x'].join(',')].join(sep);
+
+        const records = splitCsvRecords(csv);
+        expect(records).toHaveLength(2);
+        expect(records[1]).toEqual([`thanks!${sep}=SUM(A1:A2)`, 'x']);
+      }
+    );
 
     it('applies BOTH neutralisation AND quoting when the value also contains a comma', () => {
       // Neutraliser fires first; the resulting string then needs RFC

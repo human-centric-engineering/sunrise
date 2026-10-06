@@ -50,6 +50,7 @@ vi.mock('@/lib/api/context', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
+import { splitCsvRecords } from '@/tests/helpers/csv';
 import { GET as ExportConversations } from '@/app/api/v1/admin/orchestration/conversations/export/route';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
@@ -316,6 +317,25 @@ describe('GET /conversations/export', () => {
 
     expect(text).toContain('"Title, with comma"');
     expect(text).toContain('"Content ""with"" quotes"');
+  });
+
+  it('keeps a bare carriage return in message content inside its cell', async () => {
+    // A lone CR is a record break to spreadsheets; unquoted, it would
+    // start a record whose first cell the message author controls.
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([
+      makeConversation({
+        messages: [makeMessage({ content: 'thanks!\r=SUM(1+1)' })],
+      }),
+    ] as never);
+
+    const response = await ExportConversations(makeRequest({ format: 'csv' }));
+    const records = splitCsvRecords(await response.text());
+
+    expect(records).toHaveLength(2);
+    const [header, row] = records;
+    expect(row).toHaveLength(header.length);
+    expect(row[header.indexOf('message_content')]).toBe('thanks!\r=SUM(1+1)');
   });
 
   it('includes messages in JSON export', async () => {

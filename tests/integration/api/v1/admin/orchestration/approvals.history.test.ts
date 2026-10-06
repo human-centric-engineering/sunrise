@@ -46,6 +46,7 @@ vi.mock('@/lib/api/context', () => ({
 import { GET } from '@/app/api/v1/admin/orchestration/approvals/history/route';
 import { prisma } from '@/lib/db/client';
 import { auth } from '@/lib/auth/config';
+import { splitCsvRecords } from '@/tests/helpers/csv';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -228,6 +229,38 @@ describe('GET /api/v1/admin/orchestration/approvals/history', () => {
     expect(text).toContain("'=HYPERLINK");
     expect(text).not.toMatch(/,=cmd/);
     expect(text).not.toMatch(/,=HYPERLINK/);
+  });
+
+  it('keeps a bare carriage return in notes / reason inside its cell', async () => {
+    // A lone CR is a record break to spreadsheets; unquoted, it would
+    // start a record whose first cell the submitter controls.
+    // `notes` is only surfaced on approvals and `reason` on rejections, so
+    // one entry of each covers both free-text columns.
+    vi.mocked(prisma.aiWorkflowExecution.findMany).mockResolvedValueOnce([
+      makeExecution([
+        approvalEntry({
+          output: { approved: true, notes: 'ok\r=SUM(1+1)', actor: `admin:${APPROVER_ID}` },
+        }),
+        approvalEntry({
+          stepId: 'step-2',
+          status: 'rejected',
+          output: { approved: false, reason: 'no\r@SUM(1+1)', actor: `admin:${APPROVER_ID}` },
+        }),
+      ]),
+    ] as never);
+    vi.mocked(prisma.user.findMany).mockResolvedValueOnce([
+      { id: APPROVER_ID, name: 'Alice', email: 'a@x.com' },
+    ] as never);
+
+    const res = await GET(makeRequest('?format=csv'));
+    const [header, ...rows] = splitCsvRecords(await res.text());
+
+    expect(rows).toHaveLength(2);
+    for (const row of rows) expect(row).toHaveLength(header.length);
+    const notes = rows.map((r) => r[header.indexOf('notes')]);
+    const reasons = rows.map((r) => r[header.indexOf('reason')]);
+    expect(notes).toContain('ok\r=SUM(1+1)');
+    expect(reasons).toContain('no\r@SUM(1+1)');
   });
 
   // ─── Auth / rate-limit guards ─────────────────────────────────────────────
