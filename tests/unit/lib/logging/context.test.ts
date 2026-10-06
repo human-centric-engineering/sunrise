@@ -195,7 +195,7 @@ describe('Logging Context Utilities', () => {
         method: 'GET',
         url: 'http://localhost:3000/api/v1/invitations/metadata?token=live-secret&email=ada%40example.com#frag',
       } as Request;
-      vi.mocked(headers).mockResolvedValue(createMockHeaders({ 'x-request-id': 'req-q' }) as any);
+      vi.mocked(headers).mockResolvedValue(new Headers({ 'x-request-id': 'req-q' }));
 
       // Act
       const context = await getRequestContext(mockRequest);
@@ -211,7 +211,7 @@ describe('Logging Context Utilities', () => {
     it('should drop the query string from an unparseable url', async () => {
       // Arrange
       const mockRequest = { method: 'GET', url: '/relative/path?q=private' } as Request;
-      vi.mocked(headers).mockResolvedValue(createMockHeaders({ 'x-request-id': 'req-r' }) as any);
+      vi.mocked(headers).mockResolvedValue(new Headers({ 'x-request-id': 'req-r' }));
 
       // Act
       const context = await getRequestContext(mockRequest);
@@ -580,6 +580,12 @@ describe('Logging Context Utilities', () => {
 
       // Assert
       expect(path).toBe('not-a-valid-url');
+    });
+
+    it('should drop the query string on the unparseable-URL fallback (#685)', () => {
+      const path = getEndpointPath({ url: '/relative/path?q=private#frag' } as Request);
+
+      expect(path).toBe('/relative/path');
     });
 
     it('should handle nested paths', () => {

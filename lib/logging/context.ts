@@ -209,12 +209,13 @@ export async function getFullContext(request?: Request): Promise<{
  * and path are kept; everything from the first `?` or `#` is not.
  */
 function stripQuery(url: string): string {
-  return url.split(/[?#]/, 1)[0] ?? url;
+  return url.replace(/[?#][\s\S]*$/, '');
 }
 
 /**
  * Extract endpoint path from request
- * Returns clean endpoint path without query params
+ * Returns clean endpoint path without query params (or fragment), even when
+ * the URL does not parse
  *
  * @example
  * ```typescript
@@ -228,7 +229,7 @@ export function getEndpointPath(request: Request): string {
     const url = new URL(request.url);
     return url.pathname;
   } catch {
-    return request.url;
+    return stripQuery(request.url);
   }
 }
 
