@@ -287,8 +287,9 @@ wrote the visitor id into `AiConversation.userId`, a foreign key to `user` too,
 and the first message failed there. A visitor's conversation is now owned
 through `embedVisitorId` with no `userId`, so every embed turn logs cost, and
 this guard is what keeps those rows. `isEmbedUserId` (`lib/embed/auth.ts`) is the predicate,
-and it sits next to the mint so the prefix has one definition; the chat handler
-reduces a visitor to `null` through its own `attributableUserId`.
+and it sits next to the mint so the prefix has one definition; `userIdForUserRef`
+beside it reduces a visitor to `null`, and the chat handler uses it for every
+cost row.
 
 That guard reads `logCost` call sites, and **a value can also reach a foreign key
 one hop away**, through a function that accepts an attribution and forwards it.

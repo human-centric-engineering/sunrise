@@ -288,9 +288,10 @@ const ALLOWED_CALL_SITES: readonly string[] = [
   'lib/orchestration/capabilities/dispatcher.ts | agentId=spread((context.agentId && !isWorkflowAgentId(context.agentId) ? { agentId: context.agentId } : {})) | conversationId=spread((context.conversationId ? { conversationId: context.conversationId } : {})) | workflowExecutionId=spread((context.workflowExecutionId ? { workflowExecutionId: context.workflowExecutionId } : {})) | userId=spread((context.userId && !isEmbedUserId(context.userId) ? { userId: context.userId } : {}))',
   // The chat handler's four rows — turn cost, vision, transcription, tool
   // side-effects. `agent` and `conversation` are both rows it loaded itself.
-  // `attributableUserId` is load-bearing: this one handler serves the admin,
-  // consumer AND embed routes, and only the first two pass a real `User.id`.
-  'lib/orchestration/chat/streaming-handler.ts | agentId=agent.id | conversationId=conversation.id | workflowExecutionId=— | userId=attributableUserId(request.userId)',
+  // `userIdForUserRef` (`lib/embed/auth.ts`) is load-bearing: this one handler
+  // serves the admin, consumer AND embed routes, and only the first two pass a
+  // real `User.id`.
+  'lib/orchestration/chat/streaming-handler.ts | agentId=agent.id | conversationId=conversation.id | workflowExecutionId=— | userId=userIdForUserRef(request.userId)',
   // #654. All three supplied by the chat handler, which is the only caller
   // that holds real ids; omitted entirely rather than faked when it does not.
   // The handler has already reduced an embed visitor to null before this.
