@@ -921,19 +921,7 @@ export type ChatEvent =
        */
       sideEffectModels?: SideEffectModelUsage[];
     }
-  | {
-      type: 'error';
-      code: string;
-      message: string;
-      /**
-       * The failing `ProviderError`'s own verdict on whether a retry could
-       * succeed, when the error was one. Absent for chat-layer refusals (a
-       * missing agent, a cap, a guard), which have no such verdict. Read by a
-       * caller that consumes the stream rather than the error, so the verdict
-       * survives it (§77 t-747: the `judge_call` step).
-       */
-      retriable?: boolean;
-    }
+  | { type: 'error'; code: string; message: string }
   | {
       // Fires when the per-turn cost cap is breached mid-loop. The
       // streaming handler aborts the in-flight LLM stream, skips any

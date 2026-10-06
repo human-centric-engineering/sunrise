@@ -145,7 +145,7 @@ Unit tests at `tests/unit/lib/api/sse.test.ts` cover framing, keepalive (with `v
 | `capability_result`  | `capabilitySlug`, `result`                     | Single tool call result                                                                                                                       |
 | `capability_results` | `results[]`                                    | Multiple parallel tool call results                                                                                                           |
 | `done`               | `tokenUsage`, `costUsd`, `finishReason?`, etc. | Normal completion. `finishReason: 'length'` = truncated at the token cap (#594)                                                               |
-| `error`              | `code`, `message`, `retriable?`                | Terminal error — stream ends after this. `retriable` is the provider's own verdict when the failure was a `ProviderError`; absent otherwise   |
+| `error`              | `code`, `message`                              | Terminal error — stream ends after this                                                                                                       |
 
 ## Related Documentation
 

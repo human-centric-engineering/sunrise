@@ -71,12 +71,6 @@ export interface DriveJudgeResult {
    * carries a human-readable explanation; `score` is `null`.
    */
   errorCode?: string;
-  /**
-   * The provider's own verdict on whether a retry could succeed, when the
-   * chat-layer failure was a provider's. Absent otherwise, including for a
-   * malformed reply.
-   */
-  retriable?: boolean;
 }
 
 const MAX_CITATIONS = 12;
@@ -125,7 +119,6 @@ export async function driveJudgeAgent(input: DriveJudgeInput): Promise<DriveJudg
       costUsd: result.costUsd,
       tokenUsage: result.tokenUsage,
       errorCode: result.errorCode,
-      ...(result.errorRetriable === undefined ? {} : { retriable: result.errorRetriable }),
     };
   }
 

@@ -37,8 +37,6 @@ export interface DrainResult {
   /** Set when the stream ended with a `{ type: 'error' }` event. */
   errorCode?: string;
   errorMessage?: string;
-  /** The error event's `retriable`, when the failure was a provider's and said. */
-  errorRetriable?: boolean;
   /** Conversation id surfaced by the stream — useful for cross-referencing. */
   conversationId?: string;
   /** Final assistant message id (set on the `done`/`start` events). */
@@ -66,7 +64,6 @@ export async function drainStreamChat(request: ChatRequest): Promise<DrainResult
   let costUsd = 0;
   let errorCode: string | undefined;
   let errorMessage: string | undefined;
-  let errorRetriable: boolean | undefined;
   let conversationId: string | undefined;
   let messageId: string | undefined;
   let finishReason: LlmFinishReason | undefined;
@@ -97,7 +94,6 @@ export async function drainStreamChat(request: ChatRequest): Promise<DrainResult
       case 'error':
         errorCode = event.code;
         errorMessage = event.message;
-        errorRetriable = event.retriable;
         break;
     }
   }
@@ -113,7 +109,6 @@ export async function drainStreamChat(request: ChatRequest): Promise<DrainResult
   if (finishReason) result.finishReason = finishReason;
   if (errorCode) result.errorCode = errorCode;
   if (errorMessage) result.errorMessage = errorMessage;
-  if (errorRetriable !== undefined) result.errorRetriable = errorRetriable;
   if (conversationId) result.conversationId = conversationId;
   if (messageId) result.messageId = messageId;
   return result;

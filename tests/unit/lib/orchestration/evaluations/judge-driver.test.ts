@@ -2,10 +2,10 @@
  * Tests: driving a judge agent and shaping its verdict.
  *
  * `driveJudgeAgent` never throws on a chat-layer failure or a bad reply; it
- * folds both into `score: null` with an `errorCode`. These pin that shape and
- * the provider's retriable verdict riding along with it (§77 t-747), which
- * the `judge_call` step reads to decide a retry. `drainStreamChat` is mocked
- * at the module boundary.
+ * folds both into `score: null` with an `errorCode`, and keeps a judge's
+ * deliberate null (its criterion does not apply) apart from both, with no
+ * code. The `judge_call` step tells the three apart on that shape (§77
+ * t-747). `drainStreamChat` is mocked at the module boundary.
  *
  * @see lib/orchestration/evaluations/judge-driver.ts
  */
@@ -68,33 +68,19 @@ describe('driveJudgeAgent', () => {
     const result = await driveJudgeAgent(INPUT);
 
     expect(result).toMatchObject({ score: null, errorCode: 'malformed_judge_response' });
-    expect(result).not.toHaveProperty('retriable');
   });
 
-  it.each([false, true])(
-    'folds a chat-layer failure into its errorCode, with the provider’s verdict (%s)',
-    async (verdict) => {
-      vi.mocked(drainStreamChat).mockResolvedValue(
-        drained({ errorCode: 'http_401', errorMessage: 'invalid key', errorRetriable: verdict })
-      );
-
-      const result = await driveJudgeAgent(INPUT);
-
-      expect(result).toMatchObject({
-        score: null,
-        errorCode: 'http_401',
-        retriable: verdict,
-        reasoning: 'judge call error: http_401 — invalid key',
-      });
-    }
-  );
-
-  it('leaves the verdict out when the failure had none', async () => {
-    vi.mocked(drainStreamChat).mockResolvedValue(drained({ errorCode: 'agent_not_found' }));
+  it('folds a chat-layer failure into its errorCode, with the message as reasoning', async () => {
+    vi.mocked(drainStreamChat).mockResolvedValue(
+      drained({ errorCode: 'http_401', errorMessage: 'invalid key' })
+    );
 
     const result = await driveJudgeAgent(INPUT);
 
-    expect(result).toMatchObject({ errorCode: 'agent_not_found' });
-    expect(result).not.toHaveProperty('retriable');
+    expect(result).toMatchObject({
+      score: null,
+      errorCode: 'http_401',
+      reasoning: 'judge call error: http_401 — invalid key',
+    });
   });
 });

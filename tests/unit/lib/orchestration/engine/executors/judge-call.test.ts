@@ -7,7 +7,8 @@
  *   - No threshold: passed always true.
  *   - A threshold and no valid score: the step fails with the judge's
  *     errorCode, judge_not_applicable, or judge_score_out_of_range, retriable
- *     unless the provider's verdict or a known refusal says otherwise (t-747).
+ *     unless it is a provider request fault or a deterministic chat refusal
+ *     (t-747).
  *   - Null score without a threshold: passed=true, errorCode on the output.
  *   - evaluationSteps propagated when present.
  *   - Template interpolation of question / answer fields.
@@ -211,33 +212,21 @@ describe('executeJudgeCall', () => {
       return err as ExecutorError;
     }
 
-    describe('retriable: the provider’s own verdict first', () => {
-      it.each([
-        [false, false],
-        [true, true],
-        [undefined, true],
-      ])(
-        'provider_error with the provider’s verdict %s is retriable: %s',
-        async (verdict, retriable) => {
-          const err = await failureOf({
-            score: null,
-            errorCode: 'provider_error',
-            ...(verdict === undefined ? {} : { retriable: verdict }),
-          });
-          expect(err).toMatchObject({ stepId: 'jc1', code: 'provider_error', retriable });
+    describe('retriable: the rule the other LLM steps use', () => {
+      it('retries a provider failure such as a connection reset', async () => {
+        // A reset reaches the stream as provider_error. ProviderError's own
+        // flag is false for it, which is why the flag is not consulted.
+        const err = await failureOf({ score: null, errorCode: 'provider_error' });
+        expect(err).toMatchObject({ stepId: 'jc1', code: 'provider_error', retriable: true });
+      });
+
+      it.each(['truncated_no_output', 'provider_not_permitted'])(
+        'never retries the provider request fault %s',
+        async (errorCode) => {
+          const err = await failureOf({ score: null, errorCode });
+          expect(err).toMatchObject({ code: errorCode, retriable: false });
         }
       );
-
-      it('never retries a provider request fault, whatever the verdict says', async () => {
-        // A truncation reports retriable to its failover logic; re-running the
-        // same request still gets the same cut-off answer.
-        const err = await failureOf({
-          score: null,
-          errorCode: 'truncated_no_output',
-          retriable: true,
-        });
-        expect(err.retriable).toBe(false);
-      });
 
       it.each([
         'agent_not_found',
@@ -246,28 +235,32 @@ describe('executeJudgeCall', () => {
         'conversation_length_cap_reached',
         'budget_exceeded',
         'input_blocked',
-        'output_blocked',
-        'citation_required',
-        'tool_loop_cap',
-      ])('never retries the chat-layer refusal %s, which carries no verdict', async (errorCode) => {
+      ])('never retries the deterministic chat refusal %s', async (errorCode) => {
         const err = await failureOf({ score: null, errorCode });
         expect(err).toMatchObject({ code: errorCode, retriable: false });
       });
+
+      it.each(['output_blocked', 'citation_required', 'tool_loop_cap'])(
+        'retries %s, which turns on one sample of the judge’s reply',
+        async (errorCode) => {
+          const err = await failureOf({ score: null, errorCode });
+          expect(err).toMatchObject({ code: errorCode, retriable: true });
+        }
+      );
     });
 
-    it('says why the judge could not score, on one bounded line', async () => {
+    it('names the failure by its code, and keeps the chat error’s own words out', async () => {
+      // The chat message can carry an agent's budget figure, and this message
+      // reaches traces, webhooks and failure emails.
       const err = await failureOf({
         score: null,
-        errorCode: 'provider_error',
-        reasoning: `judge call error: provider_error — upstream\nfailed ${'x'.repeat(400)}`,
+        errorCode: 'budget_exceeded',
+        reasoning: 'judge call error: budget_exceeded — monthly budget of $50.00 reached',
       });
 
-      expect(err.message).toContain(
-        'could not score: judge call error: provider_error — upstream failed'
+      expect(err.message).toBe(
+        'judge_call: judge "eval-judge-correctness" could not score, so the threshold could not be applied (budget_exceeded)'
       );
-      expect(err.message).not.toContain('\n');
-      const detail = err.message.split('could not score: ')[1].split(', so the threshold')[0];
-      expect(Array.from(detail)).toHaveLength(201); // 200 characters and the ellipsis
     });
 
     it('carries the judge call’s spend when the reply was paid for but unparseable', async () => {
