@@ -858,6 +858,24 @@ describe('proxy — anonymous visitor id', () => {
     infoSpy.mockRestore();
   });
 
+  it('collapses an email-address segment in the access-log path', async () => {
+    process.env.LOG_HTTP_ACCESS = 'true';
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    const request = createMockRequest('/api/v1/admin/invitations/alice%40example.com', {
+      cookies: {},
+      method: 'DELETE',
+    });
+
+    await proxy(request);
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      'http_access',
+      expect.objectContaining({ path: '/api/v1/admin/invitations/[param]' })
+    );
+    expect(JSON.stringify(infoSpy.mock.calls)).not.toContain('alice');
+    infoSpy.mockRestore();
+  });
+
   it('emits no access log line by default (LOG_HTTP_ACCESS unset)', async () => {
     const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
     const request = createMockRequest('/pricing', { cookies: {} });

@@ -725,16 +725,20 @@ release process.
     parsed `context.url` in its logs should use `endpoint` and `method`, and
     log any query parameter it needs explicitly.
   - `endpoint` (`getEndpointPath()`) now collapses id- and credential-shaped
-    path segments to `[param]`: UUIDs, cuids, and 20+ character hex or
-    base64url-style tokens (`collapseDynamicSegments()` in
+    path segments to `[param]`: UUIDs, cuids, email addresses, JWTs, and 20+
+    character hex or base64url-style tokens; readable slugs stay
+    (`collapseDynamicSegments()` / `loggablePath()` in
     `lib/logging/redact-path.ts`). Dashboards grouping on a resolved
     `endpoint` will see the collapsed form.
   - New: `getRouteLogger(request, { endpoint })` pins a route pattern,
     logged verbatim, for a dynamic segment the heuristic cannot recognise (a
-    short token, a JWT, an email). `DELETE /api/v1/admin/invitations/[email]`
-    uses it.
-  - The proxy's `http_access` line (`LOG_HTTP_ACCESS=true`) collapses `path`
-    the same way, which covers page routes such as a `/s/<token>` share link.
+    short token, a dotted or one-case secret).
+    `DELETE /api/v1/admin/invitations/[email]` uses it.
+  - Every other line that logged a request path collapses it the same way:
+    the proxy's `http_access` line (`LOG_HTTP_ACCESS=true`), which covers page
+    routes such as a `/s/<token>` share link; the auth guards' `path` on
+    their refusal and ownership lines; and the rate-limit middleware's
+    unknown-tier warning.
 
 - **`csvEscape` quotes a lone CR, so free text can no longer start a CSV
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after

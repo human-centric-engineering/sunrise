@@ -40,6 +40,7 @@ import {
   type ApiKeyScope,
 } from '@/lib/auth/api-keys';
 import { logger } from '@/lib/logging';
+import { loggablePath } from '@/lib/logging/redact-path';
 import {
   canAdminister,
   canRead,
@@ -432,7 +433,7 @@ function refuseOrgEntry(
 ): never {
   logger.warn('tenancy: refused to enter an org for a request', {
     guard,
-    path: request.nextUrl?.pathname,
+    path: loggablePath(request.nextUrl?.pathname),
     userId: principal.userId,
     credential: principal.credential,
     refused: refusal.refused,
@@ -509,7 +510,7 @@ async function resolveResource(
     const resource = await resolver(request, context);
     if (!resource) {
       logger.warn('authorization: a route resource resolver named nothing — denying the request', {
-        path: request.nextUrl?.pathname,
+        path: loggablePath(request.nextUrl?.pathname),
         fix: 'Returning null/undefined from a resource resolver refuses the request; it does not mean "unscoped". A route that acts on no resource should not declare a resolver.',
       });
       return UNRESOLVED;
@@ -517,7 +518,7 @@ async function resolveResource(
     return resource;
   } catch (error) {
     logger.error('authorization: a route resource resolver threw — denying the request', {
-      path: request.nextUrl?.pathname,
+      path: loggablePath(request.nextUrl?.pathname),
       error: error instanceof Error ? error.message : String(error),
       fix: 'The policy cannot be asked about a resource that could not be resolved, and an unresolved scope is not an absent one.',
     });
@@ -953,7 +954,7 @@ export function withAuth(
           // neither the path nor the resource, so a refused cross-user read would
           // be an unattributable 'API Error'. Ids, not contents.
           logger.warn('authorization: canRead refused a request', {
-            path: (request as NextRequest).nextUrl?.pathname,
+            path: loggablePath((request as NextRequest).nextUrl?.pathname),
             resourceKind: resource?.kind,
             resourceId: resource?.id,
             userId: principal.userId,
@@ -1106,7 +1107,7 @@ async function runHandler(args: {
           'authorization: subjectFilter read on a route that did not ask for it',
           undefined,
           {
-            path: args.request.nextUrl?.pathname,
+            path: loggablePath(args.request.nextUrl?.pathname),
             guard: args.guard,
             declared: args.ownership?.decidedBy ?? '(none)',
             fix: "The filter is only computed for a route that declared { decidedBy: 'policy' }. This read got the reader's own id — the narrowest answer — rather than the policy's. Declare 'policy' if the handler needs the real one.",
@@ -1139,7 +1140,7 @@ async function runHandler(args: {
   // a real failure would bury the failure.
   reportOwnershipGap({
     guard: args.guard,
-    path: args.request.nextUrl?.pathname,
+    path: loggablePath(args.request.nextUrl?.pathname),
     ownership: args.ownership,
     declaredResource: args.declaredResource,
     state: args.state,
@@ -1297,7 +1298,7 @@ export function withAdminAuth(
           // Same reason as the `canRead` refusal above: the guard owns the
           // decision, so it owns the record of refusing.
           logger.warn('authorization: canAdminister refused a request', {
-            path: (request as NextRequest).nextUrl?.pathname,
+            path: loggablePath((request as NextRequest).nextUrl?.pathname),
             resourceKind: resource === UNRESOLVED ? '(unresolved)' : resource?.kind,
             resourceId: resource === UNRESOLVED ? undefined : resource?.id,
             userId: principal.userId,
@@ -1313,7 +1314,7 @@ export function withAdminAuth(
         // (owner ruling, 2026-10-02); the rule itself refuses an empty context.
         if (options?.writesSharedSettings && entry !== null && !canChangeSharedSettings()) {
           logger.warn('tenancy: refused a shared-settings write outside the install org', {
-            path: (request as NextRequest).nextUrl?.pathname,
+            path: loggablePath((request as NextRequest).nextUrl?.pathname),
             userId: principal.userId,
             orgId: entry.orgId,
           });

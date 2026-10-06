@@ -72,14 +72,20 @@ context is built to hold nothing a value-blind redactor would miss:
 - **`endpoint` is collapsed.** `getEndpointPath()` drops the query and
   replaces each id- or credential-shaped segment with `[param]`
   (`collapseDynamicSegments()` in `lib/logging/redact-path.ts`): UUIDs, cuids,
-  hex of 20+ characters, and 20+ character base64url-style tokens that contain
-  a digit or mixed case. Short readable segments (`v1`, `admin`,
-  `provider-models`, `123`) stay.
-- **The proxy's `http_access` `path` is collapsed the same way**, which covers
-  page routes (`/s/<token>`) as well as API routes.
+  hex of 20+ characters, email addresses (`@` / `%40`), JWTs, and 20+
+  character base64url-style tokens that contain a digit or mixed case. Short
+  readable segments (`v1`, `admin`, `123`) and readable slugs of any length
+  (`provider-models`, `how-we-scaled-to-10000-users`) stay.
+- **Every other logged path is collapsed the same way**: the proxy's
+  `http_access` `path` (which covers page routes such as `/s/<token>` as well
+  as API routes), the guards' `path` on their refusal and ownership lines
+  (`loggablePath()`), and the rate-limit middleware's unknown-tier warning. A
+  new log line that carries a request path should go through
+  `collapseDynamicSegments()` / `loggablePath()` too.
 
 The heuristic cannot see a secret under 20 characters, one with other
-characters (a JWT's dots, anything percent-encoded), an email address, or a
+characters (dots outside a JWT, `~`, percent-encoding other than `%40`), a
+20+ character secret that reads as a slug or is one case with no digits, or a
 secret split across short catch-all segments. A route with a dynamic segment
 like that **pins its pattern**, which is then logged verbatim:
 

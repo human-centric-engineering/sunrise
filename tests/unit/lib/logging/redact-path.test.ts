@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { collapseDynamicSegments } from '@/lib/logging/redact-path';
+import { collapseDynamicSegments, loggablePath } from '@/lib/logging/redact-path';
 
 describe('collapseDynamicSegments', () => {
   it.each([
@@ -46,7 +46,38 @@ describe('collapseDynamicSegments', () => {
     expect(collapseDynamicSegments('/x/Ab3dEf6hIj9kLm2nO')).toBe('/x/Ab3dEf6hIj9kLm2nO');
   });
 
-  it('does not recognise an email address (documented limit — pin the pattern)', () => {
-    expect(collapseDynamicSegments('/x/ada%40example.com')).toBe('/x/ada%40example.com');
+  it.each(['ada@example.com', 'ada%40example.com', 'ADA%40EXAMPLE.COM'])(
+    'collapses an email-address segment %j',
+    (email) => {
+      expect(collapseDynamicSegments(`/api/v1/admin/invitations/${email}`)).toBe(
+        '/api/v1/admin/invitations/[param]'
+      );
+    }
+  );
+
+  it('collapses a JWT segment', () => {
+    expect(
+      collapseDynamicSegments(
+        '/x/eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+      )
+    ).toBe('/x/[param]');
+  });
+
+  it.each(['/blog/how-we-scaled-to-10000-users', '/pricing-2026-launch-notes-and-faq'])(
+    'keeps a readable slug with numbers %j',
+    (path) => {
+      expect(collapseDynamicSegments(path)).toBe(path);
+    }
+  );
+
+  it('still collapses a token that contains a hyphen', () => {
+    expect(collapseDynamicSegments('/x/Ab3dEf6hIj9kLm2-Op5qRs8tUv1wXy4z')).toBe('/x/[param]');
+  });
+});
+
+describe('loggablePath', () => {
+  it('passes undefined through and collapses a present path', () => {
+    expect(loggablePath(undefined)).toBeUndefined();
+    expect(loggablePath('/api/v1/x/cmtd5heg2001804ky8pgo6odx')).toBe('/api/v1/x/[param]');
   });
 });

@@ -12,22 +12,28 @@
  * - a UUID (`8-4-4-4-12` hex);
  * - a cuid (`c` + 24 lowercase alphanumerics);
  * - hex of 20 or more characters;
+ * - anything containing `@` or `%40` — an email address, raw or encoded;
+ * - a JWT (`eyJ…` header, three dot-separated parts);
  * - 20 or more characters of `[A-Za-z0-9_-]` (base64url, cuid2, nanoid…) that
- *   contain a digit or mix upper and lower case.
+ *   contain a digit or mix upper and lower case — unless the segment is a
+ *   readable slug: hyphen-separated parts that are each all-lowercase letters
+ *   or all digits (`how-we-scaled-to-10000-users`, `pricing-2026`).
  *
- * Left alone: anything shorter than 20 characters that is not a UUID or cuid
- * (`v1`, `admin`, `orchestration`, a short numeric id), and longer readable
- * slugs that are one case with no digits (`provider-models`).
+ * Left alone: anything shorter than 20 characters that is not one of the
+ * shapes above (`v1`, `admin`, `orchestration`, a short numeric id), and
+ * readable slugs of any length (`provider-models`).
  *
  * What it cannot catch — pin the route pattern with
  * `getRouteLogger(request, { endpoint })` for these:
  * - a secret under 20 characters;
- * - a secret containing other characters — a JWT (dots), anything
- *   percent-encoded, an email address (`user%40example.com`);
- * - a 20+ character secret that happens to be one case with no digits;
+ * - a secret containing other characters (dots outside a JWT, `~`, anything
+ *   percent-encoded other than `%40`);
+ * - a 20+ character secret that happens to be one case with no digits, or to
+ *   read as a slug;
  * - a secret split across several short segments of a catch-all route.
- * It also collapses some harmless values (a long dated model id such as
- * `gpt-4o-mini-2024-07-18`); a log line losing that detail is the cheaper error.
+ * It also collapses some harmless values (a mixed-case or letter-and-digit id
+ * such as `gpt-4o-mini-2024-07-18`); a log line losing that detail is the
+ * cheaper error.
  */
 
 const PLACEHOLDER = '[param]';
@@ -36,10 +42,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CUID = /^c[a-z0-9]{24}$/;
 const LONG_HEX = /^[0-9a-f]{20,}$/i;
 const LONG_TOKEN = /^[A-Za-z0-9_-]{20,}$/;
+const JWT = /^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
+const READABLE_SLUG = /^(?:[a-z]+|\d+)(?:-(?:[a-z]+|\d+))+$/;
 
 function isSensitiveSegment(segment: string): boolean {
   if (UUID.test(segment) || CUID.test(segment) || LONG_HEX.test(segment)) return true;
-  if (!LONG_TOKEN.test(segment)) return false;
+  if (segment.includes('@') || segment.toLowerCase().includes('%40')) return true;
+  if (JWT.test(segment)) return true;
+  if (!LONG_TOKEN.test(segment) || READABLE_SLUG.test(segment)) return false;
   return /\d/.test(segment) || (/[a-z]/.test(segment) && /[A-Z]/.test(segment));
 }
 
@@ -56,4 +66,12 @@ export function collapseDynamicSegments(pathname: string): string {
     .split('/')
     .map((segment) => (isSensitiveSegment(segment) ? PLACEHOLDER : segment))
     .join('/');
+}
+
+/**
+ * `collapseDynamicSegments` for a path that may be absent — the shape of
+ * `request.nextUrl?.pathname` in a log field.
+ */
+export function loggablePath(pathname: string | undefined): string | undefined {
+  return pathname === undefined ? undefined : collapseDynamicSegments(pathname);
 }

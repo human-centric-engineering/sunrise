@@ -25,6 +25,7 @@
 import type { NextRequest } from 'next/server';
 import { auth } from '@/lib/auth/config';
 import { logger } from '@/lib/logging';
+import { collapseDynamicSegments } from '@/lib/logging/redact-path';
 import { getClientIP } from '@/lib/security/ip';
 import {
   createRateLimitResponse,
@@ -193,7 +194,7 @@ export async function applyRateLimit(request: NextRequest): Promise<Response | n
     // can fix the config instead of silently failing open.
     logger.warn('Rate-limit policy references an unknown tier; skipping limiter', {
       tier: rule.tier,
-      pathname: request.nextUrl.pathname,
+      pathname: collapseDynamicSegments(request.nextUrl.pathname),
     });
     return null;
   }
