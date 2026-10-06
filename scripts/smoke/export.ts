@@ -6,7 +6,7 @@
  * the *arguments* the manifest builds — the right `where`, the right `omit` —
  * but never that the resulting queries run. Type-checking catches a wrong
  * column name; it does not catch `omit` combined with `include` on a relation
- * load, or a `mode: 'insensitive'` filter on a column type that rejects it.
+ * load, or a by-email match that Postgres widens to someone else's rows.
  *
  * Also asserts the property that matters most and is easiest to regress: no
  * credential material reaches the bundle. That check is a recursive sweep over
