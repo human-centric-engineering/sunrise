@@ -19,6 +19,8 @@ describe('collapseDynamicSegments', () => {
     ['base64url token', '/api/v1/x/Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z'],
     ['mixed-case token with no digits', '/api/v1/x/AbcdEfghIjklMnopQrstUvwx'],
     ['hex token', '/api/v1/x/deadbeefcafebabe0123456789abcdef'],
+    ['standard base64 token', '/api/v1/x/q8Zr+Jd0Wm4xT2pLs9VbN3kHe='],
+    ['percent-encoded token', '/api/v1/x/q8Zr%2BJd0Wm4xT2pLs9VbN3kHe%3D'],
   ])('collapses a %s segment', (_label, path) => {
     expect(collapseDynamicSegments(path)).toBe('/api/v1/x/[param]');
   });

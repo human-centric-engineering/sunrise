@@ -130,6 +130,21 @@ describe('GET /api/auth/[...all]', () => {
     );
   });
 
+  // #685: better-auth serves `GET /reset-password/:token`; the live reset
+  // token must not reach the log through `authPath`.
+  it('collapses a token in the logged auth sub-path', async () => {
+    mockBetterAuthGET.mockResolvedValue(makeAuthResponse(302, {}));
+    const token = 'q8ZrJd0Wm4xT2pLs9VbN3kHe';
+
+    await GET(makeRequest('GET', `reset-password/${token}`));
+
+    expect(mockLog.info).toHaveBeenCalledWith(
+      'Auth GET request',
+      expect.objectContaining({ authPath: 'reset-password/[param]' })
+    );
+    expect(JSON.stringify(mockLog.info.mock.calls)).not.toContain(token);
+  });
+
   it('mirrors non-200 statuses from the better-auth GET handler', async () => {
     // Arrange — better-auth returns 401 for an expired session token
     const authResponse = makeAuthResponse(401, { error: 'Unauthorized' });

@@ -14,8 +14,9 @@
  * - hex of 20 or more characters;
  * - anything containing `@` or `%40` — an email address, raw or encoded;
  * - a JWT (`eyJ…` header, three dot-separated parts);
- * - 20 or more characters of `[A-Za-z0-9_-]` (base64url, cuid2, nanoid…) that
- *   contain a digit or mix upper and lower case — unless the segment is a
+ * - 20 or more characters of `[A-Za-z0-9_-+=~%]` (base64url or standard base64,
+ *   cuid2, nanoid, a percent-encoded token…) that contain a digit or mix upper
+ *   and lower case — unless the segment is a
  *   readable slug: hyphen-separated parts that are each all-lowercase letters
  *   or all digits (`how-we-scaled-to-10000-users`, `pricing-2026`).
  *
@@ -26,8 +27,8 @@
  * What it cannot catch — pin the route pattern with
  * `getRouteLogger(request, { endpoint })` for these:
  * - a secret under 20 characters;
- * - a secret containing other characters (dots outside a JWT, `~`, anything
- *   percent-encoded other than `%40`);
+ * - a secret containing other characters (dots outside a JWT, `/` inside a
+ *   catch-all segment);
  * - a 20+ character secret that happens to be one case with no digits, or to
  *   read as a slug;
  * - a secret split across several short segments of a catch-all route.
@@ -41,7 +42,7 @@ const PLACEHOLDER = '[param]';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CUID = /^c[a-z0-9]{24}$/;
 const LONG_HEX = /^[0-9a-f]{20,}$/i;
-const LONG_TOKEN = /^[A-Za-z0-9_-]{20,}$/;
+const LONG_TOKEN = /^[A-Za-z0-9_\-+=~%]{20,}$/;
 const JWT = /^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
 const READABLE_SLUG = /^(?:[a-z]+|\d+)(?:-(?:[a-z]+|\d+))+$/;
 
