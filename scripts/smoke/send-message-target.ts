@@ -12,8 +12,11 @@
  * text and the capability answered `conversation_not_found`.
  *
  * No message is actually sent: no outbound adapter is registered, so a
- * permitted call stops at provider resolution. "Permitted" below means the
- * call got past the targeting check and found the conversation.
+ * permitted call ends at `provider_not_registered`. Every check asserts the
+ * exact code: a permitted call must reach that stage (past the targeting check
+ * and the conversation lookup), a refused one must carry
+ * `conversation_not_permitted`. An earlier draft checked only "not refused",
+ * which a sabotaged build also satisfied.
  *
  * Run with:
  *   npm run smoke:send-message-target
@@ -26,6 +29,7 @@ import { runAsOrg } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { SendMessageToChannelCapability } from '@/lib/orchestration/capabilities/built-in/send-message-to-channel';
 import { executeToolCall } from '@/lib/orchestration/engine/executors/tool-call';
+import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { inboundTriggerSource } from '@/lib/orchestration/inbound/trigger-source';
 import { INBOUND_CONVERSATION_HANDLER_TEMPLATE } from '@/prisma/seeds/data/templates/inbound-conversation-handler';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
@@ -42,10 +46,15 @@ function check(ok: boolean, label: string): void {
 }
 
 const REFUSED = 'conversation_not_permitted';
+/** Where a permitted call ends here: past targeting and lookup, no adapter registered. */
+const PERMITTED = 'provider_not_registered';
 
+let attempts = 0;
 async function attempt(conversationId: string, context: CapabilityContext): Promise<string> {
+  // A distinct message per attempt, so permitted calls never share a dedup key.
+  attempts += 1;
   const result = await new SendMessageToChannelCapability().execute(
-    { conversationId, message: 'smoke' },
+    { conversationId, message: `smoke ${stamp} #${attempts}` },
     context
   );
   return result.success ? 'sent' : (result.error?.code ?? 'unknown');
@@ -152,19 +161,18 @@ async function main(): Promise<void> {
       defaultErrorStrategy: 'fail',
       logger: silentLogger(),
     }).then(
-      (r) => JSON.stringify(r.output),
-      (err: unknown) => (err instanceof Error ? err.message : String(err))
+      () => 'sent',
+      (err: unknown) => (err instanceof ExecutorError ? err.code : String(err))
     );
-    check(!outcome.includes(REFUSED), `the step is permitted (got: ${outcome.slice(0, 120)})`);
     check(
-      !outcome.includes('conversation_not_found'),
-      'it finds the conversation: {{trigger.conversationId}} was filled in'
+      outcome === PERMITTED,
+      `it is permitted and finds the conversation: {{trigger.conversationId}} was filled in (got ${outcome})`
     );
 
     // ── Each caller ─────────────────────────────────────────────────────
     console.log('\n[3] a workflow step may send only to the conversation that started its run');
     check(
-      (await attempt(convA.id, step(inbound.id))) !== REFUSED,
+      (await attempt(convA.id, step(inbound.id))) === PERMITTED,
       'inbound run → its own conversation: permitted'
     );
     check(
@@ -172,7 +180,7 @@ async function main(): Promise<void> {
       'inbound run → another conversation (even one its sender’s payload names): refused'
     );
     check(
-      (await attempt(convA.id, step(rerun.id))) !== REFUSED,
+      (await attempt(convA.id, step(rerun.id))) === PERMITTED,
       'an admin’s rerun of an inbound run → its conversation: permitted'
     );
     check(
