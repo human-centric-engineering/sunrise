@@ -22,7 +22,7 @@ import { z } from 'zod';
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiConversation: { findUnique: vi.fn() },
-    aiWorkflowExecution: { findFirst: vi.fn() },
+    aiWorkflowExecution: { findUnique: vi.fn() },
     aiAgentCapability: { findFirst: vi.fn() },
     aiOutboundMessage: {
       count: vi.fn(),
@@ -159,10 +159,9 @@ function defaultArgs() {
 
 describe('SendMessageToChannelCapability — which conversation a call may send on (t-770)', () => {
   // Whoever drives the call chooses `conversationId`; unrestricted, a steered
-  // model could have the operator's number message anyone who ever wrote to
-  // it. The database answers whether a workflow run may send; these tests pin
-  // which question each caller asks, and `scripts/smoke/send-message-target.ts`
-  // proves the answers against a real database.
+  // model or a run's starter could have the operator's number message anyone
+  // who ever wrote to it. `scripts/smoke/send-message-target.ts` proves the
+  // same rule against a real database, reruns and erasure included.
   function readyToSend() {
     setConversation({ id: 'conv-2' });
     setBinding(defaultCustomConfig());
@@ -181,35 +180,26 @@ describe('SendMessageToChannelCapability — which conversation a call may send 
     expect(prisma.aiConversation.findUnique).not.toHaveBeenCalled();
   }
 
-  /** The one read that decides a workflow send: is this the run's own inbound conversation? */
-  function expectRunConversationQuery(executionId: string, conversationId: string) {
-    const inbound = { triggerSource: { startsWith: 'inbound:' } };
-    expect(prisma.aiWorkflowExecution.findFirst).toHaveBeenCalledWith({
-      where: {
-        id: executionId,
-        inputData: { path: ['triggerMeta', 'conversationId'], equals: conversationId },
-        OR: [inbound, { parent: inbound }],
-      },
-      select: { id: true },
-    });
+  function runReplyingOn(replyConversationId: string | null) {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      replyConversationId,
+    } as never);
   }
 
   it('lets a chat turn send only on its own conversation', async () => {
     const send = readyToSend();
 
-    const refused = await makeCapability().execute(
-      otherThread,
-      makeContext({ conversationId: 'conv-1' })
+    expectRefused(
+      await makeCapability().execute(otherThread, makeContext({ conversationId: 'conv-1' }))
     );
-    expectRefused(refused);
-
     const own = await makeCapability().execute(
       otherThread,
       makeContext({ conversationId: 'conv-2' })
     );
+
     expect(own.success).toBe(true);
     expect(send).toHaveBeenCalledTimes(1);
-    expect(prisma.aiWorkflowExecution.findFirst).not.toHaveBeenCalled();
+    expect(prisma.aiWorkflowExecution.findUnique).not.toHaveBeenCalled();
   });
 
   it('refuses a caller with no conversation of its own, such as an MCP client', async () => {
@@ -227,9 +217,9 @@ describe('SendMessageToChannelCapability — which conversation a call may send 
   it.each([
     ['a fixed tool_call step', workflowAgentId('wf-1')],
     ['an AI-driven agent_call step', 'agent-1'],
-  ])('lets %s send to the conversation that started its inbound run', async (_label, agentId) => {
+  ])('lets %s send on its run’s reply conversation', async (_label, agentId) => {
     const send = readyToSend();
-    vi.mocked(prisma.aiWorkflowExecution.findFirst).mockResolvedValue({ id: 'exec-1' } as never);
+    runReplyingOn('conv-2');
 
     const result = await makeCapability().execute(
       otherThread,
@@ -238,31 +228,31 @@ describe('SendMessageToChannelCapability — which conversation a call may send 
 
     expect(result.success).toBe(true);
     expect(send).toHaveBeenCalledTimes(1);
-    expectRunConversationQuery('exec-1', 'conv-2');
+    expect(prisma.aiWorkflowExecution.findUnique).toHaveBeenCalledWith({
+      where: { id: 'exec-1' },
+      select: { replyConversationId: true },
+    });
   });
 
   it.each([
-    ['a fixed tool_call step', workflowAgentId('wf-1')],
-    ['an AI-driven agent_call step', 'agent-1'],
-  ])(
-    'refuses %s aimed at any other conversation, or in a run no inbound message started',
-    async (_label, agentId) => {
-      // A fixed step is not trusted on its own: its args can come from a prior
-      // step's model output, or from the run's input, which a model calling
-      // run_workflow chooses.
-      const send = readyToSend();
-      vi.mocked(prisma.aiWorkflowExecution.findFirst).mockResolvedValue(null);
+    ['a fixed tool_call step aimed elsewhere', workflowAgentId('wf-1'), 'conv-9'],
+    ['an AI-driven step aimed elsewhere', 'agent-1', 'conv-9'],
+    ['a step in a run with no reply conversation', workflowAgentId('wf-1'), null],
+  ])('refuses %s', async (_label, agentId, replyConversationId) => {
+    // A fixed step is not trusted on its own: its args can come from a prior
+    // step's model output, or from the run's input, which a model calling
+    // run_workflow chooses.
+    const send = readyToSend();
+    runReplyingOn(replyConversationId);
 
-      const result = await makeCapability().execute(
-        otherThread,
-        makeContext({ conversationId: undefined, agentId, workflowExecutionId: 'exec-1' })
-      );
+    const result = await makeCapability().execute(
+      otherThread,
+      makeContext({ conversationId: undefined, agentId, workflowExecutionId: 'exec-1' })
+    );
 
-      expectRefused(result);
-      expect(send).not.toHaveBeenCalled();
-      expectRunConversationQuery('exec-1', 'conv-2');
-    }
-  );
+    expectRefused(result);
+    expect(send).not.toHaveBeenCalled();
+  });
 });
 
 describe('SendMessageToChannelCapability — happy path', () => {
@@ -325,7 +315,9 @@ describe('SendMessageToChannelCapability — cost attribution', () => {
     vi.mocked(prisma.aiOutboundMessage.update).mockResolvedValue({} as never);
     stubAdapter();
     // The run's own inbound conversation, so the send is permitted (t-770).
-    vi.mocked(prisma.aiWorkflowExecution.findFirst).mockResolvedValue({ id: 'exec_1' } as never);
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      replyConversationId: 'conv-1',
+    } as never);
 
     await makeCapability().execute(
       defaultArgs(),

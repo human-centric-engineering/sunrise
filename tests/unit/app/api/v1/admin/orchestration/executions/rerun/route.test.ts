@@ -68,6 +68,7 @@ const engineExecuteMock = vi.fn(
       userId: string;
       budgetLimitUsd?: number;
       parentExecutionId?: string;
+      replyConversationId?: string;
       scope?: Record<string, string>;
     }
   ): AsyncIterable<unknown> => {
@@ -221,6 +222,36 @@ describe('POST /executions/:id/rerun', () => {
       budgetLimitUsd: 5, // copied from the original
       parentExecutionId: EXEC_ID, // lineage link
     });
+  });
+
+  it('carries the original’s reply conversation, so a retried reply can still send (t-770)', async () => {
+    // A rerun retries the same reply on the same conversation. Copied each
+    // time, so a rerun of a rerun keeps it, and it does not depend on the
+    // original surviving retention.
+    vi.mocked(prisma.aiWorkflowExecution.findFirst).mockResolvedValue(
+      makeOriginal({ userId: null, replyConversationId: 'conv-inbound' }) as never
+    );
+    vi.mocked(prepareWorkflowExecution).mockResolvedValue(happyPrepare(NEW_VERSION_ID));
+
+    await POST(makeRequest(), makeContext());
+
+    expect(prisma.aiWorkflowExecution.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ replyConversationId: true }) })
+    );
+    const [, , options] = engineExecuteMock.mock.calls[0];
+    expect(options).toMatchObject({ replyConversationId: 'conv-inbound' });
+  });
+
+  it('gives a rerun of a run with no reply conversation none either', async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findFirst).mockResolvedValue(
+      makeOriginal({ replyConversationId: null }) as never
+    );
+    vi.mocked(prepareWorkflowExecution).mockResolvedValue(happyPrepare(NEW_VERSION_ID));
+
+    await POST(makeRequest(), makeContext());
+
+    const [, , options] = engineExecuteMock.mock.calls[0];
+    expect(options).not.toHaveProperty('replyConversationId');
   });
 
   it('keeps a rerun of a system-owned run system-owned', async () => {

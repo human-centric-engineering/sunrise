@@ -232,6 +232,14 @@ model AiWorkflowExecution {
   // cascade away children's history — the lineage link goes muted but
   // the child stays.
   parentExecutionId    String?
+  // The conversation this run replies on (t-770): the only one
+  // `send_message_to_channel` lets it send to. Set by the inbound route to the
+  // conversation the inbound message resolved to, and copied by the rerun
+  // route, since a rerun retries the same reply. Nothing else sets it, so a
+  // run started any other way (schedule, admin, `run_workflow`) replies on
+  // nothing. `onDelete: SetNull`: once the conversation is erased or purged,
+  // the run has nobody to reply to.
+  replyConversationId  String?
   userId               String?
   // Optional free-form scope carrier for this run, mirroring
   // `CapabilityContext.scope`. Persisted (not just in-memory) so it survives
@@ -244,15 +252,16 @@ model AiWorkflowExecution {
   updatedAt            DateTime  @updatedAt
 
   // Relations
-  workflow       AiWorkflow                      @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  version        AiWorkflowVersion?              @relation(fields: [versionId], references: [id], onDelete: SetNull)
-  user           User?                           @relation("AiWorkflowExecutionUser", fields: [userId], references: [id], onDelete: Cascade)
-  parent         AiWorkflowExecution?            @relation("ExecutionLineage", fields: [parentExecutionId], references: [id], onDelete: SetNull)
-  reruns         AiWorkflowExecution[]           @relation("ExecutionLineage")
-  costLogs       AiCostLog[]
-  stepDispatches AiWorkflowStepDispatch[]
-  runningSteps   AiWorkflowRunningStep[]
-  leaseEvents    AiWorkflowExecutionLeaseEvent[]
+  workflow          AiWorkflow                      @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  version           AiWorkflowVersion?              @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  user              User?                           @relation("AiWorkflowExecutionUser", fields: [userId], references: [id], onDelete: Cascade)
+  parent            AiWorkflowExecution?            @relation("ExecutionLineage", fields: [parentExecutionId], references: [id], onDelete: SetNull)
+  replyConversation AiConversation?                 @relation("ExecutionReplyConversation", fields: [replyConversationId], references: [id], onDelete: SetNull)
+  reruns            AiWorkflowExecution[]           @relation("ExecutionLineage")
+  costLogs          AiCostLog[]
+  stepDispatches    AiWorkflowStepDispatch[]
+  runningSteps      AiWorkflowRunningStep[]
+  leaseEvents       AiWorkflowExecutionLeaseEvent[]
 
   orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
   org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)
@@ -274,6 +283,7 @@ model AiWorkflowExecution {
   @@index([status, leaseExpiresAt]) // Orphan sweep: RUNNING rows with expired lease
   @@index([userId, status, createdAt]) // Execution list with user + status + sort
   @@index([parentExecutionId]) // "find all reruns of this execution" lookup
+  @@index([replyConversationId]) // keeps the SetNull on a bulk conversation purge off a full scan
   @@map("ai_workflow_execution")
 }
 

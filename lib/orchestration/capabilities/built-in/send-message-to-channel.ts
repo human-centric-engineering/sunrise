@@ -40,7 +40,6 @@ import {
 } from '@/lib/orchestration/outbound/types';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import type { ConversationChannel } from '@/lib/orchestration/inbound/types';
-import { INBOUND_TRIGGER_SOURCE_PREFIX } from '@/lib/orchestration/inbound/trigger-source';
 import { CostOperation } from '@/types/orchestration';
 import { redactedString } from '@/lib/security/redact';
 
@@ -148,52 +147,29 @@ function narrowConversationChannel(value: string | null): ConversationChannel | 
  * wrote to it. So a call sends only within the conversation being handled
  * (owner rulings, 2026-10-06):
  *   - **a workflow step**, fixed (`tool_call`) or AI-driven (`agent_call`,
- *     the orchestrator): only the conversation that started the run, and only
- *     on a run the inbound route started. That route stamps the run's
- *     `triggerSource` and writes the conversation into
- *     `inputData.triggerMeta` itself, putting a sender's own payload under
- *     `trigger`, so neither an inbound message nor a run's starter can name
- *     another thread. A run started any other way has no conversation of its
- *     own and sends nothing.
+ *     the orchestrator): only the run's `replyConversationId`. The inbound
+ *     route sets it to the conversation the inbound message resolved to, and
+ *     the rerun route copies it; nothing else does. So neither an inbound
+ *     message nor a run's starter can name another thread, and a run started
+ *     any other way replies on nothing.
  *   - **a chat turn**: only the chat's own conversation. A web chat is never
  *     an inbound channel thread, so in practice the tool sends nothing here.
  *   - **anything else**, an MCP client included: refused. It has no
  *     conversation of its own.
  * Sending to another thread on purpose (outreach, reminders) is not
- * supported; a later opt-in would be an admin setting on the step, out of a
- * model's reach.
+ * supported; a later opt-in would be an admin setting, out of a model's
+ * reach (Hub idea #32).
  */
 async function mayTarget(conversationId: string, context: CapabilityContext): Promise<boolean> {
   if (context.workflowExecutionId) {
-    return isRunConversation(context.workflowExecutionId, conversationId);
+    const run = await prisma.aiWorkflowExecution.findUnique({
+      where: { id: context.workflowExecutionId },
+      select: { replyConversationId: true },
+    });
+    return run?.replyConversationId === conversationId;
   }
   if (context.conversationId) return context.conversationId === conversationId;
   return false;
-}
-
-/**
- * True when `conversationId` is the conversation that started an inbound run.
- * One read that matches the marker and the nested id in the database, rather
- * than loading `inputData`, which holds the inbound payload verbatim and can
- * be large.
- *
- * An admin's rerun of an inbound run counts too, so a failed reply can be
- * retried: the rerun route is the only writer of `parentExecutionId`, and it
- * reuses the original's `inputData` verbatim, so the conversation is still the
- * one the inbound route wrote. One level only; a rerun of a rerun sends
- * nothing.
- */
-async function isRunConversation(executionId: string, conversationId: string): Promise<boolean> {
-  const inbound = { triggerSource: { startsWith: INBOUND_TRIGGER_SOURCE_PREFIX } };
-  const run = await prisma.aiWorkflowExecution.findFirst({
-    where: {
-      id: executionId,
-      inputData: { path: ['triggerMeta', 'conversationId'], equals: conversationId },
-      OR: [inbound, { parent: inbound }],
-    },
-    select: { id: true },
-  });
-  return run !== null;
 }
 
 async function loadConversation(conversationId: string): Promise<LoadedConversation | null> {

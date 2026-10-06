@@ -22,6 +22,7 @@
  * `workflow:` id). See `isWorkflowAgentId` in the dispatcher.
  */
 
+import { z } from 'zod';
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
 import { toolCallConfigSchema } from '@/lib/validations/orchestration';
 import { capabilityDispatcher, workflowAgentId } from '@/lib/orchestration/capabilities/dispatcher';
@@ -44,26 +45,7 @@ import {
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { platformScope, hintScope } from '@/lib/orchestration/scope';
-import { interpolatePrompt } from '@/lib/orchestration/engine/interpolate-prompt';
-
-/**
- * Interpolate every string in an authored `args` object (t-770). This was the
- * one step type whose config was not interpolated, so a template's
- * `conversationId: '{{trigger.conversationId}}'` reached the capability as
- * that literal text and the inbound-reply template never sent a reply. A
- * string with no `{{` is returned as is; objects and arrays are walked.
- */
-function interpolateArgs(value: unknown, ctx: Readonly<ExecutionContext>): unknown {
-  if (typeof value === 'string')
-    return value.includes('{{') ? interpolatePrompt(value, ctx) : value;
-  if (Array.isArray(value)) return value.map((item) => interpolateArgs(item, ctx));
-  if (value !== null && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, interpolateArgs(item, ctx)])
-    );
-  }
-  return value;
-}
+import { resolveTemplatesIn } from '@/lib/orchestration/engine/interpolate-from-trace';
 
 export async function executeToolCall(
   step: WorkflowStep,
@@ -134,9 +116,12 @@ export async function executeToolCall(
   // Priority: explicit args > argsFrom (step output reference) > ctx.inputData
   let rawArgs: Record<string, unknown>;
   if (config.args) {
-    rawArgs = Object.fromEntries(
-      Object.entries(config.args).map(([key, item]) => [key, interpolateArgs(item, ctx)])
-    );
+    // Interpolated like every other step's config (t-770): before, a
+    // template's `conversationId: '{{trigger.conversationId}}'` reached the
+    // capability as that literal text, and the inbound-reply template never
+    // sent a reply. The same walker the trace viewer uses, so the two agree;
+    // values come out as strings, as they do in every step type.
+    rawArgs = z.record(z.string(), z.unknown()).parse(resolveTemplatesIn(config.args, ctx));
   } else if (config.argsFrom && ctx.stepOutputs[config.argsFrom] != null) {
     const fromOutput = ctx.stepOutputs[config.argsFrom];
     rawArgs =

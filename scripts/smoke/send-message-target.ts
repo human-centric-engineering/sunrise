@@ -2,9 +2,10 @@
  * send_message_to_channel targeting smoke script (t-770)
  *
  * Proves, against the real Postgres dev DB, which conversation each kind of
- * caller may send on. The rule lives in a database query (a JSON-path match on
- * the run's `inputData` and a lineage join for reruns), so mocked tests can
- * only pin the query's shape; this proves Postgres answers it as intended.
+ * caller may send on. A workflow run may send only on its
+ * `AiWorkflowExecution.replyConversationId`, which the inbound route sets and
+ * the rerun route copies; this also proves the column behaves (a rerun of a
+ * rerun, a purged original, an erased conversation clearing it).
  *
  * Also runs the inbound-reply template's real `send_reply` step through the
  * real dispatcher. That step never sent before t-770: `tool_call` did not
@@ -30,7 +31,6 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { SendMessageToChannelCapability } from '@/lib/orchestration/capabilities/built-in/send-message-to-channel';
 import { executeToolCall } from '@/lib/orchestration/engine/executors/tool-call';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
-import { inboundTriggerSource } from '@/lib/orchestration/inbound/trigger-source';
 import { INBOUND_CONVERSATION_HANDLER_TEMPLATE } from '@/prisma/seeds/data/templates/inbound-conversation-handler';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import type { CapabilityContext } from '@/lib/orchestration/capabilities/types';
@@ -95,7 +95,7 @@ async function main(): Promise<void> {
         title: `${PREFIX} ${label}`,
         channel: 'sms',
         provider: 'twilio',
-        fromAddress: `+4474000${String(stamp).slice(-5)}${label === 'A' ? '1' : '2'}`,
+        fromAddress: `+4474000${String(stamp).slice(-5)}${'ABC'.indexOf(label) + 1}`,
       },
     });
   const convA = await conversation('A');
@@ -104,34 +104,37 @@ async function main(): Promise<void> {
     data: { name: `${PREFIX} workflow`, slug: `${PREFIX}-${stamp}`, description: 'smoke' },
   });
   const run = (data: {
-    triggerSource?: string | null;
+    triggerSource?: string;
     parentExecutionId?: string;
-    conversationId: string;
+    replyConversationId?: string;
   }) =>
     prisma.aiWorkflowExecution.create({
       data: {
         workflowId: workflow.id,
         status: 'running',
-        triggerSource: data.triggerSource ?? null,
+        ...(data.triggerSource ? { triggerSource: data.triggerSource } : {}),
         ...(data.parentExecutionId ? { parentExecutionId: data.parentExecutionId } : {}),
+        ...(data.replyConversationId ? { replyConversationId: data.replyConversationId } : {}),
+        // Every run's input names conversation A in its envelope, and the
+        // sender's payload names B: neither is what authorises a send.
         inputData: {
           trigger: { text: 'Hi', conversationId: convB.id },
-          triggerMeta: { channel: 'sms', conversationId: data.conversationId },
+          triggerMeta: { channel: 'sms', conversationId: convA.id },
         },
         executionTrace: [],
       },
     });
-  // An inbound run whose sender's payload ALSO names conversation B: only the
-  // envelope (`triggerMeta`) counts.
-  const inbound = await run({
-    triggerSource: inboundTriggerSource('sms'),
-    conversationId: convA.id,
-  });
-  const rerun = await run({ parentExecutionId: inbound.id, conversationId: convA.id });
-  const rerunOfRerun = await run({ parentExecutionId: rerun.id, conversationId: convA.id });
-  // What a model calling run_workflow could start: a forged triggerMeta.
-  const forged = await run({ conversationId: convA.id });
-  console.log('[1] seeded two SMS conversations and four runs');
+  // As the inbound route creates a run, and as the rerun route copies it.
+  const inbound = await run({ triggerSource: 'inbound:sms', replyConversationId: convA.id });
+  const rerun = await run({ parentExecutionId: inbound.id, replyConversationId: convA.id });
+  const rerunOfRerun = await run({ parentExecutionId: rerun.id, replyConversationId: convA.id });
+  // A rerun whose original has since been purged.
+  const doomed = await run({ triggerSource: 'inbound:sms', replyConversationId: convA.id });
+  const orphanRerun = await run({ parentExecutionId: doomed.id, replyConversationId: convA.id });
+  await prisma.aiWorkflowExecution.delete({ where: { id: doomed.id } });
+  // What a model calling run_workflow, an admin, or a schedule starts: no reply conversation.
+  const unanchored = await run({});
+  console.log('[1] seeded two SMS conversations and five runs');
 
   try {
     const step = (executionId: string, agentId = 'smoke-agent') => ({
@@ -170,10 +173,10 @@ async function main(): Promise<void> {
     );
 
     // ── Each caller ─────────────────────────────────────────────────────
-    console.log('\n[3] a workflow step may send only to the conversation that started its run');
+    console.log('\n[3] a workflow step may send only on its run’s reply conversation');
     check(
       (await attempt(convA.id, step(inbound.id))) === PERMITTED,
-      'inbound run → its own conversation: permitted'
+      'inbound run → its reply conversation: permitted'
     );
     check(
       (await attempt(convB.id, step(inbound.id))) === REFUSED,
@@ -181,15 +184,19 @@ async function main(): Promise<void> {
     );
     check(
       (await attempt(convA.id, step(rerun.id))) === PERMITTED,
-      'an admin’s rerun of an inbound run → its conversation: permitted'
+      'an admin’s rerun → the same conversation: permitted'
     );
     check(
-      (await attempt(convA.id, step(rerunOfRerun.id))) === REFUSED,
-      'a rerun of a rerun: refused (one level only)'
+      (await attempt(convA.id, step(rerunOfRerun.id))) === PERMITTED,
+      'a rerun of a rerun → the same conversation: permitted'
     );
     check(
-      (await attempt(convA.id, step(forged.id))) === REFUSED,
-      'a run no inbound message started, with a forged triggerMeta: refused'
+      (await attempt(convA.id, step(orphanRerun.id))) === PERMITTED,
+      'a rerun whose original was purged → still permitted'
+    );
+    check(
+      (await attempt(convA.id, step(unanchored.id))) === REFUSED,
+      'a run no inbound message started, whatever its input says: refused'
     );
 
     console.log('\n[4] chat and MCP');
@@ -205,9 +212,22 @@ async function main(): Promise<void> {
       (await attempt(convA.id, { userId: null, agentId: 'smoke-agent' })) === REFUSED,
       'an MCP client (no conversation of its own): refused'
     );
+
+    console.log('\n[5] erasing the conversation clears the run’s permission');
+    const convC = await conversation('C');
+    const replying = await run({ triggerSource: 'inbound:sms', replyConversationId: convC.id });
+    await prisma.aiConversation.delete({ where: { id: convC.id } });
+    const after = await prisma.aiWorkflowExecution.findUnique({
+      where: { id: replying.id },
+      select: { replyConversationId: true },
+    });
+    check(
+      after?.replyConversationId === null,
+      'the run’s replyConversationId is cleared (SetNull)'
+    );
   } finally {
     await cleanup();
-    console.log('\n[5] cleaned up the smoke conversations, runs and workflow');
+    console.log('\n[6] cleaned up the smoke conversations, runs and workflow');
   }
 
   await prisma.$disconnect();

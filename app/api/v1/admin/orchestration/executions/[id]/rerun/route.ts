@@ -84,6 +84,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       versionId: true,
       scope: true,
       userId: true,
+      replyConversationId: true,
     },
   });
   if (!original) {
@@ -175,6 +176,10 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     ...(rerunScope ? { scope: rerunScope } : {}),
     signal: request.signal,
     parentExecutionId: original.id,
+    // A rerun retries the same reply, so it may send on the same conversation
+    // as the original (t-770). Copied each time, so a rerun of a rerun keeps it
+    // and it survives the original run being purged.
+    ...(original.replyConversationId ? { replyConversationId: original.replyConversationId } : {}),
   });
 
   return sseResponse(events, { signal: request.signal });

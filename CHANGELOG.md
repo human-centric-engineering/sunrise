@@ -229,8 +229,11 @@ release process.
 - **A `tool_call` step interpolates its `args`** (t-770). Every string in an
   authored `args` object now resolves `{{input.…}}`, `{{<stepId>.output}}`,
   `{{trigger.…}}` and the rest, as every other step type's config already did;
-  objects and arrays are walked. Args taken from `argsFrom` or the `inputData`
-  fallback are data and are passed through unchanged. **For a fork:** a
+  objects and arrays are walked, with the same walker the admin trace viewer
+  uses. As in every step type, an interpolated value is a string: a reference
+  to a number or an object arrives as its text, so pass structured args with
+  `argsFrom`. Args taken from `argsFrom` or the `inputData` fallback are data
+  and are passed through unchanged. **For a fork:** a
   `tool_call` whose `args` held literal `{{…}}` text meant to reach the
   capability verbatim now gets it interpolated (a missing reference becomes
   the empty string).
@@ -734,13 +737,18 @@ release process.
   `run_workflow` included), could have the operator's number message anyone
   who had ever written to it, given that conversation's id. Now a workflow
   step, fixed (`tool_call`) or AI-driven (`agent_call`, the orchestrator),
-  sends only to the conversation that started the run, and only on a run the
-  inbound route started or an admin's rerun of one; an interactive chat only to
+  sends only on its run's new **`AiWorkflowExecution.replyConversationId`**
+  (migration `20261006140000_execution_reply_conversation`, `onDelete:
+  SetNull`), which the inbound route sets and the rerun route copies through
+  the new `ExecuteOptions.replyConversationId`; an interactive chat only on
   its own conversation; an MCP client never. Anything else is refused with
   `conversation_not_permitted`, and logged, before the conversation is read.
-  **For an operator:** a workflow that texted a thread other than the one that
-  started it (reminders, outreach), or an MCP client that sent outbound
+  **For an operator:** a workflow that texted a thread other than the one it
+  replies on (reminders, outreach), or an MCP client that sent outbound
   messages, now gets that refusal; deliberate outreach is not supported yet.
+  **For a fork:** pass `replyConversationId` to `engine.execute()` only for a
+  conversation the run is genuinely replying on, never one from a request or a
+  model; it is what authorises the run to message that conversation.
 - **`csvEscape` quotes a lone CR, so free text can no longer start a CSV
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after
   the first character was emitted bare, a spreadsheet read it as a record break,
