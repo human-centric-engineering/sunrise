@@ -22,12 +22,15 @@ const FORMULA_TRIGGERS = ['=', '+', '-', '@', '\t', '\r'];
 /**
  * Escape a single value for inclusion in a CSV row. Applies both
  * formula-injection neutralisation (leading-character prefix) and
- * RFC 4180 quoting (for commas, quotes, newlines).
+ * RFC 4180 quoting (for commas, quotes, CR and LF). A lone CR is
+ * quoted too: spreadsheets treat it as a record break, so left bare it
+ * would start a new cell whose first character the neutraliser never
+ * saw.
  */
 export function csvEscape(value: string): string {
   const neutralised =
     value.length > 0 && FORMULA_TRIGGERS.includes(value.charAt(0)) ? `'${value}` : value;
-  if (neutralised.includes(',') || neutralised.includes('"') || neutralised.includes('\n')) {
+  if (/[",\r\n]/.test(neutralised)) {
     return `"${neutralised.replace(/"/g, '""')}"`;
   }
   return neutralised;

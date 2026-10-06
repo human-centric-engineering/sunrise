@@ -50,6 +50,7 @@ vi.mock('@/lib/api/context', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
+import { parseCsvRecords } from '@/tests/helpers/csv';
 import { GET as ExportConversations } from '@/app/api/v1/admin/orchestration/conversations/export/route';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
@@ -316,6 +317,25 @@ describe('GET /conversations/export', () => {
 
     expect(text).toContain('"Title, with comma"');
     expect(text).toContain('"Content ""with"" quotes"');
+  });
+
+  it('keeps a message containing a lone CR inside its own CSV record (#768)', async () => {
+    // A bare CR is a record break to a spreadsheet. Message content is
+    // third-party text, so a CR in it must not start a new record whose
+    // first cell the sender controls.
+    const content = "thanks!\r=cmd|' /C calc'!A0";
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([
+      makeConversation({ messages: [makeMessage({ content })] }),
+    ] as never);
+
+    const response = await ExportConversations(makeRequest({ format: 'csv' }));
+    const records = parseCsvRecords(await response.text());
+
+    // Header + one message row, and the row carries the content intact.
+    expect(records).toHaveLength(2);
+    expect(records[1]).toHaveLength(records[0].length);
+    expect(records[1][records[0].indexOf('message_content')]).toBe(content);
   });
 
   it('includes messages in JSON export', async () => {
