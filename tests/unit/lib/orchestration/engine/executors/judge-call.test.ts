@@ -5,10 +5,10 @@
  *   - Happy path: score + reasoning + passed=true.
  *   - Threshold: passed=false when score < threshold.
  *   - No threshold: passed always true.
- *   - Null score (judge couldn't grade): passed=true (no threshold) /
- *     passed=true even when threshold set, because typeof score !== 'number'.
+ *   - Null score with a threshold (judge couldn't grade): the step fails with
+ *     the judge's errorCode, retriable unless a retry cannot change it (t-747).
+ *   - Null score without a threshold: passed=true, errorCode on the output.
  *   - evaluationSteps propagated when present.
- *   - errorCode propagated onto output when present.
  *   - Template interpolation of question / answer fields.
  *   - Missing judgeAgentSlug → ExecutorError('missing_judge_agent_slug').
  */
@@ -25,6 +25,7 @@ vi.mock('@/lib/orchestration/evaluations/judge-driver', () => ({
 
 import { executeJudgeCall } from '@/lib/orchestration/engine/executors/judge-call';
 import { driveJudgeAgent } from '@/lib/orchestration/evaluations/judge-driver';
+import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import type { WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 
@@ -179,15 +180,6 @@ describe('executeJudgeCall', () => {
     expect((result.output as { threshold: number | null }).threshold).toBeNull();
   });
 
-  it("passed=true when score is null (judge couldn't score) — workflow gets a non-failing default", async () => {
-    mockedDrive.mockResolvedValueOnce(driveResult({ score: null }));
-
-    const result = await executeJudgeCall(makeStep(), makeCtx());
-
-    expect((result.output as { score: number | null; passed: boolean }).score).toBeNull();
-    expect((result.output as { passed: boolean }).passed).toBe(true);
-  });
-
   it('propagates evaluationSteps onto the step output when the judge returned them', async () => {
     mockedDrive.mockResolvedValueOnce(
       driveResult({ evaluationSteps: ['Step 1', 'Step 2', 'Step 3'] })
@@ -202,18 +194,67 @@ describe('executeJudgeCall', () => {
     ]);
   });
 
-  it('propagates errorCode onto the step output (workflow stays alive; route can branch on passed)', async () => {
-    mockedDrive.mockResolvedValueOnce(
-      driveResult({
-        score: null,
-        reasoning: 'malformed JSON',
-        errorCode: 'malformed_judge_response',
-      })
+  describe('a judge that returns no score (§77 t-747)', () => {
+    // `driveJudgeAgent` never throws: every failure is `score: null` plus an
+    // `errorCode`. With a threshold, the step used to report passed=true, so a
+    // quality gate opened for anything the judge could not see.
+    it.each([
+      ['provider_error', true],
+      ['malformed_judge_response', true],
+      ['provider_not_permitted', false],
+      ['no_provider_configured', false],
+      ['no_eligible_provider', false],
+      ['budget_exceeded', false],
+    ])(
+      'with a threshold, fails the step with the judge’s %s (retriable: %s)',
+      async (errorCode, retriable) => {
+        mockedDrive.mockResolvedValueOnce(
+          driveResult({ score: null, reasoning: `judge call error: ${errorCode}`, errorCode })
+        );
+
+        const failure = executeJudgeCall(makeStep(), makeCtx());
+
+        // The partial spend rides on the error, so skip / fallback / retry
+        // still account for the judge call that was billed.
+        await expect(failure).rejects.toBeInstanceOf(ExecutorError);
+        await expect(failure).rejects.toMatchObject({
+          stepId: 'jc1',
+          code: errorCode,
+          retriable,
+          tokensUsed: 78,
+          costUsd: 0.012,
+        });
+      }
     );
 
-    const result = await executeJudgeCall(makeStep(), makeCtx());
+    it('still fails the step when a judge breaks the contract and gives no errorCode', async () => {
+      mockedDrive.mockResolvedValueOnce(driveResult({ score: null }));
 
-    expect((result.output as { errorCode: string }).errorCode).toBe('malformed_judge_response');
+      await expect(executeJudgeCall(makeStep(), makeCtx())).rejects.toMatchObject({
+        code: 'judge_returned_no_score',
+        retriable: true,
+      });
+    });
+
+    it('without a threshold, still reports passed=true and carries the errorCode', async () => {
+      // A judge with no threshold scores rather than gates: unchanged.
+      mockedDrive.mockResolvedValueOnce(
+        driveResult({
+          score: null,
+          reasoning: 'malformed JSON',
+          errorCode: 'malformed_judge_response',
+        })
+      );
+
+      const result = await executeJudgeCall(makeStep({ threshold: undefined }), makeCtx());
+
+      expect(result.output).toMatchObject({
+        score: null,
+        passed: true,
+        threshold: null,
+        errorCode: 'malformed_judge_response',
+      });
+    });
   });
 
   it('throws ExecutorError when judgeAgentSlug is empty', async () => {

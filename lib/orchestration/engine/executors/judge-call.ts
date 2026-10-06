@@ -19,6 +19,20 @@
  * Output: `{ score: number | null, reasoning: string, evaluationSteps?: string[],
  *           passed: boolean, threshold: number | null }`.
  * `passed` is `true` when no threshold is set, or when `score >= threshold`.
+ *
+ * **With a threshold, a judge that returns no score fails the step** (§77
+ * t-747). `driveJudgeAgent` never throws: a vendor error, no provider, the
+ * org's provider policy refusing it, or a reply that is not `{score,
+ * reasoning}` JSON all come back as `score: null` with an `errorCode`. This
+ * step used to report `passed: true` then, so a quality gate opened for
+ * anything the judge could not see. It now throws `ExecutorError` carrying
+ * the judge's code, and the step's `errorStrategy` decides: `fail` (the
+ * default) fails the run, `retry` tries again unless the cause is one a retry
+ * cannot change, `fallback` routes to the author's chosen step. `skip`
+ * empties the output, so a gate downstream sees no `passed` at all: on a gate,
+ * choosing `skip` is choosing to have no gate. Without a threshold the step
+ * scores rather than gates, so it still reports `passed: true` with the
+ * `errorCode` in its output.
  * The boolean is the natural anchor for `route` step branching ("publish
  * if passed, escalate otherwise"). Workflows that want to branch on the
  * raw score string-match `{{<this-step-id>.output.score}}` in their
@@ -46,6 +60,21 @@ import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { interpolatePrompt } from '@/lib/orchestration/engine/interpolate-prompt';
 import { driveJudgeAgent } from '@/lib/orchestration/evaluations/judge-driver';
 import { judgeCallConfigSchema } from '@/lib/validations/orchestration';
+import { PROVIDER_NOT_PERMITTED } from '@/lib/orchestration/llm/provider';
+
+/**
+ * Judge error codes a retry cannot change: the same request gets the same
+ * answer. Each is raised non-retriable at its source (the provider policy,
+ * `NoProviderConfiguredError`, `NoEligibleProviderError`, the per-agent
+ * budget). Any other code keeps `ExecutorError`'s default, retriable, so a
+ * code missing here costs a wasted retry, never a wrong outcome.
+ */
+const NON_RETRIABLE_JUDGE_ERRORS = new Set([
+  PROVIDER_NOT_PERMITTED,
+  'no_provider_configured',
+  'no_eligible_provider',
+  'budget_exceeded',
+]);
 
 export async function executeJudgeCall(
   step: WorkflowStep,
@@ -122,6 +151,24 @@ export async function executeJudgeCall(
   });
 
   const threshold = typeof config.threshold === 'number' ? config.threshold : null;
+  const tokensUsed = result.tokenUsage.input + result.tokenUsage.output;
+
+  if (threshold !== null && typeof result.score !== 'number') {
+    // A gate with nothing to compare. `errorCode` is set whenever the score is
+    // null (`driveJudgeAgent`'s contract); the fallback is for a judge that
+    // breaks it, so the step still fails rather than passing.
+    const code = result.errorCode ?? 'judge_returned_no_score';
+    throw new ExecutorError(
+      step.id,
+      code,
+      `judge_call: judge "${judgeAgentSlug}" returned no score, so the threshold could not be applied (${code})`,
+      undefined,
+      !NON_RETRIABLE_JUDGE_ERRORS.has(code),
+      tokensUsed,
+      result.costUsd
+    );
+  }
+
   const passed =
     typeof result.score === 'number' && threshold !== null ? result.score >= threshold : true;
 
@@ -141,7 +188,7 @@ export async function executeJudgeCall(
 
   return {
     output,
-    tokensUsed: result.tokenUsage.input + result.tokenUsage.output,
+    tokensUsed,
     costUsd: result.costUsd,
   };
 }
