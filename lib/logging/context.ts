@@ -80,8 +80,9 @@ export async function getVisitorId(): Promise<string | undefined> {
 }
 
 /**
- * Drop the query string and fragment from a request URL before it is bound to
- * a log context.
+ * Drop the userinfo, query string and fragment from a request URL before it is
+ * bound to a log context. Clearing the userinfo is deliberate: `user:pass@` in
+ * the authority is a credential and must not be logged.
  *
  * Redaction in the logger is by key name only, so a value under `url` is
  * written verbatim to stdout and the admin log buffer. A query string can
@@ -109,7 +110,7 @@ function stripQueryAndFragment(rawUrl: string): string {
  * Extracts relevant information from the request
  *
  * @param request - Optional Request object (for API routes)
- * @returns Request context including ID, method, URL (query string and fragment removed), user agent
+ * @returns Request context including ID, method, URL (userinfo, query string and fragment removed), user agent
  *
  * @example
  * ```typescript

@@ -129,7 +129,7 @@ export async function POST(request: NextRequest) {
 }
 ```
 
-> **`url` carries no query string or fragment.** The logger redacts by key name
+> **`url` carries no userinfo, query string or fragment.** The logger redacts by key name
 > only, so anything under `url` is written verbatim to stdout and the admin log
 > buffer. `getRequestContext` therefore binds the URL without userinfo, query or fragment. Search terms,
 > email addresses and `?token=` values never reach the log through the bound
