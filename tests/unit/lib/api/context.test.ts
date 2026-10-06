@@ -72,7 +72,7 @@ describe('getRouteLogger', () => {
     vi.mocked(getFullContext).mockResolvedValue({
       requestId: 'req-abc',
       method: 'GET',
-      url: 'http://localhost:3000/api/v1/users?page=1',
+      url: 'http://localhost:3000/api/v1/users',
       userAgent: 'test-agent',
       userId: 'user-1',
       sessionId: 'session-1',
@@ -98,7 +98,7 @@ describe('getRouteLogger', () => {
     vi.mocked(getFullContext).mockResolvedValue({
       requestId: 'req-xyz',
       method: 'POST',
-      url: 'http://localhost:3000/api/v1/orders?status=open',
+      url: 'http://localhost:3000/api/v1/orders',
       userAgent: 'Mozilla/5.0',
       userId: 'user-42',
       sessionId: 'session-99',
@@ -114,7 +114,7 @@ describe('getRouteLogger', () => {
     expect(vi.mocked(logger.withContext)).toHaveBeenCalledWith({
       requestId: 'req-xyz',
       method: 'POST',
-      url: 'http://localhost:3000/api/v1/orders?status=open',
+      url: 'http://localhost:3000/api/v1/orders',
       userAgent: 'Mozilla/5.0',
       userId: 'user-42',
       sessionId: 'session-99',

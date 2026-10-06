@@ -84,7 +84,8 @@ export async function getVisitorId(): Promise<string | undefined> {
  * Extracts relevant information from the request
  *
  * @param request - Optional Request object (for API routes)
- * @returns Request context including ID, method, URL, user agent
+ * @returns Request context including ID, method, URL (origin and path only —
+ *   the query string and fragment are dropped, #685), user agent
  *
  * @example
  * ```typescript
@@ -118,7 +119,7 @@ export async function getRequestContext(request?: Request): Promise<{
     // platform credential.
     orgId: getTenantContext()?.orgId ?? undefined,
     method: request?.method,
-    url: request ? stripQuery(request.url) : undefined,
+    url: request?.url ? stripQuery(request.url) : undefined,
     userAgent: headersList.get('user-agent') || undefined,
   };
 }
