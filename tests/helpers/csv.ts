@@ -8,7 +8,8 @@
  * and a lone CR each end a record — Excel, LibreOffice Calc and Google
  * Sheets all accept a bare CR as a record separator, so a test that
  * splits on `\n` or `\r\n` alone cannot see a record the export split
- * by accident (#768).
+ * by accident (#768). Throws on an unclosed quoted cell rather than
+ * folding the rest of the text into it.
  */
 export function parseCsvRecords(text: string): string[][] {
   const records: string[][] = [];
@@ -21,7 +22,6 @@ export function parseCsvRecords(text: string): string[][] {
 
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
-    const fieldStart = cell === '' && (i === 0 || /[,\r\n]/.test(text[i - 1]));
     if (ch !== '\r' && ch !== '\n') inRecord = true;
     if (inQuotes) {
       if (ch === '"' && text[i + 1] === '"') {
@@ -32,7 +32,7 @@ export function parseCsvRecords(text: string): string[][] {
       } else {
         cell += ch;
       }
-    } else if (ch === '"' && fieldStart) {
+    } else if (ch === '"' && cell === '') {
       inQuotes = true;
     } else if (ch === ',') {
       record.push(cell);
@@ -48,6 +48,7 @@ export function parseCsvRecords(text: string): string[][] {
       cell += ch;
     }
   }
+  if (inQuotes) throw new Error('parseCsvRecords: unclosed quoted cell');
   if (inRecord) {
     record.push(cell);
     records.push(record);
