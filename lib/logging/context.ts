@@ -80,11 +80,32 @@ export async function getVisitorId(): Promise<string | undefined> {
 }
 
 /**
+ * Drop the query string and fragment from a request URL before it is bound to
+ * a log context.
+ *
+ * Redaction in the logger is by key name only, so a value under `url` is
+ * written verbatim to stdout and the admin log buffer. A query string can
+ * carry a credential (`?token=`) or a third party's personal data (`?q=`),
+ * neither of which a route author can keep out of a context they did not build.
+ * Path segments are not touched here: a credential in the path still reaches
+ * the log (see `.context/logging/request-context.md`).
+ */
+function stripQueryAndFragment(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    const cut = rawUrl.search(/[?#]/);
+    return cut === -1 ? rawUrl : rawUrl.slice(0, cut);
+  }
+}
+
+/**
  * Get full request context for logging
  * Extracts relevant information from the request
  *
  * @param request - Optional Request object (for API routes)
- * @returns Request context including ID, method, URL, user agent
+ * @returns Request context including ID, method, URL (query string and fragment removed), user agent
  *
  * @example
  * ```typescript
@@ -118,7 +139,7 @@ export async function getRequestContext(request?: Request): Promise<{
     // platform credential.
     orgId: getTenantContext()?.orgId ?? undefined,
     method: request?.method,
-    url: request?.url,
+    url: request ? stripQueryAndFragment(request.url) : undefined,
     userAgent: headersList.get('user-agent') || undefined,
   };
 }
@@ -216,7 +237,7 @@ export function getEndpointPath(request: Request): string {
     const url = new URL(request.url);
     return url.pathname;
   } catch {
-    return request.url;
+    return stripQueryAndFragment(request.url);
   }
 }
 

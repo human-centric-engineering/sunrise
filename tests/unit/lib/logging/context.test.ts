@@ -170,6 +170,47 @@ describe('Logging Context Utilities', () => {
       } as any);
     });
 
+    it('should not bind the query string to the logged url', async () => {
+      // Arrange — a query string can carry a credential or a third party's PII
+      const mockRequest = {
+        method: 'GET',
+        url: 'http://localhost:3000/api/v1/invitations/metadata?token=SECRET-TOKEN&email=ada%40example.com',
+      } as Request;
+
+      vi.mocked(headers).mockResolvedValue(createMockHeaders({ 'x-request-id': 'req-q' }) as any);
+
+      // Act
+      const context = await getRequestContext(mockRequest);
+
+      // Assert — the origin and pathname survive; nothing after them does
+      expect(context.url).toBe('http://localhost:3000/api/v1/invitations/metadata');
+      expect(JSON.stringify(context)).not.toContain('SECRET-TOKEN');
+      expect(JSON.stringify(context)).not.toContain('example.com');
+    });
+
+    it('should not bind a URL fragment to the logged url', async () => {
+      const mockRequest = {
+        method: 'GET',
+        url: 'http://localhost:3000/page?q=secret#frag-secret',
+      } as Request;
+
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
+
+      const context = await getRequestContext(mockRequest);
+
+      expect(context.url).toBe('http://localhost:3000/page');
+    });
+
+    it('should cut at the query when the URL cannot be parsed', async () => {
+      const mockRequest = { method: 'GET', url: '/relative?token=SECRET-TOKEN' } as Request;
+
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
+
+      const context = await getRequestContext(mockRequest);
+
+      expect(context.url).toBe('/relative');
+    });
+
     it('should work without request object', async () => {
       // Arrange
       vi.mocked(headers).mockResolvedValue({
@@ -546,6 +587,12 @@ describe('Logging Context Utilities', () => {
 
       // Assert
       expect(path).toBe('not-a-valid-url');
+    });
+
+    it('should not leak the query string through the unparseable-URL fallback', () => {
+      const mockRequest = { url: '/relative?token=SECRET-TOKEN' } as Request;
+
+      expect(getEndpointPath(mockRequest)).toBe('/relative');
     });
 
     it('should handle nested paths', () => {

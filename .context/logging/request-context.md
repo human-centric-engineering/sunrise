@@ -129,6 +129,16 @@ export async function POST(request: NextRequest) {
 }
 ```
 
+> **`url` carries no query string or fragment.** The logger redacts by key name
+> only, so anything under `url` is written verbatim to stdout and the admin log
+> buffer. `getRequestContext` therefore binds `origin + pathname`. Search terms,
+> email addresses and `?token=` values never reach the log through the bound
+> context. **Path segments are still logged as resolved** (`url` and `endpoint`
+> hold `/api/v1/x/<actual-segment>`): a route that puts a credential in its
+> _path_ must not use `getRouteLogger` as-is — pin `endpoint` to the route
+> pattern yourself. Collapsing `endpoint` to the route pattern in core is
+> tracked in #685.
+
 ## Using Request Context in Practice
 
 Request context tracing enables powerful debugging and monitoring capabilities.
