@@ -71,7 +71,10 @@ they work in the proxy runtime), and registered in `lib/env.ts` for validation.
 
 With `LOG_HTTP_ACCESS=true`, the proxy emits one `http_access` line per matched
 request: `{ requestId, visitorId, method, path }`. This makes anonymous
-navigation — which otherwise emits no server logs — visible.
+navigation — which otherwise emits no server logs — visible. `path` has its
+id- and credential-shaped segments collapsed to `[param]` (a page like
+`/s/<token>` would otherwise log a live credential on every visit; see
+[Request Context → What the context never carries](./request-context.md#what-the-context-never-carries-685)).
 
 > **Limitation:** middleware cannot observe the final response status of a
 > passthrough request, so the access line carries the request shape and

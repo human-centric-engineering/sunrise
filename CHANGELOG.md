@@ -714,15 +714,27 @@ release process.
 
 ### Security
 
-- **The request log context no longer carries the query string** (#685).
-  `getRequestContext()` (and so `getFullContext()` and `getRouteLogger()`)
-  bound `url: request.url`, which went to stdout and the admin log buffer on
-  every line a route logged — redaction is by key name, so a token or an email
-  in `?…` was written verbatim beside the redacted fields. `url` is now the
-  origin and path only; the query string and fragment are dropped. A fork that
-  parsed query parameters out of `context.url` in its logs must log the ones it
-  needs explicitly. A credential in a **path** segment (`endpoint`, and
-  `proxy.ts`'s `http_access` `path`) is still logged; that half of #685 is open.
+- **Route log lines no longer carry a credential or an email from the
+  request URL** (#685). The logger redacts by key name only, and the request
+  context bound to every line a route logs held the URL verbatim, so a token
+  in a path (`/api/v1/x/<token>`), or a token or searched-for email in a query
+  string, reached stdout and the admin log buffer whatever the route's own
+  log fields said.
+  - **Breaking: `url` is removed** from what `getRequestContext()`,
+    `getFullContext()` and `getRouteLogger()` bind. A fork that read or
+    parsed `context.url` in its logs should use `endpoint` and `method`, and
+    log any query parameter it needs explicitly.
+  - `endpoint` (`getEndpointPath()`) now collapses id- and credential-shaped
+    path segments to `[param]`: UUIDs, cuids, and 20+ character hex or
+    base64url-style tokens (`collapseDynamicSegments()` in
+    `lib/logging/redact-path.ts`). Dashboards grouping on a resolved
+    `endpoint` will see the collapsed form.
+  - New: `getRouteLogger(request, { endpoint })` pins a route pattern,
+    logged verbatim, for a dynamic segment the heuristic cannot recognise (a
+    short token, a JWT, an email). `DELETE /api/v1/admin/invitations/[email]`
+    uses it.
+  - The proxy's `http_access` line (`LOG_HTTP_ACCESS=true`) collapses `path`
+    the same way, which covers page routes such as a `/s/<token>` share link.
 
 - **`csvEscape` quotes a lone CR, so free text can no longer start a CSV
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after
