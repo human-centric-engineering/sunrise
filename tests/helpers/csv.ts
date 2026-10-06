@@ -12,6 +12,9 @@ export function splitCsvRecords(text: string): string[][] {
   let record: string[] = [];
   let cell = '';
   let inQuotes = false;
+  // True once anything has been read since the last record ended, so a
+  // trailing record of one empty (or empty-quoted) cell still counts.
+  let pending = false;
 
   const endCell = () => {
     record.push(cell);
@@ -21,10 +24,12 @@ export function splitCsvRecords(text: string): string[][] {
     endCell();
     records.push(record);
     record = [];
+    pending = false;
   };
 
   for (let i = 0; i < text.length; i++) {
     const ch = text.charAt(i);
+    pending = true;
     if (inQuotes) {
       if (ch === '"' && text.charAt(i + 1) === '"') {
         cell += '"';
@@ -34,7 +39,8 @@ export function splitCsvRecords(text: string): string[][] {
       } else {
         cell += ch;
       }
-    } else if (ch === '"') {
+    } else if (ch === '"' && cell === '') {
+      // RFC 4180: a quote only opens a quoted cell at the start of the cell.
       inQuotes = true;
     } else if (ch === ',') {
       endCell();
@@ -45,6 +51,6 @@ export function splitCsvRecords(text: string): string[][] {
       cell += ch;
     }
   }
-  if (cell !== '' || record.length > 0) endRecord();
+  if (pending) endRecord();
   return records;
 }
