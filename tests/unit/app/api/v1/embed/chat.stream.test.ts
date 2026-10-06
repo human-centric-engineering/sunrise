@@ -68,7 +68,6 @@ vi.mock('@/lib/logging/context', () => ({
       requestId: 'req-test-123',
       visitorId: 'vid-test-123',
       method: 'POST',
-      url: 'https://mysite.com/api/v1/embed/chat/stream',
       userAgent: 'test-agent/1.0',
     })
   ),

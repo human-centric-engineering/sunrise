@@ -165,7 +165,6 @@ describe('Logging Context Utilities', () => {
       expect(context).toEqual({
         requestId: 'req-123',
         method: 'POST',
-        url: 'http://localhost:3000/api/users',
         userAgent: 'Mozilla/5.0',
       } as any);
     });
@@ -182,18 +181,18 @@ describe('Logging Context Utilities', () => {
       // Assert
       expect(context.requestId).toBe('req-456');
       expect(context.method).toBeUndefined();
-      expect(context.url).toBeUndefined();
+      expect(context).not.toHaveProperty('url');
       expect(context.userAgent).toBeUndefined();
     });
 
     // #685: the context is bound to every line a route logs, and redaction is by
-    // key name only — a query string in `url` reaches stdout and the admin log
-    // buffer verbatim, whatever the route's own log fields say.
-    it('should drop the query string and fragment from url', async () => {
+    // key name only — a URL here would carry a query-string token or email, or a
+    // credential in the path, verbatim to stdout and the admin log buffer.
+    it('should carry no url key at all, so neither query nor path reaches the log', async () => {
       // Arrange
       const mockRequest = {
         method: 'GET',
-        url: 'http://localhost:3000/api/v1/invitations/metadata?token=live-secret&email=ada%40example.com#frag',
+        url: 'http://localhost:3000/s/Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z?token=live-secret&email=ada%40example.com',
       } as Request;
       vi.mocked(headers).mockResolvedValue(new Headers({ 'x-request-id': 'req-q' }));
 
@@ -201,23 +200,11 @@ describe('Logging Context Utilities', () => {
       const context = await getRequestContext(mockRequest);
 
       // Assert
-      expect(context.url).toBe('http://localhost:3000/api/v1/invitations/metadata');
+      expect(context).not.toHaveProperty('url');
       const serialised = JSON.stringify(context);
+      expect(serialised).not.toContain('Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z');
       expect(serialised).not.toContain('live-secret');
       expect(serialised).not.toContain('ada%40example.com');
-      expect(serialised).not.toContain('frag');
-    });
-
-    it('should drop the query string from an unparseable url', async () => {
-      // Arrange
-      const mockRequest = { method: 'GET', url: '/relative/path?q=private' } as Request;
-      vi.mocked(headers).mockResolvedValue(new Headers({ 'x-request-id': 'req-r' }));
-
-      // Act
-      const context = await getRequestContext(mockRequest);
-
-      // Assert
-      expect(context.url).toBe('/relative/path');
     });
 
     it('should generate request ID if not in headers', async () => {
@@ -429,7 +416,6 @@ describe('Logging Context Utilities', () => {
       expect(context).toEqual({
         requestId: 'req-789',
         method: 'POST',
-        url: 'http://localhost:3000/api/posts',
         userAgent: 'Chrome',
         userId: 'user-123',
         sessionId: 'session-456',
@@ -586,6 +572,22 @@ describe('Logging Context Utilities', () => {
       const path = getEndpointPath({ url: '/relative/path?q=private#frag' } as Request);
 
       expect(path).toBe('/relative/path');
+    });
+
+    it('should collapse a credential-shaped path segment (#685)', () => {
+      const path = getEndpointPath({
+        url: 'http://localhost:3000/api/v1/share/public/Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z?x=1',
+      } as Request);
+
+      expect(path).toBe('/api/v1/share/public/[param]');
+    });
+
+    it('should collapse a cuid id but keep readable segments (#685)', () => {
+      const path = getEndpointPath({
+        url: 'http://localhost:3000/api/v1/admin/orchestration/agents/cmtd5heg2001804ky8pgo6odx/capabilities',
+      } as Request);
+
+      expect(path).toBe('/api/v1/admin/orchestration/agents/[param]/capabilities');
     });
 
     it('should handle nested paths', () => {

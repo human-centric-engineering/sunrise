@@ -9,7 +9,7 @@
  *   then returns `logger.withContext({...context, endpoint})`.
  *
  * Test Coverage:
- * - Builds a scoped logger that includes requestId, method, url, endpoint,
+ * - Builds a scoped logger that includes requestId, method, endpoint,
  *   userId, sessionId, and email sourced from request + session context.
  * - Returns a scoped logger when session fields are absent (unauthenticated).
  * - Endpoint path is stripped of query-string (only pathname is forwarded).
@@ -72,7 +72,6 @@ describe('getRouteLogger', () => {
     vi.mocked(getFullContext).mockResolvedValue({
       requestId: 'req-abc',
       method: 'GET',
-      url: 'http://localhost:3000/api/v1/users',
       userAgent: 'test-agent',
       userId: 'user-1',
       sessionId: 'session-1',
@@ -98,7 +97,6 @@ describe('getRouteLogger', () => {
     vi.mocked(getFullContext).mockResolvedValue({
       requestId: 'req-xyz',
       method: 'POST',
-      url: 'http://localhost:3000/api/v1/orders',
       userAgent: 'Mozilla/5.0',
       userId: 'user-42',
       sessionId: 'session-99',
@@ -114,7 +112,6 @@ describe('getRouteLogger', () => {
     expect(vi.mocked(logger.withContext)).toHaveBeenCalledWith({
       requestId: 'req-xyz',
       method: 'POST',
-      url: 'http://localhost:3000/api/v1/orders',
       userAgent: 'Mozilla/5.0',
       userId: 'user-42',
       sessionId: 'session-99',
@@ -147,7 +144,6 @@ describe('getRouteLogger', () => {
     vi.mocked(getFullContext).mockResolvedValue({
       requestId: 'req-anon',
       method: 'GET',
-      url: 'http://localhost:3000/api/v1/public',
       userAgent: undefined,
       // userId, sessionId, email absent — unauthenticated path
     });

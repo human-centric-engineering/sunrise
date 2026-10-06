@@ -840,6 +840,24 @@ describe('proxy — anonymous visitor id', () => {
     infoSpy.mockRestore();
   });
 
+  // #685: a page carrying a bearer token in its path (a share link) must not
+  // write the live token to the access log.
+  it('collapses a credential-shaped segment in the access-log path', async () => {
+    process.env.LOG_HTTP_ACCESS = 'true';
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    const token = 'Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z';
+    const request = createMockRequest(`/s/${token}`, { cookies: {}, method: 'GET' });
+
+    await proxy(request);
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      'http_access',
+      expect.objectContaining({ path: '/s/[param]' })
+    );
+    expect(JSON.stringify(infoSpy.mock.calls)).not.toContain(token);
+    infoSpy.mockRestore();
+  });
+
   it('emits no access log line by default (LOG_HTTP_ACCESS unset)', async () => {
     const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
     const request = createMockRequest('/pricing', { cookies: {} });

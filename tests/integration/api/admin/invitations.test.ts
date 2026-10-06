@@ -535,6 +535,11 @@ describe('DELETE /api/v1/admin/invitations/:email', () => {
       // Assert: Should delete the invitation
       expect(deleteInvitationToken).toHaveBeenCalledWith('alice@example.com');
 
+      // Assert: the email path segment is never logged as the endpoint (#685)
+      expect(getRouteLogger).toHaveBeenCalledWith(request, {
+        endpoint: '/api/v1/admin/invitations/[email]',
+      });
+
       // Assert: Should log deletion
       const mockLogger = await vi.mocked(getRouteLogger).mock.results[0]?.value;
       expect(mockLogger.info).toHaveBeenCalledWith(

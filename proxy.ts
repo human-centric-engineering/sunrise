@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { generateRequestId } from '@/lib/logging/context';
 import { logger } from '@/lib/logging';
+import { collapseDynamicSegments } from '@/lib/logging/redact-path';
 import {
   VISITOR_COOKIE_NAME,
   VISITOR_HEADER_NAME,
@@ -203,13 +204,15 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   // Optional per-request access log (default off, behind LOG_HTTP_ACCESS).
   // Makes anonymous navigation visible server-side. The final response
   // status is not available to the proxy for passthrough requests, so the
-  // line carries the request shape + correlation keys only.
+  // line carries the request shape + correlation keys only. The path has its
+  // id- and credential-shaped segments collapsed: a page like `/s/<token>`
+  // would otherwise log a live credential on every visit (#685).
   if (isHttpAccessLogEnabled()) {
     logger.info('http_access', {
       requestId,
       visitorId: visitorId ?? undefined,
       method: request.method,
-      path: pathname,
+      path: collapseDynamicSegments(pathname),
     });
   }
 
