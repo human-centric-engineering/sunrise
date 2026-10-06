@@ -150,7 +150,7 @@ Tags are stored as `AiConversation.tags: String[]` (Postgres `text[]`, default `
 - Endpoint supports `format=json|csv`, `agentId`, `isActive`, `q`, `messageSearch`, `tag`, `dateFrom`, `dateTo`. Defaults to `json`.
 - Hard cap: 500 conversations per export, 500 messages per conversation.
 - Rate limit: 1/min per admin IP via `adminLimiter` keyed on `export:<ip>`.
-- CSV columns: `conversation_id, conversation_title, agent_slug, user_id, message_role, message_content, created_at` (one row per message). `csvEscape` quotes values containing `, "` or newline.
+- CSV columns: `conversation_id, conversation_title, agent_slug, user_id, message_role, message_content, created_at` (one row per message). `csvEscape` quotes values containing `,`, `"`, CR or LF (a lone CR is a record break to a spreadsheet), and prefixes a leading formula trigger with `'`.
 - JSON payload wraps data in `{ success: true, data: [...], meta: { total, totalMatching, capped } }` and serves it as a file download via `Content-Disposition: attachment`. `capped: true` indicates the 500-conversation cap was hit; `totalMatching` shows the untruncated count.
 
 ### Bulk clear (API only, no UI)
