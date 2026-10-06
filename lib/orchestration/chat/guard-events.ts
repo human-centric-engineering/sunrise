@@ -30,7 +30,19 @@ export interface GuardEventContext {
   contextType?: string;
   contextId?: string;
   agentId: string;
+  /**
+   * The caller. For an anonymous embed widget visitor this is the synthetic
+   * `embed_<hash>` visitor id, not a `User.id`: check {@link embedVisitorId}
+   * before writing it into a foreign key to `user`.
+   */
   userId: string;
+  /**
+   * Set only when the caller is an anonymous embed widget visitor (#705,
+   * t-765), to the same id as `userId`. A visitor is not a `User`, so a
+   * contributor that records against a user (a strike count, an escalation
+   * row) must decide what a visitor gets instead.
+   */
+  embedVisitorId?: string;
   conversationId: string;
 }
 

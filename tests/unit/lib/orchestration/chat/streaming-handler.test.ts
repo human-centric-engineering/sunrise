@@ -4105,6 +4105,29 @@ describe('guard-events seam (#414)', () => {
     expect(ctxArg).toMatchObject({ agentId: 'agent-1', userId: 'u1', conversationId: 'conv-1' });
   });
 
+  it('marks an embed visitor on the context with embedVisitorId, and a user without it (#705, t-765)', async () => {
+    // A contributor that records against a `User` must be able to tell a
+    // visitor's synthetic id apart from a real one.
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      patterns: ['system_override'],
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ inputGuardMode: 'block' })
+    );
+    const observer = vi.fn();
+    registerGuardEventContributor('obs', observer);
+
+    await collect(streamChat({ ...baseRequest, userId: 'embed_deadbeefdeadbeef' }));
+    await collect(streamChat(baseRequest));
+    await flush();
+
+    const [visitorCtx] = observer.mock.calls[0] as [Record<string, unknown>];
+    const [userCtx] = observer.mock.calls[1] as [Record<string, unknown>];
+    expect(visitorCtx).toMatchObject({ embedVisitorId: 'embed_deadbeefdeadbeef' });
+    expect(userCtx).not.toHaveProperty('embedVisitorId');
+  });
+
   it('does not emit when no registry contributor is present and does not break the turn (inert)', async () => {
     (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
       flagged: true,
@@ -5066,6 +5089,27 @@ describe('embed visitor conversations', () => {
         expect(payload).toMatchObject({ userId: null, embedVisitorId: VISITOR });
       }
     }
+  });
+
+  it('names a visitor in the budget_exceeded webhook as embedVisitorId, with no actorUserId', async () => {
+    // A receiver looks `actorUserId` up as a `User`; a visitor is not one.
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: false,
+      spent: 100,
+      limit: 10,
+      remaining: -90,
+    });
+
+    await collect(streamChat({ ...baseRequest, userId: VISITOR }));
+    await vi.waitFor(() =>
+      expect(dispatchWebhookEvent).toHaveBeenCalledWith('budget_exceeded', expect.anything())
+    );
+
+    const [, payload] = (dispatchWebhookEvent as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([name]) => name === 'budget_exceeded'
+    ) as [string, Record<string, unknown>];
+    expect(payload.embedVisitorId).toBe(VISITOR);
+    expect(payload).not.toHaveProperty('actorUserId');
   });
 
   it('names a signed-in user to hook subscribers by userId alone', async () => {

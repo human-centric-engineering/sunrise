@@ -159,19 +159,24 @@ describe('GET /api/v1/embed/widget.js', () => {
     expect(body).toContain('Connection lost.');
   });
 
-  it('forgets the conversation on conversation_not_found, so the next message starts a new one (#705, t-765)', async () => {
+  it('starts afresh on conversation_not_found and hands the whole turn back (#705, t-765)', async () => {
     // The visitor id includes the client IP; after an address change the old
-    // conversation is no longer the visitor's, and resending its id would fail
-    // the same way on every message.
+    // conversation is no longer the visitor's. The widget clears it as New chat
+    // does (so the transcript matches the server's fresh conversation) and
+    // restores the text and attachments the visitor just sent.
     const body = await GET(makeGetRequest()).text();
 
     const start = body.indexOf("evt.data.code === 'conversation_not_found'");
     expect(start).toBeGreaterThan(-1);
     const branch = body.slice(start, body.indexOf('} else if (fullText)', start));
-    expect(branch).toContain('conversationId = null;');
-    // The message the visitor just sent goes back in the box, not lost.
+    expect(branch).toContain('clearConversation();');
     expect(branch).toContain('input.value = msg;');
-    expect(branch).toContain('Press Send to start a new one with your message.');
+    expect(branch).toContain('pendingAttachments = sentAttachments;');
+    expect(branch).toContain('a new one has started');
+
+    const clear = body.slice(body.indexOf('function clearConversation()'));
+    expect(clear.slice(0, 800)).toContain('conversationId = null;');
+    expect(clear.slice(0, 800)).toContain("messagesEl.innerHTML = '';");
   });
 
   it('serves a script that parses as JavaScript', async () => {

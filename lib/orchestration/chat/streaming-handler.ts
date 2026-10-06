@@ -307,16 +307,6 @@ interface PersistMessageParams {
 }
 
 /**
- * How a hook event names its caller. A user is `userId`; an embed visitor is
- * not a `User` (#705, t-765), so a subscriber that reads `userId` as one gets
- * `null` and the visitor id arrives as `embedVisitorId` instead, matching how
- * the conversation row records them.
- */
-function hookCaller(userId: string): { userId: string | null; embedVisitorId?: string } {
-  return isEmbedUserId(userId) ? { userId: null, embedVisitorId: userId } : { userId };
-}
-
-/**
  * Who owns a conversation, as the columns that say so (#705, t-765).
  *
  * A real user owns theirs through `AiConversation.userId`, a FK to `User`. An
@@ -328,7 +318,9 @@ function hookCaller(userId: string): { userId: string | null; embedVisitorId?: s
  *
  * The same fragment serves as the create data and as the ownership filter on
  * load, so a visitor reaches only conversations created under their own id.
- * (The per-user cap does not apply to a visitor.)
+ * (The per-user cap does not apply to a visitor.) Hook events name their
+ * caller with it too, so a subscriber that reads `userId` as a `User` never
+ * gets a visitor id, and sees the visitor as the conversation row does.
  */
 function conversationOwner(
   userId: string
@@ -476,13 +468,18 @@ export class StreamingChatHandler {
         // path doesn't block the SSE `error` event we yielded above. The
         // webhook dispatcher creates the delivery row inside this call,
         // so ordering against subsequent failures is fine.
+        //
+        // An embed visitor is not a `User` (#705, t-765): the payload names
+        // them as `embedVisitorId` and carries no `actorUserId`, the field a
+        // receiver would look up as one, and no name lookup is made for them.
         void (async () => {
-          const actorUserName = await resolveUserDisplayName(request.userId);
+          const actorUserId = userIdForUserRef(request.userId);
+          const actorUserName = await resolveUserDisplayName(actorUserId);
           await dispatchWebhookEvent('budget_exceeded', {
             agentId: agent.id,
             agentSlug: agent.slug,
             agentName: agent.name,
-            actorUserId: request.userId,
+            ...(actorUserId ? { actorUserId } : { embedVisitorId: request.userId }),
             actorUserName,
             conversationId,
             usedUsd: budget.spent,
@@ -761,7 +758,7 @@ export class StreamingChatHandler {
           messageId: userMessage.id,
           agentSlug: request.agentSlug,
           agentId: agent.id,
-          ...hookCaller(request.userId),
+          ...conversationOwner(request.userId),
           role: 'user',
         });
       }
@@ -786,6 +783,7 @@ export class StreamingChatHandler {
         contextId: request.contextId,
         agentId: agent.id,
         userId: request.userId,
+        ...(isEmbedUserId(request.userId) ? { embedVisitorId: request.userId } : {}),
         conversationId: conversation.id,
       };
 
@@ -1860,7 +1858,7 @@ export class StreamingChatHandler {
             messageId: assistantMsg.id,
             agentSlug: request.agentSlug,
             agentId: agent.id,
-            ...hookCaller(request.userId),
+            ...conversationOwner(request.userId),
             role: 'assistant',
           });
 
@@ -2175,7 +2173,7 @@ export class StreamingChatHandler {
                 conversationId: conversation.id,
                 agentId: agent.id,
                 agentSlug: agent.slug,
-                ...hookCaller(request.userId),
+                ...conversationOwner(request.userId),
                 toolName: tc.name,
                 advertised: [...advertisedToolNames],
               });
@@ -2385,7 +2383,7 @@ export class StreamingChatHandler {
                 conversationId: conversation.id,
                 agentId: agent.id,
                 agentSlug: agent.slug,
-                ...hookCaller(request.userId),
+                ...conversationOwner(request.userId),
                 toolName: tc.name,
                 advertised: [...advertisedToolNames],
               });
@@ -2847,7 +2845,7 @@ export class StreamingChatHandler {
       conversationId: conversation.id,
       agentId: agent.id,
       agentSlug: agent.slug,
-      ...hookCaller(request.userId),
+      ...conversationOwner(request.userId),
     });
     return conversation;
   }

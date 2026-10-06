@@ -574,11 +574,15 @@ release process.
   sub-workflow unowned, as a scheduled run does (the document-cleanup tools
   already refuse an embed conversation before writing anything). An embed
   turn's cost rows are now written, unattributed. The `conversation.started`,
-  `message.created` and `capability.refused_not_advertised` hook events name a
-  visitor as `embedVisitorId`, with `userId: null`, and engagement analytics
-  count each visitor as their own participant. The widget forgets a
-  conversation the server no longer recognises as the visitor's, so the next
-  message starts a new one. The widget also could not send a message from a
+  `message.created` and `capability.refused_not_advertised` hook events and the
+  `conversation_escalated` webhook name a visitor as `embedVisitorId`, with
+  `userId: null`; the `budget_exceeded` webhook names them as `embedVisitorId`
+  with no `actorUserId`; and the guard-events seam's `GuardEventContext` gains
+  an optional **`embedVisitorId`**, set for a visitor (whose `userId` there is
+  still the visitor id). Engagement analytics count each visitor as their own
+  participant. When the server no longer recognises a conversation as the
+  visitor's (their IP changed), the widget starts afresh as New chat does and
+  hands back the message and attachments they just sent. The widget also could not send a message from a
   partner site at all: `proxy.ts`'s CSRF origin check refused every
   cross-origin POST. The embed routes and the embed approval routes, which
   authenticate with a token rather than a cookie and check their own origin

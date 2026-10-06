@@ -37,7 +37,9 @@ export const EMBED_USER_ID_PREFIX = 'embed_';
  *   - **user memory**, **adding provider models** and **sending outbound
  *     messages** are refused (code `anonymous_visitor`);
  *   - **a sub-workflow** runs unowned, as a scheduled run does (`run-workflow`);
- *   - **hook events** carry `userId: null` and the visitor as `embedVisitorId`;
+ *   - **hook events and webhooks** carry no user id for a visitor and name
+ *     them as `embedVisitorId`; the guard-events seam sets `embedVisitorId`
+ *     beside the visitor's `userId`;
  *   - the document-cleanup tools refuse an embed conversation before they
  *     write anything.
  * A new feature that remembers or runs something for a person must make the
@@ -54,8 +56,10 @@ export function isEmbedUserId(userId: string | null | undefined): boolean {
 /**
  * The caller's id for a column or payload field that means a `User`: the id
  * itself for a user, `null` for an embed visitor (who is not one) or for no
- * caller at all. The one spelling of that rule, for a writer that records a
- * visitor as no one rather than refusing them.
+ * caller at all. For a writer that records a visitor as no one rather than
+ * refusing them. Three cost-log writers predate it and spell the same rule as a
+ * spread that leaves the key out (`dispatcher.ts`, `search-knowledge.ts`,
+ * `send-message-to-channel.ts`); change all four together.
  */
 export function userIdForUserRef(userId: string | null | undefined): string | null {
   return userId && !isEmbedUserId(userId) ? userId : null;

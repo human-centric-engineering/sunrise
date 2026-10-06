@@ -963,8 +963,9 @@ export function GET(request: NextRequest): Response {
       });
     }
 
-    newChatBtn.addEventListener('click', function() {
-      if (activeAbort) { activeAbort.abort(); activeAbort = null; }
+    // Forget the conversation and clear its transcript, so what the visitor
+    // sees matches what the server holds: a fresh conversation with no history.
+    function clearConversation() {
       // Tear down any in-flight approval cards (aborts their polling
       // and submit fetches). Detaching the bubble div via innerHTML='' below
       // doesn't cancel network — closures hold the fetch references.
@@ -974,6 +975,11 @@ export function GET(request: NextRequest): Response {
       cardTeardowns = [];
       conversationId = null;
       messagesEl.innerHTML = '';
+    }
+
+    newChatBtn.addEventListener('click', function() {
+      if (activeAbort) { activeAbort.abort(); activeAbort = null; }
+      clearConversation();
       statusEl.style.display = 'none';
       statusEl.textContent = '';
       input.value = '';
@@ -1622,6 +1628,9 @@ export function GET(request: NextRequest): Response {
       activeAbort = controller;
 
       var requestBody = { message: msg, conversationId: conversationId || undefined };
+      // Kept so a turn the server refuses as conversation_not_found can be
+      // handed back to the visitor whole, attachments included.
+      var sentAttachments = pendingAttachments;
       if (pendingAttachments.length > 0) {
         var attList = [];
         for (var ai = 0; ai < pendingAttachments.length; ai++) {
@@ -1678,16 +1687,25 @@ export function GET(request: NextRequest): Response {
                 if (evt.data && evt.data.code === 'conversation_not_found') {
                   // The visitor id includes the client IP (#705, t-765), so a
                   // visitor whose address changed no longer owns this
-                  // conversation. Forget it, so the next message starts a new
-                  // one instead of failing the same way every time, and put
-                  // the text back in the box so it is not lost.
-                  conversationId = null;
+                  // conversation. Start afresh, as New chat does, so the next
+                  // message opens a new conversation and the visitor does not
+                  // see a history the agent no longer has; and hand the turn
+                  // back, text and attachments, so nothing they sent is lost.
+                  clearConversation();
                   if (!input.value && msg) {
                     input.value = msg;
                     if (input.__swResize) input.__swResize();
                   }
-                  assistantSpan.textContent =
-                    'This conversation could not be continued. Press Send to start a new one with your message.';
+                  if (pendingAttachments.length === 0 && sentAttachments.length > 0) {
+                    pendingAttachments = sentAttachments;
+                    refreshAttachStrip();
+                  }
+                  addMsg(
+                    'assistant',
+                    'Your earlier conversation could not be continued, so a new one has started. Press Send to send your message again.'
+                  );
+                  endStream();
+                  return;
                 } else if (fullText) {
                   setAssistantText(assistantSpan, fullText);
                 } else {
