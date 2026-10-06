@@ -51,6 +51,7 @@ export function splitCsvRecords(text: string): string[][] {
       cell += ch;
     }
   }
+  if (inQuotes) throw new Error('splitCsvRecords: unterminated quoted cell');
   if (pending) endRecord();
   return records;
 }
