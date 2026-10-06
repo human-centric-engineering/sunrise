@@ -22,7 +22,6 @@
  * `workflow:` id). See `isWorkflowAgentId` in the dispatcher.
  */
 
-import { z } from 'zod';
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
 import { toolCallConfigSchema } from '@/lib/validations/orchestration';
 import { capabilityDispatcher, workflowAgentId } from '@/lib/orchestration/capabilities/dispatcher';
@@ -45,7 +44,7 @@ import {
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { platformScope, hintScope } from '@/lib/orchestration/scope';
-import { resolveTemplatesIn } from '@/lib/orchestration/engine/interpolate-from-trace';
+import { resolveTemplatesInRecord } from '@/lib/orchestration/engine/interpolate-prompt';
 
 export async function executeToolCall(
   step: WorkflowStep,
@@ -119,9 +118,12 @@ export async function executeToolCall(
     // Interpolated like every other step's config (t-770): before, a
     // template's `conversationId: '{{trigger.conversationId}}'` reached the
     // capability as that literal text, and the inbound-reply template never
-    // sent a reply. The same walker the trace viewer uses, so the two agree;
-    // values come out as strings, as they do in every step type.
-    rawArgs = z.record(z.string(), z.unknown()).parse(resolveTemplatesIn(config.args, ctx));
+    // sent a reply. The same walker the trace viewer uses, with `previous`
+    // meaning the most recent step output, as `human_approval` and the viewer
+    // read it, so the two agree. Values come out as strings, as they do in
+    // every step type.
+    const previousStepId = Object.keys(ctx.stepOutputs).at(-1);
+    rawArgs = resolveTemplatesInRecord(config.args, ctx, previousStepId);
   } else if (config.argsFrom && ctx.stepOutputs[config.argsFrom] != null) {
     const fromOutput = ctx.stepOutputs[config.argsFrom];
     rawArgs =

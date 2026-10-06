@@ -223,3 +223,46 @@ function fencedJson(value: unknown): string {
     return '[unserializable]';
   }
 }
+
+/**
+ * Walk an arbitrary value (typically a step's config object) and replace
+ * every string leaf that contains a `{{...}}` token with its interpolated
+ * form. Other leaves pass through unchanged. Returns a fresh structure; the
+ * input is not mutated.
+ *
+ * Shared by the `tool_call` executor (its `args`, t-770) and the admin trace
+ * viewer's "Resolve templates" view, so what an admin sees is what a step
+ * sent. Objects are rebuilt with `Object.fromEntries`, which defines own
+ * properties, so a `__proto__` key in JSON-parsed config is copied like any
+ * other rather than reaching the prototype setter.
+ */
+export function resolveTemplatesIn(
+  value: unknown,
+  ctx: Readonly<InterpolationContext>,
+  previousStepId?: string
+): unknown {
+  if (typeof value === 'string') {
+    return value.includes('{{') ? interpolatePrompt(value, ctx, previousStepId) : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => resolveTemplatesIn(item, ctx, previousStepId));
+  }
+  if (value !== null && typeof value === 'object') {
+    return resolveTemplatesInRecord(value as Record<string, unknown>, ctx, previousStepId);
+  }
+  return value;
+}
+
+/** {@link resolveTemplatesIn} for a record, typed as one. */
+export function resolveTemplatesInRecord(
+  record: Readonly<Record<string, unknown>>,
+  ctx: Readonly<InterpolationContext>,
+  previousStepId?: string
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, item]) => [
+      key,
+      resolveTemplatesIn(item, ctx, previousStepId),
+    ])
+  );
+}

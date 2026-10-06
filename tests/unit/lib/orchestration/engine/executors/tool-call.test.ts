@@ -450,6 +450,17 @@ describe('executeToolCall', () => {
       );
     });
 
+    it('reads {{previous.output}} as the most recent step’s output, as the trace viewer does', async () => {
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+      const ctx = makeCtx({ stepOutputs: { first: 'old', respond: 'Happy to help.' } });
+
+      await executeToolCall(makeStep({ args: { message: '{{previous.output}}' } }), ctx);
+
+      expect(vi.mocked(capabilityDispatcher.dispatch).mock.calls[0][1]).toEqual({
+        message: 'Happy to help.',
+      });
+    });
+
     it('passes argsFrom output and the inputData fallback through as data, uninterpolated', async () => {
       vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
       const literal = { note: '{{input.secret}}' };

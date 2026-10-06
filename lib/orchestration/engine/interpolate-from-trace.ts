@@ -23,10 +23,7 @@
  *   the new logic against the old data.
  */
 
-import {
-  interpolatePrompt,
-  type InterpolationContext,
-} from '@/lib/orchestration/engine/interpolate-prompt';
+import type { InterpolationContext } from '@/lib/orchestration/engine/interpolate-prompt';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 /**
@@ -79,41 +76,11 @@ export function findPreviousStepId(
 }
 
 /**
- * Walk an arbitrary value (typically a step's `input` config object)
- * and replace every string leaf that contains a `{{...}}` token with
- * its interpolated form. Other leaves pass through unchanged.
- *
- * Returns a fresh structure — the input is not mutated.
+ * The walker the engine's `tool_call` executor also uses, so the trace
+ * viewer's "Resolve templates" view and the args a step actually sent agree.
+ * It lives beside `interpolatePrompt`; re-exported here for the viewer.
  */
-export function resolveTemplatesIn(
-  value: unknown,
-  ctx: InterpolationContext,
-  previousStepId?: string
-): unknown {
-  return walk(value, ctx, previousStepId);
-}
-
-function walk(
-  value: unknown,
-  ctx: InterpolationContext,
-  previousStepId: string | undefined
-): unknown {
-  if (typeof value === 'string') {
-    if (!value.includes('{{')) return value;
-    return interpolatePrompt(value, ctx, previousStepId);
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => walk(item, ctx, previousStepId));
-  }
-  if (value !== null && typeof value === 'object') {
-    const result: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      result[k] = walk(v, ctx, previousStepId);
-    }
-    return result;
-  }
-  return value;
-}
+export { resolveTemplatesIn } from '@/lib/orchestration/engine/interpolate-prompt';
 
 /**
  * Returns true when the given value (or any leaf of it) contains a

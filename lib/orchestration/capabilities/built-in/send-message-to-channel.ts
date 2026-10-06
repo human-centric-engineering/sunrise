@@ -139,7 +139,7 @@ function narrowConversationChannel(value: string | null): ConversationChannel | 
 }
 
 /**
- * Whether this call may send on `conversationId` (t-770). The argument is
+ * Why this call may not send on `conversationId`, or `null` when it may (t-770). The argument is
  * chosen by whoever drives the call: a model steered by the person chatting,
  * by an inbound message, or by content an MCP client is reading; or the
  * starter of a workflow run, `run_workflow`'s model included. Unrestricted, it
@@ -160,16 +160,25 @@ function narrowConversationChannel(value: string | null): ConversationChannel | 
  * supported; a later opt-in would be an admin setting, out of a model's
  * reach (Hub idea #32).
  */
-async function mayTarget(conversationId: string, context: CapabilityContext): Promise<boolean> {
+async function targetRefusal(
+  conversationId: string,
+  context: CapabilityContext
+): Promise<string | null> {
   if (context.workflowExecutionId) {
     const run = await prisma.aiWorkflowExecution.findUnique({
       where: { id: context.workflowExecutionId },
       select: { replyConversationId: true },
     });
-    return run?.replyConversationId === conversationId;
+    // Named apart, so a missing run (or one this org scope cannot see) does
+    // not read in the log as a steered model reaching for another thread.
+    if (!run) return 'the run could not be read';
+    if (run.replyConversationId === null) return 'the run replies on no conversation';
+    return run.replyConversationId === conversationId ? null : 'not the run’s reply conversation';
   }
-  if (context.conversationId) return context.conversationId === conversationId;
-  return false;
+  if (context.conversationId) {
+    return context.conversationId === conversationId ? null : 'not this chat’s conversation';
+  }
+  return 'the caller has no conversation of its own';
 }
 
 async function loadConversation(conversationId: string): Promise<LoadedConversation | null> {
@@ -305,10 +314,12 @@ export class SendMessageToChannelCapability extends BaseCapability<Args, Data> {
 
     // Only the conversation this call is handling, before anything is read
     // or written: the same answer whether or not the named one exists.
-    if (!(await mayTarget(args.conversationId, context))) {
-      // Logged, so an operator can see a steered model trying to reach
-      // another thread, or why a reply stopped going out.
+    const refusal = await targetRefusal(args.conversationId, context);
+    if (refusal) {
+      // Logged with its reason, so an operator can tell a steered model
+      // reaching for another thread from a run with nobody to reply to.
       logger.warn('send_message_to_channel: refused a conversation outside the one being handled', {
+        reason: refusal,
         agentId: context.agentId,
         conversationId: context.conversationId,
         workflowExecutionId: context.workflowExecutionId,

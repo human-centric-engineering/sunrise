@@ -54,6 +54,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 import { prisma } from '@/lib/db/client';
+import { logger } from '@/lib/logging';
 import { getOutboundAdapter } from '@/lib/orchestration/outbound/registry';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { workflowAgentId } from '@/lib/orchestration/capabilities/dispatcher';
@@ -200,6 +201,28 @@ describe('SendMessageToChannelCapability — which conversation a call may send 
     expect(own.success).toBe(true);
     expect(send).toHaveBeenCalledTimes(1);
     expect(prisma.aiWorkflowExecution.findUnique).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a run it cannot read', undefined, 'the run could not be read'],
+    ['a run with no reply conversation', null, 'the run replies on no conversation'],
+    ['another conversation', 'conv-9', 'not the run’s reply conversation'],
+  ])('logs why it refused a workflow step: %s', async (_label, reply, reason) => {
+    // So an operator can tell a steered model from a run with nobody to reply to.
+    readyToSend();
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      (reply === undefined ? null : { replyConversationId: reply }) as never
+    );
+
+    await makeCapability().execute(
+      otherThread,
+      makeContext({ conversationId: undefined, agentId: 'agent-1', workflowExecutionId: 'exec-1' })
+    );
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('refused a conversation'),
+      expect.objectContaining({ reason, requestedConversationId: 'conv-2' })
+    );
   });
 
   it('refuses a caller with no conversation of its own, such as an MCP client', async () => {
