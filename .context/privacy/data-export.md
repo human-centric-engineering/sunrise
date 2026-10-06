@@ -233,7 +233,7 @@ cascade**. Sunrise has two, both in the manifest by hand:
 
 | Table               | Identified by                    | How it is matched                     |
 | ------------------- | -------------------------------- | ------------------------------------- |
-| `ContactSubmission` | `email` — no user id at all      | `email`, case-insensitively           |
+| `ContactSubmission` | `email` — no user id at all      | `email`, exactly, lower-cased         |
 | `FeatureFlag`       | `createdBy String?`, no relation | `createdBy`, as an attribution source |
 
 The guard casts **two nets**, because the first one missed both of these:
@@ -255,6 +255,11 @@ and it is why the manifest still needs a human deciding what a new table holds
 rather than trusting the guard to ask. If your fork adds a table keyed by email,
 phone number, or an external identifier, **the guard will not find it for you** —
 add it by hand and write a test row that says why.
+
+Match such a table **exactly, on a normalised value** (normalise on write, lower-case
+the comparison side), never with `mode: 'insensitive'`: Prisma compiles that to an
+unescaped `ILIKE`, so `_` and `%` in an address match other people's rows — a
+disclosure in an export, a deletion if the pattern is copied onto an erasure path.
 
 If your fork adds a table like this — anything keyed by email, phone number, or
 an external identifier rather than `userId` — **the guard will not find it for

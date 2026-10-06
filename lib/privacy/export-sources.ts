@@ -268,9 +268,16 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     // reason the manifest still needs a human deciding what a new table holds.
     // Any table keyed by email, phone number, or an external identifier needs
     // the same treatment; nothing mechanical will find it for you.
+    //
+    // ⚠️ If you copy this shape, match EXACTLY on a normalised value — never
+    // `mode: 'insensitive'`. Prisma compiles that to an unescaped `ILIKE`, so
+    // `_` and `%` (both legal in an address) match other people's rows. Here
+    // that discloses a stranger's message; copied onto an erasure path it
+    // DELETES a stranger's rows. Normalise on write (the contact form stores
+    // `emailSchema`'s trimmed, lower-cased value) and compare the same way.
     fetch: ({ email }) =>
       prisma.contactSubmission.findMany({
-        where: { email: { equals: email, mode: 'insensitive' } },
+        where: { email: email.trim().toLowerCase() },
         orderBy: byCreatedAt,
       }),
   },

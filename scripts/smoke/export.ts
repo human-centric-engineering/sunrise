@@ -260,12 +260,13 @@ async function main(): Promise<void> {
       },
     });
 
-    // No FK to User — proves the by-email source resolves against real Postgres,
-    // including the case-insensitive match.
+    // No FK to User — proves the by-email source resolves against real Postgres.
+    // Stored lower-cased, as the contact route stores it (`emailSchema`); the
+    // source matches exactly on the lower-cased address, not with ILIKE.
     const contact = await prisma.contactSubmission.create({
       data: {
         name: `${PREFIX} contact`,
-        email: email.toUpperCase(),
+        email: email.toLowerCase(),
         subject: 'smoke',
         message: 'smoke enquiry',
       },
@@ -319,7 +320,7 @@ async function main(): Promise<void> {
     check(bundle.personalData.apiKeys?.length === 1, 'API key metadata exported');
     check(
       bundle.personalData.contactSubmissions?.length === 1,
-      'contact submission matched by email, case-insensitively'
+      'contact submission matched by email'
     );
     check(bundle.attributions.agents?.length === 1, 'created agent exported as attribution');
 

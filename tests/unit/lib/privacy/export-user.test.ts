@@ -272,19 +272,26 @@ describe('exportUserData', () => {
       expect(argsTo('aiWorkflowExecution').where).toEqual({ userId: 'user-1' });
     });
 
-    it('matches contact submissions on the subject email, case-insensitively', async () => {
-      // No FK to User — the public form takes an address. Case matters because
-      // the stored address may differ in case from the account's.
+    it('matches contact submissions on the subject email exactly, on the lower-cased value', async () => {
+      // No FK to User — the public form takes an address. The form stores the
+      // address trimmed and lower-cased (`emailSchema`), so the comparison side
+      // is normalised to match. `mode: 'insensitive'` is deliberately absent:
+      // Prisma compiles it to an unescaped `ILIKE`, so `_` and `%` in an address
+      // would match other people's submissions.
+      mockUserFindUnique.mockResolvedValue({ ...SUBJECT, email: '  Subject_One@Example.com ' });
+
       await exportUserData(PARAMS);
 
-      expect(argsTo('contactSubmission').where).toEqual({
-        email: { equals: 'Subject@Example.com', mode: 'insensitive' },
-      });
+      const { where } = argsTo('contactSubmission');
+      expect(where).toEqual({ email: 'subject_one@example.com' });
+      expect(JSON.stringify(where)).not.toContain('insensitive');
     });
   });
 
   describe('reading across every org at multi (§107 t-748)', () => {
-    const isSubject = (value: unknown) => value === SUBJECT.id || value === SUBJECT.email;
+    // The contact source compares the lower-cased address, so accept that form too.
+    const isSubject = (value: unknown) =>
+      value === SUBJECT.id || value === SUBJECT.email || value === SUBJECT.email.toLowerCase();
     const isRecord = (value: unknown): value is Record<string, unknown> =>
       typeof value === 'object' && value !== null && !Array.isArray(value);
 
