@@ -54,11 +54,11 @@ import { getRequestContext, getFullContext } from '@/lib/logging/context';
 export async function POST(request: NextRequest) {
   // Get request metadata only
   const context = await getRequestContext(request);
-  // Returns: { requestId, method, url, userAgent }
+  // Returns: { requestId, method, userAgent } — no url (#685)
 
   // Get combined request + user context
   const fullContext = await getFullContext(request);
-  // Returns: { requestId, method, url, userAgent, userId, sessionId, email }
+  // Returns: { requestId, method, userAgent, userId, sessionId, email }
 
   const logger = createLogger(fullContext);
   logger.info('User action logged');
