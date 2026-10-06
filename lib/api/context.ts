@@ -26,10 +26,12 @@ export interface RouteLoggerOptions {
   /**
    * The route pattern to log as `endpoint`, used verbatim — e.g.
    * `'/api/v1/admin/invitations/[email]'`. Pin it on a route whose dynamic
-   * segment is a credential or personal data that `getEndpointPath()`'s
-   * heuristic cannot recognise (a short token, a JWT, an email address).
-   * Without it, `endpoint` is the resolved path with id- and
-   * credential-shaped segments collapsed to `[param]` (#685).
+   * segment is a credential or personal data, and always where
+   * `getEndpointPath()`'s heuristic cannot recognise it (a token under 20
+   * characters, one with dots or other punctuation, a one-case or slug-shaped
+   * secret — see `lib/logging/redact-path.ts`). Without it, `endpoint` is the
+   * resolved path with id- and credential-shaped segments collapsed to
+   * `[param]` (#685).
    */
   endpoint?: string;
 }

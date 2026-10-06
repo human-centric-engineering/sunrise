@@ -26,8 +26,9 @@ import { getRouteLogger } from '@/lib/api/context';
  * @throws NotFoundError if invitation not found
  */
 export const DELETE = withAdminAuth<{ email: string }>(async (request, session, { params }) => {
-  // The path segment is an email address, which the endpoint heuristic cannot
-  // recognise — pin the pattern so the address is not logged as `endpoint`.
+  // The path segment is an email address. The endpoint heuristic collapses it
+  // too, but pin the pattern so the route says so itself and logs a readable
+  // `endpoint` rather than `[param]` (#685).
   const log = await getRouteLogger(request, { endpoint: '/api/v1/admin/invitations/[email]' });
 
   // Get email from URL params
