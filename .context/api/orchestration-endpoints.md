@@ -145,7 +145,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 **Schedule constraints:** Maximum 10 schedules per workflow. Workflow must be active (`isActive: true`) to create schedules. Create, update, and delete operations are audit-logged via `logAdminAction`. Create/update accept an optional `scope` (a flat string→string map stamped onto fired runs; `null` on update clears it via `Prisma.DbNull`) — see [Scheduling — Static scope carrier](../orchestration/scheduling.md#static-scope-carrier). The `POST /triggers` + `PATCH /triggers/:id` inbound-trigger routes accept the same `scope` field.
 
 | `/executions` | GET | List workflow executions (paginated) | 5.1 |
-| `/conversations/export` | POST | Export conversations as JSON | 5.1 |
+| `/conversations/export` | GET | Export conversations as JSON or CSV (`?format=json\|csv`) | 5.1 |
 | `/conversations/:id/messages` | GET | List messages for a conversation | 5.1 |
 | `/conversations/search` | GET | Full-text search across conversations | 5.1 |
 | `/knowledge/patterns` | GET | List all design patterns | 3.3 |

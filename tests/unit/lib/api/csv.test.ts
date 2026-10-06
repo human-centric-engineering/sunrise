@@ -27,6 +27,24 @@ describe('csvEscape', () => {
       expect(csvEscape('line1\rline2')).toBe('"line1\rline2"');
     });
 
+    it('wraps values containing CRLF in double quotes', () => {
+      expect(csvEscape('line1\r\nline2')).toBe('"line1\r\nline2"');
+    });
+
+    // Only the lone-CR case failed before #768; LF and CRLF guard
+    // behaviour that already worked.
+    it.each(['\r\n', '\r', '\n'])(
+      'does not let an interior line break (%j) start a record of its own',
+      (sep) => {
+        const cell = csvEscape(`thanks!${sep}=SUM(A1:A2)`);
+        const csv = ['a,b', [cell, 'x'].join(',')].join(sep);
+        expect(parseCsvRecords(csv)).toEqual([
+          ['a', 'b'],
+          [`thanks!${sep}=SUM(A1:A2)`, 'x'],
+        ]);
+      }
+    );
+
     it('keeps a mid-cell CR inside its record so it cannot open a new cell (#768)', () => {
       // No comma or quote, so only the CR can trigger quoting. A
       // spreadsheet treats a bare CR as a record break. Unquoted, the
