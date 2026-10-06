@@ -290,6 +290,21 @@ describe('SendMessageToChannelCapability — cost attribution', () => {
 // ─── Conversation-level error paths ──────────────────────────────────────────
 
 describe('SendMessageToChannelCapability — guard rails', () => {
+  it('refuses an embed visitor before loading any conversation (#705, t-765)', async () => {
+    // The conversation comes from the tool's arguments, so a visitor could
+    // otherwise name someone else's inbound thread and message a third party.
+    setBinding(defaultCustomConfig());
+
+    const result = await makeCapability().execute(defaultArgs(), {
+      ...makeContext(),
+      userId: 'embed_deadbeefdeadbeef',
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('anonymous_visitor');
+    expect(prisma.aiConversation.findUnique).not.toHaveBeenCalled();
+  });
+
   it('returns conversation_not_found when conversation does not exist', async () => {
     vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue(null);
     setBinding(defaultCustomConfig());

@@ -43,7 +43,7 @@ import { generateApprovalToken } from '@/lib/orchestration/approval-tokens';
 import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { redactedString } from '@/lib/security/redact';
-import { isEmbedUserId } from '@/lib/embed/auth';
+import { userIdForUserRef } from '@/lib/embed/auth';
 import type { WorkflowDefinition } from '@/types/orchestration';
 
 const customConfigSchema = z
@@ -297,7 +297,7 @@ export class RunWorkflowCapability extends BaseCapability<Args, Data> {
           // refusing would break that agent for every visitor. A step that
           // needs a user (`judge_call`, `user-memory`) refuses an unowned run
           // by its own rule.
-          userId: isEmbedUserId(context.userId) ? null : context.userId,
+          userId: userIdForUserRef(context.userId),
           ...(effectiveBudgetLimitUsd !== undefined
             ? { budgetLimitUsd: effectiveBudgetLimitUsd }
             : {}),

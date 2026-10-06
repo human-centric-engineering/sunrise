@@ -5051,6 +5051,35 @@ describe('embed visitor conversations', () => {
     );
   });
 
+  it('names a visitor to hook subscribers as embedVisitorId, with userId null', async () => {
+    // A subscriber that reads `userId` as a `User` must not get a visitor id.
+    replyOnce();
+
+    await collect(streamChat({ ...baseRequest, userId: VISITOR }));
+
+    for (const event of ['conversation.started', 'message.created']) {
+      const calls = (emitHookEvent as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([name]) => name === event
+      );
+      expect(calls.length).toBeGreaterThan(0);
+      for (const [, payload] of calls) {
+        expect(payload).toMatchObject({ userId: null, embedVisitorId: VISITOR });
+      }
+    }
+  });
+
+  it('names a signed-in user to hook subscribers by userId alone', async () => {
+    replyOnce();
+
+    await collect(streamChat({ ...baseRequest }));
+
+    const started = (emitHookEvent as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([name]) => name === 'conversation.started'
+    );
+    expect(started?.[1]).toMatchObject({ userId: 'u1' });
+    expect(started?.[1]).not.toHaveProperty('embedVisitorId');
+  });
+
   it('creates a signed-in user’s conversation with their userId and no embedVisitorId', async () => {
     replyOnce();
 

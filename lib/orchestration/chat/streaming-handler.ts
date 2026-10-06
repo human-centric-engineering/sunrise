@@ -90,7 +90,7 @@ import { getUserFacingError } from '@/lib/orchestration/chat/error-messages';
 import { queueMessageEmbedding } from '@/lib/orchestration/chat/message-embedder';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { summarizeMessages, isPlaceholderSummary } from '@/lib/orchestration/chat/summarizer';
-import { isEmbedUserId } from '@/lib/embed/auth';
+import { isEmbedUserId, userIdForUserRef } from '@/lib/embed/auth';
 import { hintScope } from '@/lib/orchestration/scope';
 import {
   GEN_AI_OPERATION_NAME,
@@ -307,19 +307,13 @@ interface PersistMessageParams {
 }
 
 /**
- * The caller's id, but only when it is a real `User` row.
- *
- * This handler serves three routes and two of them pass `session.user.id`; the
- * embed route passes a synthetic `embed_<hash>` visitor id, which is not a
- * `User` and must never reach a foreign key to one. `AiCostLog.userId` is such
- * a key, and `logCost` swallows write failures — so the visitor id would be
- * rejected and the cost row silently discarded. Conversation ownership goes
- * through {@link conversationOwner}; only FK attribution goes here. (A visitor
- * has no memory: the `user-memory` capability refuses them, and the handler
- * skips its memory read for them.)
+ * How a hook event names its caller. A user is `userId`; an embed visitor is
+ * not a `User` (#705, t-765), so a subscriber that reads `userId` as one gets
+ * `null` and the visitor id arrives as `embedVisitorId` instead, matching how
+ * the conversation row records them.
  */
-function attributableUserId(userId: string): string | null {
-  return isEmbedUserId(userId) ? null : userId;
+function hookCaller(userId: string): { userId: string | null; embedVisitorId?: string } {
+  return isEmbedUserId(userId) ? { userId: null, embedVisitorId: userId } : { userId };
 }
 
 /**
@@ -725,7 +719,7 @@ export class StreamingChatHandler {
         void logCost({
           agentId: agent.id,
           conversationId: conversation.id,
-          userId: attributableUserId(request.userId),
+          userId: userIdForUserRef(request.userId),
           model: resolvedModel,
           provider: resolvedBinding.providerSlug,
           inputTokens: 0,
@@ -767,7 +761,7 @@ export class StreamingChatHandler {
           messageId: userMessage.id,
           agentSlug: request.agentSlug,
           agentId: agent.id,
-          userId: request.userId,
+          ...hookCaller(request.userId),
           role: 'user',
         });
       }
@@ -982,7 +976,7 @@ export class StreamingChatHandler {
               // The summary is spend this user's turn caused, so it is
               // attributed to them like the turn itself — see #654 for what
               // happens when this boundary drops a cost row's real keys.
-              userId: attributableUserId(request.userId),
+              userId: userIdForUserRef(request.userId),
             }
           );
           conversationSummary = summarizeResult.summary;
@@ -1448,7 +1442,7 @@ export class StreamingChatHandler {
                   void logCost({
                     agentId: agent.id,
                     conversationId: conversation.id,
-                    userId: attributableUserId(request.userId),
+                    userId: userIdForUserRef(request.userId),
                     model: resolvedModel,
                     provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
                     inputTokens: errUsage.inputTokens,
@@ -1859,14 +1853,14 @@ export class StreamingChatHandler {
             // Same turn, same payer: without this the turn's chat row is
             // attributed and its embedding row is not, and the subject's
             // export shows one but not the other.
-            userId: attributableUserId(request.userId),
+            userId: userIdForUserRef(request.userId),
           });
           emitHookEvent('message.created', {
             conversationId: conversation.id,
             messageId: assistantMsg.id,
             agentSlug: request.agentSlug,
             agentId: agent.id,
-            userId: request.userId,
+            ...hookCaller(request.userId),
             role: 'assistant',
           });
 
@@ -1914,7 +1908,7 @@ export class StreamingChatHandler {
             void logCost({
               agentId: agent.id,
               conversationId: conversation.id,
-              userId: attributableUserId(request.userId),
+              userId: userIdForUserRef(request.userId),
               model: resolvedModel,
               provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
               inputTokens: u.inputTokens,
@@ -2009,7 +2003,7 @@ export class StreamingChatHandler {
           void logCost({
             agentId: agent.id,
             conversationId: conversation.id,
-            userId: attributableUserId(request.userId),
+            userId: userIdForUserRef(request.userId),
             model: resolvedModel,
             provider: resolvedProviderSlug ?? resolvedBinding.providerSlug,
             inputTokens: turnUsage.inputTokens,
@@ -2181,7 +2175,7 @@ export class StreamingChatHandler {
                 conversationId: conversation.id,
                 agentId: agent.id,
                 agentSlug: agent.slug,
-                userId: request.userId,
+                ...hookCaller(request.userId),
                 toolName: tc.name,
                 advertised: [...advertisedToolNames],
               });
@@ -2391,7 +2385,7 @@ export class StreamingChatHandler {
                 conversationId: conversation.id,
                 agentId: agent.id,
                 agentSlug: agent.slug,
-                userId: request.userId,
+                ...hookCaller(request.userId),
                 toolName: tc.name,
                 advertised: [...advertisedToolNames],
               });
@@ -2853,7 +2847,7 @@ export class StreamingChatHandler {
       conversationId: conversation.id,
       agentId: agent.id,
       agentSlug: agent.slug,
-      userId: request.userId,
+      ...hookCaller(request.userId),
     });
     return conversation;
   }

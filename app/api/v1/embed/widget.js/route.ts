@@ -1679,10 +1679,15 @@ export function GET(request: NextRequest): Response {
                   // The visitor id includes the client IP (#705, t-765), so a
                   // visitor whose address changed no longer owns this
                   // conversation. Forget it, so the next message starts a new
-                  // one instead of failing the same way every time.
+                  // one instead of failing the same way every time, and put
+                  // the text back in the box so it is not lost.
                   conversationId = null;
+                  if (!input.value && msg) {
+                    input.value = msg;
+                    if (input.__swResize) input.__swResize();
+                  }
                   assistantSpan.textContent =
-                    'This conversation could not be continued. Send your message again to start a new one.';
+                    'This conversation could not be continued. Press Send to start a new one with your message.';
                 } else if (fullText) {
                   setAssistantText(assistantSpan, fullText);
                 } else {

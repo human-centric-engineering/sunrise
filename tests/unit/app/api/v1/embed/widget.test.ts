@@ -169,7 +169,9 @@ describe('GET /api/v1/embed/widget.js', () => {
     expect(start).toBeGreaterThan(-1);
     const branch = body.slice(start, body.indexOf('} else if (fullText)', start));
     expect(branch).toContain('conversationId = null;');
-    expect(branch).toContain('Send your message again to start a new one.');
+    // The message the visitor just sent goes back in the box, not lost.
+    expect(branch).toContain('input.value = msg;');
+    expect(branch).toContain('Press Send to start a new one with your message.');
   });
 
   it('serves a script that parses as JavaScript', async () => {

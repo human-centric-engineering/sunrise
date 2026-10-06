@@ -569,11 +569,14 @@ release process.
   visitor (owner ruling): a visitor cannot archive conversations and shares an
   identity behind a NAT. Every built-in tool that would write the visitor id
   into a user key now decides explicitly: `read_user_memory`,
-  `write_user_memory` and `add_provider_models` refuse a visitor with
-  `anonymous_visitor`, and `run_workflow` runs the sub-workflow unowned, as a
-  scheduled run does (`send_message_to_channel` and the document-cleanup tools
+  `write_user_memory`, `add_provider_models` and `send_message_to_channel`
+  refuse a visitor with `anonymous_visitor`, and `run_workflow` runs the
+  sub-workflow unowned, as a scheduled run does (the document-cleanup tools
   already refuse an embed conversation before writing anything). An embed
-  turn's cost rows are now written, unattributed. The widget forgets a
+  turn's cost rows are now written, unattributed. The `conversation.started`,
+  `message.created` and `capability.refused_not_advertised` hook events name a
+  visitor as `embedVisitorId`, with `userId: null`, and engagement analytics
+  count each visitor as their own participant. The widget forgets a
   conversation the server no longer recognises as the visitor's, so the next
   message starts a new one. The widget also could not send a message from a
   partner site at all: `proxy.ts`'s CSRF origin check refused every

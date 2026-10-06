@@ -34,11 +34,12 @@ export const EMBED_USER_ID_PREFIX = 'embed_';
  *   - **a conversation** is owned through `AiConversation.embedVisitorId`,
  *     with no `userId` (`conversationOwner` in the streaming chat handler);
  *   - **cost and embedding attribution** record no user;
- *   - **user memory** and **adding provider models** are refused (code
- *     `anonymous_visitor`);
+ *   - **user memory**, **adding provider models** and **sending outbound
+ *     messages** are refused (code `anonymous_visitor`);
  *   - **a sub-workflow** runs unowned, as a scheduled run does (`run-workflow`);
- *   - `send_message_to_channel` and the document-cleanup tools refuse an embed
- *     conversation before they write anything.
+ *   - **hook events** carry `userId: null` and the visitor as `embedVisitorId`;
+ *   - the document-cleanup tools refuse an embed conversation before they
+ *     write anything.
  * A new feature that remembers or runs something for a person must make the
  * same call. Do not read this predicate's existence as a claim that every
  * `user` FK in the tree is covered.
@@ -48,6 +49,16 @@ export const EMBED_USER_ID_PREFIX = 'embed_';
  */
 export function isEmbedUserId(userId: string | null | undefined): boolean {
   return typeof userId === 'string' && userId.startsWith(EMBED_USER_ID_PREFIX);
+}
+
+/**
+ * The caller's id for a column or payload field that means a `User`: the id
+ * itself for a user, `null` for an embed visitor (who is not one) or for no
+ * caller at all. The one spelling of that rule, for a writer that records a
+ * visitor as no one rather than refusing them.
+ */
+export function userIdForUserRef(userId: string | null | undefined): string | null {
+  return userId && !isEmbedUserId(userId) ? userId : null;
 }
 
 export interface EmbedContext {
