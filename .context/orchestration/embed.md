@@ -225,6 +225,8 @@ CORS is applied dynamically based on the token's `allowedOrigins`:
 
 OPTIONS preflight requests return 204 with appropriate CORS headers.
 
+The proxy's CSRF origin check (`validateOrigin` in `proxy.ts`) refuses a POST whose `Origin` differs from the host. The embed routes and the embed approval routes are exempt (`CROSS_ORIGIN_TOKEN_ROUTES`, #705 t-765), because the widget calls them from a partner's domain by design, and they authenticate with a token rather than a cookie. Before that exemption the widget worked only when served from the app's own domain. See [`.context/auth/security.md`](../auth/security.md#additional-origin-validation).
+
 ### SSE response
 
 On success, reuses `streamChat()` from the orchestration chat handler and returns an SSE stream identical to the admin chat endpoint. Conversation ID is created or continued via the `conversationId` field in the request body.

@@ -566,7 +566,12 @@ release process.
   id into a user key now decide explicitly: `read_user_memory` and
   `write_user_memory` refuse a visitor with `anonymous_visitor`, and
   `run_workflow` runs the sub-workflow unowned, as a scheduled run does. The
-  embed turn's cost rows are now written, unattributed. **For a fork:** a
+  embed turn's cost rows are now written, unattributed. The widget also could
+  not send a message from a partner site at all: `proxy.ts`'s CSRF origin
+  check refused every cross-origin POST. The embed routes and the embed
+  approval routes, which authenticate with a token rather than a cookie and
+  check their own origin allowlist, are now exempt
+  (`CROSS_ORIGIN_TOKEN_ROUTES`). **For a fork:** a
   feature that writes a caller's id into a `User` foreign key must check
   `isEmbedUserId` (`lib/embed/auth.ts`) first, and decide what a visitor gets.
 - **At `multi`, a person's data export holds their rows from every org**
