@@ -679,6 +679,15 @@ release process.
 
 ### Security
 
+- **A data export no longer hands the subject another person's contact-form
+  messages** (#766). `exportUserData()` matched `ContactSubmission` with
+  `mode: 'insensitive'`, which Prisma compiles to an unescaped `ILIKE`, so `_`
+  or `%` in the subject's address matched other people's rows. It now matches
+  exactly on the address trimmed and lower-cased, which is how the contact route
+  stores it. A fork that copied the old `collectAppSubjectData()` example from
+  `.context/privacy/data-export.md` into `lib/app/data-export.ts`, or used the
+  same match anywhere else keyed by email, should change it the same way.
+
 - **The email-preview server's copy of Next is no longer in the `next/og`
   remote-code-execution range** (t-758). `@react-email/ui` (dev-only) pins
   `next` 16.3.3; a scoped `overrides` entry makes it use the app's own `next`,

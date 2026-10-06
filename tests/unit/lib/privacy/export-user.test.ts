@@ -315,9 +315,11 @@ describe('exportUserData', () => {
       if (isSubject(value)) return true;
       if (!isRecord(value)) return false;
       const keys = Object.keys(value);
-      // `equals` alone. With `mode: 'insensitive'` Prisma emits an unescaped
-      // ILIKE, so `_` or `%` in the value match other people's rows.
-      if (keys.length === 1 && keys[0] === 'equals') return isSubject(value.equals);
+      // An exact `equals` only. With `mode: 'insensitive'` Prisma emits an
+      // unescaped ILIKE, so `_` or `%` in the value match other people's rows.
+      if (keys.every((k) => k === 'equals' || k === 'mode')) {
+        return value.mode !== 'insensitive' && isSubject(value.equals);
+      }
       if (keys.length === 1 && Array.isArray(value.in)) {
         return value.in.length > 0 && value.in.every(isSubject);
       }
@@ -463,6 +465,9 @@ describe('exportUserData', () => {
       );
       expect(pinsSubject('ContactSubmission', { email: NORMALISED_EMAIL })).toBe(true);
       expect(pinsSubject('ContactSubmission', { email: { equals: NORMALISED_EMAIL } })).toBe(true);
+      expect(
+        pinsSubject('ContactSubmission', { email: { equals: NORMALISED_EMAIL, mode: 'default' } })
+      ).toBe(true);
       // A case-insensitive match is a pattern match in Postgres, not a pin.
       expect(
         pinsSubject('ContactSubmission', { email: { equals: SUBJECT.email, mode: 'insensitive' } })
