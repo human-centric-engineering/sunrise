@@ -1675,7 +1675,15 @@ export function GET(request: NextRequest): Response {
               } else if (evt.type === 'approval_required' && evt.data.pendingApproval) {
                 renderApprovalCard(evt.data.pendingApproval);
               } else if (evt.type === 'error') {
-                if (fullText) {
+                if (evt.data && evt.data.code === 'conversation_not_found') {
+                  // The visitor id includes the client IP (#705, t-765), so a
+                  // visitor whose address changed no longer owns this
+                  // conversation. Forget it, so the next message starts a new
+                  // one instead of failing the same way every time.
+                  conversationId = null;
+                  assistantSpan.textContent =
+                    'This conversation could not be continued. Send your message again to start a new one.';
+                } else if (fullText) {
                   setAssistantText(assistantSpan, fullText);
                 } else {
                   assistantSpan.textContent = 'Something went wrong.';

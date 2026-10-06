@@ -5039,6 +5039,18 @@ describe('embed visitor conversations', () => {
     expect(data).toMatchObject({ userId: null, embedVisitorId: VISITOR, agentId: 'agent-1' });
   });
 
+  it('skips the memory read for a visitor, who has no memory, and reads it for a user', async () => {
+    replyOnce();
+    await collect(streamChat({ ...baseRequest, userId: VISITOR }));
+    expect(prisma.aiUserMemory.findMany).not.toHaveBeenCalled();
+
+    replyOnce();
+    await collect(streamChat({ ...baseRequest }));
+    expect(prisma.aiUserMemory.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'u1', agentId: 'agent-1' } })
+    );
+  });
+
   it('creates a signed-in user’s conversation with their userId and no embedVisitorId', async () => {
     replyOnce();
 
@@ -5068,22 +5080,21 @@ describe('embed visitor conversations', () => {
     expect(events[0]).toMatchObject({ type: 'error', code: 'conversation_not_found' });
   });
 
-  it('counts the visitor’s own conversations against the per-user cap', async () => {
+  it('does not apply the per-user cap to a visitor, who cannot archive conversations', async () => {
+    // Owner ruling, 2026-10-06: a visitor shares an identity behind a NAT and
+    // cannot get back under the cap, so it would lock a whole address out.
     (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
       maxConversationsPerUser: 3,
       maxMessagesPerConversation: null,
     });
     (prisma.aiConversation.count as ReturnType<typeof vi.fn>).mockResolvedValue(3);
+    replyOnce();
 
     const events = await collect(streamChat({ ...baseRequest, userId: VISITOR }));
 
-    expect(prisma.aiConversation.count).toHaveBeenCalledWith({
-      where: { userId: null, embedVisitorId: VISITOR, agentId: 'agent-1', isActive: true },
-    });
-    expect(events.find((e) => (e as { type: string }).type === 'error')).toMatchObject({
-      code: 'conversation_cap_reached',
-    });
-    expect(prisma.aiConversation.create).not.toHaveBeenCalled();
+    expect(prisma.aiConversation.count).not.toHaveBeenCalled();
+    expect(events.find((e) => (e as { type: string }).type === 'error')).toBeUndefined();
+    expect(prisma.aiConversation.create).toHaveBeenCalled();
   });
 });
 

@@ -18,6 +18,7 @@ import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector'
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import { unwrapApprovalPayload } from '@/lib/orchestration/capabilities/approval-payload-unwrap';
 import { CAPABILITIES } from '@/lib/orchestration/model-audit/enums';
+import { isEmbedUserId } from '@/lib/embed/auth';
 import type {
   CapabilityContext,
   CapabilityFunctionDefinition,
@@ -184,6 +185,18 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
   protected readonly schema = schema;
 
   async execute(args: Args, context: CapabilityContext): Promise<CapabilityResult<Data>> {
+    // An anonymous embed widget visitor is not a `User`, and `createdBy` is a
+    // FK to one (#705, t-765). Changing the provider catalogue is an
+    // operator's act, so a visitor is refused outright rather than recorded
+    // as no one; this reaches a visitor only if an admin binds the capability
+    // to an agent published on the widget.
+    if (isEmbedUserId(context.userId)) {
+      return this.error(
+        'Adding provider models is unavailable to anonymous embed widget visitors.',
+        'anonymous_visitor'
+      );
+    }
+
     // Empty array — nothing to add (e.g. approval payload had no new models)
     if (args.newModels.length === 0) {
       return this.success(

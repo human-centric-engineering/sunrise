@@ -13,6 +13,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { NextRequest } from 'next/server';
+import { Script } from 'node:vm';
 import { GET } from '@/app/api/v1/embed/widget.js/route';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -156,6 +157,26 @@ describe('GET /api/v1/embed/widget.js', () => {
 
     // Reader catch must show user-facing text, not silently fail
     expect(body).toContain('Connection lost.');
+  });
+
+  it('forgets the conversation on conversation_not_found, so the next message starts a new one (#705, t-765)', async () => {
+    // The visitor id includes the client IP; after an address change the old
+    // conversation is no longer the visitor's, and resending its id would fail
+    // the same way on every message.
+    const body = await GET(makeGetRequest()).text();
+
+    const start = body.indexOf("evt.data.code === 'conversation_not_found'");
+    expect(start).toBeGreaterThan(-1);
+    const branch = body.slice(start, body.indexOf('} else if (fullText)', start));
+    expect(branch).toContain('conversationId = null;');
+    expect(branch).toContain('Send your message again to start a new one.');
+  });
+
+  it('serves a script that parses as JavaScript', async () => {
+    const body = await GET(makeGetRequest()).text();
+
+    // Compile only: `vm.Script` parses the body without running it.
+    expect(() => new Script(body)).not.toThrow();
   });
 
   it('includes status element in widget HTML', async () => {

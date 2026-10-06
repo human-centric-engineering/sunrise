@@ -34,8 +34,11 @@ export const EMBED_USER_ID_PREFIX = 'embed_';
  *   - **a conversation** is owned through `AiConversation.embedVisitorId`,
  *     with no `userId` (`conversationOwner` in the streaming chat handler);
  *   - **cost and embedding attribution** record no user;
- *   - **user memory** is refused (`user-memory`, code `anonymous_visitor`);
- *   - **a sub-workflow** runs unowned, as a scheduled run does (`run-workflow`).
+ *   - **user memory** and **adding provider models** are refused (code
+ *     `anonymous_visitor`);
+ *   - **a sub-workflow** runs unowned, as a scheduled run does (`run-workflow`);
+ *   - `send_message_to_channel` and the document-cleanup tools refuse an embed
+ *     conversation before they write anything.
  * A new feature that remembers or runs something for a person must make the
  * same call. Do not read this predicate's existence as a claim that every
  * `user` FK in the tree is covered.

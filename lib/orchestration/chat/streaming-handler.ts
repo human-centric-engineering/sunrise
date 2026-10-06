@@ -315,8 +315,8 @@ interface PersistMessageParams {
  * a key, and `logCost` swallows write failures — so the visitor id would be
  * rejected and the cost row silently discarded. Conversation ownership goes
  * through {@link conversationOwner}; only FK attribution goes here. (A visitor
- * has no memory: the `user-memory` capability refuses them, and the memory
- * read below finds no row under a visitor id.)
+ * has no memory: the `user-memory` capability refuses them, and the handler
+ * skips its memory read for them.)
  */
 function attributableUserId(userId: string): string | null {
   return isEmbedUserId(userId) ? null : userId;
@@ -333,8 +333,8 @@ function attributableUserId(userId: string): string | null {
  * message fail at conversation-create.
  *
  * The same fragment serves as the create data and as the ownership filter on
- * load and on the per-user cap, so a visitor reaches only conversations
- * created under their own id.
+ * load, so a visitor reaches only conversations created under their own id.
+ * (The per-user cap does not apply to a visitor.)
  */
 function conversationOwner(
   userId: string
@@ -1076,13 +1076,17 @@ export class StreamingChatHandler {
               userId: request.userId,
             })
           : Promise.resolve(null),
-        // Per-user-per-agent memories for context injection
-        prisma.aiUserMemory.findMany({
-          where: { userId: request.userId, agentId: agent.id },
-          orderBy: { updatedAt: 'desc' },
-          take: 50,
-          select: { key: true, value: true },
-        }),
+        // Per-user-per-agent memories for context injection. An embed visitor
+        // has none (the `user-memory` capability refuses them), so the read
+        // is skipped rather than sent to find nothing.
+        isEmbedUserId(request.userId)
+          ? Promise.resolve([])
+          : prisma.aiUserMemory.findMany({
+              where: { userId: request.userId, agentId: agent.id },
+              orderBy: { updatedAt: 'desc' },
+              take: 50,
+              select: { key: true, value: true },
+            }),
         getCapabilityDefinitions(agent.id),
       ]);
 
@@ -2813,9 +2817,16 @@ export class StreamingChatHandler {
     // Enforce per-user conversation cap before creating a new one.
     // Note: this is a soft cap — concurrent requests may race past the count
     // check, which is acceptable for a usage limit (not a security boundary).
-    if (maxConversationsPerUser !== null) {
+    //
+    // Not for an embed visitor (#705, t-765; owner ruling, 2026-10-06). A
+    // user who reaches the cap can archive conversations to get back under
+    // it; a visitor cannot, every page load opens a new conversation, and
+    // everyone behind one NAT is the same visitor, so the cap would lock a
+    // whole office out until retention cleared the rows. The widget stays
+    // bounded by the per-token-and-IP rate limit and the agent's budget.
+    if (maxConversationsPerUser !== null && !isEmbedUserId(request.userId)) {
       const count = await prisma.aiConversation.count({
-        where: { ...conversationOwner(request.userId), agentId: agent.id, isActive: true },
+        where: { userId: request.userId, agentId: agent.id, isActive: true },
       });
       if (count >= maxConversationsPerUser) {
         throw new ChatError(
