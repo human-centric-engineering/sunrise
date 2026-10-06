@@ -1423,10 +1423,8 @@ describe('StreamingChatHandler', () => {
     // swallows write failures the entire cost row is discarded. Exactly
     // #599/#600/#654, one column over.
     //
-    // This asserts the guard, not a bug currently reachable in production: an
-    // embed turn dies earlier, at conversation-create, for the same reason
-    // (#705). The test is still worth having — it is what stops the cost-row
-    // loss from silently arriving with #705's fix.
+    // Reachable since #705 (t-765): a visitor's conversation is now created
+    // (owned through `embedVisitorId`), so every embed turn reaches `logCost`.
     //
     // Asserting `userId: null` rather than merely "not the visitor id": the
     // column must be explicitly unattributed, not carrying some other value.
@@ -4107,6 +4105,29 @@ describe('guard-events seam (#414)', () => {
     expect(ctxArg).toMatchObject({ agentId: 'agent-1', userId: 'u1', conversationId: 'conv-1' });
   });
 
+  it('marks an embed visitor on the context with embedVisitorId, and a user without it (#705, t-765)', async () => {
+    // A contributor that records against a `User` must be able to tell a
+    // visitor's synthetic id apart from a real one.
+    (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
+      flagged: true,
+      patterns: ['system_override'],
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ inputGuardMode: 'block' })
+    );
+    const observer = vi.fn();
+    registerGuardEventContributor('obs', observer);
+
+    await collect(streamChat({ ...baseRequest, userId: 'embed_deadbeefdeadbeef' }));
+    await collect(streamChat(baseRequest));
+    await flush();
+
+    const [visitorCtx] = observer.mock.calls[0] as [Record<string, unknown>];
+    const [userCtx] = observer.mock.calls[1] as [Record<string, unknown>];
+    expect(visitorCtx).toMatchObject({ embedVisitorId: 'embed_deadbeefdeadbeef' });
+    expect(userCtx).not.toHaveProperty('embedVisitorId');
+  });
+
   it('does not emit when no registry contributor is present and does not break the turn (inert)', async () => {
     (scanForInjection as ReturnType<typeof vi.fn>).mockReturnValue({
       flagged: true,
@@ -5009,6 +5030,144 @@ describe('per-user conversation cap', () => {
 
     // New conversation should never be created
     expect(prisma.aiConversation.create).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// An embed visitor owns conversations through `embedVisitorId` (#705, t-765)
+// ---------------------------------------------------------------------------
+
+describe('embed visitor conversations', () => {
+  // `AiConversation.userId` is a FK to `user`, and a visitor is not a `User`
+  // (owner ruling, 2026-10-06). Writing the visitor id there is what made a
+  // visitor's first message fail at conversation-create.
+  const VISITOR = 'embed_deadbeefdeadbeef';
+
+  function replyOnce(): void {
+    const provider = mockProvider([
+      [{ type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' }],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+  }
+
+  it('creates a visitor’s conversation with no userId, owned through embedVisitorId', async () => {
+    replyOnce();
+
+    await collect(streamChat({ ...baseRequest, userId: VISITOR }));
+
+    const data = (prisma.aiConversation.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+    expect(data).toMatchObject({ userId: null, embedVisitorId: VISITOR, agentId: 'agent-1' });
+  });
+
+  it('skips the memory read for a visitor, who has no memory, and reads it for a user', async () => {
+    replyOnce();
+    await collect(streamChat({ ...baseRequest, userId: VISITOR }));
+    expect(prisma.aiUserMemory.findMany).not.toHaveBeenCalled();
+
+    replyOnce();
+    await collect(streamChat({ ...baseRequest }));
+    expect(prisma.aiUserMemory.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { userId: 'u1', agentId: 'agent-1' } })
+    );
+  });
+
+  it('names a visitor to hook subscribers as embedVisitorId, with userId null', async () => {
+    // A subscriber that reads `userId` as a `User` must not get a visitor id.
+    replyOnce();
+
+    await collect(streamChat({ ...baseRequest, userId: VISITOR }));
+
+    for (const event of ['conversation.started', 'message.created']) {
+      const calls = (emitHookEvent as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([name]) => name === event
+      );
+      expect(calls.length).toBeGreaterThan(0);
+      for (const [, payload] of calls) {
+        expect(payload).toMatchObject({ userId: null, embedVisitorId: VISITOR });
+      }
+    }
+  });
+
+  it('names a visitor in the budget_exceeded webhook as embedVisitorId, with no actorUserId', async () => {
+    // A receiver looks `actorUserId` up as a `User`; a visitor is not one.
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: false,
+      spent: 100,
+      limit: 10,
+      remaining: -90,
+    });
+
+    await collect(streamChat({ ...baseRequest, userId: VISITOR }));
+    await vi.waitFor(() =>
+      expect(dispatchWebhookEvent).toHaveBeenCalledWith('budget_exceeded', expect.anything())
+    );
+
+    const [, payload] = (dispatchWebhookEvent as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([name]) => name === 'budget_exceeded'
+    ) as [string, Record<string, unknown>];
+    expect(payload.embedVisitorId).toBe(VISITOR);
+    expect(payload).not.toHaveProperty('actorUserId');
+  });
+
+  it('names a signed-in user to hook subscribers by userId alone', async () => {
+    replyOnce();
+
+    await collect(streamChat({ ...baseRequest }));
+
+    const started = (emitHookEvent as ReturnType<typeof vi.fn>).mock.calls.find(
+      ([name]) => name === 'conversation.started'
+    );
+    expect(started?.[1]).toMatchObject({ userId: 'u1' });
+    expect(started?.[1]).not.toHaveProperty('embedVisitorId');
+  });
+
+  it('creates a signed-in user’s conversation with their userId and no embedVisitorId', async () => {
+    replyOnce();
+
+    await collect(streamChat({ ...baseRequest }));
+
+    const data = (prisma.aiConversation.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+    expect(data).toMatchObject({ userId: 'u1' });
+    expect(data).not.toHaveProperty('embedVisitorId');
+  });
+
+  it('continues only a conversation the visitor owns: the load filters on embedVisitorId', async () => {
+    (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    const events = await collect(
+      streamChat({ ...baseRequest, userId: VISITOR, conversationId: 'conv-1' })
+    );
+
+    expect(prisma.aiConversation.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: 'conv-1',
+        userId: null,
+        embedVisitorId: VISITOR,
+        agentId: 'agent-1',
+        isActive: true,
+      },
+    });
+    expect(events[0]).toMatchObject({ type: 'error', code: 'conversation_not_found' });
+  });
+
+  it('does not apply the per-user cap to a visitor, who cannot archive conversations', async () => {
+    // Owner ruling, 2026-10-06: a visitor shares an identity behind a NAT and
+    // cannot get back under the cap, so it would lock a whole address out.
+    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      maxConversationsPerUser: 3,
+      maxMessagesPerConversation: null,
+    });
+    (prisma.aiConversation.count as ReturnType<typeof vi.fn>).mockResolvedValue(3);
+    replyOnce();
+
+    const events = await collect(streamChat({ ...baseRequest, userId: VISITOR }));
+
+    expect(prisma.aiConversation.count).not.toHaveBeenCalled();
+    expect(events.find((e) => (e as { type: string }).type === 'error')).toBeUndefined();
+    expect(prisma.aiConversation.create).toHaveBeenCalled();
   });
 });
 

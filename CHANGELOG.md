@@ -554,6 +554,41 @@ release process.
 
 ### Fixed
 
+- **An embed widget visitor's first message now starts a conversation**
+  (#705, t-765). It failed before any reply on every install: the handler
+  wrote the anonymous `embed_<hash>` visitor id into `AiConversation.userId`,
+  a foreign key to `User`. A visitor is deliberately not a `User` (owner
+  ruling), so they stay out of the user lists and every user's export and
+  erasure. A visitor's conversation now has no `userId`; the new nullable
+  **`AiConversation.embedVisitorId`** column (migration
+  `20261006120000_embed_visitor_conversations`) owns it, and continuing a
+  conversation matches on it. A CHECK constraint,
+  `ai_conversation_owner_exclusive` (migration
+  `20261006130000_conversation_owner_exclusive`, drift probe A9), keeps a row
+  from carrying both. The per-user conversation cap does not apply to a
+  visitor (owner ruling): a visitor cannot archive conversations and shares an
+  identity behind a NAT. Every built-in tool that would write the visitor id
+  into a user key now decides explicitly: `read_user_memory`,
+  `write_user_memory`, `add_provider_models` and `send_message_to_channel`
+  refuse a visitor with `anonymous_visitor`, and `run_workflow` runs the
+  sub-workflow unowned, as a scheduled run does (the document-cleanup tools
+  already refuse an embed conversation before writing anything). An embed
+  turn's cost rows are now written, unattributed. The `conversation.started`,
+  `message.created` and `capability.refused_not_advertised` hook events and the
+  `conversation_escalated` webhook name a visitor as `embedVisitorId`, with
+  `userId: null`; the `budget_exceeded` webhook names them as `embedVisitorId`
+  with no `actorUserId`; and the guard-events seam's `GuardEventContext` gains
+  an optional **`embedVisitorId`**, set for a visitor (whose `userId` there is
+  still the visitor id). Engagement analytics count each visitor as their own
+  participant. When the server no longer recognises a conversation as the
+  visitor's (their IP changed), the widget starts afresh as New chat does and
+  hands back the message and attachments they just sent. The widget also could not send a message from a
+  partner site at all: `proxy.ts`'s CSRF origin check refused every
+  cross-origin POST. The embed routes and the embed approval routes, which
+  authenticate with a token rather than a cookie and check their own origin
+  allowlist, are now exempt (`CROSS_ORIGIN_TOKEN_ROUTES`). **For a fork:** a
+  feature that writes a caller's id into a `User` foreign key must check
+  `isEmbedUserId` (`lib/embed/auth.ts`) first, and decide what a visitor gets.
 - **At `multi`, a person's data export holds their rows from every org**
   (§107 t-748). `exportUserData()` read inside whatever org the caller had
   entered, so the self-service and admin exports returned only the session's

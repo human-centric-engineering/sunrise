@@ -562,7 +562,7 @@ The post-detection sibling of the guard-floor seam. When an inline guard **flags
 
 **Fire-and-forget.** Emission never delays or breaks the turn: each contributor runs on a microtask (so it can't block the handler), and a synchronous throw or an async rejection is swallowed and logged. It fires **before** the `block` short-circuit, so a `block` outcome is still observed. An empty registry is a no-op — inert in vanilla Sunrise.
 
-A contributor receives a `GuardEventContext` keyed on the turn's `(contextType, contextId, agentId, userId, conversationId)` and a `GuardEvent` = `{ guard: 'input'|'output'|'citation', outcome: GuardMode }` — where `outcome` is the effective mode the guard acted in (`block` = turn stopped, `warn_and_continue` = warned, `log_only` = logged only, `none` = flagged but no action). It is **observation only**: it cannot change detection or the action taken (use a guard-floor contributor to raise strictness). A throwing init is logged and rolled back: contributors registered before the throw would otherwise observe every guard firing for the life of the process — and these are the observers that notify and escalate — from a config the log reports as disabled. See [Fork Init Seams](../architecture/fork-init-seams.md).
+A contributor receives a `GuardEventContext` keyed on the turn's `(contextType, contextId, agentId, userId, conversationId)` — plus `embedVisitorId` when the caller is an anonymous embed widget visitor, whose `userId` is then the synthetic visitor id rather than a `User.id`, so check it before writing `userId` into a foreign key to `user` (#705, t-765) — and a `GuardEvent` = `{ guard: 'input'|'output'|'citation', outcome: GuardMode }` — where `outcome` is the effective mode the guard acted in (`block` = turn stopped, `warn_and_continue` = warned, `log_only` = logged only, `none` = flagged but no action). It is **observation only**: it cannot change detection or the action taken (use a guard-floor contributor to raise strictness). A throwing init is logged and rolled back: contributors registered before the throw would otherwise observe every guard firing for the life of the process — and these are the observers that notify and escalate — from a config the log reports as disabled. See [Fork Init Seams](../architecture/fork-init-seams.md).
 
 ```typescript
 // lib/app/guard-event-contributors.ts — called once by the chat handler
@@ -621,6 +621,8 @@ Per-user-per-agent persistent memory that survives across conversations. Stored 
 1. Before building the message array, the handler loads all memories for `(request.userId, agent.id)` from `AiUserMemory`, ordered by `updatedAt DESC`, capped at 50 entries.
 2. If memories exist, they're injected as a `[User memories]` system message after the context block but before conversation history. Format: `- key: value` per entry.
 3. Agents read/write memories via two built-in capabilities: `read_user_memory` and `write_user_memory`.
+
+**An embed widget visitor has no memory** (#705, t-765). Both capabilities refuse a visitor with `anonymous_visitor`, and the load in step 1 finds no rows under a visitor id. The visitor id is a hash of the embed token and the client IP, so remembering per visitor would read one person's memories back to everyone sharing their address. See [`embed.md`](./embed.md#a-visitor-is-not-a-user).
 
 **Capabilities:**
 

@@ -264,6 +264,11 @@ function validateOrigin(request: NextRequest): boolean {
     return true;
   }
 
+  // The embed widget's routes, called cross-origin by design (see below)
+  if (CROSS_ORIGIN_TOKEN_ROUTES.some((route) => route.test(request.nextUrl.pathname))) {
+    return true;
+  }
+
   const origin = request.headers.get('origin');
   const host = request.headers.get('host');
 
@@ -276,6 +281,17 @@ function validateOrigin(request: NextRequest): boolean {
   }
 }
 ```
+
+**Cross-origin token routes are exempt** (#705, t-765). The embed widget runs on
+a partner's domain, so every POST it makes carries a foreign `Origin`; until
+the exemption, the check refused them all and no visitor on a partner site could
+send a message. `CROSS_ORIGIN_TOKEN_ROUTES` in `proxy.ts` lists them:
+`/api/v1/embed/*` and `/api/v1/orchestration/approvals/:id/{approve,reject}/embed`.
+Skipping the check is safe there because CSRF rides on cookies the browser
+attaches by itself, and these routes read none: they authenticate with a token
+the caller must hold (`X-Embed-Token`, or a signed approval token) and enforce
+their own origin allowlist. A route added to the list must keep both
+properties.
 
 ## Auth Rate Limiting
 

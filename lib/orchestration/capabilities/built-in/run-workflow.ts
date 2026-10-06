@@ -43,6 +43,7 @@ import { generateApprovalToken } from '@/lib/orchestration/approval-tokens';
 import { resolveMaxCostPerExecution } from '@/lib/orchestration/llm/cost-caps';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { redactedString } from '@/lib/security/redact';
+import { userIdForUserRef } from '@/lib/embed/auth';
 import type { WorkflowDefinition } from '@/types/orchestration';
 
 const customConfigSchema = z
@@ -289,7 +290,14 @@ export class RunWorkflowCapability extends BaseCapability<Args, Data> {
         { id: workflowRow.id, definition, versionId: pinnedVersionId },
         args.input ?? {},
         {
-          userId: context.userId,
+          // An embed widget visitor is not a `User`, and the execution's
+          // `userId` is a FK to one (#705, t-765). The child runs unowned, as a
+          // scheduled or inbound run does (owner ruling, 2026-10-06): the admin
+          // bound this workflow to an agent they published on the widget, so
+          // refusing would break that agent for every visitor. A step that
+          // needs a user (`judge_call`, `user-memory`) refuses an unowned run
+          // by its own rule.
+          userId: userIdForUserRef(context.userId),
           ...(effectiveBudgetLimitUsd !== undefined
             ? { budgetLimitUsd: effectiveBudgetLimitUsd }
             : {}),

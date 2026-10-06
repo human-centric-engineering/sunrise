@@ -104,6 +104,13 @@ you are shipping rows that outlive everyone's ability to reach them.
 `user-memory` capability returns a `no_user_context` error rather than assuming
 a user.
 
+An anonymous embed-widget visitor is the other kind of caller with no `User`
+row (#705, t-765). Their conversations carry `userId = null` and are owned
+through `AiConversation.embedVisitorId`, a plain column with no foreign key, so
+they appear in no user's export or erasure. They belong to the token's org and
+go with its export, erasure and retention. See
+[`.context/orchestration/embed.md`](../orchestration/embed.md#a-visitor-is-not-a-user).
+
 Schedule- and inbound-triggered runs use that: they are written **system-owned**,
 `userId = null`. Nobody with an account caused them, and the data on them is
 frequently somebody else's — an inbound run's `inputData.trigger` is the adapter

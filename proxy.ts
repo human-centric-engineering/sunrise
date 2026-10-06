@@ -92,6 +92,27 @@ function isAuthenticated(request: NextRequest): boolean {
 }
 
 /**
+ * Routes a partner site calls cross-origin by design, exempt from the Origin
+ * check below (#705, t-765): the embed widget's API (`/api/v1/embed/*`) and its
+ * in-chat approval buttons (`/approvals/:id/approve/embed`, `/reject/embed`).
+ * The widget runs on someone else's domain, so its every POST carries a foreign
+ * Origin, and the check refused them all: a visitor on a partner site could
+ * never send a message.
+ *
+ * The exemption is safe because the check defends against CSRF, which rides on
+ * credentials the browser attaches by itself — cookies. None of these routes
+ * reads a session or cookie: they authenticate with a token the caller must
+ * hold (the `X-Embed-Token` header, or a signed approval token), and each
+ * enforces its own origin allowlist (the embed token's `allowedOrigins`,
+ * `embedAllowedOrigins` for approvals). A route added here must keep both
+ * properties.
+ */
+const CROSS_ORIGIN_TOKEN_ROUTES = [
+  /^\/api\/v1\/embed\//,
+  /^\/api\/v1\/orchestration\/approvals\/[^/]+\/(approve|reject)\/embed$/,
+];
+
+/**
  * Validate origin for state-changing requests (additional CSRF protection)
  *
  * Better-auth provides CSRF protection via tokens, but this adds defense-in-depth
@@ -103,6 +124,10 @@ function isAuthenticated(request: NextRequest): boolean {
 function validateOrigin(request: NextRequest): boolean {
   // Only validate state-changing methods
   if (!['POST', 'PUT', 'DELETE', 'PATCH'].includes(request.method)) {
+    return true;
+  }
+
+  if (CROSS_ORIGIN_TOKEN_ROUTES.some((route) => route.test(request.nextUrl.pathname))) {
     return true;
   }
 

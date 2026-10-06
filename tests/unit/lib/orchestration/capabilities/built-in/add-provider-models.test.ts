@@ -293,6 +293,21 @@ describe('AddProviderModelsCapability', () => {
     });
   });
 
+  describe('execute() — embed visitor (#705, t-765)', () => {
+    it('refuses an anonymous embed visitor and creates nothing', async () => {
+      // `createdBy` is a FK to `user`, and a visitor is not one.
+      const cap = new AddProviderModelsCapability();
+      const result = await cap.execute(
+        { newModels: [makeNewModel()] },
+        { ...context, userId: 'embed_deadbeefdeadbeef' }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('anonymous_visitor');
+      expect(mockCreate).not.toHaveBeenCalled();
+    });
+  });
+
   describe('execute() — happy path', () => {
     it('creates a model and returns created=1', async () => {
       const cap = new AddProviderModelsCapability();

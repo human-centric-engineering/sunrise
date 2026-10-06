@@ -516,6 +516,48 @@ describe('proxy (project root)', () => {
     );
   });
 
+  describe('Origin validation — cross-origin token routes (#705, t-765)', () => {
+    // The embed widget runs on a partner's domain, so its POSTs carry a foreign
+    // Origin. These routes authenticate with a token, not a cookie, and check
+    // their own origin allowlist, so the proxy's CSRF check must let them by.
+    it.each([
+      '/api/v1/embed/chat/stream',
+      '/api/v1/embed/speech-to-text',
+      '/api/v1/orchestration/approvals/cmexec123/approve/embed',
+      '/api/v1/orchestration/approvals/cmexec123/reject/embed',
+    ])('lets a cross-origin POST to %s through to the route', async (path) => {
+      const request = createMockRequest(path, {
+        method: 'POST',
+        headers: { origin: 'https://partner.example', host: 'localhost:3000' },
+      });
+
+      const response = await proxy(request);
+
+      expect(response.status).not.toBe(403);
+      expect(applyRateLimit).toHaveBeenCalledWith(request);
+    });
+
+    it.each([
+      // The cookie-authenticated approval routes, one segment away.
+      '/api/v1/orchestration/approvals/cmexec123/approve',
+      '/api/v1/orchestration/approvals/cmexec123/approve/chat',
+      // A prefix that only looks like the embed API.
+      '/api/v1/embedding-models',
+      '/api/v1/admin/orchestration/agents/a1/embed-tokens',
+    ])('still refuses a cross-origin POST to %s', async (path) => {
+      const request = createMockRequest(path, {
+        method: 'POST',
+        headers: { origin: 'https://partner.example', host: 'localhost:3000' },
+      });
+
+      const response = await proxy(request);
+
+      expect(response.status).toBe(403);
+      const body = (await response.json()) as { error: { message: string } };
+      expect(body.error.message).toBe('Invalid request origin');
+    });
+  });
+
   describe('Rate limiting — delegation to applyRateLimit', () => {
     it('calls applyRateLimit for every request that passes origin validation', async () => {
       const request = createMockRequest('/api/v1/users');

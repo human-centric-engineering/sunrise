@@ -257,6 +257,18 @@ export class SendMessageToChannelCapability extends BaseCapability<Args, Data> {
     // registers any adapters whose env vars are set. Subsequent calls no-op.
     bootstrapOutboundAdapters();
 
+    // An anonymous embed widget visitor never sends outbound messages (#705,
+    // t-765). The conversation comes from the tool's arguments, not from the
+    // caller's own chat, so a visitor could otherwise name someone else's
+    // inbound thread and message a third party's phone or inbox; and the
+    // audit rows below would carry the visitor id into a `User` foreign key.
+    if (isEmbedUserId(context.userId)) {
+      return this.error(
+        'Sending outbound messages is unavailable to anonymous embed widget visitors.',
+        'anonymous_visitor'
+      );
+    }
+
     // 1. Load conversation. Missing or no channel/provider/fromAddress
     //    means the conversation never came in on an outbound-capable
     //    channel (e.g. a web embed chat) — refuse cleanly.

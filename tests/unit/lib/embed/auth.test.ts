@@ -38,6 +38,7 @@ vi.mock('@/lib/logging', () => ({
 
 import {
   isEmbedUserId,
+  userIdForUserRef,
   EMBED_USER_ID_PREFIX,
   resolveEmbedToken,
   isOriginAllowed,
@@ -265,5 +266,20 @@ describe('isEmbedUserId', () => {
     // startsWith, not includes — a real id happening to contain "embed_" is a
     // real user and must keep its attribution.
     expect(isEmbedUserId('user_embed_123')).toBe(false);
+  });
+});
+
+describe('userIdForUserRef', () => {
+  // The value a `User` foreign key or a `userId` payload field gets (#705,
+  // t-765): a visitor is not a `User`, so they are recorded as no one.
+  it('keeps a real user id', () => {
+    expect(userIdForUserRef('cm3x9k2p40000abcd1234efgh')).toBe('cm3x9k2p40000abcd1234efgh');
+  });
+
+  it('records an embed visitor, or no caller, as null', () => {
+    expect(userIdForUserRef(`${EMBED_USER_ID_PREFIX}0123456789abcdef`)).toBeNull();
+    expect(userIdForUserRef(null)).toBeNull();
+    expect(userIdForUserRef(undefined)).toBeNull();
+    expect(userIdForUserRef('')).toBeNull();
   });
 });

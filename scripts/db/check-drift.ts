@@ -133,6 +133,12 @@ const DRIFT_OBJECTS: DriftObject[] = [
     probe: constraintExists('ai_knowledge_document_status_lowercase'),
   },
   {
+    name: 'A9 ai_conversation_owner_exclusive',
+    kind: 'CHECK constraint',
+    table: 'ai_conversation',
+    probe: constraintExists('ai_conversation_owner_exclusive'),
+  },
+  {
     name: "Postgres 'english' tsearch configuration",
     kind: 'pg_ts_config row',
     table: '—',

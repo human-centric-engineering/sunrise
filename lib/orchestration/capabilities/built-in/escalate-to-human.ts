@@ -21,6 +21,7 @@ import type {
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
 import { redactedString } from '@/lib/security/redact';
+import { isEmbedUserId, userIdForUserRef } from '@/lib/embed/auth';
 
 const schema = z.object({
   reason: z.string().min(1).max(1000),
@@ -119,9 +120,13 @@ export class EscalateToHumanCapability extends BaseCapability<Args, Data> {
       priority,
     });
 
+    // An anonymous embed widget visitor is not a `User` (#705, t-765): a
+    // subscriber reading `userId` as one gets `null`, and the visitor arrives
+    // as `embedVisitorId`, as on the chat hook events.
     const escalationPayload = {
       agentId: context.agentId,
-      userId: context.userId,
+      userId: userIdForUserRef(context.userId),
+      ...(isEmbedUserId(context.userId) ? { embedVisitorId: context.userId } : {}),
       conversationId: context.conversationId ?? null,
       reason,
       priority,

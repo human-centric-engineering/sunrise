@@ -19,6 +19,40 @@ import type {
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
 import { redactedString } from '@/lib/security/redact';
+import { isEmbedUserId } from '@/lib/embed/auth';
+
+/**
+ * The user whose memory a call reads or writes, or why there is none.
+ *
+ * - **A system-initiated run** (a schedule, an inbound trigger) has no user.
+ * - **An embed widget visitor** is not a `User` (#705, t-765; owner ruling,
+ *   2026-10-06), and `AiUserMemory.userId` is a FK to one. Refused rather than
+ *   stored under the visitor id: that id is a hash of the embed token and the
+ *   client IP, so everyone behind one office or mobile-network address is the
+ *   same visitor, and a memory one of them wrote would be read back to the
+ *   others.
+ */
+function memoryOwner(
+  userId: string | null | undefined
+): { userId: string } | { refused: { message: string; code: string } } {
+  if (!userId) {
+    return {
+      refused: {
+        message: 'User memory is unavailable for system-initiated runs (no user context).',
+        code: 'no_user_context',
+      },
+    };
+  }
+  if (isEmbedUserId(userId)) {
+    return {
+      refused: {
+        message: 'User memory is unavailable to anonymous embed widget visitors.',
+        code: 'anonymous_visitor',
+      },
+    };
+  }
+  return { userId };
+}
 
 // ── Read Memory ──────────────────────────────────────────────────────────────
 
@@ -100,14 +134,10 @@ export class ReadUserMemoryCapability extends BaseCapability<ReadArgs, ReadData>
   protected readonly schema = readSchema;
 
   async execute(args: ReadArgs, context: CapabilityContext): Promise<CapabilityResult<ReadData>> {
-    if (!context.userId) {
-      return this.error(
-        'User memory is unavailable for system-initiated runs (no user context).',
-        'no_user_context'
-      );
-    }
+    const owner = memoryOwner(context.userId);
+    if ('refused' in owner) return this.error(owner.refused.message, owner.refused.code);
     const where: { userId: string; agentId: string; key?: string } = {
-      userId: context.userId,
+      userId: owner.userId,
       agentId: context.agentId,
     };
     if (args.key) {
@@ -201,16 +231,12 @@ export class WriteUserMemoryCapability extends BaseCapability<WriteArgs, WriteDa
   protected readonly schema = writeSchema;
 
   async execute(args: WriteArgs, context: CapabilityContext): Promise<CapabilityResult<WriteData>> {
-    if (!context.userId) {
-      return this.error(
-        'User memory is unavailable for system-initiated runs (no user context).',
-        'no_user_context'
-      );
-    }
+    const owner = memoryOwner(context.userId);
+    if ('refused' in owner) return this.error(owner.refused.message, owner.refused.code);
     const existing = await prisma.aiUserMemory.findUnique({
       where: {
         userId_agentId_key: {
-          userId: context.userId,
+          userId: owner.userId,
           agentId: context.agentId,
           key: args.key,
         },
@@ -220,13 +246,13 @@ export class WriteUserMemoryCapability extends BaseCapability<WriteArgs, WriteDa
     await prisma.aiUserMemory.upsert({
       where: {
         userId_agentId_key: {
-          userId: context.userId,
+          userId: owner.userId,
           agentId: context.agentId,
           key: args.key,
         },
       },
       create: {
-        userId: context.userId,
+        userId: owner.userId,
         agentId: context.agentId,
         key: args.key,
         value: args.value,

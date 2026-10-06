@@ -254,16 +254,20 @@ export async function getEngagementMetrics(
         },
       }),
 
-      // Unique users
+      // Unique users. A participant is a user or an embed widget visitor
+      // (#705, t-765): a visitor's conversation has no `userId` and is owned
+      // through `embedVisitorId`, so keying on `userId` alone would count every
+      // widget visitor as one person. The two never share a row (CHECK
+      // `ai_conversation_owner_exclusive`), so the pair names one participant.
       prisma.aiConversation.findMany({
         where: { createdAt: { gte: from, lte: to }, ...scope },
-        select: { userId: true },
-        distinct: ['userId'],
+        select: { userId: true, embedVisitorId: true },
+        distinct: ['userId', 'embedVisitorId'],
       }),
 
-      // Returning users (users with >1 conversation in the period)
+      // Returning users (participants with >1 conversation in the period)
       prisma.aiConversation.groupBy({
-        by: ['userId'],
+        by: ['userId', 'embedVisitorId'],
         where: { createdAt: { gte: from, lte: to }, ...scope },
         _count: { id: true },
         having: { id: { _count: { gt: 1 } } },

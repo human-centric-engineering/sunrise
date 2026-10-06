@@ -297,6 +297,24 @@ describe('getEngagementMetrics', () => {
     expect(result.conversationsByDay[1]).toEqual({ date: '2026-04-16', count: 1 });
   });
 
+  it('counts each embed visitor as their own participant, not one null user (#705, t-765)', async () => {
+    // A visitor's conversation has `userId` null and is owned through
+    // `embedVisitorId`; keying on `userId` alone folds every visitor into one.
+    vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
+    vi.mocked(prisma.aiMessage.count).mockResolvedValue(0);
+    vi.mocked(prisma.aiConversation.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.aiConversation.groupBy).mockResolvedValue([] as never);
+
+    await getEngagementMetrics(baseQuery, admin);
+
+    expect(prisma.aiConversation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ distinct: ['userId', 'embedVisitorId'] })
+    );
+    expect(prisma.aiConversation.groupBy).toHaveBeenCalledWith(
+      expect.objectContaining({ by: ['userId', 'embedVisitorId'] })
+    );
+  });
+
   it('returns zeros when no data exists', async () => {
     vi.mocked(prisma.aiConversation.count).mockResolvedValue(0);
     vi.mocked(prisma.aiMessage.count).mockResolvedValue(0);

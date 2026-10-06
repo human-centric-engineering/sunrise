@@ -281,14 +281,15 @@ adding the column to the guard, not by review, which is the argument for
 extending that roster the moment a foreign key appears rather than after the
 first incident on it.
 
-**The reach is narrower than that sounds, and saying so matters.** No embed turn
-reaches `logCost` today: `AiConversation.userId` is a foreign key to `user` as
-well, nothing mints a `User` row for a visitor, and so an embed visitor's first
-message already fails at conversation-create ([#705](https://github.com/human-centric-engineering/sunrise/issues/705)).
-The guard is correct and forward-looking, not currently load-bearing — its value
-is that the cost-row loss cannot appear the moment #705 is fixed. `isEmbedUserId` (`lib/embed/auth.ts`) is the predicate,
-and it sits next to the mint so the prefix has one definition; the chat handler
-reduces a visitor to `null` through its own `attributableUserId`.
+**It became load-bearing with [#705](https://github.com/human-centric-engineering/sunrise/issues/705)
+(t-765).** Until then no embed turn reached `logCost`: the conversation-create
+wrote the visitor id into `AiConversation.userId`, a foreign key to `user` too,
+and the first message failed there. A visitor's conversation is now owned
+through `embedVisitorId` with no `userId`, so every embed turn logs cost, and
+this guard is what keeps those rows. `isEmbedUserId` (`lib/embed/auth.ts`) is the predicate,
+and it sits next to the mint so the prefix has one definition; `userIdForUserRef`
+beside it reduces a visitor to `null`, and the chat handler uses it for every
+cost row.
 
 That guard reads `logCost` call sites, and **a value can also reach a foreign key
 one hop away**, through a function that accepts an attribution and forwards it.
@@ -663,6 +664,8 @@ Returns `{ memories: [{ key, value, updatedAt }] }`. When `key` is omitted, retu
 
 Stores or updates a memory for the current user+agent pair. Uses `prisma.aiUserMemory.upsert` with compound unique `(userId, agentId, key)`.
 
+Both memory capabilities refuse a run with no user (`no_user_context`) and an anonymous embed widget visitor (`anonymous_visitor`, #705 t-765): `AiUserMemory.userId` is a foreign key to `User`, and a visitor is not one.
+
 ```json
 {
   "name": "write_user_memory",
@@ -722,6 +725,8 @@ Per-agent binding `customConfig`:
 
 - `allowedWorkflowSlugs: string[]` — required, min 1. The LLM may only invoke workflows on this list. Fail-closed if the binding is missing or malformed.
 - `defaultBudgetUsd?: number` — optional. Caller-side override on the child execution's per-execution cap, equivalent to passing `budgetLimitUsd` to the engine directly.
+
+**Who the child execution belongs to.** The calling user, as `AiWorkflowExecution.userId`. An anonymous embed widget visitor is not a `User`, so for a visitor the child runs **unowned** (`userId` null), as a scheduled or inbound run does (#705, t-765). Steps that need a user, such as `judge_call`, refuse an unowned run by their own rule.
 
 **Per-execution cap resolution.** When the agent invokes a workflow, the engine receives a `budgetLimitUsd` resolved by `resolveMaxCostPerExecution` (in `lib/orchestration/llm/cost-caps.ts`) using this fall-back chain:
 

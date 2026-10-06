@@ -13,6 +13,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { NextRequest } from 'next/server';
+import { Script } from 'node:vm';
 import { GET } from '@/app/api/v1/embed/widget.js/route';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -156,6 +157,33 @@ describe('GET /api/v1/embed/widget.js', () => {
 
     // Reader catch must show user-facing text, not silently fail
     expect(body).toContain('Connection lost.');
+  });
+
+  it('starts afresh on conversation_not_found and hands the whole turn back (#705, t-765)', async () => {
+    // The visitor id includes the client IP; after an address change the old
+    // conversation is no longer the visitor's. The widget clears it as New chat
+    // does (so the transcript matches the server's fresh conversation) and
+    // restores the text and attachments the visitor just sent.
+    const body = await GET(makeGetRequest()).text();
+
+    const start = body.indexOf("evt.data.code === 'conversation_not_found'");
+    expect(start).toBeGreaterThan(-1);
+    const branch = body.slice(start, body.indexOf('} else if (fullText)', start));
+    expect(branch).toContain('clearConversation();');
+    expect(branch).toContain('input.value = msg;');
+    expect(branch).toContain('pendingAttachments = sentAttachments;');
+    expect(branch).toContain('a new one has started');
+
+    const clear = body.slice(body.indexOf('function clearConversation()'));
+    expect(clear.slice(0, 800)).toContain('conversationId = null;');
+    expect(clear.slice(0, 800)).toContain("messagesEl.innerHTML = '';");
+  });
+
+  it('serves a script that parses as JavaScript', async () => {
+    const body = await GET(makeGetRequest()).text();
+
+    // Compile only: `vm.Script` parses the body without running it.
+    expect(() => new Script(body)).not.toThrow();
   });
 
   it('includes status element in widget HTML', async () => {

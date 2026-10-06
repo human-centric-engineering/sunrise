@@ -57,6 +57,21 @@ describe('EscalateToHumanCapability', () => {
     });
   });
 
+  it('names an embed visitor as embedVisitorId with userId null (#705, t-765)', async () => {
+    // A subscriber reading `userId` as a `User` must never get a visitor id.
+    const cap = new EscalateToHumanCapability();
+
+    await cap.execute(
+      { reason: 'Needs a human', priority: 'high' },
+      { ...context, userId: 'embed_deadbeefdeadbeef' }
+    );
+
+    expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+      'conversation_escalated',
+      expect.objectContaining({ userId: null, embedVisitorId: 'embed_deadbeefdeadbeef' })
+    );
+  });
+
   it('defaults priority to medium when not specified', async () => {
     const cap = new EscalateToHumanCapability();
 
