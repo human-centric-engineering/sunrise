@@ -57,7 +57,7 @@ Start or continue a streaming chat conversation with a public agent.
 | `content_reset`      | `{ reason }`                                                | Provider fallback — clear accumulated text                                                                                          |
 | `done`               | `{ tokenUsage, costUsd, provider?, model?, finishReason? }` | Turn complete. `finishReason: 'length'` means the answer was **cut off** at the token cap — a fragment, not a complete reply (#594) |
 | `warning`            | `{ code, message }`                                         | Budget warning, input guard flag                                                                                                    |
-| `error`              | `{ code, message }`                                         | Unrecoverable error                                                                                                                 |
+| `error`              | `{ code, message, retriable? }`                             | Unrecoverable error. `retriable`, when present, is the provider's verdict on whether trying again could succeed                     |
 
 **Errors:**
 

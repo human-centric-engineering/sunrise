@@ -19,19 +19,27 @@
  * Output: `{ score: number | null, reasoning: string, evaluationSteps?: string[],
  *           passed: boolean, threshold: number | null }`.
  * `passed` is `true` when no threshold is set, or when `score >= threshold`.
+ * The boolean is the natural anchor for `route` step branching ("publish
+ * if passed, escalate otherwise"). Workflows that want to branch on the
+ * raw score string-match `{{<this-step-id>.output.score}}` in their
+ * route conditions.
  *
  * **With a threshold, a judge that returns no score fails the step** (§77
  * t-747). Two kinds of no score reach this step as `score: null`:
  *   - **the judge could not score**: a vendor error, no provider, the org's
  *     provider policy refusing it, a guard blocking it, or a reply that is not
  *     `{score, reasoning}` JSON. It carries the judge's `errorCode`.
- *   - **the judge says the criterion does not apply**: the faithfulness and
- *     citation judges on an answer with no `[N]` markers, the correctness and
- *     recall judges with no expected answer. No `errorCode`; the step uses
- *     `judge_not_applicable`, with the judge's reasoning (owner ruling,
- *     2026-10-06: a gate passes only on a real score).
- * This step used to report `passed: true` for both, so a quality gate opened
- * for anything the judge did not score. It now throws `ExecutorError`, and the
+ *   - **the judge says the criterion does not apply**: for example the
+ *     faithfulness and citation judges on an answer with no `[N]` markers, the
+ *     correctness, recall and answer-similarity judges with no expected
+ *     answer, the brand-voice judge with no voice to judge against. No
+ *     `errorCode`; the step uses `judge_not_applicable` (owner ruling,
+ *     2026-10-06: a gate passes only on a real score). The context-precision
+ *     judge always lands here from this step, which passes it no citations.
+ * A score outside 0–1 fails the same way, as `judge_score_out_of_range`.
+ * This step used to report `passed: true` for both kinds of no score, and to
+ * compare an out-of-range score as if it were valid, so a quality gate opened
+ * for anything the judge did not properly score. It now throws `ExecutorError`, and the
  * step's `errorStrategy` decides: `fail` (the default) fails the run, `retry`
  * tries again unless the cause is one a retry cannot change, `fallback` routes
  * to the author's chosen step. `skip` empties the output, so a gate downstream
@@ -42,10 +50,6 @@
  * Infrastructure failures the chat stream does not fold into an `error`
  * event still throw out of `driveJudgeAgent`, and reach the engine as
  * `executor_threw` like any other executor's.
- * The boolean is the natural anchor for `route` step branching ("publish
- * if passed, escalate otherwise"). Workflows that want to branch on the
- * raw score string-match `{{<this-step-id>.output.score}}` in their
- * route conditions.
  *
  * Cost: the judge call writes one `AiCostLog` row attributed to the judge
  * agent, and `ctx.costLogMetadata` is forwarded so an evaluation run's tags
@@ -74,36 +78,53 @@ import { isRequestFaultCode } from '@/lib/orchestration/llm/provider';
 /** The step's code when the judge returns `score: null` with no `errorCode`. */
 export const JUDGE_NOT_APPLICABLE = 'judge_not_applicable';
 
+/** The step's code when the judge returns a score outside the 0–1 contract. */
+export const JUDGE_SCORE_OUT_OF_RANGE = 'judge_score_out_of_range';
+
 /**
- * Judge outcomes a retry cannot change: the same request gets the same answer.
- * The provider's own request faults come from `isRequestFaultCode` (the code
- * is all that survives the chat stream, so the `ProviderError`'s `retriable`
- * flag is lost on the way here). These are the rest: configuration
- * (`NoProviderConfiguredError`, `NoEligibleProviderError`, a missing or
- * inactive judge, a malformed request), the per-agent budget, the chat
- * handler's guards and loop cap, which have already spent the generation and
- * would spend it again, and a judge that says its criterion does not apply.
- * Any other code keeps `ExecutorError`'s default, retriable, so a code
- * missing here costs a wasted retry, never a wrong outcome.
+ * Chat-layer refusals a retry cannot change. They are raised before or around
+ * the provider call, so no `ProviderError` carries a verdict for them: a
+ * missing or inactive judge, a malformed request, the caller's conversation
+ * caps (each judge call opens a conversation under the run's user), the
+ * per-agent budget, and the guards and loop cap, which have already spent the
+ * generation and would spend it again.
  */
-const PERMANENT_JUDGE_OUTCOMES = new Set([
-  'no_provider_configured',
-  'no_eligible_provider',
+const PERMANENT_CHAT_REFUSALS = new Set([
   'agent_not_found',
   'invalid_request',
+  'conversation_cap_reached',
+  'conversation_length_cap_reached',
   'budget_exceeded',
   'input_blocked',
   'output_blocked',
   'citation_required',
   'tool_loop_cap',
-  JUDGE_NOT_APPLICABLE,
 ]);
 
-const isRetriableJudgeOutcome = (code: string): boolean =>
-  !isRequestFaultCode(code) && !PERMANENT_JUDGE_OUTCOMES.has(code);
+/**
+ * Whether another attempt could change a judge's failure. A provider failure
+ * brings its own verdict (`retriable`, carried through the chat stream); the
+ * provider's request faults are refused even so, as everywhere else. Anything
+ * else is retriable unless it is a known chat-layer refusal: a code missing
+ * from that list costs a wasted retry, never a wrong outcome. A judge that
+ * found its criterion not applicable is retriable too: for a platform judge it
+ * is deterministic, but a custom judge's null is one sample of a model.
+ */
+function isRetriableJudgeFailure(code: string, providerVerdict: boolean | undefined): boolean {
+  if (providerVerdict === false || isRequestFaultCode(code)) return false;
+  return !PERMANENT_CHAT_REFUSALS.has(code);
+}
 
-/** The judge's reasoning as it reaches a trace: one line, bounded. */
-const REASONING_IN_MESSAGE_MAX = 200;
+/** System-written failure text as it reaches a trace: one line, bounded. */
+const DETAIL_IN_MESSAGE_MAX = 200;
+
+function oneLine(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  const chars = Array.from(flat);
+  return chars.length > DETAIL_IN_MESSAGE_MAX
+    ? `${chars.slice(0, DETAIL_IN_MESSAGE_MAX).join('')}…`
+    : flat;
+}
 
 export async function executeJudgeCall(
   step: WorkflowStep,
@@ -185,19 +206,33 @@ export async function executeJudgeCall(
   let passed = true;
   if (threshold !== null) {
     const { score } = result;
-    if (typeof score !== 'number') {
-      // A gate with nothing to compare. With an `errorCode` the judge could
-      // not score; without one it chose not to, and its reasoning says why.
-      const code = result.errorCode ?? JUDGE_NOT_APPLICABLE;
-      const why = result.errorCode
-        ? 'could not score'
-        : `found the criterion not applicable: ${result.reasoning.replace(/\s+/g, ' ').slice(0, REASONING_IN_MESSAGE_MAX)}`;
+    if (typeof score !== 'number' || score < 0 || score > 1) {
+      // A gate with nothing valid to compare. Three cases:
+      //   - an `errorCode`: the judge could not score. `reasoning` is the
+      //     driver's own text ("judge call error: <code> — <message>"), so it
+      //     is safe to show.
+      //   - no score and no code: the judge chose not to score. Its reasoning
+      //     is model output the answer under review can steer, and this
+      //     message reaches traces, webhooks and failure emails, so it stays
+      //     out; the judge's conversation keeps it.
+      //   - a score outside 0–1: the judges' contract is 0–1 (as
+      //     `score-response.ts` holds it), so `6 >= 0.8` would open the gate
+      //     on a reply in the wrong scale.
+      const failure =
+        typeof score === 'number'
+          ? {
+              code: JUDGE_SCORE_OUT_OF_RANGE,
+              why: `returned score ${score}, outside 0–1`,
+            }
+          : result.errorCode
+            ? { code: result.errorCode, why: `could not score: ${oneLine(result.reasoning)}` }
+            : { code: JUDGE_NOT_APPLICABLE, why: 'returned no score: criterion not applicable' };
       throw new ExecutorError(
         step.id,
-        code,
-        `judge_call: judge "${judgeAgentSlug}" ${why}, so the threshold could not be applied (${code})`,
+        failure.code,
+        `judge_call: judge "${judgeAgentSlug}" ${failure.why}, so the threshold could not be applied (${failure.code})`,
         undefined,
-        isRetriableJudgeOutcome(code),
+        isRetriableJudgeFailure(failure.code, result.retriable),
         tokensUsed,
         result.costUsd
       );

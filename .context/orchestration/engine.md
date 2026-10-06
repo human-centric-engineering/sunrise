@@ -291,12 +291,13 @@ Retriable codes: `rate_limited`, `execution_error` (tool_call), `http_error_retr
 
 See [`external-calls.md`](./external-calls.md) for the full external_call error code table.
 
-**`judge_call` with a `threshold` fails when the judge returns no score** (§77 t-747). The step used to report `passed: true`, so a gate opened for anything the judge did not score. Now it throws with:
+**`judge_call` with a `threshold` fails when the judge does not properly score** (§77 t-747). The step used to report `passed: true` when the judge returned no score, and to compare an out-of-range score as if it were valid, so a gate opened for anything the judge did not properly score. Now it throws with:
 
-- **the judge's own `errorCode`** when the judge could not score: `provider_error`, `malformed_judge_response`, `provider_not_permitted`, `output_blocked`, …;
-- **`judge_not_applicable`** when the judge returned `score: null` on purpose because its criterion does not apply (faithfulness or citation judges on an answer with no `[N]` markers, correctness or recall judges with no expected answer). The message carries the judge's reasoning.
+- **the judge's own `errorCode`** when the judge could not score: `provider_error`, `malformed_judge_response`, `provider_not_permitted`, `output_blocked`, …. The message carries the driver's one-line explanation;
+- **`judge_not_applicable`** when the judge returned `score: null` on purpose because its criterion does not apply: for example the faithfulness and citation judges on an answer with no `[N]` markers, the correctness, recall and answer-similarity judges with no expected answer, the brand-voice judge with no voice. The judge's own reasoning stays out of the message, because the answer under review can steer it. **`eval-judge-context-precision` always lands here from a `judge_call`, which passes it no citations**;
+- **`judge_score_out_of_range`** for a score outside the judges' 0–1 contract.
 
-It is not retriable when a retry cannot change the answer: the provider's request faults (`isRequestFaultCode`), configuration (`no_provider_configured`, `no_eligible_provider`, `agent_not_found`, `invalid_request`), `budget_exceeded`, the chat guards and loop cap (`input_blocked`, `output_blocked`, `citation_required`, `tool_loop_cap`) and `judge_not_applicable`. Any other code is retriable. `skip` on a gate empties the output, so a downstream `route` sees no `passed`: choosing `skip` is choosing no gate. Without a threshold the step still returns `passed: true`, with any `errorCode` in its output.
+Retriable unless a retry cannot change the answer: the provider's own `retriable: false` (carried on the chat `error` event), the provider's request faults (`isRequestFaultCode`), and the chat-layer refusals with no provider verdict (`agent_not_found`, `invalid_request`, the conversation caps, `budget_exceeded`, `input_blocked`, `output_blocked`, `citation_required`, `tool_loop_cap`). `skip` on a gate empties the output, so a downstream `route` sees no `passed`: choosing `skip` is choosing no gate. Without a threshold the step still returns `passed: true`, with any `errorCode` in its output.
 
 ### Per-step timeout
 

@@ -404,6 +404,8 @@ describe('StreamingChatHandler', () => {
 
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({ type: 'error', code: 'agent_not_found' });
+    // A chat-layer refusal has no provider verdict to carry.
+    expect(events[0]).not.toHaveProperty('retriable');
     expect(getProviderWithFallbacks).not.toHaveBeenCalled();
     expect(prisma.aiMessage.create).not.toHaveBeenCalled();
   });
@@ -2977,6 +2979,45 @@ describe('StreamingChatHandler', () => {
         expect.objectContaining({ inputTokens: 111, outputTokens: 222 })
       );
     });
+
+    it.each([false, true])(
+      'carries the ProviderError’s own retriable verdict (%s) on the error event',
+      async (retriable) => {
+        // A caller that reads the stream, not the error, needs the verdict to
+        // decide a retry: the judge_call step (§77 t-747).
+        const failingProvider = {
+          name: 'failing',
+          isLocal: false,
+          chat: vi.fn(),
+          embed: vi.fn(),
+          listModels: vi.fn(),
+          testConnection: vi.fn(),
+          // eslint-disable-next-line require-yield
+          chatStream: vi.fn(async function* () {
+            throw new ProviderError('upstream said no', { code: 'http_418', retriable });
+          }),
+        };
+        (getBreaker as ReturnType<typeof vi.fn>).mockReturnValue({
+          recordSuccess: vi.fn(),
+          recordFailure: vi.fn(),
+        });
+        (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+          makeAgent({ fallbackProviders: [] })
+        );
+        (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+          provider: failingProvider,
+          usedSlug: 'anthropic',
+        });
+
+        const events = await collect(streamChat(baseRequest));
+
+        expect(events[events.length - 1]).toMatchObject({
+          type: 'error',
+          code: 'http_418',
+          retriable,
+        });
+      }
+    );
 
     it('logs nothing extra when the error carries no usage', async () => {
       // Most errors do not know what they cost — a 401, a connection refused,

@@ -18,6 +18,13 @@ release process.
 
 ### Added
 
+- **The chat `error` event carries `retriable?: boolean`** (§77 t-747): the
+  failing `ProviderError`'s own verdict on whether a retry could succeed, absent
+  for chat-layer refusals. Optional and additive on the SSE wire (`sse.md`,
+  `consumer-chat.md`). `drainStreamChat` returns it as `errorRetriable` and
+  `driveJudgeAgent` as `retriable`; `isRequestFaultCode(code)` joins
+  `isRequestFault` in `lib/orchestration/llm/provider.ts` for callers that
+  have only the code.
 - **Platform agents: Sunrise's own agents, defined in code, with one instance
   per org** (multi-tenancy §116 t-724). The sixteen agents seeds used to write
   once, as the install org's rows, are now definitions in
@@ -226,20 +233,23 @@ release process.
 
 ### Changed
 
-- **A `judge_call` step with a `threshold` now fails when the judge returns no
-  score** (§77 t-747). It used to report `passed: true` whenever the judge could
-  not score — a vendor error, no provider, the org's provider policy refusing it
-  (common at `multi` since §120), or a reply that was not `{score, reasoning}`
-  JSON — and whenever a platform judge found its criterion not applicable (the
-  faithfulness and citation judges on an answer with no `[N]` markers, the
-  correctness and recall judges with no expected output). So a quality gate let
-  through anything the judge did not score. The step now throws, with the
-  judge's `errorCode` or `judge_not_applicable`, and its `errorStrategy`
-  decides: the default `fail` fails the run, `retry` retries unless the cause
-  cannot change, `fallback` routes to the author's step. **An existing workflow
-  whose judge sometimes fails, or gates on a criterion that does not always
-  apply, will now fail where it used to pass unjudged.** Without a threshold,
-  nothing changes.
+- **A `judge_call` step with a `threshold` now fails when the judge does not
+  properly score** (§77 t-747). It used to report `passed: true` whenever the
+  judge returned no score — a vendor error, no provider, the org's provider
+  policy refusing it (common at `multi` since §120), a reply that was not
+  `{score, reasoning}` JSON, or a platform judge finding its criterion not
+  applicable (for example faithfulness and citation judges on an answer with no
+  `[N]` markers, correctness, recall and answer-similarity judges with no
+  expected output, the brand-voice judge with no voice) — and compared an
+  out-of-range score as if it were valid. So a quality gate let through
+  anything the judge did not properly score. The step now throws, with the
+  judge's `errorCode`, `judge_not_applicable` or `judge_score_out_of_range`, and
+  its `errorStrategy` decides: the default `fail` fails the run, `retry`
+  retries unless the cause cannot change, `fallback` routes to the author's
+  step. **An existing workflow whose judge sometimes fails, or gates on a
+  criterion that does not always apply, will now fail where it used to pass
+  unjudged; a gate on `eval-judge-context-precision`, which this step passes no
+  citations, now fails every run.** Without a threshold, nothing changes.
 - **`@sentry/nextjs` 11, mermaid 12 and dotenv 18** (t-758). Core calls Sentry
   only through `lib/errors/sentry.ts`, whose calls are unchanged, and ships no
   `Sentry.init`. **A fork that configures Sentry:** v11 collects request and

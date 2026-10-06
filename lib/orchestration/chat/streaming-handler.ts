@@ -2719,7 +2719,7 @@ export class StreamingChatHandler {
         // now ends the turn here rather than failing over — leaves the user
         // message unanswered on reload.
         await persistErrorMarker(err.code);
-        yield errorEvent(err.code, safe.message);
+        yield errorEvent(err.code, safe.message, err.retriable);
         return;
       }
       // Not on a client abort — see `isClientAbort`.
@@ -3066,8 +3066,8 @@ function isClientAbort(err: unknown, signal?: AbortSignal): boolean {
   return signal === undefined && err.message.includes('aborted');
 }
 
-function errorEvent(code: string, message: string): ChatEvent {
-  return { type: 'error', code, message };
+function errorEvent(code: string, message: string, retriable?: boolean): ChatEvent {
+  return { type: 'error', code, message, ...(retriable === undefined ? {} : { retriable }) };
 }
 
 /**

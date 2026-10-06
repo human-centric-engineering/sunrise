@@ -258,6 +258,18 @@ describe('drainStreamChat', () => {
     expect(result.assistantText).toBe('partial');
   });
 
+  it('carries a provider error’s retriable verdict, and leaves it out when there is none', async () => {
+    mockedStreamChat.mockReturnValueOnce(
+      fromEvents([{ type: 'error', code: 'http_401', message: 'nope', retriable: false }])
+    );
+    expect((await drainStreamChat(baseRequest)).errorRetriable).toBe(false);
+
+    mockedStreamChat.mockReturnValueOnce(
+      fromEvents([{ type: 'error', code: 'agent_not_found', message: 'gone' }])
+    );
+    expect(await drainStreamChat(baseRequest)).not.toHaveProperty('errorRetriable');
+  });
+
   it('measures latencyMs', async () => {
     let nowCall = 0;
     const spy = vi.spyOn(Date, 'now').mockImplementation(() => {
