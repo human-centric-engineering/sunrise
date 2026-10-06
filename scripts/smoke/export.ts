@@ -99,8 +99,10 @@ async function main(): Promise<void> {
 
   try {
     // The `_` is deliberate: an unescaped ILIKE reads it as a one-character
-    // wildcard, which the stranger's contact row below exists to catch.
-    const email = `${PREFIX}_subject-${stamp}@example.com`;
+    // wildcard, which the stranger's contact row below exists to catch. The
+    // capitals are too: the contact row is stored lower-cased, so the export
+    // only finds it if the source normalises the account address.
+    const email = `${PREFIX}_Subject-${stamp}@Example.com`;
 
     // ADMIN so the export also covers an attribution source (a created agent).
     const subject = await prisma.user.create({

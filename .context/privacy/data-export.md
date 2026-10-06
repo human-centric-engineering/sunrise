@@ -284,7 +284,8 @@ export async function collectAppSubjectData({
 }: AppSubjectQuery): Promise<AppSubjectData> {
   const [invoices, enquiries] = await Promise.all([
     prisma.appInvoice.findMany({ where: { userId }, omit: { gatewayToken: true } }),
-    // Exact, on the address as the writer stored it — see "Tables With No `User` FK".
+    // Exact, normalised the way YOUR enquiry writer normalises — this assumes it
+    // stores `emailSchema` output. See "Tables With No `User` FK".
     prisma.appEnquiry.findMany({ where: { email: email.trim().toLowerCase() } }),
   ]);
 

@@ -282,6 +282,16 @@ describe('exportUserData', () => {
 
       expect(argsTo('contactSubmission').where).toEqual({ email: 'subject@example.com' });
     });
+
+    it('trims the subject email before matching contact submissions', async () => {
+      // `emailSchema` trims too, so an account address with stray whitespace
+      // (one written by a path other than better-auth) still finds its rows.
+      mockUserFindUnique.mockResolvedValue({ ...SUBJECT, email: '  Subject@Example.com ' });
+
+      await exportUserData(PARAMS);
+
+      expect(argsTo('contactSubmission').where).toEqual({ email: 'subject@example.com' });
+    });
   });
 
   describe('reading across every org at multi (§107 t-748)', () => {
