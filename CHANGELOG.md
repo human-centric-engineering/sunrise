@@ -230,13 +230,16 @@ release process.
   score** (§77 t-747). It used to report `passed: true` whenever the judge could
   not score — a vendor error, no provider, the org's provider policy refusing it
   (common at `multi` since §120), or a reply that was not `{score, reasoning}`
-  JSON — so a quality gate let through anything the judge could not see. The
-  step now throws with the judge's `errorCode`, and its `errorStrategy` decides:
-  the default `fail` fails the run, `retry` retries unless the cause cannot
-  change (`provider_not_permitted`, `no_provider_configured`,
-  `no_eligible_provider`, `budget_exceeded`), `fallback` routes to the author's
-  step. **An existing workflow whose judge sometimes fails will now fail where
-  it used to pass unjudged.** Without a threshold, nothing changes.
+  JSON — and whenever a platform judge found its criterion not applicable (the
+  faithfulness and citation judges on an answer with no `[N]` markers, the
+  correctness and recall judges with no expected output). So a quality gate let
+  through anything the judge did not score. The step now throws, with the
+  judge's `errorCode` or `judge_not_applicable`, and its `errorStrategy`
+  decides: the default `fail` fails the run, `retry` retries unless the cause
+  cannot change, `fallback` routes to the author's step. **An existing workflow
+  whose judge sometimes fails, or gates on a criterion that does not always
+  apply, will now fail where it used to pass unjudged.** Without a threshold,
+  nothing changes.
 - **`@sentry/nextjs` 11, mermaid 12 and dotenv 18** (t-758). Core calls Sentry
   only through `lib/errors/sentry.ts`, whose calls are unchanged, and ships no
   `Sentry.init`. **A fork that configures Sentry:** v11 collects request and

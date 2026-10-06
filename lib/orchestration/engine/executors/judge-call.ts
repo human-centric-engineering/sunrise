@@ -21,18 +21,27 @@
  * `passed` is `true` when no threshold is set, or when `score >= threshold`.
  *
  * **With a threshold, a judge that returns no score fails the step** (§77
- * t-747). `driveJudgeAgent` never throws: a vendor error, no provider, the
- * org's provider policy refusing it, or a reply that is not `{score,
- * reasoning}` JSON all come back as `score: null` with an `errorCode`. This
- * step used to report `passed: true` then, so a quality gate opened for
- * anything the judge could not see. It now throws `ExecutorError` carrying
- * the judge's code, and the step's `errorStrategy` decides: `fail` (the
- * default) fails the run, `retry` tries again unless the cause is one a retry
- * cannot change, `fallback` routes to the author's chosen step. `skip`
- * empties the output, so a gate downstream sees no `passed` at all: on a gate,
- * choosing `skip` is choosing to have no gate. Without a threshold the step
- * scores rather than gates, so it still reports `passed: true` with the
- * `errorCode` in its output.
+ * t-747). Two kinds of no score reach this step as `score: null`:
+ *   - **the judge could not score**: a vendor error, no provider, the org's
+ *     provider policy refusing it, a guard blocking it, or a reply that is not
+ *     `{score, reasoning}` JSON. It carries the judge's `errorCode`.
+ *   - **the judge says the criterion does not apply**: the faithfulness and
+ *     citation judges on an answer with no `[N]` markers, the correctness and
+ *     recall judges with no expected answer. No `errorCode`; the step uses
+ *     `judge_not_applicable`, with the judge's reasoning (owner ruling,
+ *     2026-10-06: a gate passes only on a real score).
+ * This step used to report `passed: true` for both, so a quality gate opened
+ * for anything the judge did not score. It now throws `ExecutorError`, and the
+ * step's `errorStrategy` decides: `fail` (the default) fails the run, `retry`
+ * tries again unless the cause is one a retry cannot change, `fallback` routes
+ * to the author's chosen step. `skip` empties the output, so a gate downstream
+ * sees no `passed` at all: on a gate, choosing `skip` is choosing to have no
+ * gate. Without a threshold the step scores rather than gates, so it still
+ * reports `passed: true`, with any `errorCode` in its output.
+ *
+ * Infrastructure failures the chat stream does not fold into an `error`
+ * event still throw out of `driveJudgeAgent`, and reach the engine as
+ * `executor_threw` like any other executor's.
  * The boolean is the natural anchor for `route` step branching ("publish
  * if passed, escalate otherwise"). Workflows that want to branch on the
  * raw score string-match `{{<this-step-id>.output.score}}` in their
@@ -60,21 +69,41 @@ import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { interpolatePrompt } from '@/lib/orchestration/engine/interpolate-prompt';
 import { driveJudgeAgent } from '@/lib/orchestration/evaluations/judge-driver';
 import { judgeCallConfigSchema } from '@/lib/validations/orchestration';
-import { PROVIDER_NOT_PERMITTED } from '@/lib/orchestration/llm/provider';
+import { isRequestFaultCode } from '@/lib/orchestration/llm/provider';
+
+/** The step's code when the judge returns `score: null` with no `errorCode`. */
+export const JUDGE_NOT_APPLICABLE = 'judge_not_applicable';
 
 /**
- * Judge error codes a retry cannot change: the same request gets the same
- * answer. Each is raised non-retriable at its source (the provider policy,
- * `NoProviderConfiguredError`, `NoEligibleProviderError`, the per-agent
- * budget). Any other code keeps `ExecutorError`'s default, retriable, so a
- * code missing here costs a wasted retry, never a wrong outcome.
+ * Judge outcomes a retry cannot change: the same request gets the same answer.
+ * The provider's own request faults come from `isRequestFaultCode` (the code
+ * is all that survives the chat stream, so the `ProviderError`'s `retriable`
+ * flag is lost on the way here). These are the rest: configuration
+ * (`NoProviderConfiguredError`, `NoEligibleProviderError`, a missing or
+ * inactive judge, a malformed request), the per-agent budget, the chat
+ * handler's guards and loop cap, which have already spent the generation and
+ * would spend it again, and a judge that says its criterion does not apply.
+ * Any other code keeps `ExecutorError`'s default, retriable, so a code
+ * missing here costs a wasted retry, never a wrong outcome.
  */
-const NON_RETRIABLE_JUDGE_ERRORS = new Set([
-  PROVIDER_NOT_PERMITTED,
+const PERMANENT_JUDGE_OUTCOMES = new Set([
   'no_provider_configured',
   'no_eligible_provider',
+  'agent_not_found',
+  'invalid_request',
   'budget_exceeded',
+  'input_blocked',
+  'output_blocked',
+  'citation_required',
+  'tool_loop_cap',
+  JUDGE_NOT_APPLICABLE,
 ]);
+
+const isRetriableJudgeOutcome = (code: string): boolean =>
+  !isRequestFaultCode(code) && !PERMANENT_JUDGE_OUTCOMES.has(code);
+
+/** The judge's reasoning as it reaches a trace: one line, bounded. */
+const REASONING_IN_MESSAGE_MAX = 200;
 
 export async function executeJudgeCall(
   step: WorkflowStep,
@@ -153,24 +182,28 @@ export async function executeJudgeCall(
   const threshold = typeof config.threshold === 'number' ? config.threshold : null;
   const tokensUsed = result.tokenUsage.input + result.tokenUsage.output;
 
-  if (threshold !== null && typeof result.score !== 'number') {
-    // A gate with nothing to compare. `errorCode` is set whenever the score is
-    // null (`driveJudgeAgent`'s contract); the fallback is for a judge that
-    // breaks it, so the step still fails rather than passing.
-    const code = result.errorCode ?? 'judge_returned_no_score';
-    throw new ExecutorError(
-      step.id,
-      code,
-      `judge_call: judge "${judgeAgentSlug}" returned no score, so the threshold could not be applied (${code})`,
-      undefined,
-      !NON_RETRIABLE_JUDGE_ERRORS.has(code),
-      tokensUsed,
-      result.costUsd
-    );
+  let passed = true;
+  if (threshold !== null) {
+    const { score } = result;
+    if (typeof score !== 'number') {
+      // A gate with nothing to compare. With an `errorCode` the judge could
+      // not score; without one it chose not to, and its reasoning says why.
+      const code = result.errorCode ?? JUDGE_NOT_APPLICABLE;
+      const why = result.errorCode
+        ? 'could not score'
+        : `found the criterion not applicable: ${result.reasoning.replace(/\s+/g, ' ').slice(0, REASONING_IN_MESSAGE_MAX)}`;
+      throw new ExecutorError(
+        step.id,
+        code,
+        `judge_call: judge "${judgeAgentSlug}" ${why}, so the threshold could not be applied (${code})`,
+        undefined,
+        isRetriableJudgeOutcome(code),
+        tokensUsed,
+        result.costUsd
+      );
+    }
+    passed = score >= threshold;
   }
-
-  const passed =
-    typeof result.score === 'number' && threshold !== null ? result.score >= threshold : true;
 
   const output: Record<string, unknown> = {
     score: result.score,

@@ -289,7 +289,16 @@ const REQUEST_FAULT_CODES = new Set(['truncated_no_output', PROVIDER_NOT_PERMITT
  * failure that re-running, re-routing or failing over cannot fix.
  */
 export function isRequestFault(err: unknown): err is ProviderError {
-  return err instanceof ProviderError && REQUEST_FAULT_CODES.has(err.code);
+  return err instanceof ProviderError && isRequestFaultCode(err.code);
+}
+
+/**
+ * {@link isRequestFault} for a caller that has only the code: one that read
+ * the failure off a chat stream's `error` event, where the `ProviderError`
+ * itself does not survive (the `judge_call` step, §77 t-747).
+ */
+export function isRequestFaultCode(code: string): boolean {
+  return REQUEST_FAULT_CODES.has(code);
 }
 
 /**

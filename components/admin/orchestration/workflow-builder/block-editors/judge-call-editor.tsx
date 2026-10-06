@@ -107,8 +107,11 @@ export function JudgeCallEditor({ config, onChange }: EditorProps<JudgeCallConfi
             Optional. The step&apos;s output carries <code>passed: true</code> when{' '}
             <code>score &gt;= threshold</code>. Use it from a downstream <code>route</code> step:
             condition <code>passed</code> publishes; <code>!passed</code> escalates. If the judge
-            cannot score (its provider fails or is not allowed for this org), the step fails and its
-            error strategy decides; it never passes unjudged. Leave empty to always pass.
+            returns no score, the step fails and its error strategy decides; it never passes
+            unjudged. That covers a judge that could not score (its provider failed or is not
+            allowed for this org) and one whose criterion does not apply, such as a faithfulness
+            judge on an answer with no citations, or a correctness judge with no expected output.
+            Leave empty to always pass.
           </FieldHelp>
         </Label>
         <Input
