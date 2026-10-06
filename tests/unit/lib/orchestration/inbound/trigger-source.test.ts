@@ -1,33 +1,30 @@
 /**
  * Tests: the inbound route's run marker (t-770).
  *
- * `send_message_to_channel` trusts a run's `triggerMeta.conversationId` only
- * when this says the inbound route started the run, so a false positive would
- * let a model-chosen `run_workflow` input steer an outbound message.
+ * `send_message_to_channel` trusts a run's `triggerMeta.conversationId` only on
+ * a run whose `triggerSource` starts with this prefix, so the marker and the
+ * prefix the capability matches must agree.
  *
  * @see lib/orchestration/inbound/trigger-source.ts
  */
 import { describe, expect, it } from 'vitest';
 
 import {
+  INBOUND_TRIGGER_SOURCE_PREFIX,
   inboundTriggerSource,
-  isInboundTriggerSource,
 } from '@/lib/orchestration/inbound/trigger-source';
 
 describe('inbound trigger source', () => {
-  it('recognises the marker the inbound route stamps, for every channel', () => {
+  it('stamps inbound:<channel>, which the capability’s prefix matches', () => {
+    expect(inboundTriggerSource('sms')).toBe('inbound:sms');
     for (const channel of ['sms', 'whatsapp', 'email', 'slack']) {
-      expect(isInboundTriggerSource(inboundTriggerSource(channel))).toBe(true);
+      expect(inboundTriggerSource(channel).startsWith(INBOUND_TRIGGER_SOURCE_PREFIX)).toBe(true);
     }
   });
 
-  it('does not recognise any other way a run starts', () => {
-    expect(isInboundTriggerSource('schedule')).toBe(false);
-    expect(isInboundTriggerSource('webhook')).toBe(false);
-    expect(isInboundTriggerSource('chat')).toBe(false);
-    expect(isInboundTriggerSource(null)).toBe(false);
-    expect(isInboundTriggerSource(undefined)).toBe(false);
-    // A prefix test, not a substring one.
-    expect(isInboundTriggerSource('webhook:inbound:sms')).toBe(false);
+  it('is a prefix no other run source shares', () => {
+    for (const source of ['schedule', 'webhook', 'chat']) {
+      expect(source.startsWith(INBOUND_TRIGGER_SOURCE_PREFIX)).toBe(false);
+    }
   });
 });

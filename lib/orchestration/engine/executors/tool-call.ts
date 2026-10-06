@@ -3,8 +3,11 @@
  *
  * Config:
  *   - `capabilitySlug: string` (required, validated upstream)
- *   - `args?: Record<string, unknown>` — passed through to the dispatcher.
- *     When omitted, `ctx.inputData` is forwarded instead.
+ *   - `args?: Record<string, unknown>` — passed to the dispatcher, with every
+ *     string value template-interpolated like any other step's config
+ *     (`{{input.foo}}`, `{{<stepId>.output}}`, `{{trigger.conversationId}}`).
+ *     When omitted, `ctx.inputData` is forwarded instead, as data: it is not
+ *     interpolated, and neither is an `argsFrom` output.
  *   - `argsFrom?: string` — step ID whose output should be used as args.
  *     Takes precedence over `ctx.inputData` but not over explicit `args`.
  *
@@ -41,6 +44,26 @@ import {
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { platformScope, hintScope } from '@/lib/orchestration/scope';
+import { interpolatePrompt } from '@/lib/orchestration/engine/interpolate-prompt';
+
+/**
+ * Interpolate every string in an authored `args` object (t-770). This was the
+ * one step type whose config was not interpolated, so a template's
+ * `conversationId: '{{trigger.conversationId}}'` reached the capability as
+ * that literal text and the inbound-reply template never sent a reply. A
+ * string with no `{{` is returned as is; objects and arrays are walked.
+ */
+function interpolateArgs(value: unknown, ctx: Readonly<ExecutionContext>): unknown {
+  if (typeof value === 'string')
+    return value.includes('{{') ? interpolatePrompt(value, ctx) : value;
+  if (Array.isArray(value)) return value.map((item) => interpolateArgs(item, ctx));
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, interpolateArgs(item, ctx)])
+    );
+  }
+  return value;
+}
 
 export async function executeToolCall(
   step: WorkflowStep,
@@ -111,7 +134,9 @@ export async function executeToolCall(
   // Priority: explicit args > argsFrom (step output reference) > ctx.inputData
   let rawArgs: Record<string, unknown>;
   if (config.args) {
-    rawArgs = config.args;
+    rawArgs = Object.fromEntries(
+      Object.entries(config.args).map(([key, item]) => [key, interpolateArgs(item, ctx)])
+    );
   } else if (config.argsFrom && ctx.stepOutputs[config.argsFrom] != null) {
     const fromOutput = ctx.stepOutputs[config.argsFrom];
     rawArgs =

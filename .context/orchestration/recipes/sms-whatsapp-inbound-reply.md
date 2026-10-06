@@ -69,16 +69,15 @@ You only need a `providers.<slug>` block for channels you actually use. A bindin
 
 `throttle.perConversationPerHour` caps outbound dispatches per `conversationId` in a trailing hour (default 5). `allowForceProvider` enables the admin `forceProvider` override (false by default — must be explicitly opted in).
 
-**Which conversation a call may send on** (t-770). The `conversationId` argument comes from whoever drives the call, and an unrestricted one would let a steered model message anyone who ever wrote to your number. So the capability sends only within the conversation being handled:
+**Which conversation a call may send on** (t-770). The `conversationId` argument comes from whoever drives the call, and an unrestricted one would let a steered model, or the starter of a run, message anyone who ever wrote to your number. So the capability sends only within the conversation being handled:
 
-| Called from                                         | May send on                                                                                                                                                                                    |
-| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A `tool_call` workflow step (this recipe's shape)   | Whatever the workflow definition names, usually `{{trigger.conversationId}}`. A model never chooses it.                                                                                        |
-| An `agent_call` step, or the orchestrator           | Only the conversation that started the run (`inputData.triggerMeta.conversationId`), and only on a run the inbound route started. A sender's text cannot redirect the reply to another thread. |
-| An interactive chat (admin, consumer)               | Only the chat's own conversation, which is never an inbound channel thread, so in practice nothing.                                                                                            |
-| An MCP client, or an anonymous embed widget visitor | Nothing: refused.                                                                                                                                                                              |
+| Called from                                                                                             | May send on                                                                                                                                                                                                                           |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A workflow step, fixed (`tool_call`, this recipe's shape) or AI-driven (`agent_call`, the orchestrator) | Only the conversation that started the run (`inputData.triggerMeta.conversationId`), and only on a run the inbound route started, or an admin's rerun of one. Neither an inbound message nor a run's starter can name another thread. |
+| An interactive chat (admin, consumer)                                                                   | Only the chat's own conversation, which is never an inbound channel thread, so in practice nothing.                                                                                                                                   |
+| An MCP client, or an anonymous embed widget visitor                                                     | Nothing: refused.                                                                                                                                                                                                                     |
 
-Anything else is refused with `conversation_not_permitted` before the conversation is read.
+Anything else is refused with `conversation_not_permitted` (and logged) before the conversation is read. A run started any other way (by schedule, by an admin, by `run_workflow`, or a rerun of a rerun) has no conversation of its own and sends nothing. Texting a thread other than the one that started the run (reminders, outreach) is not supported yet.
 
 ## 6. Inbound trigger setup
 

@@ -9,16 +9,10 @@
  * chosen by its starter, a model calling `run_workflow` included (t-770).
  */
 
-const INBOUND_TRIGGER_SOURCE_PREFIX = 'inbound:';
+/** The prefix of every `triggerSource` the inbound route stamps. */
+export const INBOUND_TRIGGER_SOURCE_PREFIX = 'inbound:';
 
 /** The `triggerSource` the inbound route stamps on a run it starts. */
 export function inboundTriggerSource(channel: string): string {
   return `${INBOUND_TRIGGER_SOURCE_PREFIX}${channel}`;
-}
-
-/** True when a run's `triggerSource` says the inbound route started it. */
-export function isInboundTriggerSource(triggerSource: string | null | undefined): boolean {
-  return (
-    typeof triggerSource === 'string' && triggerSource.startsWith(INBOUND_TRIGGER_SOURCE_PREFIX)
-  );
 }

@@ -226,6 +226,14 @@ release process.
 
 ### Changed
 
+- **A `tool_call` step interpolates its `args`** (t-770). Every string in an
+  authored `args` object now resolves `{{input.…}}`, `{{<stepId>.output}}`,
+  `{{trigger.…}}` and the rest, as every other step type's config already did;
+  objects and arrays are walked. Args taken from `argsFrom` or the `inputData`
+  fallback are data and are passed through unchanged. **For a fork:** a
+  `tool_call` whose `args` held literal `{{…}}` text meant to reach the
+  capability verbatim now gets it interpolated (a missing reference becomes
+  the empty string).
 - **A `judge_call` step with a `threshold` now fails when the judge does not
   properly score** (§77 t-747). It used to report `passed: true` whenever the
   judge returned no score — a vendor error, no provider, the org's provider
@@ -554,6 +562,11 @@ release process.
 
 ### Fixed
 
+- **The SMS / WhatsApp inbound-reply template sends its reply** (t-770). Its
+  `send_reply` step is a `tool_call`, and `tool_call` was the one step type
+  that did not interpolate its config, so `{{trigger.conversationId}}` and
+  `{{respond_to_inbound.output}}` reached `send_message_to_channel` as literal
+  text and every reply failed with `conversation_not_found`. See **Changed**.
 - **An embed widget visitor's first message now starts a conversation**
   (#705, t-765). It failed before any reply on every install: the handler
   wrote the anonymous `embed_<hash>` visitor id into `AiConversation.userId`,
@@ -717,16 +730,17 @@ release process.
 - **`send_message_to_channel` sends only within the conversation being
   handled** (t-770). It sent on whatever `conversationId` its caller passed, so
   a model steered by the person chatting, by an inbound message or by content
-  an MCP client was reading could have the operator's number message anyone
-  who had ever written to it, given that conversation's id. Now a `tool_call`
-  workflow step still sends where its definition says; an `agent_call` step
-  (and the orchestrator) only to the conversation that started the run, and
-  only on a run the inbound route started; an interactive chat only to its own
-  conversation; an MCP client never. Anything else is refused with
-  `conversation_not_permitted` before the conversation is read. **For an
-  operator:** an agent-driven workflow that sent to a conversation other than
-  the one that started its run, or an MCP client that sent outbound messages,
-  now gets that refusal; use a `tool_call` step for a deliberate send.
+  an MCP client was reading, or the starter of a workflow run (a model calling
+  `run_workflow` included), could have the operator's number message anyone
+  who had ever written to it, given that conversation's id. Now a workflow
+  step, fixed (`tool_call`) or AI-driven (`agent_call`, the orchestrator),
+  sends only to the conversation that started the run, and only on a run the
+  inbound route started or an admin's rerun of one; an interactive chat only to
+  its own conversation; an MCP client never. Anything else is refused with
+  `conversation_not_permitted`, and logged, before the conversation is read.
+  **For an operator:** a workflow that texted a thread other than the one that
+  started it (reminders, outreach), or an MCP client that sent outbound
+  messages, now gets that refusal; deliberate outreach is not supported yet.
 - **`csvEscape` quotes a lone CR, so free text can no longer start a CSV
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after
   the first character was emitted bare, a spreadsheet read it as a record break,

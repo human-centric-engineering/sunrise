@@ -748,14 +748,13 @@ Workflow failure surfaces as a capability error (`code: 'workflow_failed'`) so t
 
 Replies to a person on the channel they contacted you on (SMS, WhatsApp), through the outbound adapter for the conversation's recorded provider. Takes `conversationId` and `message` (plus an optional WhatsApp `template`); the binding's `customConfig` carries the provider credentials by env-var name. Setup, guards (STOP opt-out, WhatsApp 24-hour window, length cap, throttle, idempotency) and the worked example are in the [SMS / WhatsApp inbound-reply recipe](./recipes/sms-whatsapp-inbound-reply.md); adding a provider is in [outbound-adapters.md](./outbound-adapters.md).
 
-**It sends only within the conversation being handled** (t-770). The `conversationId` argument is chosen by whoever drives the call, so an unrestricted one would let a steered model message anyone who ever wrote to the operator's number:
+**It sends only within the conversation being handled** (t-770). The `conversationId` argument is chosen by whoever drives the call, so an unrestricted one would let a steered model, or a run's starter, message anyone who ever wrote to the operator's number:
 
-- a `tool_call` workflow step sends where its definition says (no model chooses);
-- an `agent_call` step, or the orchestrator, only to the conversation that started the run, and only on a run the inbound route started (`isInboundTriggerSource`, `lib/orchestration/inbound/trigger-source.ts`);
+- a workflow step, fixed (`tool_call`) or AI-driven (`agent_call`, the orchestrator), only to the conversation that started the run, and only on a run the inbound route started (`triggerSource` `inbound:<channel>`, `lib/orchestration/inbound/trigger-source.ts`) or an admin's one-level rerun of one. A fixed step is not trusted on its own: its args can come from a prior step's model output, or from the run's input, which a model calling `run_workflow` chooses;
 - an interactive chat only to its own conversation, which is never a channel thread;
 - an MCP client or an anonymous embed widget visitor, never.
 
-Anything else is refused with `conversation_not_permitted` (an embed visitor with `anonymous_visitor`) before the conversation is read.
+Anything else is refused with `conversation_not_permitted` (an embed visitor with `anonymous_visitor`) and logged, before the conversation is read. Sending to another thread on purpose (outreach, reminders) is not supported yet.
 
 ### `upload_to_storage`
 

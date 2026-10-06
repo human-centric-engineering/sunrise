@@ -40,7 +40,7 @@ import {
 } from '@/lib/orchestration/outbound/types';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import type { ConversationChannel } from '@/lib/orchestration/inbound/types';
-import { isInboundTriggerSource } from '@/lib/orchestration/inbound/trigger-source';
+import { INBOUND_TRIGGER_SOURCE_PREFIX } from '@/lib/orchestration/inbound/trigger-source';
 import { CostOperation } from '@/types/orchestration';
 import { redactedString } from '@/lib/security/redact';
 
@@ -139,46 +139,61 @@ function narrowConversationChannel(value: string | null): ConversationChannel | 
     : null;
 }
 
-/** Where an inbound-started run records its own conversation (the inbound route writes it). */
-const runConversationSchema = z.object({
-  triggerMeta: z.object({ conversationId: z.string().min(1) }),
-});
-
 /**
- * Whether this call may send on `conversationId` (t-770). The model picks that
- * argument, and whoever steers the model could otherwise have the operator's
- * number message anyone who ever wrote to it. So a model may send only within
- * the conversation it is handling:
- *   - **a `tool_call` step** (dispatched under a workflow label): the id comes
- *     from the workflow definition an admin wrote, not from a model; allowed
- *     as before.
- *   - **an AI-driven workflow step** (`agent_call`, and the orchestrator that
- *     delegates to it): only the conversation that started the run, the
- *     execution's `inputData.triggerMeta.conversationId`, and only on a run
- *     the inbound route started (`triggerSource` `inbound:<channel>`). That
- *     route writes `triggerMeta` itself and puts a sender's own payload under
- *     `trigger`, so text in an inbound message cannot redirect the reply. Any
- *     other run's input was chosen by someone else, `run_workflow`'s model
- *     included, so a `triggerMeta` there proves nothing and is not read.
+ * Whether this call may send on `conversationId` (t-770). The argument is
+ * chosen by whoever drives the call: a model steered by the person chatting,
+ * by an inbound message, or by content an MCP client is reading; or the
+ * starter of a workflow run, `run_workflow`'s model included. Unrestricted, it
+ * would let any of them have the operator's number message anyone who ever
+ * wrote to it. So a call sends only within the conversation being handled
+ * (owner rulings, 2026-10-06):
+ *   - **a workflow step**, fixed (`tool_call`) or AI-driven (`agent_call`,
+ *     the orchestrator): only the conversation that started the run, and only
+ *     on a run the inbound route started. That route stamps the run's
+ *     `triggerSource` and writes the conversation into
+ *     `inputData.triggerMeta` itself, putting a sender's own payload under
+ *     `trigger`, so neither an inbound message nor a run's starter can name
+ *     another thread. A run started any other way has no conversation of its
+ *     own and sends nothing.
  *   - **a chat turn**: only the chat's own conversation. A web chat is never
  *     an inbound channel thread, so in practice the tool sends nothing here.
  *   - **anything else**, an MCP client included: refused. It has no
- *     conversation of its own, and the model behind it can be reading
- *     untrusted content too (owner ruling, 2026-10-06).
+ *     conversation of its own.
+ * Sending to another thread on purpose (outreach, reminders) is not
+ * supported; a later opt-in would be an admin setting on the step, out of a
+ * model's reach.
  */
 async function mayTarget(conversationId: string, context: CapabilityContext): Promise<boolean> {
   if (context.workflowExecutionId) {
-    if (isWorkflowAgentId(context.agentId)) return true;
-    const execution = await prisma.aiWorkflowExecution.findUnique({
-      where: { id: context.workflowExecutionId },
-      select: { inputData: true, triggerSource: true },
-    });
-    if (!execution || !isInboundTriggerSource(execution.triggerSource)) return false;
-    const run = runConversationSchema.safeParse(execution.inputData);
-    return run.success && run.data.triggerMeta.conversationId === conversationId;
+    return isRunConversation(context.workflowExecutionId, conversationId);
   }
   if (context.conversationId) return context.conversationId === conversationId;
   return false;
+}
+
+/**
+ * True when `conversationId` is the conversation that started an inbound run.
+ * One read that matches the marker and the nested id in the database, rather
+ * than loading `inputData`, which holds the inbound payload verbatim and can
+ * be large.
+ *
+ * An admin's rerun of an inbound run counts too, so a failed reply can be
+ * retried: the rerun route is the only writer of `parentExecutionId`, and it
+ * reuses the original's `inputData` verbatim, so the conversation is still the
+ * one the inbound route wrote. One level only; a rerun of a rerun sends
+ * nothing.
+ */
+async function isRunConversation(executionId: string, conversationId: string): Promise<boolean> {
+  const inbound = { triggerSource: { startsWith: INBOUND_TRIGGER_SOURCE_PREFIX } };
+  const run = await prisma.aiWorkflowExecution.findFirst({
+    where: {
+      id: executionId,
+      inputData: { path: ['triggerMeta', 'conversationId'], equals: conversationId },
+      OR: [inbound, { parent: inbound }],
+    },
+    select: { id: true },
+  });
+  return run !== null;
 }
 
 async function loadConversation(conversationId: string): Promise<LoadedConversation | null> {
@@ -315,6 +330,14 @@ export class SendMessageToChannelCapability extends BaseCapability<Args, Data> {
     // Only the conversation this call is handling, before anything is read
     // or written: the same answer whether or not the named one exists.
     if (!(await mayTarget(args.conversationId, context))) {
+      // Logged, so an operator can see a steered model trying to reach
+      // another thread, or why a reply stopped going out.
+      logger.warn('send_message_to_channel: refused a conversation outside the one being handled', {
+        agentId: context.agentId,
+        conversationId: context.conversationId,
+        workflowExecutionId: context.workflowExecutionId,
+        requestedConversationId: args.conversationId,
+      });
       return this.error(
         'This tool can only send within the conversation being handled.',
         'conversation_not_permitted'
