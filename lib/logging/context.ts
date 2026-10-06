@@ -93,7 +93,11 @@ export async function getVisitorId(): Promise<string | undefined> {
 function stripQueryAndFragment(rawUrl: string): string {
   try {
     const parsed = new URL(rawUrl);
-    return `${parsed.origin}${parsed.pathname}`;
+    parsed.username = '';
+    parsed.password = '';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.href;
   } catch {
     const cut = rawUrl.search(/[?#]/);
     return cut === -1 ? rawUrl : rawUrl.slice(0, cut);

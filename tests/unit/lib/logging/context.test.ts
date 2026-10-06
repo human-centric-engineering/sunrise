@@ -201,6 +201,23 @@ describe('Logging Context Utilities', () => {
       expect(context.url).toBe('http://localhost:3000/page');
     });
 
+    it.each([
+      ['userinfo is dropped', 'https://user:pass@example.com/x?q=1', 'https://example.com/x'],
+      [
+        'non-special scheme keeps its host',
+        'foo://host/path?token=SECRET-TOKEN',
+        'foo://host/path',
+      ],
+      ['empty query', 'http://localhost:3000/x?', 'http://localhost:3000/x'],
+      ['root path', 'http://localhost:3000/?a=1', 'http://localhost:3000/'],
+    ])('should log a clean url: %s', async (_label, rawUrl, expected) => {
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
+
+      const context = await getRequestContext({ method: 'GET', url: rawUrl } as Request);
+
+      expect(context.url).toBe(expected);
+    });
+
     it('should cut at the query when the URL cannot be parsed', async () => {
       const mockRequest = { method: 'GET', url: '/relative?token=SECRET-TOKEN' } as Request;
 
@@ -403,6 +420,21 @@ describe('Logging Context Utilities', () => {
   });
 
   describe('getFullContext()', () => {
+    it('should bind no query string through the real request context', async () => {
+      const mockRequest = {
+        method: 'GET',
+        url: 'http://localhost:3000/api/v1/invitations/metadata?token=SECRET-TOKEN&email=ada%40example.com',
+      } as Request;
+
+      vi.mocked(headers).mockResolvedValue(createMockHeaders() as any);
+      vi.mocked(auth.api.getSession).mockResolvedValue(null);
+
+      const context = await getFullContext(mockRequest);
+
+      expect(JSON.stringify(context)).not.toContain('SECRET-TOKEN');
+      expect(JSON.stringify(context)).not.toContain('example.com');
+    });
+
     it('should combine request and user context', async () => {
       // Arrange
       const mockRequest = {
