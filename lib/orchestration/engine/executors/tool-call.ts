@@ -44,7 +44,10 @@ import {
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { platformScope, hintScope } from '@/lib/orchestration/scope';
-import { resolveTemplatesInRecord } from '@/lib/orchestration/engine/interpolate-prompt';
+import {
+  latestStepOutputId,
+  resolveTemplatesInRecord,
+} from '@/lib/orchestration/engine/interpolate-prompt';
 
 export async function executeToolCall(
   step: WorkflowStep,
@@ -118,12 +121,10 @@ export async function executeToolCall(
     // Interpolated like every other step's config (t-770): before, a
     // template's `conversationId: '{{trigger.conversationId}}'` reached the
     // capability as that literal text, and the inbound-reply template never
-    // sent a reply. The same walker the trace viewer uses, with `previous`
-    // meaning the most recent step output, as `human_approval` and the viewer
-    // read it, so the two agree. Values come out as strings, as they do in
-    // every step type.
-    const previousStepId = Object.keys(ctx.stepOutputs).at(-1);
-    rawArgs = resolveTemplatesInRecord(config.args, ctx, previousStepId);
+    // sent a reply. The walker the trace viewer also uses, with `previous`
+    // read as `human_approval` reads it. Values come out as strings, as they
+    // do in every step type.
+    rawArgs = resolveTemplatesInRecord(config.args, ctx, latestStepOutputId(ctx));
   } else if (config.argsFrom && ctx.stepOutputs[config.argsFrom] != null) {
     const fromOutput = ctx.stepOutputs[config.argsFrom];
     rawArgs =

@@ -266,3 +266,15 @@ export function resolveTemplatesInRecord(
     ])
   );
 }
+
+/**
+ * The step `{{previous.output}}` names in an executor: the most recently
+ * added key of `ctx.stepOutputs`. Shared by `human_approval` and `tool_call`
+ * so the rule has one spelling. It is insertion order, not completion order:
+ * after a parallel fan-out it names whichever branch was recorded last, and a
+ * step re-run by a retry keeps its first position. The trace viewer derives
+ * `previous` from trace order instead, which can differ in those cases.
+ */
+export function latestStepOutputId(ctx: Readonly<InterpolationContext>): string | undefined {
+  return Object.keys(ctx.stepOutputs).at(-1);
+}

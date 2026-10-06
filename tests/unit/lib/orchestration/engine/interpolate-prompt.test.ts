@@ -17,6 +17,7 @@ import { describe, it, expect } from 'vitest';
 import {
   interpolatePrompt,
   type InterpolationContext,
+  latestStepOutputId,
   resolveTemplatesIn,
   resolveTemplatesInRecord,
 } from '@/lib/orchestration/engine/interpolate-prompt';
@@ -373,5 +374,12 @@ describe('resolveTemplatesIn (t-770)', () => {
     expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
     expect(out.keep).toBe('Ada');
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
+
+describe('latestStepOutputId', () => {
+  it('names the most recently recorded step output, or nothing before any step ran', () => {
+    expect(latestStepOutputId(makeCtx({ stepOutputs: { a: 1, b: 2 } }))).toBe('b');
+    expect(latestStepOutputId(makeCtx())).toBeUndefined();
   });
 });

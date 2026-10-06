@@ -199,6 +199,20 @@ describe('GET /api/v1/admin/orchestration/executions/:id', () => {
     expect(data.data.costEntries).toEqual([]);
   });
 
+  it('returns the conversation the run replies on, for the re-run dialog (t-770)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({ replyConversationId: 'conv-inbound' }) as never
+    );
+
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    const data = await parseJson<{ data: { execution: { replyConversationId: string | null } } }>(
+      response
+    );
+
+    expect(data.data.execution.replyConversationId).toBe('conv-inbound');
+  });
+
   it('returns the four supervisor fields when populated on the row', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(

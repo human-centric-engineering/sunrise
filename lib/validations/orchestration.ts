@@ -2350,6 +2350,13 @@ export const rerunExecutionBodySchema = z.object({
     .positive('Budget limit must be positive')
     .max(1000, 'Budget limit must be at most $1,000')
     .optional(),
+  /**
+   * Let a rerun of a COMPLETED run reply to the person who wrote in again
+   * (t-770). A completed run already sent its reply, so by default its rerun
+   * texts nobody; an admin ticks this when that reply never arrived or was
+   * deleted. A failed or cancelled run's rerun may reply without it.
+   */
+  resendReply: z.boolean().optional(),
 });
 
 /** Approve execution request body (POST /executions/[id]/approve). */

@@ -45,6 +45,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { parseSseBlock } from '@/lib/api/sse-parser';
@@ -59,6 +61,13 @@ export interface RerunExecutionDialogProps {
     workflowId: string;
     /** Pinned version id of the original run. May be null on legacy rows. */
     versionId: string | null;
+    /** The original run's status: a completed run already sent its reply. */
+    status?: string;
+    /**
+     * The conversation the original run replies on (t-770): set when an
+     * inbound message started it. Null when it replies to nobody.
+     */
+    replyConversationId?: string | null;
   };
 }
 
@@ -89,6 +98,7 @@ export function RerunExecutionDialog({ open, onOpenChange, execution }: RerunExe
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<WorkflowCostEstimate | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [resendReply, setResendReply] = useState(false);
 
   // Load versions + cost estimate in parallel on open. The cost
   // estimate is the workflow's current-published estimate — close
@@ -96,6 +106,7 @@ export function RerunExecutionDialog({ open, onOpenChange, execution }: RerunExe
   // estimates is out of scope here.
   useEffect(() => {
     if (!open) return;
+    setResendReply(false);
     setLoading(true);
     setError(null);
     setEstimate(null);
@@ -174,6 +185,7 @@ export function RerunExecutionDialog({ open, onOpenChange, execution }: RerunExe
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...(selectedVersionId ? { versionId: selectedVersionId } : {}),
+          ...(resendReply ? { resendReply: true } : {}),
         }),
       });
       if (!res.ok || !res.body) {
@@ -232,6 +244,11 @@ export function RerunExecutionDialog({ open, onOpenChange, execution }: RerunExe
   };
 
   const showChooser = eligibleVersions.length > 1;
+  // A run that replies to someone (t-770). A completed one already sent its
+  // reply, so its re-run texts nobody unless the admin asks; a failed or
+  // cancelled one never got its reply out, so its re-run may send.
+  const repliesToSomeone = Boolean(execution.replyConversationId);
+  const alreadyReplied = repliesToSomeone && execution.status === 'completed';
   const onlyOriginalAvailable =
     !loading && eligibleVersions.length === 1 && execution.versionId !== null;
 
@@ -299,6 +316,40 @@ export function RerunExecutionDialog({ open, onOpenChange, execution }: RerunExe
             <p className="text-muted-foreground text-xs" data-testid="rerun-same-version-notice">
               Re-running against the same version this execution used (no newer versions have been
               published).
+            </p>
+          )}
+
+          {alreadyReplied && (
+            <div className="flex items-start gap-2" data-testid="rerun-resend-reply-row">
+              <Checkbox
+                id="rerun-resend-reply"
+                checked={resendReply}
+                onCheckedChange={setResendReply}
+                data-testid="rerun-resend-reply"
+                className="mt-0.5"
+              />
+              <div className="space-y-0.5">
+                <Label htmlFor="rerun-resend-reply" className="text-xs">
+                  Send the reply to the person again
+                  <FieldHelp title="Sending the reply again">
+                    This run started from a message someone sent in, and it already sent them a
+                    reply. A re-run texts nobody unless you tick this, so re-running to debug or to
+                    try a newer version never surprises them. Tick it when that reply did not reach
+                    them (Sunrise only knows the provider accepted it, not that it arrived) or they
+                    deleted it. The re-run may then send one new reply, written afresh.
+                  </FieldHelp>
+                </Label>
+                <p className="text-muted-foreground text-[11px]">
+                  Leave unticked to re-run without contacting them.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {repliesToSomeone && !alreadyReplied && (
+            <p className="text-muted-foreground text-xs" data-testid="rerun-may-reply-notice">
+              The original run did not finish, so this re-run may send the reply to the person who
+              wrote in.
             </p>
           )}
 

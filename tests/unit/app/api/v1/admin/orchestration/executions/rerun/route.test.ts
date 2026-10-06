@@ -224,34 +224,56 @@ describe('POST /executions/:id/rerun', () => {
     });
   });
 
-  it('carries the original’s reply conversation, so a retried reply can still send (t-770)', async () => {
-    // A rerun retries the same reply on the same conversation. Copied each
-    // time, so a rerun of a rerun keeps it, and it does not depend on the
-    // original surviving retention.
-    vi.mocked(prisma.aiWorkflowExecution.findFirst).mockResolvedValue(
-      makeOriginal({ userId: null, replyConversationId: 'conv-inbound' }) as never
+  describe('who a rerun may reply to (t-770)', () => {
+    // A rerun may reply on the original's conversation, copied each time so a
+    // rerun of a rerun keeps it. A completed run already sent its reply, so
+    // its rerun texts nobody unless the admin asks with `resendReply`.
+    async function rerun(original: Record<string, unknown>, body: Record<string, unknown> = {}) {
+      vi.mocked(prisma.aiWorkflowExecution.findFirst).mockResolvedValue(
+        makeOriginal({ userId: null, ...original }) as never
+      );
+      vi.mocked(prepareWorkflowExecution).mockResolvedValue(happyPrepare(NEW_VERSION_ID));
+      await POST(makeRequest(body), makeContext());
+      return engineExecuteMock.mock.calls.at(-1)?.[2];
+    }
+
+    it.each(['failed', 'cancelled'])(
+      'carries a %s run’s reply conversation, so the reply that never went out can',
+      async (status) => {
+        const options = await rerun({ status, replyConversationId: 'conv-inbound' });
+
+        expect(prisma.aiWorkflowExecution.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({
+            select: expect.objectContaining({ status: true, replyConversationId: true }),
+          })
+        );
+        expect(options).toMatchObject({ replyConversationId: 'conv-inbound' });
+      }
     );
-    vi.mocked(prepareWorkflowExecution).mockResolvedValue(happyPrepare(NEW_VERSION_ID));
 
-    await POST(makeRequest(), makeContext());
+    it('does not let a rerun of a completed run text the person again by default', async () => {
+      const options = await rerun({ status: 'completed', replyConversationId: 'conv-inbound' });
 
-    expect(prisma.aiWorkflowExecution.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ select: expect.objectContaining({ replyConversationId: true }) })
-    );
-    const [, , options] = engineExecuteMock.mock.calls[0];
-    expect(options).toMatchObject({ replyConversationId: 'conv-inbound' });
-  });
+      expect(options).not.toHaveProperty('replyConversationId');
+    });
 
-  it('gives a rerun of a run with no reply conversation none either', async () => {
-    vi.mocked(prisma.aiWorkflowExecution.findFirst).mockResolvedValue(
-      makeOriginal({ replyConversationId: null }) as never
-    );
-    vi.mocked(prepareWorkflowExecution).mockResolvedValue(happyPrepare(NEW_VERSION_ID));
+    it('lets a rerun of a completed run reply again when the admin sets resendReply', async () => {
+      const options = await rerun(
+        { status: 'completed', replyConversationId: 'conv-inbound' },
+        { resendReply: true }
+      );
 
-    await POST(makeRequest(), makeContext());
+      expect(options).toMatchObject({ replyConversationId: 'conv-inbound' });
+    });
 
-    const [, , options] = engineExecuteMock.mock.calls[0];
-    expect(options).not.toHaveProperty('replyConversationId');
+    it('gives a rerun of a run with no reply conversation none, even with resendReply', async () => {
+      const options = await rerun(
+        { status: 'completed', replyConversationId: null },
+        { resendReply: true }
+      );
+
+      expect(options).not.toHaveProperty('replyConversationId');
+    });
   });
 
   it('keeps a rerun of a system-owned run system-owned', async () => {

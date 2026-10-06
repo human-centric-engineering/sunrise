@@ -68,6 +68,9 @@ const NOW = 1_714_000_000_000;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps resolved values; reset this one so a run's reply
+  // conversation set by one test never authorises the next.
+  vi.mocked(prisma.aiWorkflowExecution.findUnique).mockReset();
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
 });
