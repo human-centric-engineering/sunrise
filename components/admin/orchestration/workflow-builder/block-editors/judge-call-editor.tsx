@@ -106,8 +106,9 @@ export function JudgeCallEditor({ config, onChange }: EditorProps<JudgeCallConfi
           <FieldHelp title="Pass threshold">
             Optional. The step&apos;s output carries <code>passed: true</code> when{' '}
             <code>score &gt;= threshold</code>. Use it from a downstream <code>route</code> step:
-            condition <code>passed</code> publishes; <code>!passed</code> escalates. Leave empty to
-            always pass.
+            condition <code>passed</code> publishes; <code>!passed</code> escalates. If the judge
+            cannot score (its provider fails or is not allowed for this org), the step fails and its
+            error strategy decides; it never passes unjudged. Leave empty to always pass.
           </FieldHelp>
         </Label>
         <Input
