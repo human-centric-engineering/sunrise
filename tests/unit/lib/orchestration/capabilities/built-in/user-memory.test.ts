@@ -151,6 +151,21 @@ describe('ReadUserMemoryCapability', () => {
     // Assert: the guard short-circuits before any DB access
     expect(findMany).not.toHaveBeenCalled();
   });
+
+  it('refuses an embed visitor with anonymous_visitor and does not query the DB (#705, t-765)', async () => {
+    // A visitor id is a hash of the embed token and the client IP, so people
+    // sharing an address would read each other's memories.
+    const visitorContext = { userId: 'embed_deadbeefdeadbeef', agentId: 'agent-1' };
+
+    const result = await new ReadUserMemoryCapability().execute({}, visitorContext);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('anonymous_visitor');
+    expect(result.error?.message).toBe(
+      'User memory is unavailable to anonymous embed widget visitors.'
+    );
+    expect(findMany).not.toHaveBeenCalled();
+  });
 });
 
 // ── WriteUserMemoryCapability ─────────────────────────────────────────────────
@@ -257,6 +272,21 @@ describe('WriteUserMemoryCapability', () => {
       'User memory is unavailable for system-initiated runs (no user context).'
     );
     // Assert: the guard short-circuits before any DB access (findUnique and upsert both skipped)
+    expect(findUnique).not.toHaveBeenCalled();
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses an embed visitor with anonymous_visitor and writes nothing (#705, t-765)', async () => {
+    // `AiUserMemory.userId` is a FK to `user`; a visitor is not one.
+    const visitorContext = { userId: 'embed_deadbeefdeadbeef', agentId: 'agent-1' };
+
+    const result = await new WriteUserMemoryCapability().execute(
+      { key: 'language', value: 'Rust' },
+      visitorContext
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('anonymous_visitor');
     expect(findUnique).not.toHaveBeenCalled();
     expect(upsert).not.toHaveBeenCalled();
   });

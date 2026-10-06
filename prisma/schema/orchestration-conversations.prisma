@@ -2,6 +2,12 @@
 model AiConversation {
   id                   String    @id @default(cuid())
   userId               String?
+  // An anonymous embed-widget visitor (#705, t-765): the `embed_<hash>` id
+  // `resolveEmbedToken` derives from the token and the client IP. A visitor
+  // is deliberately not a `User` (owner ruling, 2026-10-06), so their
+  // conversations carry no `userId` and this plain column, with no FK, owns
+  // them instead. Never both on one row.
+  embedVisitorId       String?
   agentId              String
   title                String?
   contextType          String?
@@ -48,6 +54,7 @@ model AiConversation {
   @@unique([agentId, channel, fromAddress], name: "ai_conversation_inbound_key", map: "ai_conversation_inbound_key")
   @@index([orgId])
   @@index([userId])
+  @@index([embedVisitorId, agentId])
   @@index([agentId])
   @@index([contextType, contextId])
   @@index([isActive])

@@ -554,6 +554,21 @@ release process.
 
 ### Fixed
 
+- **An embed widget visitor's first message now starts a conversation**
+  (#705, t-765). It failed before any reply on every install: the handler
+  wrote the anonymous `embed_<hash>` visitor id into `AiConversation.userId`,
+  a foreign key to `User`. A visitor is deliberately not a `User` (owner
+  ruling), so they stay out of the user lists and every user's export and
+  erasure. A visitor's conversation now has no `userId`, and the new nullable
+  **`AiConversation.embedVisitorId`** column (migration
+  `20261006120000_embed_visitor_conversations`) owns it, for continuing a
+  conversation and for the per-user cap. The two tools that wrote the visitor
+  id into a user key now decide explicitly: `read_user_memory` and
+  `write_user_memory` refuse a visitor with `anonymous_visitor`, and
+  `run_workflow` runs the sub-workflow unowned, as a scheduled run does. The
+  embed turn's cost rows are now written, unattributed. **For a fork:** a
+  feature that writes a caller's id into a `User` foreign key must check
+  `isEmbedUserId` (`lib/embed/auth.ts`) first, and decide what a visitor gets.
 - **At `multi`, a person's data export holds their rows from every org**
   (§107 t-748). `exportUserData()` read inside whatever org the caller had
   entered, so the self-service and admin exports returned only the session's

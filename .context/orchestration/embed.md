@@ -229,6 +229,21 @@ OPTIONS preflight requests return 204 with appropriate CORS headers.
 
 On success, reuses `streamChat()` from the orchestration chat handler and returns an SSE stream identical to the admin chat endpoint. Conversation ID is created or continued via the `conversationId` field in the request body.
 
+### A visitor is not a user
+
+The `embed_<hash>` visitor id has no `User` row behind it, and that is deliberate: visitors stay out of the admin user lists, user counts, and every user's data export and erasure (owner ruling, 2026-10-06; #705, t-765). Everything that would write a person's id into a foreign key to `user` makes its own call for a visitor:
+
+| What                                     | For an embed visitor                                                                                                                                                                                                      |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The conversation                         | Stored with no `userId`; `AiConversation.embedVisitorId` holds the visitor id and owns it. Continuing a conversation, and the per-user conversation cap, match on it, so a visitor reaches only their own conversations.  |
+| Cost logs, embedding attribution         | Recorded with no user (`isEmbedUserId`).                                                                                                                                                                                  |
+| `read_user_memory` / `write_user_memory` | Refused with `anonymous_visitor`. The visitor id is a hash of the token and the client IP, so everyone behind one office or mobile-network address is the same visitor; a stored memory would be read back to the others. |
+| `run_workflow`                           | The sub-workflow runs unowned (`userId` null), as a scheduled or inbound run does. Steps that need a user, such as `judge_call`, refuse it by their own rule.                                                             |
+
+A visitor's conversations belong to the token's org: they are in that org's export, erasure and retention purge, and in no user's. In the admin conversations list they are ownerless rows, like inbound SMS and email threads, so an admin sees them when the authorization policy grants unattributed reads (`conversationVisibilityWhere`). Because the visitor id includes the client IP, a visitor whose address changes starts afresh, and continuing an old `conversationId` returns `conversation_not_found`.
+
+A new feature that remembers or runs something for a person has to make the same call: check `isEmbedUserId` before writing a caller's id into a `user` foreign key.
+
 ## Admin UI — EmbedConfigPanel
 
 `components/admin/orchestration/agents/embed-config-panel.tsx`

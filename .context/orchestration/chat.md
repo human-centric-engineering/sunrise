@@ -622,6 +622,8 @@ Per-user-per-agent persistent memory that survives across conversations. Stored 
 2. If memories exist, they're injected as a `[User memories]` system message after the context block but before conversation history. Format: `- key: value` per entry.
 3. Agents read/write memories via two built-in capabilities: `read_user_memory` and `write_user_memory`.
 
+**An embed widget visitor has no memory** (#705, t-765). Both capabilities refuse a visitor with `anonymous_visitor`, and the load in step 1 finds no rows under a visitor id. The visitor id is a hash of the embed token and the client IP, so remembering per visitor would read one person's memories back to everyone sharing their address. See [`embed.md`](./embed.md#a-visitor-is-not-a-user).
+
 **Capabilities:**
 
 | Capability          | Parameters                     | Behavior                                                           |

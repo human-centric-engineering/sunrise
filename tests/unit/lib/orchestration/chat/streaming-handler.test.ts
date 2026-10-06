@@ -1423,10 +1423,8 @@ describe('StreamingChatHandler', () => {
     // swallows write failures the entire cost row is discarded. Exactly
     // #599/#600/#654, one column over.
     //
-    // This asserts the guard, not a bug currently reachable in production: an
-    // embed turn dies earlier, at conversation-create, for the same reason
-    // (#705). The test is still worth having — it is what stops the cost-row
-    // loss from silently arriving with #705's fix.
+    // Reachable since #705 (t-765): a visitor's conversation is now created
+    // (owned through `embedVisitorId`), so every embed turn reaches `logCost`.
     //
     // Asserting `userId: null` rather than merely "not the visitor id": the
     // column must be explicitly unattributed, not carrying some other value.
@@ -5008,6 +5006,83 @@ describe('per-user conversation cap', () => {
     expect(errorEvt.code).toBe('conversation_cap_reached');
 
     // New conversation should never be created
+    expect(prisma.aiConversation.create).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// An embed visitor owns conversations through `embedVisitorId` (#705, t-765)
+// ---------------------------------------------------------------------------
+
+describe('embed visitor conversations', () => {
+  // `AiConversation.userId` is a FK to `user`, and a visitor is not a `User`
+  // (owner ruling, 2026-10-06). Writing the visitor id there is what made a
+  // visitor's first message fail at conversation-create.
+  const VISITOR = 'embed_deadbeefdeadbeef';
+
+  function replyOnce(): void {
+    const provider = mockProvider([
+      [{ type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' }],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+  }
+
+  it('creates a visitor’s conversation with no userId, owned through embedVisitorId', async () => {
+    replyOnce();
+
+    await collect(streamChat({ ...baseRequest, userId: VISITOR }));
+
+    const data = (prisma.aiConversation.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+    expect(data).toMatchObject({ userId: null, embedVisitorId: VISITOR, agentId: 'agent-1' });
+  });
+
+  it('creates a signed-in user’s conversation with their userId and no embedVisitorId', async () => {
+    replyOnce();
+
+    await collect(streamChat({ ...baseRequest }));
+
+    const data = (prisma.aiConversation.create as ReturnType<typeof vi.fn>).mock.calls[0][0].data;
+    expect(data).toMatchObject({ userId: 'u1' });
+    expect(data).not.toHaveProperty('embedVisitorId');
+  });
+
+  it('continues only a conversation the visitor owns: the load filters on embedVisitorId', async () => {
+    (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+
+    const events = await collect(
+      streamChat({ ...baseRequest, userId: VISITOR, conversationId: 'conv-1' })
+    );
+
+    expect(prisma.aiConversation.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: 'conv-1',
+        userId: null,
+        embedVisitorId: VISITOR,
+        agentId: 'agent-1',
+        isActive: true,
+      },
+    });
+    expect(events[0]).toMatchObject({ type: 'error', code: 'conversation_not_found' });
+  });
+
+  it('counts the visitor’s own conversations against the per-user cap', async () => {
+    (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      maxConversationsPerUser: 3,
+      maxMessagesPerConversation: null,
+    });
+    (prisma.aiConversation.count as ReturnType<typeof vi.fn>).mockResolvedValue(3);
+
+    const events = await collect(streamChat({ ...baseRequest, userId: VISITOR }));
+
+    expect(prisma.aiConversation.count).toHaveBeenCalledWith({
+      where: { userId: null, embedVisitorId: VISITOR, agentId: 'agent-1', isActive: true },
+    });
+    expect(events.find((e) => (e as { type: string }).type === 'error')).toMatchObject({
+      code: 'conversation_cap_reached',
+    });
     expect(prisma.aiConversation.create).not.toHaveBeenCalled();
   });
 });

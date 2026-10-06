@@ -376,6 +376,41 @@ describe('RunWorkflowCapability', () => {
     });
   });
 
+  describe('the child execution’s owner (#705, t-765)', () => {
+    function completes(): void {
+      bindCustomConfig({ allowedWorkflowSlugs: ['refund-flow'] });
+      existingWorkflow('refund-flow');
+      workflowEvents([
+        { type: 'workflow_started', executionId: 'exec-9', workflowId: 'wf-1' },
+        { type: 'workflow_completed', output: null, totalCostUsd: 0, totalTokensUsed: 0 },
+      ]);
+    }
+
+    it('runs the child as the calling user', async () => {
+      completes();
+
+      await new RunWorkflowCapability().execute({ workflowSlug: 'refund-flow' }, context);
+
+      const opts = mockEngineExecute.mock.calls[0]?.[2] as Record<string, unknown>;
+      expect(opts.userId).toBe('user-1');
+    });
+
+    it('runs the child unowned for an embed visitor, who is not a User', async () => {
+      // `AiWorkflowExecution.userId` is a FK to `user`. The owner ruled the
+      // child runs unowned, as a scheduled run does, rather than being refused.
+      completes();
+
+      const result = await new RunWorkflowCapability().execute(
+        { workflowSlug: 'refund-flow' },
+        { userId: 'embed_deadbeefdeadbeef', agentId: 'agent-1' }
+      );
+
+      const opts = mockEngineExecute.mock.calls[0]?.[2] as Record<string, unknown>;
+      expect(opts.userId).toBeNull();
+      expect(result.success).toBe(true);
+    });
+  });
+
   describe('scope inheritance', () => {
     it("forwards the parent's scope into the child execution", async () => {
       bindCustomConfig({ allowedWorkflowSlugs: ['refund-flow'] });

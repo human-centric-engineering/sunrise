@@ -313,19 +313,33 @@ interface PersistMessageParams {
  * embed route passes a synthetic `embed_<hash>` visitor id, which is not a
  * `User` and must never reach a foreign key to one. `AiCostLog.userId` is such
  * a key, and `logCost` swallows write failures — so the visitor id would be
- * rejected and the cost row silently discarded. Conversation and memory
- * scoping still use `request.userId` itself; only FK attribution goes here.
- *
- * Note what this does NOT currently prevent: no embed turn reaches `logCost`
- * at all, because `AiConversation.userId` is a FK to `user` too and nothing
- * mints a `User` for a visitor, so the first message dies at
- * conversation-create (#705). This is a guard against the failure that appears
- * when #705 is fixed — not one that is firing today. Kept deliberately rather
- * than deferred: the two fixes land separately, and this is the half nobody
- * would think to add while fixing the other.
+ * rejected and the cost row silently discarded. Conversation ownership goes
+ * through {@link conversationOwner}; only FK attribution goes here. (A visitor
+ * has no memory: the `user-memory` capability refuses them, and the memory
+ * read below finds no row under a visitor id.)
  */
 function attributableUserId(userId: string): string | null {
   return isEmbedUserId(userId) ? null : userId;
+}
+
+/**
+ * Who owns a conversation, as the columns that say so (#705, t-765).
+ *
+ * A real user owns theirs through `AiConversation.userId`, a FK to `User`. An
+ * embed visitor is not a `User` (owner ruling, 2026-10-06: visitors stay out of
+ * the user lists, and out of every user's export and erasure), so a visitor's
+ * conversation carries no `userId` and `embedVisitorId` holds the visitor id
+ * instead. Writing the visitor id into `userId` is what made a visitor's first
+ * message fail at conversation-create.
+ *
+ * The same fragment serves as the create data and as the ownership filter on
+ * load and on the per-user cap, so a visitor reaches only conversations
+ * created under their own id.
+ */
+function conversationOwner(
+  userId: string
+): { userId: string } | { userId: null; embedVisitorId: string } {
+  return isEmbedUserId(userId) ? { userId: null, embedVisitorId: userId } : { userId };
 }
 
 interface WriteEvaluationLogParams {
@@ -2785,7 +2799,7 @@ export class StreamingChatHandler {
       const existing = await prisma.aiConversation.findFirst({
         where: {
           id: request.conversationId,
-          userId: request.userId,
+          ...conversationOwner(request.userId),
           agentId: agent.id,
           isActive: true,
         },
@@ -2801,7 +2815,7 @@ export class StreamingChatHandler {
     // check, which is acceptable for a usage limit (not a security boundary).
     if (maxConversationsPerUser !== null) {
       const count = await prisma.aiConversation.count({
-        where: { userId: request.userId, agentId: agent.id, isActive: true },
+        where: { ...conversationOwner(request.userId), agentId: agent.id, isActive: true },
       });
       if (count >= maxConversationsPerUser) {
         throw new ChatError(
@@ -2812,7 +2826,7 @@ export class StreamingChatHandler {
     }
 
     const data: Prisma.AiConversationUncheckedCreateInput = {
-      userId: request.userId,
+      ...conversationOwner(request.userId),
       agentId: agent.id,
       // Title from whichever text this turn carries. An opening turn has no user
       // message, so the opener stands in — a conversation titled from the agent's

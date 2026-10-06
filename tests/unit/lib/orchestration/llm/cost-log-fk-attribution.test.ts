@@ -25,14 +25,11 @@
  *     rather than by anyone reading the diff — the argument for adding a field
  *     here the moment the column exists, not after the first incident on it.
  *
- *     Be precise about the blast radius, because it is smaller than it looks
- *     and overstating it is how a guard gets trusted for the wrong reason: no
- *     embed turn reaches `logCost` today at all. `AiConversation.userId` is
- *     also a FK to `user`, nothing mints a `User` for a visitor, so a
- *     visitor's first message already dies at conversation-create (see #705).
- *     This guard is therefore correct and forward-looking rather than
- *     currently load-bearing — it stops the cost-row loss from appearing the
- *     moment #705 is fixed, which is exactly when nobody would be looking.
+ *     It became load-bearing with #705 (t-765). Until then no embed turn
+ *     reached `logCost`: the visitor's first message died at
+ *     conversation-create, which wrote the visitor id into another FK to
+ *     `user`. A visitor's conversation is now owned through `embedVisitorId`,
+ *     so every embed turn logs cost, and this guard is what keeps the rows.
  *
  * ## Why this is a roster and not a pattern match
  *
