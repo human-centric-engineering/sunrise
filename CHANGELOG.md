@@ -683,9 +683,10 @@ release process.
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after
   the first character was emitted bare, a spreadsheet read it as a record break,
   and the text after it opened a new cell past the leading-trigger prefix. Both
-  admin exports that use it, `/conversations/export` (message content) and
-  `/approvals/history` (notes and reason), are fixed. A fork that wrapped
-  `csvEscape` to quote CR can drop the wrapper.
+  admin exports that use it are fixed for every free-text column:
+  `/conversations/export` (message content, conversation title) and
+  `/approvals/history` (notes, reason, workflow name, step label, approver
+  name). A fork that wrapped `csvEscape` to quote CR can drop the wrapper.
 
 - **A data export no longer hands the subject another person's contact-form
   messages** (#766). `exportUserData()` matched `ContactSubmission` with
