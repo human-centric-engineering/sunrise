@@ -35,5 +35,16 @@ export interface ContactSubject {
  */
 export function contactSubmissionsOf(subject: ContactSubject): { email: string } | null {
   if (!subject.emailVerified) return null;
-  return { email: subject.email.trim().toLowerCase() };
+  return contactSubmissionsUnder(subject.email);
+}
+
+/**
+ * The `where` for every contact submission under an address, whoever sent it —
+ * exact and normalised, as above, but with NO verification gate. So it says
+ * nothing about whose the rows are: use it to count what an erasure left
+ * behind, never to export or delete. For a subject's rows, use
+ * {@link contactSubmissionsOf}.
+ */
+export function contactSubmissionsUnder(email: string): { email: string } {
+  return { email: email.trim().toLowerCase() };
 }

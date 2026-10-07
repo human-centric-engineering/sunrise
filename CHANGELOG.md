@@ -923,9 +923,10 @@ release process.
   and **its export no longer includes them** (it previously did, so with email
   verification off an account opened under someone else's address received
   their enquiries). Where verification is required (the production default)
-  this affects only sign-ups that never verified; erasure logs a warning for
-  them so an operator can handle those messages by hand. A fork with its own table keyed by email needs the same
-  step in an erasure hook's `scrubInTransaction`, and the same verified-only
+  this affects only sign-ups that never verified; when one leaves messages
+  behind, erasure logs a warning with the count so an operator can handle them
+  by hand. A fork with its own table keyed by email needs the same step in an
+  erasure hook's `scrubInTransaction`, and the same verified-only
   rule if a public form fills it; `.context/privacy/data-erasure.md` shows how.
 
 - **The email-preview server's copy of Next is no longer in the `next/og`

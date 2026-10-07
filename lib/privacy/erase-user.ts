@@ -26,7 +26,7 @@ import { createHash } from 'node:crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
-import { contactSubmissionsOf } from '@/lib/privacy/contact-submissions';
+import { contactSubmissionsOf, contactSubmissionsUnder } from '@/lib/privacy/contact-submissions';
 import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
 
 export type ErasureReason = 'self_service' | 'admin_action';
@@ -94,13 +94,16 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
     receiptId: receipt.id,
     contactSubmissionsDeleted: receipt.contactSubmissionsDeleted,
   });
-  // An unverified address matched nothing, so any contact messages sent under
-  // it are still there, and only a person can decide whether they were this
-  // subject's. Say so, rather than let a 0 above read as "there were none".
-  if (receipt.contactSubmissionsUnverified) {
+  // An unverified address matched nothing, so contact messages sent under it
+  // are still there, and only a person can decide whether they were this
+  // subject's. The address itself is gone with the user row and is not
+  // logged; the operator finds the rows through the receipt's
+  // `subjectEmailHash`, which hashes the same trimmed, lower-cased form.
+  if (receipt.contactSubmissionsLeft > 0) {
     logger.warn('Contact messages not erased: the account never verified its address', {
       userId,
       receiptId: receipt.id,
+      contactSubmissionsLeft: receipt.contactSubmissionsLeft,
     });
   }
 
@@ -112,7 +115,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
   id: string;
   erasedAt: Date;
   contactSubmissionsDeleted: number;
-  contactSubmissionsUnverified: boolean;
+  contactSubmissionsLeft: number;
 }> {
   const { userId, userEmail, actorUserId, reason } = params;
 
@@ -157,6 +160,12 @@ async function eraseRows(params: EraseUserParams): Promise<{
     });
     const where = contactSubmissionsOf(account);
     const contacts = where ? await tx.contactSubmission.deleteMany({ where }) : { count: 0 };
+    // Unverified: count what is being left, so the warning below fires only
+    // when there is something for an operator to look at. Counted, never
+    // deleted: nothing says these rows are the subject's.
+    const left = where
+      ? 0
+      : await tx.contactSubmission.count({ where: contactSubmissionsUnder(account.email) });
 
     // App-registered in-transaction scrub. Runs before `tx.user.delete()` so
     // hooks can still match retained rows on `userId`, and atomically with the
@@ -181,7 +190,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
     return {
       ...created,
       contactSubmissionsDeleted: contacts.count,
-      contactSubmissionsUnverified: where === null,
+      contactSubmissionsLeft: left,
     };
   });
 }

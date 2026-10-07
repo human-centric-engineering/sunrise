@@ -23,6 +23,7 @@ import {
 const {
   mockUpdateMany,
   mockContactDeleteMany,
+  mockContactCount,
   mockReceiptCreate,
   mockUserDelete,
   mockUserFind,
@@ -31,6 +32,7 @@ const {
 } = vi.hoisted(() => {
   const updateMany = vi.fn().mockResolvedValue({ count: 1 });
   const contactDeleteMany = vi.fn().mockResolvedValue({ count: 1 });
+  const contactCount = vi.fn().mockResolvedValue(0);
   const receiptCreate = vi.fn().mockResolvedValue({
     id: 'receipt-1',
     erasedAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -46,7 +48,7 @@ const {
   const prismaObj = {
     $transaction: vi.fn(),
     aiAdminAuditLog: { updateMany },
-    contactSubmission: { deleteMany: contactDeleteMany },
+    contactSubmission: { deleteMany: contactDeleteMany, count: contactCount },
     dataErasureReceipt: { create: receiptCreate },
     user: { delete: userDelete, findUniqueOrThrow: userFind },
   };
@@ -66,6 +68,7 @@ const {
   return {
     mockUpdateMany: updateMany,
     mockContactDeleteMany: contactDeleteMany,
+    mockContactCount: contactCount,
     mockReceiptCreate: receiptCreate,
     mockUserDelete: userDelete,
     mockUserFind: userFind,
@@ -136,6 +139,7 @@ describe('eraseUser', () => {
     mockDeleteByPrefix.mockResolvedValue({ deleted: 1 });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     mockContactDeleteMany.mockResolvedValue({ count: 1 });
+    mockContactCount.mockResolvedValue(0);
     mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
     mockReceiptCreate.mockResolvedValue({
       id: 'receipt-1',
@@ -381,15 +385,16 @@ describe('eraseUser', () => {
     expect(mockContactDeleteMany).toHaveBeenCalledWith({ where: { email: 'new@bar.com' } });
   });
 
-  it('contact submissions — none deleted for an unverified address, and the erasure still completes', async () => {
+  it('contact submissions — none deleted for an unverified address; what is left is counted and flagged', async () => {
     // Arrange — the account never proved it owns the address, so the messages
     // under it may be a stranger's (anyone can type any address in the form)
-    mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: false });
+    mockUserFind.mockResolvedValue({ email: ' Foo@BAR.com', emailVerified: false });
+    mockContactCount.mockResolvedValue(2);
 
     // Act
     const result = await eraseUser(BASE_PARAMS);
 
-    // Assert — nothing matched, the rest of the erasure ran, and the log says 0
+    // Assert — nothing deleted, the rest of the erasure ran, the log says 0
     expect(mockContactDeleteMany).not.toHaveBeenCalled();
     expect(mockUserDelete).toHaveBeenCalledTimes(1);
     expect(result.receiptId).toBe('receipt-1');
@@ -397,20 +402,36 @@ describe('eraseUser', () => {
       'User erased',
       expect.objectContaining({ contactSubmissionsDeleted: 0 })
     );
-    // …and a 0 that means "not looked for" is flagged, so an operator can
-    // answer the rest of the request by hand
+    // …the rows left were counted on the stored address, exactly…
+    expect(mockContactCount).toHaveBeenCalledWith({ where: { email: 'foo@bar.com' } });
+    // …and flagged with that count, so an operator can answer the rest of the
+    // request by hand (the address is not logged: it is PII)
     expect(mockLogger.warn).toHaveBeenCalledWith(
       'Contact messages not erased: the account never verified its address',
-      { userId: BASE_PARAMS.userId, receiptId: 'receipt-1' }
+      { userId: BASE_PARAMS.userId, receiptId: 'receipt-1', contactSubmissionsLeft: 2 }
     );
+  });
+
+  it('contact submissions — no warning for an unverified account with nothing under its address', async () => {
+    // Arrange — the common case where verification is off: no messages at all
+    mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: false });
+    mockContactCount.mockResolvedValue(0);
+
+    // Act
+    await eraseUser(BASE_PARAMS);
+
+    // Assert — a warning on every such erasure would teach operators to ignore it
+    expect(mockContactCount).toHaveBeenCalledTimes(1);
+    expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
   it('contact submissions — no unverified-address warning for a verified account', async () => {
     // Act — beforeEach's stored address is verified
     await eraseUser(BASE_PARAMS);
 
-    // Assert — the warning is specific to the skipped case, not every erasure
+    // Assert — deleted, not counted, and no warning
     expect(mockContactDeleteMany).toHaveBeenCalledTimes(1);
+    expect(mockContactCount).not.toHaveBeenCalled();
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 

@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { contactSubmissionsOf } from '@/lib/privacy/contact-submissions';
+import { contactSubmissionsOf, contactSubmissionsUnder } from '@/lib/privacy/contact-submissions';
 
 describe('contactSubmissionsOf', () => {
   it('normalises a verified address the way the contact route stores it', () => {
@@ -31,5 +31,15 @@ describe('contactSubmissionsOf', () => {
     // With verification off, anyone can hold an account under someone else's
     // address; matching would hand over or delete that person's messages.
     expect(contactSubmissionsOf({ email: 'subject@example.com', emailVerified: false })).toBeNull();
+  });
+});
+
+describe('contactSubmissionsUnder', () => {
+  it('matches an address exactly and normalised, with no verification gate', () => {
+    // For counting what an erasure left behind — so it must not depend on
+    // the flag that decided to leave it.
+    expect(contactSubmissionsUnder('  A_b%C@Example.com ')).toStrictEqual({
+      email: 'a_b%c@example.com',
+    });
   });
 });
