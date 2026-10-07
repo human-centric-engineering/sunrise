@@ -141,4 +141,14 @@ describe('describeFetchFailure', () => {
       'Request cannot be constructed from a URL that includes credentials: https://host.example.com/hook'
     );
   });
+
+  it.each([
+    ['https://api.x.com?email=a@b.com', 'https://api.x.com/'],
+    ['https://api.x.com/hook?email=a@b.com', 'https://api.x.com/hook'],
+    ['https://host.io#notify=ops@corp.com', 'https://host.io/'],
+  ])('does not take an @ in the query or fragment of %s for userinfo', (url, reduced) => {
+    expect(describeFetchFailure(new Error(`fetch failed: ${url}`))).toBe(
+      `fetch failed: ${reduced}`
+    );
+  });
 });

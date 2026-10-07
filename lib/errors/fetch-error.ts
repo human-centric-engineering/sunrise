@@ -19,8 +19,11 @@ import { loggableUrl } from '@/lib/logging/redact-path';
 // would stop `collapseDynamicSegments` recognising a token there.
 const URL_IN_TEXT = /\bhttps?:\/\/[^\s'"<>]*[^\s'"<>.,;:!?)\]}]/gi;
 // Userinfo is stripped first, up to its `@`, so a quote or other character
-// inside a password cannot end the URL match before the password does.
-const USERINFO_IN_TEXT = /\b(https?:\/\/)[^\s/@]*@/gi;
+// inside a password cannot end the URL match before the password does. It
+// stops at `/`, `?` and `#` as URL parsing does: an `@` after one of them is
+// in the path, query or fragment, and taking it for userinfo would delete the
+// real host.
+const USERINFO_IN_TEXT = /\b(https?:\/\/)[^\s/?#@]*@/gi;
 
 /**
  * Replace every URL quoted in `text` with its `loggableUrl()` form (#953).
