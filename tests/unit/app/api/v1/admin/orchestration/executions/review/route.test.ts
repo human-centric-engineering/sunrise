@@ -39,6 +39,10 @@ vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
 vi.mock('@/lib/orchestration/llm/model-registry', () => ({
   getModel: vi.fn(),
 }));
+// The registry is hydrated from the Model Matrix before the model lookup (#813).
+vi.mock('@/lib/orchestration/llm/model-registry-db-hydrate', () => ({
+  hydrateFromDb: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
   // The route falls through to `getDefaultModelForTask('chat')` when
   // JUDGE_MODEL is null (no EVALUATION_JUDGE_* env vars set in the
@@ -67,6 +71,7 @@ import { POST } from '@/app/api/v1/admin/orchestration/executions/[id]/review/ro
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
+import { hydrateFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { runSupervisorAssessment } from '@/lib/orchestration/supervisor';
 import {
@@ -297,6 +302,20 @@ describe('POST /api/v1/admin/orchestration/executions/:id/review', () => {
     );
     const res = await POST(req, makeContext());
     expect(res.status).toBe(400);
+  });
+
+  it('hydrates the model registry before resolving the judge model (#813)', async () => {
+    // A judge model only the Model Matrix knows would otherwise be rejected
+    // as unknown in a module graph that never hydrated.
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(happyExecution() as never);
+    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
+
+    const res = await POST(makeRequest(), makeContext());
+
+    expect(res.status).toBe(200);
+    const hydratedAt = vi.mocked(hydrateFromDb).mock.invocationCallOrder[0];
+    expect(hydratedAt).toBeDefined();
+    expect(hydratedAt).toBeLessThan(vi.mocked(getModel).mock.invocationCallOrder[0]);
   });
 
   it('returns 400 when modelOverride references a model not in the registry', async () => {

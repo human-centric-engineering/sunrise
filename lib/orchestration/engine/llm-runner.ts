@@ -25,6 +25,7 @@ import type { LlmResponseFormat, ReasoningEffort } from '@/lib/orchestration/llm
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
@@ -116,6 +117,9 @@ export async function runLlmCall(
         params.modelOverride && params.modelOverride.length > 0 ? params.modelOverride : null;
       const modelId = override ?? (await getDefaultModelForTask('chat'));
 
+      // A matrix-only model is unknown until hydrated, and this runs from
+      // scheduled and triggered executions too, not only the admin route.
+      await hydrateModelRegistryFromDb();
       const modelInfo = getModel(modelId);
       if (!modelInfo) {
         throw new ExecutorError(

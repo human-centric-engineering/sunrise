@@ -23,6 +23,7 @@ import { logger } from '@/lib/logging';
 import { filterProvidersWithCredential } from '@/lib/orchestration/llm/provider-credentials';
 import { ProviderError } from '@/lib/orchestration/llm/provider';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
+import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getTenantContext } from '@/lib/tenancy/context';
 // The fork's eligibility rule wires itself, lazily, inside
 // `resolveEligibleProviders`. It used to be a module-load side effect here,
@@ -98,6 +99,9 @@ export async function resolveAgentProviderAndModel(
   agent: ResolvableAgent,
   task: TaskType = 'chat'
 ): Promise<ResolvedAgentBinding> {
+  // Callers read `getModel(model)` (the chat history budget, cost) before
+  // they fetch the provider, so hydrate here too, not only in `getProvider`.
+  await hydrateModelRegistryFromDb();
   const providerSet = typeof agent.provider === 'string' && agent.provider.length > 0;
   const modelSet = typeof agent.model === 'string' && agent.model.length > 0;
 

@@ -12,6 +12,10 @@ vi.mock('@/lib/db/client', () => ({
       findFirst: vi.fn(),
       findMany: vi.fn(),
     },
+    // `getProvider` hydrates the model registry first (#813).
+    aiProviderModel: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   },
 }));
 
@@ -60,6 +64,9 @@ const {
 } = await import('@/lib/orchestration/llm/provider-manager');
 
 const { getBreaker, resetAllBreakers } = await import('@/lib/orchestration/llm/circuit-breaker');
+const registry = await import('@/lib/orchestration/llm/model-registry');
+const hydrate = await import('@/lib/orchestration/llm/model-registry-db-hydrate');
+const { calculateCost } = await import('@/lib/orchestration/llm/cost-tracker');
 
 function makeRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -642,5 +649,62 @@ describe('listProvidersWithStatus', () => {
 
     // Cleanup
     delete process.env.SECRET_THING;
+  });
+});
+
+// #813: a model only the Model Matrix knows (here a dated snapshot id the
+// static map lacks) was costed at $0 in any module graph that never hydrated
+// the registry — and nothing on the chat path did. `getProvider` is where
+// every LLM call resolves its provider before its cost is computed.
+describe('getProvider — model registry hydration (#813)', () => {
+  const DATED_ID = 'gpt-4o-mini-2024-07-18';
+
+  function matrixRow(overrides: Record<string, unknown> = {}) {
+    return {
+      providerSlug: 'anthropic',
+      modelId: DATED_ID,
+      name: 'Pinned snapshot',
+      tierRole: 'worker',
+      deploymentProfiles: ['hosted'],
+      contextLength: 'high',
+      toolUse: 'strong',
+      capabilities: ['chat'],
+      paramProfile: null,
+      costPerMillionTokens: 0.375,
+      isActive: true,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    registry.__resetForTests();
+    hydrate.__resetForTests();
+  });
+
+  it('prices a matrix-only model on a cold registry once a provider is resolved', async () => {
+    // Cold: the registry has never heard of the snapshot, so it costs $0.
+    expect(registry.getModel(DATED_ID)).toBeUndefined();
+    expect(calculateCost(DATED_ID, 3_000, 300)).toMatchObject({ totalCostUsd: 0, unpriced: true });
+
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([matrixRow()] as never);
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeRow() as never);
+
+    await getProvider('anthropic');
+
+    // (3000 + 300) tokens at the row's 0.375/M.
+    const cost = calculateCost(DATED_ID, 3_000, 300);
+    expect(cost.totalCostUsd).toBeCloseTo((3_300 / 1_000_000) * 0.375, 12);
+    expect(cost.unpriced).toBeUndefined();
+  });
+
+  it('still resolves the provider when the hydrate SELECT fails', async () => {
+    vi.mocked(prisma.aiProviderModel.findMany).mockRejectedValue(new Error('db down'));
+    vi.mocked(prisma.aiProviderConfig.findFirst).mockResolvedValue(makeRow() as never);
+
+    await expect(getProvider('anthropic')).resolves.toBeInstanceOf(AnthropicProvider);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Model registry: hydrateFromDb failed',
+      expect.objectContaining({ error: 'db down' })
+    );
   });
 });

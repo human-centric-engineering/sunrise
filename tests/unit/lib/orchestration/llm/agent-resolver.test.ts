@@ -26,6 +26,10 @@ vi.mock('@/lib/db/client', () => ({
     aiProviderConfig: {
       findMany: vi.fn(),
     },
+    // The resolver hydrates the model registry first (#813).
+    aiProviderModel: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   },
 }));
 
@@ -64,6 +68,8 @@ import {
   registerProviderEligibility,
   resetProviderEligibility,
 } from '@/lib/orchestration/llm/provider-eligibility';
+import { getModel, __resetForTests as resetRegistry } from '@/lib/orchestration/llm/model-registry';
+import { __resetForTests as resetHydrate } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -616,5 +622,41 @@ describe('resolveAgentProviderAndModel — provider eligibility seam', () => {
     // a candidate), and what remains is in the resolver's order, not the rule's.
     expect(result.providerSlug).toBe('anthropic');
     expect(result.fallbacks).toEqual(['ollama']);
+  });
+});
+
+// #813: the chat handler reads `getModel(model).maxContext` for its history
+// budget BEFORE it fetches a provider, so `getProvider`'s hydrate is too late
+// for it. The resolver runs first on every agent path, so it hydrates too.
+describe('resolveAgentProviderAndModel — model registry hydration (#813)', () => {
+  const DATED_ID = 'gpt-4o-mini-2024-07-18';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetRegistry();
+    resetHydrate();
+  });
+
+  it('leaves a matrix-only model resolvable by the time it returns', async () => {
+    expect(getModel(DATED_ID)).toBeUndefined();
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+      {
+        providerSlug: 'openai',
+        modelId: DATED_ID,
+        name: 'Pinned snapshot',
+        tierRole: 'worker',
+        deploymentProfiles: ['hosted'],
+        contextLength: 'medium',
+        toolUse: 'strong',
+        capabilities: ['chat'],
+        paramProfile: null,
+        costPerMillionTokens: 0.375,
+        isActive: true,
+      },
+    ] as never);
+
+    await resolveAgentProviderAndModel(makeAgent({ provider: 'openai', model: DATED_ID }));
+
+    expect(getModel(DATED_ID)).toMatchObject({ provider: 'openai', maxContext: 32_000 });
   });
 });

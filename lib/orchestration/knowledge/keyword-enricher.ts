@@ -22,6 +22,7 @@
 import { logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { isProviderEligible } from '@/lib/orchestration/llm/provider-eligibility';
@@ -106,6 +107,7 @@ export class ProviderNotPermittedError extends Error {
  */
 export async function enrichDocumentKeywords(documentId: string): Promise<EnrichResult> {
   const modelId = await getDefaultModelForTask('chat');
+  await hydrateModelRegistryFromDb();
   const modelInfo = getModel(modelId);
   if (!modelInfo) {
     throw new Error(`Resolved model "${modelId}" is not in the model registry`);

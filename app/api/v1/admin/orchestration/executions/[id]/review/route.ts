@@ -51,6 +51,7 @@ import {
 } from '@/types/orchestration';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
+import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import {
@@ -155,6 +156,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   // answered, not on what the model is.
   const operatorChoice = body.modelOverride ?? JUDGE_MODEL ?? null;
   const modelId = operatorChoice ?? (await getDefaultModelForTask('chat'));
+  await hydrateModelRegistryFromDb();
   const modelInfo = getModel(modelId);
   if (!modelInfo) {
     throw new ValidationError('Unknown model', {

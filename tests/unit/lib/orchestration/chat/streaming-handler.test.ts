@@ -26,6 +26,8 @@ vi.mock('@/lib/db/client', () => ({
     aiEvaluationLog: { findFirst: vi.fn(), create: vi.fn() },
     aiEvaluationSession: { findFirst: vi.fn() },
     aiWorkflowExecution: { findUnique: vi.fn() },
+    // The model-registry hydrate the resolver runs before the turn (#813).
+    aiProviderModel: { findMany: vi.fn() },
   },
 }));
 
@@ -46,6 +48,7 @@ vi.mock('@/lib/logging', () => ({
 
 vi.mock('@/lib/orchestration/llm/model-registry', () => ({
   getModel: vi.fn().mockReturnValue(null),
+  registerModels: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => {
@@ -242,7 +245,9 @@ const { queueMessageEmbedding } = await import('@/lib/orchestration/chat/message
 const { withAgentBudgetLock } = await import('@/lib/orchestration/llm/budget-mutex');
 const { dispatchWebhookEvent } = await import('@/lib/orchestration/webhooks/dispatcher');
 // Ensure the model-registry mock is loaded (module itself is used by source via vi.mock above)
-await import('@/lib/orchestration/llm/model-registry');
+const { getModel } = await import('@/lib/orchestration/llm/model-registry');
+const { __resetForTests: resetModelHydrate } =
+  await import('@/lib/orchestration/llm/model-registry-db-hydrate');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -466,6 +471,29 @@ describe('StreamingChatHandler', () => {
   });
 
   // 3 -----------------------------------------------------------------------
+  it('hydrates the model registry before reading the history budget from it (#813)', async () => {
+    // The handler sizes history from `getModel(model).maxContext` before it
+    // fetches a provider. A model only the Model Matrix knows is invisible to
+    // that lookup — and its turns cost $0 — unless the registry was hydrated
+    // first, which the resolver does on the way in.
+    resetModelHydrate();
+    vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider: mockProvider([
+        [{ type: 'done', usage: { inputTokens: 1, outputTokens: 1 }, finishReason: 'stop' }],
+      ]),
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat(baseRequest));
+
+    const hydratedAt = vi.mocked(prisma.aiProviderModel.findMany).mock.invocationCallOrder[0];
+    const budgetLookupAt = vi.mocked(getModel).mock.invocationCallOrder[0];
+    expect(hydratedAt).toBeDefined();
+    expect(budgetLookupAt).toBeDefined();
+    expect(hydratedAt).toBeLessThan(budgetLookupAt);
+  });
+
   it('happy path with no tools: yields start, content chunks, done', async () => {
     const provider = mockProvider([
       [

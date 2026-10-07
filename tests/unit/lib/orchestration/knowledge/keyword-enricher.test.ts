@@ -37,6 +37,10 @@ vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
 vi.mock('@/lib/orchestration/llm/model-registry', () => ({
   getModel: vi.fn(),
 }));
+// The registry is hydrated from the Model Matrix before the model lookup (#813).
+vi.mock('@/lib/orchestration/llm/model-registry-db-hydrate', () => ({
+  hydrateFromDb: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   getProvider: vi.fn(),
@@ -50,6 +54,7 @@ vi.mock('@/lib/orchestration/llm/cost-tracker', () => ({
 import { prisma } from '@/lib/db/client';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
+import { hydrateFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { calculateCost, logCost } from '@/lib/orchestration/llm/cost-tracker';
 
@@ -156,6 +161,20 @@ describe('enrichDocumentKeywords', () => {
     vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([]);
 
     await expect(enrichDocumentKeywords('doc-1')).rejects.toBeInstanceOf(NoChunksToEnrichError);
+  });
+
+  it('hydrates the model registry before looking the default model up (#813)', async () => {
+    setupProvider(async () => makeChatResponse('alpha'));
+    vi.mocked(prisma.aiKnowledgeChunk.findMany).mockResolvedValue([
+      makeChunk('c1', 'Some text.'),
+    ] as never);
+    vi.mocked(prisma.aiKnowledgeChunk.update).mockResolvedValue({} as never);
+
+    await enrichDocumentKeywords('doc-1');
+
+    const hydratedAt = vi.mocked(hydrateFromDb).mock.invocationCallOrder[0];
+    expect(hydratedAt).toBeDefined();
+    expect(hydratedAt).toBeLessThan(vi.mocked(getModel).mock.invocationCallOrder[0]);
   });
 
   it('calls the LLM once per chunk and writes normalised keywords', async () => {
