@@ -44,6 +44,7 @@ async function advanceCacheClock(ms: number): Promise<void> {
 
 describe('verifyRateLimitCredential', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     vi.spyOn(performance, 'now').mockImplementation(() => realPerformanceNow() + clockOffset);
     resetRateLimitCredentialCache();
@@ -205,5 +206,64 @@ describe('verifyRateLimitCredential', () => {
       id: 'sk:k1',
       stale: false,
     });
+  });
+
+  it('never marks an entry capped at the key expiry as stale', async () => {
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
+      id: 'k1',
+      expiresAt: new Date(Date.now() + 20_000),
+    } as never);
+
+    await verifyRateLimitCredential('api-key', 'sk_short_lived');
+
+    // 20s left is under the 30s refresh mark, but a re-check could not extend it.
+    expect(getCachedRateLimitCredential('api-key', 'sk_short_lived')).toEqual({
+      id: 'sk:k1',
+      stale: false,
+    });
+  });
+
+  it('re-arms a failed re-check only up to the key expiry', async () => {
+    // Both clocks move together here: the cache TTL (performance.now) and the
+    // expiry arithmetic (Date).
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+    const advanceBoth = async (ms: number) => {
+      vi.setSystemTime(Date.now() + ms);
+      await advanceCacheClock(ms);
+    };
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValueOnce({
+      id: 'k1',
+      expiresAt: new Date(Date.now() + 80_000),
+    } as never);
+    await verifyRateLimitCredential('api-key', 'sk_expiring_outage');
+    await advanceBoth(30_001);
+    expect(getCachedRateLimitCredential('api-key', 'sk_expiring_outage')?.stale).toBe(true);
+
+    vi.mocked(prisma.aiApiKey.findFirst).mockRejectedValueOnce(new Error('db down'));
+    await expect(verifyRateLimitCredential('api-key', 'sk_expiring_outage')).rejects.toThrow();
+
+    // Re-armed, but only for the ~50s left before the key expires, not 60s.
+    await advanceBoth(49_000);
+    expect(getCachedRateLimitCredential('api-key', 'sk_expiring_outage')?.id).toBe('sk:k1');
+    await advanceBoth(1_000);
+    expect(getCachedRateLimitCredential('api-key', 'sk_expiring_outage')).toBeUndefined();
+    vi.useRealTimers();
+  });
+
+  it('a lookup that settles after a reset does not drop the newer in-flight lookup', async () => {
+    let resolveFirst: (row: unknown) => void = () => {};
+    vi.mocked(prisma.aiApiKey.findFirst)
+      .mockImplementationOnce(() => new Promise((resolve) => (resolveFirst = resolve)) as never)
+      .mockImplementationOnce(() => new Promise(() => {}) as never);
+
+    const first = verifyRateLimitCredential('api-key', 'sk_reset_race');
+    resetRateLimitCredentialCache();
+    const second = verifyRateLimitCredential('api-key', 'sk_reset_race');
+    resolveFirst({ id: 'k1', expiresAt: null });
+    await first;
+
+    // The second lookup is still pending and must still be shared.
+    expect(verifyRateLimitCredential('api-key', 'sk_reset_race')).toBe(second);
+    expect(prisma.aiApiKey.findFirst).toHaveBeenCalledTimes(2);
   });
 });

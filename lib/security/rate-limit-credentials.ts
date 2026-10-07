@@ -56,9 +56,20 @@ const USER_API_KEY_PREFIX = 'sk_';
 /** Prefix of an MCP API key (`lib/orchestration/mcp/auth.ts`). */
 const MCP_API_KEY_PREFIX = 'smcp_';
 
+/** A live credential's bucket id and, when it has one, its expiry. */
+interface LiveCredential {
+  id: string;
+  expiresAt: Date | null;
+}
+
+/** A cached verification; `capped` when its TTL was cut short by the expiry. */
+interface CachedEntry extends LiveCredential {
+  capped: boolean;
+}
+
 // Keyed on a digest of the presented value so the raw credential is never
-// held as a cache key; the value is the stable id the bucket is keyed on.
-const verified = new LRUCache<string, string>({
+// held as a cache key; the value holds the stable id the bucket is keyed on.
+const verified = new LRUCache<string, CachedEntry>({
   max: MAX_VERIFIED_CREDENTIALS,
   ttl: VERIFIED_TTL_MS,
 });
@@ -89,15 +100,14 @@ export function getCachedRateLimitCredential(
   value: string
 ): CachedRateLimitCredential | undefined {
   const key = cacheKey(kind, value);
-  const id = verified.get(key);
-  if (!id) return undefined;
-  return { id, stale: verified.getRemainingTTL(key) < REFRESH_BELOW_MS };
-}
-
-/** A live credential's bucket id and, when it has one, its expiry. */
-interface LiveCredential {
-  id: string;
-  expiresAt: Date | null;
+  const entry = verified.get(key);
+  if (!entry) return undefined;
+  // An entry cut short by the credential's expiry is never stale: it ends
+  // when the credential does, and a re-check could not extend it.
+  return {
+    id: entry.id,
+    stale: !entry.capped && verified.getRemainingTTL(key) < REFRESH_BELOW_MS,
+  };
 }
 
 function live(id: string, expiresAt: Date | null): LiveCredential | null {
@@ -152,22 +162,27 @@ async function verifyAndCache(
     found = await lookup(kind, value);
   } catch (error) {
     // Re-arm a cached entry so a failing database is retried once per
-    // refresh window rather than on every request that finds it stale.
+    // refresh window rather than on every request that finds it stale —
+    // still never past the credential's own expiry.
     const cached = verified.get(key);
-    if (cached) verified.set(key, cached);
+    if (cached) cacheLive(key, live(cached.id, cached.expiresAt));
     throw error;
   }
+  cacheLive(key, found);
+  return found?.id ?? null;
+}
+
+function cacheLive(key: string, found: LiveCredential | null): void {
   if (!found) {
     verified.delete(key);
-    return null;
+    return;
   }
   // Never keep a key's bucket past the key's own expiry (and never pass 0,
   // which lru-cache reads as "no TTL").
-  const ttl = found.expiresAt
-    ? Math.max(1, Math.min(VERIFIED_TTL_MS, found.expiresAt.getTime() - Date.now()))
-    : VERIFIED_TTL_MS;
-  verified.set(key, found.id, { ttl });
-  return found.id;
+  const untilExpiry = found.expiresAt ? found.expiresAt.getTime() - Date.now() : Infinity;
+  const capped = untilExpiry < VERIFIED_TTL_MS;
+  const ttl = capped ? Math.max(1, untilExpiry) : VERIFIED_TTL_MS;
+  verified.set(key, { ...found, capped }, { ttl });
 }
 
 /**
@@ -176,7 +191,9 @@ async function verifyAndCache(
  * {@link VERIFIED_TTL_MS}, or until the credential expires if that is sooner;
  * a credential that no longer verifies (revoked, expired, deactivated) loses
  * its cached entry. Concurrent calls for one credential share one lookup.
- * Throws if the lookup itself fails, re-arming any cached entry.
+ * Throws if the lookup itself fails, re-arming any cached entry — so while the
+ * database is failing, a cached credential keeps its bucket (up to its expiry)
+ * until a re-check succeeds.
  */
 export function verifyRateLimitCredential(
   kind: RateLimitCredentialKind,
@@ -185,7 +202,10 @@ export function verifyRateLimitCredential(
   const key = cacheKey(kind, value);
   const pending = inFlight.get(key);
   if (pending) return pending;
-  const promise = verifyAndCache(key, kind, value).finally(() => inFlight.delete(key));
+  const promise = verifyAndCache(key, kind, value).finally(() => {
+    // Only remove our own entry; a reset may have let a newer lookup in.
+    if (inFlight.get(key) === promise) inFlight.delete(key);
+  });
   inFlight.set(key, promise);
   return promise;
 }
