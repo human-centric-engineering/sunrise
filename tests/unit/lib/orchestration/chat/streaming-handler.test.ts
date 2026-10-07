@@ -296,6 +296,8 @@ function makeAgent(overrides: Partial<Record<string, unknown>> = {}) {
     createdBy: 'u1',
     createdAt: new Date(),
     updatedAt: new Date(),
+    // Latest-version include from loadAgent; empty = no version history.
+    versions: [],
     ...overrides,
   };
 }
@@ -6479,6 +6481,119 @@ describe('attachment gate', () => {
       };
       expect(user.data.modelId).toBeUndefined();
       expect(user.data.providerSlug).toBeUndefined();
+    });
+  });
+
+  describe('agent version pin (#811)', () => {
+    type Row = {
+      data: {
+        role: string;
+        agentVersionId?: string;
+        metadata?: { error?: boolean };
+      };
+    };
+    const persistedMessages = (): Row[] =>
+      (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mock.calls.map(
+        (c: unknown[]) => c[0] as Row
+      );
+    const assistantRows = (): Row[] =>
+      persistedMessages().filter((m) => m.data.role === 'assistant');
+
+    function setupTextTurn() {
+      const provider = mockProvider([
+        [
+          { type: 'text', content: 'Hello.' },
+          { type: 'done', usage: { inputTokens: 5, outputTokens: 2 }, finishReason: 'stop' },
+        ],
+      ]);
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider,
+        usedSlug: 'anthropic',
+      });
+    }
+
+    it('loads only the latest AiAgentVersion id alongside the agent', async () => {
+      setupTextTurn();
+      await collect(streamChat(baseRequest));
+
+      const query = (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mock.calls[0][0] as {
+        include: { versions?: unknown };
+      };
+      expect(query.include.versions).toEqual({
+        orderBy: { version: 'desc' },
+        take: 1,
+        select: { id: true },
+      });
+    });
+
+    it('pins the latest version id on the terminal assistant message', async () => {
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ versions: [{ id: 'ver-latest' }] })
+      );
+      setupTextTurn();
+      await collect(streamChat(baseRequest));
+
+      const rows = assistantRows();
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(row.data.agentVersionId).toBe('ver-latest');
+      }
+    });
+
+    it('pins the version on the error marker once the agent has loaded', async () => {
+      const failingProvider = {
+        name: 'failing',
+        isLocal: false,
+        chat: vi.fn(),
+        embed: vi.fn(),
+        listModels: vi.fn(),
+        testConnection: vi.fn(),
+        // eslint-disable-next-line require-yield
+        chatStream: vi.fn(async function* () {
+          throw new ProviderError('hit max_completion_tokens', {
+            code: 'truncated_no_output',
+            retriable: false,
+          });
+        }),
+      };
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ fallbackProviders: [], versions: [{ id: 'ver-latest' }] })
+      );
+      (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+        provider: failingProvider,
+        usedSlug: 'anthropic',
+      });
+      await collect(streamChat(baseRequest));
+
+      const marker = assistantRows().find((m) => m.data.metadata?.error === true);
+      expect(marker).toBeDefined();
+      expect(marker?.data.agentVersionId).toBe('ver-latest');
+    });
+
+    it('leaves the pin unset for an agent with no version history', async () => {
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ versions: [] })
+      );
+      setupTextTurn();
+      await collect(streamChat(baseRequest));
+
+      const rows = assistantRows();
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(row.data).not.toHaveProperty('agentVersionId');
+      }
+    });
+
+    it('does not pin user messages', async () => {
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ versions: [{ id: 'ver-latest' }] })
+      );
+      setupTextTurn();
+      await collect(streamChat(baseRequest));
+
+      const user = persistedMessages().find((m) => m.data.role === 'user');
+      expect(user).toBeDefined();
+      expect(user?.data.agentVersionId).toBeUndefined();
     });
   });
 

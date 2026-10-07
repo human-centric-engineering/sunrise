@@ -231,6 +231,7 @@ const makeAgent = (overrides: Record<string, unknown> = {}) => ({
   brandVoiceInstructions: null,
   maxHistoryTokens: null,
   metadata: null,
+  versions: [],
   ...overrides,
 });
 

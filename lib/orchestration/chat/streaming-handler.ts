@@ -286,7 +286,11 @@ export class ChatError extends Error {
  * eagerly includes the profile so the system-prompt resolver doesn't
  * incur a second round-trip per turn.
  */
-type AgentWithProfile = AiAgent & { profile: AiAgentProfile | null };
+type AgentWithProfile = AiAgent & {
+  profile: AiAgentProfile | null;
+  /** Latest `AiAgentVersion` only — the pin stamped on assistant messages. */
+  versions: Array<{ id: string }>;
+};
 
 interface PersistMessageParams {
   conversationId: string;
@@ -413,6 +417,11 @@ export class StreamingChatHandler {
         : logger;
     let conversationId: string | null = null;
     let resolvedProviderSlug: string | null = null;
+    // The latest AiAgentVersion at turn start, stamped on every assistant
+    // message so a transcript can be traced to the agent config that produced
+    // it (#811). Spread-able and empty for an agent with no version history.
+    // Lives out here so the error marker, which runs outside the try, sees it.
+    let agentVersionPin: { agentVersionId?: string } = {};
     // The breaker key for the credential in use (§120 t-744): the slug for the
     // shared credential, slug + identity for a per-org one.
     let resolvedBreakerKey: string | null = null;
@@ -421,6 +430,8 @@ export class StreamingChatHandler {
       registerBuiltInCapabilities();
 
       const agent = await this.loadAgent(request.agentSlug);
+      const latestVersionId = agent.versions[0]?.id;
+      if (latestVersionId) agentVersionPin = { agentVersionId: latestVersionId };
       // Resolve provider + model once. Empty agent.provider/agent.model fall
       // back to the active provider with a key set + the system default-model
       // map; explicit values pass through unchanged.
@@ -1831,6 +1842,7 @@ export class StreamingChatHandler {
             conversationId: conversation.id,
             role: 'assistant',
             content: assistantText,
+            ...agentVersionPin,
             modelId: resolvedModel,
             providerSlug: currentProviderSlug,
             ...(assistantWorkflowExecutionId
@@ -2049,6 +2061,7 @@ export class StreamingChatHandler {
             conversationId: conversation.id,
             role: 'assistant',
             content: assistantText,
+            ...agentVersionPin,
             modelId: resolvedModel,
             providerSlug: resolvedProviderSlug ?? resolvedBinding.providerSlug,
             metadata: {
@@ -2328,6 +2341,7 @@ export class StreamingChatHandler {
               conversationId: conversation.id,
               role: 'assistant',
               content: '',
+              ...agentVersionPin,
               modelId: resolvedModel,
               providerSlug: currentProviderSlug,
               metadata: { pendingApproval },
@@ -2622,6 +2636,7 @@ export class StreamingChatHandler {
                 conversationId: conversation.id,
                 role: 'assistant',
                 content: '',
+                ...agentVersionPin,
                 modelId: resolvedModel,
                 providerSlug: currentProviderSlug,
                 metadata: { pendingApproval: pa },
@@ -2687,6 +2702,7 @@ export class StreamingChatHandler {
             conversationId,
             role: 'assistant',
             content: '[An error occurred and the response could not be completed.]',
+            ...agentVersionPin,
             // Pin provider only — `resolvedModel` lives inside the try
             // and isn't reliably in scope here. modelId stays null on
             // error markers; the audit trail reads that as "model in
@@ -2778,7 +2794,10 @@ export class StreamingChatHandler {
     // rather than run in the platform agent's place.
     const agent = await prisma.aiAgent.findFirst({
       where: { slug, isActive: true, ...platformSlugWhere(slug) },
-      include: { profile: true },
+      include: {
+        profile: true,
+        versions: { orderBy: { version: 'desc' }, take: 1, select: { id: true } },
+      },
     });
     if (!agent) {
       throw new ChatError('agent_not_found', `Active agent '${slug}' not found`);
