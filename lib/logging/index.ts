@@ -176,8 +176,8 @@ function shouldSanitizePII(): boolean {
  * "api_key", "apikey" and "apiKey" need only one spelling in the lists.
  */
 const toLetters = (pattern: string): string => pattern.toLowerCase().replace(/[^a-z]/g, '');
-const SECRET_WORDS = new Set(SECRET_FIELDS.map(toLetters));
-const PII_WORDS = new Set(PII_FIELDS.map(toLetters));
+const SECRET_WORDS: readonly string[] = SECRET_FIELDS.map(toLetters);
+const PII_WORDS: readonly string[] = PII_FIELDS.map(toLetters);
 const LONGEST_PATTERN = Math.max(...[...SECRET_WORDS, ...PII_WORDS].map((word) => word.length));
 
 /**
@@ -210,14 +210,14 @@ function toWords(fieldName: string): string[] {
  * still joins back up). A pattern inside a longer word never matches, which is
  * what keeps "ip" out of "recipients" and "token" out of "inputTokens".
  */
-function matchesSensitiveField(words: string[], sensitiveWords: Set<string>): boolean {
+function matchesSensitiveField(words: string[], sensitiveWords: readonly string[]): boolean {
   for (let start = 0; start < words.length; start++) {
     let joined = '';
     // A run longer than the longest pattern can never match, which keeps this
     // linear in the key's length.
     for (let end = start; end < words.length && joined.length < LONGEST_PATTERN; end++) {
       joined += words[end];
-      if (sensitiveWords.has(joined)) return true;
+      if (sensitiveWords.includes(joined)) return true;
     }
   }
   return false;
