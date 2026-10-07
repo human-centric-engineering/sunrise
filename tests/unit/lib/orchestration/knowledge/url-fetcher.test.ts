@@ -28,6 +28,7 @@ vi.mock('@/lib/logging', () => ({
 
 import { fetchDocumentFromUrl } from '@/lib/orchestration/knowledge/url-fetcher';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
+import { logger } from '@/lib/logging';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -424,5 +425,120 @@ describe('fetchDocumentFromUrl', () => {
     const result = await fetchDocumentFromUrl(url);
 
     expect(result.sourceUrl).toBe(url);
+  });
+});
+
+// ─── Outbound URL redaction (#953) ──────────────────────────────────────────
+//
+// A document URL can be a signed URL, with its credential in the query or the
+// path. The logger redacts by key name only, so the URL is reduced first.
+
+describe('fetchDocumentFromUrl log lines', () => {
+  const SECRET = 'AbCdEfGhIjKlMnOpQrStUvWx';
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(checkSafeProviderUrl).mockReturnValue({ ok: true });
+  });
+
+  it('does not log a credential carried in the fetched URL or a redirect target', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({
+        ...makeFetchResponse({ status: 302, ok: false }),
+        status: 302,
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === 'location'
+              ? `https://cdn.example.com/${SECRET}/doc.txt?sig=redirect-secret`
+              : null,
+        },
+        body: { cancel: vi.fn().mockResolvedValue(undefined) },
+      } as unknown as Response)
+      .mockResolvedValueOnce(makeFetchResponse({ body: 'final body' }) as unknown as Response);
+
+    const result = await fetchDocumentFromUrl(
+      `https://files.example.com/${SECRET}/doc.txt?sig=initial-secret`
+    );
+
+    expect(result.content.toString()).toBe('final body');
+    expect(logger.info).toHaveBeenCalledWith('Fetching document from URL', {
+      url: 'https://files.example.com/[param]/doc.txt',
+    });
+    expect(logger.info).toHaveBeenCalledWith(
+      'Following redirect while fetching document',
+      expect.objectContaining({
+        from: 'https://files.example.com/[param]/doc.txt',
+        to: 'https://cdn.example.com/[param]/doc.txt',
+      })
+    );
+    const logged = JSON.stringify(vi.mocked(logger.info).mock.calls);
+    expect(logged).not.toContain(SECRET);
+    expect(logged).not.toContain('initial-secret');
+    expect(logged).not.toContain('redirect-secret');
+  });
+
+  it('keeps a URL quoted by a failed fetch out of the error it rethrows', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+      new TypeError(
+        `Request cannot be constructed from a URL that includes credentials: https://u:pw@files.example.com/${SECRET}/doc.txt`
+      )
+    );
+
+    const err = await fetchDocumentFromUrl(
+      `https://u:pw@files.example.com/${SECRET}/doc.txt`
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toContain('https://files.example.com/[param]/doc.txt');
+    expect(message).not.toContain(SECRET);
+    expect(message).not.toContain('pw@');
+    expect((err as Error).cause).toBeUndefined();
+    expect(err).toBeInstanceOf(TypeError);
+  });
+
+  it('keeps the network error code from the cause on the rethrown error', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+      Object.assign(new TypeError('fetch failed'), {
+        cause: Object.assign(new Error('getaddrinfo ENOTFOUND files.example.com'), {
+          code: 'ENOTFOUND',
+        }),
+      })
+    );
+
+    const err = await fetchDocumentFromUrl('https://files.example.com/doc.txt').catch(
+      (e: unknown) => e
+    );
+
+    expect(err).toBeInstanceOf(TypeError);
+    expect((err as NodeJS.ErrnoException).code).toBe('ENOTFOUND');
+    expect((err as Error).message).toBe('fetch failed: getaddrinfo ENOTFOUND files.example.com');
+  });
+
+  it('keeps the credential out of the error thrown for a blocked redirect target', async () => {
+    vi.mocked(checkSafeProviderUrl)
+      .mockReturnValueOnce({ ok: true })
+      .mockReturnValueOnce({ ok: false, message: 'private address blocked' });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ...makeFetchResponse({ status: 302, ok: false }),
+      status: 302,
+      headers: {
+        get: (k: string) =>
+          k.toLowerCase() === 'location'
+            ? `https://cdn.example.com/${SECRET}/doc.txt?sig=redirect-secret`
+            : null,
+      },
+      body: { cancel: vi.fn().mockResolvedValue(undefined) },
+    } as unknown as Response);
+
+    const err = await fetchDocumentFromUrl('https://files.example.com/doc.txt').catch(
+      (e: unknown) => e
+    );
+
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toContain('https://cdn.example.com/[param]/doc.txt');
+    expect(message).not.toContain(SECRET);
+    expect(message).not.toContain('redirect-secret');
   });
 });

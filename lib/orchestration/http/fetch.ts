@@ -17,6 +17,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { collapseDynamicSegments, loggableUrl } from '@/lib/logging/redact-path';
 import {
   checkOutboundRateLimit,
   recordRetryAfter,
@@ -90,7 +91,9 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
   if (!isHostAllowed(opts.url)) {
     throw new HttpError(
       'host_not_allowed',
-      `Host not in ${ALLOWED_HOSTS_ENV} allowlist: ${opts.url}`,
+      // Reduced: the message reaches the model and step errors, and the URL can
+      // carry an interpolated secret in its query or userinfo (#953).
+      `Host not in ${ALLOWED_HOSTS_ENV} allowlist: ${loggableUrl(opts.url)}`,
       false
     );
   }
@@ -156,7 +159,7 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
   logger.info('HTTP request: sending', {
     method,
     hostname,
-    path: new URL(authedUrl).pathname,
+    path: collapseDynamicSegments(new URL(authedUrl).pathname),
     timeoutMs,
     ...(opts.logContext ?? {}),
   });

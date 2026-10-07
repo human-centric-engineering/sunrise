@@ -48,6 +48,13 @@ vi.mock('@/lib/security/safe-url', () => ({
   isSafeProviderUrl: vi.fn((url: string) => !url.includes('internal')),
 }));
 
+const mockLogInfo = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/api/context', () => ({
+  getRouteLogger: vi.fn(() =>
+    Promise.resolve({ info: mockLogInfo, warn: vi.fn(), error: vi.fn(), debug: vi.fn() })
+  ),
+}));
+
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
   computeChanges: vi.fn(),
@@ -240,6 +247,27 @@ describe('Webhook Subscription API', () => {
           }),
         })
       );
+    });
+
+    it('does not log a credential carried in the subscription URL (#953)', async () => {
+      const SECRET = 'AbCdEfGhIjKlMnOpQrStUvWx';
+      const url = `https://example.com/services/T0000/B0000/${SECRET}?token=qs-secret`;
+      vi.mocked(prisma.aiWebhookSubscription.create).mockResolvedValue({
+        ...mockWebhook,
+        channel: 'webhook',
+        url,
+      } as never);
+
+      const res = await POST(makePostRequest({ ...validPayload, url }));
+
+      expect(res.status).toBe(201);
+      expect(mockLogInfo).toHaveBeenCalledWith(
+        'Webhook created',
+        expect.objectContaining({ destination: 'https://example.com/services/T0000/B0000/[param]' })
+      );
+      const logged = JSON.stringify(mockLogInfo.mock.calls);
+      expect(logged).not.toContain(SECRET);
+      expect(logged).not.toContain('qs-secret');
     });
 
     it('defaults isActive to true when not specified', async () => {

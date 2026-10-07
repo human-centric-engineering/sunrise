@@ -867,6 +867,28 @@ release process.
     (better-auth's `/reset-password/<token>`); and the rate-limit
     middleware's unknown-tier warning.
 
+- **Outbound webhook and document URLs are no longer logged verbatim**
+  (#953). Hook and webhook-subscription deliveries, the escalation webhook,
+  the webhook create and test routes, the notification step and
+  knowledge-base URL fetches logged the target URL as configured, so a
+  credential carried in it (a Slack or Discord webhook path, a signed URL's
+  query, userinfo) reached stdout and the admin log buffer. They now log
+  `loggableUrl()` (new in `lib/logging/redact-path.ts`): origin plus the
+  collapsed path, with userinfo, query and fragment dropped, and
+  `[non-http-url]` for any other scheme. `describeFetchFailure()`
+  (`lib/errors/fetch-error.ts`) now reduces any URL quoted in the error it
+  describes, so a delivery's `error` field and stored `lastError` no longer
+  carry one either, and a knowledge-base fetch error reaches the route's error
+  log reduced. The outbound HTTP client's `HTTP request: sending` line
+  collapses its `path`, and its `host_not_allowed` error, which reaches the
+  model, carries the reduced URL. A path secret the
+  `collapseDynamicSegments()` heuristic does not recognise (under 20
+  characters, or containing `:`) is still kept.
+  **Not covered:** the execution trace still shows a step's configured URL,
+  in its `input` and in a `send_notification` step's `output.url`, as the
+  workflow definition does; `output.url` keeps the working URL because later
+  steps and resumed runs read it.
+
 - **The logger redacts camelCase and kebab-case keys** (#951). Key matching
   lower-cased a key before looking for word boundaries, which erased the
   camelCase boundary, so `userPassword`, `accessToken`, `clientSecret`,

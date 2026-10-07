@@ -15,6 +15,7 @@ import { prisma } from '@/lib/db/client';
 import { errorResponse, successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
+import { loggableUrl } from '@/lib/logging/redact-path';
 import { getClientIP } from '@/lib/security/ip';
 import { fetchDocumentFromUrl } from '@/lib/orchestration/knowledge/url-fetcher';
 import {
@@ -93,7 +94,7 @@ export const POST = withAdminAuth(async (request, session) => {
   });
 
   log.info('Document fetched from URL', {
-    url: body.url,
+    url: loggableUrl(body.url),
     documentId: document.id,
     fileName: fetched.fileName,
     tagsApplied,

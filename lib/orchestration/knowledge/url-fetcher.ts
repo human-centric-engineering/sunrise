@@ -9,6 +9,8 @@
 import { basename, extname } from 'path';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { logger } from '@/lib/logging';
+import { loggableUrl } from '@/lib/logging/redact-path';
+import { describeFetchFailure } from '@/lib/errors/fetch-error';
 
 const MAX_FETCH_BYTES = 50 * 1024 * 1024; // 50 MB
 const FETCH_TIMEOUT_MS = 30_000;
@@ -80,11 +82,21 @@ async function fetchRevalidatingRedirects(target: string, init: RequestInit): Pr
       throw new Error(
         hop === 0
           ? `URL blocked: ${urlCheck.message}`
-          : `URL blocked after ${hop} redirect(s) (${current}): ${urlCheck.message}`
+          : `URL blocked after ${hop} redirect(s) (${loggableUrl(current)}): ${urlCheck.message}`
       );
     }
 
-    const response = await fetch(current, { ...init, redirect: 'manual' });
+    let response: Response;
+    try {
+      response = await fetch(current, { ...init, redirect: 'manual' });
+    } catch (err) {
+      // undici quotes the request URL in some messages, and this error reaches
+      // the route's error log — rethrow with the URL reduced (#953). The
+      // original is not kept as `cause` (its message is unreduced); what a
+      // caller classifies on is kept instead: the class for a TypeError, the
+      // name (a timeout stays a TimeoutError) and the network error `code`.
+      throw reducedFetchError(err);
+    }
 
     if (!REDIRECT_STATUSES.has(response.status)) return response;
 
@@ -111,20 +123,36 @@ async function fetchRevalidatingRedirects(target: string, init: RequestInit): Pr
       // Location may be relative; resolve against the URL that issued it.
       next = new URL(location, current).toString();
     } catch {
-      throw new Error(`Redirect to an unparseable Location: ${location}`);
+      throw new Error('Redirect to an unparseable Location');
     }
 
     logger.info('Following redirect while fetching document', {
-      from: current,
-      to: next,
+      from: loggableUrl(current),
+      to: loggableUrl(next),
       hop: hop + 1,
     });
     current = next;
   }
 }
 
+function reducedFetchError(err: unknown): Error {
+  const reduced =
+    err instanceof TypeError
+      ? new TypeError(describeFetchFailure(err))
+      : new Error(describeFetchFailure(err));
+  if (!(err instanceof Error)) return reduced;
+  reduced.name = err.name;
+  const code = errorCode(err) ?? errorCode(err.cause);
+  return code === undefined ? reduced : Object.assign(reduced, { code });
+}
+
+function errorCode(value: unknown): string | undefined {
+  if (!(value instanceof Error) || !('code' in value)) return undefined;
+  return typeof value.code === 'string' ? value.code : undefined;
+}
+
 export async function fetchDocumentFromUrl(url: string): Promise<FetchedDocument> {
-  logger.info('Fetching document from URL', { url });
+  logger.info('Fetching document from URL', { url: loggableUrl(url) });
 
   // SSRF protection — applied to the initial URL and to every redirect target.
   const response = await fetchRevalidatingRedirects(url, {
@@ -184,7 +212,7 @@ export async function fetchDocumentFromUrl(url: string): Promise<FetchedDocument
   }
 
   logger.info('Document fetched from URL', {
-    url,
+    url: loggableUrl(url),
     fileName,
     contentType,
     sizeBytes: buffer.length,

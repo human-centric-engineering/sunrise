@@ -20,6 +20,7 @@ import { createHmac } from 'crypto';
 import { render } from '@react-email/render';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { loggableUrl } from '@/lib/logging/redact-path';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/client';
@@ -354,7 +355,7 @@ async function attemptDelivery(
   logger.warn('Webhook delivery failed', {
     deliveryId,
     channel: sub.channel,
-    destination: sub.channel === 'email' ? sub.emailAddress : sub.url,
+    destination: sub.channel === 'email' ? sub.emailAddress : loggableUrl(sub.url),
     attempt: newAttempts,
     maxAttempts: policy.maxAttempts,
     exhausted,

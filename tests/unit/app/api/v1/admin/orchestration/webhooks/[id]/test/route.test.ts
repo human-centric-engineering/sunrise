@@ -495,6 +495,25 @@ describe('POST /api/v1/admin/orchestration/webhooks/:id/test', () => {
       );
     });
 
+    it('does not log a credential carried in the subscription URL (#953)', async () => {
+      const SECRET = 'AbCdEfGhIjKlMnOpQrStUvWx';
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
+        makeWebhook({
+          url: `https://example.com/services/T0000/B0000/${SECRET}?token=qs-secret`,
+        }) as never
+      );
+
+      await POST(makeRequest(), makeParams());
+
+      expect(mockLogInfo).toHaveBeenCalledWith(
+        'Webhook test sent',
+        expect.objectContaining({ url: 'https://example.com/services/T0000/B0000/[param]' })
+      );
+      const logged = JSON.stringify(mockLogInfo.mock.calls);
+      expect(logged).not.toContain(SECRET);
+      expect(logged).not.toContain('qs-secret');
+    });
+
     it('calls log.info with success:false when the remote returns a 5xx', async () => {
       // Arrange
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 503 }));
