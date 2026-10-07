@@ -750,7 +750,10 @@ release process.
   run of consecutive words; every key redacted before is still redacted.
   Production log fields that change from clear text to `[REDACTED]` /
   `[PII REDACTED]` include the sign-up hook's `userEmail` and the
-  invitation-delete route's `deletedByEmail`.
+  invitation-delete route's `deletedByEmail`, and `clientIP` on the inbound
+  and webhook-trigger signature-failure lines (IP is in the PII list; set
+  `LOG_SANITIZE_PII=false` to keep it). PostHog's debug `apiKeyPrefix` is now
+  `[REDACTED]`.
   - Non-secret keys that name a sensitive word (`tokenId`, `apiKeyId`,
     `hasApiKey`, `emailStatus`) are now redacted too, as their snake_case forms
     already were. Sunrise's own such log keys are renamed so they keep their
@@ -762,8 +765,7 @@ release process.
     replaces `tokenKey` (storage token mismatch); `recordId` replaces
     `tokenId` (embed and invite token refusals, embed-token admin routes);
     `keyId` replaces `apiKeyId` (unscoped MCP knowledge search); `usage`
-    replaces `tokenUsage` (evaluation completed); `keyPrefix` replaces
-    `apiKeyPrefix` (PostHog server capture); `envVarName` replaces
+    replaces `tokenUsage` (evaluation completed); `envVarName` replaces
     `apiKeyEnvVar` (two provider migration scripts). Dashboards or alerts
     reading the old keys should switch.
 

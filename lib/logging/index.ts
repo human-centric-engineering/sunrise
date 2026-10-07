@@ -175,25 +175,29 @@ function shouldSanitizePII(): boolean {
  * once. Matching compares these against joined runs of a key's words, so
  * "api_key", "apikey" and "apiKey" need only one spelling in the lists.
  */
-const toLetters = (pattern: string): string => pattern.replace(/[^a-z]/g, '');
+const toLetters = (pattern: string): string => pattern.toLowerCase().replace(/[^a-z]/g, '');
 const SECRET_WORDS = new Set(SECRET_FIELDS.map(toLetters));
 const PII_WORDS = new Set(PII_FIELDS.map(toLetters));
 const LONGEST_PATTERN = Math.max(...[...SECRET_WORDS, ...PII_WORDS].map((word) => word.length));
 
 /**
  * Split a field name into lower-case words. Every non-letter (`_`, `-`,
- * `.`, space, digit) separates words, and so does each camelCase or
- * acronym boundary: "userPassword" → [user, password], "APIKey" → [api, key],
- * "oauth2Token" → [oauth, token]. Splitting happens before lower-casing,
- * because lower-casing is what erases the camelCase boundary.
+ * `.`, space, digit) separates words, and so does each case boundary:
+ * lower to upper ("userPassword" → [user, password]), the end of an acronym
+ * before a capitalised word ("APIKey" → [api, key]), and the end of an
+ * acronym before lower case ("IPv4" → [ip, v], "APIkey" → [api, key]).
+ * Splitting happens before lower-casing, because lower-casing is what erases
+ * the boundary. Extra split points never lose a match, because matching
+ * rejoins consecutive words.
  */
+const WORD_BOUNDARY =
+  /[^a-zA-Z]+|(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=[A-Z]{2})(?=[a-z])/;
+
 function toWords(fieldName: string): string[] {
   return fieldName
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/([A-Z])([A-Z][a-z])/g, '$1 $2')
-    .toLowerCase()
-    .split(/[^a-z]+/)
-    .filter(Boolean);
+    .split(WORD_BOUNDARY)
+    .filter(Boolean)
+    .map((word) => word.toLowerCase());
 }
 
 /**

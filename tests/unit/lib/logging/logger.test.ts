@@ -767,6 +767,8 @@ describe('Logger', () => {
         'zipCode',
         'user_postCode',
         'billingPostCode',
+        'clientIPv4',
+        'remoteIPs',
         'billingZIPcode',
       ])('should redact the PII field %s when PII sanitization is on', (key) => {
         vi.stubEnv('NODE_ENV', 'production');
