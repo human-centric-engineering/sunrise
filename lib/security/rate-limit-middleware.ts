@@ -373,13 +373,14 @@ async function resolveIdentifier(
  * The stored id of the credential a request presents, or `null` to use the
  * caller's IP bucket.
  *
- * A verified id cached within its TTL costs nothing. Otherwise the credential
- * is looked up — unless the IP bucket this request would fall back to is
- * already full, in which case the lookup is skipped and the request is
- * counted (and refused) there. That bounds the lookups an unverifiable value
- * can cause to the IP cap, while a real credential still costs one lookup per
- * TTL. A failed lookup falls back to the IP bucket, as `'session-user'` does
- * when session resolution fails.
+ * A verified id cached in the first half of its TTL costs nothing; in the
+ * second half it is re-checked, so a credential in steady use stays cached.
+ * A value with no cached verification is looked up — unless the IP bucket
+ * this request would fall back to is already full, in which case the lookup
+ * is skipped and the request is counted (and refused) there. That bounds the
+ * lookups an unverifiable value can cause to the IP cap. A failed lookup
+ * keeps a cached id if there is one and otherwise falls back to the IP
+ * bucket, as `'session-user'` does when session resolution fails.
  */
 async function resolveCredentialIdentifier(
   kind: RateLimitCredentialKind,
@@ -388,15 +389,19 @@ async function resolveCredentialIdentifier(
   fallbackHasRoom: (fallbackId: string) => boolean
 ): Promise<string | null> {
   const cached = getCachedRateLimitCredential(kind, value);
-  if (cached) return cached;
-  if (!fallbackHasRoom(`ip:${ip}`)) return null;
+  if (cached && !cached.stale) return cached.id;
+  // Only a value with no cached verification is gated on the IP bucket. A
+  // stale entry was verified within the TTL, so re-checking it is not
+  // something a caller can mint, and gating it would push a credential in
+  // steady use into a full IP bucket.
+  if (!cached && !fallbackHasRoom(`ip:${ip}`)) return null;
   try {
     return await verifyRateLimitCredential(kind, value);
   } catch (error) {
-    logger.warn('rate-limit middleware: credential lookup failed; falling back to IP', {
+    logger.warn('rate-limit middleware: credential lookup failed; falling back', {
       key: kind,
       error: error instanceof Error ? error.message : String(error),
     });
-    return null;
+    return cached?.id ?? null;
   }
 }

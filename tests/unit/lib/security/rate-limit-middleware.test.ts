@@ -116,6 +116,16 @@ async function exhaust(
   return last;
 }
 
+// lru-cache reads its clock from `performance.now()` (captured at import) and
+// memoises the reading for 1ms, so the cache TTL is driven by an offset on the
+// real clock plus a short real wait for the memo to clear.
+let clockOffset = 0;
+const realPerformanceNow = performance.now.bind(performance);
+async function advanceCacheClock(ms: number): Promise<void> {
+  clockOffset += ms;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+}
+
 // ─── Suite ───────────────────────────────────────────────────────────────────
 
 describe('applyRateLimit', () => {
@@ -137,6 +147,7 @@ describe('applyRateLimit', () => {
     // Reset the mock so every test starts with getSession returning null
     // (tests that need a session override it inline).
     vi.clearAllMocks();
+    vi.spyOn(performance, 'now').mockImplementation(() => realPerformanceNow() + clockOffset);
 
     // Re-wire findRateLimitRule to the real implementation by default.
     // The real function was captured by the mock factory above.
@@ -502,10 +513,14 @@ describe('applyRateLimit', () => {
       const tokenB = 'mw:api:api-key:key:mcp:row_b';
       RATE_LIMIT_TIERS.api.reset(tokenA);
       RATE_LIMIT_TIERS.api.reset(tokenB);
-      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({ id: 'row_a' } as never);
+      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
+        id: 'row_a',
+        expiresAt: null,
+      } as never);
       vi.mocked(prisma.mcpApiKey.findUnique).mockResolvedValue({
         id: 'row_b',
         isActive: true,
+        expiresAt: null,
       } as never);
       vi.mocked(findRateLimitRule).mockReturnValue({
         match: /^\/api\/v1\/test-apikey-verified\//,
@@ -563,6 +578,73 @@ describe('applyRateLimit', () => {
       expect(prisma.aiApiKey.findFirst).not.toHaveBeenCalled();
 
       RATE_LIMIT_TIERS.api.reset(ipToken);
+    });
+
+    it("'api-key' re-checks a stale verified key even when the IP bucket is full", async () => {
+      // A key verified within the TTL is re-checked in the second half of it.
+      // That re-check must not be gated on the IP bucket, or a key in steady
+      // use would land in a full IP bucket each time its entry aged out.
+      const ip = '192.0.2.75';
+      const ipToken = `mw:api:api-key:ip:${ip}`;
+      const keyToken = 'mw:api:api-key:key:sk:row_c';
+      RATE_LIMIT_TIERS.api.reset(ipToken);
+      RATE_LIMIT_TIERS.api.reset(keyToken);
+      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
+        id: 'row_c',
+        expiresAt: null,
+      } as never);
+      vi.mocked(findRateLimitRule).mockReturnValue({
+        match: /^\/api\/v1\/test-apikey-stale\//,
+        tier: 'api',
+        key: 'api-key',
+      });
+      const path = '/api/v1/test-apikey-stale/resource';
+      const keyed = { 'x-forwarded-for': ip, authorization: 'Bearer sk_steady' };
+
+      expect(await applyRateLimit(makeRequest(path, keyed))).toBeNull();
+      await exhaust(path, 100, { 'x-forwarded-for': ip });
+      await advanceCacheClock(30_001);
+
+      // Act: the entry is stale and the IP bucket is full.
+      const response = await applyRateLimit(makeRequest(path, keyed));
+
+      // Assert: re-checked and kept in its own bucket.
+      expect(response).toBeNull();
+      expect(prisma.aiApiKey.findFirst).toHaveBeenCalledTimes(2);
+      expect(RATE_LIMIT_TIERS.api.peek(keyToken).remaining).toBe(98);
+
+      RATE_LIMIT_TIERS.api.reset(ipToken);
+      RATE_LIMIT_TIERS.api.reset(keyToken);
+    });
+
+    it("'api-key' keeps a stale verified key's bucket when the re-check fails", async () => {
+      const ip = '192.0.2.76';
+      const keyToken = 'mw:api:api-key:key:sk:row_d';
+      RATE_LIMIT_TIERS.api.reset(keyToken);
+      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValueOnce({
+        id: 'row_d',
+        expiresAt: null,
+      } as never);
+      vi.mocked(findRateLimitRule).mockReturnValue({
+        match: /^\/api\/v1\/test-apikey-recheck\//,
+        tier: 'api',
+        key: 'api-key',
+      });
+      const path = '/api/v1/test-apikey-recheck/resource';
+      const keyed = { 'x-forwarded-for': ip, authorization: 'Bearer sk_flaky_db' };
+
+      await applyRateLimit(makeRequest(path, keyed));
+      await advanceCacheClock(30_001);
+      vi.mocked(prisma.aiApiKey.findFirst).mockRejectedValueOnce(new Error('db down'));
+      await applyRateLimit(makeRequest(path, keyed));
+
+      expect(RATE_LIMIT_TIERS.api.peek(keyToken).remaining).toBe(98);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('credential lookup failed'),
+        expect.objectContaining({ key: 'api-key', error: 'db down' })
+      );
+
+      RATE_LIMIT_TIERS.api.reset(keyToken);
     });
 
     it("'api-key' falls back to the IP bucket and warns when the lookup fails", async () => {
@@ -698,6 +780,7 @@ describe('applyRateLimit', () => {
       vi.mocked(prisma.aiAgentEmbedToken.findUnique).mockResolvedValue({
         id: 'tokrow_1',
         isActive: true,
+        agent: { isActive: true },
       } as never);
       vi.mocked(findRateLimitRule).mockReturnValue({
         match: /^\/api\/v1\/embed\/test-verified\//,
@@ -725,6 +808,7 @@ describe('applyRateLimit', () => {
       vi.mocked(prisma.aiAgentEmbedToken.findUnique).mockResolvedValue({
         id: 'tokrow_2',
         isActive: false,
+        agent: { isActive: true },
       } as never);
       vi.mocked(findRateLimitRule).mockReturnValue({
         match: /^\/api\/v1\/embed\/test-inactive\//,
