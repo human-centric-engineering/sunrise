@@ -224,6 +224,32 @@ describe('fetchWithTimeout', () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it('reduces a URL in a cause-less fetch error without keeping the original on cause (#953)', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(() =>
+      Promise.reject(
+        new TypeError('Failed to parse URL from https://h.example.com/x?api-version=qs-secret')
+      )
+    );
+
+    try {
+      const err = await fetchWithTimeout('https://h.example.com/x', {}, 1000).catch(
+        (e: unknown) => e
+      );
+
+      expect(err).toBeInstanceOf(ProviderError);
+      expect((err as Error).message).toBe('Failed to parse URL from https://h.example.com/x');
+      // Nothing down the cause chain still holds the unreduced message.
+      let cause: unknown = (err as Error).cause;
+      while (cause instanceof Error) {
+        expect(cause.message).not.toContain('qs-secret');
+        cause = cause.cause;
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
 
 const { DEFAULT_TIMEOUT_MS } = await import('@/lib/orchestration/llm/provider');

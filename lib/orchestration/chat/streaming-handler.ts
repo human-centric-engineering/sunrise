@@ -80,7 +80,10 @@ import {
 } from '@/lib/orchestration/chat/guard-floor';
 import { emitGuardEvent, type GuardEventContext } from '@/lib/orchestration/chat/guard-events';
 import { platformSlugWhere } from '@/lib/orchestration/agents/platform-agent-guard';
-import { LATEST_AGENT_VERSION_ID_INCLUDE } from '@/lib/orchestration/agents/agent-versioning';
+import {
+  LATEST_AGENT_VERSION_ID_INCLUDE,
+  readAgentConsistently,
+} from '@/lib/orchestration/agents/agent-versioning';
 import { buildMessagesAndBreakdown } from '@/lib/orchestration/chat/message-builder';
 import { estimateTokens } from '@/lib/orchestration/chat/token-estimator';
 import {
@@ -2793,13 +2796,14 @@ export class StreamingChatHandler {
     // names the org's platform instance only. An org's own agent that took
     // the slug before it was reserved (§116 t-725) is refused as not found
     // rather than run in the platform agent's place.
-    const agent = await prisma.aiAgent.findFirst({
-      where: { slug, isActive: true, ...platformSlugWhere(slug) },
-      include: {
-        profile: true,
-        versions: LATEST_AGENT_VERSION_ID_INCLUDE,
-      },
-    });
+    // One snapshot for the row and its newest version, so the pin names the
+    // config this turn runs even if an edit commits mid-read (t-779).
+    const agent = await readAgentConsistently(prisma, (tx) =>
+      tx.aiAgent.findFirst({
+        where: { slug, isActive: true, ...platformSlugWhere(slug) },
+        include: { profile: true, versions: LATEST_AGENT_VERSION_ID_INCLUDE },
+      })
+    );
     if (!agent) {
       throw new ChatError('agent_not_found', `Active agent '${slug}' not found`);
     }

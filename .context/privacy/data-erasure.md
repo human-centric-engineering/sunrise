@@ -18,7 +18,7 @@ both delete endpoints route through it.
 **Don't** call `prisma.user.delete()` directly:
 
 ```typescript
-// ❌ Skips PII scrub, the erasure receipt, and avatar cleanup.
+// ❌ Skips PII scrub, contact messages, the erasure receipt, and avatar cleanup.
 await prisma.user.delete({ where: { id: userId } });
 ```
 
@@ -187,9 +187,10 @@ relations the merge introduced** — they reintroduce this bug unnoticed.
 
 ## What `eraseUser()` Does Beyond the Cascade
 
-The DB cascade can't reach everything. The service adds three steps; the scrub,
-receipt, and delete run in **one transaction** (avatar cleanup is a best-effort
-side effect first, since object storage can't enlist in a DB transaction):
+The DB cascade can't reach everything. The service adds four steps; the scrub,
+contact delete, receipt, and delete run in **one transaction** (avatar cleanup
+is a best-effort side effect first, since object storage can't enlist in a DB
+transaction):
 
 1. **Scrub residual PII** — `SetNull` drops the `userId` link on retained
    `AiAdminAuditLog` rows but leaves `clientIp` (an IP address = PII). The
@@ -201,6 +202,34 @@ side effect first, since object storage can't enlist in a DB transaction):
    A provider that stored objects in more than one place and swept only one
    would make this step a partial delete that still reported success — see
    [`.context/storage/overview.md`](../storage/overview.md#local-provider).
+4. **Delete contact-form messages** — `ContactSubmission` has no FK to `User`
+   (the public form takes an address, not a session), so no cascade reaches it.
+   The service deletes the rows sent from the subject's address, matched
+   **exactly** on the trimmed, lower-cased form the contact route stores, through
+   `contactSubmissionsOf()` in `lib/privacy/contact-submissions.ts`. The export
+   uses the same matcher on the same input — the address on the user row, read
+   inside the transaction, not the caller's `userEmail`, which a cached session
+   can hold stale across an email change — so the two cannot drift. Never
+   `mode: 'insensitive'`: Prisma compiles it to an unescaped `ILIKE`, so a `_`
+   or `%` in the address would delete a stranger's messages too (#766).
+   **Only for a verified address.** The contact form proves nothing about who
+   typed an address, and with email verification off anyone can open an account
+   under someone else's, so an account whose `emailVerified` is false matches
+   nothing: its erasure leaves those messages in place, and its export omits
+   them. Erasure counts the messages it left and, when there are any, logs a
+   warning carrying `contactSubmissionsLeft`, so the operator knows to answer
+   the rest of that request by hand. The address is not logged; find the rows
+   by hashing each `contact_submission.email` with SHA-256 and comparing it to
+   the erasure receipt's `subjectEmailHash` (both use the trimmed, lower-cased
+   address). Where verification is required (the production default) the only unverified
+   accounts are sign-ups that never clicked their link — those, and every
+   account where verification is off, are the ones this affects.
+   Deleted rather than anonymised, because the export already hands these rows
+   over as the subject's personal data. It is a system model, so no org scope
+   is needed at either tenancy mode. It is matched on the account's current
+   address only: messages sent from an address the person used before are not
+   linked to them by anything. See the export doc's
+   [Tables With No `User` FK](./data-export.md#tables-with-no-user-fk).
 
 **At `multi`, a person's rows in every org go** (§107 t-748). The cascades are
 FK actions, which row-level security does not filter, so `user.delete` removes
@@ -289,6 +318,14 @@ registerErasureCleanupHook({
   },
 });
 ```
+
+**A fork table keyed by email (no `userId` at all) is the `ContactSubmission`
+case** — no FK, so delete it in `scrubInTransaction`. The hook is handed only
+the `userId`, but the user row still exists at that point, so read the address
+from `tx.user` and match it exactly, normalised as your writer stores it. If the
+writer takes an address nobody proved (a public form), also read
+`emailVerified` and match nothing when it is false, as `contactSubmissionsOf()`
+does.
 
 Register once at startup (alongside the app's capability registration), then add
 an assertion to `scripts/smoke/erasure.ts` proving the app table is erased or

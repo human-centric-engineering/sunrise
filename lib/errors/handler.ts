@@ -32,7 +32,11 @@
 
 import { isRecord } from '@/lib/utils';
 import { logger } from '@/lib/logging';
+import { loggablePath, scrubUrlsDeep, scrubUrlsInError } from '@/lib/logging/redact-path';
 import { trackError, ErrorSeverity } from '@/lib/errors/sentry';
+
+/** The flag `@sentry/core` sets on an exception it has captured (`checkOrSetAlreadyCaught`). */
+const SENTRY_CAPTURED_MARKER = '__sentry_captured__';
 
 /**
  * Fields that contain sensitive data
@@ -221,23 +225,34 @@ export function handleClientError(error: unknown, context: Record<string, unknow
     }
   }
 
-  // Scrub sensitive data from context and metadata
-  const rawScrubbedContext = scrubSensitiveData(context);
+  // Scrub sensitive data from context and metadata, then every URL in them:
+  // an error from an inline script reports the page URL as its file, in
+  // `filename` and in the stack's frames, and a caller's context can carry one
+  // at any depth (#952).
+  const rawScrubbedContext = scrubUrlsDeep(scrubSensitiveData(context));
   const scrubbedContext = isRecord(rawScrubbedContext) ? rawScrubbedContext : {};
-  const rawScrubbedMetadata = scrubSensitiveData(normalized.metadata);
+  const rawScrubbedMetadata = scrubUrlsDeep(scrubSensitiveData(normalized.metadata));
   const scrubbedMetadata = isRecord(rawScrubbedMetadata) ? rawScrubbedMetadata : {};
+  // The Error itself goes to the logger and to Sentry with its stack, so they
+  // get a copy with the same URLs scrubbed.
+  const reportedError = scrubUrlsInError(normalized.error);
+
+  // The page path, never `location.href`: the query and fragment can carry a
+  // token or an email, and a path segment can be a credential (#952). The
+  // scrubbers above match key names, so they cannot clean a URL value.
+  const path = loggablePath(typeof window !== 'undefined' ? window.location.pathname : undefined);
 
   // Log the error with structured logger
-  logger.error('Unhandled client error', normalized.error, {
+  logger.error('Unhandled client error', reportedError, {
     ...scrubbedContext,
     ...scrubbedMetadata,
     errorType: 'unhandled',
     userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
-    url: typeof window !== 'undefined' ? window.location.href : undefined,
+    path,
   });
 
   // Send to error tracking service
-  trackError(normalized.error, {
+  trackError(reportedError, {
     tags: {
       errorType: 'unhandled',
       source: 'globalHandler',
@@ -246,10 +261,25 @@ export function handleClientError(error: unknown, context: Record<string, unknow
       ...scrubbedContext,
       ...scrubbedMetadata,
       userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
-      url: typeof window !== 'undefined' ? window.location.href : undefined,
+      path,
     },
     level: ErrorSeverity.Error,
   });
+
+  // Sentry marks an error it has captured, so its own global handlers skip it
+  // later; it marked the copy, so mark the original too.
+  if (Reflect.get(reportedError, SENTRY_CAPTURED_MARKER) === true) {
+    try {
+      Object.defineProperty(normalized.error, SENTRY_CAPTURED_MARKER, {
+        value: true,
+        configurable: true,
+        writable: true,
+        enumerable: false,
+      });
+    } catch {
+      // A frozen error cannot be marked; Sentry's dedupe is the fallback.
+    }
+  }
 }
 
 /**

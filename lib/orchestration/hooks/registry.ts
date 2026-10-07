@@ -22,6 +22,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { loggableUrl } from '@/lib/logging/redact-path';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import {
   HookEventPayloadSchema,
@@ -255,7 +256,7 @@ async function dispatchWebhook(
   } catch (err: unknown) {
     logger.warn('Hook webhook dispatch setup failed', {
       hookId,
-      url: action.url,
+      url: loggableUrl(action.url),
       error: err instanceof Error ? err.message : String(err),
     });
   }
@@ -370,7 +371,7 @@ async function attemptDelivery(
 
   logger.warn('Hook webhook delivery failed', {
     deliveryId,
-    url,
+    url: loggableUrl(url),
     attempt: newAttempts,
     maxAttempts: MAX_ATTEMPTS,
     exhausted,

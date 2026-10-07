@@ -13,6 +13,7 @@ import { prisma } from '@/lib/db/client';
 import { successResponse, paginatedResponse } from '@/lib/api/responses';
 import { validateRequestBody, validateQueryParams } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
+import { loggableUrl } from '@/lib/logging/redact-path';
 import { getClientIP } from '@/lib/security/ip';
 import { createWebhookSchema, listWebhooksQuerySchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -107,7 +108,7 @@ export const POST = withAdminAuth(async (request, session) => {
   log.info('Webhook created', {
     webhookId: webhook.id,
     channel: webhook.channel,
-    destination: webhook.channel === 'webhook' ? webhook.url : webhook.emailAddress,
+    destination: webhook.channel === 'webhook' ? loggableUrl(webhook.url) : webhook.emailAddress,
     events: webhook.events,
     adminId: session.user.id,
   });

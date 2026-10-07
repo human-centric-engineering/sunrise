@@ -219,7 +219,11 @@ export async function exportUserData(params: ExportUserParams): Promise<SubjectE
     throw new SubjectNotFoundError(userId);
   }
 
-  const subject: SubjectQuery = { userId, email: account.email };
+  const subject: SubjectQuery = {
+    userId,
+    email: account.email,
+    emailVerified: account.emailVerified,
+  };
 
   // Run every source, then split by disposition. A rejection here propagates:
   // an export that quietly lost a section would be indistinguishable, to the
@@ -254,7 +258,9 @@ export async function exportUserData(params: ExportUserParams): Promise<SubjectE
     } else {
       results.push(...(await Promise.all(SUBJECT_DATA_SOURCES.map(fetchOne))));
     }
-    return { results, app: await collectAppSubjectData(subject) };
+    // The fork's collector gets exactly `AppSubjectQuery` — that type lives in
+    // the fork-owned scaffold, so a field it does not declare stays out.
+    return { results, app: await collectAppSubjectData({ userId, email: account.email }) };
   };
   // The reason names whose rows and who asked: it is the audit line for a
   // read across every org, and it is logged before the work, so it survives

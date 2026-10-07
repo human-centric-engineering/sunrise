@@ -22,6 +22,18 @@
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
 
+  // Register Sentry's page-URL scrubber for this server process before any
+  // request can raise an event (#952). A no-op when no DSN is set.
+  try {
+    const { initErrorTracking } = await import('@/lib/errors/sentry');
+    initErrorTracking();
+  } catch (err) {
+    const { logger } = await import('@/lib/logging');
+    logger.error('instrumentation: error tracking init failed', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   // App boot seam — runs in ALL environments (prod included), so it sits above
   // the dev-only ticker guards below. Core carries zero reference to any fork:
   // the reserved `lib/app/bootstrap.ts` ships an empty `initApp()` and a fork

@@ -9,7 +9,15 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { collapseDynamicSegments, loggablePath } from '@/lib/logging/redact-path';
+import {
+  collapseDynamicSegments,
+  loggablePath,
+  loggableUrl,
+  scrubUrl,
+  scrubUrlsDeep,
+  scrubUrlsInError,
+  scrubUrlsInText,
+} from '@/lib/logging/redact-path';
 
 describe('collapseDynamicSegments', () => {
   it.each([
@@ -81,5 +89,331 @@ describe('loggablePath', () => {
   it('passes undefined through and collapses a present path', () => {
     expect(loggablePath(undefined)).toBeUndefined();
     expect(loggablePath('/api/v1/x/cmtd5heg2001804ky8pgo6odx')).toBe('/api/v1/x/[param]');
+  });
+});
+
+describe('scrubUrl', () => {
+  const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+
+  it('drops the query string and fragment and collapses a credential-shaped segment', () => {
+    expect(scrubUrl(`https://app.example.com/s/${token}?email=a%40b.c#t=${token}`)).toBe(
+      'https://app.example.com/s/[param]'
+    );
+  });
+
+  it('drops user:password from the authority', () => {
+    expect(scrubUrl('https://user:secret@app.example.com/admin?x=1')).toBe(
+      'https://app.example.com/admin'
+    );
+  });
+
+  it('scrubs a relative path and leaves readable segments alone', () => {
+    expect(scrubUrl(`/s/${token}?q=1`)).toBe('/s/[param]');
+    expect(scrubUrl('/admin/orchestration/agents#tab')).toBe('/admin/orchestration/agents');
+  });
+
+  it('keeps a bare origin intact', () => {
+    expect(scrubUrl('https://app.example.com?ref=x')).toBe('https://app.example.com');
+  });
+
+  it('does not exempt a web URL because it contains /node_modules/', () => {
+    expect(scrubUrl(`https://h.example/s/${token}/node_modules/x`)).toBe(
+      'https://h.example/s/[param]/node_modules/x'
+    );
+  });
+
+  it('collapses segments ahead of a build-asset tail', () => {
+    expect(scrubUrl(`https://h.example/s/${token}/_next/static/chunks/a.js`)).toBe(
+      'https://h.example/s/[param]/_next/static/chunks/a.js'
+    );
+  });
+
+  it('keeps installed package paths whole, scoped packages included', () => {
+    expect(scrubUrl('/var/task/node_modules/@prisma/client/runtime/library.js')).toBe(
+      '/var/task/node_modules/@prisma/client/runtime/library.js'
+    );
+  });
+
+  it('keeps a build asset path intact under a basePath', () => {
+    expect(scrubUrl('https://host/app/_next/static/AbCdEf0123456789xYz12/_buildManifest.js')).toBe(
+      'https://host/app/_next/static/AbCdEf0123456789xYz12/_buildManifest.js'
+    );
+  });
+
+  it('keeps a Next.js build asset path intact, minus its query', () => {
+    expect(
+      scrubUrl('https://app.example.com/_next/static/AbCdEf0123456789xYz12/_buildManifest.js?dpl=1')
+    ).toBe('https://app.example.com/_next/static/AbCdEf0123456789xYz12/_buildManifest.js');
+  });
+});
+
+describe('scrubUrlsInText', () => {
+  const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+
+  it('scrubs paths and URLs in span names', () => {
+    expect(scrubUrlsInText(`GET /s/${token}?a=1`)).toBe('GET /s/[param]');
+    expect(scrubUrlsInText(`middleware GET https://app.example.com/s/${token}`)).toBe(
+      'middleware GET https://app.example.com/s/[param]'
+    );
+    expect(scrubUrlsInText(`fetch(https://app.example.com/s/${token}?x=1)`)).toBe(
+      'fetch(https://app.example.com/s/[param])'
+    );
+  });
+
+  it('scrubs stack frame URLs and keeps their line and column', () => {
+    const stack = `Error: boom\n    at f (https://app.example.com/s/${token}?email=a%40b.c:12:34)\n    at g (https://app.example.com/_next/static/chunks/main-abc.js:1:2)`;
+    expect(scrubUrlsInText(stack)).toBe(
+      'Error: boom\n    at f (https://app.example.com/s/[param]:12:34)\n    at g (https://app.example.com/_next/static/chunks/main-abc.js:1:2)'
+    );
+  });
+
+  it('does not let trailing punctuation shield a credential segment', () => {
+    expect(scrubUrlsInText(`Failed to load https://app.example.com/s/${token}, status 404`)).toBe(
+      'Failed to load https://app.example.com/s/[param], status 404'
+    );
+    expect(scrubUrlsInText(`{"url":"https://app.example.com/s/${token}"}`)).toBe(
+      '{"url":"https://app.example.com/s/[param]"}'
+    );
+  });
+
+  it('stops a URL at a quote or comma, so JSON after it survives', () => {
+    expect(scrubUrlsInText('{"a":"https://h.example/x?q=1","b":"keep"}')).toBe(
+      '{"a":"https://h.example/x","b":"keep"}'
+    );
+    expect(scrubUrlsInText(`["/s/${token}?a=1",'/x#y']`)).toBe(`["/s/[param]",'/x']`);
+  });
+
+  it('drops a whole query or fragment even when it holds commas, brackets or parentheses', () => {
+    expect(
+      scrubUrlsInText(`fetch failed https://app.example.com/api?ids=1,2&token=${token} next`)
+    ).toBe('fetch failed https://app.example.com/api next');
+    expect(scrubUrlsInText(`/a?filter[x]=1&token=${token}`)).toBe('/a');
+    expect(scrubUrlsInText('see /p#a(b)&email=foo@bar.com.')).toBe('see /p.');
+  });
+
+  it('drops the query when the path holds commas, parentheses or brackets', () => {
+    expect(
+      scrubUrlsInText(`fetch https://app.example.com/search/a,b?email=a%40x.com&token=${token}`)
+    ).toBe('fetch https://app.example.com/search/a,b');
+    expect(scrubUrlsInText(`see /wiki/Foo_(bar)?token=${token}.`)).toBe('see /wiki/Foo_(bar).');
+    expect(scrubUrlsInText(`fetch(https://app.example.com/s/${token}?x=1)`)).toBe(
+      'fetch(https://app.example.com/s/[param])'
+    );
+  });
+
+  it('scrubs an IPv4 host with a port', () => {
+    expect(scrubUrlsInText('fetch failed: 10.0.0.5:8080/reset?token=abc')).toBe(
+      'fetch failed: 10.0.0.5:8080/reset'
+    );
+  });
+
+  it('stays fast on long hyphenated text that is not a URL', () => {
+    const input = '-a'.repeat(20000);
+    const started = performance.now();
+
+    expect(scrubUrlsInText(input)).toBe(input);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
+  it('scrubs a scheme-less host followed directly by a query', () => {
+    expect(scrubUrlsInText(`redirect to app.example.com?token=${token}`)).toBe(
+      'redirect to app.example.com'
+    );
+  });
+
+  it('scrubs a scheme-less host/path', () => {
+    expect(scrubUrlsInText(`see h.com/s/${token}?email=a%40b.c`)).toBe('see h.com/s/[param]');
+    expect(scrubUrlsInText(`at app.example.com:3000/s/${token}#t`)).toBe(
+      'at app.example.com:3000/s/[param]'
+    );
+  });
+
+  it('leaves user-agent product tokens alone', () => {
+    const ua = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
+    expect(scrubUrlsInText(ua)).toBe(ua);
+  });
+
+  it('leaves text with no URL or leading-slash path alone', () => {
+    expect(scrubUrlsInText('pageload')).toBe('pageload');
+    expect(scrubUrlsInText('a/b and 1/2')).toBe('a/b and 1/2');
+  });
+});
+
+describe('scrubUrlsDeep', () => {
+  const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+
+  it('scrubs strings in nested objects and arrays, and leaves other values alone', () => {
+    const when = new Date(0);
+    const input = {
+      request: { url: `https://app.example.com/s/${token}?a=1`, method: 'GET' },
+      config: { urls: [`/s/${token}#x`], value: [`/s/${token}`] },
+      count: 3,
+      when,
+    };
+
+    expect(scrubUrlsDeep(input)).toEqual({
+      request: { url: 'https://app.example.com/s/[param]', method: 'GET' },
+      config: { urls: ['/s/[param]'], value: ['/s/[param]'] },
+      count: 3,
+      when,
+    });
+    expect(input.request.url).toBe(`https://app.example.com/s/${token}?a=1`);
+  });
+
+  it('copies an Error with its message, stack and own properties scrubbed', () => {
+    const error = Object.assign(new Error(`bad link /s/${token}?a=1`), { code: 'E_LINK' });
+    error.name = 'LinkError';
+    error.stack = `LinkError: bad link\n    at https://app.example.com/s/${token}?a=1:3:7`;
+
+    const scrubbed = scrubUrlsInError(error);
+
+    expect(scrubbed).not.toBe(error);
+    expect(scrubbed).toMatchObject({
+      name: 'LinkError',
+      message: 'bad link /s/[param]',
+      stack: 'LinkError: bad link\n    at https://app.example.com/s/[param]:3:7',
+      code: 'E_LINK',
+    });
+    expect(error.message).toBe(`bad link /s/${token}?a=1`);
+  });
+
+  it('keeps the subclass and scrubs the cause chain, so linked errors survive', () => {
+    const inner = new Error(`inner https://app.example.com/s/${token}?a=1`);
+    const outer = new TypeError('outer', { cause: inner });
+
+    const scrubbed = scrubUrlsInError(outer);
+
+    expect(scrubbed).toBeInstanceOf(TypeError);
+    expect(scrubbed.name).toBe('TypeError');
+    expect(scrubbed.cause).toBeInstanceOf(Error);
+    expect(scrubbed.cause).toMatchObject({ message: 'inner https://app.example.com/s/[param]' });
+    expect(Object.keys(scrubbed)).not.toContain('cause');
+  });
+
+  it('copies a DOMException into a plain Error that can be read, keeping its name', () => {
+    const scrubbed = scrubUrlsInError(new DOMException(`aborted /s/${token}?a=1`, 'AbortError'));
+
+    expect(() => String(scrubbed)).not.toThrow();
+    expect(scrubbed.name).toBe('AbortError');
+    expect(scrubbed.message).toBe('aborted /s/[param]');
+  });
+
+  it('copies an error class with private-field getters without throwing on read', () => {
+    class CodedError extends Error {
+      #code = 'E_PRIVATE';
+      get code(): string {
+        return this.#code;
+      }
+    }
+    const scrubbed = scrubUrlsInError(new CodedError(`bad /s/${token}`));
+
+    expect(() => [scrubbed.name, String(scrubbed), Reflect.get(scrubbed, 'code')]).not.toThrow();
+    expect(scrubbed.message).toBe('bad /s/[param]');
+  });
+
+  it("keeps Sentry's already-captured marker so the copy is not reported twice", () => {
+    const error = new Error('caught');
+    Object.defineProperty(error, '__sentry_captured__', { value: true, enumerable: false });
+
+    expect(Reflect.get(scrubUrlsInError(error), '__sentry_captured__')).toBe(true);
+  });
+
+  it("scrubs an AggregateError's errors", () => {
+    const scrubbed = scrubUrlsInError(
+      new AggregateError([new Error(`failed /s/${token}?a=1`)], 'several failed')
+    );
+
+    expect(scrubbed).toBeInstanceOf(AggregateError);
+    expect(scrubbed).toHaveProperty('errors');
+    expect(Reflect.get(scrubbed, 'errors')).toEqual([
+      expect.objectContaining({ message: 'failed /s/[param]' }),
+    ]);
+  });
+
+  it('copies a class instance as its scrubbed own properties, failing closed on a Map', () => {
+    class Request {
+      url = `https://h.example/s/${token}?token=x`;
+    }
+    const when = new Date(0);
+
+    expect(
+      scrubUrlsDeep({ req: new Request(), map: new Map([['u', `/s/${token}?a=1`]]), when })
+    ).toEqual({
+      req: { url: 'https://h.example/s/[param]' },
+      map: {},
+      when,
+    });
+  });
+
+  it('turns a URL object into its scrubbed href', () => {
+    expect(scrubUrlsDeep({ a: new URL(`https://h.example/s/${token}?x=1`) })).toEqual({
+      a: 'https://h.example/s/[param]',
+    });
+  });
+
+  it('replaces an object nested past the depth cap instead of passing it on raw', () => {
+    let nested: unknown = { url: `https://h.example/s/${token}?email=a%40b.c` };
+    for (let i = 0; i < 9; i++) nested = { next: nested };
+
+    const serialised = JSON.stringify(scrubUrlsDeep(nested));
+
+    expect(serialised).toContain('[depth limit]');
+    expect(serialised).not.toContain(token);
+    expect(serialised).not.toContain('email=');
+  });
+
+  it('terminates on an Error that references itself', () => {
+    const error = new Error('loop') as Error & { self?: unknown };
+    error.self = error;
+
+    expect(() => scrubUrlsDeep(error)).not.toThrow();
+  });
+});
+
+describe('loggableUrl (#953)', () => {
+  it('collapses a credential-shaped path segment and keeps the origin', () => {
+    expect(
+      loggableUrl('https://hooks.slack.com/services/T0000/B0000/AbCdEfGhIjKlMnOpQrStUvWx')
+    ).toBe('https://hooks.slack.com/services/T0000/B0000/[param]');
+  });
+
+  it('drops the query string and fragment', () => {
+    expect(loggableUrl('https://files.example.com/doc.pdf?sig=abc123&expires=1#page=2')).toBe(
+      'https://files.example.com/doc.pdf'
+    );
+  });
+
+  it('drops userinfo', () => {
+    expect(loggableUrl('https://user:hunter2@example.com/hook')).toBe('https://example.com/hook');
+  });
+
+  it('keeps a non-default port and an ordinary path', () => {
+    expect(loggableUrl('http://localhost:8080/api/notify')).toBe(
+      'http://localhost:8080/api/notify'
+    );
+  });
+
+  it('passes null and undefined through', () => {
+    expect(loggableUrl(null)).toBeNull();
+    expect(loggableUrl(undefined)).toBeUndefined();
+  });
+
+  it.each([
+    ['a data: URL', 'data:text/plain,qs-secret'],
+    ['a non-http scheme with userinfo', 'foo://user:pw@host.example.com/p'],
+  ])('replaces %s rather than logging what follows a null origin', (_label, url) => {
+    expect(loggableUrl(url)).toBe('[non-http-url]');
+  });
+
+  // Documented limit, recorded so a change to it is deliberate: a path segment
+  // containing `:` is outside LONG_TOKEN, so it is kept.
+  it('keeps a token-shaped path segment that contains a colon (documented limit)', () => {
+    expect(loggableUrl('https://api.example.com/bot123456789:AbCdEfGhIjKlMnOpQrStUvWx/send')).toBe(
+      'https://api.example.com/bot123456789:AbCdEfGhIjKlMnOpQrStUvWx/send'
+    );
+  });
+
+  it('never echoes a value it cannot parse', () => {
+    expect(loggableUrl('not a url ?api_key=abc')).toBe('[unparseable-url]');
   });
 });

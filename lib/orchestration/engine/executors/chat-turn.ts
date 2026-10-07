@@ -55,7 +55,10 @@ import {
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
 import { platformSlugWhere } from '@/lib/orchestration/agents/platform-agent-guard';
-import { LATEST_AGENT_VERSION_ID_INCLUDE } from '@/lib/orchestration/agents/agent-versioning';
+import {
+  LATEST_AGENT_VERSION_ID_INCLUDE,
+  readAgentConsistently,
+} from '@/lib/orchestration/agents/agent-versioning';
 
 const DEFAULT_HISTORY_LIMIT = 20;
 const ROLES_TO_LOAD = ['user', 'assistant'] as const;
@@ -91,14 +94,15 @@ export async function executeChatTurn(
       where: { id: conversationId },
       select: { id: true, agentId: true },
     }),
-    prisma.aiAgent.findFirst({
-      // A platform slug names the org's platform instance only (§116 t-725).
-      where: { slug: config.agentSlug, ...platformSlugWhere(config.agentSlug) },
-      include: {
-        profile: true,
-        versions: LATEST_AGENT_VERSION_ID_INCLUDE,
-      },
-    }),
+    // One snapshot for the row and its newest version, so the pin names the
+    // config this turn runs even if an edit commits mid-read.
+    readAgentConsistently(prisma, (tx) =>
+      tx.aiAgent.findFirst({
+        // A platform slug names the org's platform instance only (§116 t-725).
+        where: { slug: config.agentSlug, ...platformSlugWhere(config.agentSlug) },
+        include: { profile: true, versions: LATEST_AGENT_VERSION_ID_INCLUDE },
+      })
+    ),
   ]);
 
   if (!conversation) {

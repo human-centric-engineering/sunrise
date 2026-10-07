@@ -353,6 +353,33 @@ describe('notifyEscalation', () => {
       );
     });
 
+    // #953: a webhook URL can carry its credential in the path or the query,
+    // and the logger redacts by key name only.
+    it.each([
+      ['a non-2xx response', () => new Response(null, { status: 500 })],
+      ['a failed fetch', () => Promise.reject(new Error('DNS failure'))],
+    ])('does not log a credential in the webhook URL on %s', async (_label, respond) => {
+      const SECRET = 'AbCdEfGhIjKlMnOpQrStUvWx';
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettings({
+          emailAddresses: ['ops@example.com'],
+          notifyOnPriority: 'all',
+          webhookUrl: `https://hooks.example.com/services/T0000/B0000/${SECRET}?token=qs-secret`,
+        }) as never
+      );
+      globalThis.fetch = vi.fn().mockImplementation(respond);
+
+      await notifyEscalation(makePayload());
+
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        expect.stringMatching(/^Escalation webhook/),
+        expect.objectContaining({ url: 'https://hooks.example.com/services/T0000/B0000/[param]' })
+      );
+      const logged = JSON.stringify(vi.mocked(logger.warn).mock.calls);
+      expect(logged).not.toContain(SECRET);
+      expect(logged).not.toContain('qs-secret');
+    });
+
     it('does not call fetch when webhookUrl is not configured', async () => {
       vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
         makeSettings({ emailAddresses: ['ops@example.com'], notifyOnPriority: 'all' }) as never

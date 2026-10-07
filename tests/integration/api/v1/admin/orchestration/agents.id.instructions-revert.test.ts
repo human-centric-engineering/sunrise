@@ -29,14 +29,30 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const prisma = {
     aiAgent: {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
-  },
-}));
+    // The write runs in a transaction; the tx is the client itself here.
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown): Promise<unknown> => fn(prisma)),
+  };
+  return { prisma };
+});
+
+// The version helpers read the agent back and write `AiAgentVersion` rows;
+// their behaviour is proved in agent-versioning's own tests. Here they are
+// stubbed so the test can assert WHEN the revert calls them.
+vi.mock('@/lib/orchestration/agents/agent-versioning', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/agents/agent-versioning')>();
+  return {
+    ...actual,
+    ensureBaselineVersion: vi.fn(async () => undefined),
+    recordAgentVersion: vi.fn(async () => 4),
+  };
+});
 
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
@@ -46,7 +62,12 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
+import {
+  ensureBaselineVersion,
+  recordAgentVersion,
+} from '@/lib/orchestration/agents/agent-versioning';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -152,6 +173,58 @@ describe('POST /api/v1/admin/orchestration/agents/:id/instructions-revert', () =
       expect(newHistory[2].instructions).toBe('Current instructions.');
       expect(newHistory[2].changedBy).toBe(ADMIN_ID);
       expect(newHistory[2].changedAt).toBeDefined();
+    });
+
+    it('saves the reverted config as a new agent version, in the same transaction', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const agent = makeAgentRow();
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(agent as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(agent as never);
+
+      const response = await POST(makeRequest({ versionIndex: 0 }), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(200);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      // An agent with no version rows keeps its pre-revert config as v1…
+      expect(ensureBaselineVersion).toHaveBeenCalledWith(prisma, AGENT_ID, ADMIN_ID);
+      // …and the reverted instructions become the newest version, so a chat
+      // turn after the revert is pinned to the config it actually runs.
+      expect(recordAgentVersion).toHaveBeenCalledWith(prisma, AGENT_ID, {
+        label: 'Reverted from instruction history',
+        createdBy: ADMIN_ID,
+      });
+      const updateAt = vi.mocked(prisma.aiAgent.update).mock.invocationCallOrder[0];
+      expect(vi.mocked(ensureBaselineVersion).mock.invocationCallOrder[0]).toBeLessThan(updateAt);
+      expect(vi.mocked(recordAgentVersion).mock.invocationCallOrder[0]).toBeGreaterThan(updateAt);
+    });
+
+    it('returns a retryable 409 when a concurrent edit takes the version number', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const agent = makeAgentRow();
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(agent as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(agent as never);
+      vi.mocked(recordAgentVersion).mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+          meta: { modelName: 'AiAgentVersion' },
+        })
+      );
+
+      const response = await POST(makeRequest({ versionIndex: 0 }), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(409);
+    });
+
+    it('lets any other database error through as a 500, not a 409', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const agent = makeAgentRow();
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(agent as never);
+      vi.mocked(prisma.aiAgent.update).mockRejectedValueOnce(new Error('connection lost'));
+
+      const response = await POST(makeRequest({ versionIndex: 0 }), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(500);
     });
 
     it('reverts to the correct version when versionIndex is 1', async () => {

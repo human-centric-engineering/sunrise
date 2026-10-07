@@ -68,9 +68,10 @@ vi.mock('@/lib/orchestration/knowledge/resolveAgentDocumentAccess', () => ({
   invalidateAllAgentAccess: vi.fn(),
 }));
 
+const mockLogInfo = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/api/context', () => ({
   getRouteLogger: vi.fn(() =>
-    Promise.resolve({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() })
+    Promise.resolve({ info: mockLogInfo, warn: vi.fn(), error: vi.fn(), debug: vi.fn() })
   ),
 }));
 
@@ -190,6 +191,24 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/fetch-url', () =>
       // test-review:accept tobe_true — structural boolean assertion on API response field
       expect(data.success).toBe(true);
       expect(data.data.id).toBe('doc-1');
+    });
+
+    it('does not log a credential carried in the fetched URL (#953)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const SECRET = 'AbCdEfGhIjKlMnOpQrStUvWx';
+
+      const response = await POST(
+        makePostRequest({ url: `https://example.com/d/${SECRET}/guide.md?sig=qs-secret` })
+      );
+
+      expect(response.status).toBe(201);
+      expect(mockLogInfo).toHaveBeenCalledWith(
+        'Document fetched from URL',
+        expect.objectContaining({ url: 'https://example.com/d/[param]/guide.md' })
+      );
+      const logged = JSON.stringify(mockLogInfo.mock.calls);
+      expect(logged).not.toContain(SECRET);
+      expect(logged).not.toContain('qs-secret');
     });
 
     it('calls fetchDocumentFromUrl with the provided URL', async () => {

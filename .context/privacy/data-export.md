@@ -231,10 +231,10 @@ A table can identify a person without declaring a Prisma relation to `User` —
 and then it is invisible to a relation-based scan, **and to the erasure
 cascade**. Sunrise has two, both in the manifest by hand:
 
-| Table               | Identified by                    | How it is matched                     |
-| ------------------- | -------------------------------- | ------------------------------------- |
-| `ContactSubmission` | `email` — no user id at all      | `email`, exactly, normalised          |
-| `FeatureFlag`       | `createdBy String?`, no relation | `createdBy`, as an attribution source |
+| Table               | Identified by                    | How it is matched                                    |
+| ------------------- | -------------------------------- | ---------------------------------------------------- |
+| `ContactSubmission` | `email` — no user id at all      | `email`, exactly, normalised; verified accounts only |
+| `FeatureFlag`       | `createdBy String?`, no relation | `createdBy`, as an attribution source                |
 
 The guard casts **two nets**, because the first one missed both of these:
 
@@ -248,6 +248,11 @@ The guard casts **two nets**, because the first one missed both of these:
 `exportUserData()` fetches it directly into the bundle's `erasureReceipts`
 section rather than through a manifest source. That allowlist is an accounting
 note, not an escape hatch — anything added to it still owes a reader a reason.
+
+Being invisible to the cascade means erasure needs its own step for each.
+`eraseUser()` deletes `ContactSubmission` rows through the same matcher the
+manifest uses (`contactSubmissionsOf()`); see
+[What `eraseUser()` Does Beyond the Cascade](./data-erasure.md#what-eraseuser-does-beyond-the-cascade).
 
 **Neither net can reach `ContactSubmission`.** It holds no user id in any
 column, only an email, so no mechanical scan finds it. That is the residual gap,
@@ -267,6 +272,15 @@ that hands the subject a stranger's data, and copied onto an erasure path it
 deletes a stranger's rows. `ContactSubmission`'s only writer stores
 `emailSchema` output (trimmed, lower-cased), so its source matches
 `email.trim().toLowerCase()`.
+
+**And attribute a row by address only when the account has proven that
+address.** A public form records whatever address its sender typed, and with
+email verification off anyone can open an account under someone else's. So
+`ContactSubmission` is exported (and erased) only for an account whose
+`emailVerified` is true — `contactSubmissionsOf()` in
+`lib/privacy/contact-submissions.ts` returns no match otherwise. The app
+collector below receives `userId` and `email` only, so a fork table filled by
+an unauthenticated writer should read `emailVerified` off the user row itself.
 
 ## Extending It — the App Seam
 

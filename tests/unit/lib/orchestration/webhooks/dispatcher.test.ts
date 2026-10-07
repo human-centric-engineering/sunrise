@@ -286,6 +286,24 @@ describe('dispatchWebhookEvent', () => {
     );
   });
 
+  it('does not log a credential carried in the subscription URL (#953)', async () => {
+    const secret = 'AbCdEfGhIjKlMnOpQrStUvWx';
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([
+      makeSub({ url: `https://example.com/services/T0000/B0000/${secret}?token=qs-secret` }),
+    ] as never);
+    mockFetch.mockResolvedValue({ ok: false, status: 500 });
+
+    await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Webhook delivery failed',
+      expect.objectContaining({ destination: 'https://example.com/services/T0000/B0000/[param]' })
+    );
+    const logged = JSON.stringify(vi.mocked(logger.warn).mock.calls);
+    expect(logged).not.toContain(secret);
+    expect(logged).not.toContain('qs-secret');
+  });
+
   it('does not throw when fetch rejects (fire-and-forget)', async () => {
     vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
     mockFetch.mockRejectedValue(new Error('Network error'));

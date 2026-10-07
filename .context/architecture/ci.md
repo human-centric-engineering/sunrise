@@ -959,6 +959,16 @@ output:
 fork that adds its own deployment docs is the most likely thing to trip the
 tripwire, and `LOCAL_HOSTS` is the seam for it.
 
+**The weekly sweep has a second exclude list.** PR and push scans read only the
+commits in their range; the scheduled (and manual) full-history sweep reads
+every commit, including placeholders in files that have since been cleaned or
+deleted. Those paths go in `.trufflehog-exclude-history.txt`, which the
+workflow appends to `.trufflehog-exclude.txt` only for `schedule` and
+`workflow_dispatch` runs — so exempting an old commit's `CLAUDE.md` does not
+switch off TruffleHog's detectors for `CLAUDE.md` on every future PR. A sweep
+that fails on a finding no PR scan would reach belongs in the history list, not
+the main one.
+
 One wrinkle, because the script's own comment got this wrong until recently and
 the reasoning is worth keeping. That comment used to say the file "is not on
 `.trufflehog-exclude.txt`". It is — the last entry in that file names it. Both were written in the same commit (`3712a013`): a literal

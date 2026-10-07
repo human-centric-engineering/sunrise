@@ -29,6 +29,14 @@ import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import type { WorkflowDefinition } from '@/types/orchestration';
 import { importedAgentProviderWarnings } from '@/lib/orchestration/agents/provider-approval';
 import { findUnapprovedModelOverridesIn } from '@/lib/orchestration/workflows/semantic-validator';
+import {
+  AGENT_BATCH_TRANSACTION_TIMEOUT_MS,
+  INITIAL_VERSION_SUMMARY,
+  ensureBaselineVersion,
+  recordAgentVersion,
+} from '@/lib/orchestration/agents/agent-versioning';
+
+const BACKUP_VERSION_LABEL = 'Overwritten by backup import';
 
 export interface ImportResult {
   agents: { created: number; updated: number };
@@ -73,535 +81,547 @@ export async function importOrchestrationConfig(
     if (unchecked) result.warnings.push(unchecked);
   }
 
-  await prisma.$transaction(async (tx) => {
-    // Knowledge tags first — agents reference them by slug, so create/refresh
-    // them before the agent import so grant resolution succeeds.
-    const tagIdBySlug = new Map<string, string>();
-    for (const tag of parsed.data.knowledgeTags ?? []) {
-      const upserted = await tx.knowledgeTag.upsert({
-        where: { slug: tag.slug },
-        create: { slug: tag.slug, name: tag.name, description: tag.description ?? null },
-        update: { name: tag.name, description: tag.description ?? null },
-      });
-      tagIdBySlug.set(upserted.slug, upserted.id);
-      if (upserted.createdAt.getTime() === upserted.updatedAt.getTime()) {
-        result.knowledgeTags.created++;
-      } else {
-        result.knowledgeTags.updated++;
-      }
-    }
-
-    // v1 → v2 compatibility: when the backup is v1 (no `knowledgeTags`) but an
-    // agent carries non-empty `knowledgeCategories`, infer tag slugs from those
-    // strings so the new resolver model has something to work with.
-    function slugifyFor(input: string): string {
-      return input
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 64);
-    }
-    if (parsed.schemaVersion === 1) {
-      const inferredCategories = new Set<string>();
-      for (const a of parsed.data.agents) {
-        for (const c of a.knowledgeCategories ?? []) {
-          if (c.trim()) inferredCategories.add(c.trim());
-        }
-      }
-      for (const name of inferredCategories) {
-        const slug = slugifyFor(name);
-        if (!slug || tagIdBySlug.has(slug)) continue;
+  await prisma.$transaction(
+    async (tx) => {
+      // Knowledge tags first — agents reference them by slug, so create/refresh
+      // them before the agent import so grant resolution succeeds.
+      const tagIdBySlug = new Map<string, string>();
+      for (const tag of parsed.data.knowledgeTags ?? []) {
         const upserted = await tx.knowledgeTag.upsert({
-          where: { slug },
-          create: { slug, name },
-          update: { name },
+          where: { slug: tag.slug },
+          create: { slug: tag.slug, name: tag.name, description: tag.description ?? null },
+          update: { name: tag.name, description: tag.description ?? null },
         });
-        tagIdBySlug.set(slug, upserted.id);
-        result.knowledgeTags.created++;
-      }
-    }
-
-    // Import agents by slug upsert
-    for (const agent of parsed.data.agents) {
-      const existing = await tx.aiAgent.findFirst({ where: { slug: agent.slug } });
-      if (existing?.isSystem) {
-        result.warnings.push(
-          `System agent '${agent.slug}' skipped — system agents cannot be overwritten by backup import`
-        );
-        continue;
-      }
-      // A platform agent's slug is never an org's own agent's (§116 t-725):
-      // the reconcile creates this org's instance, not the backup.
-      if (isReservedAgentSlug(agent.slug)) {
-        result.warnings.push(
-          `Agent '${agent.slug}' skipped — ${reservedAgentSlugMessage(agent.slug)}`
-        );
-        continue;
-      }
-      // Imported and flagged, not refused (§120 t-743).
-      const unapproved = agentProviders.bySlug.get(agent.slug);
-      if (unapproved) result.warnings.push(unapproved);
-      if (existing) {
-        await tx.aiAgent.update({
-          where: { id: existing.id },
-          data: {
-            name: agent.name,
-            description: agent.description,
-            systemInstructions: agent.systemInstructions,
-            model: agent.model,
-            provider: agent.provider,
-            fallbackProviders: agent.fallbackProviders,
-            temperature: agent.temperature,
-            maxTokens: agent.maxTokens,
-            reasoningEffort: agent.reasoningEffort ?? null,
-            monthlyBudgetUsd: agent.monthlyBudgetUsd,
-            // Older backup bundles omit this field — treat absent as
-            // null (no per-turn cap). The schema validator allows the
-            // omission via `optional()`.
-            maxCostPerTurnUsd: agent.maxCostPerTurnUsd ?? null,
-            visibility: agent.visibility,
-            isActive: agent.isActive,
-            metadata: (agent.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-            knowledgeAccessMode: agent.knowledgeAccessMode,
-            knowledgeRetrievalMode: agent.knowledgeRetrievalMode,
-            knowledgeTriggerKeywords: agent.knowledgeTriggerKeywords,
-            topicBoundaries: agent.topicBoundaries,
-            brandVoiceInstructions: agent.brandVoiceInstructions,
-            rateLimitRpm: agent.rateLimitRpm,
-            inputGuardMode: agent.inputGuardMode,
-            outputGuardMode: agent.outputGuardMode,
-            citationGuardMode: agent.citationGuardMode,
-            maxHistoryTokens: agent.maxHistoryTokens,
-            maxHistoryMessages: agent.maxHistoryMessages,
-            retentionDays: agent.retentionDays,
-            providerConfig: (agent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-            widgetConfig: (agent.widgetConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-            // Discriminator + inheritance + attachment + runtime-prompt fields.
-            // The schema defaults them for older bundles, so an overwrite always
-            // applies a coherent value rather than silently leaving the prior one.
-            kind: agent.kind,
-            persona: agent.persona,
-            guardrails: agent.guardrails,
-            personaMode: agent.personaMode,
-            voiceMode: agent.voiceMode,
-            guardrailsMode: agent.guardrailsMode,
-            enableVoiceInput: agent.enableVoiceInput,
-            enableImageInput: agent.enableImageInput,
-            enableDocumentInput: agent.enableDocumentInput,
-            runtimePromptManaged: agent.runtimePromptManaged,
-            runtimePromptNote: agent.runtimePromptNote,
-          },
-        });
-        result.agents.updated++;
-      } else {
-        // Strip every backup-only field that is NOT an `AiAgent` column before
-        // spreading into `create` — Prisma rejects unknown args. `knowledgeCategories`
-        // is kept on the wire for old-bundle back-compat (and the v1->v2 tag
-        // backfill above still reads it off `agent`), but the column was dropped
-        // in Phase 6, so it must not reach `create` (#353). The grant arrays are
-        // applied separately below.
-        const {
-          grantedTagSlugs: _ignoreTagSlugs,
-          grantedDocumentSlugs: _ignoreDocSlugs,
-          grantedDocumentHashes: _ignoreDocHashes,
-          knowledgeCategories: _ignoreKnowledgeCategories,
-          ...createAgent
-        } = agent;
-        await tx.aiAgent.create({
-          data: {
-            ...createAgent,
-            metadata: (createAgent.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-            providerConfig:
-              (createAgent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-            widgetConfig: (createAgent.widgetConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-            createdBy: userId,
-          },
-        });
-        result.agents.created++;
-      }
-
-      // Apply grants after upsert. For v1 backups (where the slug arrays are
-      // empty and we synthesised tag rows from knowledgeCategories above),
-      // fall back to looking up by category-derived slug so the agent ends up
-      // with the same effective scope as before the migration.
-      const target = await tx.aiAgent.findFirst({
-        where: { slug: agent.slug },
-        select: { id: true },
-      });
-      if (!target) continue; // upsert just succeeded — should never happen
-
-      const tagSlugs =
-        agent.grantedTagSlugs.length > 0
-          ? agent.grantedTagSlugs
-          : parsed.schemaVersion === 1
-            ? (agent.knowledgeCategories ?? [])
-                .map((c) => slugifyFor(c))
-                .filter((s) => s.length > 0)
-            : [];
-
-      const resolvedTagIds: string[] = [];
-      for (const slug of tagSlugs) {
-        const tagId = tagIdBySlug.get(slug);
-        if (tagId) {
-          resolvedTagIds.push(tagId);
+        tagIdBySlug.set(upserted.slug, upserted.id);
+        if (upserted.createdAt.getTime() === upserted.updatedAt.getTime()) {
+          result.knowledgeTags.created++;
         } else {
-          result.warnings.push(
-            `Agent '${agent.slug}' references missing knowledge-tag slug '${slug}'; grant skipped`
-          );
+          result.knowledgeTags.updated++;
         }
       }
 
-      await tx.aiAgentKnowledgeTag.deleteMany({ where: { agentId: target.id } });
-      if (resolvedTagIds.length > 0) {
-        await tx.aiAgentKnowledgeTag.createMany({
-          data: resolvedTagIds.map((tagId) => ({ agentId: target.id, tagId })),
-          skipDuplicates: true,
-        });
+      // v1 → v2 compatibility: when the backup is v1 (no `knowledgeTags`) but an
+      // agent carries non-empty `knowledgeCategories`, infer tag slugs from those
+      // strings so the new resolver model has something to work with.
+      function slugifyFor(input: string): string {
+        return input
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 64);
+      }
+      if (parsed.schemaVersion === 1) {
+        const inferredCategories = new Set<string>();
+        for (const a of parsed.data.agents) {
+          for (const c of a.knowledgeCategories ?? []) {
+            if (c.trim()) inferredCategories.add(c.trim());
+          }
+        }
+        for (const name of inferredCategories) {
+          const slug = slugifyFor(name);
+          if (!slug || tagIdBySlug.has(slug)) continue;
+          const upserted = await tx.knowledgeTag.upsert({
+            where: { slug },
+            create: { slug, name },
+            update: { name },
+          });
+          tagIdBySlug.set(slug, upserted.id);
+          result.knowledgeTags.created++;
+        }
       }
 
-      // Document grants resolve via slug (v3 — the stable cross-env key, #338).
-      // v2 backups carried `grantedDocumentHashes` instead; fall back to fileHash
-      // lookup only when no slugs are present, so older bundles still restore.
-      const docSlugs = agent.grantedDocumentSlugs ?? [];
-      let resolvedDocIds: string[] = [];
-      if (docSlugs.length > 0) {
-        const docs = await tx.aiKnowledgeDocument.findMany({
-          where: { slug: { in: docSlugs } },
-          select: { id: true, slug: true },
+      // Import agents by slug upsert
+      for (const agent of parsed.data.agents) {
+        const existing = await tx.aiAgent.findFirst({ where: { slug: agent.slug } });
+        if (existing?.isSystem) {
+          result.warnings.push(
+            `System agent '${agent.slug}' skipped — system agents cannot be overwritten by backup import`
+          );
+          continue;
+        }
+        // A platform agent's slug is never an org's own agent's (§116 t-725):
+        // the reconcile creates this org's instance, not the backup.
+        if (isReservedAgentSlug(agent.slug)) {
+          result.warnings.push(
+            `Agent '${agent.slug}' skipped — ${reservedAgentSlugMessage(agent.slug)}`
+          );
+          continue;
+        }
+        // Imported and flagged, not refused (§120 t-743).
+        const unapproved = agentProviders.bySlug.get(agent.slug);
+        if (unapproved) result.warnings.push(unapproved);
+        if (existing) {
+          await ensureBaselineVersion(tx, existing.id, userId);
+          await tx.aiAgent.update({
+            where: { id: existing.id },
+            data: {
+              name: agent.name,
+              description: agent.description,
+              systemInstructions: agent.systemInstructions,
+              model: agent.model,
+              provider: agent.provider,
+              fallbackProviders: agent.fallbackProviders,
+              temperature: agent.temperature,
+              maxTokens: agent.maxTokens,
+              reasoningEffort: agent.reasoningEffort ?? null,
+              monthlyBudgetUsd: agent.monthlyBudgetUsd,
+              // Older backup bundles omit this field — treat absent as
+              // null (no per-turn cap). The schema validator allows the
+              // omission via `optional()`.
+              maxCostPerTurnUsd: agent.maxCostPerTurnUsd ?? null,
+              visibility: agent.visibility,
+              isActive: agent.isActive,
+              metadata: (agent.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+              knowledgeAccessMode: agent.knowledgeAccessMode,
+              knowledgeRetrievalMode: agent.knowledgeRetrievalMode,
+              knowledgeTriggerKeywords: agent.knowledgeTriggerKeywords,
+              topicBoundaries: agent.topicBoundaries,
+              brandVoiceInstructions: agent.brandVoiceInstructions,
+              rateLimitRpm: agent.rateLimitRpm,
+              inputGuardMode: agent.inputGuardMode,
+              outputGuardMode: agent.outputGuardMode,
+              citationGuardMode: agent.citationGuardMode,
+              maxHistoryTokens: agent.maxHistoryTokens,
+              maxHistoryMessages: agent.maxHistoryMessages,
+              retentionDays: agent.retentionDays,
+              providerConfig: (agent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+              widgetConfig: (agent.widgetConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+              // Discriminator + inheritance + attachment + runtime-prompt fields.
+              // The schema defaults them for older bundles, so an overwrite always
+              // applies a coherent value rather than silently leaving the prior one.
+              kind: agent.kind,
+              persona: agent.persona,
+              guardrails: agent.guardrails,
+              personaMode: agent.personaMode,
+              voiceMode: agent.voiceMode,
+              guardrailsMode: agent.guardrailsMode,
+              enableVoiceInput: agent.enableVoiceInput,
+              enableImageInput: agent.enableImageInput,
+              enableDocumentInput: agent.enableDocumentInput,
+              runtimePromptManaged: agent.runtimePromptManaged,
+              runtimePromptNote: agent.runtimePromptNote,
+            },
+          });
+          result.agents.updated++;
+        } else {
+          // Strip every backup-only field that is NOT an `AiAgent` column before
+          // spreading into `create` — Prisma rejects unknown args. `knowledgeCategories`
+          // is kept on the wire for old-bundle back-compat (and the v1->v2 tag
+          // backfill above still reads it off `agent`), but the column was dropped
+          // in Phase 6, so it must not reach `create` (#353). The grant arrays are
+          // applied separately below.
+          const {
+            grantedTagSlugs: _ignoreTagSlugs,
+            grantedDocumentSlugs: _ignoreDocSlugs,
+            grantedDocumentHashes: _ignoreDocHashes,
+            knowledgeCategories: _ignoreKnowledgeCategories,
+            ...createAgent
+          } = agent;
+          await tx.aiAgent.create({
+            data: {
+              ...createAgent,
+              metadata: (createAgent.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+              providerConfig:
+                (createAgent.providerConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+              widgetConfig: (createAgent.widgetConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+              createdBy: userId,
+            },
+          });
+          result.agents.created++;
+        }
+
+        // Apply grants after upsert. For v1 backups (where the slug arrays are
+        // empty and we synthesised tag rows from knowledgeCategories above),
+        // fall back to looking up by category-derived slug so the agent ends up
+        // with the same effective scope as before the migration.
+        const target = await tx.aiAgent.findFirst({
+          where: { slug: agent.slug },
+          select: { id: true },
         });
-        const presentSlugs = new Set(docs.map((d) => d.slug));
-        for (const slug of docSlugs) {
-          if (!presentSlugs.has(slug)) {
+        if (!target) continue; // upsert just succeeded — should never happen
+
+        const tagSlugs =
+          agent.grantedTagSlugs.length > 0
+            ? agent.grantedTagSlugs
+            : parsed.schemaVersion === 1
+              ? (agent.knowledgeCategories ?? [])
+                  .map((c) => slugifyFor(c))
+                  .filter((s) => s.length > 0)
+              : [];
+
+        const resolvedTagIds: string[] = [];
+        for (const slug of tagSlugs) {
+          const tagId = tagIdBySlug.get(slug);
+          if (tagId) {
+            resolvedTagIds.push(tagId);
+          } else {
             result.warnings.push(
-              `Agent '${agent.slug}' references missing knowledge document slug '${slug}'; grant skipped`
+              `Agent '${agent.slug}' references missing knowledge-tag slug '${slug}'; grant skipped`
             );
           }
         }
-        resolvedDocIds = docs.map((d) => d.id);
-      } else {
-        const docHashes = agent.grantedDocumentHashes ?? [];
-        if (docHashes.length > 0) {
-          const docs = await tx.aiKnowledgeDocument.findMany({
-            where: { fileHash: { in: docHashes } },
-            select: { id: true, fileHash: true },
+
+        await tx.aiAgentKnowledgeTag.deleteMany({ where: { agentId: target.id } });
+        if (resolvedTagIds.length > 0) {
+          await tx.aiAgentKnowledgeTag.createMany({
+            data: resolvedTagIds.map((tagId) => ({ agentId: target.id, tagId })),
+            skipDuplicates: true,
           });
-          const presentHashes = new Set(docs.map((d) => d.fileHash));
-          for (const h of docHashes) {
-            if (!presentHashes.has(h)) {
+        }
+
+        // Document grants resolve via slug (v3 — the stable cross-env key, #338).
+        // v2 backups carried `grantedDocumentHashes` instead; fall back to fileHash
+        // lookup only when no slugs are present, so older bundles still restore.
+        const docSlugs = agent.grantedDocumentSlugs ?? [];
+        let resolvedDocIds: string[] = [];
+        if (docSlugs.length > 0) {
+          const docs = await tx.aiKnowledgeDocument.findMany({
+            where: { slug: { in: docSlugs } },
+            select: { id: true, slug: true },
+          });
+          const presentSlugs = new Set(docs.map((d) => d.slug));
+          for (const slug of docSlugs) {
+            if (!presentSlugs.has(slug)) {
               result.warnings.push(
-                `Agent '${agent.slug}' references missing knowledge document (fileHash ${h.slice(0, 12)}…); grant skipped`
+                `Agent '${agent.slug}' references missing knowledge document slug '${slug}'; grant skipped`
               );
             }
           }
-          // A single fileHash can match multiple documents (content dedup is
-          // advisory, not unique) — restrict to one grant per agent+document.
-          resolvedDocIds = [...new Set(docs.map((d) => d.id))];
-        }
-      }
-      await tx.aiAgentKnowledgeDocument.deleteMany({ where: { agentId: target.id } });
-      if (resolvedDocIds.length > 0) {
-        await tx.aiAgentKnowledgeDocument.createMany({
-          data: resolvedDocIds.map((documentId) => ({ agentId: target.id, documentId })),
-          skipDuplicates: true,
-        });
-      }
-    }
-
-    // Import capabilities by slug upsert
-    for (const cap of parsed.data.capabilities) {
-      const existing = await tx.aiCapability.findUnique({ where: { slug: cap.slug } });
-      if (existing) {
-        const data: Prisma.AiCapabilityUpdateInput = {
-          name: cap.name,
-          description: cap.description,
-          category: cap.category,
-          executionConfig: (cap.executionConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-          requiresApproval: cap.requiresApproval,
-          rateLimit: cap.rateLimit,
-        };
-
-        // `PATCH /capabilities/{id}` refuses `isActive: false` on a system row —
-        // deactivating a built-in is treated as equivalent to deleting it — and
-        // nothing puts it back: every capability seed sets `isActive` only in
-        // its `create` branch, so a re-seed will not undo it. An import must not
-        // do what the API refuses, or a hand-edited bundle carrying
-        // `{"slug":"upload_to_storage","isActive":false}` silently disables a
-        // built-in for good, through the same call that declines to import that
-        // bundle's `executionHandler`.
-        //
-        // Re-ACTIVATING stays allowed, exactly as PATCH allows it.
-        if (existing.isSystem && cap.isActive === false) {
-          result.warnings.push(
-            `System capability '${cap.slug}' — isActive:false not imported; deactivating a built-in is equivalent to deleting it and no re-seed restores it`
-          );
+          resolvedDocIds = docs.map((d) => d.id);
         } else {
-          data.isActive = cap.isActive;
+          const docHashes = agent.grantedDocumentHashes ?? [];
+          if (docHashes.length > 0) {
+            const docs = await tx.aiKnowledgeDocument.findMany({
+              where: { fileHash: { in: docHashes } },
+              select: { id: true, fileHash: true },
+            });
+            const presentHashes = new Set(docs.map((d) => d.fileHash));
+            for (const h of docHashes) {
+              if (!presentHashes.has(h)) {
+                result.warnings.push(
+                  `Agent '${agent.slug}' references missing knowledge document (fileHash ${h.slice(0, 12)}…); grant skipped`
+                );
+              }
+            }
+            // A single fileHash can match multiple documents (content dedup is
+            // advisory, not unique) — restrict to one grant per agent+document.
+            resolvedDocIds = [...new Set(docs.map((d) => d.id))];
+          }
+        }
+        await tx.aiAgentKnowledgeDocument.deleteMany({ where: { agentId: target.id } });
+        if (resolvedDocIds.length > 0) {
+          await tx.aiAgentKnowledgeDocument.createMany({
+            data: resolvedDocIds.map((documentId) => ({ agentId: target.id, documentId })),
+            skipDuplicates: true,
+          });
         }
 
-        // On a system row the seeds own the execution fields, so importing them
-        // would write a change the next re-seed reverts with no audit entry.
-        // Skip just those fields rather than skipping the row (which is what
-        // the agent path above does): an import is a whole-config restore, and
-        // refusing it because the bundle carries a built-in's shipped
-        // definition would make routine restores unusable. Everything the
-        // operator owns — name, description, category, rate limit, approval —
-        // still restores.
-        //
-        // Sunrise's own exporter filters `isSystem: false`, so a bundle this
-        // produced never reaches here with a system capability. A hand-edited
-        // or foreign bundle can, and that is the case worth being correct for.
-        const seedOwned = existing.isSystem ? changedSeedOwnedFields(existing, cap) : [];
-        if (seedOwned.length > 0) {
-          // Only warn when a value actually differs — a routine restore of an
-          // unmodified bundle carries the shipped definition verbatim, and
-          // warning on that would be noise on every import.
-          result.warnings.push(
-            `System capability '${cap.slug}' — ${seedOwned.join(', ')} not imported; these are seeded from code and a re-seed would revert them`
-          );
-        }
-        if (!existing.isSystem) {
-          data.functionDefinition = cap.functionDefinition as Prisma.InputJsonValue;
-          data.executionType = cap.executionType;
-          data.executionHandler = cap.executionHandler;
-        }
+        // Save the restored config (row and grants) as the agent's next version
+        // (v1 for a new agent), so the newest version equals what it now runs.
+        // Nothing is written when the backup left the config unchanged.
+        await recordAgentVersion(tx, target.id, {
+          label: existing ? BACKUP_VERSION_LABEL : INITIAL_VERSION_SUMMARY,
+          createdBy: userId,
+        });
+      }
 
-        await tx.aiCapability.update({ where: { slug: cap.slug }, data });
-        result.capabilities.updated++;
-      } else {
-        await tx.aiCapability.create({
-          data: {
-            ...cap,
-            functionDefinition: cap.functionDefinition as Prisma.InputJsonValue,
+      // Import capabilities by slug upsert
+      for (const cap of parsed.data.capabilities) {
+        const existing = await tx.aiCapability.findUnique({ where: { slug: cap.slug } });
+        if (existing) {
+          const data: Prisma.AiCapabilityUpdateInput = {
+            name: cap.name,
+            description: cap.description,
+            category: cap.category,
             executionConfig: (cap.executionConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-          },
-        });
-        result.capabilities.created++;
-      }
-    }
+            requiresApproval: cap.requiresApproval,
+            rateLimit: cap.rateLimit,
+          };
 
-    // Import workflows by slug upsert. The wire format carries one
-    // `workflowDefinition` per workflow — on import it becomes either a
-    // new published version (update path: published draft promoted to vN+1)
-    // or the initial v1 (create path).
-    for (const wf of parsed.data.workflows) {
-      // A system workflow is the seed's, as a platform agent is, so it is
-      // recognised by slug before anything else: a bundle exported before
-      // t-729 carries the provider-model audit, and on a target where that row
-      // is absent (or another org's, at `multi`) the row check further down
-      // cannot see it.
-      if (isSystemWorkflowSlug(wf.slug)) {
-        result.warnings.push(systemWorkflowSkipped(wf.slug));
-        continue;
-      }
-      // A built-in template is served from code (§116 t-727). A backup taken
-      // before the upgrade carries the seed-era template row; importing it
-      // would bring that row back as a template. An ordinary workflow holding
-      // the slug (one an install switched back on or converted) imports as
-      // any other.
-      if (wf.isTemplate && isBuiltinTemplateSlug(wf.slug)) {
-        result.warnings.push(
-          `Workflow '${wf.slug}' skipped — built-in templates are served from code, not restored from a backup`
-        );
-        continue;
-      }
-      const existing = await tx.aiWorkflow.findUnique({ where: { slug: wf.slug } });
-      // The row flag catches a system workflow the slug list does not know (a
-      // fork's own seed). Versioning over one would republish whatever
-      // definition the bundle carried, and the update below could deactivate
-      // it or change its template status — both of which PATCH refuses.
-      if (existing?.isSystem) {
-        result.warnings.push(systemWorkflowSkipped(wf.slug));
-        continue;
-      }
-      // Parsed only after both system checks, so a skipped row never reports a
-      // definition problem as its reason.
-      const defParsed = workflowDefinitionSchema.safeParse(wf.workflowDefinition);
-      if (!defParsed.success) {
-        result.warnings.push(`Workflow '${wf.slug}' skipped — definition failed validation`);
-        continue;
-      }
-      const unapprovedSteps = workflowProviders.bySlug.get(wf.slug);
-      if (unapprovedSteps) result.warnings.push(unapprovedSteps);
-      if (existing) {
-        // Promote the imported snapshot to a new version on the existing workflow.
-        const lastVersion = await tx.aiWorkflowVersion.findFirst({
-          where: { workflowId: existing.id },
-          orderBy: { version: 'desc' },
-          select: { version: true },
-        });
-        const newVersion = await tx.aiWorkflowVersion.create({
-          data: {
-            workflowId: existing.id,
-            version: (lastVersion?.version ?? 0) + 1,
-            snapshot: defParsed.data as unknown as Prisma.InputJsonValue,
-            changeSummary: 'Imported from backup',
-            createdBy: userId,
-          },
-        });
-        await tx.aiWorkflow.update({
-          where: { id: existing.id },
-          data: {
-            name: wf.name,
-            description: wf.description,
-            patternsUsed: wf.patternsUsed,
-            isActive: wf.isActive,
-            isTemplate: wf.isTemplate,
-            metadata: (wf.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-            publishedVersionId: newVersion.id,
-          },
-        });
-        result.workflows.updated++;
-      } else {
-        const created = await tx.aiWorkflow.create({
-          data: {
-            name: wf.name,
-            slug: wf.slug,
-            description: wf.description,
-            patternsUsed: wf.patternsUsed,
-            isActive: wf.isActive,
-            isTemplate: wf.isTemplate,
-            metadata: (wf.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-            createdBy: userId,
-          },
-        });
-        await createInitialVersion({
-          tx,
-          workflowId: created.id,
-          definition: defParsed.data,
-          userId,
-        });
-        result.workflows.created++;
-      }
-    }
+          // `PATCH /capabilities/{id}` refuses `isActive: false` on a system row —
+          // deactivating a built-in is treated as equivalent to deleting it — and
+          // nothing puts it back: every capability seed sets `isActive` only in
+          // its `create` branch, so a re-seed will not undo it. An import must not
+          // do what the API refuses, or a hand-edited bundle carrying
+          // `{"slug":"upload_to_storage","isActive":false}` silently disables a
+          // built-in for good, through the same call that declines to import that
+          // bundle's `executionHandler`.
+          //
+          // Re-ACTIVATING stays allowed, exactly as PATCH allows it.
+          if (existing.isSystem && cap.isActive === false) {
+            result.warnings.push(
+              `System capability '${cap.slug}' — isActive:false not imported; deactivating a built-in is equivalent to deleting it and no re-seed restores it`
+            );
+          } else {
+            data.isActive = cap.isActive;
+          }
 
-    // Import event subscriptions (webhook + email channels).
-    // Skip duplicates by destination — url for webhook rows,
-    // emailAddress for email rows.
-    for (const wh of parsed.data.webhooks) {
-      const channel = wh.channel ?? 'webhook';
-      const destination = channel === 'webhook' ? wh.url : wh.emailAddress;
-      if (!destination) {
-        result.warnings.push(
-          `Skipped event subscription with channel "${channel}" and no destination value`
-        );
-        continue;
+          // On a system row the seeds own the execution fields, so importing them
+          // would write a change the next re-seed reverts with no audit entry.
+          // Skip just those fields rather than skipping the row (which is what
+          // the agent path above does): an import is a whole-config restore, and
+          // refusing it because the bundle carries a built-in's shipped
+          // definition would make routine restores unusable. Everything the
+          // operator owns — name, description, category, rate limit, approval —
+          // still restores.
+          //
+          // Sunrise's own exporter filters `isSystem: false`, so a bundle this
+          // produced never reaches here with a system capability. A hand-edited
+          // or foreign bundle can, and that is the case worth being correct for.
+          const seedOwned = existing.isSystem ? changedSeedOwnedFields(existing, cap) : [];
+          if (seedOwned.length > 0) {
+            // Only warn when a value actually differs — a routine restore of an
+            // unmodified bundle carries the shipped definition verbatim, and
+            // warning on that would be noise on every import.
+            result.warnings.push(
+              `System capability '${cap.slug}' — ${seedOwned.join(', ')} not imported; these are seeded from code and a re-seed would revert them`
+            );
+          }
+          if (!existing.isSystem) {
+            data.functionDefinition = cap.functionDefinition as Prisma.InputJsonValue;
+            data.executionType = cap.executionType;
+            data.executionHandler = cap.executionHandler;
+          }
+
+          await tx.aiCapability.update({ where: { slug: cap.slug }, data });
+          result.capabilities.updated++;
+        } else {
+          await tx.aiCapability.create({
+            data: {
+              ...cap,
+              functionDefinition: cap.functionDefinition as Prisma.InputJsonValue,
+              executionConfig: (cap.executionConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            },
+          });
+          result.capabilities.created++;
+        }
       }
 
-      // A bundle is operator-supplied data that becomes a DESTINATION, so both
-      // channels are validated here rather than trusted. Per row, with a
-      // warning, matching the skip above — validating in the schema instead
-      // would abort the whole restore over one bad subscription, taking agents,
-      // capabilities, workflows and settings with it. It would also reject an
-      // email row carrying a stale `url` left behind by a channel switch, which
-      // the importer never even reads.
-      if (channel === 'webhook' && !isSafeProviderUrl(destination)) {
-        result.warnings.push(
-          `Skipped webhook for ${destination} — private or internal addresses are not allowed as a destination`
-        );
-        continue;
-      }
-      if (channel === 'email' && !z.string().email().safeParse(destination).success) {
-        result.warnings.push(
-          `Skipped email subscription — "${destination}" is not a valid address`
-        );
-        continue;
+      // Import workflows by slug upsert. The wire format carries one
+      // `workflowDefinition` per workflow — on import it becomes either a
+      // new published version (update path: published draft promoted to vN+1)
+      // or the initial v1 (create path).
+      for (const wf of parsed.data.workflows) {
+        // A system workflow is the seed's, as a platform agent is, so it is
+        // recognised by slug before anything else: a bundle exported before
+        // t-729 carries the provider-model audit, and on a target where that row
+        // is absent (or another org's, at `multi`) the row check further down
+        // cannot see it.
+        if (isSystemWorkflowSlug(wf.slug)) {
+          result.warnings.push(systemWorkflowSkipped(wf.slug));
+          continue;
+        }
+        // A built-in template is served from code (§116 t-727). A backup taken
+        // before the upgrade carries the seed-era template row; importing it
+        // would bring that row back as a template. An ordinary workflow holding
+        // the slug (one an install switched back on or converted) imports as
+        // any other.
+        if (wf.isTemplate && isBuiltinTemplateSlug(wf.slug)) {
+          result.warnings.push(
+            `Workflow '${wf.slug}' skipped — built-in templates are served from code, not restored from a backup`
+          );
+          continue;
+        }
+        const existing = await tx.aiWorkflow.findUnique({ where: { slug: wf.slug } });
+        // The row flag catches a system workflow the slug list does not know (a
+        // fork's own seed). Versioning over one would republish whatever
+        // definition the bundle carried, and the update below could deactivate
+        // it or change its template status — both of which PATCH refuses.
+        if (existing?.isSystem) {
+          result.warnings.push(systemWorkflowSkipped(wf.slug));
+          continue;
+        }
+        // Parsed only after both system checks, so a skipped row never reports a
+        // definition problem as its reason.
+        const defParsed = workflowDefinitionSchema.safeParse(wf.workflowDefinition);
+        if (!defParsed.success) {
+          result.warnings.push(`Workflow '${wf.slug}' skipped — definition failed validation`);
+          continue;
+        }
+        const unapprovedSteps = workflowProviders.bySlug.get(wf.slug);
+        if (unapprovedSteps) result.warnings.push(unapprovedSteps);
+        if (existing) {
+          // Promote the imported snapshot to a new version on the existing workflow.
+          const lastVersion = await tx.aiWorkflowVersion.findFirst({
+            where: { workflowId: existing.id },
+            orderBy: { version: 'desc' },
+            select: { version: true },
+          });
+          const newVersion = await tx.aiWorkflowVersion.create({
+            data: {
+              workflowId: existing.id,
+              version: (lastVersion?.version ?? 0) + 1,
+              snapshot: defParsed.data as unknown as Prisma.InputJsonValue,
+              changeSummary: 'Imported from backup',
+              createdBy: userId,
+            },
+          });
+          await tx.aiWorkflow.update({
+            where: { id: existing.id },
+            data: {
+              name: wf.name,
+              description: wf.description,
+              patternsUsed: wf.patternsUsed,
+              isActive: wf.isActive,
+              isTemplate: wf.isTemplate,
+              metadata: (wf.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+              publishedVersionId: newVersion.id,
+            },
+          });
+          result.workflows.updated++;
+        } else {
+          const created = await tx.aiWorkflow.create({
+            data: {
+              name: wf.name,
+              slug: wf.slug,
+              description: wf.description,
+              patternsUsed: wf.patternsUsed,
+              isActive: wf.isActive,
+              isTemplate: wf.isTemplate,
+              metadata: (wf.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+              createdBy: userId,
+            },
+          });
+          await createInitialVersion({
+            tx,
+            workflowId: created.id,
+            definition: defParsed.data,
+            userId,
+          });
+          result.workflows.created++;
+        }
       }
 
-      const existing = await tx.aiWebhookSubscription.findFirst({
-        where: channel === 'webhook' ? { url: destination } : { emailAddress: destination },
-      });
-      if (existing) {
-        result.webhooks.skipped++;
-        continue;
+      // Import event subscriptions (webhook + email channels).
+      // Skip duplicates by destination — url for webhook rows,
+      // emailAddress for email rows.
+      for (const wh of parsed.data.webhooks) {
+        const channel = wh.channel ?? 'webhook';
+        const destination = channel === 'webhook' ? wh.url : wh.emailAddress;
+        if (!destination) {
+          result.warnings.push(
+            `Skipped event subscription with channel "${channel}" and no destination value`
+          );
+          continue;
+        }
+
+        // A bundle is operator-supplied data that becomes a DESTINATION, so both
+        // channels are validated here rather than trusted. Per row, with a
+        // warning, matching the skip above — validating in the schema instead
+        // would abort the whole restore over one bad subscription, taking agents,
+        // capabilities, workflows and settings with it. It would also reject an
+        // email row carrying a stale `url` left behind by a channel switch, which
+        // the importer never even reads.
+        if (channel === 'webhook' && !isSafeProviderUrl(destination)) {
+          result.warnings.push(
+            `Skipped webhook for ${destination} — private or internal addresses are not allowed as a destination`
+          );
+          continue;
+        }
+        if (channel === 'email' && !z.string().email().safeParse(destination).success) {
+          result.warnings.push(
+            `Skipped email subscription — "${destination}" is not a valid address`
+          );
+          continue;
+        }
+
+        const existing = await tx.aiWebhookSubscription.findFirst({
+          where: channel === 'webhook' ? { url: destination } : { emailAddress: destination },
+        });
+        if (existing) {
+          result.webhooks.skipped++;
+          continue;
+        }
+
+        if (channel === 'webhook') {
+          result.warnings.push(
+            `Webhook for ${destination} imported inactive — set the signing secret and re-enable manually`
+          );
+          await tx.aiWebhookSubscription.create({
+            data: {
+              channel: 'webhook',
+              url: destination,
+              events: wh.events,
+              description: wh.description ?? null,
+              secret: '', // Secrets are never exported
+              isActive: false, // Force inactive: empty secret would sign dispatches with an empty HMAC key
+              createdBy: userId,
+            },
+          });
+        } else {
+          // Forced inactive and warned about, exactly like the webhook branch.
+          // It used to honour the bundle's own `isActive`, and email delivery
+          // needs no secret — so an imported bundle could stand up a LIVE
+          // subscription mailing every matching event, with its full payload, to
+          // an address of the bundle author's choosing, from the deployment's own
+          // verified sender, with nothing in the result to say so. Quieter than
+          // the webhook hole beside it, and cheaper.
+          result.warnings.push(
+            `Email subscription for ${destination} imported inactive — review the address and enable manually`
+          );
+          await tx.aiWebhookSubscription.create({
+            data: {
+              channel: 'email',
+              emailAddress: destination,
+              events: wh.events,
+              description: wh.description ?? null,
+              isActive: false,
+              createdBy: userId,
+            },
+          });
+        }
+        result.webhooks.created++;
       }
 
-      if (channel === 'webhook') {
-        result.warnings.push(
-          `Webhook for ${destination} imported inactive — set the signing secret and re-enable manually`
-        );
-        await tx.aiWebhookSubscription.create({
-          data: {
-            channel: 'webhook',
-            url: destination,
-            events: wh.events,
-            description: wh.description ?? null,
-            secret: '', // Secrets are never exported
-            isActive: false, // Force inactive: empty secret would sign dispatches with an empty HMAC key
-            createdBy: userId,
+      // Import settings
+      if (parsed.data.settings) {
+        const s = parsed.data.settings;
+        await tx.aiOrchestrationSettings.upsert({
+          where: { slug: 'global' },
+          create: {
+            slug: 'global',
+            defaultModels: s.defaultModels as Prisma.InputJsonValue,
+            globalMonthlyBudgetUsd: s.globalMonthlyBudgetUsd,
+            searchConfig: (s.searchConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            defaultApprovalTimeoutMs: s.defaultApprovalTimeoutMs,
+            approvalDefaultAction: s.approvalDefaultAction,
+            inputGuardMode: s.inputGuardMode,
+            outputGuardMode: s.outputGuardMode,
+            citationGuardMode: s.citationGuardMode,
+            webhookRetentionDays: s.webhookRetentionDays,
+            costLogRetentionDays: s.costLogRetentionDays,
+            auditLogRetentionDays: s.auditLogRetentionDays,
+            executionRetentionDays: s.executionRetentionDays,
+            evaluationRetentionDays: s.evaluationRetentionDays,
+            maxConversationsPerUser: s.maxConversationsPerUser,
+            maxMessagesPerConversation: s.maxMessagesPerConversation,
+            escalationConfig: (s.escalationConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+          },
+          update: {
+            defaultModels: s.defaultModels as Prisma.InputJsonValue,
+            globalMonthlyBudgetUsd: s.globalMonthlyBudgetUsd,
+            searchConfig: (s.searchConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            defaultApprovalTimeoutMs: s.defaultApprovalTimeoutMs,
+            approvalDefaultAction: s.approvalDefaultAction,
+            inputGuardMode: s.inputGuardMode,
+            outputGuardMode: s.outputGuardMode,
+            citationGuardMode: s.citationGuardMode,
+            webhookRetentionDays: s.webhookRetentionDays,
+            costLogRetentionDays: s.costLogRetentionDays,
+            auditLogRetentionDays: s.auditLogRetentionDays,
+            executionRetentionDays: s.executionRetentionDays,
+            evaluationRetentionDays: s.evaluationRetentionDays,
+            maxConversationsPerUser: s.maxConversationsPerUser,
+            maxMessagesPerConversation: s.maxMessagesPerConversation,
+            escalationConfig: (s.escalationConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
           },
         });
-      } else {
-        // Forced inactive and warned about, exactly like the webhook branch.
-        // It used to honour the bundle's own `isActive`, and email delivery
-        // needs no secret — so an imported bundle could stand up a LIVE
-        // subscription mailing every matching event, with its full payload, to
-        // an address of the bundle author's choosing, from the deployment's own
-        // verified sender, with nothing in the result to say so. Quieter than
-        // the webhook hole beside it, and cheaper.
-        result.warnings.push(
-          `Email subscription for ${destination} imported inactive — review the address and enable manually`
-        );
-        await tx.aiWebhookSubscription.create({
-          data: {
-            channel: 'email',
-            emailAddress: destination,
-            events: wh.events,
-            description: wh.description ?? null,
-            isActive: false,
-            createdBy: userId,
-          },
-        });
+        result.settingsUpdated = true;
       }
-      result.webhooks.created++;
-    }
-
-    // Import settings
-    if (parsed.data.settings) {
-      const s = parsed.data.settings;
-      await tx.aiOrchestrationSettings.upsert({
-        where: { slug: 'global' },
-        create: {
-          slug: 'global',
-          defaultModels: s.defaultModels as Prisma.InputJsonValue,
-          globalMonthlyBudgetUsd: s.globalMonthlyBudgetUsd,
-          searchConfig: (s.searchConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-          defaultApprovalTimeoutMs: s.defaultApprovalTimeoutMs,
-          approvalDefaultAction: s.approvalDefaultAction,
-          inputGuardMode: s.inputGuardMode,
-          outputGuardMode: s.outputGuardMode,
-          citationGuardMode: s.citationGuardMode,
-          webhookRetentionDays: s.webhookRetentionDays,
-          costLogRetentionDays: s.costLogRetentionDays,
-          auditLogRetentionDays: s.auditLogRetentionDays,
-          executionRetentionDays: s.executionRetentionDays,
-          evaluationRetentionDays: s.evaluationRetentionDays,
-          maxConversationsPerUser: s.maxConversationsPerUser,
-          maxMessagesPerConversation: s.maxMessagesPerConversation,
-          escalationConfig: (s.escalationConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-        },
-        update: {
-          defaultModels: s.defaultModels as Prisma.InputJsonValue,
-          globalMonthlyBudgetUsd: s.globalMonthlyBudgetUsd,
-          searchConfig: (s.searchConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-          defaultApprovalTimeoutMs: s.defaultApprovalTimeoutMs,
-          approvalDefaultAction: s.approvalDefaultAction,
-          inputGuardMode: s.inputGuardMode,
-          outputGuardMode: s.outputGuardMode,
-          citationGuardMode: s.citationGuardMode,
-          webhookRetentionDays: s.webhookRetentionDays,
-          costLogRetentionDays: s.costLogRetentionDays,
-          auditLogRetentionDays: s.auditLogRetentionDays,
-          executionRetentionDays: s.executionRetentionDays,
-          evaluationRetentionDays: s.evaluationRetentionDays,
-          maxConversationsPerUser: s.maxConversationsPerUser,
-          maxMessagesPerConversation: s.maxMessagesPerConversation,
-          escalationConfig: (s.escalationConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
-        },
-      });
-      result.settingsUpdated = true;
-    }
-  });
+    },
+    { timeout: AGENT_BATCH_TRANSACTION_TIMEOUT_MS }
+  );
 
   logger.info('Orchestration config imported', { ...result });
   return result;

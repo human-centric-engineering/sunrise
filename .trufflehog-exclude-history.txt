@@ -1,0 +1,23 @@
+# TruffleHog path allowlist for the full-history sweep ONLY — see
+# .github/workflows/secret-scan.yml, which appends this file to
+# `.trufflehog-exclude.txt` on scheduled and manual runs. PR and push scans
+# never read it.
+#
+# Same format as `.trufflehog-exclude.txt`: newline-separated regexes matched
+# against the file path.
+#
+# Why a separate list: TruffleHog exempts history only by path, and a path rule
+# in the main list would also switch off every detector for that path on every
+# future PR. Placeholders that live only in old commits belong here, so the
+# sweep can pass while PR and push scans keep scanning the file today.
+#
+# The initial commit (316963fb) carried placeholder Postgres DSNs
+# (`user:pass@db`, `postgres:postgres@db`, `user:password@host`) in the
+# since-removed `.instructions/` build guides and in CLAUDE.md's original Docker
+# section. They are why the weekly sweep exited 183 from at least 2026-09-07.
+# CLAUDE.md today holds no connection string. What the sweep gives up is
+# TruffleHog on CLAUDE.md's history; every commit reaching main still passes a
+# PR or push scan with all detectors, and the `Postgres DSN tripwire` checks the
+# current file (not its history) on every run.
+^\.instructions/
+^CLAUDE\.md$

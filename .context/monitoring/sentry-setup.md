@@ -91,9 +91,16 @@ fork that turns Sentry on without setting this sends that data to Sentry. Set
 
 ```typescript
 import * as Sentry from '@sentry/nextjs';
+import { scrubSentryEvent, scrubSentrySpan } from '@/lib/errors/sentry';
 
 Sentry.init({
   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+  // Page URLs: drop query strings and fragments, collapse id- and
+  // credential-shaped path segments (see "Page URLs" below). `beforeSend` is
+  // needed in instrumentation-client.ts and sentry.edge.config.ts; the Node
+  // server config can leave it out.
+  beforeSend: scrubSentryEvent,
+  beforeSendSpan: scrubSentrySpan,
   // Collect nothing about the request, the user or the data by default.
   // (Session Replay is separate; see below.)
   dataCollection: {
@@ -113,6 +120,58 @@ Sentry.init({
 
 `setErrorTrackingUser()` still attaches the user you pass it; `userInfo: false`
 stops only the SDK filling in `user.*` from request data on its own.
+
+### Page URLs
+
+A page URL can carry a credential or personal data: a token or an email in the
+query string or the fragment, or a token as a path segment (a share page such
+as `/s/<token>`). `urlQueryParams: false` covers only query strings the SDK
+collected itself. `lib/errors/sentry.ts` covers the rest:
+
+- **Error events, by default.** Sunrise registers `scrubSentryEvent` on
+  Sentry's global scope the first time it uses Sentry: on the client from
+  `ErrorHandlingProvider` (`initErrorTracking()`), on the Node server from
+  `instrumentation.ts`. It reduces an event's `request.url`, transaction
+  name, message and exception values, stack frames' file URLs (an inline
+  script's frame is the page URL) and every string in `extra` (nested objects
+  included) to origin plus path, and scrubs the trace context and the
+  breadcrumbs the event carries (a fetch or xhr `url`, a navigation's `from` /
+  `to`, a console breadcrumb's message and arguments), its `logentry` and any
+  request headers. The registration runs late in two places, so **also set
+  `beforeSend: scrubSentryEvent`** there: in `instrumentation-client.ts`,
+  because `ErrorHandlingProvider` registers only after hydration and an error
+  raised while the page loads would otherwise go out unscrubbed; and in
+  `sentry.edge.config.ts`, because the edge runtime does not run
+  `instrumentation.ts`'s Node branch. Scrubbing twice changes nothing.
+  `beforeBreadcrumb` is not needed.
+- **Spans: add `beforeSendSpan: scrubSentrySpan`** to each `Sentry.init`.
+  Under v11's default `traceLifecycle: 'stream'`, spans go out one by one and
+  never pass through an event processor. It scrubs every URL and path in each
+  span's name and attribute values, and in its links' attributes (`url.full`,
+  `http.url`, `next.span_name`, a captured `referer` header…), and drops
+  `url.fragment`, `url.query` and the raw path-parameter values
+  (`url.path.parameter.*`, `url.path.params.*`, `params.*`).
+
+Each id- or credential-shaped path segment becomes `[param]`
+(`collapseDynamicSegments()` in `lib/logging/redact-path.ts`, which lists what
+it cannot catch). The tail of a path from `/_next/static/` on, and in a file
+path (a server stack frame) from `/node_modules/` on, is kept as built so source
+maps and issue grouping still work; segments before it are still collapsed. A
+copied Error keeps its `cause` / `errors` chain, scrubbed the same way; a
+built-in class (`TypeError`, `AggregateError`…) keeps its class, and any other
+(a `DOMException`, your own subclass) becomes a plain `Error` with the same
+name, because its getters cannot run on a copy. Any other object becomes a
+plain object of its own properties, scrubbed. The global client error handler
+(`lib/errors/handler.ts`) already sends the page as the collapsed pathname,
+under `extra.path`, and scrubs the URLs in its context and in the error it
+reports. Request headers are scrubbed like the rest; tags are not. Keep
+`httpHeaders` off anyway, as above.
+
+**If you set `traceLifecycle: 'static'`**, `scrubSentrySpan` is never called
+(it takes the streamed span shape). The global event processor still scrubs
+each transaction and its child spans. Standalone spans (INP and other web
+vitals sent outside a transaction) pass through neither and are **not**
+scrubbed under `'static'`; stay on `'stream'` if you send them.
 
 **Session Replay is not governed by `dataCollection`.** The wizard adds
 `replayIntegration()` to the client init, and a replay records what the admin

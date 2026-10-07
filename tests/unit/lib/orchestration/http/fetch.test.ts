@@ -17,6 +17,7 @@ import { resetAllowlistCache } from '@/lib/orchestration/http/allowlist';
 import { HttpError } from '@/lib/orchestration/http/errors';
 import { executeHttpRequest } from '@/lib/orchestration/http/fetch';
 import { resetOutboundRateLimiters } from '@/lib/orchestration/engine/outbound-rate-limiter';
+import { logger } from '@/lib/logging';
 
 vi.mock('@/lib/logging', () => ({
   logger: {
@@ -66,6 +67,23 @@ describe('executeHttpRequest', () => {
     expect(out.body).toEqual({ ok: true });
     expect(typeof out.latencyMs).toBe('number');
     expect(out.transformError).toBeUndefined();
+  });
+
+  it('logs the request path with credential-shaped segments collapsed (#953)', async () => {
+    mockResponse(200, { ok: true });
+    const secret = 'AbCdEfGhIjKlMnOpQrStUvWx';
+
+    await executeHttpRequest({
+      url: `https://api.allowed.com/hooks/${secret}/notify`,
+      method: 'POST',
+      body: '{}',
+    });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      'HTTP request: sending',
+      expect.objectContaining({ path: '/hooks/[param]/notify' })
+    );
+    expect(JSON.stringify(vi.mocked(logger.info).mock.calls)).not.toContain(secret);
   });
 
   // ── Redirect refusal (#628) ─────────────────────────────────────────────
@@ -148,6 +166,18 @@ describe('executeHttpRequest', () => {
     await expect(
       executeHttpRequest({ url: 'https://evil.com/x', method: 'GET' })
     ).rejects.toMatchObject({ code: 'host_not_allowed', retriable: false });
+  });
+
+  it('keeps the query and userinfo out of the host_not_allowed message (#953)', async () => {
+    const err = await executeHttpRequest({
+      url: 'https://u:pw@evil.example.com/x?key=qs-secret',
+      method: 'GET',
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(HttpError);
+    expect((err as HttpError).message).toContain('https://evil.example.com/x');
+    expect((err as HttpError).message).not.toContain('qs-secret');
+    expect((err as HttpError).message).not.toContain('pw@');
   });
 
   it('attaches bearer auth header from env-var secret', async () => {

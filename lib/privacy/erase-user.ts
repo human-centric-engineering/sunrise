@@ -13,16 +13,20 @@
  *   2. Write an append-only `DataErasureReceipt` for accountability
  *      (Art. 5(2)) without re-introducing PII (opaque id + email hash).
  *   3. Remove the user's stored avatar blobs (object storage, not the DB).
+ *   4. Delete the contact-form messages sent from the user's stored address,
+ *      when the account has verified it. `ContactSubmission` has no FK to
+ *      `User`, so no cascade reaches it.
  *
- * The scrub, receipt, and delete run in one transaction so they commit or
- * roll back together. Avatar cleanup runs first as a best-effort side effect
- * (object storage cannot enlist in the DB transaction).
+ * The scrub, contact delete, receipt, and user delete run in one transaction
+ * so they commit or roll back together. Avatar cleanup runs first as a
+ * best-effort side effect (object storage cannot enlist in the DB transaction).
  */
 
 import { createHash } from 'node:crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
+import { contactSubmissionsOf, contactSubmissionsUnder } from '@/lib/privacy/contact-submissions';
 import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
 
 export type ErasureReason = 'self_service' | 'admin_action';
@@ -81,13 +85,38 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
       )
     : await eraseRows(params);
 
-  logger.info('User erased', { userId, actorUserId, reason, receiptId: receipt.id });
+  // The contact count is the one thing erased by address rather than by FK,
+  // so it is the one the receipt cannot vouch for: log what was taken.
+  logger.info('User erased', {
+    userId,
+    actorUserId,
+    reason,
+    receiptId: receipt.id,
+    contactSubmissionsDeleted: receipt.contactSubmissionsDeleted,
+  });
+  // An unverified address matched nothing, so contact messages sent under it
+  // are still there, and only a person can decide whether they were this
+  // subject's. The address itself is gone with the user row and is not
+  // logged; the operator finds the rows through the receipt's
+  // `subjectEmailHash`, which hashes the same trimmed, lower-cased form.
+  if (receipt.contactSubmissionsLeft > 0) {
+    logger.warn('Contact messages not erased: the account never verified its address', {
+      userId,
+      receiptId: receipt.id,
+      contactSubmissionsLeft: receipt.contactSubmissionsLeft,
+    });
+  }
 
   return { receiptId: receipt.id, erasedAt: receipt.erasedAt };
 }
 
 /** The hooks and the transaction — at `multi`, as {@link eraseUser} runs them in the system scope. */
-async function eraseRows(params: EraseUserParams): Promise<{ id: string; erasedAt: Date }> {
+async function eraseRows(params: EraseUserParams): Promise<{
+  id: string;
+  erasedAt: Date;
+  contactSubmissionsDeleted: number;
+  contactSubmissionsLeft: number;
+}> {
   const { userId, userEmail, actorUserId, reason } = params;
 
   // 1b. App-registered external cleanup (object storage, search indexes, …).
@@ -114,6 +143,30 @@ async function eraseRows(params: EraseUserParams): Promise<{ id: string; erasedA
       data: { clientIp: null },
     });
 
+    // Contact-form messages are keyed by address alone (no FK), so the
+    // cascade below never reaches them. The export hands these same rows to
+    // the subject as their personal data, so they go — matched exactly, never
+    // case-insensitively: an `ILIKE` here would delete a stranger's messages.
+    // The address is read from the user row, as the export reads it, not taken
+    // from `userEmail`: a caller's copy can be stale (a cached session that
+    // predates an email change), and then this would delete the old address's
+    // messages and leave the ones the export calls the subject's. An
+    // unverified address matches nothing — the form proves nothing about who
+    // typed it, so they may be a stranger's. A system model, so no org scope
+    // is needed at either tenancy mode.
+    const account = await tx.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { email: true, emailVerified: true },
+    });
+    const where = contactSubmissionsOf(account);
+    const contacts = where ? await tx.contactSubmission.deleteMany({ where }) : { count: 0 };
+    // Unverified: count what is being left, so the warning below fires only
+    // when there is something for an operator to look at. Counted, never
+    // deleted: nothing says these rows are the subject's.
+    const left = where
+      ? 0
+      : await tx.contactSubmission.count({ where: contactSubmissionsUnder(account.email) });
+
     // App-registered in-transaction scrub. Runs before `tx.user.delete()` so
     // hooks can still match retained rows on `userId`, and atomically with the
     // delete — a throw here rolls the entire erasure back.
@@ -134,6 +187,10 @@ async function eraseRows(params: EraseUserParams): Promise<{ id: string; erasedA
     // Cascades erase personal data; SetNull de-attributes retained config/audit.
     await tx.user.delete({ where: { id: userId } });
 
-    return created;
+    return {
+      ...created,
+      contactSubmissionsDeleted: contacts.count,
+      contactSubmissionsLeft: left,
+    };
   });
 }

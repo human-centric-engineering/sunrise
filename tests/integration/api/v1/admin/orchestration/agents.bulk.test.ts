@@ -26,13 +26,30 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const prisma = {
     aiAgent: {
+      findMany: vi.fn(),
       updateMany: vi.fn(),
     },
-  },
-}));
+    // The action runs in a transaction; the tx is the client itself here.
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown): Promise<unknown> => fn(prisma)),
+  };
+  return { prisma };
+});
+
+// The version helpers read the agent back and write `AiAgentVersion` rows;
+// their behaviour is proved in agent-versioning's own tests. Here they are
+// stubbed so the test can assert WHEN the action calls them.
+vi.mock('@/lib/orchestration/agents/agent-versioning', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/agents/agent-versioning')>();
+  return {
+    ...actual,
+    ensureBaselineVersion: vi.fn(async () => undefined),
+    recordAgentVersion: vi.fn(async () => 2),
+  };
+});
 
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
@@ -42,7 +59,12 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
+import {
+  ensureBaselineVersion,
+  recordAgentVersion,
+} from '@/lib/orchestration/agents/agent-versioning';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -62,6 +84,9 @@ describe('POST /api/v1/admin/orchestration/agents/bulk', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (prisma.aiAgent.updateMany as ReturnType<typeof vi.fn>).mockResolvedValue({ count: 2 });
+    (prisma.aiAgent.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
+      AGENT_IDS.map((id) => ({ id }))
+    );
   });
 
   // ── Auth ──────────────────────────────────────────────────────────────────
@@ -110,7 +135,9 @@ describe('POST /api/v1/admin/orchestration/agents/bulk', () => {
 
     const call = (prisma.aiAgent.updateMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(call.where.id.in).toEqual(AGENT_IDS);
-    expect(call.where.isSystem).toBe(false);
+    // System agents are excluded when choosing which agents to write.
+    const select = (prisma.aiAgent.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(select.where.isSystem).toBe(false);
     // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(call.data.isActive).toBe(true);
   });
@@ -134,8 +161,72 @@ describe('POST /api/v1/admin/orchestration/agents/bulk', () => {
     expect(res.status).toBe(200);
 
     const call = (prisma.aiAgent.updateMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(call.where.isSystem).toBe(false);
+    const select = (prisma.aiAgent.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(select.where.isSystem).toBe(false);
     expect(call.data.isActive).toBe(false);
+  });
+
+  // ── Versions ──────────────────────────────────────────────────────────────
+
+  it.each([
+    ['activate', 'Bulk activate'],
+    ['deactivate', 'Bulk deactivate'],
+    ['delete', 'Bulk delete'],
+  ])('saves a version for each agent %s changes, after the write', async (action, label) => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const res = await POST(makeRequest({ action, agentIds: AGENT_IDS }));
+    expect(res.status).toBe(200);
+
+    // isActive is versioned: every targeted agent keeps a baseline before the
+    // write and gets the result recorded after it, in the same transaction.
+    const adminId = mockAdminUser().user.id;
+    for (const id of AGENT_IDS) {
+      expect(ensureBaselineVersion).toHaveBeenCalledWith(prisma, id, adminId);
+      expect(recordAgentVersion).toHaveBeenCalledWith(prisma, id, { label, createdBy: adminId });
+    }
+    // The targets are the agents the write will change: system agents
+    // excluded, and so is any agent already in the requested state.
+    expect(prisma.aiAgent.findMany).toHaveBeenCalledWith({
+      where: { id: { in: AGENT_IDS }, isSystem: false, isActive: action !== 'activate' },
+      select: { id: true },
+    });
+    // The write touches exactly those agents, so none changes without a version.
+    expect(prisma.aiAgent.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: AGENT_IDS } },
+      data: { isActive: action === 'activate' },
+    });
+    const writeAt = (prisma.aiAgent.updateMany as ReturnType<typeof vi.fn>).mock
+      .invocationCallOrder[0];
+    expect(Math.max(...vi.mocked(ensureBaselineVersion).mock.invocationCallOrder)).toBeLessThan(
+      writeAt
+    );
+    expect(Math.min(...vi.mocked(recordAgentVersion).mock.invocationCallOrder)).toBeGreaterThan(
+      writeAt
+    );
+  });
+
+  it('returns a retryable 409 when a concurrent edit takes a version number', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(recordAgentVersion).mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+        meta: { modelName: 'AiAgentVersion' },
+      })
+    );
+
+    const res = await POST(makeRequest({ action: 'deactivate', agentIds: AGENT_IDS }));
+
+    expect(res.status).toBe(409);
+  });
+
+  it('lets any other database error through as a 500, not a 409', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(recordAgentVersion).mockRejectedValueOnce(new Error('connection lost'));
+
+    const res = await POST(makeRequest({ action: 'deactivate', agentIds: AGENT_IDS }));
+
+    expect(res.status).toBe(500);
   });
 
   // ── Affected count ────────────────────────────────────────────────────────

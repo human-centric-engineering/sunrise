@@ -35,6 +35,14 @@ vi.mock('@/lib/errors/sentry', () => ({
   },
 }));
 
+/**
+ * The handler reports a copy of the error with URLs scrubbed (#952), so match
+ * it by name and message rather than identity.
+ */
+function sameError(error: Error) {
+  return expect.objectContaining({ name: error.name, message: error.message });
+}
+
 describe('normalizeError', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -397,7 +405,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           component: 'TestComponent',
           action: 'testAction',
@@ -413,7 +421,7 @@ describe('handleClientError', () => {
       handleClientError(error, context);
 
       expect(trackError).toHaveBeenCalledWith(
-        error,
+        sameError(error),
         expect.objectContaining({
           tags: {
             errorType: 'unhandled',
@@ -434,7 +442,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           errorType: 'unhandled',
         })
@@ -451,7 +459,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           username: 'john',
           password: '[REDACTED]',
@@ -466,7 +474,7 @@ describe('handleClientError', () => {
       handleClientError(error, context);
 
       expect(trackError).toHaveBeenCalledWith(
-        error,
+        sameError(error),
         expect.objectContaining({
           extra: expect.objectContaining({
             authToken: '[REDACTED]',
@@ -484,7 +492,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           apiKey: '[REDACTED]',
           action: 'payment',
@@ -500,7 +508,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           clientSecret: '[REDACTED]',
         })
@@ -515,7 +523,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           creditCard: '[REDACTED]',
         })
@@ -530,7 +538,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           ssn: '[REDACTED]',
         })
@@ -545,7 +553,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           authorization: '[REDACTED]',
         })
@@ -560,7 +568,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           sessionToken: '[REDACTED]',
         })
@@ -575,7 +583,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           refreshToken: '[REDACTED]',
         })
@@ -590,7 +598,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           accessToken: '[REDACTED]',
         })
@@ -616,7 +624,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           user: {
             name: 'John',
@@ -641,7 +649,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           apiKey: '[REDACTED]',
           userId: 'user-123',
@@ -662,7 +670,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           users: [
             { name: 'John', password: '[REDACTED]' },
@@ -673,7 +681,7 @@ describe('handleClientError', () => {
     });
   });
 
-  describe('Browser context (userAgent and url)', () => {
+  describe('Browser context (userAgent and path)', () => {
     afterEach(() => {
       vi.unstubAllGlobals();
     });
@@ -689,57 +697,126 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           userAgent: 'Mozilla/5.0 (Test Browser)',
         })
       );
     });
 
-    it('should include url when window is available', () => {
-      const mockWindow = {
+    it('should include the page path, without its query or fragment, when window is available', () => {
+      vi.stubGlobal('window', {
         location: {
-          href: 'https://example.com/test',
+          href: 'https://example.com/test?q=search+terms#section',
+          pathname: '/test',
         },
-      };
-      vi.stubGlobal('window', mockWindow);
+      });
 
       const error = new Error('test error');
       handleClientError(error);
 
-      expect(logger.error).toHaveBeenCalledWith(
-        'Unhandled client error',
-        error,
-        expect.objectContaining({
-          url: 'https://example.com/test',
-        })
-      );
+      const meta = vi.mocked(logger.error).mock.calls[0][2];
+      expect(meta).toMatchObject({ path: '/test' });
+      expect(JSON.stringify(meta)).not.toContain('search+terms');
+      expect(JSON.stringify(meta)).not.toContain('#section');
     });
 
-    it('should include both userAgent and url when both are available', () => {
-      const mockNavigator = {
-        userAgent: 'Mozilla/5.0 (Test Browser)',
-      };
-      const mockWindow = {
+    it('should collapse a credential-shaped path segment in the logged and tracked path', () => {
+      const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+      vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Test Browser)' });
+      vi.stubGlobal('window', {
         location: {
-          href: 'https://example.com/test',
+          href: `https://example.com/s/${token}?email=a%40example.com#t=${token}`,
+          pathname: `/s/${token}`,
         },
-      };
-      vi.stubGlobal('navigator', mockNavigator);
-      vi.stubGlobal('window', mockWindow);
+      });
 
       const error = new Error('test error');
       handleClientError(error);
 
-      expect(trackError).toHaveBeenCalledWith(
-        error,
-        expect.objectContaining({
-          extra: expect.objectContaining({
-            userAgent: 'Mozilla/5.0 (Test Browser)',
-            url: 'https://example.com/test',
-          }),
-        })
-      );
+      const meta = vi.mocked(logger.error).mock.calls[0][2];
+      const extra = vi.mocked(trackError).mock.calls[0][1]?.extra;
+      expect(meta).toMatchObject({ path: '/s/[param]' });
+      expect(extra).toMatchObject({
+        userAgent: 'Mozilla/5.0 (Test Browser)',
+        path: '/s/[param]',
+      });
+      for (const recorded of [meta, extra]) {
+        const serialised = JSON.stringify(recorded);
+        expect(serialised).not.toContain(token);
+        expect(serialised).not.toContain('example.com');
+        expect(serialised).not.toContain('?');
+        expect(recorded).not.toHaveProperty('url');
+      }
+    });
+
+    it('should scrub the page URL out of filename and stack', () => {
+      const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+      const pageUrl = `https://example.com/s/${token}?email=a%40example.com#t=1`;
+      vi.stubGlobal('window', { location: { href: pageUrl, pathname: `/s/${token}` } });
+      const error = new Error('inline script error');
+      error.stack = `Error: inline script error\n    at ${pageUrl}:3:7`;
+
+      handleClientError(error, { filename: pageUrl, lineno: 3 });
+
+      const meta = vi.mocked(logger.error).mock.calls[0][2];
+      const extra = vi.mocked(trackError).mock.calls[0][1]?.extra;
+      for (const recorded of [meta, extra]) {
+        expect(recorded).toMatchObject({
+          filename: 'https://example.com/s/[param]',
+          stack: 'Error: inline script error\n    at https://example.com/s/[param]:3:7',
+          lineno: 3,
+        });
+        expect(JSON.stringify(recorded)).not.toContain(token);
+        expect(JSON.stringify(recorded)).not.toContain('example.com#');
+      }
+    });
+
+    it('should report a copy of the error with the page URL scrubbed from its stack and message', () => {
+      const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+      const pageUrl = `https://example.com/s/${token}?email=a%40example.com#t=1`;
+      vi.stubGlobal('window', { location: { href: pageUrl, pathname: `/s/${token}` } });
+      const error = new Error(`failed to load ${pageUrl}`);
+      error.stack = `Error: failed\n    at ${pageUrl}:3:7`;
+
+      handleClientError(error);
+
+      const logged = vi.mocked(logger.error).mock.calls[0][1];
+      const tracked = vi.mocked(trackError).mock.calls[0][0];
+      for (const reported of [logged, tracked]) {
+        expect(reported).toBeInstanceOf(Error);
+        expect(reported).toMatchObject({
+          message: 'failed to load https://example.com/s/[param]',
+          stack: 'Error: failed\n    at https://example.com/s/[param]:3:7',
+        });
+      }
+      expect(error.stack).toContain(token);
+    });
+
+    it('should scrub URLs nested anywhere in the caller context', () => {
+      const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+      handleClientError(new Error('nested'), {
+        request: { url: `https://example.com/s/${token}?email=a%40example.com` },
+      });
+
+      const extra = vi.mocked(trackError).mock.calls[0][1]?.extra;
+      expect(extra).toMatchObject({ request: { url: 'https://example.com/s/[param]' } });
+      expect(JSON.stringify(extra)).not.toContain(token);
+    });
+
+    it('should mark the original error as captured when Sentry marked the reported copy', () => {
+      vi.mocked(trackError).mockImplementationOnce((reported) => {
+        if (typeof reported !== 'string') {
+          Object.defineProperty(reported, '__sentry_captured__', { value: true });
+        }
+        return 'event-id';
+      });
+      const error = new Error('captured once');
+
+      handleClientError(error);
+
+      expect(Reflect.get(error, '__sentry_captured__')).toBe(true);
+      expect(Object.keys(error)).not.toContain('__sentry_captured__');
     });
 
     it('should handle missing navigator gracefully', () => {
@@ -750,7 +827,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           userAgent: undefined,
         })
@@ -765,9 +842,9 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
-          url: undefined,
+          path: undefined,
         })
       );
     });
@@ -1097,6 +1174,7 @@ describe('initGlobalErrorHandler', () => {
         removeEventListener: vi.fn(),
         location: {
           href: 'https://example.com',
+          pathname: '/',
         },
       };
       vi.stubGlobal('window', mockWindow);
@@ -1137,6 +1215,7 @@ describe('initGlobalErrorHandler', () => {
         removeEventListener: vi.fn(),
         location: {
           href: 'https://example.com',
+          pathname: '/',
         },
       };
       vi.stubGlobal('window', mockWindow);
@@ -1183,6 +1262,7 @@ describe('initGlobalErrorHandler', () => {
         removeEventListener: vi.fn(),
         location: {
           href: 'https://example.com',
+          pathname: '/',
         },
       };
       vi.stubGlobal('window', mockWindow);

@@ -35,6 +35,18 @@ vi.mock('@/lib/db/client', () => ({
   },
 }));
 
+// The agent read's REPEATABLE READ wrapper is proved in agent-versioning's
+// own tests; here it runs the read against the client directly, so the
+// `$transaction` assertions below keep meaning "the message persist".
+vi.mock('@/lib/orchestration/agents/agent-versioning', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/agents/agent-versioning')>();
+  return {
+    ...actual,
+    readAgentConsistently: vi.fn((db: unknown, read: (tx: unknown) => unknown) => read(db)),
+  };
+});
+
 vi.mock('@/lib/orchestration/llm/provider-manager', () => ({
   getProviderWithFallbacks: vi.fn(),
 }));
@@ -87,6 +99,10 @@ import {
 } from '@/lib/orchestration/llm/agent-resolver';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
 import { executeChatTurn } from '@/lib/orchestration/engine/executors/chat-turn';
+import {
+  LATEST_AGENT_VERSION_ID_INCLUDE,
+  readAgentConsistently,
+} from '@/lib/orchestration/agents/agent-versioning';
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import type { WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
@@ -677,6 +693,28 @@ describe('chat_turn — resilience to unusual upstream shapes', () => {
     expect(writes).toHaveLength(2);
     expect(writes[0].data.agentVersionId).toBe('agentver_42');
     expect(writes[1].data.agentVersionId).toBe('agentver_42');
+  });
+
+  it('reads the agent and its newest version through one consistent read', async () => {
+    vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue({
+      id: 'conv_1',
+      agentId: 'agent_1',
+    } as never);
+    vi.mocked(prisma.aiAgent.findFirst).mockResolvedValue(mockAgent as never);
+    vi.mocked(prisma.aiMessage.findMany).mockResolvedValue([] as never);
+
+    await executeChatTurn(makeStep(), makeCtx());
+
+    // The agent lookup, version include and all, runs inside the wrapper — a
+    // bare `prisma.aiAgent.findFirst` would read the version in a second
+    // snapshot and could pin a turn to a version it did not run.
+    expect(readAgentConsistently).toHaveBeenCalledTimes(1);
+    expect(readAgentConsistently).toHaveBeenCalledWith(prisma, expect.any(Function));
+    expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({ versions: LATEST_AGENT_VERSION_ID_INCLUDE }),
+      })
+    );
   });
 });
 

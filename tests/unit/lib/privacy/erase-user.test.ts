@@ -4,7 +4,8 @@
  * Contract under test:
  *   eraseUser({ userId, userEmail, actorUserId, reason })
  *   1. best-effort avatar blob cleanup (outside the DB transaction)
- *   2. prisma.$transaction → scrub clientIp | write receipt | delete user
+ *   2. prisma.$transaction → scrub clientIp | delete contact submissions |
+ *      write receipt | delete user
  *   3. returns { receiptId, erasedAt } from the created receipt row
  */
 
@@ -19,47 +20,62 @@ import {
 // Mocks — use vi.hoisted() so variables exist before vi.mock() factories run
 // ---------------------------------------------------------------------------
 
-const { mockUpdateMany, mockReceiptCreate, mockUserDelete, mockPrisma, mockLogger } = vi.hoisted(
-  () => {
-    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-    const receiptCreate = vi.fn().mockResolvedValue({
-      id: 'receipt-1',
-      erasedAt: new Date('2026-01-01T00:00:00.000Z'),
-    });
-    const userDelete = vi.fn().mockResolvedValue({ id: 'user-1' });
+const {
+  mockUpdateMany,
+  mockContactDeleteMany,
+  mockContactCount,
+  mockReceiptCreate,
+  mockUserDelete,
+  mockUserFind,
+  mockPrisma,
+  mockLogger,
+} = vi.hoisted(() => {
+  const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+  const contactDeleteMany = vi.fn().mockResolvedValue({ count: 1 });
+  const contactCount = vi.fn().mockResolvedValue(0);
+  const receiptCreate = vi.fn().mockResolvedValue({
+    id: 'receipt-1',
+    erasedAt: new Date('2026-01-01T00:00:00.000Z'),
+  });
+  const userDelete = vi.fn().mockResolvedValue({ id: 'user-1' });
+  // The address as the user row holds it — what the contact delete matches on.
+  const userFind = vi.fn().mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
 
-    // Prisma mock — $transaction invokes its async callback with the same
-    // prisma mock so tx.X === prisma.X; this is the pattern described in the
-    // test plan's brittle-patterns note (a no-op mock makes downstream
-    // assertions vacuous).
-    const prismaObj = {
-      $transaction: vi.fn(),
-      aiAdminAuditLog: { updateMany },
-      dataErasureReceipt: { create: receiptCreate },
-      user: { delete: userDelete },
-    };
-    prismaObj.$transaction.mockImplementation(
-      (callback: (tx: typeof prismaObj) => Promise<unknown>) => callback(prismaObj)
-    );
+  // Prisma mock — $transaction invokes its async callback with the same
+  // prisma mock so tx.X === prisma.X; this is the pattern described in the
+  // test plan's brittle-patterns note (a no-op mock makes downstream
+  // assertions vacuous).
+  const prismaObj = {
+    $transaction: vi.fn(),
+    aiAdminAuditLog: { updateMany },
+    contactSubmission: { deleteMany: contactDeleteMany, count: contactCount },
+    dataErasureReceipt: { create: receiptCreate },
+    user: { delete: userDelete, findUniqueOrThrow: userFind },
+  };
+  prismaObj.$transaction.mockImplementation(
+    (callback: (tx: typeof prismaObj) => Promise<unknown>) => callback(prismaObj)
+  );
 
-    const log = {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      child: vi.fn(),
-      withContext: vi.fn(),
-    };
+  const log = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    child: vi.fn(),
+    withContext: vi.fn(),
+  };
 
-    return {
-      mockUpdateMany: updateMany,
-      mockReceiptCreate: receiptCreate,
-      mockUserDelete: userDelete,
-      mockPrisma: prismaObj,
-      mockLogger: log,
-    };
-  }
-);
+  return {
+    mockUpdateMany: updateMany,
+    mockContactDeleteMany: contactDeleteMany,
+    mockContactCount: contactCount,
+    mockReceiptCreate: receiptCreate,
+    mockUserDelete: userDelete,
+    mockUserFind: userFind,
+    mockPrisma: prismaObj,
+    mockLogger: log,
+  };
+});
 
 vi.mock('@/lib/logging', () => ({
   logger: mockLogger,
@@ -122,6 +138,9 @@ describe('eraseUser', () => {
     mockIsStorageEnabled.mockReturnValue(false);
     mockDeleteByPrefix.mockResolvedValue({ deleted: 1 });
     mockUpdateMany.mockResolvedValue({ count: 1 });
+    mockContactDeleteMany.mockResolvedValue({ count: 1 });
+    mockContactCount.mockResolvedValue(0);
+    mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
     mockReceiptCreate.mockResolvedValue({
       id: 'receipt-1',
       erasedAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -330,6 +349,147 @@ describe('eraseUser', () => {
 
     // Act + Assert — eraseUser rejects, and the delete never runs
     await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('storage down');
+    expect(mockUserDelete).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Case 7d: Contact submissions — no FK to User, so the cascade never reaches
+  // them; the service deletes them, matched exactly on the normalised address.
+  // -------------------------------------------------------------------------
+
+  it('contact submissions — matched on the address the user row holds, normalised, as an exact match', async () => {
+    // Arrange — a stored address that is not already in the canonical form
+    mockUserFind.mockResolvedValue({ email: '  Foo@BAR.com ', emailVerified: true });
+
+    // Act
+    await eraseUser(BASE_PARAMS);
+
+    // Assert — the address was read for THIS user, and the filter is the
+    // normalised string with no `mode`, so Prisma compiles it to `=`, not ILIKE
+    expect(mockUserFind).toHaveBeenCalledWith({
+      where: { id: BASE_PARAMS.userId },
+      select: { email: true, emailVerified: true },
+    });
+    expect(mockContactDeleteMany).toHaveBeenCalledTimes(1);
+    expect(mockContactDeleteMany).toHaveBeenCalledWith({ where: { email: 'foo@bar.com' } });
+  });
+
+  it('contact submissions — a stale caller address is ignored; the stored one is matched', async () => {
+    // Arrange — the caller's copy predates an email change (a cached session)
+    mockUserFind.mockResolvedValue({ email: 'new@bar.com', emailVerified: true });
+
+    // Act
+    await eraseUser({ ...BASE_PARAMS, userEmail: 'old@bar.com' });
+
+    // Assert — the old address may be someone else's by now; never match it
+    expect(mockContactDeleteMany).toHaveBeenCalledWith({ where: { email: 'new@bar.com' } });
+  });
+
+  it('contact submissions — none deleted for an unverified address; what is left is counted and flagged', async () => {
+    // Arrange — the account never proved it owns the address, so the messages
+    // under it may be a stranger's (anyone can type any address in the form)
+    mockUserFind.mockResolvedValue({ email: ' Foo@BAR.com', emailVerified: false });
+    mockContactCount.mockResolvedValue(2);
+
+    // Act
+    const result = await eraseUser(BASE_PARAMS);
+
+    // Assert — nothing deleted, the rest of the erasure ran, the log says 0
+    expect(mockContactDeleteMany).not.toHaveBeenCalled();
+    expect(mockUserDelete).toHaveBeenCalledTimes(1);
+    expect(result.receiptId).toBe('receipt-1');
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      'User erased',
+      expect.objectContaining({ contactSubmissionsDeleted: 0 })
+    );
+    // …the rows left were counted on the stored address, exactly…
+    expect(mockContactCount).toHaveBeenCalledWith({ where: { email: 'foo@bar.com' } });
+    // …and flagged with that count, so an operator can answer the rest of the
+    // request by hand (the address is not logged: it is PII)
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'Contact messages not erased: the account never verified its address',
+      { userId: BASE_PARAMS.userId, receiptId: 'receipt-1', contactSubmissionsLeft: 2 }
+    );
+  });
+
+  it('contact submissions — no warning for an unverified account with nothing under its address', async () => {
+    // Arrange — the common case where verification is off: no messages at all
+    mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: false });
+    mockContactCount.mockResolvedValue(0);
+
+    // Act
+    await eraseUser(BASE_PARAMS);
+
+    // Assert — a warning on every such erasure would teach operators to ignore it
+    expect(mockContactCount).toHaveBeenCalledTimes(1);
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it('contact submissions — no unverified-address warning for a verified account', async () => {
+    // Act — beforeEach's stored address is verified
+    await eraseUser(BASE_PARAMS);
+
+    // Assert — deleted, not counted, and no warning
+    expect(mockContactDeleteMany).toHaveBeenCalledTimes(1);
+    expect(mockContactCount).not.toHaveBeenCalled();
+    expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  it('contact submissions — an address with `_` and `%` is matched as a literal string, not a pattern', async () => {
+    // Arrange — under `mode: 'insensitive'` (ILIKE) `_` matches any one
+    // character and `%` any run, so this would also delete `aXb@ex.com`'s
+    // messages. An equality match on the literal string cannot.
+    mockUserFind.mockResolvedValue({ email: 'a_b%c@ex.com', emailVerified: true });
+
+    // Act
+    await eraseUser(BASE_PARAMS);
+
+    // Assert — exactly this filter: a plain string, no `mode`, no operator
+    const [args] = mockContactDeleteMany.mock.calls[0] as [{ where: unknown }];
+    expect(args).toEqual({ where: { email: 'a_b%c@ex.com' } });
+  });
+
+  it('contact submissions — deleted through the transaction client, before the user row', async () => {
+    // Arrange — hand the callback a tx distinct from `prisma`, so a delete
+    // issued on the outer client (outside the transaction) would miss it
+    const txContactDeleteMany = vi.fn().mockResolvedValue({ count: 2 });
+    const tx = { ...mockPrisma, contactSubmission: { deleteMany: txContactDeleteMany } };
+    mockPrisma.$transaction.mockImplementation(
+      (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)
+    );
+
+    // Act
+    await eraseUser(BASE_PARAMS);
+
+    // Assert — on the tx, not the outer client, and ahead of the user delete
+    expect(txContactDeleteMany).toHaveBeenCalledTimes(1);
+    expect(mockContactDeleteMany).not.toHaveBeenCalled();
+    expect(txContactDeleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+      mockUserDelete.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('contact submissions — the number deleted is logged on the erasure line', async () => {
+    // Arrange
+    mockContactDeleteMany.mockResolvedValue({ count: 3 });
+
+    // Act
+    await eraseUser(BASE_PARAMS);
+
+    // Assert — erased by address, not FK, so the log is its only trace
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      'User erased',
+      expect.objectContaining({ contactSubmissionsDeleted: 3 })
+    );
+  });
+
+  it('contact submissions — a failed delete rolls the erasure back (the user row is never deleted)', async () => {
+    // Arrange
+    mockContactDeleteMany.mockRejectedValue(new Error('contact delete failed'));
+
+    // Act + Assert — the throw escapes the transaction; nothing after it ran
+    await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('contact delete failed');
+    expect(mockReceiptCreate).not.toHaveBeenCalled();
     expect(mockUserDelete).not.toHaveBeenCalled();
   });
 

@@ -108,7 +108,8 @@ async function main(): Promise<void> {
 
     // ADMIN so the export also covers an attribution source (a created agent).
     const subject = await prisma.user.create({
-      data: { name: `${PREFIX} subject`, email, role: PLATFORM_ADMIN_ROLE },
+      // Verified: contact messages are matched only to a proven address.
+      data: { name: `${PREFIX} subject`, email, emailVerified: true, role: PLATFORM_ADMIN_ROLE },
     });
     subjectUserId = subject.id;
 

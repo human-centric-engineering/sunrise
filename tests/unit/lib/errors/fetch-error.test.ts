@@ -98,4 +98,57 @@ describe('describeFetchFailure', () => {
   ])('stringifies %s thrown as a non-Error', (_label, thrown, expected) => {
     expect(describeFetchFailure(thrown)).toBe(expected);
   });
+
+  // #953: undici puts the request URL in some messages (a URL with userinfo is
+  // refused with the URL quoted), and this text is logged and stored.
+  it('reduces a URL inside the message or the cause to its loggable form', () => {
+    const err = Object.assign(
+      new TypeError(
+        'Request cannot be constructed from a URL that includes credentials: https://u:pw@example.com/hooks/AbCdEfGhIjKlMnOpQrStUvWx?token=qs-secret'
+      ),
+      { cause: new Error('redirect to http://other.example.com/x?sig=cause-secret refused') }
+    );
+
+    const described = describeFetchFailure(err);
+
+    expect(described).toBe(
+      'Request cannot be constructed from a URL that includes credentials: https://example.com/hooks/[param]: redirect to http://other.example.com/x refused'
+    );
+    expect(described).not.toContain('pw');
+    expect(described).not.toContain('qs-secret');
+    expect(described).not.toContain('cause-secret');
+  });
+
+  it.each([
+    ['a comma', 'POST to https://h.example.com/x/AbCdEfGhIjKlMnOpQrStUvWx, retrying'],
+    ['a closing parenthesis', 'failed (https://h.example.com/x/AbCdEfGhIjKlMnOpQrStUvWx)'],
+    ['a full stop', 'could not reach https://h.example.com/x/AbCdEfGhIjKlMnOpQrStUvWx.'],
+  ])('reduces a URL followed by %s', (_label, message) => {
+    const described = describeFetchFailure(new Error(message));
+
+    expect(described).toContain('https://h.example.com/x/[param]');
+    expect(described).not.toContain('AbCdEfGhIjKlMnOpQrStUvWx');
+  });
+
+  it('drops the whole userinfo even when it contains a quote', () => {
+    const described = describeFetchFailure(
+      new TypeError(
+        "Request cannot be constructed from a URL that includes credentials: https://bot:pa'ssw0rd@host.example.com/hook"
+      )
+    );
+
+    expect(described).toBe(
+      'Request cannot be constructed from a URL that includes credentials: https://host.example.com/hook'
+    );
+  });
+
+  it.each([
+    ['https://api.x.com?email=a@b.com', 'https://api.x.com/'],
+    ['https://api.x.com/hook?email=a@b.com', 'https://api.x.com/hook'],
+    ['https://host.io#notify=ops@corp.com', 'https://host.io/'],
+  ])('does not take an @ in the query or fragment of %s for userinfo', (url, reduced) => {
+    expect(describeFetchFailure(new Error(`fetch failed: ${url}`))).toBe(
+      `fetch failed: ${reduced}`
+    );
+  });
 });

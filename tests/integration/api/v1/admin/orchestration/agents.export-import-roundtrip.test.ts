@@ -31,6 +31,19 @@ vi.mock('next/headers', () => ({
  * with a transactional client that records create/update calls so we can
  * verify the import wrote the correct data.
  */
+// The version helpers read the agent back and write `AiAgentVersion` rows;
+// their behaviour is proved in agent-versioning's own tests. Here they are
+// stubbed so the test can assert WHEN the import calls them.
+vi.mock('@/lib/orchestration/agents/agent-versioning', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/agents/agent-versioning')>();
+  return {
+    ...actual,
+    ensureBaselineVersion: vi.fn(async () => undefined),
+    recordAgentVersion: vi.fn(async () => 2),
+  };
+});
+
 vi.mock('@/lib/db/client', () => {
   const txMock = {
     aiAgent: {

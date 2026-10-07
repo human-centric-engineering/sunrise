@@ -12,6 +12,7 @@
  *   2. 400 LAST_ADMIN — admin session, adminCount === 1 → blocked before erase
  *   3. 200 happy path — non-last admin (count 2) self-delete:
  *        - real eraseUser ran: $transaction called, tx.aiAdminAuditLog.updateMany,
+ *          tx.contactSubmission.deleteMany,
  *          tx.dataErasureReceipt.create, tx.user.delete all invoked with correct args
  *        - cookies cleared (4 deletes + 4 set-with-maxAge:0)
  *   4. 400 VALIDATION_ERROR — missing / invalid confirmation → no erase
@@ -65,9 +66,13 @@ vi.mock('@/lib/db/client', () => ({
     user: {
       count: vi.fn(),
       delete: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
     },
     aiAdminAuditLog: {
       updateMany: vi.fn(),
+    },
+    contactSubmission: {
+      deleteMany: vi.fn(),
     },
     dataErasureReceipt: {
       create: vi.fn(),
@@ -177,6 +182,14 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
 
     // Default: aiAdminAuditLog.updateMany resolves (returns void-like)
     vi.mocked(prisma.aiAdminAuditLog.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.contactSubmission.deleteMany).mockResolvedValue({ count: 0 });
+    // eraseUser reads the stored address for the contact delete. Deliberately
+    // NOT the address the route passes in, so the assertion below can tell the
+    // two apart: a stale session address must never be the one matched.
+    vi.mocked(prisma.user.findUniqueOrThrow).mockResolvedValue({
+      email: 'stored-self@example.com',
+      emailVerified: true,
+    } as never);
 
     // Default: user.delete resolves
     vi.mocked(prisma.user.delete).mockResolvedValue({ id: SESSION_USER_ID } as never);
@@ -278,6 +291,12 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       expect(prisma.aiAdminAuditLog.updateMany).toHaveBeenCalledWith({
         where: { userId: SESSION_USER_ID },
         data: { clientIp: null },
+      });
+
+      // Inside $transaction: contact-form messages (no FK to User, so no
+      // cascade) are deleted by the erased user's stored address, matched exactly.
+      expect(prisma.contactSubmission.deleteMany).toHaveBeenCalledWith({
+        where: { email: 'stored-self@example.com' },
       });
 
       // Inside $transaction: eraseUser writes an erasure receipt (GDPR Art. 5(2)).

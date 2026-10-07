@@ -52,6 +52,19 @@ vi.mock('next/headers', () => ({
  * with a transactional client (tx). The tx object mirrors the same models
  * we need in the import handler.
  */
+// The version helpers read the agent back and write `AiAgentVersion` rows;
+// their behaviour is proved in agent-versioning's own tests. Here they are
+// stubbed so the test can assert WHEN the import calls them.
+vi.mock('@/lib/orchestration/agents/agent-versioning', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/agents/agent-versioning')>();
+  return {
+    ...actual,
+    ensureBaselineVersion: vi.fn(async () => undefined),
+    recordAgentVersion: vi.fn(async () => 2),
+  };
+});
+
 vi.mock('@/lib/db/client', () => {
   const txMock = {
     aiAgent: {
@@ -96,9 +109,16 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
+import { Prisma } from '@prisma/client';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
+import {
+  AGENT_BATCH_TRANSACTION_TIMEOUT_MS,
+  INITIAL_VERSION_SUMMARY,
+  ensureBaselineVersion,
+  recordAgentVersion,
+} from '@/lib/orchestration/agents/agent-versioning';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -255,6 +275,27 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       expect(data.data.overwritten).toBe(0);
     });
 
+    it("saves a new agent's imported config as its v1", async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const tx = getTxMock();
+      tx.aiAgent.findFirst.mockResolvedValue(null);
+
+      const response = await POST(
+        makeRequest({ bundle: makeBundle([makeBundledAgent('new-agent')]) })
+      );
+
+      expect(response.status).toBe(200);
+      expect(recordAgentVersion).toHaveBeenCalledWith(tx, AGENT_ID, {
+        label: INITIAL_VERSION_SUMMARY,
+        createdBy: ADMIN_ID,
+      });
+      expect(vi.mocked(recordAgentVersion).mock.invocationCallOrder[0]).toBeGreaterThan(
+        tx.aiAgent.create.mock.invocationCallOrder[0]
+      );
+      // A new agent has no earlier config to keep.
+      expect(ensureBaselineVersion).not.toHaveBeenCalled();
+    });
+
     it('creates capability pivot rows when capabilities exist in db', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([
@@ -274,6 +315,18 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
           data: expect.arrayContaining([expect.objectContaining({ capabilityId: CAPABILITY_ID })]),
         })
       );
+    });
+
+    it('gives the import transaction a batch-sized timeout', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      await POST(makeRequest({ bundle: makeBundle([makeBundledAgent('new-agent')]) }));
+
+      // Each agent now costs several version round trips; Prisma's 5s default
+      // would roll back a large import on a remote database.
+      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        timeout: AGENT_BATCH_TRANSACTION_TIMEOUT_MS,
+      });
     });
 
     it('runs all db operations inside a single $transaction', async () => {
@@ -368,6 +421,88 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
         expect.objectContaining({ where: { agentId: existingAgent.id } })
       );
       expect(tx.aiAgentCapability.createMany).toHaveBeenCalled();
+    });
+
+    it('saves the overwritten config as a new agent version, after every write', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const existingAgent = makeDbAgent(AGENT_ID, 'existing-agent');
+      const tx = getTxMock();
+      tx.aiAgent.findFirst.mockResolvedValue(existingAgent);
+
+      const response = await POST(
+        makeRequest({
+          bundle: makeBundle([makeBundledAgent('existing-agent')]),
+          conflictMode: 'overwrite',
+        })
+      );
+
+      expect(response.status).toBe(200);
+      // A pre-versioning agent keeps its current config as v1 before the write…
+      expect(ensureBaselineVersion).toHaveBeenCalledWith(tx, existingAgent.id, ADMIN_ID);
+      // …and the imported config becomes the newest version, inside the same tx.
+      expect(recordAgentVersion).toHaveBeenCalledWith(tx, existingAgent.id, {
+        label: 'Overwritten by agent import',
+        createdBy: ADMIN_ID,
+      });
+      const baselineAt = vi.mocked(ensureBaselineVersion).mock.invocationCallOrder[0];
+      const recordAt = vi.mocked(recordAgentVersion).mock.invocationCallOrder[0];
+      // Baseline before the row changes; the new version after the last grant
+      // write, or it would snapshot the agent's old grants.
+      expect(baselineAt).toBeLessThan(tx.aiAgent.update.mock.invocationCallOrder[0]);
+      expect(recordAt).toBeGreaterThan(
+        Math.max(
+          tx.aiAgent.update.mock.invocationCallOrder[0],
+          ...tx.aiAgentKnowledgeTag.deleteMany.mock.invocationCallOrder,
+          ...tx.aiAgentKnowledgeDocument.deleteMany.mock.invocationCallOrder
+        )
+      );
+    });
+
+    it('returns a retryable 409 when a concurrent edit takes the version number', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      getTxMock().aiAgent.findFirst.mockResolvedValue(makeDbAgent(AGENT_ID, 'existing-agent'));
+      vi.mocked(recordAgentVersion).mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+          meta: { modelName: 'AiAgentVersion' },
+        })
+      );
+
+      const response = await POST(
+        makeRequest({
+          bundle: makeBundle([makeBundledAgent('existing-agent')]),
+          conflictMode: 'overwrite',
+        })
+      );
+
+      expect(response.status).toBe(409);
+    });
+
+    it('leaves a unique violation a retry cannot fix to the shared handler, not a 409', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      getTxMock().aiAgent.findFirst.mockResolvedValue(null);
+      // e.g. a bundle listing the same capability twice: it fails every time.
+      getTxMock().aiAgentCapability.createMany.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+          meta: { modelName: 'AiAgentCapability' },
+        })
+      );
+      vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([
+        { id: CAPABILITY_ID, slug: 'search-web' },
+      ] as never);
+
+      const response = await POST(
+        makeRequest({
+          bundle: makeBundle([makeBundledAgent('new-agent', [{ slug: 'search-web' }])]),
+        })
+      );
+
+      // The shared API error handler's answer for a unique violation (400),
+      // not "conflicted with a concurrent change, please retry".
+      expect(response.status).toBe(400);
     });
 
     it('rebuilds knowledge-document grants by slug on overwrite (#338)', async () => {

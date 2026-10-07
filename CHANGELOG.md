@@ -232,6 +232,21 @@ release process.
 
 ### Changed
 
+- **Reverting an agent's instructions, importing an agent over it, restoring a
+  backup over it, and bulk activate / deactivate / delete now each add an agent
+  version** (t-779). `POST /admin/orchestration/agents/:id/instructions-revert`,
+  `POST /admin/orchestration/agents/import`, `POST /admin/orchestration/backup/import`
+  and `POST /admin/orchestration/agents/bulk` used to change an agent's
+  versioned config without one, so its newest version no longer matched what
+  it ran. Version history now shows each such change as a new vN, summarised by
+  the fields it changed; an agent created by an import gets a v1, and an agent
+  with no history keeps its prior config as v1 first. A write that leaves an
+  agent matching its newest version adds none. These routes, like PATCH, now
+  return a retryable `409` when a concurrent edit takes the version number. The
+  version-history diff also stops reporting an object field as changed when only
+  its key order differs. The workflow `chat_turn` step reads an agent and its
+  newest version in one snapshot, so an edit committed mid-read cannot pin a
+  turn to a version it did not run.
 - **The Model Matrix no longer overrides the price or context window of a
   model the registry already knows** (#813, t-769). A positive figure from the
   static map or OpenRouter now wins over the row's blended rate and context
@@ -783,6 +798,24 @@ release process.
 
 ### Security
 
+- **Client error reports and Sentry events no longer carry the page URL's
+  query string, fragment or credential-shaped path segments** (#952). The
+  global client error handler (`lib/errors/handler.ts`) sent
+  `window.location.href` as `extra.url`; it now sends the collapsed pathname
+  as **`extra.path`** (update any Sentry saved search or alert on `extra.url`),
+  and scrubs URLs in its context and in the error it reports.
+  `lib/errors/sentry.ts` registers a new `scrubSentryEvent` on Sentry's
+  global scope (client: `initErrorTracking()`; Node server: `instrumentation.ts`),
+  so error and transaction events, their breadcrumbs and stack frames are
+  scrubbed from then on without a fork change. **Forks with Sentry on should add
+  `beforeSendSpan: scrubSentrySpan`** to each `Sentry.init` (spans are
+  streamed past event processors in `@sentry/nextjs` 11), and
+  `beforeSend: scrubSentryEvent` to `instrumentation-client.ts` (the client
+  registration runs after hydration, so load-time errors would miss it) and
+  `sentry.edge.config.ts`. New helpers
+  `scrubUrl()`, `scrubUrlsInText()`, `scrubUrlsDeep()` and
+  `scrubUrlsInError()` live in `lib/logging/redact-path.ts`. See
+  [`sentry-setup.md`](./.context/monitoring/sentry-setup.md#page-urls).
 - **The `api-key` and `embed-token` rate-limit key strategies key on a
   verified credential** (#701). Both built the bucket from the header value
   as presented, so a caller could open a new bucket per request and the cap
@@ -849,6 +882,28 @@ release process.
     (better-auth's `/reset-password/<token>`); and the rate-limit
     middleware's unknown-tier warning.
 
+- **Outbound webhook and document URLs are no longer logged verbatim**
+  (#953). Hook and webhook-subscription deliveries, the escalation webhook,
+  the webhook create and test routes, the notification step and
+  knowledge-base URL fetches logged the target URL as configured, so a
+  credential carried in it (a Slack or Discord webhook path, a signed URL's
+  query, userinfo) reached stdout and the admin log buffer. They now log
+  `loggableUrl()` (new in `lib/logging/redact-path.ts`): origin plus the
+  collapsed path, with userinfo, query and fragment dropped, and
+  `[non-http-url]` for any other scheme. `describeFetchFailure()`
+  (`lib/errors/fetch-error.ts`) now reduces any URL quoted in the error it
+  describes, so a delivery's `error` field and stored `lastError` no longer
+  carry one either, and a knowledge-base fetch error reaches the route's error
+  log reduced. The outbound HTTP client's `HTTP request: sending` line
+  collapses its `path`, and its `host_not_allowed` error, which reaches the
+  model, carries the reduced URL. A path secret the
+  `collapseDynamicSegments()` heuristic does not recognise (under 20
+  characters, or containing `:`) is still kept.
+  **Not covered:** the execution trace still shows a step's configured URL,
+  in its `input` and in a `send_notification` step's `output.url`, as the
+  workflow definition does; `output.url` keeps the working URL because later
+  steps and resumed runs read it.
+
 - **The logger redacts camelCase and kebab-case keys** (#951). Key matching
   lower-cased a key before looking for word boundaries, which erased the
   camelCase boundary, so `userPassword`, `accessToken`, `clientSecret`,
@@ -887,6 +942,25 @@ release process.
   stores it. A fork that copied the old `collectAppSubjectData()` example from
   `.context/privacy/data-export.md` into `lib/app/data-export.ts`, or used the
   same match anywhere else keyed by email, should change it the same way.
+
+- **Erasing an account now deletes the contact-form messages sent from its
+  address, and both erasure and export attribute those messages only to a
+  verified address** (t-767). `ContactSubmission` has no FK to `User`, so the
+  erasure cascade never reached it: `eraseUser()` reported success and left the
+  person's name, address and messages behind, while the export already treated
+  those rows as theirs. They are now deleted inside the erasure transaction,
+  matched exactly on the account's stored address, trimmed and lower-cased,
+  through `contactSubmissionsOf()`, the matcher the export also uses. The
+  contact form proves nothing about who typed an address, so an account whose
+  `emailVerified` is false now matches none of them: its erasure leaves them,
+  and **its export no longer includes them** (it previously did, so with email
+  verification off an account opened under someone else's address received
+  their enquiries). Where verification is required (the production default)
+  this affects only sign-ups that never verified; when one leaves messages
+  behind, erasure logs a warning with the count so an operator can handle them
+  by hand. A fork with its own table keyed by email needs the same step in an
+  erasure hook's `scrubInTransaction`, and the same verified-only
+  rule if a public form fills it; `.context/privacy/data-erasure.md` shows how.
 
 - **The email-preview server's copy of Next is no longer in the `next/og`
   remote-code-execution range** (t-758). `@react-email/ui` (dev-only) pins

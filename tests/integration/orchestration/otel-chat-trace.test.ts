@@ -23,6 +23,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // Module mocks — declared before any imports that trigger the modules
 // ---------------------------------------------------------------------------
 
+// The agent read's REPEATABLE READ wrapper is proved in agent-versioning's
+// own tests; here it runs the read against the client directly.
+vi.mock('@/lib/orchestration/agents/agent-versioning', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/agents/agent-versioning')>();
+  return {
+    ...actual,
+    readAgentConsistently: vi.fn((db: unknown, read: (tx: unknown) => unknown) => read(db)),
+  };
+});
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     aiAgent: { findFirst: vi.fn() },

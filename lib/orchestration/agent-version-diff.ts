@@ -117,20 +117,30 @@ export function labelForField(field: string): string {
   );
 }
 
+/** JSON with object keys sorted at every depth. */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v !== null && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(
+          Object.entries(v as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))
+        )
+      : v
+  );
+}
+
 /**
- * Deep-equality check for snapshot values. Snapshots come from the
- * same code path on both sides, so JSON-stringify equality is enough:
- * keys land in the same order from the writing side, and the values
- * are restricted to JSON-serialisable primitives, arrays, and plain
- * objects.
+ * Deep-equality check for snapshot values, which are JSON-serialisable
+ * primitives, arrays and plain objects. Object keys are compared in sorted
+ * order: a snapshot read back from JSONB comes back with its keys reordered,
+ * and must still equal the same config built from a live agent row.
  */
-function valuesEqual(a: unknown, b: unknown): boolean {
+export function snapshotValuesEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a == null || b == null) return a === b;
   if (typeof a !== typeof b) return false;
   if (typeof a === 'object') {
     try {
-      return JSON.stringify(a) === JSON.stringify(b);
+      return stableJson(a) === stableJson(b);
     } catch {
       return false;
     }
@@ -158,7 +168,7 @@ export function diffAgentSnapshots(
   for (const key of keys) {
     const a = after[key];
     const b = beforeObj[key];
-    if (before !== null && valuesEqual(a, b)) continue;
+    if (before !== null && snapshotValuesEqual(a, b)) continue;
     changes.push({
       field: key,
       label: labelForField(key),

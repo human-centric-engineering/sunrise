@@ -40,6 +40,7 @@
  */
 
 import { prisma } from '@/lib/db/client';
+import { contactSubmissionsOf } from '@/lib/privacy/contact-submissions';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 
 /** How a `User`-linked model is represented in a subject export. */
@@ -51,6 +52,8 @@ export interface SubjectQuery {
   userId: string;
   /** The subject's email — needed by sources that have no FK (see `ContactSubmission`). */
   email: string;
+  /** Whether the account has proven it owns `email` — a by-address source trusts it only then. */
+  emailVerified: boolean;
 }
 
 /** One row of "you created this", with none of the created thing's content. */
@@ -260,7 +263,8 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     model: 'ContactSubmission',
     section: 'contactSubmissions',
     disposition: 'export',
-    description: 'Messages sent through the public contact form from the subject’s email address.',
+    description:
+      'Messages sent through the public contact form from the subject’s email address. Included only once the account has verified that address: the form does not check who typed it.',
     // ⚠️ No FK to `User`, and no user id in any column — the public contact form
     // takes an address, not a session. So this table is invisible to the erasure
     // cascade AND to both of the guard's nets: the relation scan and the
@@ -270,17 +274,17 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     // the same treatment; nothing mechanical will find it for you.
     //
     // ⚠️ If you copy this, match EXACTLY on a value normalised the way the
-    // writer normalises it — never `mode: 'insensitive'`. Prisma compiles that
-    // to an unescaped `ILIKE`, so `_` and `%` in an address match other
-    // people's rows: here that hands a stranger's message to the subject, and
-    // on an erasure path it deletes a stranger's rows. The contact route is
-    // the only writer and stores `emailSchema` output (trimmed, lower-cased),
-    // so the same normalisation here finds every row of the subject's.
-    fetch: ({ email }) =>
-      prisma.contactSubmission.findMany({
-        where: { email: email.trim().toLowerCase() },
-        orderBy: byCreatedAt,
-      }),
+    // writer normalises it — never `mode: 'insensitive'`, whose unescaped
+    // `ILIKE` matches a stranger's address. `contactSubmissionsOf()` says why,
+    // and erasure deletes through the same matcher.
+    //
+    // And only for a verified address: the form proves nothing about who
+    // typed it, so an unverified account gets none (see the matcher).
+    fetch: async (subject: SubjectQuery): Promise<unknown[]> => {
+      const where = contactSubmissionsOf(subject);
+      if (!where) return [];
+      return prisma.contactSubmission.findMany({ where, orderBy: byCreatedAt });
+    },
   },
   {
     model: 'AiCostLog',

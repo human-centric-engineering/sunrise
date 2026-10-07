@@ -240,7 +240,7 @@ Returns the full audit array. Malformed rows are logged server-side and skipped 
 
 ### `POST /agents/:id/instructions-revert`
 
-Body: `{ index: number }` — revert to a previous history entry. The current value is pushed onto history before the overwrite, so the revert itself is also recoverable.
+Body: `{ index: number }` — revert to a previous history entry. The current value is pushed onto history before the overwrite, so the revert itself is also recoverable. The revert also adds an agent version, as any change to versioned config does.
 
 ### `POST /agents/:id/clone`
 
@@ -252,7 +252,7 @@ Optional body: `{ name?: string, slug?: string }`. Defaults: name = `"{source.na
 
 Bulk agent operations. Body: `{ action: 'activate' | 'deactivate' | 'delete', agentIds: string[] }`. System agents (`isSystem = true`) are excluded from all mutations. Delete is a soft delete (sets `isActive = false`).
 
-Response: `{ action, requested, affected }` — `affected` may be less than `requested` when system agents are filtered out.
+Response: `{ action, requested, affected }` — `affected` may be less than `requested` when system agents are filtered out. `isActive` is versioned, so each agent the action changes gets a new agent version in the same transaction; a concurrent edit that takes a version number returns a retryable `409`.
 
 ### `GET /agents/compare`
 

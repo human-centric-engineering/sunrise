@@ -18,6 +18,7 @@ import { BRAND } from '@/lib/brand';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
+import { loggableUrl } from '@/lib/logging/redact-path';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import { cuidSchema } from '@/lib/validations/common';
 import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/client';
@@ -213,7 +214,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   log.info('Webhook test sent', {
     webhookId: parsed.data,
-    url: webhook.url,
+    url: loggableUrl(webhook.url),
     statusCode,
     durationMs,
     success,

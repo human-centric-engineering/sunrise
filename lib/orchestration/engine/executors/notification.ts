@@ -28,6 +28,7 @@ import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { sendEmail } from '@/lib/email/send';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
 import { logger } from '@/lib/logging';
+import { loggableUrl } from '@/lib/logging/redact-path';
 import { WorkflowNotification } from '@/emails/workflow-notification';
 import { notificationToSchema } from '@/lib/validations/orchestration';
 
@@ -211,9 +212,13 @@ async function executeNotification(
         stepId: step.id,
       });
 
+      // A webhook URL can carry its credential (path, query or userinfo), so
+      // the log line gets the reduced form (#953). `output.url` keeps the
+      // working URL: later steps read it as `{{steps.<id>.output.url}}`, and a
+      // resumed run rehydrates it from the persisted trace.
       logger.info('Notification step: webhook dispatched', {
         stepId: step.id,
-        webhookUrl: config.webhookUrl,
+        webhookUrl: loggableUrl(config.webhookUrl),
       });
 
       stepResult = {

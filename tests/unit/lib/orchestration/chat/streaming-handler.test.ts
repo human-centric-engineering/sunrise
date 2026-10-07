@@ -14,6 +14,17 @@ import { assertNoAttachmentPersistence } from '@/tests/helpers/no-attachment-per
 // Module mocks — hoisted before dynamic imports
 // ---------------------------------------------------------------------------
 
+// The agent read's REPEATABLE READ wrapper is proved in agent-versioning's
+// own tests; here it runs the read against the client directly.
+vi.mock('@/lib/orchestration/agents/agent-versioning', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/agents/agent-versioning')>();
+  return {
+    ...actual,
+    readAgentConsistently: vi.fn((db: unknown, read: (tx: unknown) => unknown) => read(db)),
+  };
+});
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     // `touchAgentLastActive` (called from `createNewConversation`) does
@@ -229,6 +240,7 @@ const { buildContext, invalidateContext } =
   await import('@/lib/orchestration/chat/context-builder');
 const { emitHookEvent } = await import('@/lib/orchestration/hooks/registry');
 const { streamChat } = await import('@/lib/orchestration/chat/streaming-handler');
+const { readAgentConsistently } = await import('@/lib/orchestration/agents/agent-versioning');
 const { CostOperation } = await import('@/types/orchestration');
 const { getBreaker } = await import('@/lib/orchestration/llm/circuit-breaker');
 const { ProviderError } = await import('@/lib/orchestration/llm/provider');
@@ -6524,6 +6536,15 @@ describe('attachment gate', () => {
         take: 1,
         select: { id: true },
       });
+    });
+
+    it('reads the agent and its newest version through one consistent read', async () => {
+      setupTextTurn();
+      await collect(streamChat(baseRequest));
+
+      // A bare `prisma.aiAgent.findFirst` would read the version in a second
+      // snapshot and could pin a turn to a version it did not run (t-779).
+      expect(readAgentConsistently).toHaveBeenCalledWith(prisma, expect.any(Function));
     });
 
     it('pins the latest version id on the terminal assistant message', async () => {
