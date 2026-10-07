@@ -723,6 +723,62 @@ describe('Logger', () => {
         expect((parsed.meta as any).recipients[1].email).toBe('[PII REDACTED]');
       });
     });
+
+    describe('Compound field names (camelCase, snake_case, kebab-case)', () => {
+      function logAndParse(meta: Record<string, unknown>): Record<string, unknown> {
+        const testLogger = new Logger(LogLevel.INFO);
+        testLogger.info('Compound keys', meta);
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        const parsed = JSON.parse(output) as ParsedLogOutput;
+        assertDefined(parsed.meta);
+        return parsed.meta;
+      }
+
+      it.each([
+        'userPassword',
+        'newPassword',
+        'accessToken',
+        'refreshToken',
+        'sessionToken',
+        'clientSecret',
+        'APIKey',
+        'x-api-key',
+        'user password',
+        'password123',
+        'user_password_hash',
+      ])('should always redact the secret field %s', (key) => {
+        vi.stubEnv('NODE_ENV', 'production');
+        vi.stubEnv('LOG_SANITIZE_PII', 'false');
+
+        const meta = logAndParse({ [key]: 'sensitive-value' });
+
+        expect(meta[key]).toBe('[REDACTED]');
+      });
+
+      it.each(['userEmail', 'inviteeEmail', 'deletedByEmail', 'clientIP', 'ipAddress', 'zipCode'])(
+        'should redact the PII field %s when PII sanitization is on',
+        (key) => {
+          vi.stubEnv('NODE_ENV', 'production');
+          vi.stubEnv('LOG_SANITIZE_PII', 'true');
+
+          const meta = logAndParse({ [key]: 'pii-value' });
+
+          expect(meta[key]).toBe('[PII REDACTED]');
+        }
+      );
+
+      it.each(['recipients', 'shipping', 'description', 'tokens', 'inputTokens'])(
+        'should not redact %s, which only contains a sensitive word inside a longer word',
+        (key) => {
+          vi.stubEnv('NODE_ENV', 'production');
+          vi.stubEnv('LOG_SANITIZE_PII', 'true');
+
+          const meta = logAndParse({ [key]: 'plain-value' });
+
+          expect(meta[key]).toBe('plain-value');
+        }
+      );
+    });
   });
 
   describe('Output Formatting', () => {

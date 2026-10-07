@@ -741,6 +741,18 @@ release process.
     (better-auth's `/reset-password/<token>`); and the rate-limit
     middleware's unknown-tier warning.
 
+- **The logger redacts camelCase and kebab-case keys** (#951). Key matching
+  lower-cased a key before looking for word boundaries, which erased the
+  camelCase boundary, so `userPassword`, `accessToken`, `clientSecret`,
+  `userEmail` and similar keys were written in the clear while `password` and
+  `user_email` were redacted. Keys are now split into words at camelCase,
+  `_`, `-` and spaces first. Production log fields that change from clear text
+  to `[REDACTED]` / `[PII REDACTED]` include the sign-up hook's `userEmail`
+  and the invitation-delete route's `deletedByEmail`; non-secret keys that
+  name a sensitive word (`tokenId`, `apiKeyId`, `hasApiKey`, `emailStatus`,
+  `clientIP`) are now redacted too, as their snake_case forms already were.
+  Dashboards or alerts reading those fields should switch to another key.
+
 - **`csvEscape` quotes a lone CR, so free text can no longer start a CSV
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after
   the first character was emitted bare, a spreadsheet read it as a record break,

@@ -268,7 +268,7 @@ logger.info('Auth attempt', {
 - `creditcard`, `credit_card`, `ssn`, `authorization`
 - `bearer`, `credential`, `privatekey`, `private_key`
 
-**Note:** Field matching is case-insensitive, so `apiKey`, `APIKEY`, and `apikey` all match.
+**Note:** Field matching is case-insensitive and matches whole words of the key. A key is split into words at camelCase, `_`, `-` and spaces before matching, so `userPassword`, `accessToken`, `x-api-key`, `APIKEY` and `password_hash` all match, while `recipients` does not match `ip` and `inputTokens` does not match `token`. The cost is that a non-secret key naming a sensitive word is redacted too (`tokenId`, `hasApiKey`, `emailStatus`) — log those under a different name if you need the value.
 
 ### Tier 2: PII (Environment-Aware)
 

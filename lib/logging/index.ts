@@ -171,12 +171,27 @@ function shouldSanitizePII(): boolean {
 }
 
 /**
+ * Normalise a field name to lower-case words joined by `_`, so camelCase,
+ * PascalCase, kebab-case and spaced keys share snake_case word boundaries:
+ * "userPassword" → "user_password", "APIKey" → "api_key",
+ * "x-api-key" → "x_api_key". Splitting must happen before lower-casing,
+ * because lower-casing is what erases the camelCase boundary.
+ */
+function toSnakeWords(fieldName: string): string {
+  return fieldName
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1_$2')
+    .replace(/[-\s]+/g, '_')
+    .toLowerCase();
+}
+
+/**
  * Check if a field name matches any sensitive pattern
  * Uses word boundary matching to avoid false positives like:
  * - "recipients" matching "ip"
  * - "credentials" matching "credential" (this one is intentionally matched)
  *
- * Matches if the field:
+ * Matches if the field, split into words (see `toSnakeWords`):
  * - Exactly equals the sensitive pattern
  * - Starts with the pattern followed by non-letter (e.g., "password123")
  * - Ends with the pattern preceded by non-letter (e.g., "userPassword")
@@ -184,16 +199,16 @@ function shouldSanitizePII(): boolean {
  */
 function matchesSensitiveField(fieldName: string, sensitivePatterns: string[]): boolean {
   const lowerField = fieldName.toLowerCase();
+  const wordField = toSnakeWords(fieldName);
   return sensitivePatterns.some((pattern) => {
     // Exact match
     if (lowerField === pattern) return true;
 
     // Word boundary matching using regex
-    // Pattern should match as a complete word or camelCase boundary
     // e.g., "password" matches "userPassword", "password_hash", "PASSWORD"
     // but "ip" should NOT match "recipients" or "shipping"
-    const regex = new RegExp(`(^|[^a-z])${pattern}([^a-z]|$)`, 'i');
-    return regex.test(lowerField);
+    const regex = new RegExp(`(^|[^a-z])${pattern}([^a-z]|$)`);
+    return regex.test(wordField);
   });
 }
 
