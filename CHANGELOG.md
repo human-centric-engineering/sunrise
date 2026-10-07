@@ -751,7 +751,8 @@ release process.
   Production log fields that change from clear text to `[REDACTED]` /
   `[PII REDACTED]` include the sign-up hook's `userEmail` and the
   invitation-delete route's `deletedByEmail`, and `clientIP` on the inbound
-  and webhook-trigger signature-failure lines (IP is in the PII list; set
+  signature-failure and verification-handshake lines and the webhook-trigger
+  execution line (IP is in the PII list; set
   `LOG_SANITIZE_PII=false` to keep it). PostHog's debug `apiKeyPrefix` is now
   `[REDACTED]`.
   - Non-secret keys that name a sensitive word (`tokenId`, `apiKeyId`,
