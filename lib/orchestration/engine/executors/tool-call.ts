@@ -3,8 +3,11 @@
  *
  * Config:
  *   - `capabilitySlug: string` (required, validated upstream)
- *   - `args?: Record<string, unknown>` — passed through to the dispatcher.
- *     When omitted, `ctx.inputData` is forwarded instead.
+ *   - `args?: Record<string, unknown>` — passed to the dispatcher, with every
+ *     string value template-interpolated like any other step's config
+ *     (`{{input.foo}}`, `{{<stepId>.output}}`, `{{trigger.conversationId}}`).
+ *     When omitted, `ctx.inputData` is forwarded instead, as data: it is not
+ *     interpolated, and neither is an `argsFrom` output.
  *   - `argsFrom?: string` — step ID whose output should be used as args.
  *     Takes precedence over `ctx.inputData` but not over explicit `args`.
  *
@@ -41,6 +44,10 @@ import {
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { platformScope, hintScope } from '@/lib/orchestration/scope';
+import {
+  latestStepOutputId,
+  resolveTemplatesInRecord,
+} from '@/lib/orchestration/engine/interpolate-prompt';
 
 export async function executeToolCall(
   step: WorkflowStep,
@@ -111,7 +118,13 @@ export async function executeToolCall(
   // Priority: explicit args > argsFrom (step output reference) > ctx.inputData
   let rawArgs: Record<string, unknown>;
   if (config.args) {
-    rawArgs = config.args;
+    // Interpolated like every other step's config (t-770): before, a
+    // template's `conversationId: '{{trigger.conversationId}}'` reached the
+    // capability as that literal text, and the inbound-reply template never
+    // sent a reply. The walker the trace viewer also uses, with `previous`
+    // read as `human_approval` reads it. Values come out as strings, as they
+    // do in every step type.
+    rawArgs = resolveTemplatesInRecord(config.args, ctx, latestStepOutputId(ctx));
   } else if (config.argsFrom && ctx.stepOutputs[config.argsFrom] != null) {
     const fromOutput = ctx.stepOutputs[config.argsFrom];
     rawArgs =

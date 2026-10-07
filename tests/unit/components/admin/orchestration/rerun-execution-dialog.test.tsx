@@ -290,6 +290,63 @@ describe('RerunExecutionDialog', () => {
       expect(baseProps.onOpenChange).toHaveBeenCalledWith(false);
     });
 
+    describe('sending the reply to the person again (t-770)', () => {
+      const replying = {
+        ...baseProps,
+        execution: { ...baseProps.execution, replyConversationId: 'conv-inbound' },
+      };
+      function versionsOnlyV2() {
+        mockApiCalls({
+          versions: versionsResponse(
+            [makeVersion({ id: VERSION_ID_V2, version: 2 })],
+            VERSION_ID_V2
+          ),
+        });
+        mockFetch.mockResolvedValueOnce(
+          makeSseResponse([
+            'event: workflow_started\ndata: {"executionId":"exec_new","workflowId":"wf_test"}',
+          ])
+        );
+      }
+
+      it('offers the checkbox, unticked, for any run that replied to someone', async () => {
+        versionsOnlyV2();
+        const { unmount } = render(<RerunExecutionDialog {...replying} />);
+        expect(await screen.findByTestId('rerun-resend-reply')).not.toBeChecked();
+        unmount();
+
+        versionsOnlyV2();
+        render(<RerunExecutionDialog {...baseProps} />);
+        await screen.findByTestId('rerun-confirm');
+        expect(screen.queryByTestId('rerun-resend-reply')).not.toBeInTheDocument();
+      });
+
+      it('sends resendReply only when the admin ticks the box', async () => {
+        const user = userEvent.setup();
+        versionsOnlyV2();
+        render(<RerunExecutionDialog {...replying} />);
+
+        await user.click(await screen.findByTestId('rerun-resend-reply'));
+        await user.click(await screen.findByTestId('rerun-confirm'));
+
+        await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
+        const [, init] = mockFetch.mock.calls[0] as [unknown, RequestInit];
+        expect(JSON.parse(init.body as string)).toMatchObject({ resendReply: true });
+      });
+
+      it('leaves resendReply out when the box is not ticked', async () => {
+        const user = userEvent.setup();
+        versionsOnlyV2();
+        render(<RerunExecutionDialog {...replying} />);
+
+        await user.click(await screen.findByTestId('rerun-confirm'));
+
+        await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
+        const [, init] = mockFetch.mock.calls[0] as [unknown, RequestInit];
+        expect(JSON.parse(init.body as string)).not.toHaveProperty('resendReply');
+      });
+    });
+
     it('surfaces the server error envelope when fetch returns non-OK with JSON body', async () => {
       mockApiCalls({
         versions: versionsResponse([makeVersion({ id: VERSION_ID_V2, version: 2 })], VERSION_ID_V2),

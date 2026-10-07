@@ -411,6 +411,71 @@ describe('executeToolCall', () => {
 
   // ─── isIdempotent / dispatch-cache path tests ────────────────────────────────
 
+  describe('template interpolation in args (t-770)', () => {
+    // tool_call was the one step type whose config was not interpolated, so
+    // the inbound-reply template's `{{trigger.conversationId}}` reached the
+    // capability as literal text and no reply was ever sent.
+    it('interpolates every string in authored args, the inbound-reply template’s included', async () => {
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+      const ctx = makeCtx({
+        // The real inbound route's shape: the payload at `trigger`, the
+        // resolved conversation at `triggerMeta`.
+        inputData: {
+          trigger: { text: 'Hi', from: '+447400123456' },
+          triggerMeta: { channel: 'sms', conversationId: 'conv-inbound' },
+        },
+        stepOutputs: { respond_to_inbound: 'Happy to help.' },
+      });
+      const step = makeStep({
+        capabilitySlug: 'send_message_to_channel',
+        args: {
+          conversationId: '{{trigger.conversationId}}',
+          message: '{{respond_to_inbound.output}}',
+          nested: { list: ['from {{trigger.from}}', 7] },
+          plain: 'no placeholders',
+        },
+      });
+
+      await executeToolCall(step, ctx);
+
+      expect(capabilityDispatcher.dispatch).toHaveBeenCalledWith(
+        'send_message_to_channel',
+        {
+          conversationId: 'conv-inbound',
+          message: 'Happy to help.',
+          nested: { list: ['from +447400123456', 7] },
+          plain: 'no placeholders',
+        },
+        expect.any(Object)
+      );
+    });
+
+    it('reads {{previous.output}} as the most recent step’s output, as the trace viewer does', async () => {
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+      const ctx = makeCtx({ stepOutputs: { first: 'old', respond: 'Happy to help.' } });
+
+      await executeToolCall(makeStep({ args: { message: '{{previous.output}}' } }), ctx);
+
+      expect(vi.mocked(capabilityDispatcher.dispatch).mock.calls[0][1]).toEqual({
+        message: 'Happy to help.',
+      });
+    });
+
+    it('passes argsFrom output and the inputData fallback through as data, uninterpolated', async () => {
+      vi.mocked(capabilityDispatcher.dispatch).mockResolvedValue({ success: true, data: {} });
+      const literal = { note: '{{input.secret}}' };
+
+      await executeToolCall(
+        makeStep({ argsFrom: 'prev' }),
+        makeCtx({ inputData: { secret: 'x' }, stepOutputs: { prev: literal } })
+      );
+      await executeToolCall(makeStep(), makeCtx({ inputData: literal }));
+
+      expect(vi.mocked(capabilityDispatcher.dispatch).mock.calls[0][1]).toEqual(literal);
+      expect(vi.mocked(capabilityDispatcher.dispatch).mock.calls[1][1]).toEqual(literal);
+    });
+  });
+
   describe('dispatch cache integration', () => {
     // Nested beforeEach resets dispatch-cache mocks so each test starts from a
     // known baseline regardless of execution order (gotcha #22 — module-mock

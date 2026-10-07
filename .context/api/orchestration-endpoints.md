@@ -562,10 +562,11 @@ Guards: execution must be `failed`, `stepId` must reference a failed step in the
 Re-run a previously-executed workflow against either its current published version or a caller-specified version, carrying the original execution's `inputData` and `budgetLimitUsd` forward. The new execution row carries `parentExecutionId` pointing at the original, which the admin detail view renders as a "Re-run of execution X" breadcrumb.
 
 ```jsonc
-// Request — both fields optional
+// Request — every field optional
 {
   "versionId": "<workflow-version-cuid>", // defaults to publishedVersionId
   "budgetLimitUsd": 5.0, // defaults to original's budget
+  "resendReply": true, // let a re-run of a COMPLETED run reply to the person again (t-770)
 }
 
 // Response: SSE stream of ExecutionEvent
@@ -577,6 +578,8 @@ The response is an SSE stream — clients capture the new `executionId` from the
 Guards: execution must belong to `session.user.id` (cross-user returns 404 to avoid existence leaks). `versionId`, when provided, must belong to the original workflow — cross-workflow pins return 400 with a typed `ValidationError`. `prepareWorkflowExecution` then runs structural + semantic validation on the chosen version's snapshot before the engine starts.
 
 Side effects: every capability dispatch, notification, and external call in the workflow re-fires. The admin UI dialog (`<RerunExecutionDialog>`) surfaces this explicitly in the confirmation body.
+
+**Replying to the person who wrote in** (t-770). An execution an inbound message started carries `replyConversationId`, the only conversation `send_message_to_channel` lets it send to. A re-run gets it only when the request sets `resendReply: true` (the dialog's "Send the reply to the person again" checkbox, offered unticked for any such run) and the original has finished (completed, failed or cancelled). Without it the re-run texts nobody, whatever the original's outcome: a run can send and then fail, or complete without sending, and Sunrise records only that a provider accepted a message, not that it arrived. A run still in flight would reply itself when it resumes, so its re-run never gets it.
 
 ### `GET /approvals/history`
 

@@ -22,6 +22,7 @@ import type { ExecutionContext } from '@/lib/orchestration/engine/context';
 import { ExecutorError, PausedForApproval } from '@/lib/orchestration/engine/errors';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
+import { latestStepOutputId } from '@/lib/orchestration/engine/interpolate-prompt';
 
 export function executeHumanApproval(
   step: WorkflowStep,
@@ -36,8 +37,7 @@ export function executeHumanApproval(
   }
 
   // Find the most-recent step output to preview for the reviewer.
-  const stepIds = Object.keys(ctx.stepOutputs);
-  const lastStepId = stepIds.length > 0 ? stepIds[stepIds.length - 1] : undefined;
+  const lastStepId = latestStepOutputId(ctx);
   const previous = lastStepId ? ctx.stepOutputs[lastStepId] : null;
 
   // Resolve `{{stepId.output}}`, `{{input.foo}}`, `{{vars.x}}`,

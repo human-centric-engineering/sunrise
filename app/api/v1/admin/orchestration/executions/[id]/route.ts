@@ -195,6 +195,9 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
       // versions added since) and the parent-lineage breadcrumb.
       versionId: execution.versionId,
       parentExecutionId: execution.parentExecutionId,
+      // Whether this run replies to someone, so the re-run dialog can offer
+      // to send that reply again (t-770).
+      replyConversationId: execution.replyConversationId,
       status: execution.status,
       totalTokensUsed: execution.totalTokensUsed,
       totalCostUsd: execution.totalCostUsd,

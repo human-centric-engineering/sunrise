@@ -98,6 +98,12 @@ export interface ExecutionInfo {
    * normal (non-rerun) executions.
    */
   parentExecutionId?: string | null;
+  /**
+   * The conversation this run replies on (t-770): set when an inbound message
+   * started it, copied by a re-run. Lets the re-run dialog offer to send the
+   * reply again.
+   */
+  replyConversationId?: string | null;
   status: string;
   totalTokensUsed: number;
   totalCostUsd: number;
@@ -1567,6 +1573,7 @@ export function ExecutionDetailView({
           id: execution.id,
           workflowId: execution.workflowId,
           versionId: execution.versionId ?? null,
+          replyConversationId: execution.replyConversationId ?? null,
         }}
       />
     </div>

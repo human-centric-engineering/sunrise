@@ -17,6 +17,9 @@ import { describe, it, expect } from 'vitest';
 import {
   interpolatePrompt,
   type InterpolationContext,
+  latestStepOutputId,
+  resolveTemplatesIn,
+  resolveTemplatesInRecord,
 } from '@/lib/orchestration/engine/interpolate-prompt';
 
 function makeCtx(overrides: Partial<InterpolationContext> = {}): InterpolationContext {
@@ -348,5 +351,35 @@ describe('interpolatePrompt', () => {
         '[unserializable]'
       );
     });
+  });
+});
+
+describe('resolveTemplatesIn (t-770)', () => {
+  it('interpolates string leaves, walks objects and arrays, and leaves other leaves alone', () => {
+    const ctx = makeCtx({ inputData: { name: 'Ada' }, stepOutputs: { s1: 'done' } });
+
+    expect(
+      resolveTemplatesIn({ a: 'Hi {{input.name}}', b: ['{{s1.output}}', 3, true, null] }, ctx)
+    ).toEqual({ a: 'Hi Ada', b: ['done', 3, true, null] });
+  });
+
+  it('copies a __proto__ key as an ordinary property rather than through the prototype setter', () => {
+    const args = JSON.parse(
+      '{"__proto__": {"polluted": true}, "keep": "{{input.name}}"}'
+    ) as Record<string, unknown>;
+
+    const out = resolveTemplatesInRecord(args, makeCtx({ inputData: { name: 'Ada' } }));
+
+    expect(Object.prototype.hasOwnProperty.call(out, '__proto__')).toBe(true);
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
+    expect(out.keep).toBe('Ada');
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
+
+describe('latestStepOutputId', () => {
+  it('names the most recently recorded step output, or nothing before any step ran', () => {
+    expect(latestStepOutputId(makeCtx({ stepOutputs: { a: 1, b: 2 } }))).toBe('b');
+    expect(latestStepOutputId(makeCtx())).toBeUndefined();
   });
 });

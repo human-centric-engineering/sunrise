@@ -58,7 +58,7 @@ export const INBOUND_CONVERSATION_HANDLER_TEMPLATE: WorkflowTemplate = {
     {
       title: 'Multi-turn appointment confirmation flows',
       scenario:
-        'Send an initial outreach via send_message_to_channel; this workflow then handles the inbound replies ("yes, confirm" / "can we reschedule for Thursday?") with full memory of the original appointment, so the agent never re-asks for context the user has already provided.',
+        'A patient texts in about their appointment; this workflow handles every reply ("yes, confirm" / "can we reschedule for Thursday?") with full memory of the thread, so the agent never re-asks for context the patient has already provided. Each run replies only to the person whose message started it; texting other threads first (outreach, reminders) is not supported by send_message_to_channel.',
     },
     {
       title: 'Mutual-aid coordination',

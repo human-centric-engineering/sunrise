@@ -821,6 +821,22 @@ describe('OrchestrationEngine', () => {
       expect(seenScope).toEqual({ projectId: 'proj-42' });
     });
 
+    it('records options.replyConversationId on the created row, and nothing when absent (t-770)', async () => {
+      // The conversation a run may send on; the rerun route copies it forward.
+      registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 1, costUsd: 0 }));
+      const engine = new OrchestrationEngine();
+
+      await collect(engine, makeWorkflow(linearDefinition()), {
+        userId: null,
+        replyConversationId: 'conv-inbound',
+      });
+      await collect(engine, makeWorkflow(linearDefinition()), { userId: USER_ID });
+
+      const calls = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls;
+      expect(calls[0][0].data).toMatchObject({ replyConversationId: 'conv-inbound' });
+      expect(calls[1][0].data).not.toHaveProperty('replyConversationId');
+    });
+
     it('omits scope from the created row when no scope is supplied', async () => {
       registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 1, costUsd: 0 }));
 

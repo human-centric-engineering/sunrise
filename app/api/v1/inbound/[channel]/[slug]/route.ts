@@ -450,6 +450,10 @@ async function fireTrigger(
         userId: null,
         triggerSource,
         triggerExternalId: externalId,
+        // The conversation this run replies on, the only one
+        // `send_message_to_channel` lets it send to (t-770). The route
+        // resolved it from the verified inbound, so no sender text names it.
+        ...(resolvedConversationId ? { replyConversationId: resolvedConversationId } : {}),
         dedupKey,
         ...(scope ? { scope } : {}),
         ...(effectiveBudgetLimitUsd !== undefined

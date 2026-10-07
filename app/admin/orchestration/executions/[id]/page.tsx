@@ -27,6 +27,7 @@ interface ExecutionDetail {
   workflowId: string;
   versionId: string | null;
   parentExecutionId: string | null;
+  replyConversationId: string | null;
   status: string;
   totalTokensUsed: number;
   totalCostUsd: number;

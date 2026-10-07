@@ -68,6 +68,7 @@ const engineExecuteMock = vi.fn(
       userId: string;
       budgetLimitUsd?: number;
       parentExecutionId?: string;
+      replyConversationId?: string;
       scope?: Record<string, string>;
     }
   ): AsyncIterable<unknown> => {
@@ -220,6 +221,61 @@ describe('POST /executions/:id/rerun', () => {
       userId: USER_ID,
       budgetLimitUsd: 5, // copied from the original
       parentExecutionId: EXEC_ID, // lineage link
+    });
+  });
+
+  describe('who a rerun may reply to (t-770)', () => {
+    // A rerun texts the person who wrote in only when the admin asks
+    // (`resendReply`) and the original has finished. Its status says nothing
+    // reliable about whether they were already texted, so it is never used to
+    // decide on the admin's behalf.
+    async function rerun(original: Record<string, unknown>, body: Record<string, unknown> = {}) {
+      vi.mocked(prisma.aiWorkflowExecution.findFirst).mockResolvedValue(
+        makeOriginal({ userId: null, ...original }) as never
+      );
+      vi.mocked(prepareWorkflowExecution).mockResolvedValue(happyPrepare(NEW_VERSION_ID));
+      await POST(makeRequest(body), makeContext());
+      return engineExecuteMock.mock.calls.at(-1)?.[2];
+    }
+
+    it.each(['completed', 'failed', 'cancelled'])(
+      'lets a rerun of a %s run reply only when the admin sets resendReply',
+      async (status) => {
+        const asked = await rerun(
+          { status, replyConversationId: 'conv-inbound' },
+          { resendReply: true }
+        );
+        expect(asked).toMatchObject({ replyConversationId: 'conv-inbound' });
+
+        const notAsked = await rerun({ status, replyConversationId: 'conv-inbound' });
+        expect(notAsked).not.toHaveProperty('replyConversationId');
+      }
+    );
+
+    it.each(['running', 'pending', 'paused_for_approval'])(
+      'never lets a rerun of a %s run reply: the original would reply itself on resume',
+      async (status) => {
+        const options = await rerun(
+          { status, replyConversationId: 'conv-inbound' },
+          { resendReply: true }
+        );
+
+        expect(options).not.toHaveProperty('replyConversationId');
+      }
+    );
+
+    it('gives a rerun of a run with no reply conversation none, even with resendReply', async () => {
+      const options = await rerun(
+        { status: 'completed', replyConversationId: null },
+        { resendReply: true }
+      );
+
+      expect(prisma.aiWorkflowExecution.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ status: true, replyConversationId: true }),
+        })
+      );
+      expect(options).not.toHaveProperty('replyConversationId');
     });
   });
 

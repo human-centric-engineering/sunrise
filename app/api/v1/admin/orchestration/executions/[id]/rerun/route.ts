@@ -17,6 +17,12 @@
  *   - `budgetLimitUsd` — override the original's budget. When omitted,
  *     the original execution's budget is reused (preserves "same
  *     input parameters" semantics).
+ *   - `resendReply` — let the rerun text the person who wrote in (t-770).
+ *     A run an inbound message started may send only on its
+ *     `replyConversationId`; a rerun gets that only when this is `true` and
+ *     the original has finished (completed, failed or cancelled). Without
+ *     it, the rerun texts nobody, whatever the original's outcome: Sunrise
+ *     cannot tell whether the first reply was sent, let alone received.
  *
  * Lineage: the new execution row is created with
  * `parentExecutionId` set to the original's id, so the detail view
@@ -43,6 +49,14 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { sseResponse } from '@/lib/api/sse';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
+import { WorkflowStatus } from '@/types/orchestration';
+
+/** A run that will not resume, so its rerun may be given its reply conversation. */
+const FINISHED_STATUSES: ReadonlySet<string> = new Set([
+  WorkflowStatus.COMPLETED,
+  WorkflowStatus.FAILED,
+  WorkflowStatus.CANCELLED,
+]);
 import { rerunExecutionBodySchema, workflowScopeSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { executionVisibilityWhere } from '@/lib/orchestration/access/execution-access';
@@ -84,6 +98,8 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       versionId: true,
       scope: true,
       userId: true,
+      status: true,
+      replyConversationId: true,
     },
   });
   if (!original) {
@@ -162,6 +178,13 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   });
 
   const engine = new OrchestrationEngine();
+  const replyConversationId =
+    original.replyConversationId &&
+    body.resendReply === true &&
+    FINISHED_STATUSES.has(original.status)
+      ? original.replyConversationId
+      : null;
+
   const events = engine.execute({ id: workflow.id, definition, versionId: version.id }, inputData, {
     // Inherit the original's attribution rather than claiming the rerun for
     // the admin who clicked. Visibility above allows exactly two cases, so
@@ -175,6 +198,13 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     ...(rerunScope ? { scope: rerunScope } : {}),
     signal: request.signal,
     parentExecutionId: original.id,
+    // A rerun texts the person who wrote in only when the admin asks
+    // (`resendReply`, the dialog's "Send the reply to the person again"), and
+    // only for a finished original (t-770; owner ruling, 2026-10-07). Its
+    // status says nothing reliable about whether they were texted: a run can
+    // send and then fail, or complete without sending. A run still in flight
+    // would reply itself when it resumes, so its rerun never may.
+    ...(replyConversationId ? { replyConversationId } : {}),
   });
 
   return sseResponse(events, { signal: request.signal });

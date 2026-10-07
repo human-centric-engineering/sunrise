@@ -243,6 +243,17 @@ release process.
   - The sensitive-field lists drop their `_` spellings (`api_key`,
     `first_name`, …): one letters-only spelling now covers every form.
 
+- **A `tool_call` step interpolates its `args`** (t-770). Every string in an
+  authored `args` object now resolves `{{input.…}}`, `{{<stepId>.output}}`,
+  `{{trigger.…}}` and the rest, as every other step type's config already did;
+  objects and arrays are walked, with the same walker the admin trace viewer
+  uses. As in every step type, an interpolated value is a string: a reference
+  to a number or an object arrives as its text, so pass structured args with
+  `argsFrom`. Args taken from `argsFrom` or the `inputData` fallback are data
+  and are passed through unchanged. **For a fork:** a
+  `tool_call` whose `args` held literal `{{…}}` text meant to reach the
+  capability verbatim now gets it interpolated (a missing reference becomes
+  the empty string).
 - **A `judge_call` step with a `threshold` now fails when the judge does not
   properly score** (§77 t-747). It used to report `passed: true` whenever the
   judge returned no score — a vendor error, no provider, the org's provider
@@ -571,6 +582,11 @@ release process.
 
 ### Fixed
 
+- **The SMS / WhatsApp inbound-reply template sends its reply** (t-770). Its
+  `send_reply` step is a `tool_call`, and `tool_call` was the one step type
+  that did not interpolate its config, so `{{trigger.conversationId}}` and
+  `{{respond_to_inbound.output}}` reached `send_message_to_channel` as literal
+  text and every reply failed with `conversation_not_found`. See **Changed**.
 - **An embed widget visitor's first message now starts a conversation**
   (#705, t-765). It failed before any reply on every install: the handler
   wrote the anonymous `embed_<hash>` visitor id into `AiConversation.userId`,
@@ -731,6 +747,28 @@ release process.
 
 ### Security
 
+- **`send_message_to_channel` sends only within the conversation being
+  handled** (t-770). It sent on whatever `conversationId` its caller passed, so
+  a model steered by the person chatting, by an inbound message or by content
+  an MCP client was reading, or the starter of a workflow run (a model calling
+  `run_workflow` included), could have the operator's number message anyone
+  who had ever written to it, given that conversation's id. Now a workflow
+  step, fixed (`tool_call`) or AI-driven (`agent_call`, the orchestrator),
+  sends only on its run's new **`AiWorkflowExecution.replyConversationId`**
+  (migration `20261006140000_execution_reply_conversation`, `onDelete:
+  SetNull`), which the inbound route sets and the rerun route copies through
+  the new `ExecuteOptions.replyConversationId` only when the admin asks, with
+  the new `resendReply` (the re-run dialog's "Send the reply to the person
+  again" checkbox), and only for a finished original, so a re-run never texts
+  a real person on its own; an interactive chat only on
+  its own conversation; an MCP client never. Anything else is refused with
+  `conversation_not_permitted`, and logged, before the conversation is read.
+  **For an operator:** a workflow that texted a thread other than the one it
+  replies on (reminders, outreach), or an MCP client that sent outbound
+  messages, now gets that refusal; deliberate outreach is not supported yet.
+  **For a fork:** pass `replyConversationId` to `engine.execute()` only for a
+  conversation the run is genuinely replying on, never one from a request or a
+  model; it is what authorises the run to message that conversation.
 - **Route log lines no longer carry a credential or an email from the
   request URL** (#685). The logger redacts by key name only, and the request
   context bound to every line a route logs held the URL verbatim, so a token

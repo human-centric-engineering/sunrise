@@ -4,8 +4,8 @@ import {
   buildInterpolationContextFromTrace,
   findPreviousStepId,
   hasTemplateTokens,
-  resolveTemplatesIn,
 } from '@/lib/orchestration/engine/interpolate-from-trace';
+import { resolveTemplatesIn } from '@/lib/orchestration/engine/interpolate-prompt';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 function entry(overrides: Partial<ExecutionTraceEntry> = {}): ExecutionTraceEntry {

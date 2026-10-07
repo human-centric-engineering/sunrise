@@ -40,12 +40,13 @@ model AiConversation {
   updatedAt            DateTime  @updatedAt
 
   // Relations
-  user             User?                @relation("AiConversationUser", fields: [userId], references: [id], onDelete: Cascade)
-  agent            AiAgent              @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  user             User?                 @relation("AiConversationUser", fields: [userId], references: [id], onDelete: Cascade)
+  agent            AiAgent               @relation(fields: [agentId], references: [id], onDelete: Cascade)
   messages         AiMessage[]
   costLogs         AiCostLog[]
   share            AiConversationShare?
   outboundMessages AiOutboundMessage[]
+  replyingRuns     AiWorkflowExecution[] @relation("ExecutionReplyConversation")
 
   orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
   org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)

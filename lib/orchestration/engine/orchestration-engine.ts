@@ -189,6 +189,17 @@ export interface ExecuteOptions {
    */
   parentExecutionId?: string;
   /**
+   * The conversation the new run replies on, recorded as
+   * `AiWorkflowExecution.replyConversationId`: the only one
+   * `send_message_to_channel` lets the run send to (t-770). Set by the rerun
+   * endpoint from the original run, because a rerun retries the same reply.
+   * The inbound route sets the column on the row it creates itself. **Pass
+   * only a conversation the run is genuinely replying on**, never one taken
+   * from a request or from a model: it is what authorises the run to message
+   * that conversation's sender. Fresh runs only, like `parentExecutionId`.
+   */
+  replyConversationId?: string;
+  /**
    * Extra metadata spread into every `AiCostLog.metadata` row written
    * by executors during this run. The evaluation worker sets
    * `{ evaluationRunId, role: 'subject' }` (and graders set `role: 'judge'`)
@@ -1991,6 +2002,9 @@ export class OrchestrationEngine {
         // not set, matching how `versionId: null` is treated for
         // legacy executions. Only the rerun endpoint passes it today.
         ...(options.parentExecutionId ? { parentExecutionId: options.parentExecutionId } : {}),
+        ...(options.replyConversationId
+          ? { replyConversationId: options.replyConversationId }
+          : {}),
         status: WorkflowStatus.RUNNING,
         inputData: inputData as unknown as Prisma.InputJsonValue,
         ...(options.scope ? { scope: options.scope } : {}),

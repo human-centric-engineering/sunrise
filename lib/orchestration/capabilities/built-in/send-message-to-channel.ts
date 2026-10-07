@@ -138,6 +138,49 @@ function narrowConversationChannel(value: string | null): ConversationChannel | 
     : null;
 }
 
+/**
+ * Why this call may not send on `conversationId`, or `null` when it may (t-770). The argument is
+ * chosen by whoever drives the call: a model steered by the person chatting,
+ * by an inbound message, or by content an MCP client is reading; or the
+ * starter of a workflow run, `run_workflow`'s model included. Unrestricted, it
+ * would let any of them have the operator's number message anyone who ever
+ * wrote to it. So a call sends only within the conversation being handled
+ * (owner rulings, 2026-10-06):
+ *   - **a workflow step**, fixed (`tool_call`) or AI-driven (`agent_call`,
+ *     the orchestrator): only the run's `replyConversationId`. The inbound
+ *     route sets it to the conversation the inbound message resolved to, and
+ *     the rerun route copies it; nothing else does. So neither an inbound
+ *     message nor a run's starter can name another thread, and a run started
+ *     any other way replies on nothing.
+ *   - **a chat turn**: only the chat's own conversation. A web chat is never
+ *     an inbound channel thread, so in practice the tool sends nothing here.
+ *   - **anything else**, an MCP client included: refused. It has no
+ *     conversation of its own.
+ * Sending to another thread on purpose (outreach, reminders) is not
+ * supported; a later opt-in would be an admin setting, out of a model's
+ * reach (Hub idea #32).
+ */
+async function targetRefusal(
+  conversationId: string,
+  context: CapabilityContext
+): Promise<string | null> {
+  if (context.workflowExecutionId) {
+    const run = await prisma.aiWorkflowExecution.findUnique({
+      where: { id: context.workflowExecutionId },
+      select: { replyConversationId: true },
+    });
+    // Named apart, so a missing run (or one this org scope cannot see) does
+    // not read in the log as a steered model reaching for another thread.
+    if (!run) return 'the run could not be read';
+    if (run.replyConversationId === null) return 'the run replies on no conversation';
+    return run.replyConversationId === conversationId ? null : 'not the run’s reply conversation';
+  }
+  if (context.conversationId) {
+    return context.conversationId === conversationId ? null : 'not this chat’s conversation';
+  }
+  return 'the caller has no conversation of its own';
+}
+
 async function loadConversation(conversationId: string): Promise<LoadedConversation | null> {
   const row = await prisma.aiConversation.findUnique({
     where: { id: conversationId },
@@ -266,6 +309,25 @@ export class SendMessageToChannelCapability extends BaseCapability<Args, Data> {
       return this.error(
         'Sending outbound messages is unavailable to anonymous embed widget visitors.',
         'anonymous_visitor'
+      );
+    }
+
+    // Only the conversation this call is handling, before anything is read
+    // or written: the same answer whether or not the named one exists.
+    const refusal = await targetRefusal(args.conversationId, context);
+    if (refusal) {
+      // Logged with its reason, so an operator can tell a steered model
+      // reaching for another thread from a run with nobody to reply to.
+      logger.warn('send_message_to_channel: refused a conversation outside the one being handled', {
+        reason: refusal,
+        agentId: context.agentId,
+        conversationId: context.conversationId,
+        workflowExecutionId: context.workflowExecutionId,
+        requestedConversationId: args.conversationId,
+      });
+      return this.error(
+        'This tool can only send within the conversation being handled.',
+        'conversation_not_permitted'
       );
     }
 

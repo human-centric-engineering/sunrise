@@ -507,6 +507,9 @@ describe('Slack channel', () => {
           }),
         })
       );
+      // Slack resolves no conversation, so the run replies on none (t-770).
+      const created = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls.at(-1)?.[0]?.data;
+      expect(created).not.toHaveProperty('replyConversationId');
     });
 
     it('stamps the trigger scope onto the created execution', async () => {
@@ -1738,8 +1741,15 @@ describe('Twilio channel + conversation enrichment', () => {
     // conversationId was threaded into the execution's triggerMeta.
     const createCalls = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls;
     const lastCall = createCalls[createCalls.length - 1]?.[0]?.data as
-      { inputData?: { triggerMeta?: { conversationId?: string } } } | undefined;
+      | {
+          inputData?: { triggerMeta?: { conversationId?: string } };
+          replyConversationId?: string;
+        }
+      | undefined;
     expect(lastCall?.inputData?.triggerMeta?.conversationId).toBe('conv-new-1');
+    // And recorded as the conversation the run replies on: the only one
+    // send_message_to_channel lets it send to (t-770).
+    expect(lastCall?.replyConversationId).toBe('conv-new-1');
   });
 
   it('updates an existing conversation (lastInboundAt) when one already exists for this (agent, channel, fromAddress)', async () => {
