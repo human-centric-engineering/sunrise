@@ -856,8 +856,13 @@ release process.
   credential carried in it (a Slack or Discord webhook path, a signed URL's
   query, userinfo) reached stdout and the admin log buffer. They now log
   `loggableUrl()` (new in `lib/logging/redact-path.ts`): origin plus the
-  collapsed path, with userinfo, query and fragment dropped. A blocked
-  redirect's error message carries the reduced form too.
+  collapsed path, with userinfo, query and fragment dropped.
+  `describeFetchFailure()` (`lib/errors/fetch-error.ts`) now reduces any URL
+  quoted in the error it describes, so a delivery's `error` field and stored
+  `lastError` no longer carry one either, and a knowledge-base fetch error
+  reaches the route's error log reduced. A path secret the
+  `collapseDynamicSegments()` heuristic does not recognise (under 20
+  characters, or containing `:`) is still kept.
   **For an operator:** a `send_notification` webhook step's stored
   `output.url`, shown in the execution trace, now holds that reduced form;
   the `webhookUrl` the step sends to `workflow_notification` subscribers is

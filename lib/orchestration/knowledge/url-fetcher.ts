@@ -10,6 +10,7 @@ import { basename, extname } from 'path';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { logger } from '@/lib/logging';
 import { loggableUrl } from '@/lib/logging/redact-path';
+import { describeFetchFailure } from '@/lib/errors/fetch-error';
 
 const MAX_FETCH_BYTES = 50 * 1024 * 1024; // 50 MB
 const FETCH_TIMEOUT_MS = 30_000;
@@ -85,7 +86,14 @@ async function fetchRevalidatingRedirects(target: string, init: RequestInit): Pr
       );
     }
 
-    const response = await fetch(current, { ...init, redirect: 'manual' });
+    let response: Response;
+    try {
+      response = await fetch(current, { ...init, redirect: 'manual' });
+    } catch (err) {
+      // undici quotes the request URL in some messages, and this error reaches
+      // the route's error log — rethrow with the URL reduced and no `cause` (#953).
+      throw new Error(describeFetchFailure(err));
+    }
 
     if (!REDIRECT_STATUSES.has(response.status)) return response;
 

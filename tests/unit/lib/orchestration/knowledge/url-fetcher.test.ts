@@ -477,6 +477,25 @@ describe('fetchDocumentFromUrl log lines', () => {
     expect(logged).not.toContain('redirect-secret');
   });
 
+  it('keeps a URL quoted by a failed fetch out of the error it rethrows', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+      new TypeError(
+        `Request cannot be constructed from a URL that includes credentials: https://u:pw@files.example.com/${SECRET}/doc.txt`
+      )
+    );
+
+    const err = await fetchDocumentFromUrl(
+      `https://u:pw@files.example.com/${SECRET}/doc.txt`
+    ).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toContain('https://files.example.com/[param]/doc.txt');
+    expect(message).not.toContain(SECRET);
+    expect(message).not.toContain('pw@');
+    expect((err as Error).cause).toBeUndefined();
+  });
+
   it('keeps the credential out of the error thrown for a blocked redirect target', async () => {
     vi.mocked(checkSafeProviderUrl)
       .mockReturnValueOnce({ ok: true })

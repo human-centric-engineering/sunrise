@@ -98,4 +98,24 @@ describe('describeFetchFailure', () => {
   ])('stringifies %s thrown as a non-Error', (_label, thrown, expected) => {
     expect(describeFetchFailure(thrown)).toBe(expected);
   });
+
+  // #953: undici puts the request URL in some messages (a URL with userinfo is
+  // refused with the URL quoted), and this text is logged and stored.
+  it('reduces a URL inside the message or the cause to its loggable form', () => {
+    const err = Object.assign(
+      new TypeError(
+        'Request cannot be constructed from a URL that includes credentials: https://u:pw@example.com/hooks/AbCdEfGhIjKlMnOpQrStUvWx?token=qs-secret'
+      ),
+      { cause: new Error('redirect to http://other.example.com/x?sig=cause-secret refused') }
+    );
+
+    const described = describeFetchFailure(err);
+
+    expect(described).toBe(
+      'Request cannot be constructed from a URL that includes credentials: https://example.com/hooks/[param]: redirect to http://other.example.com/x refused'
+    );
+    expect(described).not.toContain('pw');
+    expect(described).not.toContain('qs-secret');
+    expect(described).not.toContain('cause-secret');
+  });
 });

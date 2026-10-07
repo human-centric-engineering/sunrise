@@ -13,8 +13,23 @@
  * refusal to a human.
  */
 
+import { loggableUrl } from '@/lib/logging/redact-path';
+
+const URL_IN_TEXT = /\bhttps?:\/\/[^\s'"<>]+/gi;
+
+/**
+ * Replace every URL quoted in `text` with its `loggableUrl()` form (#953).
+ * undici quotes the request URL in some messages — a URL carrying userinfo is
+ * refused with the URL in the message — and the description lands in logs and
+ * in stored delivery rows.
+ */
+function reduceUrls(text: string): string {
+  return text.replace(URL_IN_TEXT, (url) => loggableUrl(url));
+}
+
 /**
  * A human-readable description of a thrown value, unwrapping undici's `cause`.
+ * Any URL quoted in it is reduced to its loggable form.
  *
  * Only `Error` and `string` causes are unwrapped: an arbitrary object would
  * render as `"[object Object]"` in the operator-visible log it lands in, which
@@ -32,10 +47,11 @@
  * ```
  */
 export function describeFetchFailure(err: unknown): string {
-  if (!(err instanceof Error)) return String(err);
+  if (!(err instanceof Error)) return reduceUrls(String(err));
 
+  const message = reduceUrls(err.message);
   const detail = describeCause(err.cause);
-  return detail ? `${err.message}: ${detail}` : err.message;
+  return detail ? `${message}: ${reduceUrls(detail)}` : message;
 }
 
 /**

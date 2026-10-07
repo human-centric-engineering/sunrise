@@ -92,7 +92,8 @@ context is built to hold nothing a value-blind redactor would miss:
   webhook-subscription deliveries, the escalation webhook, the webhook create
   and test routes, the `send_notification` webhook step (log line and stored
   `output.url`) and knowledge-base URL fetches use it; a new log line that
-  names a URL Sunrise calls out to should too.
+  names a URL Sunrise calls out to should too. `describeFetchFailure()`
+  reduces any URL quoted in a fetch error the same way.
 
 The heuristic cannot see a secret under 20 characters, one with other
 characters (dots outside a JWT), a
