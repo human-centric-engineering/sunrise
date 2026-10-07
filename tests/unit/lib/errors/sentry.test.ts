@@ -723,6 +723,16 @@ describe('Sentry URL scrubbing', () => {
       expect(liveTrace['url.path']).toBe(`/s/${token}`);
     });
 
+    it('does not throw (and so does not drop the event) on an unreadable extra value', () => {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+
+      expect(scrubSentryEvent({ extra: { p: proxy, ok: 1 } }).extra).toEqual({
+        p: '[unreadable]',
+        ok: 1,
+      });
+    });
+
     it('does not throw on a child span with no data', () => {
       const span = { span_id: 'c', trace_id: 't', start_timestamp: 0, status: 'ok' };
       // A span another processor built can lack the typed-required `data`.

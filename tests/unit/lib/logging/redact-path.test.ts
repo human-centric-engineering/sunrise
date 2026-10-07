@@ -362,6 +362,23 @@ describe('scrubUrlsDeep', () => {
     expect(serialised).not.toContain('email=');
   });
 
+  it('replaces a value that throws when read instead of throwing', () => {
+    const throwing = Object.defineProperty({}, 'boom', {
+      enumerable: true,
+      get() {
+        throw new Error('getter');
+      },
+    });
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+
+    expect(scrubUrlsDeep({ a: throwing, b: proxy, c: `/s/${token}?x=1` })).toEqual({
+      a: '[unreadable]',
+      b: '[unreadable]',
+      c: '/s/[param]',
+    });
+  });
+
   it('terminates on an Error that references itself', () => {
     const error = new Error('loop') as Error & { self?: unknown };
     error.self = error;

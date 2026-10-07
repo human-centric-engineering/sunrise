@@ -186,6 +186,20 @@ function getErrorFingerprint(error: Error): string {
 }
 
 /**
+ * `scrubSensitiveData` then `scrubUrlsDeep`, as a record. A value that cannot
+ * be read (a throwing getter, a revoked Proxy) costs only the context, never
+ * the report: the handler must not throw.
+ */
+function scrubForReport(value: unknown): Record<string, unknown> {
+  try {
+    const scrubbed = scrubUrlsDeep(scrubSensitiveData(value));
+    return isRecord(scrubbed) ? scrubbed : {};
+  } catch {
+    return { context: '[unreadable]' };
+  }
+}
+
+/**
  * Handle a client-side error
  * Logs the error and sends it to error tracking
  *
@@ -229,10 +243,8 @@ export function handleClientError(error: unknown, context: Record<string, unknow
   // an error from an inline script reports the page URL as its file, in
   // `filename` and in the stack's frames, and a caller's context can carry one
   // at any depth (#952).
-  const rawScrubbedContext = scrubUrlsDeep(scrubSensitiveData(context));
-  const scrubbedContext = isRecord(rawScrubbedContext) ? rawScrubbedContext : {};
-  const rawScrubbedMetadata = scrubUrlsDeep(scrubSensitiveData(normalized.metadata));
-  const scrubbedMetadata = isRecord(rawScrubbedMetadata) ? rawScrubbedMetadata : {};
+  const scrubbedContext = scrubForReport(context);
+  const scrubbedMetadata = scrubForReport(normalized.metadata);
   // The Error itself goes to the logger and to Sentry with its stack, so they
   // get a copy with the same URLs scrubbed.
   const reportedError = scrubUrlsInError(normalized.error);

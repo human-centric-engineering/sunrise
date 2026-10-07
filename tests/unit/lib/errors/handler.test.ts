@@ -819,6 +819,14 @@ describe('handleClientError', () => {
       expect(Object.keys(error)).not.toContain('__sentry_captured__');
     });
 
+    it('should still log and track when the context holds an unreadable value', () => {
+      const { proxy, revoke } = Proxy.revocable({}, {});
+      revoke();
+
+      expect(() => handleClientError(new Error('with proxy'), { p: proxy })).not.toThrow();
+      expect(trackError).toHaveBeenCalledTimes(1);
+    });
+
     it('should handle missing navigator gracefully', () => {
       vi.stubGlobal('navigator', undefined);
 

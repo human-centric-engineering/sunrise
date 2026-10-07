@@ -160,6 +160,9 @@ const MAX_SCRUB_DEPTH = 8;
 /** What `scrubUrlsDeep` puts in place of an object nested past `MAX_SCRUB_DEPTH`. */
 const DEPTH_LIMIT = '[depth limit]';
 
+/** What `scrubUrlsDeep` puts in place of a value it cannot read (a throwing getter, a revoked Proxy). */
+const UNREADABLE = '[unreadable]';
+
 /**
  * Copy of an Error with `scrubUrlsInText` applied to its message, its stack
  * and its own properties (such as `code`), keeping its name.
@@ -249,7 +252,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  * copied; a `URL` object becomes its scrubbed href; a Date is returned as it
  * is; any other object (a class instance, a Map) becomes a plain object of its
  * own properties, scrubbed. An object nested past the depth cap becomes
- * `'[depth limit]'`.
+ * `'[depth limit]'`, and one that throws when read becomes `'[unreadable]'`.
  *
  * @example
  * scrubUrlsDeep({ request: { url: 'https://app.example.com/s/Xk9fQ2mZp4LrT7vB1nWc8sYd?a=1' } });
@@ -262,6 +265,16 @@ export function scrubUrlsDeep(value: unknown, depth = 0): unknown {
   if (depth >= MAX_SCRUB_DEPTH) {
     return typeof value === 'object' && value !== null ? DEPTH_LIMIT : value;
   }
+  try {
+    return scrubNonString(value, depth);
+  } catch {
+    // A getter that throws or a revoked Proxy: replace the value rather than
+    // let the throw drop the whole log line or Sentry event.
+    return UNREADABLE;
+  }
+}
+
+function scrubNonString(value: unknown, depth: number): unknown {
   if (value instanceof Error) return scrubError(value, depth + 1);
   // A URL object would print its full href through `toJSON()`.
   if (value instanceof URL) return scrubUrl(value.href);
