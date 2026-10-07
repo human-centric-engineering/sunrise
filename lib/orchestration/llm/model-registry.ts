@@ -173,13 +173,15 @@ export async function refreshFromProvider(provider: LlmProvider): Promise<ModelI
  *
  * Last-write-wins on key conflict — EXCEPT:
  *
- *   - **Pricing + context length** fall back to the existing entry when
- *     the incoming row carries zero. `AiProviderModel.costPerMillionTokens`
- *     is nullable (and unfilled rows coerce to 0 via `dbModelToModelInfo`);
- *     clobbering a known OpenRouter price with 0 would silently zero
- *     out every downstream cost estimate. Operators who genuinely want
- *     to override pricing for a local / custom model can still do so by
- *     setting a non-zero value in the matrix.
+ *   - **Pricing + context length** keep the existing entry's value
+ *     whenever it is positive; the incoming row only fills a field the
+ *     registry has at zero. `AiProviderModel.costPerMillionTokens` is a
+ *     single blended rate (nullable; unfilled rows coerce to 0 via
+ *     `dbModelToModelInfo`) and `contextLength` is a coarse bucket, so
+ *     letting either beat the registry's exact input/output split and
+ *     real window mis-prices turns and mis-sizes the history budget. A
+ *     custom / local model the registry has never seen is unaffected —
+ *     its row is the only source and is registered as-is.
  *
  *   - **Cross-provider id collisions are dropped.** The bare-id key
  *     drives runtime provider resolution (`getModel(id).provider →
@@ -222,13 +224,19 @@ export function registerModels(infos: ModelInfo[]): void {
       });
       continue;
     }
+    // Same provider: the incoming row wins on descriptive fields, but a
+    // positive figure already in the registry wins on price and context.
+    // A matrix row carries one blended rate and a coarse context bucket;
+    // the registry's input/output split and real window are the exact ones.
     merged.set(info.id, {
       ...info,
       inputCostPerMillion:
-        info.inputCostPerMillion > 0 ? info.inputCostPerMillion : existing.inputCostPerMillion,
+        existing.inputCostPerMillion > 0 ? existing.inputCostPerMillion : info.inputCostPerMillion,
       outputCostPerMillion:
-        info.outputCostPerMillion > 0 ? info.outputCostPerMillion : existing.outputCostPerMillion,
-      maxContext: info.maxContext > 0 ? info.maxContext : existing.maxContext,
+        existing.outputCostPerMillion > 0
+          ? existing.outputCostPerMillion
+          : info.outputCostPerMillion,
+      maxContext: existing.maxContext > 0 ? existing.maxContext : info.maxContext,
     });
   }
   state = { ...state, models: merged };

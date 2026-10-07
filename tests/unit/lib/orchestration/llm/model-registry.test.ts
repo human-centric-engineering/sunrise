@@ -907,25 +907,65 @@ describe('registerModels', () => {
     expect(after?.maxContext).toBe(before?.maxContext);
   });
 
-  it('does override pricing when the incoming entry has a non-zero cost', () => {
-    // Operators who genuinely want to override pricing for a local /
-    // custom model can still do so — only zero is treated as "unfilled".
+  it('keeps an existing split rate and context window over a same-provider DB row (#813)', () => {
+    // A matrix row carries ONE blended rate (`(input + output) / 2`, see
+    // prisma/seeds/009-provider-models.ts) and a coarse context bucket
+    // (`high` → 200k). The registry's figures for the same id are exact,
+    // so a hydrate must not replace them — doing so priced gpt-4o-mini at
+    // its blend on both sides and budgeted a 128k model's history at 200k.
+    const before = registry.getModel('gpt-4o-mini');
+    expect(before?.inputCostPerMillion).toBeGreaterThan(0);
+    expect(before?.outputCostPerMillion).not.toBe(before?.inputCostPerMillion);
+
     registry.registerModels([
       {
         id: 'gpt-4o-mini',
         name: 'GPT-4o Mini',
         provider: 'openai',
         tier: 'budget',
-        inputCostPerMillion: 1.23,
-        outputCostPerMillion: 4.56,
-        maxContext: 64_000,
+        inputCostPerMillion: 0.375,
+        outputCostPerMillion: 0.375,
+        maxContext: 200_000,
         supportsTools: true,
       },
     ]);
 
     const after = registry.getModel('gpt-4o-mini');
-    expect(after?.inputCostPerMillion).toBe(1.23);
-    expect(after?.outputCostPerMillion).toBe(4.56);
+    expect(after?.inputCostPerMillion).toBe(before?.inputCostPerMillion);
+    expect(after?.outputCostPerMillion).toBe(before?.outputCostPerMillion);
+    expect(after?.maxContext).toBe(before?.maxContext);
+  });
+
+  it('fills a same-provider field from the DB row only where the existing value is zero', () => {
+    registry.registerModels([
+      {
+        id: 'acme-partial',
+        name: 'Acme Partial',
+        provider: 'acme',
+        tier: 'mid',
+        inputCostPerMillion: 2,
+        outputCostPerMillion: 0,
+        maxContext: 0,
+        supportsTools: true,
+      },
+    ]);
+
+    registry.registerModels([
+      {
+        id: 'acme-partial',
+        name: 'Acme Partial',
+        provider: 'acme',
+        tier: 'mid',
+        inputCostPerMillion: 9,
+        outputCostPerMillion: 6,
+        maxContext: 64_000,
+        supportsTools: true,
+      },
+    ]);
+
+    const after = registry.getModel('acme-partial');
+    expect(after?.inputCostPerMillion).toBe(2);
+    expect(after?.outputCostPerMillion).toBe(6);
     expect(after?.maxContext).toBe(64_000);
   });
 
