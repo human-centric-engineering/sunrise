@@ -78,7 +78,10 @@ import { auth } from '@/lib/auth/config';
 import { logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
 import { findRateLimitRule, type RateLimitRule } from '@/lib/security/rate-limit-policy';
-import { resetRateLimitCredentialCache } from '@/lib/security/rate-limit-credentials';
+import {
+  resetRateLimitCredentialBudget,
+  resetRateLimitCredentialCache,
+} from '@/lib/security/rate-limit-credentials';
 
 // ─── Real findRateLimitRule reference ────────────────────────────────────────
 // Captured via vi.importActual in beforeAll so we can restore the real
@@ -555,40 +558,108 @@ describe('applyRateLimit', () => {
       RATE_LIMIT_TIERS.api.reset(tokenB);
     });
 
-    it("'api-key' skips the lookup once the caller's IP bucket is full", async () => {
+    it("'api-key' bounds concurrent cold lookups from one IP by the lookup budget", async () => {
+      // Distinct made-up values cannot share a lookup, so only the per-IP
+      // lookup budget (30/min), reserved before each query, bounds them —
+      // however many arrive at once.
       const ip = '192.0.2.73';
       const ipToken = `mw:api:api-key:ip:${ip}`;
       RATE_LIMIT_TIERS.api.reset(ipToken);
+      resetRateLimitCredentialBudget(ip);
       vi.mocked(findRateLimitRule).mockReturnValue({
-        match: /^\/api\/v1\/test-apikey-full\//,
+        match: /^\/api\/v1\/test-apikey-burst\//,
         tier: 'api',
         key: 'api-key',
       });
-      const path = '/api/v1/test-apikey-full/resource';
-      await exhaust(path, 100, { 'x-forwarded-for': ip });
-      vi.mocked(prisma.aiApiKey.findFirst).mockClear();
+      const path = '/api/v1/test-apikey-burst/resource';
 
-      // Act
-      const response = await applyRateLimit(
-        makeRequest(path, { 'x-forwarded-for': ip, authorization: 'Bearer sk_new_value' })
+      // Act: 60 concurrent requests, each with its own value.
+      await Promise.all(
+        Array.from({ length: 60 }, (_, i) =>
+          applyRateLimit(
+            makeRequest(path, { 'x-forwarded-for': ip, authorization: `Bearer sk_burst_${i}` })
+          )
+        )
       );
 
-      // Assert: refused from the IP bucket, without a lookup.
-      expect(response?.status).toBe(429);
-      expect(prisma.aiApiKey.findFirst).not.toHaveBeenCalled();
+      // Assert: at most the budget reached the database, and all 60 were
+      // counted in the one IP bucket.
+      expect(prisma.aiApiKey.findFirst).toHaveBeenCalledTimes(30);
+      expect(RATE_LIMIT_TIERS.api.peek(ipToken).remaining).toBe(40);
 
       RATE_LIMIT_TIERS.api.reset(ipToken);
+      resetRateLimitCredentialBudget(ip);
     });
 
-    it("'api-key' re-checks a stale verified key even when the IP bucket is full", async () => {
-      // A key verified within the TTL is re-checked in the second half of it.
-      // That re-check must not be gated on the IP bucket, or a key in steady
-      // use would land in a full IP bucket each time its entry aged out.
-      const ip = '192.0.2.75';
+    it("'api-key' still verifies a cold real key when its IP's request bucket is full", async () => {
+      // Others on the same IP filling the request bucket must not push a
+      // real key into it: only the separate lookup budget gates a cold lookup.
+      const ip = '192.0.2.74';
       const ipToken = `mw:api:api-key:ip:${ip}`;
-      const keyToken = 'mw:api:api-key:key:sk:row_c';
+      const keyToken = 'mw:api:api-key:key:sk:row_cold';
       RATE_LIMIT_TIERS.api.reset(ipToken);
       RATE_LIMIT_TIERS.api.reset(keyToken);
+      resetRateLimitCredentialBudget(ip);
+      vi.mocked(findRateLimitRule).mockReturnValue({
+        match: /^\/api\/v1\/test-apikey-cold\//,
+        tier: 'api',
+        key: 'api-key',
+      });
+      const path = '/api/v1/test-apikey-cold/resource';
+      await exhaust(path, 100, { 'x-forwarded-for': ip });
+      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
+        id: 'row_cold',
+        expiresAt: null,
+      } as never);
+
+      const response = await applyRateLimit(
+        makeRequest(path, { 'x-forwarded-for': ip, authorization: 'Bearer sk_colleague' })
+      );
+
+      expect(response).toBeNull();
+      expect(RATE_LIMIT_TIERS.api.peek(keyToken).remaining).toBe(99);
+
+      RATE_LIMIT_TIERS.api.reset(ipToken);
+      RATE_LIMIT_TIERS.api.reset(keyToken);
+      resetRateLimitCredentialBudget(ip);
+    });
+
+    it("'api-key' keys a cold value on the IP, without a lookup, once the IP's lookup budget is spent", async () => {
+      // The documented trade-off: a real key that is cold while its IP has
+      // spent the lookup budget shares the IP bucket until the budget frees.
+      const ip = '192.0.2.75';
+      const ipToken = `mw:api:api-key:ip:${ip}`;
+      RATE_LIMIT_TIERS.api.reset(ipToken);
+      resetRateLimitCredentialBudget(ip);
+      vi.mocked(findRateLimitRule).mockReturnValue({
+        match: /^\/api\/v1\/test-apikey-budget\//,
+        tier: 'api',
+        key: 'api-key',
+      });
+      const path = '/api/v1/test-apikey-budget/resource';
+      for (let i = 0; i < 30; i++) {
+        await applyRateLimit(
+          makeRequest(path, { 'x-forwarded-for': ip, authorization: `Bearer sk_spend_${i}` })
+        );
+      }
+      vi.mocked(prisma.aiApiKey.findFirst).mockClear();
+
+      await applyRateLimit(
+        makeRequest(path, { 'x-forwarded-for': ip, authorization: 'Bearer sk_real_but_cold' })
+      );
+
+      expect(prisma.aiApiKey.findFirst).not.toHaveBeenCalled();
+      expect(RATE_LIMIT_TIERS.api.peek(ipToken).remaining).toBe(100 - 31);
+
+      RATE_LIMIT_TIERS.api.reset(ipToken);
+      resetRateLimitCredentialBudget(ip);
+    });
+
+    it("'api-key' serves a stale verified key from cache and re-checks it in the background", async () => {
+      const ip = '192.0.2.76';
+      const keyToken = 'mw:api:api-key:key:sk:row_c';
+      RATE_LIMIT_TIERS.api.reset(keyToken);
+      resetRateLimitCredentialBudget(ip);
       vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
         id: 'row_c',
         expiresAt: null,
@@ -602,27 +673,27 @@ describe('applyRateLimit', () => {
       const keyed = { 'x-forwarded-for': ip, authorization: 'Bearer sk_steady' };
 
       expect(await applyRateLimit(makeRequest(path, keyed))).toBeNull();
-      await exhaust(path, 100, { 'x-forwarded-for': ip });
       await advanceCacheClock(30_001);
 
-      // Act: the entry is stale and the IP bucket is full.
+      // Act: the entry is in the second half of its TTL.
       const response = await applyRateLimit(makeRequest(path, keyed));
 
-      // Assert: re-checked and kept in its own bucket.
+      // Assert: served from cache into its own bucket, with one re-check started.
       expect(response).toBeNull();
-      expect(prisma.aiApiKey.findFirst).toHaveBeenCalledTimes(2);
       expect(RATE_LIMIT_TIERS.api.peek(keyToken).remaining).toBe(98);
+      expect(prisma.aiApiKey.findFirst).toHaveBeenCalledTimes(2);
 
-      RATE_LIMIT_TIERS.api.reset(ipToken);
       RATE_LIMIT_TIERS.api.reset(keyToken);
+      resetRateLimitCredentialBudget(ip);
     });
 
-    it("'api-key' moves a key whose re-check finds it revoked into the IP bucket", async () => {
+    it("'api-key' moves a key whose background re-check finds it revoked into the IP bucket", async () => {
       const ip = '192.0.2.77';
       const ipToken = `mw:api:api-key:ip:${ip}`;
       const keyToken = 'mw:api:api-key:key:sk:row_e';
       RATE_LIMIT_TIERS.api.reset(ipToken);
       RATE_LIMIT_TIERS.api.reset(keyToken);
+      resetRateLimitCredentialBudget(ip);
       vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValueOnce({
         id: 'row_e',
         expiresAt: null,
@@ -635,55 +706,28 @@ describe('applyRateLimit', () => {
       const path = '/api/v1/test-apikey-revoked/resource';
       const keyed = { 'x-forwarded-for': ip, authorization: 'Bearer sk_revoked' };
 
-      expect(await applyRateLimit(makeRequest(path, keyed))).toBeNull();
-      await exhaust(path, 100, { 'x-forwarded-for': ip });
-      await advanceCacheClock(30_001);
-      // The re-check now finds no live key (the default mock answers null).
-
-      const response = await applyRateLimit(makeRequest(path, keyed));
-
-      // Refused from the full IP bucket; the key's own bucket was not used again.
-      expect(response?.status).toBe(429);
-      expect(RATE_LIMIT_TIERS.api.peek(keyToken).remaining).toBe(99);
-
-      RATE_LIMIT_TIERS.api.reset(ipToken);
-      RATE_LIMIT_TIERS.api.reset(keyToken);
-    });
-
-    it("'api-key' keeps a stale verified key's bucket when the re-check fails", async () => {
-      const ip = '192.0.2.76';
-      const keyToken = 'mw:api:api-key:key:sk:row_d';
-      RATE_LIMIT_TIERS.api.reset(keyToken);
-      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValueOnce({
-        id: 'row_d',
-        expiresAt: null,
-      } as never);
-      vi.mocked(findRateLimitRule).mockReturnValue({
-        match: /^\/api\/v1\/test-apikey-recheck\//,
-        tier: 'api',
-        key: 'api-key',
-      });
-      const path = '/api/v1/test-apikey-recheck/resource';
-      const keyed = { 'x-forwarded-for': ip, authorization: 'Bearer sk_flaky_db' };
-
       await applyRateLimit(makeRequest(path, keyed));
       await advanceCacheClock(30_001);
-      vi.mocked(prisma.aiApiKey.findFirst).mockRejectedValueOnce(new Error('db down'));
+      // The background re-check finds no live key (the default mock answers null).
+      await applyRateLimit(makeRequest(path, keyed));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // Act: the next request finds no cached entry and verifies to nothing.
       await applyRateLimit(makeRequest(path, keyed));
 
       expect(RATE_LIMIT_TIERS.api.peek(keyToken).remaining).toBe(98);
-      expect(logger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('credential lookup failed'),
-        expect.objectContaining({ key: 'api-key', error: 'db down' })
-      );
+      expect(RATE_LIMIT_TIERS.api.peek(ipToken).remaining).toBe(99);
 
+      RATE_LIMIT_TIERS.api.reset(ipToken);
       RATE_LIMIT_TIERS.api.reset(keyToken);
+      resetRateLimitCredentialBudget(ip);
     });
 
     it("'api-key' falls back to the IP bucket and warns when the lookup fails", async () => {
-      const ip = '192.0.2.74';
+      const ip = '192.0.2.78';
       const ipToken = `mw:api:api-key:ip:${ip}`;
       RATE_LIMIT_TIERS.api.reset(ipToken);
+      resetRateLimitCredentialBudget(ip);
       vi.mocked(prisma.aiApiKey.findFirst).mockRejectedValue(new Error('db down'));
       vi.mocked(findRateLimitRule).mockReturnValue({
         match: /^\/api\/v1\/test-apikey-dbdown\//,
@@ -701,9 +745,38 @@ describe('applyRateLimit', () => {
       expect(response).toBeNull();
       expect(RATE_LIMIT_TIERS.api.peek(ipToken).remaining).toBe(99);
       expect(logger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('credential lookup failed'),
+        expect.stringContaining('lookup failed'),
         expect.objectContaining({ key: 'api-key', error: 'db down' })
       );
+
+      RATE_LIMIT_TIERS.api.reset(ipToken);
+      resetRateLimitCredentialBudget(ip);
+    });
+
+    it("'api-key' parses the header as the routes do: a lowercase scheme is not a Bearer key", async () => {
+      const ip = '192.0.2.79';
+      const ipToken = `mw:api:api-key:ip:${ip}`;
+      RATE_LIMIT_TIERS.api.reset(ipToken);
+      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
+        id: 'row_f',
+        expiresAt: null,
+      } as never);
+      vi.mocked(findRateLimitRule).mockReturnValue({
+        match: /^\/api\/v1\/test-apikey-case\//,
+        tier: 'api',
+        key: 'api-key',
+      });
+
+      await applyRateLimit(
+        makeRequest('/api/v1/test-apikey-case/resource', {
+          'x-forwarded-for': ip,
+          authorization: 'bearer sk_valid_lowercase',
+        })
+      );
+
+      // `resolveApiKey` refuses this header, so the proxy must not give it a key bucket.
+      expect(prisma.aiApiKey.findFirst).not.toHaveBeenCalled();
+      expect(RATE_LIMIT_TIERS.api.peek(ipToken).remaining).toBe(99);
 
       RATE_LIMIT_TIERS.api.reset(ipToken);
     });

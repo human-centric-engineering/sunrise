@@ -240,7 +240,10 @@ export const RATE_LIMIT_POLICY: readonly RateLimitRule[] = [
   // server, always API-key-authenticated, much chattier per session (agents
   // iterate through tool calls inside a conversation). It gets its own tier
   // (300/min by default — override with `RATE_LIMIT_MCP`) keyed by api-key
-  // so two customers sharing a NAT'd egress get independent buckets. The
+  // so two customers sharing a NAT'd egress get independent buckets — once
+  // each key is verified; a key that is cold while that IP has spent its
+  // credential-lookup budget shares the IP bucket until the budget frees
+  // (`lib/security/rate-limit-credentials.ts`). The
   // per-customer budget knob is `McpRateLimiter` inside the handler, sized
   // from the `apiKey.rateLimit` field; this section tier is the coarse
   // ceiling above it.

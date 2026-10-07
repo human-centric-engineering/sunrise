@@ -40,11 +40,7 @@ import {
   resolveAppRateLimitKeyResolver,
   type RateLimitRule,
 } from '@/lib/security/rate-limit-policy';
-import {
-  getCachedRateLimitCredential,
-  verifyRateLimitCredential,
-  type RateLimitCredentialKind,
-} from '@/lib/security/rate-limit-credentials';
+import { resolveRateLimitCredential } from '@/lib/security/rate-limit-credentials';
 import { registerAppRateLimits } from '@/lib/app/rate-limit';
 
 // Auto-wire the app's rate-limit registrations (fork-readiness — the `lib/app/`
@@ -204,7 +200,7 @@ export async function applyRateLimit(request: NextRequest): Promise<Response | n
     return null;
   }
 
-  const token = await buildToken(rule, request, limiter);
+  const token = await buildToken(rule, request);
   const result = limiter.check(token);
   if (!result.success) {
     return createRateLimitResponse(result);
@@ -264,18 +260,9 @@ function warnIfBypassActiveInProduction(): void {
  *
  * Format: `mw:${tier}:${key-strategy}:${identifier}`.
  */
-async function buildToken(
-  rule: RateLimitRule,
-  request: NextRequest,
-  limiter: RateLimiter
-): Promise<string> {
-  const prefix = `mw:${rule.tier}:${rule.key}:`;
-  const id = await resolveIdentifier(
-    rule.key,
-    request,
-    (fallbackId) => limiter.peek(`${prefix}${fallbackId}`).success
-  );
-  return `${prefix}${id}`;
+async function buildToken(rule: RateLimitRule, request: NextRequest): Promise<string> {
+  const id = await resolveIdentifier(rule.key, request);
+  return `mw:${rule.tier}:${rule.key}:${id}`;
 }
 
 /**
@@ -295,17 +282,14 @@ async function buildToken(
  *
  * The two credential strategies never key on the header as presented: the
  * caller chooses that value, so it would give them a fresh bucket per request
- * (#701). See {@link resolveCredentialIdentifier}.
+ * (#701). See `lib/security/rate-limit-credentials.ts` for what a lookup
+ * costs and when it falls back to the IP.
  *
  * IP fallback exists because rate-limiting is best-effort defense in depth —
  * if we can't identify the caller more precisely, we still want *some* bucket
  * rather than letting the request through unlimited.
  */
-async function resolveIdentifier(
-  key: RateLimitRule['key'],
-  request: NextRequest,
-  fallbackHasRoom: (fallbackId: string) => boolean
-): Promise<string> {
+async function resolveIdentifier(key: RateLimitRule['key'], request: NextRequest): Promise<string> {
   const ip = getClientIP(request);
 
   // App-defined key strategies (registerRateLimitKeyResolver). The rule
@@ -353,55 +337,21 @@ async function resolveIdentifier(
     }
 
     case 'api-key': {
-      const header = request.headers.get('authorization');
-      const match = header ? /^Bearer\s+(.+)$/i.exec(header.trim()) : null;
-      if (!match?.[1]) return `ip:${ip}`;
-      const id = await resolveCredentialIdentifier('api-key', match[1], ip, fallbackHasRoom);
+      // Parsed exactly as the routes parse it (`resolveApiKey`, the MCP
+      // transport): a case-sensitive `Bearer ` and the rest verbatim, so the
+      // proxy never gives its own bucket to a header the route would refuse.
+      const header = request.headers.get('authorization') ?? '';
+      const bearer = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+      if (!bearer) return `ip:${ip}`;
+      const id = await resolveRateLimitCredential('api-key', bearer, ip);
       return id ? `key:${id}` : `ip:${ip}`;
     }
 
     case 'embed-token': {
       const token = request.headers.get('x-embed-token');
       if (!token) return `ip:${ip}`;
-      const id = await resolveCredentialIdentifier('embed-token', token, ip, fallbackHasRoom);
+      const id = await resolveRateLimitCredential('embed-token', token, ip);
       return id ? `embed:${id}:${ip}` : `ip:${ip}`;
     }
-  }
-}
-
-/**
- * The stored id of the credential a request presents, or `null` to use the
- * caller's IP bucket.
- *
- * A verified id cached in the first half of its TTL costs nothing; in the
- * second half it is re-checked, so a credential in steady use stays cached.
- * A value with no cached verification is looked up — unless the IP bucket
- * this request would fall back to is already full, in which case the lookup
- * is skipped and the request is counted (and refused) there. That bounds the
- * lookups an unverifiable value can cause to the IP cap. A failed lookup
- * keeps a cached id if there is one and otherwise falls back to the IP
- * bucket, as `'session-user'` does when session resolution fails.
- */
-async function resolveCredentialIdentifier(
-  kind: RateLimitCredentialKind,
-  value: string,
-  ip: string,
-  fallbackHasRoom: (fallbackId: string) => boolean
-): Promise<string | null> {
-  const cached = getCachedRateLimitCredential(kind, value);
-  if (cached && !cached.stale) return cached.id;
-  // Only a value with no cached verification is gated on the IP bucket. A
-  // stale entry was verified within the TTL, so re-checking it is not
-  // something a caller can mint, and gating it would push a credential in
-  // steady use into a full IP bucket.
-  if (!cached && !fallbackHasRoom(`ip:${ip}`)) return null;
-  try {
-    return await verifyRateLimitCredential(kind, value);
-  } catch (error) {
-    logger.warn('rate-limit middleware: credential lookup failed; falling back', {
-      key: kind,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return cached?.id ?? null;
   }
 }

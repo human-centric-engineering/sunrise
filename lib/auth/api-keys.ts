@@ -47,10 +47,13 @@ export function isApiKeySession(session: AuthSession): boolean {
   return session.session.id.startsWith(API_KEY_SESSION_ID_PREFIX);
 }
 
+/** Prefix every user/admin API key carries; the rate-limit credential lookup reads it too. */
+export const API_KEY_PREFIX = 'sk_';
+
 /** Generate a new API key string. */
 export function generateApiKey(): string {
   const random = randomBytes(32).toString('hex');
-  return `sk_${random}`;
+  return `${API_KEY_PREFIX}${random}`;
 }
 
 /** Hash an API key with SHA-256. */
@@ -91,7 +94,7 @@ export async function resolveApiKey(request: NextRequest): Promise<{
   // optional chain we'd throw before the cookie-session path could run,
   // turning a pre-Phase-4 401/400 into a 500.
   const authHeader = request.headers?.get('authorization');
-  if (!authHeader?.startsWith('Bearer sk_')) return null;
+  if (!authHeader?.startsWith(`Bearer ${API_KEY_PREFIX}`)) return null;
 
   const rawKey = authHeader.slice('Bearer '.length);
   const hash = hashApiKey(rawKey);

@@ -164,12 +164,24 @@ describe('POST /api/v1/embed/chat/stream', () => {
       expect(response.status).toBe(429);
     });
 
-    it('does not call resolveEmbedToken when rate limited', async () => {
-      vi.mocked(embedChatLimiter.check).mockReturnValue({ success: false } as never);
-
+    it('keys the per-flow limit on the verified visitor id, not the raw token (#701)', async () => {
       await POST(makePostRequest({ message: 'hello' }, { 'x-embed-token': VALID_TOKEN }));
 
-      expect(vi.mocked(resolveEmbedToken)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+      // The resolver's visitor id is derived from the token row + IP; the
+      // header value as presented must never be the bucket key.
+      expect(embedChatLimiter.check).toHaveBeenCalledWith(VALID_CONTEXT.userId);
+      expect(embedChatLimiter.check).not.toHaveBeenCalledWith(expect.stringContaining(VALID_TOKEN));
+    });
+
+    it('refuses an unknown token without opening a per-flow bucket for it', async () => {
+      vi.mocked(resolveEmbedToken).mockResolvedValue(null);
+
+      const response = await POST(
+        makePostRequest({ message: 'hello' }, { 'x-embed-token': 'made-up-token' })
+      );
+
+      expect(response.status).toBe(401);
+      expect(vi.mocked(embedChatLimiter.check)).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
     });
   });
 

@@ -86,11 +86,6 @@ export async function POST(request: NextRequest): Promise<Response> {
   const requestContext = await getRequestContext(request);
   const log = logger.withContext(requestContext);
 
-  // Rate limit per token + IP
-  const rateKey = `${token}:${clientIp}`;
-  const rateLimit = embedChatLimiter.check(rateKey);
-  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
-
   const ctx = await resolveEmbedToken(token, clientIp);
   if (!ctx) {
     return NextResponse.json(
@@ -101,6 +96,13 @@ export async function POST(request: NextRequest): Promise<Response> {
       { status: 401 }
     );
   }
+
+  // Rate limit per verified token + IP. `ctx.userId` is derived from the
+  // token's row id and the IP, so a caller cannot open a fresh bucket by
+  // varying the header (#701); unknown tokens were refused above and are
+  // capped by the section tier in the proxy.
+  const rateLimit = embedChatLimiter.check(ctx.userId);
+  if (!rateLimit.success) return createRateLimitResponse(rateLimit);
 
   // CORS origin check
   if (!isOriginAllowed(origin, ctx.allowedOrigins)) {

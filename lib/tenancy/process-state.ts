@@ -232,10 +232,11 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/security/rate-limit-credentials.ts',
-    holders: ['verified', 'inFlight'],
+    holders: ['verified', 'inFlight', 'lookupBudget'],
     posture: 'row-keyed',
-    keyedBy: 'a SHA-256 digest of the presented credential, mapping to the stored key or token id',
-    why: "Answers only which credential row a presented value names, for the rate-limit bucket (#701); a value and the row id it maps to are unique across orgs, and the org, scopes and access decision stay with the route's own resolver. The shared 1000-entry cap is a noisy-neighbour question: an evicted entry costs one more lookup, not a wrong bucket. The 60-second TTL is the window in which a revoked key still gets its own bucket while the database answers — longer during an outage, when a failed re-check re-arms the entry (the route still refuses the key either way); `inFlight` holds a lookup only until it settles, under the same digest.",
+    keyedBy:
+      'a SHA-256 digest of the presented credential, mapping to the stored key or token id (the lookup budget: client IP)',
+    why: "Answers only which credential row a presented value names, for the rate-limit bucket (#701); a value and the row id it maps to are unique across orgs, and scopes and the access decision stay with the route's own resolver. The shared 1000-entry cap is a noisy-neighbour question: an evicted entry costs one more lookup, not a wrong bucket. A revoked key keeps its own bucket until its entry's next re-check (under a minute), or for at most 2x the TTL while the database is failing (the route still refuses the key either way). `inFlight` holds a lookup only until it settles, under the same digest; `lookupBudget` counts cold lookups per client IP, which every org behind that IP shares by decision, like the IP request buckets.",
   },
   {
     file: 'lib/orchestration/mcp/singletons.ts',

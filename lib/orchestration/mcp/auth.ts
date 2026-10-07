@@ -15,7 +15,8 @@ import { resolveCredentialOrg } from '@/lib/tenancy/entry';
 import { runAsCredentialLookup } from '@/lib/tenancy/context';
 import type { McpAuthContext } from '@/types/mcp';
 
-const KEY_PREFIX = 'smcp_';
+/** Prefix every MCP API key carries; the rate-limit credential lookup reads it too. */
+export const MCP_API_KEY_PREFIX = 'smcp_';
 const KEY_BYTE_LENGTH = 32;
 
 /** Base62 alphabet for compact key encoding */
@@ -54,7 +55,7 @@ export function hashApiKey(plaintext: string): string {
  */
 export function generateApiKey(): { plaintext: string; hash: string; prefix: string } {
   const encoded = randomBase62(KEY_BYTE_LENGTH);
-  const plaintext = `${KEY_PREFIX}${encoded}`;
+  const plaintext = `${MCP_API_KEY_PREFIX}${encoded}`;
   const hash = hashApiKey(plaintext);
   const prefix = plaintext.slice(0, 12);
   return { plaintext, hash, prefix };
@@ -75,7 +76,7 @@ export async function authenticateMcpRequest(
   clientIp: string,
   userAgent: string
 ): Promise<McpAuthContext | null> {
-  if (!bearerToken || !bearerToken.startsWith(KEY_PREFIX)) {
+  if (!bearerToken || !bearerToken.startsWith(MCP_API_KEY_PREFIX)) {
     return null;
   }
 
