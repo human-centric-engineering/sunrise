@@ -116,18 +116,19 @@ export function scrubUrl(url: string): string {
 }
 
 /**
- * A URL in free text: an absolute URL, a scheme-less `host.tld/path`, or a path
- * starting with `/` — not preceded by a word character, `/` or `.`, so
- * `GET /x`, `fetch(https://…)`, `at f (https://…:1:2)` and `see h.com/x`
- * match but `a/b` does not. The path ends at whitespace, a bracket, a quote or
- * a comma, so a URL inside JSON or markup takes nothing after it; a query or
- * fragment runs on to whitespace, a quote or `<>`, so `?ids=1,2&token=…` is
- * dropped whole. A scheme-less host may be followed by `/`, `?` or `#`. A scheme-less
- * host needs a dotted TLD, so a bare `localhost:3000/…` (dev only) is not
- * matched; with a scheme it is.
+ * A URL in free text: an absolute URL, a scheme-less `host.tld/path` or
+ * `1.2.3.4:port/path`, or a path starting with `/`, not preceded by a word
+ * character, `/`, `.` or `-`. So `GET /x`, `fetch(https://…)`,
+ * `at f (https://…:1:2)` and `see h.com/x` match, but `a/b` does not. A URL
+ * ends at whitespace, a quote or `<>`, so one inside JSON or markup takes
+ * nothing after it. Commas, brackets and parentheses stay part of it, because
+ * browsers leave them unencoded in paths (`/wiki/Foo_(bar)?token=…`), and a
+ * trailing one is handed back as punctuation. A scheme-less host may be
+ * followed by `/`, `?` or `#`; it needs a dotted TLD or an IPv4 address, so a
+ * bare `localhost:3000/…` (dev only) is not matched, though with a scheme it is.
  */
 const URL_IN_TEXT =
-  /(?<![\w/.])(?:[a-z][a-z0-9+.-]*:\/\/|(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?=[/?#])|\/)[^\s()[\]{}<>"'`,?#]*(?:[?#][^\s<>"'`]*)?/gi;
+  /(?<![\w/.-])(?:[a-z][a-z0-9+.-]*:\/\/|(?:(?:[a-z0-9-]+\.)+[a-z]{2,}|(?:\d{1,3}\.){3}\d{1,3})(?::\d+)?(?=[/?#])|\/)[^\s<>"'`?#]*(?:[?#][^\s<>"'`]*)?/gi;
 
 /** Punctuation that ends a sentence or a quoted value, not the URL before it. */
 const TRAILING_PUNCTUATION = /[.,;:!?'"`)\]}>&]+$/;
@@ -245,9 +246,10 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 /**
  * `scrubUrlsInText` applied to every string in a value: strings, arrays, plain
  * objects (to a bounded depth) and Errors (with their `cause` chain), each
- * copied; a `URL` object becomes its scrubbed href. Other objects (a Date, a
- * class instance) are returned unchanged, and an object nested past the depth
- * cap becomes `'[depth limit]'`.
+ * copied; a `URL` object becomes its scrubbed href; a Date is returned as it
+ * is; any other object (a class instance, a Map) becomes a plain object of its
+ * own properties, scrubbed. An object nested past the depth cap becomes
+ * `'[depth limit]'`.
  *
  * @example
  * scrubUrlsDeep({ request: { url: 'https://app.example.com/s/Xk9fQ2mZp4LrT7vB1nWc8sYd?a=1' } });
@@ -264,7 +266,12 @@ export function scrubUrlsDeep(value: unknown, depth = 0): unknown {
   // A URL object would print its full href through `toJSON()`.
   if (value instanceof URL) return scrubUrl(value.href);
   if (Array.isArray(value)) return value.map((item: unknown) => scrubUrlsDeep(item, depth + 1));
-  if (isPlainRecord(value)) {
+  if (value instanceof Date) return value;
+  if (typeof value === 'object' && value !== null) {
+    // A plain object, or a class instance, Map or Set: Sentry serializes an
+    // instance's own properties, so it is copied as a plain object of them,
+    // scrubbed (a Map or Set has none and becomes `{}`). Failing closed beats
+    // passing an unknown object on unscrubbed.
     const scrubbed: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) scrubbed[key] = scrubUrlsDeep(item, depth + 1);
     return scrubbed;

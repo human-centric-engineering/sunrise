@@ -35,6 +35,9 @@ import { logger } from '@/lib/logging';
 import { loggablePath, scrubUrlsDeep, scrubUrlsInError } from '@/lib/logging/redact-path';
 import { trackError, ErrorSeverity } from '@/lib/errors/sentry';
 
+/** The flag `@sentry/core` sets on an exception it has captured (`checkOrSetAlreadyCaught`). */
+const SENTRY_CAPTURED_MARKER = '__sentry_captured__';
+
 /**
  * Fields that contain sensitive data
  * These will be scrubbed before sending to error tracking
@@ -262,6 +265,21 @@ export function handleClientError(error: unknown, context: Record<string, unknow
     },
     level: ErrorSeverity.Error,
   });
+
+  // Sentry marks an error it has captured, so its own global handlers skip it
+  // later; it marked the copy, so mark the original too.
+  if (Reflect.get(reportedError, SENTRY_CAPTURED_MARKER) === true) {
+    try {
+      Object.defineProperty(normalized.error, SENTRY_CAPTURED_MARKER, {
+        value: true,
+        configurable: true,
+        writable: true,
+        enumerable: false,
+      });
+    } catch {
+      // A frozen error cannot be marked; Sentry's dedupe is the fallback.
+    }
+  }
 }
 
 /**

@@ -161,6 +161,10 @@ function registerUrlScrubber(Sentry: typeof import('@sentry/nextjs')): void {
  * ```
  */
 export function initErrorTracking(): void {
+  // Register the page-URL scrubber whether or not NEXT_PUBLIC_SENTRY_DSN is
+  // set: a fork may init Sentry with a DSN written into its config, and a
+  // processor on an uninitialised SDK does nothing (#952).
+  registerUrlScrubber(loadSentry());
   const Sentry = getSentry();
 
   if (Sentry) {
@@ -446,11 +450,21 @@ export function scrubSentryEvent<T extends Event>(event: T): T {
     });
   });
   const trace = event.contexts?.trace;
-  if (trace?.data) scrubRecord(trace.data);
+  // Copies: under `traceLifecycle: 'static'` these are the live spans' own
+  // attribute objects.
+  if (trace?.data) {
+    const data = { ...trace.data };
+    scrubRecord(data);
+    trace.data = data;
+  }
   event.spans?.forEach((span) => {
     if (span.description) span.description = scrubUrlsInText(span.description);
     // Typed as always present; a span another processor built may lack it.
-    if (span.data) scrubRecord(span.data);
+    if (span.data) {
+      const data = { ...span.data };
+      scrubRecord(data);
+      span.data = data;
+    }
   });
   if (event.breadcrumbs) event.breadcrumbs = event.breadcrumbs.map(scrubSentryBreadcrumb);
   return event;

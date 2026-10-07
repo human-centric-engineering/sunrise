@@ -708,6 +708,21 @@ describe('Sentry URL scrubbing', () => {
       expect(event.request?.headers).toEqual({ Referer: 'https://h.example/s/[param]' });
     });
 
+    it('scrubs copies of span data, leaving the live attribute objects alone', () => {
+      const liveData = { 'url.full': `https://h.example/s/${token}?a=1`, 'url.query': 'a=1' };
+      const liveTrace = { 'url.path': `/s/${token}` };
+      const event = scrubSentryEvent({
+        type: 'transaction',
+        contexts: { trace: { trace_id: 't', span_id: 's', data: liveTrace } },
+        spans: [{ span_id: 'c', trace_id: 't', start_timestamp: 0, status: 'ok', data: liveData }],
+      });
+
+      expect(event.spans?.[0].data).toEqual({ 'url.full': 'https://h.example/s/[param]' });
+      expect(event.contexts?.trace?.data).toEqual({ 'url.path': '/s/[param]' });
+      expect(liveData['url.query']).toBe('a=1');
+      expect(liveTrace['url.path']).toBe(`/s/${token}`);
+    });
+
     it('does not throw on a child span with no data', () => {
       const span = { span_id: 'c', trace_id: 't', start_timestamp: 0, status: 'ok' };
       // A span another processor built can lack the typed-required `data`.
@@ -804,13 +819,13 @@ describe('URL scrubber registration (#952)', () => {
     expect(mockAddEventProcessor).toHaveBeenCalledTimes(1);
   });
 
-  it('registers nothing when Sentry is not configured', async () => {
+  it('registers from initErrorTracking even without NEXT_PUBLIC_SENTRY_DSN (a DSN in the config)', async () => {
     delete process.env.NEXT_PUBLIC_SENTRY_DSN;
     const fresh = await import('@/lib/errors/sentry');
 
     fresh.initErrorTracking();
-    fresh.trackError(new Error('one'));
 
-    expect(mockAddEventProcessor).not.toHaveBeenCalled();
+    expect(mockAddEventProcessor).toHaveBeenCalledTimes(1);
+    expect(mockAddEventProcessor).toHaveBeenCalledWith(fresh.scrubSentryEvent);
   });
 });

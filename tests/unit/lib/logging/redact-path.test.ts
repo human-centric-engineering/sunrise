@@ -190,6 +190,30 @@ describe('scrubUrlsInText', () => {
     expect(scrubUrlsInText('see /p#a(b)&email=foo@bar.com.')).toBe('see /p.');
   });
 
+  it('drops the query when the path holds commas, parentheses or brackets', () => {
+    expect(
+      scrubUrlsInText(`fetch https://app.example.com/search/a,b?email=a%40x.com&token=${token}`)
+    ).toBe('fetch https://app.example.com/search/a,b');
+    expect(scrubUrlsInText(`see /wiki/Foo_(bar)?token=${token}.`)).toBe('see /wiki/Foo_(bar).');
+    expect(scrubUrlsInText(`fetch(https://app.example.com/s/${token}?x=1)`)).toBe(
+      'fetch(https://app.example.com/s/[param])'
+    );
+  });
+
+  it('scrubs an IPv4 host with a port', () => {
+    expect(scrubUrlsInText('fetch failed: 10.0.0.5:8080/reset?token=abc')).toBe(
+      'fetch failed: 10.0.0.5:8080/reset'
+    );
+  });
+
+  it('stays fast on long hyphenated text that is not a URL', () => {
+    const input = '-a'.repeat(20000);
+    const started = performance.now();
+
+    expect(scrubUrlsInText(input)).toBe(input);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+
   it('scrubs a scheme-less host followed directly by a query', () => {
     expect(scrubUrlsInText(`redirect to app.example.com?token=${token}`)).toBe(
       'redirect to app.example.com'
@@ -303,6 +327,21 @@ describe('scrubUrlsDeep', () => {
     expect(Reflect.get(scrubbed, 'errors')).toEqual([
       expect.objectContaining({ message: 'failed /s/[param]' }),
     ]);
+  });
+
+  it('copies a class instance as its scrubbed own properties, failing closed on a Map', () => {
+    class Request {
+      url = `https://h.example/s/${token}?token=x`;
+    }
+    const when = new Date(0);
+
+    expect(
+      scrubUrlsDeep({ req: new Request(), map: new Map([['u', `/s/${token}?a=1`]]), when })
+    ).toEqual({
+      req: { url: 'https://h.example/s/[param]' },
+      map: {},
+      when,
+    });
   });
 
   it('turns a URL object into its scrubbed href', () => {

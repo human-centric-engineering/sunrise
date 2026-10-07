@@ -804,6 +804,21 @@ describe('handleClientError', () => {
       expect(JSON.stringify(extra)).not.toContain(token);
     });
 
+    it('should mark the original error as captured when Sentry marked the reported copy', () => {
+      vi.mocked(trackError).mockImplementationOnce((reported) => {
+        if (typeof reported !== 'string') {
+          Object.defineProperty(reported, '__sentry_captured__', { value: true });
+        }
+        return 'event-id';
+      });
+      const error = new Error('captured once');
+
+      handleClientError(error);
+
+      expect(Reflect.get(error, '__sentry_captured__')).toBe(true);
+      expect(Object.keys(error)).not.toContain('__sentry_captured__');
+    });
+
     it('should handle missing navigator gracefully', () => {
       vi.stubGlobal('navigator', undefined);
 
