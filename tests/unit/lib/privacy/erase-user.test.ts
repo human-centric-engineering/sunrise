@@ -4,7 +4,8 @@
  * Contract under test:
  *   eraseUser({ userId, userEmail, actorUserId, reason })
  *   1. best-effort avatar blob cleanup (outside the DB transaction)
- *   2. prisma.$transaction → scrub clientIp | write receipt | delete user
+ *   2. prisma.$transaction → scrub clientIp | delete contact submissions |
+ *      write receipt | delete user
  *   3. returns { receiptId, erasedAt } from the created receipt row
  */
 
@@ -19,47 +20,55 @@ import {
 // Mocks — use vi.hoisted() so variables exist before vi.mock() factories run
 // ---------------------------------------------------------------------------
 
-const { mockUpdateMany, mockReceiptCreate, mockUserDelete, mockPrisma, mockLogger } = vi.hoisted(
-  () => {
-    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-    const receiptCreate = vi.fn().mockResolvedValue({
-      id: 'receipt-1',
-      erasedAt: new Date('2026-01-01T00:00:00.000Z'),
-    });
-    const userDelete = vi.fn().mockResolvedValue({ id: 'user-1' });
+const {
+  mockUpdateMany,
+  mockContactDeleteMany,
+  mockReceiptCreate,
+  mockUserDelete,
+  mockPrisma,
+  mockLogger,
+} = vi.hoisted(() => {
+  const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+  const contactDeleteMany = vi.fn().mockResolvedValue({ count: 1 });
+  const receiptCreate = vi.fn().mockResolvedValue({
+    id: 'receipt-1',
+    erasedAt: new Date('2026-01-01T00:00:00.000Z'),
+  });
+  const userDelete = vi.fn().mockResolvedValue({ id: 'user-1' });
 
-    // Prisma mock — $transaction invokes its async callback with the same
-    // prisma mock so tx.X === prisma.X; this is the pattern described in the
-    // test plan's brittle-patterns note (a no-op mock makes downstream
-    // assertions vacuous).
-    const prismaObj = {
-      $transaction: vi.fn(),
-      aiAdminAuditLog: { updateMany },
-      dataErasureReceipt: { create: receiptCreate },
-      user: { delete: userDelete },
-    };
-    prismaObj.$transaction.mockImplementation(
-      (callback: (tx: typeof prismaObj) => Promise<unknown>) => callback(prismaObj)
-    );
+  // Prisma mock — $transaction invokes its async callback with the same
+  // prisma mock so tx.X === prisma.X; this is the pattern described in the
+  // test plan's brittle-patterns note (a no-op mock makes downstream
+  // assertions vacuous).
+  const prismaObj = {
+    $transaction: vi.fn(),
+    aiAdminAuditLog: { updateMany },
+    contactSubmission: { deleteMany: contactDeleteMany },
+    dataErasureReceipt: { create: receiptCreate },
+    user: { delete: userDelete },
+  };
+  prismaObj.$transaction.mockImplementation(
+    (callback: (tx: typeof prismaObj) => Promise<unknown>) => callback(prismaObj)
+  );
 
-    const log = {
-      debug: vi.fn(),
-      info: vi.fn(),
-      warn: vi.fn(),
-      error: vi.fn(),
-      child: vi.fn(),
-      withContext: vi.fn(),
-    };
+  const log = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    child: vi.fn(),
+    withContext: vi.fn(),
+  };
 
-    return {
-      mockUpdateMany: updateMany,
-      mockReceiptCreate: receiptCreate,
-      mockUserDelete: userDelete,
-      mockPrisma: prismaObj,
-      mockLogger: log,
-    };
-  }
-);
+  return {
+    mockUpdateMany: updateMany,
+    mockContactDeleteMany: contactDeleteMany,
+    mockReceiptCreate: receiptCreate,
+    mockUserDelete: userDelete,
+    mockPrisma: prismaObj,
+    mockLogger: log,
+  };
+});
 
 vi.mock('@/lib/logging', () => ({
   logger: mockLogger,
@@ -122,6 +131,7 @@ describe('eraseUser', () => {
     mockIsStorageEnabled.mockReturnValue(false);
     mockDeleteByPrefix.mockResolvedValue({ deleted: 1 });
     mockUpdateMany.mockResolvedValue({ count: 1 });
+    mockContactDeleteMany.mockResolvedValue({ count: 1 });
     mockReceiptCreate.mockResolvedValue({
       id: 'receipt-1',
       erasedAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -330,6 +340,71 @@ describe('eraseUser', () => {
 
     // Act + Assert — eraseUser rejects, and the delete never runs
     await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('storage down');
+    expect(mockUserDelete).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Case 7d: Contact submissions — no FK to User, so the cascade never reaches
+  // them; the service deletes them, matched exactly on the normalised address.
+  // -------------------------------------------------------------------------
+
+  it('contact submissions — deleted on the trimmed, lower-cased address, as an exact match', async () => {
+    // Act — the address as a caller might hold it, padded and mixed-case
+    await eraseUser({ ...BASE_PARAMS, userEmail: '  Foo@BAR.com ' });
+
+    // Assert — the stored form (`emailSchema` output) with no `mode`, so
+    // Prisma compiles it to `=` rather than `ILIKE`
+    expect(mockContactDeleteMany).toHaveBeenCalledTimes(1);
+    expect(mockContactDeleteMany).toHaveBeenCalledWith({ where: { email: 'foo@bar.com' } });
+  });
+
+  it('contact submissions — an address with `_` and `%` is matched as a literal string, not a pattern', async () => {
+    // Arrange — under `mode: 'insensitive'` (ILIKE) `_` matches any one
+    // character and `%` any run, so this would also delete `aXb@ex.com`'s
+    // messages. An equality match on the literal string cannot.
+    await eraseUser({ ...BASE_PARAMS, userEmail: 'a_b%c@ex.com' });
+
+    // Assert — exactly this filter: a plain string, no `mode`, no operator
+    const [args] = mockContactDeleteMany.mock.calls[0] as [{ where: unknown }];
+    expect(args).toEqual({ where: { email: 'a_b%c@ex.com' } });
+  });
+
+  it('contact submissions — deleted inside the transaction, before the user row', async () => {
+    // Arrange — record whether the delete ran inside the $transaction callback
+    let insideTx = false;
+    let deletedInsideTx = false;
+    mockContactDeleteMany.mockImplementation(() => {
+      deletedInsideTx = insideTx;
+      return Promise.resolve({ count: 2 });
+    });
+    mockPrisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => {
+        insideTx = true;
+        try {
+          return await callback(mockPrisma);
+        } finally {
+          insideTx = false;
+        }
+      }
+    );
+
+    // Act
+    await eraseUser(BASE_PARAMS);
+
+    // Assert — atomic with the erasure, and ordered ahead of the user delete
+    expect(deletedInsideTx).toBe(true);
+    expect(mockContactDeleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+      mockUserDelete.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('contact submissions — a failed delete rolls the erasure back (the user row is never deleted)', async () => {
+    // Arrange
+    mockContactDeleteMany.mockRejectedValue(new Error('contact delete failed'));
+
+    // Act + Assert — the throw escapes the transaction; nothing after it ran
+    await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('contact delete failed');
+    expect(mockReceiptCreate).not.toHaveBeenCalled();
     expect(mockUserDelete).not.toHaveBeenCalled();
   });
 

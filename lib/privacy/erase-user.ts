@@ -13,9 +13,11 @@
  *   2. Write an append-only `DataErasureReceipt` for accountability
  *      (Art. 5(2)) without re-introducing PII (opaque id + email hash).
  *   3. Remove the user's stored avatar blobs (object storage, not the DB).
+ *   4. Delete the contact-form messages sent from the user's address.
+ *      `ContactSubmission` has no FK to `User`, so no cascade reaches it.
  *
- * The scrub, receipt, and delete run in one transaction so they commit or
- * roll back together. Avatar cleanup runs first as a best-effort side effect
+ * The scrub, contact delete, receipt, and user delete run in one transaction
+ * so they commit or roll back together. Avatar cleanup runs first as a best-effort side effect
  * (object storage cannot enlist in the DB transaction).
  */
 
@@ -23,6 +25,7 @@ import { createHash } from 'node:crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
+import { contactSubmissionsOf } from '@/lib/privacy/contact-submissions';
 import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
 
 export type ErasureReason = 'self_service' | 'admin_action';
@@ -113,6 +116,13 @@ async function eraseRows(params: EraseUserParams): Promise<{ id: string; erasedA
       where: { userId },
       data: { clientIp: null },
     });
+
+    // Contact-form messages are keyed by address alone (no FK), so the
+    // cascade below never reaches them. The export hands these same rows to
+    // the subject as their personal data, so they go — matched exactly, never
+    // case-insensitively: an `ILIKE` here would delete a stranger's messages.
+    // A system model, so no org scope is needed at either tenancy mode.
+    await tx.contactSubmission.deleteMany({ where: contactSubmissionsOf(userEmail) });
 
     // App-registered in-transaction scrub. Runs before `tx.user.delete()` so
     // hooks can still match retained rows on `userId`, and atomically with the
