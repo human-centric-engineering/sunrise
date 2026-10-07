@@ -91,15 +91,15 @@ fork that turns Sentry on without setting this sends that data to Sentry. Set
 
 ```typescript
 import * as Sentry from '@sentry/nextjs';
-import { scrubSentryBreadcrumb, scrubSentryEvent, scrubSentrySpan } from '@/lib/errors/sentry';
+import { scrubSentrySpan } from '@/lib/errors/sentry';
 
 Sentry.init({
   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
-  // Page URLs: drop query strings and fragments, collapse id- and
-  // credential-shaped path segments (see "Page URLs" below).
-  beforeSend: scrubSentryEvent,
+  // Page URLs in spans: drop query strings and fragments, collapse id- and
+  // credential-shaped path segments (see "Page URLs" below). Error events are
+  // scrubbed already; sentry.edge.config.ts also needs
+  // `beforeSend: scrubSentryEvent`.
   beforeSendSpan: scrubSentrySpan,
-  beforeBreadcrumb: scrubSentryBreadcrumb,
   // Collect nothing about the request, the user or the data by default.
   // (Session Replay is separate; see below.)
   dataCollection: {
@@ -125,35 +125,42 @@ stops only the SDK filling in `user.*` from request data on its own.
 A page URL can carry a credential or personal data: a token or an email in the
 query string or the fragment, or a token as a path segment (a share page such
 as `/s/<token>`). `urlQueryParams: false` covers only query strings the SDK
-collected itself. Three hooks from `lib/errors/sentry.ts` cover the rest:
+collected itself. `lib/errors/sentry.ts` covers the rest:
 
-- `scrubSentryEvent` (`beforeSend`) reduces an error event's `request.url`,
-  transaction name, message and exception values, stack frames' file URLs (an
-  inline script's frame is the page URL) and the string values of `extra` to
-  origin plus path, and scrubs the trace context and breadcrumbs it carries;
-- `scrubSentrySpan` (`beforeSendSpan`) scrubs every URL and path in each
+- **Error events, by default.** Sunrise registers `scrubSentryEvent` on
+  Sentry's global scope the first time it uses Sentry: on the client from
+  `ErrorHandlingProvider` (`initErrorTracking()`), on the Node server from
+  `instrumentation.ts`. It reduces an event's `request.url`, transaction
+  name, message and exception values, stack frames' file URLs (an inline
+  script's frame is the page URL) and every string in `extra` (nested objects
+  included) to origin plus path, and scrubs the trace context and the
+  breadcrumbs the event carries (a fetch or xhr `url`, a navigation's `from` /
+  `to`, a console breadcrumb's message and arguments). No `beforeSend` or
+  `beforeBreadcrumb` is needed, except in `sentry.edge.config.ts`: the edge
+  runtime does not run `instrumentation.ts`'s Node branch, so set
+  `beforeSend: scrubSentryEvent` there.
+- **Spans: add `beforeSendSpan: scrubSentrySpan`** to each `Sentry.init`.
+  Under v11's default `traceLifecycle: 'stream'`, spans go out one by one and
+  never pass through an event processor. It scrubs every URL and path in each
   span's name and attribute values, and in its links' attributes (`url.full`,
   `http.url`, `next.span_name`, a captured `referer` header…), and drops
   `url.fragment`, `url.query` and the raw path-parameter values
-  (`url.path.parameter.*`, `url.path.params.*`, `params.*`);
-- `scrubSentryBreadcrumb` (`beforeBreadcrumb`) does the same for a
-  breadcrumb's message and data: a fetch or xhr `url`, a navigation's `from` /
-  `to`, a console breadcrumb's string arguments.
-
-URLs inside an object argument of a console breadcrumb (an `Error` passed to
-`console.error`) are not reached; neither are tags or request headers. Keep
-`httpHeaders` off, as above.
-
-**If you set `traceLifecycle: 'static'`**, the SDK never calls
-`beforeSendSpan: scrubSentrySpan`; set `beforeSendTransaction: scrubSentryEvent`
-instead, which scrubs the transaction and its child spans. Under v11's default
-`'stream'` it is the other way round: `beforeSendTransaction` is never called.
+  (`url.path.parameter.*`, `url.path.params.*`, `params.*`).
 
 Each id- or credential-shaped path segment becomes `[param]`
 (`collapseDynamicSegments()` in `lib/logging/redact-path.ts`, which lists what
-it cannot catch). Set them in every `Sentry.init`, as above. The global client error handler
+it cannot catch); Next.js build assets and `node_modules` paths are kept whole
+so source maps and issue grouping still work. The global client error handler
 (`lib/errors/handler.ts`) already sends the page as the collapsed pathname,
-under `extra.path`, and scrubs the URLs in `extra.filename` and `extra.stack`.
+under `extra.path`, and scrubs the URLs in its context and in the error it
+reports. Tags and request headers are not scrubbed; keep `httpHeaders` off, as
+above.
+
+**If you set `traceLifecycle: 'static'`**, `scrubSentrySpan` is never called
+(it takes the streamed span shape). The global event processor still scrubs
+each transaction and its child spans. Standalone spans (INP and other web
+vitals sent outside a transaction) pass through neither and are **not**
+scrubbed under `'static'`; stay on `'stream'` if you send them.
 
 **Session Replay is not governed by `dataCollection`.** The wizard adds
 `replayIntegration()` to the client init, and a replay records what the admin

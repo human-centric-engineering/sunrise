@@ -54,9 +54,8 @@
  */
 
 import type { Breadcrumb, Event, init as sentryInit } from '@sentry/nextjs';
-import { isRecord } from '@/lib/utils';
 import { logger } from '@/lib/logging';
-import { scrubUrl, scrubUrlsInText } from '@/lib/logging/redact-path';
+import { scrubUrl, scrubUrlsDeep, scrubUrlsInText } from '@/lib/logging/redact-path';
 
 /**
  * Error severity levels
@@ -107,9 +106,30 @@ function getSentry(): typeof import('@sentry/nextjs') | undefined {
     return undefined;
   }
 
+  const Sentry = loadSentry();
+  registerUrlScrubber(Sentry);
+  return Sentry;
+}
+
+function loadSentry(): typeof import('@sentry/nextjs') {
   // Sentry is installed as a dependency, safe to import
   // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-unsafe-return
   return require('@sentry/nextjs');
+}
+
+let urlScrubberRegistered = false;
+
+/**
+ * Register `scrubSentryEvent` on Sentry's global scope, once per process, so
+ * every error and transaction event (and the breadcrumbs it carries) is
+ * scrubbed of page URLs without each fork wiring `beforeSend` (#952). The
+ * global scope, not `Sentry.addEventProcessor`, which on the server attaches
+ * to the current request's isolation scope only.
+ */
+function registerUrlScrubber(Sentry: typeof import('@sentry/nextjs')): void {
+  if (urlScrubberRegistered) return;
+  Sentry.getGlobalScope().addEventProcessor(scrubSentryEvent);
+  urlScrubberRegistered = true;
 }
 
 /**
@@ -325,47 +345,36 @@ type StreamedSpanJSON = Parameters<
 const DROPPED_ATTRIBUTE =
   /^(?:url\.query|url\.fragment|http\.query|http\.fragment|url\.path\.parameters?\..*|url\.path\.params\..*|params\..*)$/;
 
-/** A span attribute value — raw, an array, or `{ value, unit? }` — with `scrubUrlsInText` applied. */
-function scrubAttributeValue(value: unknown): unknown {
-  if (typeof value === 'string') return scrubUrlsInText(value);
-  if (Array.isArray(value)) return value.map(scrubAttributeValue);
-  if (isRecord(value) && typeof value.value === 'string') {
-    return { ...value, value: scrubUrlsInText(value.value) };
-  }
-  return value;
-}
-
 /**
- * Copy of span `attributes` with every URL and path in every value scrubbed —
- * a rule, not a list of keys, so `url.full`, `http.url`, `next.span_name` and a
- * header such as `referer` are all covered — and query, fragment and
- * path-parameter attributes dropped.
+ * Scrub a record in place: every URL and path in every value — a rule, not a
+ * list of keys, so `url.full`, `http.url`, `next.span_name`, a `referer`
+ * header and nested objects are all covered — and query, fragment and
+ * path-parameter keys dropped.
  */
-function scrubAttributes<T extends Record<string, unknown>>(attributes: T): T {
-  const scrubbed: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(attributes)) {
-    if (!DROPPED_ATTRIBUTE.test(key)) scrubbed[key] = scrubAttributeValue(value);
+function scrubRecord(record: Record<string, unknown>): void {
+  for (const key of Object.keys(record)) {
+    if (DROPPED_ATTRIBUTE.test(key)) delete record[key];
+    else record[key] = scrubUrlsDeep(record[key]);
   }
-  // Same keys as the input, minus dropped ones, each holding the same shape.
-  return scrubbed as T;
 }
 
 /**
- * `beforeBreadcrumb` for `Sentry.init`: scrubs every URL and path in a
- * breadcrumb's message and data (a fetch or xhr `url`, a navigation's `from` /
- * `to`, a console breadcrumb's string arguments) and drops `url.query` /
- * `url.fragment`. Returns a copy: a fetch breadcrumb's `data` is the SDK's own
- * request object, shared with its other fetch handlers.
- *
- * @example
- * Sentry.init({ beforeBreadcrumb: scrubSentryBreadcrumb, ... });
+ * Scrub every URL and path in a breadcrumb's message and data (a fetch or xhr
+ * `url`, a navigation's `from` / `to`, a console breadcrumb's arguments) and
+ * drop `url.query` / `url.fragment`. `scrubSentryEvent` runs it on the
+ * breadcrumbs an event carries, so it need not also be set as
+ * `beforeBreadcrumb`. Returns a copy: a fetch breadcrumb's `data` is the SDK's
+ * own request object, shared with its other fetch handlers.
  */
 export function scrubSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
-  return {
-    ...breadcrumb,
-    ...(breadcrumb.message !== undefined && { message: scrubUrlsInText(breadcrumb.message) }),
-    ...(breadcrumb.data && { data: scrubAttributes(breadcrumb.data) }),
-  };
+  const scrubbed = { ...breadcrumb };
+  if (scrubbed.message !== undefined) scrubbed.message = scrubUrlsInText(scrubbed.message);
+  if (scrubbed.data) {
+    const data: Record<string, unknown> = { ...scrubbed.data };
+    scrubRecord(data);
+    scrubbed.data = data;
+  }
+  return scrubbed;
 }
 
 /**
@@ -378,33 +387,34 @@ export function scrubSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
  * Sentry.init({ beforeSendSpan: scrubSentrySpan, ... });
  */
 export function scrubSentrySpan(span: StreamedSpanJSON): StreamedSpanJSON {
-  return {
-    ...span,
-    name: scrubUrlsInText(span.name),
-    attributes: scrubAttributes(span.attributes),
-    ...(span.links && {
-      links: span.links.map((link) =>
-        link.attributes ? { ...link, attributes: scrubAttributes(link.attributes) } : link
-      ),
-    }),
-  };
+  const attributes = { ...span.attributes };
+  scrubRecord(attributes);
+  const links = span.links?.map((link) => {
+    if (!link.attributes) return link;
+    const linkAttributes = { ...link.attributes };
+    scrubRecord(linkAttributes);
+    return { ...link, attributes: linkAttributes };
+  });
+  return { ...span, name: scrubUrlsInText(span.name), attributes, ...(links && { links }) };
 }
 
 /**
  * `beforeSend` for `Sentry.init`: scrubs the page URL the SDK records on an
  * error event, its query string, the transaction name, the message and
  * exception values, the stack frames' file URLs (an inline script's frame is
- * the page URL), the string values of `extra`, the trace context's span data
- * and the attached breadcrumbs. Also usable as
- * `beforeSendTransaction` under `traceLifecycle: 'static'`, where it scrubs
- * each child span the same way.
+ * the page URL), every string in `extra` (nested objects included), the
+ * trace context's span data and the attached breadcrumbs. Sunrise registers
+ * it on Sentry's global scope (see `registerUrlScrubber`), so it also runs on
+ * transactions under `traceLifecycle: 'static'`, scrubbing each child span.
+ * Pass it as `beforeSend` too where Sunrise's code may not have run first
+ * (`sentry.edge.config.ts`).
  *
  * `dataCollection.urlQueryParams: false` drops query strings, but not the
  * fragment or a credential in the path (a `/s/<token>` share page), and only
  * for URLs the SDK collected itself (#952).
  *
  * @example
- * Sentry.init({ beforeSend: scrubSentryEvent, ... });
+ * Sentry.init({ beforeSend: scrubSentryEvent, ... }); // edge runtime
  */
 export function scrubSentryEvent<T extends Event>(event: T): T {
   if (event.request) {
@@ -413,7 +423,7 @@ export function scrubSentryEvent<T extends Event>(event: T): T {
   }
   if (event.transaction) event.transaction = scrubUrlsInText(event.transaction);
   if (typeof event.message === 'string') event.message = scrubUrlsInText(event.message);
-  if (event.extra) event.extra = scrubAttributes(event.extra);
+  if (event.extra) scrubRecord(event.extra);
   event.exception?.values?.forEach((exception) => {
     if (exception.value) exception.value = scrubUrlsInText(exception.value);
     exception.stacktrace?.frames?.forEach((frame) => {
@@ -422,11 +432,11 @@ export function scrubSentryEvent<T extends Event>(event: T): T {
     });
   });
   const trace = event.contexts?.trace;
-  if (trace?.data) trace.data = scrubAttributes(trace.data);
+  if (trace?.data) scrubRecord(trace.data);
   event.spans?.forEach((span) => {
     if (span.description) span.description = scrubUrlsInText(span.description);
     // Typed as always present; a span another processor built may lack it.
-    if (span.data) span.data = scrubAttributes(span.data);
+    if (span.data) scrubRecord(span.data);
   });
   if (event.breadcrumbs) event.breadcrumbs = event.breadcrumbs.map(scrubSentryBreadcrumb);
   return event;

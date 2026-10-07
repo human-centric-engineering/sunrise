@@ -78,10 +78,11 @@ export function loggablePath(pathname: string | undefined): string | undefined {
 }
 
 /**
- * Next.js build assets (under any `basePath`): their URLs carry no request
- * data, and a source-map lookup needs the path exactly as built.
+ * Paths kept whole: Next.js build assets (under any `basePath`) and installed
+ * packages (`node_modules/@scope/pkg/…`). They carry no request data, and a
+ * source-map lookup or Sentry's issue grouping needs them exactly as built.
  */
-const BUILD_ASSET_PATH = '/_next/static/';
+const KEPT_PATHS = ['/_next/static/', '/node_modules/'];
 
 /** An absolute URL's `scheme://authority`, and the rest. */
 const ABSOLUTE_URL = /^([a-z][a-z0-9+.-]*:\/\/[^/]*)?(.*)$/is;
@@ -90,7 +91,8 @@ const ABSOLUTE_URL = /^([a-z][a-z0-9+.-]*:\/\/[^/]*)?(.*)$/is;
  * Reduce a URL to its origin and its path for logging or error tracking (#952):
  * the query string, the fragment and any `user:password@` are dropped, and
  * every id- or credential-shaped path segment is collapsed to `[param]`. Accepts
- * an absolute URL or a relative path. A Next.js build asset keeps its path.
+ * an absolute URL or a relative path. A build asset or package path keeps its
+ * path.
  *
  * @example
  * scrubUrl('https://app.example.com/s/Xk9fQ2mZp4LrT7vB1nWc8sYd?email=a%40b.c#x');
@@ -102,15 +104,19 @@ export function scrubUrl(url: string): string {
   const match = ABSOLUTE_URL.exec(withoutQuery);
   const origin = (match?.[1] ?? '').replace(/\/\/[^/]*@/, '//');
   const path = match?.[2] ?? '';
-  return origin + (path.includes(BUILD_ASSET_PATH) ? path : collapseDynamicSegments(path));
+  const kept = KEPT_PATHS.some((prefix) => path.includes(prefix));
+  return origin + (kept ? path : collapseDynamicSegments(path));
 }
 
 /**
- * An absolute URL, or a path starting with `/`, not preceded by a word
- * character or `/` — so `GET /x`, `fetch(https://…)` and `at f (https://…:1:2)`
- * match, but `a/b` does not.
+ * A URL in free text: an absolute URL, a scheme-less `host.tld/path`, or a path
+ * starting with `/` — not preceded by a word character, `/` or `.`, so
+ * `GET /x`, `fetch(https://…)`, `at f (https://…:1:2)` and `see h.com/x`
+ * match but `a/b` does not. It ends at whitespace, a bracket, a quote or a
+ * comma, so a URL inside JSON or markup takes nothing after it.
  */
-const URL_IN_TEXT = /(?<![\w/])(?:[a-z][a-z0-9+.-]*:\/\/|\/)[^\s()]*/gi;
+const URL_IN_TEXT =
+  /(?<![\w/.])(?:[a-z][a-z0-9+.-]*:\/\/|(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?=\/)|\/)[^\s()[\]{}<>"'`,]*/gi;
 
 /** Punctuation that ends a sentence or a quoted value, not the URL before it. */
 const TRAILING_PUNCTUATION = /[.,;:!?'"`\]}>&]+$/;
@@ -134,4 +140,52 @@ export function scrubUrlsInText(text: string): string {
     const lineColumn = LINE_COLUMN.exec(url)?.[0] ?? '';
     return scrubUrl(url.slice(0, url.length - lineColumn.length)) + lineColumn + punctuation;
   });
+}
+
+/** How deep `scrubUrlsDeep` follows nested objects and arrays. */
+const MAX_SCRUB_DEPTH = 8;
+
+/**
+ * Copy of an Error with `scrubUrlsInText` applied to its message, its stack
+ * and its own properties (such as `code`), keeping its name.
+ */
+export function scrubUrlsInError(error: Error): Error {
+  return scrubError(error, 0);
+}
+
+function scrubError(error: Error, depth: number): Error {
+  const scrubbed = new Error(scrubUrlsInText(error.message));
+  scrubbed.name = error.name;
+  scrubbed.stack = error.stack === undefined ? undefined : scrubUrlsInText(error.stack);
+  const own = scrubUrlsDeep({ ...error }, depth + 1);
+  if (isPlainRecord(own)) Object.assign(scrubbed, own);
+  return scrubbed;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * `scrubUrlsInText` applied to every string in a value: strings, arrays, plain
+ * objects (to a bounded depth) and Errors, each copied. Other objects (a Date,
+ * a class instance) are returned unchanged.
+ *
+ * @example
+ * scrubUrlsDeep({ request: { url: 'https://app.example.com/s/Xk9fQ2mZp4LrT7vB1nWc8sYd?a=1' } });
+ * // { request: { url: 'https://app.example.com/s/[param]' } }
+ */
+export function scrubUrlsDeep(value: unknown, depth = 0): unknown {
+  if (typeof value === 'string') return scrubUrlsInText(value);
+  if (depth >= MAX_SCRUB_DEPTH) return value;
+  if (value instanceof Error) return scrubError(value, depth + 1);
+  if (Array.isArray(value)) return value.map((item: unknown) => scrubUrlsDeep(item, depth + 1));
+  if (isPlainRecord(value)) {
+    const scrubbed: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) scrubbed[key] = scrubUrlsDeep(item, depth + 1);
+    return scrubbed;
+  }
+  return value;
 }

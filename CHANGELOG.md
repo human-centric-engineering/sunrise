@@ -783,6 +783,22 @@ release process.
 
 ### Security
 
+- **Client error reports and Sentry events no longer carry the page URL's
+  query string, fragment or credential-shaped path segments** (#952). The
+  global client error handler (`lib/errors/handler.ts`) sent
+  `window.location.href` as `extra.url`; it now sends the collapsed pathname
+  as **`extra.path`** (update any Sentry saved search or alert on `extra.url`),
+  and scrubs URLs in its context and in the error it reports.
+  `lib/errors/sentry.ts` registers a new `scrubSentryEvent` on Sentry's
+  global scope (client: `initErrorTracking()`; Node server: `instrumentation.ts`),
+  so error and transaction events, their breadcrumbs and stack frames are
+  scrubbed with no fork change. **Forks with Sentry on should add
+  `beforeSendSpan: scrubSentrySpan`** to each `Sentry.init` (spans are
+  streamed past event processors in `@sentry/nextjs` 11), and
+  `beforeSend: scrubSentryEvent` to `sentry.edge.config.ts`. New helpers
+  `scrubUrl()`, `scrubUrlsInText()`, `scrubUrlsDeep()` and
+  `scrubUrlsInError()` live in `lib/logging/redact-path.ts`. See
+  [`sentry-setup.md`](./.context/monitoring/sentry-setup.md#page-urls).
 - **The `api-key` and `embed-token` rate-limit key strategies key on a
   verified credential** (#701). Both built the bucket from the header value
   as presented, so a caller could open a new bucket per request and the cap

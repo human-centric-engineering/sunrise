@@ -32,7 +32,7 @@
 
 import { isRecord } from '@/lib/utils';
 import { logger } from '@/lib/logging';
-import { loggablePath, scrubUrlsInText } from '@/lib/logging/redact-path';
+import { loggablePath, scrubUrlsDeep, scrubUrlsInError } from '@/lib/logging/redact-path';
 import { trackError, ErrorSeverity } from '@/lib/errors/sentry';
 
 /**
@@ -51,9 +51,6 @@ const SENSITIVE_FIELDS = [
   'refreshToken',
   'accessToken',
 ];
-
-/** Fields whose value can hold the page URL; their URLs are scrubbed, not the whole value. */
-const URL_BEARING_FIELDS = ['filename', 'stack'];
 
 /**
  * Track processed errors to prevent infinite loops
@@ -225,19 +222,17 @@ export function handleClientError(error: unknown, context: Record<string, unknow
     }
   }
 
-  // Scrub sensitive data from context and metadata
-  const rawScrubbedContext = scrubSensitiveData(context);
+  // Scrub sensitive data from context and metadata, then every URL in them:
+  // an error from an inline script reports the page URL as its file, in
+  // `filename` and in the stack's frames, and a caller's context can carry one
+  // at any depth (#952).
+  const rawScrubbedContext = scrubUrlsDeep(scrubSensitiveData(context));
   const scrubbedContext = isRecord(rawScrubbedContext) ? rawScrubbedContext : {};
-  const rawScrubbedMetadata = scrubSensitiveData(normalized.metadata);
+  const rawScrubbedMetadata = scrubUrlsDeep(scrubSensitiveData(normalized.metadata));
   const scrubbedMetadata = isRecord(rawScrubbedMetadata) ? rawScrubbedMetadata : {};
-  // An error from an inline script reports the page URL as its file, in
-  // `filename` and in the stack's frames.
-  for (const record of [scrubbedContext, scrubbedMetadata]) {
-    for (const key of URL_BEARING_FIELDS) {
-      const value = record[key];
-      if (typeof value === 'string') record[key] = scrubUrlsInText(value);
-    }
-  }
+  // The Error itself goes to the logger and to Sentry with its stack, so they
+  // get a copy with the same URLs scrubbed.
+  const reportedError = scrubUrlsInError(normalized.error);
 
   // The page path, never `location.href`: the query and fragment can carry a
   // token or an email, and a path segment can be a credential (#952). The
@@ -245,7 +240,7 @@ export function handleClientError(error: unknown, context: Record<string, unknow
   const path = loggablePath(typeof window !== 'undefined' ? window.location.pathname : undefined);
 
   // Log the error with structured logger
-  logger.error('Unhandled client error', normalized.error, {
+  logger.error('Unhandled client error', reportedError, {
     ...scrubbedContext,
     ...scrubbedMetadata,
     errorType: 'unhandled',
@@ -254,7 +249,7 @@ export function handleClientError(error: unknown, context: Record<string, unknow
   });
 
   // Send to error tracking service
-  trackError(normalized.error, {
+  trackError(reportedError, {
     tags: {
       errorType: 'unhandled',
       source: 'globalHandler',

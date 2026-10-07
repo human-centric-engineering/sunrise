@@ -13,6 +13,8 @@ import {
   collapseDynamicSegments,
   loggablePath,
   scrubUrl,
+  scrubUrlsDeep,
+  scrubUrlsInError,
   scrubUrlsInText,
 } from '@/lib/logging/redact-path';
 
@@ -113,6 +115,12 @@ describe('scrubUrl', () => {
     expect(scrubUrl('https://app.example.com?ref=x')).toBe('https://app.example.com');
   });
 
+  it('keeps installed package paths whole, scoped packages included', () => {
+    expect(scrubUrl('/var/task/node_modules/@prisma/client/runtime/library.js')).toBe(
+      '/var/task/node_modules/@prisma/client/runtime/library.js'
+    );
+  });
+
   it('keeps a build asset path intact under a basePath', () => {
     expect(scrubUrl('https://host/app/_next/static/AbCdEf0123456789xYz12/_buildManifest.js')).toBe(
       'https://host/app/_next/static/AbCdEf0123456789xYz12/_buildManifest.js'
@@ -155,8 +163,73 @@ describe('scrubUrlsInText', () => {
     );
   });
 
+  it('stops a URL at a quote or comma, so JSON after it survives', () => {
+    expect(scrubUrlsInText('{"a":"https://h.example/x?q=1","b":"keep"}')).toBe(
+      '{"a":"https://h.example/x","b":"keep"}'
+    );
+    expect(scrubUrlsInText(`["/s/${token}?a=1",'/x#y']`)).toBe(`["/s/[param]",'/x']`);
+  });
+
+  it('scrubs a scheme-less host/path', () => {
+    expect(scrubUrlsInText(`see h.com/s/${token}?email=a%40b.c`)).toBe('see h.com/s/[param]');
+    expect(scrubUrlsInText(`at app.example.com:3000/s/${token}#t`)).toBe(
+      'at app.example.com:3000/s/[param]'
+    );
+  });
+
+  it('leaves user-agent product tokens alone', () => {
+    const ua = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36';
+    expect(scrubUrlsInText(ua)).toBe(ua);
+  });
+
   it('leaves text with no URL or leading-slash path alone', () => {
     expect(scrubUrlsInText('pageload')).toBe('pageload');
     expect(scrubUrlsInText('a/b and 1/2')).toBe('a/b and 1/2');
+  });
+});
+
+describe('scrubUrlsDeep', () => {
+  const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+
+  it('scrubs strings in nested objects and arrays, and leaves other values alone', () => {
+    const when = new Date(0);
+    const input = {
+      request: { url: `https://app.example.com/s/${token}?a=1`, method: 'GET' },
+      config: { urls: [`/s/${token}#x`], value: [`/s/${token}`] },
+      count: 3,
+      when,
+    };
+
+    expect(scrubUrlsDeep(input)).toEqual({
+      request: { url: 'https://app.example.com/s/[param]', method: 'GET' },
+      config: { urls: ['/s/[param]'], value: ['/s/[param]'] },
+      count: 3,
+      when,
+    });
+    expect(input.request.url).toBe(`https://app.example.com/s/${token}?a=1`);
+  });
+
+  it('copies an Error with its message, stack and own properties scrubbed', () => {
+    const error = Object.assign(new Error(`bad link /s/${token}?a=1`), { code: 'E_LINK' });
+    error.name = 'LinkError';
+    error.stack = `LinkError: bad link\n    at https://app.example.com/s/${token}?a=1:3:7`;
+
+    const scrubbed = scrubUrlsInError(error);
+
+    expect(scrubbed).not.toBe(error);
+    expect(scrubbed).toMatchObject({
+      name: 'LinkError',
+      message: 'bad link /s/[param]',
+      stack: 'LinkError: bad link\n    at https://app.example.com/s/[param]:3:7',
+      code: 'E_LINK',
+    });
+    expect(error.message).toBe(`bad link /s/${token}?a=1`);
+  });
+
+  it('terminates on an Error that references itself', () => {
+    const error = new Error('loop') as Error & { self?: unknown };
+    error.self = error;
+
+    expect(() => scrubUrlsDeep(error)).not.toThrow();
   });
 });

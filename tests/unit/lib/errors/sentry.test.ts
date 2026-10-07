@@ -33,12 +33,14 @@ const mockCaptureException = vi.fn().mockReturnValue('sentry-event-id');
 const mockCaptureMessage = vi.fn().mockReturnValue('sentry-message-id');
 const mockWithScope = vi.fn();
 const mockSetUser = vi.fn();
+const mockAddEventProcessor = vi.fn();
 
 const mockSentryModule = {
   captureException: mockCaptureException,
   captureMessage: mockCaptureMessage,
   withScope: mockWithScope,
   setUser: mockSetUser,
+  getGlobalScope: () => ({ addEventProcessor: mockAddEventProcessor }),
 };
 
 // ── Inject the mock into Node's require cache ─────────────────────────────────
@@ -668,6 +670,28 @@ describe('Sentry URL scrubbing', () => {
       expect(event.extra).toEqual({ link: 'https://app.example.com/s/[param]', count: 2 });
     });
 
+    it('scrubs nested objects in extra and Errors among breadcrumb arguments', () => {
+      const logged = new Error(`failed /s/${token}?a=1`);
+      const event = scrubSentryEvent({
+        extra: { request: { url: `https://app.example.com/s/${token}?email=a%40b.c` } },
+        breadcrumbs: [{ category: 'console', data: { arguments: [logged] } }],
+      });
+
+      expect(event.extra).toEqual({ request: { url: 'https://app.example.com/s/[param]' } });
+      const argument: unknown = event.breadcrumbs?.[0].data?.arguments[0];
+      expect(argument).toBeInstanceOf(Error);
+      expect(argument).toMatchObject({ message: 'failed /s/[param]' });
+    });
+
+    it('keeps node_modules frame paths whole', () => {
+      const frame = { filename: '/var/task/node_modules/@prisma/client/runtime/library.js' };
+      const event = scrubSentryEvent({
+        exception: { values: [{ type: 'Error', stacktrace: { frames: [{ ...frame }] } }] },
+      });
+
+      expect(event.exception?.values?.[0].stacktrace?.frames?.[0]).toEqual(frame);
+    });
+
     it('does not throw on a child span with no data', () => {
       const span = { span_id: 'c', trace_id: 't', start_timestamp: 0, status: 'ok' };
       // A span another processor built can lack the typed-required `data`.
@@ -727,5 +751,38 @@ describe('Sentry URL scrubbing', () => {
       expect(JSON.stringify(scrubbed)).not.toContain(token);
       expect(span.attributes['url.path']).toBe(`/s/${token}`);
     });
+  });
+});
+
+describe('URL scrubber registration (#952)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    mockAddEventProcessor.mockClear();
+  });
+  afterEach(() => {
+    delete process.env.NEXT_PUBLIC_SENTRY_DSN;
+  });
+
+  it('registers scrubSentryEvent on the global scope once, however often Sentry is used', async () => {
+    process.env.NEXT_PUBLIC_SENTRY_DSN = 'https://test@sentry.io/123';
+    makeMockScope();
+    const fresh = await import('@/lib/errors/sentry');
+
+    fresh.initErrorTracking();
+    fresh.trackError(new Error('one'));
+    fresh.trackMessage('two', fresh.ErrorSeverity.Info);
+
+    expect(mockAddEventProcessor).toHaveBeenCalledTimes(1);
+    expect(mockAddEventProcessor).toHaveBeenCalledWith(fresh.scrubSentryEvent);
+  });
+
+  it('registers nothing when Sentry is not configured', async () => {
+    delete process.env.NEXT_PUBLIC_SENTRY_DSN;
+    const fresh = await import('@/lib/errors/sentry');
+
+    fresh.initErrorTracking();
+    fresh.trackError(new Error('one'));
+
+    expect(mockAddEventProcessor).not.toHaveBeenCalled();
   });
 });

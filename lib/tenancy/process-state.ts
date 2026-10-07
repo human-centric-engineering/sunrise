@@ -482,6 +482,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: "A bounded set of error fingerprints already handled, so the handler cannot loop on itself; browser-only (initialised from a client component, `typeof window` guarded), so the process it is global to is one visitor's tab.",
   },
   {
+    file: 'lib/errors/sentry.ts',
+    holders: ['urlScrubberRegistered'],
+    posture: 'no-tenant-data',
+    why: "A one-shot latch for registering the Sentry page-URL scrubber on the SDK's global scope (#952).",
+  },
+  {
     file: 'lib/admin/logs.ts',
     holders: ['tenancy'],
     posture: 'no-tenant-data',

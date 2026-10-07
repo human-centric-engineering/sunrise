@@ -15,14 +15,18 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { initApp, loggerInfo, loggerError, runMaintenanceTick } = vi.hoisted(() => ({
-  initApp: vi.fn(),
-  loggerInfo: vi.fn(),
-  loggerError: vi.fn(),
-  runMaintenanceTick: vi.fn(),
-}));
+const { initApp, initErrorTracking, loggerInfo, loggerError, runMaintenanceTick } = vi.hoisted(
+  () => ({
+    initApp: vi.fn(),
+    initErrorTracking: vi.fn(),
+    loggerInfo: vi.fn(),
+    loggerError: vi.fn(),
+    runMaintenanceTick: vi.fn(),
+  })
+);
 
 vi.mock('@/lib/app/bootstrap', () => ({ initApp }));
+vi.mock('@/lib/errors/sentry', () => ({ initErrorTracking }));
 vi.mock('@/lib/logging', () => ({
   logger: { info: loggerInfo, error: loggerError, warn: vi.fn(), debug: vi.fn() },
 }));
@@ -61,6 +65,38 @@ afterEach(() => {
   (process.env as Record<string, string | undefined>).NODE_ENV = savedEnv.NODE_ENV;
   (process.env as Record<string, string | undefined>).SUNRISE_DISABLE_DEV_TICK =
     savedEnv.SUNRISE_DISABLE_DEV_TICK;
+});
+
+describe('register() — error tracking', () => {
+  it('initialises error tracking (registering the Sentry URL scrubber) on the nodejs runtime', async () => {
+    setEnv({ runtime: 'nodejs', node: 'production' });
+
+    await register();
+
+    expect(initErrorTracking).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs and carries on when error tracking init throws', async () => {
+    setEnv({ runtime: 'nodejs', node: 'production' });
+    initErrorTracking.mockImplementationOnce(() => {
+      throw new Error('sdk broken');
+    });
+
+    await register();
+
+    expect(loggerError).toHaveBeenCalledWith('instrumentation: error tracking init failed', {
+      error: 'sdk broken',
+    });
+    expect(initApp).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not initialise error tracking on the edge runtime', async () => {
+    setEnv({ runtime: 'edge', node: 'production' });
+
+    await register();
+
+    expect(initErrorTracking).not.toHaveBeenCalled();
+  });
 });
 
 describe('register() — app boot seam', () => {

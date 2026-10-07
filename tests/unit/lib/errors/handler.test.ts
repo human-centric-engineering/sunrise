@@ -35,6 +35,14 @@ vi.mock('@/lib/errors/sentry', () => ({
   },
 }));
 
+/**
+ * The handler reports a copy of the error with URLs scrubbed (#952), so match
+ * it by name and message rather than identity.
+ */
+function sameError(error: Error) {
+  return expect.objectContaining({ name: error.name, message: error.message });
+}
+
 describe('normalizeError', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -397,7 +405,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           component: 'TestComponent',
           action: 'testAction',
@@ -413,7 +421,7 @@ describe('handleClientError', () => {
       handleClientError(error, context);
 
       expect(trackError).toHaveBeenCalledWith(
-        error,
+        sameError(error),
         expect.objectContaining({
           tags: {
             errorType: 'unhandled',
@@ -434,7 +442,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           errorType: 'unhandled',
         })
@@ -451,7 +459,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           username: 'john',
           password: '[REDACTED]',
@@ -466,7 +474,7 @@ describe('handleClientError', () => {
       handleClientError(error, context);
 
       expect(trackError).toHaveBeenCalledWith(
-        error,
+        sameError(error),
         expect.objectContaining({
           extra: expect.objectContaining({
             authToken: '[REDACTED]',
@@ -484,7 +492,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           apiKey: '[REDACTED]',
           action: 'payment',
@@ -500,7 +508,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           clientSecret: '[REDACTED]',
         })
@@ -515,7 +523,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           creditCard: '[REDACTED]',
         })
@@ -530,7 +538,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           ssn: '[REDACTED]',
         })
@@ -545,7 +553,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           authorization: '[REDACTED]',
         })
@@ -560,7 +568,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           sessionToken: '[REDACTED]',
         })
@@ -575,7 +583,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           refreshToken: '[REDACTED]',
         })
@@ -590,7 +598,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           accessToken: '[REDACTED]',
         })
@@ -616,7 +624,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           user: {
             name: 'John',
@@ -641,7 +649,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           apiKey: '[REDACTED]',
           userId: 'user-123',
@@ -662,7 +670,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           users: [
             { name: 'John', password: '[REDACTED]' },
@@ -689,7 +697,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           userAgent: 'Mozilla/5.0 (Test Browser)',
         })
@@ -764,6 +772,38 @@ describe('handleClientError', () => {
       }
     });
 
+    it('should report a copy of the error with the page URL scrubbed from its stack and message', () => {
+      const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+      const pageUrl = `https://example.com/s/${token}?email=a%40example.com#t=1`;
+      vi.stubGlobal('window', { location: { href: pageUrl, pathname: `/s/${token}` } });
+      const error = new Error(`failed to load ${pageUrl}`);
+      error.stack = `Error: failed\n    at ${pageUrl}:3:7`;
+
+      handleClientError(error);
+
+      const logged = vi.mocked(logger.error).mock.calls[0][1];
+      const tracked = vi.mocked(trackError).mock.calls[0][0];
+      for (const reported of [logged, tracked]) {
+        expect(reported).toBeInstanceOf(Error);
+        expect(reported).toMatchObject({
+          message: 'failed to load https://example.com/s/[param]',
+          stack: 'Error: failed\n    at https://example.com/s/[param]:3:7',
+        });
+      }
+      expect(error.stack).toContain(token);
+    });
+
+    it('should scrub URLs nested anywhere in the caller context', () => {
+      const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+      handleClientError(new Error('nested'), {
+        request: { url: `https://example.com/s/${token}?email=a%40example.com` },
+      });
+
+      const extra = vi.mocked(trackError).mock.calls[0][1]?.extra;
+      expect(extra).toMatchObject({ request: { url: 'https://example.com/s/[param]' } });
+      expect(JSON.stringify(extra)).not.toContain(token);
+    });
+
     it('should handle missing navigator gracefully', () => {
       vi.stubGlobal('navigator', undefined);
 
@@ -772,7 +812,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           userAgent: undefined,
         })
@@ -787,7 +827,7 @@ describe('handleClientError', () => {
 
       expect(logger.error).toHaveBeenCalledWith(
         'Unhandled client error',
-        error,
+        sameError(error),
         expect.objectContaining({
           path: undefined,
         })
