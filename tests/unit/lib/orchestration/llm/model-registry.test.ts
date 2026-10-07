@@ -1190,6 +1190,43 @@ describe('registerModels', () => {
       expect(after).not.toHaveProperty('pricingUnknown');
     });
 
+    it('keeps a cross-provider fill of a free registry entry replaceable by its own row', async () => {
+      // OpenRouter knows the model at 0/0 (free); another provider's row fills
+      // a price into it. That fill is the matrix's, so when the entry's own row
+      // is priced later, the own row's figure must win.
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({
+          data: [
+            {
+              id: 'acme/acme-owned',
+              name: 'Acme Owned',
+              context_length: 32_000,
+              pricing: { prompt: '0', completion: '0' },
+            },
+          ],
+        }),
+      });
+      await registry.refreshFromOpenRouter({ force: true });
+
+      const own = { ...owned, inputCostPerMillion: 0, outputCostPerMillion: 0 };
+      const other = {
+        ...owned,
+        provider: 'other',
+        inputCostPerMillion: 0.6,
+        outputCostPerMillion: 0.6,
+      };
+      registry.registerModels([own, other]);
+      expect(registry.getModel('acme-owned')?.inputCostPerMillion).toBe(0.6);
+
+      registry.registerModels([
+        { ...own, inputCostPerMillion: 0.9, outputCostPerMillion: 0.9 },
+        other,
+      ]);
+      expect(registry.getModel('acme-owned')?.inputCostPerMillion).toBe(0.9);
+    });
+
     it('re-applies the hydrated rows after an OpenRouter rebuild', async () => {
       registry.registerModels([owned]);
       globalThis.fetch = vi.fn().mockResolvedValue({
