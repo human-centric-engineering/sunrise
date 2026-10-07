@@ -397,6 +397,21 @@ describe('eraseUser', () => {
       'User erased',
       expect.objectContaining({ contactSubmissionsDeleted: 0 })
     );
+    // …and a 0 that means "not looked for" is flagged, so an operator can
+    // answer the rest of the request by hand
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'Contact messages not erased: the account never verified its address',
+      { userId: BASE_PARAMS.userId, receiptId: 'receipt-1' }
+    );
+  });
+
+  it('contact submissions — no unverified-address warning for a verified account', async () => {
+    // Act — beforeEach's stored address is verified
+    await eraseUser(BASE_PARAMS);
+
+    // Assert — the warning is specific to the skipped case, not every erasure
+    expect(mockContactDeleteMany).toHaveBeenCalledTimes(1);
+    expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
   it('contact submissions — an address with `_` and `%` is matched as a literal string, not a pattern', async () => {

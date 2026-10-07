@@ -646,9 +646,11 @@ describe('DELETE /api/v1/users/:id', () => {
     // Default sub-transaction collaborators — each test can override per-case.
     vi.mocked(prisma.aiAdminAuditLog.updateMany).mockResolvedValue({ count: 1 });
     vi.mocked(prisma.contactSubmission.deleteMany).mockResolvedValue({ count: 0 });
-    // eraseUser reads the stored address for the contact delete
+    // eraseUser reads the stored address for the contact delete. Deliberately
+    // NOT the address the route passes in, so the assertion below can tell the
+    // two apart: a stale session address must never be the one matched.
     vi.mocked(prisma.user.findUniqueOrThrow).mockResolvedValue({
-      email: 'target@example.com',
+      email: 'stored-target@example.com',
       emailVerified: true,
     } as never);
     vi.mocked(prisma.dataErasureReceipt.create).mockResolvedValue(RECEIPT_FIXTURE as never);
@@ -746,7 +748,7 @@ describe('DELETE /api/v1/users/:id', () => {
       // Inside $transaction: contact-form messages (no FK to User, so no
       // cascade) are deleted by the erased user's stored address, matched exactly.
       expect(prisma.contactSubmission.deleteMany).toHaveBeenCalledWith({
-        where: { email: 'target@example.com' },
+        where: { email: 'stored-target@example.com' },
       });
 
       // 3. Erasure receipt written (GDPR Art. 5(2) accountability)

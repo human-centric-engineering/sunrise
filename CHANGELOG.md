@@ -922,8 +922,9 @@ release process.
   `emailVerified` is false now matches none of them: its erasure leaves them,
   and **its export no longer includes them** (it previously did, so with email
   verification off an account opened under someone else's address received
-  their enquiries). Nothing changes where verification is required, the
-  production default. A fork with its own table keyed by email needs the same
+  their enquiries). Where verification is required (the production default)
+  this affects only sign-ups that never verified; erasure logs a warning for
+  them so an operator can handle those messages by hand. A fork with its own table keyed by email needs the same
   step in an erasure hook's `scrubInTransaction`, and the same verified-only
   rule if a public form fills it; `.context/privacy/data-erasure.md` shows how.
 

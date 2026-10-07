@@ -216,8 +216,12 @@ transaction):
    typed an address, and with email verification off anyone can open an account
    under someone else's, so an account whose `emailVerified` is false matches
    nothing: its erasure leaves those messages in place, and its export omits
-   them. The operator answers such a request by hand. On the default production
-   setup every account is verified, so nothing changes there.
+   them. Erasure logs a warning (`Contact messages not erased: the account
+never verified its address`) so the operator knows to answer the rest of
+   that request by hand. Where verification is required (the production
+   default) the only unverified accounts are sign-ups that never clicked their
+   link — those, and every account where verification is off, are the ones
+   this affects.
    Deleted rather than anonymised, because the export already hands these rows
    over as the subject's personal data. It is a system model, so no org scope
    is needed at either tenancy mode. It is matched on the account's current

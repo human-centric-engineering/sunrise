@@ -94,14 +94,26 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
     receiptId: receipt.id,
     contactSubmissionsDeleted: receipt.contactSubmissionsDeleted,
   });
+  // An unverified address matched nothing, so any contact messages sent under
+  // it are still there, and only a person can decide whether they were this
+  // subject's. Say so, rather than let a 0 above read as "there were none".
+  if (receipt.contactSubmissionsUnverified) {
+    logger.warn('Contact messages not erased: the account never verified its address', {
+      userId,
+      receiptId: receipt.id,
+    });
+  }
 
   return { receiptId: receipt.id, erasedAt: receipt.erasedAt };
 }
 
 /** The hooks and the transaction — at `multi`, as {@link eraseUser} runs them in the system scope. */
-async function eraseRows(
-  params: EraseUserParams
-): Promise<{ id: string; erasedAt: Date; contactSubmissionsDeleted: number }> {
+async function eraseRows(params: EraseUserParams): Promise<{
+  id: string;
+  erasedAt: Date;
+  contactSubmissionsDeleted: number;
+  contactSubmissionsUnverified: boolean;
+}> {
   const { userId, userEmail, actorUserId, reason } = params;
 
   // 1b. App-registered external cleanup (object storage, search indexes, …).
@@ -166,6 +178,10 @@ async function eraseRows(
     // Cascades erase personal data; SetNull de-attributes retained config/audit.
     await tx.user.delete({ where: { id: userId } });
 
-    return { ...created, contactSubmissionsDeleted: contacts.count };
+    return {
+      ...created,
+      contactSubmissionsDeleted: contacts.count,
+      contactSubmissionsUnverified: where === null,
+    };
   });
 }
