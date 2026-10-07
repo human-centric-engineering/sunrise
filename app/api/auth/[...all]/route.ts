@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { auth } from '@/lib/auth/config';
 import { toNextJsHandler } from 'better-auth/next-js';
 import { getRouteLogger } from '@/lib/api/context';
+import { collapseDynamicSegments } from '@/lib/logging/redact-path';
 
 /**
  * Better Auth API Route Handler
@@ -21,7 +22,7 @@ const { POST: betterAuthPOST, GET: betterAuthGET } = toNextJsHandler(auth);
 
 export async function POST(request: NextRequest): Promise<Response> {
   const log = await getRouteLogger(request);
-  const authPath = request.nextUrl.pathname.replace('/api/auth/', '');
+  const authPath = collapseDynamicSegments(request.nextUrl.pathname).replace('/api/auth/', '');
   log.info('Auth POST request', { authPath });
 
   try {
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
 export async function GET(request: NextRequest): Promise<Response> {
   const log = await getRouteLogger(request);
-  const authPath = request.nextUrl.pathname.replace('/api/auth/', '');
+  const authPath = collapseDynamicSegments(request.nextUrl.pathname).replace('/api/auth/', '');
   log.info('Auth GET request', { authPath });
 
   try {

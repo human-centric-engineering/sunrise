@@ -196,6 +196,26 @@ describe('applyRateLimit', () => {
     });
   });
 
+  // #685: the unknown-tier warning logs the path; a credential in a dynamic
+  // segment must not reach the log through it.
+  it('logs an unknown tier with the path collapsed', async () => {
+    const token = 'Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z';
+    vi.mocked(findRateLimitRule).mockReturnValue({
+      match: /^\/api\/v1\/test\//,
+      // A tier no one registered — the branch the type system normally prevents.
+      tier: 'no-such-tier',
+      key: 'ip',
+    });
+
+    const result = await applyRateLimit(makeRequest(`/api/v1/test/${token}`));
+
+    expect(result).toBeNull();
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'Rate-limit policy references an unknown tier; skipping limiter',
+      { tier: 'no-such-tier', pathname: '/api/v1/test/[param]' }
+    );
+  });
+
   // ─── Limiter pass-through (1 test) ───────────────────────────────────────
 
   describe('limiter pass-through', () => {

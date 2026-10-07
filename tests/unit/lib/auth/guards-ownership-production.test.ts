@@ -101,6 +101,22 @@ describe('in production, a missing ownership decision', () => {
     );
   });
 
+  // #685: the guard's own log lines carry `path`; a credential in a dynamic
+  // segment must not reach the log through them.
+  it('logs the path with id- and credential-shaped segments collapsed', async () => {
+    const token = 'Ab3dEf6hIj9kLm2nOp5qRs8tUv1wXy4z';
+    await withAuth(() => Response.json({ success: true }))(
+      new NextRequest(`http://localhost:3000/api/v1/widgets/${token}`)
+    );
+
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      'authorization: a route made no ownership decision',
+      undefined,
+      expect.objectContaining({ path: '/api/v1/widgets/[param]' })
+    );
+    expect(JSON.stringify(vi.mocked(logger.error).mock.calls)).not.toContain(token);
+  });
+
   it('records the action it took, so the log says which branch ran', async () => {
     // Without `action`, the same line means "we refused this" in one deployment
     // and "we let it through" in another, and an operator reading it cannot tell

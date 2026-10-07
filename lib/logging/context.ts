@@ -25,6 +25,7 @@ import { nanoid } from 'nanoid';
 import { headers } from 'next/headers';
 import { auth } from '@/lib/auth/config';
 import { VISITOR_HEADER_NAME } from '@/lib/logging/visitor-id';
+import { collapseDynamicSegments } from '@/lib/logging/redact-path';
 import { getTenantContext } from '@/lib/tenancy/context';
 
 /**
@@ -84,7 +85,11 @@ export async function getVisitorId(): Promise<string | undefined> {
  * Extracts relevant information from the request
  *
  * @param request - Optional Request object (for API routes)
- * @returns Request context including ID, method, URL, user agent
+ * @returns Request context including ID, method, user agent. There is
+ *   deliberately no URL (#685): this context is bound to every line a route
+ *   logs and redaction is by key name, so a token or email in the query string
+ *   or a credential in the path would be logged verbatim. Use
+ *   `getEndpointPath()` for a loggable path.
  *
  * @example
  * ```typescript
@@ -100,7 +105,6 @@ export async function getRequestContext(request?: Request): Promise<{
   visitorId?: string;
   orgId?: string;
   method?: string;
-  url?: string;
   userAgent?: string;
 }> {
   const headersList = await headers();
@@ -118,7 +122,6 @@ export async function getRequestContext(request?: Request): Promise<{
     // platform credential.
     orgId: getTenantContext()?.orgId ?? undefined,
     method: request?.method,
-    url: request?.url,
     userAgent: headersList.get('user-agent') || undefined,
   };
 }
@@ -183,7 +186,6 @@ export async function getFullContext(request?: Request): Promise<{
   visitorId?: string;
   orgId?: string;
   method?: string;
-  url?: string;
   userAgent?: string;
   userId?: string;
   sessionId?: string;
@@ -201,23 +203,30 @@ export async function getFullContext(request?: Request): Promise<{
 }
 
 /**
- * Extract endpoint path from request
- * Returns clean endpoint path without query params
+ * Extract a loggable endpoint path from a request (#685)
+ *
+ * The pathname without query string or fragment (even when the URL does not
+ * parse), with id- and credential-shaped segments collapsed to `[param]` by
+ * `collapseDynamicSegments()` — the logger redacts by key name only, so a
+ * token in a route path would otherwise be logged verbatim. A route whose
+ * dynamic segment the heuristic cannot recognise pins its pattern instead:
+ * `getRouteLogger(request, { endpoint })`.
  *
  * @example
  * ```typescript
  * getEndpointPath(request)
- * // Input: '/api/v1/users?page=1'
- * // Output: '/api/v1/users'
+ * // Input: '/api/v1/users/cmtd5heg2001804ky8pgo6odx/posts?page=1'
+ * // Output: '/api/v1/users/[param]/posts'
  * ```
  */
 export function getEndpointPath(request: Request): string {
+  let pathname: string;
   try {
-    const url = new URL(request.url);
-    return url.pathname;
+    pathname = new URL(request.url).pathname;
   } catch {
-    return request.url;
+    pathname = request.url.replace(/[?#][\s\S]*$/, '');
   }
+  return collapseDynamicSegments(pathname);
 }
 
 /**

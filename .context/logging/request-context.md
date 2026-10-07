@@ -6,12 +6,13 @@ Request context utilities enable distributed tracing across your application. Al
 
 ## Quick Reference
 
-| Need             | Use                                                    |
-| ---------------- | ------------------------------------------------------ |
-| API route logger | `getRouteLogger(request)` from `@/lib/api/context`     |
-| Get request ID   | `getRequestId()` from `@/lib/logging/context`          |
-| Get user context | `getUserContext()` from `@/lib/logging/context`        |
-| Full context     | `getFullContext(request)` from `@/lib/logging/context` |
+| Need             | Use                                                          |
+| ---------------- | ------------------------------------------------------------ |
+| API route logger | `getRouteLogger(request)` from `@/lib/api/context`           |
+| Pin the endpoint | `getRouteLogger(request, { endpoint: '/api/v1/x/[token]' })` |
+| Get request ID   | `getRequestId()` from `@/lib/logging/context`                |
+| Get user context | `getUserContext()` from `@/lib/logging/context`              |
+| Full context     | `getFullContext(request)` from `@/lib/logging/context`       |
 
 ## Standard Pattern: getRouteLogger()
 
@@ -27,7 +28,8 @@ export async function POST(request: NextRequest) {
   // All log entries automatically include:
   // - requestId (for distributed tracing)
   // - userId, sessionId (if authenticated)
-  // - method, endpoint, userAgent
+  // - method, endpoint (with id/credential segments collapsed), userAgent
+  // and never the URL — see "What the context never carries" below
 
   try {
     const result = await doWork();
@@ -42,15 +44,60 @@ export async function POST(request: NextRequest) {
 
 ## Available Context Utilities
 
-| Function                   | Description                                       | Async | Location                 |
-| -------------------------- | ------------------------------------------------- | ----- | ------------------------ |
-| `getRouteLogger(request)`  | **Standard** - Get scoped logger for API routes   | Yes   | `lib/api/context.ts`     |
-| `getRequestId()`           | Get or generate request ID from headers           | Yes   | `lib/logging/context.ts` |
-| `getUserContext()`         | Extract userId, sessionId, email from session     | Yes   | `lib/logging/context.ts` |
-| `getFullContext(request)`  | Combined request + user context (+ `orgId`, §106) | Yes   | `lib/logging/context.ts` |
-| `getEndpointPath(request)` | Extract clean endpoint path without query params  | No    | `lib/logging/context.ts` |
-| `generateRequestId()`      | Generate new unique request ID (16-char nanoid)   | No    | `lib/logging/context.ts` |
-| `getClientIp()`            | Get client IP from proxy headers                  | Yes   | `lib/logging/context.ts` |
+| Function                   | Description                                                 | Async | Location                 |
+| -------------------------- | ----------------------------------------------------------- | ----- | ------------------------ |
+| `getRouteLogger(request)`  | **Standard** - Get scoped logger for API routes             | Yes   | `lib/api/context.ts`     |
+| `getRequestId()`           | Get or generate request ID from headers                     | Yes   | `lib/logging/context.ts` |
+| `getUserContext()`         | Extract userId, sessionId, email from session               | Yes   | `lib/logging/context.ts` |
+| `getFullContext(request)`  | Combined request + user context (+ `orgId`, §106)           | Yes   | `lib/logging/context.ts` |
+| `getEndpointPath(request)` | Loggable path: no query, id/credential segments → `[param]` | No    | `lib/logging/context.ts` |
+| `generateRequestId()`      | Generate new unique request ID (16-char nanoid)             | No    | `lib/logging/context.ts` |
+| `getClientIp()`            | Get client IP from proxy headers                            | Yes   | `lib/logging/context.ts` |
+
+## What the context never carries (#685)
+
+The logger redacts **by key name only** (`SECRET_FIELDS` / `PII_FIELDS` in
+`lib/logging/index.ts`) — it never looks inside a value. A field literally
+named `token` is redacted; the same token inside a field named `url`,
+`endpoint` or `path` is written verbatim to stdout and to the admin log
+buffer, whose `search` greps the serialised context. And because the request
+context is bound to **every** line a route logs, a route that carefully keeps
+a secret out of its own log fields still leaks it through the context. So the
+context is built to hold nothing a value-blind redactor would miss:
+
+- **No `url`.** `getRequestContext()` / `getFullContext()` do not return the
+  request URL at all — its query string can hold a token or a searched-for
+  email, and its path the same credential `endpoint` would. `method` +
+  `endpoint` identify the request.
+- **`endpoint` is collapsed.** `getEndpointPath()` drops the query and
+  replaces each id- or credential-shaped segment with `[param]`
+  (`collapseDynamicSegments()` in `lib/logging/redact-path.ts`): UUIDs, cuids,
+  hex of 20+ characters, email addresses (`@` / `%40`), JWTs, and 20+
+  character base64 / base64url / percent-encoded tokens that contain a digit
+  or mixed case. Short
+  readable segments (`v1`, `admin`, `123`) and readable slugs of any length
+  (`provider-models`, `how-we-scaled-to-10000-users`) stay.
+- **Every other server-side logged path is collapsed the same way**: the proxy's
+  `http_access` `path` (which covers page routes such as `/s/<token>` as well
+  as API routes), the guards' `path` on their refusal and ownership lines
+  (`loggablePath()`), the auth catch-all's `authPath` (better-auth serves
+  `/reset-password/<token>`), and the rate-limit middleware's unknown-tier
+  warning. A
+  new log line that carries a request path should go through
+  `collapseDynamicSegments()` / `loggablePath()` too.
+
+The heuristic cannot see a secret under 20 characters, one with other
+characters (dots outside a JWT), a
+20+ character secret that reads as a slug or is one case with no digits, or a
+secret split across short catch-all segments. A route with a dynamic segment
+like that **pins its pattern**, which is then logged verbatim:
+
+```typescript
+const log = await getRouteLogger(request, { endpoint: '/api/v1/admin/invitations/[email]' });
+```
+
+To check a route, assert on the object passed to `logger.withContext`, not
+on the log fields — see `tests/unit/lib/api/context.redaction.test.ts`.
 
 **Note:** For rate limiting and security, use `getClientIP()` from `lib/security/ip.ts` instead — it validates IP format and provides a fallback value. The logging `getClientIp()` is for tracing purposes only.
 
@@ -124,7 +171,8 @@ export async function POST(request: NextRequest) {
   const context = await getFullContext(request);
   const contextLogger = logger.withContext(context);
 
-  // Includes: requestId, userId, sessionId, email, method, url, userAgent
+  // Includes: requestId, userId, sessionId, email, method, userAgent
+  // (no url — see "What the context never carries" above)
   contextLogger.info('Processing request');
 }
 ```

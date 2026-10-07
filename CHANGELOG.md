@@ -752,6 +752,33 @@ release process.
   **For a fork:** pass `replyConversationId` to `engine.execute()` only for a
   conversation the run is genuinely replying on, never one from a request or a
   model; it is what authorises the run to message that conversation.
+- **Route log lines no longer carry a credential or an email from the
+  request URL** (#685). The logger redacts by key name only, and the request
+  context bound to every line a route logs held the URL verbatim, so a token
+  in a path (`/api/v1/x/<token>`), or a token or searched-for email in a query
+  string, reached stdout and the admin log buffer whatever the route's own
+  log fields said.
+  - **Breaking: `url` is removed** from what `getRequestContext()`,
+    `getFullContext()` and `getRouteLogger()` bind. A fork that read or
+    parsed `context.url` in its logs should use `endpoint` and `method`, and
+    log any query parameter it needs explicitly.
+  - `endpoint` (`getEndpointPath()`) now collapses id- and credential-shaped
+    path segments to `[param]`: UUIDs, cuids, email addresses, JWTs, and 20+
+    character hex, base64 or percent-encoded tokens; readable slugs stay
+    (`collapseDynamicSegments()` / `loggablePath()` in
+    `lib/logging/redact-path.ts`). Dashboards grouping on a resolved
+    `endpoint` will see the collapsed form.
+  - New: `getRouteLogger(request, { endpoint })` pins a route pattern,
+    logged verbatim, for a dynamic segment the heuristic cannot recognise (a
+    short token, a dotted or one-case secret).
+    `DELETE /api/v1/admin/invitations/[email]` uses it.
+  - The other server-side lines that logged a request path collapse it the same way:
+    the proxy's `http_access` line (`LOG_HTTP_ACCESS=true`), which covers page
+    routes such as a `/s/<token>` share link; the auth guards' `path` on
+    their refusal and ownership lines; the auth catch-all's `authPath`
+    (better-auth's `/reset-password/<token>`); and the rate-limit
+    middleware's unknown-tier warning.
+
 - **`csvEscape` quotes a lone CR, so free text can no longer start a CSV
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after
   the first character was emitted bare, a spreadsheet read it as a record break,
