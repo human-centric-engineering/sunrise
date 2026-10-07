@@ -70,6 +70,9 @@ vi.mock('@/lib/db/client', () => ({
     aiAdminAuditLog: {
       updateMany: vi.fn(),
     },
+    contactSubmission: {
+      deleteMany: vi.fn(),
+    },
     orgMembership: {
       upsert: vi.fn(),
     },
@@ -641,6 +644,7 @@ describe('DELETE /api/v1/users/:id', () => {
 
     // Default sub-transaction collaborators — each test can override per-case.
     vi.mocked(prisma.aiAdminAuditLog.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.contactSubmission.deleteMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.dataErasureReceipt.create).mockResolvedValue(RECEIPT_FIXTURE as never);
     vi.mocked(prisma.user.delete).mockResolvedValue(undefined as never);
   });
@@ -731,6 +735,12 @@ describe('DELETE /api/v1/users/:id', () => {
       expect(prisma.aiAdminAuditLog.updateMany).toHaveBeenCalledWith({
         where: { userId: TARGET_USER_ID },
         data: { clientIp: null },
+      });
+
+      // Inside $transaction: contact-form messages (no FK to User, so no
+      // cascade) are deleted by the erased user's own address, matched exactly.
+      expect(prisma.contactSubmission.deleteMany).toHaveBeenCalledWith({
+        where: { email: 'target@example.com' },
       });
 
       // 3. Erasure receipt written (GDPR Art. 5(2) accountability)

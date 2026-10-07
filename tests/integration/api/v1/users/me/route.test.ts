@@ -12,6 +12,7 @@
  *   2. 400 LAST_ADMIN — admin session, adminCount === 1 → blocked before erase
  *   3. 200 happy path — non-last admin (count 2) self-delete:
  *        - real eraseUser ran: $transaction called, tx.aiAdminAuditLog.updateMany,
+ *          tx.contactSubmission.deleteMany,
  *          tx.dataErasureReceipt.create, tx.user.delete all invoked with correct args
  *        - cookies cleared (4 deletes + 4 set-with-maxAge:0)
  *   4. 400 VALIDATION_ERROR — missing / invalid confirmation → no erase
@@ -68,6 +69,9 @@ vi.mock('@/lib/db/client', () => ({
     },
     aiAdminAuditLog: {
       updateMany: vi.fn(),
+    },
+    contactSubmission: {
+      deleteMany: vi.fn(),
     },
     dataErasureReceipt: {
       create: vi.fn(),
@@ -177,6 +181,7 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
 
     // Default: aiAdminAuditLog.updateMany resolves (returns void-like)
     vi.mocked(prisma.aiAdminAuditLog.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.contactSubmission.deleteMany).mockResolvedValue({ count: 0 });
 
     // Default: user.delete resolves
     vi.mocked(prisma.user.delete).mockResolvedValue({ id: SESSION_USER_ID } as never);
@@ -278,6 +283,12 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       expect(prisma.aiAdminAuditLog.updateMany).toHaveBeenCalledWith({
         where: { userId: SESSION_USER_ID },
         data: { clientIp: null },
+      });
+
+      // Inside $transaction: contact-form messages (no FK to User, so no
+      // cascade) are deleted by the erased user's own address, matched exactly.
+      expect(prisma.contactSubmission.deleteMany).toHaveBeenCalledWith({
+        where: { email: SESSION_USER_EMAIL },
       });
 
       // Inside $transaction: eraseUser writes an erasure receipt (GDPR Art. 5(2)).
