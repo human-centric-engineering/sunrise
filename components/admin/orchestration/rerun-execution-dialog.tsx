@@ -329,7 +329,7 @@ export function RerunExecutionDialog({ open, onOpenChange, execution }: RerunExe
                 className="mt-0.5"
               />
               <div className="space-y-0.5">
-                <Label htmlFor="rerun-resend-reply" className="text-xs">
+                <Label htmlFor="rerun-resend-reply" className="flex items-center gap-1 text-xs">
                   Send the reply to the person again
                   <FieldHelp title="Sending the reply again">
                     This run started from a message someone sent in, and it already sent them a
