@@ -765,9 +765,9 @@ release process.
     replaces `tokenKey` (storage token mismatch); `recordId` replaces
     `tokenId` (embed and invite token refusals, embed-token admin routes);
     `keyId` replaces `apiKeyId` (unscoped MCP knowledge search); `usage`
-    replaces `tokenUsage` (evaluation completed); `envVarName` replaces
-    `apiKeyEnvVar` (two provider migration scripts). Dashboards or alerts
-    reading the old keys should switch.
+    replaces `tokenUsage` (evaluation completed). Dashboards or alerts
+    reading the old keys should switch. The May 2026 provider migration
+    scripts' skip warnings now show `apiKeyEnvVar` as `[REDACTED]`.
 
 - **`csvEscape` quotes a lone CR, so free text can no longer start a CSV
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after

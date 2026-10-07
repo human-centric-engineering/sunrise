@@ -86,7 +86,7 @@ async function main(): Promise<void> {
         slug: p.slug,
         providerType: p.providerType,
         baseUrl: p.baseUrl,
-        envVarName: p.apiKeyEnvVar,
+        apiKeyEnvVar: p.apiKeyEnvVar,
       });
       continue;
     }

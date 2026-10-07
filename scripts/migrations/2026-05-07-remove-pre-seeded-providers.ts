@@ -126,7 +126,7 @@ async function main(): Promise<void> {
         name: row.name,
         providerType: row.providerType,
         baseUrl: row.baseUrl,
-        envVarName: row.apiKeyEnvVar,
+        apiKeyEnvVar: row.apiKeyEnvVar,
       });
       continue;
     }
