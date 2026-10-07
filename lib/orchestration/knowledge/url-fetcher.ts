@@ -9,6 +9,7 @@
 import { basename, extname } from 'path';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import { logger } from '@/lib/logging';
+import { loggableUrl } from '@/lib/logging/redact-path';
 
 const MAX_FETCH_BYTES = 50 * 1024 * 1024; // 50 MB
 const FETCH_TIMEOUT_MS = 30_000;
@@ -115,8 +116,8 @@ async function fetchRevalidatingRedirects(target: string, init: RequestInit): Pr
     }
 
     logger.info('Following redirect while fetching document', {
-      from: current,
-      to: next,
+      from: loggableUrl(current),
+      to: loggableUrl(next),
       hop: hop + 1,
     });
     current = next;
@@ -124,7 +125,7 @@ async function fetchRevalidatingRedirects(target: string, init: RequestInit): Pr
 }
 
 export async function fetchDocumentFromUrl(url: string): Promise<FetchedDocument> {
-  logger.info('Fetching document from URL', { url });
+  logger.info('Fetching document from URL', { url: loggableUrl(url) });
 
   // SSRF protection — applied to the initial URL and to every redirect target.
   const response = await fetchRevalidatingRedirects(url, {
@@ -184,7 +185,7 @@ export async function fetchDocumentFromUrl(url: string): Promise<FetchedDocument
   }
 
   logger.info('Document fetched from URL', {
-    url,
+    url: loggableUrl(url),
     fileName,
     contentType,
     sizeBytes: buffer.length,

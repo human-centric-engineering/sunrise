@@ -76,3 +76,27 @@ export function collapseDynamicSegments(pathname: string): string {
 export function loggablePath(pathname: string | undefined): string | undefined {
   return pathname === undefined ? undefined : collapseDynamicSegments(pathname);
 }
+
+/**
+ * Reduce an outbound URL to something safe to log (#953): its origin plus the
+ * path from `collapseDynamicSegments`. Userinfo, the query string and the
+ * fragment are dropped — a webhook or signed URL often carries its credential
+ * in one of those, or in a path segment, and the logger redacts by key name
+ * only. A value that does not parse as a URL is replaced, never echoed.
+ *
+ * The path inherits `collapseDynamicSegments`' limits: a secret segment it
+ * does not recognise as one is kept.
+ *
+ * @example
+ * loggableUrl('https://user:pw@example.com/hooks/Ab3dEf6hIj9kLm2nOp5qRs8t?sig=x#y');
+ * // 'https://example.com/hooks/[param]'
+ */
+export function loggableUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return '[unparseable-url]';
+  }
+  return `${parsed.origin}${collapseDynamicSegments(parsed.pathname)}`;
+}

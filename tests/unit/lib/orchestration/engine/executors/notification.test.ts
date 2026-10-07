@@ -352,6 +352,29 @@ describe('executeNotification', () => {
   // ── Webhook channel ────────────────────────────────────────────────────────
 
   describe('webhook channel', () => {
+    it('keeps a credential in the webhook URL out of the log line and the step output (#953)', async () => {
+      const secret = 'AbCdEfGhIjKlMnOpQrStUvWx';
+      const step = makeWebhookStep({
+        webhookUrl: `https://hooks.slack.com/services/T0000/B0000/${secret}?token=qs-secret`,
+      });
+
+      const result = await executor(step, makeCtx());
+
+      // The dispatcher still receives the full URL — only what is recorded is reduced.
+      expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledWith(
+        'workflow_notification',
+        expect.objectContaining({ webhookUrl: step.config.webhookUrl })
+      );
+      expect(result.output).toEqual({
+        sent: true,
+        channel: 'webhook',
+        url: 'https://hooks.slack.com/services/T0000/B0000/[param]',
+      });
+      const recorded = JSON.stringify([vi.mocked(logger.info).mock.calls, result.output]);
+      expect(recorded).not.toContain(secret);
+      expect(recorded).not.toContain('qs-secret');
+    });
+
     it('calls dispatchWebhookEvent and returns { sent: true, channel: "webhook" }', async () => {
       const result = await executor(makeWebhookStep(), makeCtx());
 

@@ -28,6 +28,7 @@ vi.mock('@/lib/logging', () => ({
 
 import { fetchDocumentFromUrl } from '@/lib/orchestration/knowledge/url-fetcher';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
+import { logger } from '@/lib/logging';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -424,5 +425,55 @@ describe('fetchDocumentFromUrl', () => {
     const result = await fetchDocumentFromUrl(url);
 
     expect(result.sourceUrl).toBe(url);
+  });
+});
+
+// ─── Outbound URL redaction (#953) ──────────────────────────────────────────
+//
+// A document URL can be a signed URL, with its credential in the query or the
+// path. The logger redacts by key name only, so the URL is reduced first.
+
+describe('fetchDocumentFromUrl log lines', () => {
+  const SECRET = 'AbCdEfGhIjKlMnOpQrStUvWx';
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(checkSafeProviderUrl).mockReturnValue({ ok: true });
+  });
+
+  it('does not log a credential carried in the fetched URL or a redirect target', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce({
+        ...makeFetchResponse({ status: 302, ok: false }),
+        status: 302,
+        headers: {
+          get: (k: string) =>
+            k.toLowerCase() === 'location'
+              ? `https://cdn.example.com/${SECRET}/doc.txt?sig=redirect-secret`
+              : null,
+        },
+        body: { cancel: vi.fn().mockResolvedValue(undefined) },
+      } as unknown as Response)
+      .mockResolvedValueOnce(makeFetchResponse({ body: 'final body' }) as unknown as Response);
+
+    const result = await fetchDocumentFromUrl(
+      `https://files.example.com/${SECRET}/doc.txt?sig=initial-secret`
+    );
+
+    expect(result.content.toString()).toBe('final body');
+    expect(logger.info).toHaveBeenCalledWith('Fetching document from URL', {
+      url: 'https://files.example.com/[param]/doc.txt',
+    });
+    expect(logger.info).toHaveBeenCalledWith(
+      'Following redirect while fetching document',
+      expect.objectContaining({
+        from: 'https://files.example.com/[param]/doc.txt',
+        to: 'https://cdn.example.com/[param]/doc.txt',
+      })
+    );
+    const logged = JSON.stringify(vi.mocked(logger.info).mock.calls);
+    expect(logged).not.toContain(SECRET);
+    expect(logged).not.toContain('initial-secret');
+    expect(logged).not.toContain('redirect-secret');
   });
 });
