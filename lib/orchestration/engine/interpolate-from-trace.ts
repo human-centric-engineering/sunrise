@@ -76,13 +76,6 @@ export function findPreviousStepId(
 }
 
 /**
- * The walker the engine's `tool_call` executor also uses, so the trace
- * viewer's "Resolve templates" view and the args a step actually sent agree.
- * It lives beside `interpolatePrompt`; re-exported here for the viewer.
- */
-export { resolveTemplatesIn } from '@/lib/orchestration/engine/interpolate-prompt';
-
-/**
  * Returns true when the given value (or any leaf of it) contains a
  * `{{...}}` template token. Cheap heuristic for showing or hiding the
  * "Resolve templates" affordance in the trace viewer.

@@ -750,7 +750,7 @@ Replies to a person on the channel they contacted you on (SMS, WhatsApp), throug
 
 **It sends only within the conversation being handled** (t-770). The `conversationId` argument is chosen by whoever drives the call, so an unrestricted one would let a steered model, or a run's starter, message anyone who ever wrote to the operator's number:
 
-- a workflow step, fixed (`tool_call`) or AI-driven (`agent_call`, the orchestrator), only to the run's `AiWorkflowExecution.replyConversationId`. The inbound route sets it to the conversation the inbound message resolved to and the rerun route copies it (`ExecuteOptions.replyConversationId`) for a failed or cancelled original, or a completed one when the admin sets `resendReply`; nothing else does. A fixed step is not trusted on its own: its args can come from a prior step's model output, or from the run's input, which a model calling `run_workflow` chooses;
+- a workflow step, fixed (`tool_call`) or AI-driven (`agent_call`, the orchestrator), only to the run's `AiWorkflowExecution.replyConversationId`. The inbound route sets it to the conversation the inbound message resolved to and the rerun route copies it (`ExecuteOptions.replyConversationId`) only when the admin sets `resendReply` on a finished original; nothing else does. A fixed step is not trusted on its own: its args can come from a prior step's model output, or from the run's input, which a model calling `run_workflow` chooses;
 - an interactive chat only to its own conversation, which is never a channel thread;
 - an MCP client or an anonymous embed widget visitor, never.
 

@@ -1573,7 +1573,6 @@ export function ExecutionDetailView({
           id: execution.id,
           workflowId: execution.workflowId,
           versionId: execution.versionId ?? null,
-          status: execution.status,
           replyConversationId: execution.replyConversationId ?? null,
         }}
       />

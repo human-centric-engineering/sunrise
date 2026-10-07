@@ -740,10 +740,10 @@ release process.
   sends only on its run's new **`AiWorkflowExecution.replyConversationId`**
   (migration `20261006140000_execution_reply_conversation`, `onDelete:
   SetNull`), which the inbound route sets and the rerun route copies through
-  the new `ExecuteOptions.replyConversationId` (for a completed original only
-  when the request sets the new `resendReply`, the re-run dialog's "Send the
-  reply to the person again" checkbox, so a debugging re-run never texts a
-  real person again); an interactive chat only on
+  the new `ExecuteOptions.replyConversationId` only when the admin asks, with
+  the new `resendReply` (the re-run dialog's "Send the reply to the person
+  again" checkbox), and only for a finished original, so a re-run never texts
+  a real person on its own; an interactive chat only on
   its own conversation; an MCP client never. Anything else is refused with
   `conversation_not_permitted`, and logged, before the conversation is read.
   **For an operator:** a workflow that texted a thread other than the one it

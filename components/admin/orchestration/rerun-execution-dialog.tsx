@@ -61,8 +61,6 @@ export interface RerunExecutionDialogProps {
     workflowId: string;
     /** Pinned version id of the original run. May be null on legacy rows. */
     versionId: string | null;
-    /** The original run's status: a completed run already sent its reply. */
-    status?: string;
     /**
      * The conversation the original run replies on (t-770): set when an
      * inbound message started it. Null when it replies to nobody.
@@ -244,11 +242,12 @@ export function RerunExecutionDialog({ open, onOpenChange, execution }: RerunExe
   };
 
   const showChooser = eligibleVersions.length > 1;
-  // A run that replies to someone (t-770). A completed one already sent its
-  // reply, so its re-run texts nobody unless the admin asks; a failed or
-  // cancelled one never got its reply out, so its re-run may send.
+  // A run that replies to someone (t-770). Its re-run texts them only when
+  // the admin ticks the box, whatever the original's outcome: a run can send
+  // and then fail, or complete without sending, so its status says nothing
+  // reliable about whether they were already texted. The dialog opens only
+  // for a finished run, which the server checks too.
   const repliesToSomeone = Boolean(execution.replyConversationId);
-  const alreadyReplied = repliesToSomeone && execution.status === 'completed';
   const onlyOriginalAvailable =
     !loading && eligibleVersions.length === 1 && execution.versionId !== null;
 
@@ -319,7 +318,7 @@ export function RerunExecutionDialog({ open, onOpenChange, execution }: RerunExe
             </p>
           )}
 
-          {alreadyReplied && (
+          {repliesToSomeone && (
             <div className="flex items-start gap-2" data-testid="rerun-resend-reply-row">
               <Checkbox
                 id="rerun-resend-reply"
@@ -332,11 +331,12 @@ export function RerunExecutionDialog({ open, onOpenChange, execution }: RerunExe
                 <Label htmlFor="rerun-resend-reply" className="flex items-center gap-1 text-xs">
                   Send the reply to the person again
                   <FieldHelp title="Sending the reply again">
-                    This run started from a message someone sent in, and it already sent them a
-                    reply. A re-run texts nobody unless you tick this, so re-running to debug or to
-                    try a newer version never surprises them. Tick it when that reply did not reach
-                    them (Sunrise only knows the provider accepted it, not that it arrived) or they
-                    deleted it. The re-run may then send one new reply, written afresh.
+                    This run started from a message someone sent in. A re-run texts nobody unless
+                    you tick this, so re-running to debug or to try a newer version never surprises
+                    them. Sunrise cannot tell whether the original run texted them, or whether a
+                    text arrived: a run can send and then fail, or finish without sending. Tick it
+                    when they still need a reply, for example they say they never got one. The
+                    re-run may then send one new reply, written afresh.
                   </FieldHelp>
                 </Label>
                 <p className="text-muted-foreground text-[11px]">
@@ -344,13 +344,6 @@ export function RerunExecutionDialog({ open, onOpenChange, execution }: RerunExe
                 </p>
               </div>
             </div>
-          )}
-
-          {repliesToSomeone && !alreadyReplied && (
-            <p className="text-muted-foreground text-xs" data-testid="rerun-may-reply-notice">
-              The original run did not finish, so this re-run may send the reply to the person who
-              wrote in.
-            </p>
           )}
 
           {estimate && (

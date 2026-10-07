@@ -291,10 +291,10 @@ describe('RerunExecutionDialog', () => {
     });
 
     describe('sending the reply to the person again (t-770)', () => {
-      const replying = (status: string) => ({
+      const replying = {
         ...baseProps,
-        execution: { ...baseProps.execution, status, replyConversationId: 'conv-inbound' },
-      });
+        execution: { ...baseProps.execution, replyConversationId: 'conv-inbound' },
+      };
       function versionsOnlyV2() {
         mockApiCalls({
           versions: versionsResponse(
@@ -309,9 +309,9 @@ describe('RerunExecutionDialog', () => {
         );
       }
 
-      it('offers the checkbox only for a completed run that replied to someone', async () => {
+      it('offers the checkbox, unticked, for any run that replied to someone', async () => {
         versionsOnlyV2();
-        const { unmount } = render(<RerunExecutionDialog {...replying('completed')} />);
+        const { unmount } = render(<RerunExecutionDialog {...replying} />);
         expect(await screen.findByTestId('rerun-resend-reply')).not.toBeChecked();
         unmount();
 
@@ -321,18 +321,10 @@ describe('RerunExecutionDialog', () => {
         expect(screen.queryByTestId('rerun-resend-reply')).not.toBeInTheDocument();
       });
 
-      it('tells the admin a failed run’s re-run may reply, with no checkbox to tick', async () => {
-        versionsOnlyV2();
-        render(<RerunExecutionDialog {...replying('failed')} />);
-
-        expect(await screen.findByTestId('rerun-may-reply-notice')).toBeInTheDocument();
-        expect(screen.queryByTestId('rerun-resend-reply')).not.toBeInTheDocument();
-      });
-
       it('sends resendReply only when the admin ticks the box', async () => {
         const user = userEvent.setup();
         versionsOnlyV2();
-        render(<RerunExecutionDialog {...replying('completed')} />);
+        render(<RerunExecutionDialog {...replying} />);
 
         await user.click(await screen.findByTestId('rerun-resend-reply'));
         await user.click(await screen.findByTestId('rerun-confirm'));
@@ -345,7 +337,7 @@ describe('RerunExecutionDialog', () => {
       it('leaves resendReply out when the box is not ticked', async () => {
         const user = userEvent.setup();
         versionsOnlyV2();
-        render(<RerunExecutionDialog {...replying('completed')} />);
+        render(<RerunExecutionDialog {...replying} />);
 
         await user.click(await screen.findByTestId('rerun-confirm'));
 

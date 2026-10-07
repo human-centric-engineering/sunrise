@@ -32,11 +32,11 @@ import { isMarkdown } from '@/lib/utils/is-markdown';
 import { JsonPretty } from '@/components/admin/orchestration/json-pretty';
 import { MarkdownOrRawView } from '@/components/admin/orchestration/markdown-or-raw-view';
 import { SourcesField } from '@/components/admin/orchestration/approvals/sources-field';
+import { hasTemplateTokens } from '@/lib/orchestration/engine/interpolate-from-trace';
 import {
-  hasTemplateTokens,
   resolveTemplatesIn,
-} from '@/lib/orchestration/engine/interpolate-from-trace';
-import type { InterpolationContext } from '@/lib/orchestration/engine/interpolate-prompt';
+  type InterpolationContext,
+} from '@/lib/orchestration/engine/interpolate-prompt';
 import type { ExecutionTraceEntry } from '@/types/orchestration';
 
 const RETRY_PILL_CLASS =

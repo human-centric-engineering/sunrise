@@ -17,6 +17,12 @@
  *   - `budgetLimitUsd` — override the original's budget. When omitted,
  *     the original execution's budget is reused (preserves "same
  *     input parameters" semantics).
+ *   - `resendReply` — let the rerun text the person who wrote in (t-770).
+ *     A run an inbound message started may send only on its
+ *     `replyConversationId`; a rerun gets that only when this is `true` and
+ *     the original has finished (completed, failed or cancelled). Without
+ *     it, the rerun texts nobody, whatever the original's outcome: Sunrise
+ *     cannot tell whether the first reply was sent, let alone received.
  *
  * Lineage: the new execution row is created with
  * `parentExecutionId` set to the original's id, so the detail view
@@ -44,6 +50,13 @@ import { getRouteLogger } from '@/lib/api/context';
 import { sseResponse } from '@/lib/api/sse';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import { WorkflowStatus } from '@/types/orchestration';
+
+/** A run that will not resume, so its rerun may be given its reply conversation. */
+const FINISHED_STATUSES: ReadonlySet<string> = new Set([
+  WorkflowStatus.COMPLETED,
+  WorkflowStatus.FAILED,
+  WorkflowStatus.CANCELLED,
+]);
 import { rerunExecutionBodySchema, workflowScopeSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { executionVisibilityWhere } from '@/lib/orchestration/access/execution-access';
@@ -167,7 +180,8 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   const engine = new OrchestrationEngine();
   const replyConversationId =
     original.replyConversationId &&
-    (original.status !== WorkflowStatus.COMPLETED || body.resendReply === true)
+    body.resendReply === true &&
+    FINISHED_STATUSES.has(original.status)
       ? original.replyConversationId
       : null;
 
@@ -184,12 +198,12 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     ...(rerunScope ? { scope: rerunScope } : {}),
     signal: request.signal,
     parentExecutionId: original.id,
-    // A rerun may reply to the person who wrote in (t-770), copied each time
-    // so a rerun of a rerun keeps it and it survives the original being
-    // purged. Not for a run that completed, which already sent its reply: a
-    // debugging rerun must not text a real person again. The admin opts in
-    // with `resendReply` when that reply never arrived or was deleted (owner
-    // ruling, 2026-10-06).
+    // A rerun texts the person who wrote in only when the admin asks
+    // (`resendReply`, the dialog's "Send the reply to the person again"), and
+    // only for a finished original (t-770; owner ruling, 2026-10-07). Its
+    // status says nothing reliable about whether they were texted: a run can
+    // send and then fail, or complete without sending. A run still in flight
+    // would reply itself when it resumes, so its rerun never may.
     ...(replyConversationId ? { replyConversationId } : {}),
   });
 

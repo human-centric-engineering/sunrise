@@ -2351,10 +2351,10 @@ export const rerunExecutionBodySchema = z.object({
     .max(1000, 'Budget limit must be at most $1,000')
     .optional(),
   /**
-   * Let a rerun of a COMPLETED run reply to the person who wrote in again
-   * (t-770). A completed run already sent its reply, so by default its rerun
-   * texts nobody; an admin ticks this when that reply never arrived or was
-   * deleted. A failed or cancelled run's rerun may reply without it.
+   * Let the rerun text the person who wrote in (t-770): the dialog's "Send
+   * the reply to the person again". Without it a rerun texts nobody, whatever
+   * the original's outcome, since a run's status says nothing reliable about
+   * whether it already replied. Honoured only for a finished original.
    */
   resendReply: z.boolean().optional(),
 });

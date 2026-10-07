@@ -579,7 +579,7 @@ Guards: execution must belong to `session.user.id` (cross-user returns 404 to av
 
 Side effects: every capability dispatch, notification, and external call in the workflow re-fires. The admin UI dialog (`<RerunExecutionDialog>`) surfaces this explicitly in the confirmation body.
 
-**Replying to the person who wrote in** (t-770). An execution an inbound message started carries `replyConversationId`, the only conversation `send_message_to_channel` lets it send to. A re-run of a failed or cancelled one copies it, so the reply that never went out can. A re-run of a **completed** one does not, because that run already replied and a debugging re-run must not text a real person again, unless the request sets `resendReply: true` (the dialog's "Send the reply to the person again" checkbox, for a reply that never arrived or was deleted; Sunrise records only that the provider accepted it). Copied each time, so a re-run of a re-run keeps it.
+**Replying to the person who wrote in** (t-770). An execution an inbound message started carries `replyConversationId`, the only conversation `send_message_to_channel` lets it send to. A re-run gets it only when the request sets `resendReply: true` (the dialog's "Send the reply to the person again" checkbox, offered unticked for any such run) and the original has finished (completed, failed or cancelled). Without it the re-run texts nobody, whatever the original's outcome: a run can send and then fail, or complete without sending, and Sunrise records only that a provider accepted a message, not that it arrived. A run still in flight would reply itself when it resumes, so its re-run never gets it.
 
 ### `GET /approvals/history`
 
