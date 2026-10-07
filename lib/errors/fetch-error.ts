@@ -15,7 +15,9 @@
 
 import { loggableUrl } from '@/lib/logging/redact-path';
 
-const URL_IN_TEXT = /\bhttps?:\/\/[^\s'"<>]+/gi;
+// Stops before trailing punctuation: a `,` or `)` left on the last segment
+// would stop `collapseDynamicSegments` recognising a token there.
+const URL_IN_TEXT = /\bhttps?:\/\/[^\s'"<>]*[^\s'"<>.,;:!?)\]}]/gi;
 
 /**
  * Replace every URL quoted in `text` with its `loggableUrl()` form (#953).

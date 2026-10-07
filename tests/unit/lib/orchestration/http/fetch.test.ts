@@ -17,6 +17,7 @@ import { resetAllowlistCache } from '@/lib/orchestration/http/allowlist';
 import { HttpError } from '@/lib/orchestration/http/errors';
 import { executeHttpRequest } from '@/lib/orchestration/http/fetch';
 import { resetOutboundRateLimiters } from '@/lib/orchestration/engine/outbound-rate-limiter';
+import { logger } from '@/lib/logging';
 
 vi.mock('@/lib/logging', () => ({
   logger: {
@@ -66,6 +67,23 @@ describe('executeHttpRequest', () => {
     expect(out.body).toEqual({ ok: true });
     expect(typeof out.latencyMs).toBe('number');
     expect(out.transformError).toBeUndefined();
+  });
+
+  it('logs the request path with credential-shaped segments collapsed (#953)', async () => {
+    mockResponse(200, { ok: true });
+    const secret = 'AbCdEfGhIjKlMnOpQrStUvWx';
+
+    await executeHttpRequest({
+      url: `https://api.allowed.com/hooks/${secret}/notify`,
+      method: 'POST',
+      body: '{}',
+    });
+
+    expect(logger.info).toHaveBeenCalledWith(
+      'HTTP request: sending',
+      expect.objectContaining({ path: '/hooks/[param]/notify' })
+    );
+    expect(JSON.stringify(vi.mocked(logger.info).mock.calls)).not.toContain(secret);
   });
 
   // ── Redirect refusal (#628) ─────────────────────────────────────────────

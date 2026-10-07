@@ -860,7 +860,9 @@ release process.
   `describeFetchFailure()` (`lib/errors/fetch-error.ts`) now reduces any URL
   quoted in the error it describes, so a delivery's `error` field and stored
   `lastError` no longer carry one either, and a knowledge-base fetch error
-  reaches the route's error log reduced. A path secret the
+  reaches the route's error log reduced. The outbound HTTP client's
+  `HTTP request: sending` line collapses its `path` the same way. A path
+  secret the
   `collapseDynamicSegments()` heuristic does not recognise (under 20
   characters, or containing `:`) is still kept.
   **For an operator:** a `send_notification` webhook step's stored

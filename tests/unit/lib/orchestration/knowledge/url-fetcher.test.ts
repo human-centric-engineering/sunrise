@@ -494,6 +494,7 @@ describe('fetchDocumentFromUrl log lines', () => {
     expect(message).not.toContain(SECRET);
     expect(message).not.toContain('pw@');
     expect((err as Error).cause).toBeUndefined();
+    expect((err as Error).name).toBe('TypeError');
   });
 
   it('keeps the credential out of the error thrown for a blocked redirect target', async () => {

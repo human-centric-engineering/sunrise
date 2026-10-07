@@ -17,6 +17,7 @@
  */
 
 import { logger } from '@/lib/logging';
+import { collapseDynamicSegments } from '@/lib/logging/redact-path';
 import {
   checkOutboundRateLimit,
   recordRetryAfter,
@@ -156,7 +157,7 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
   logger.info('HTTP request: sending', {
     method,
     hostname,
-    path: new URL(authedUrl).pathname,
+    path: collapseDynamicSegments(new URL(authedUrl).pathname),
     timeoutMs,
     ...(opts.logContext ?? {}),
   });

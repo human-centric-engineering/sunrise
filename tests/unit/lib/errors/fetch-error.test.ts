@@ -118,4 +118,15 @@ describe('describeFetchFailure', () => {
     expect(described).not.toContain('qs-secret');
     expect(described).not.toContain('cause-secret');
   });
+
+  it.each([
+    ['a comma', 'POST to https://h.example.com/x/AbCdEfGhIjKlMnOpQrStUvWx, retrying'],
+    ['a closing parenthesis', 'failed (https://h.example.com/x/AbCdEfGhIjKlMnOpQrStUvWx)'],
+    ['a full stop', 'could not reach https://h.example.com/x/AbCdEfGhIjKlMnOpQrStUvWx.'],
+  ])('reduces a URL followed by %s', (_label, message) => {
+    const described = describeFetchFailure(new Error(message));
+
+    expect(described).toContain('https://h.example.com/x/[param]');
+    expect(described).not.toContain('AbCdEfGhIjKlMnOpQrStUvWx');
+  });
 });

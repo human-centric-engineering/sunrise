@@ -91,8 +91,11 @@ async function fetchRevalidatingRedirects(target: string, init: RequestInit): Pr
       response = await fetch(current, { ...init, redirect: 'manual' });
     } catch (err) {
       // undici quotes the request URL in some messages, and this error reaches
-      // the route's error log — rethrow with the URL reduced and no `cause` (#953).
-      throw new Error(describeFetchFailure(err));
+      // the route's error log — rethrow with the URL reduced and no `cause`,
+      // keeping the error's name (a timeout stays a TimeoutError) (#953).
+      const reduced = new Error(describeFetchFailure(err));
+      if (err instanceof Error) reduced.name = err.name;
+      throw reduced;
     }
 
     if (!REDIRECT_STATUSES.has(response.status)) return response;
