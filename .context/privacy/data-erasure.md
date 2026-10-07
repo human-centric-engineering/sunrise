@@ -212,6 +212,12 @@ transaction):
    can hold stale across an email change — so the two cannot drift. Never
    `mode: 'insensitive'`: Prisma compiles it to an unescaped `ILIKE`, so a `_`
    or `%` in the address would delete a stranger's messages too (#766).
+   **Only for a verified address.** The contact form proves nothing about who
+   typed an address, and with email verification off anyone can open an account
+   under someone else's, so an account whose `emailVerified` is false matches
+   nothing: its erasure leaves those messages in place, and its export omits
+   them. The operator answers such a request by hand. On the default production
+   setup every account is verified, so nothing changes there.
    Deleted rather than anonymised, because the export already hands these rows
    over as the subject's personal data. It is a system model, so no org scope
    is needed at either tenancy mode. It is matched on the account's current
@@ -310,7 +316,10 @@ registerErasureCleanupHook({
 **A fork table keyed by email (no `userId` at all) is the `ContactSubmission`
 case** — no FK, so delete it in `scrubInTransaction`. The hook is handed only
 the `userId`, but the user row still exists at that point, so read the address
-from `tx.user` and match it exactly, normalised as your writer stores it.
+from `tx.user` and match it exactly, normalised as your writer stores it. If the
+writer takes an address nobody proved (a public form), also read
+`emailVerified` and match nothing when it is false, as `contactSubmissionsOf()`
+does.
 
 Register once at startup (alongside the app's capability registration), then add
 an assertion to `scripts/smoke/erasure.ts` proving the app table is erased or
