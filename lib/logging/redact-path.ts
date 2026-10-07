@@ -76,3 +76,57 @@ export function collapseDynamicSegments(pathname: string): string {
 export function loggablePath(pathname: string | undefined): string | undefined {
   return pathname === undefined ? undefined : collapseDynamicSegments(pathname);
 }
+
+/**
+ * Next.js build assets: their URLs carry no request data, and a source-map
+ * lookup needs the path exactly as built.
+ */
+const BUILD_ASSET_PATH = '/_next/static/';
+
+/** An absolute URL's `scheme://authority`, and the rest. */
+const ABSOLUTE_URL = /^([a-z][a-z0-9+.-]*:\/\/[^/]*)?(.*)$/is;
+
+/**
+ * Reduce a URL to its origin and its path for logging or error tracking (#952):
+ * the query string, the fragment and any `user:password@` are dropped, and
+ * every id- or credential-shaped path segment is collapsed to `[param]`. Accepts
+ * an absolute URL or a relative path. A Next.js build asset keeps its path.
+ *
+ * @example
+ * scrubUrl('https://app.example.com/s/Xk9fQ2mZp4LrT7vB1nWc8sYd?email=a%40b.c#x');
+ * // 'https://app.example.com/s/[param]'
+ */
+export function scrubUrl(url: string): string {
+  const cut = url.search(/[?#]/);
+  const withoutQuery = cut === -1 ? url : url.slice(0, cut);
+  const match = ABSOLUTE_URL.exec(withoutQuery);
+  const origin = (match?.[1] ?? '').replace(/\/\/[^/]*@/, '//');
+  const path = match?.[2] ?? '';
+  return origin + (path.startsWith(BUILD_ASSET_PATH) ? path : collapseDynamicSegments(path));
+}
+
+/**
+ * An absolute URL, or a path starting with `/`, not preceded by a word
+ * character or `/` — so `GET /x`, `fetch(https://…)` and `at f (https://…:1:2)`
+ * match, but `a/b` does not.
+ */
+const URL_IN_TEXT = /(?<![\w/])(?:[a-z][a-z0-9+.-]*:\/\/|\/)[^\s()]*/gi;
+
+/** A stack frame's `:line` or `:line:column` suffix. */
+const LINE_COLUMN = /(?::\d+){1,2}$/;
+
+/**
+ * `scrubUrl` applied to every URL and path in free text: a span or
+ * transaction name (`GET /s/<token>`), or a stack trace, whose frames for an
+ * inline script carry the page URL.
+ *
+ * @example
+ * scrubUrlsInText('GET https://app.example.com/s/Xk9fQ2mZp4LrT7vB1nWc8sYd?a=1');
+ * // 'GET https://app.example.com/s/[param]'
+ */
+export function scrubUrlsInText(text: string): string {
+  return text.replace(URL_IN_TEXT, (found) => {
+    const suffix = LINE_COLUMN.exec(found)?.[0] ?? '';
+    return scrubUrl(found.slice(0, found.length - suffix.length)) + suffix;
+  });
+}

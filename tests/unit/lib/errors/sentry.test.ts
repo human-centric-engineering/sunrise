@@ -10,8 +10,8 @@
  * - trackMessage: no-op paths for all severity levels, full Sentry path
  * - setErrorTrackingUser: no-op and Sentry user path
  * - clearErrorTrackingUser: no-op and Sentry clear path
- * - scrubUrl / scrubSentryBreadcrumb / scrubSentryEvent / scrubSentrySpan: URL
- *   scrubbing for Sentry's beforeSend / beforeBreadcrumb / beforeSendSpan (#952)
+ * - scrubSentryBreadcrumb / scrubSentryEvent / scrubSentrySpan: URL scrubbing
+ *   for Sentry's beforeSend / beforeBreadcrumb / beforeSendSpan (#952)
  *
  * Mocking strategy:
  * - @sentry/nextjs: The source uses dynamic require() inside getSentry() which
@@ -85,7 +85,6 @@ import {
   setErrorTrackingUser,
   clearErrorTrackingUser,
   ErrorSeverity,
-  scrubUrl,
   scrubSentryBreadcrumb,
   scrubSentryEvent,
   scrubSentrySpan,
@@ -477,29 +476,6 @@ describe('isSentryAvailable (via observable behaviour)', () => {
 describe('Sentry URL scrubbing', () => {
   const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
 
-  describe('scrubUrl', () => {
-    it('drops the query string and fragment and collapses a credential-shaped segment', () => {
-      expect(scrubUrl(`https://app.example.com/s/${token}?email=a%40b.c#t=${token}`)).toBe(
-        'https://app.example.com/s/[param]'
-      );
-    });
-
-    it('drops user:password from the authority', () => {
-      expect(scrubUrl('https://user:secret@app.example.com/admin?x=1')).toBe(
-        'https://app.example.com/admin'
-      );
-    });
-
-    it('scrubs a relative path and leaves readable segments alone', () => {
-      expect(scrubUrl(`/s/${token}?q=1`)).toBe('/s/[param]');
-      expect(scrubUrl('/admin/orchestration/agents#tab')).toBe('/admin/orchestration/agents');
-    });
-
-    it('keeps a bare origin intact', () => {
-      expect(scrubUrl('https://app.example.com?ref=x')).toBe('https://app.example.com');
-    });
-  });
-
   describe('scrubSentryBreadcrumb', () => {
     it('scrubs navigation from/to and fetch url data', () => {
       const breadcrumb = scrubSentryBreadcrumb({
@@ -599,6 +575,74 @@ describe('Sentry URL scrubbing', () => {
         'http.url': 'https://app.example.com/api/v1/x/[param]',
       });
       expect(JSON.stringify(event)).not.toContain(token);
+    });
+
+    it('scrubs the file URL of each stack frame and keeps build-asset paths for source maps', () => {
+      const event = scrubSentryEvent({
+        exception: {
+          values: [
+            {
+              type: 'Error',
+              stacktrace: {
+                frames: [
+                  {
+                    filename: `https://app.example.com/s/${token}?email=a%40b.c#t=1`,
+                    abs_path: `https://app.example.com/s/${token}?email=a%40b.c#t=1`,
+                  },
+                  {
+                    filename: 'app:///_next/static/chunks/app/s/[token]/page-0123456789abcdef.js',
+                    abs_path:
+                      'https://app.example.com/_next/static/chunks/app/s/[token]/page-0123456789abcdef.js?dpl=x',
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      });
+
+      const frames = event.exception?.values?.[0].stacktrace?.frames;
+      expect(frames?.[0]).toEqual({
+        filename: 'https://app.example.com/s/[param]',
+        abs_path: 'https://app.example.com/s/[param]',
+      });
+      expect(frames?.[1]).toEqual({
+        filename: 'app:///_next/static/chunks/app/s/[token]/page-0123456789abcdef.js',
+        abs_path:
+          'https://app.example.com/_next/static/chunks/app/s/[token]/page-0123456789abcdef.js',
+      });
+    });
+
+    it('scrubs URLs in any span attribute, including next.span_name and header arrays', () => {
+      const event = scrubSentryEvent({
+        type: 'transaction',
+        spans: [
+          {
+            span_id: 'c',
+            trace_id: 't',
+            start_timestamp: 0,
+            status: 'ok',
+            data: {
+              'next.span_name': `fetch GET https://api.vendor.example/v1/x?api_key=${token}`,
+              'http.request.header.referer': [`https://app.example.com/s/${token}?a=1`],
+              'sentry.op': 'http.client',
+            },
+          },
+        ],
+      });
+
+      expect(event.spans?.[0].data).toEqual({
+        'next.span_name': 'fetch GET https://api.vendor.example/v1/x',
+        'http.request.header.referer': ['https://app.example.com/s/[param]'],
+        'sentry.op': 'http.client',
+      });
+    });
+
+    it('does not throw on a child span with no data', () => {
+      const span = { span_id: 'c', trace_id: 't', start_timestamp: 0, status: 'ok' };
+      // A span another processor built can lack the typed-required `data`.
+      const event = scrubSentryEvent({ type: 'transaction', spans: [span] } as never);
+      expect(event).toEqual({ type: 'transaction', spans: [span] });
     });
 
     it('leaves a parameterised route name and an event with no request alone', () => {

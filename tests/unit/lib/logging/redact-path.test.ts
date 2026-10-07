@@ -9,7 +9,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { collapseDynamicSegments, loggablePath } from '@/lib/logging/redact-path';
+import {
+  collapseDynamicSegments,
+  loggablePath,
+  scrubUrl,
+  scrubUrlsInText,
+} from '@/lib/logging/redact-path';
 
 describe('collapseDynamicSegments', () => {
   it.each([
@@ -81,5 +86,62 @@ describe('loggablePath', () => {
   it('passes undefined through and collapses a present path', () => {
     expect(loggablePath(undefined)).toBeUndefined();
     expect(loggablePath('/api/v1/x/cmtd5heg2001804ky8pgo6odx')).toBe('/api/v1/x/[param]');
+  });
+});
+
+describe('scrubUrl', () => {
+  const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+
+  it('drops the query string and fragment and collapses a credential-shaped segment', () => {
+    expect(scrubUrl(`https://app.example.com/s/${token}?email=a%40b.c#t=${token}`)).toBe(
+      'https://app.example.com/s/[param]'
+    );
+  });
+
+  it('drops user:password from the authority', () => {
+    expect(scrubUrl('https://user:secret@app.example.com/admin?x=1')).toBe(
+      'https://app.example.com/admin'
+    );
+  });
+
+  it('scrubs a relative path and leaves readable segments alone', () => {
+    expect(scrubUrl(`/s/${token}?q=1`)).toBe('/s/[param]');
+    expect(scrubUrl('/admin/orchestration/agents#tab')).toBe('/admin/orchestration/agents');
+  });
+
+  it('keeps a bare origin intact', () => {
+    expect(scrubUrl('https://app.example.com?ref=x')).toBe('https://app.example.com');
+  });
+
+  it('keeps a Next.js build asset path intact, minus its query', () => {
+    expect(
+      scrubUrl('https://app.example.com/_next/static/AbCdEf0123456789xYz12/_buildManifest.js?dpl=1')
+    ).toBe('https://app.example.com/_next/static/AbCdEf0123456789xYz12/_buildManifest.js');
+  });
+});
+
+describe('scrubUrlsInText', () => {
+  const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+
+  it('scrubs paths and URLs in span names', () => {
+    expect(scrubUrlsInText(`GET /s/${token}?a=1`)).toBe('GET /s/[param]');
+    expect(scrubUrlsInText(`middleware GET https://app.example.com/s/${token}`)).toBe(
+      'middleware GET https://app.example.com/s/[param]'
+    );
+    expect(scrubUrlsInText(`fetch(https://app.example.com/s/${token}?x=1)`)).toBe(
+      'fetch(https://app.example.com/s/[param])'
+    );
+  });
+
+  it('scrubs stack frame URLs and keeps their line and column', () => {
+    const stack = `Error: boom\n    at f (https://app.example.com/s/${token}?email=a%40b.c:12:34)\n    at g (https://app.example.com/_next/static/chunks/main-abc.js:1:2)`;
+    expect(scrubUrlsInText(stack)).toBe(
+      'Error: boom\n    at f (https://app.example.com/s/[param]:12:34)\n    at g (https://app.example.com/_next/static/chunks/main-abc.js:1:2)'
+    );
+  });
+
+  it('leaves text with no URL or leading-slash path alone', () => {
+    expect(scrubUrlsInText('pageload')).toBe('pageload');
+    expect(scrubUrlsInText('a/b and 1/2')).toBe('a/b and 1/2');
   });
 });

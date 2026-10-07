@@ -127,23 +127,27 @@ query string or the fragment, or a token as a path segment (a share page such
 as `/s/<token>`). `urlQueryParams: false` covers only query strings the SDK
 collected itself. Three hooks from `lib/errors/sentry.ts` cover the rest:
 
-- `scrubSentryEvent` (`beforeSend`) reduces an error event's `request.url` and
-  its transaction name to origin plus path, and scrubs the trace context and
-  breadcrumbs it carries;
-- `scrubSentrySpan` (`beforeSendSpan`) does the same for each span's name and
-  its `url.*` / `http.url` attributes, and drops `url.fragment`, `url.query` and
-  the raw `url.path.parameter.*` values. With v11's default
-  `traceLifecycle: 'stream'`, spans pass through `beforeSendSpan` only;
-  `beforeSendTransaction` is not called (under `'static'`, use
-  `scrubSentryEvent` there);
+- `scrubSentryEvent` (`beforeSend`) reduces an error event's `request.url`,
+  its transaction name and its stack frames' file URLs (an inline script's
+  frame is the page URL) to origin plus path, and scrubs the trace context
+  and breadcrumbs it carries;
+- `scrubSentrySpan` (`beforeSendSpan`) scrubs every URL and path in each
+  span's name and attribute values (`url.full`, `http.url`, `next.span_name`,
+  a captured `referer` header…), and drops `url.fragment`, `url.query` and the
+  raw `url.path.parameter.*` values;
 - `scrubSentryBreadcrumb` (`beforeBreadcrumb`) scrubs the `url` / `from` / `to`
   of fetch, xhr and navigation breadcrumbs.
+
+**If you set `traceLifecycle: 'static'`**, the SDK never calls
+`beforeSendSpan: scrubSentrySpan`; set `beforeSendTransaction: scrubSentryEvent`
+instead, which scrubs the transaction and its child spans. Under v11's default
+`'stream'` it is the other way round: `beforeSendTransaction` is never called.
 
 Each id- or credential-shaped path segment becomes `[param]`
 (`collapseDynamicSegments()` in `lib/logging/redact-path.ts`, which lists what
 it cannot catch). Set them in every `Sentry.init`, as above. The global client error handler
-(`lib/errors/handler.ts`) already sends only the collapsed pathname, under
-`extra.path`.
+(`lib/errors/handler.ts`) already sends the page as the collapsed pathname,
+under `extra.path`, and scrubs the URLs in `extra.filename` and `extra.stack`.
 
 **Session Replay is not governed by `dataCollection`.** The wizard adds
 `replayIntegration()` to the client init, and a replay records what the admin

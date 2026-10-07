@@ -56,7 +56,7 @@
 import type { Breadcrumb, Event, init as sentryInit } from '@sentry/nextjs';
 import { isRecord } from '@/lib/utils';
 import { logger } from '@/lib/logging';
-import { collapseDynamicSegments } from '@/lib/logging/redact-path';
+import { scrubUrl, scrubUrlsInText } from '@/lib/logging/redact-path';
 
 /**
  * Error severity levels
@@ -312,24 +312,6 @@ export function clearErrorTrackingUser(): void {
   }
 }
 
-/**
- * Reduce a URL to its origin and its path, with the query string, the fragment
- * and any `user:password@` dropped and every id- or credential-shaped path
- * segment collapsed to `[param]` (see `collapseDynamicSegments`). Accepts an
- * absolute URL or a relative path.
- *
- * @example
- * scrubUrl('https://app.example.com/s/Xk9fQ2mZp4LrT7vB1nWc8sYd?email=a%40b.c#x');
- * // 'https://app.example.com/s/[param]'
- */
-export function scrubUrl(url: string): string {
-  const cut = url.search(/[?#]/);
-  const withoutQuery = cut === -1 ? url : url.slice(0, cut);
-  const match = /^([a-z][a-z0-9+.-]*:\/\/[^/]*)?(.*)$/is.exec(withoutQuery);
-  const origin = (match?.[1] ?? '').replace(/\/\/[^/]*@/, '//');
-  return origin + collapseDynamicSegments(match?.[2] ?? '');
-}
-
 /** The span `beforeSendSpan` receives (`@sentry/nextjs` does not re-export the type). */
 type StreamedSpanJSON = Parameters<
   NonNullable<NonNullable<Parameters<typeof sentryInit>[0]>['beforeSendSpan']>
@@ -338,48 +320,33 @@ type StreamedSpanJSON = Parameters<
 /** Breadcrumb `data` keys that hold a URL (fetch/xhr `url`, navigation `from`/`to`). */
 const BREADCRUMB_URL_KEYS = ['url', 'from', 'to'];
 
-/** Span attributes that hold a URL or a path. */
-const SPAN_URL_ATTRIBUTES = ['url.full', 'url.path', 'http.url', 'http.target', 'url'];
-
-/** Span attributes that hold only a query string or a fragment. */
-const SPAN_DROPPED_ATTRIBUTES = ['url.query', 'url.fragment', 'http.query', 'http.fragment'];
-
-/** `url.path.parameter.<key>` holds the raw value of a dynamic path segment. */
-const SPAN_PATH_PARAMETER_PREFIX = 'url.path.parameter.';
-
 /**
- * Scrub every URL or path in a span or transaction name, which the SDK writes
- * as `/path`, `GET /path`, `GET https://host/path` or `middleware GET /path`.
+ * Span attributes dropped outright: the query string, the fragment, and the
+ * raw value of each dynamic path segment (`url.path.parameter.<key>`).
  */
-function scrubSpanName(name: string): string {
-  return name
-    .split(' ')
-    .map((part) =>
-      part.startsWith('/') || /^[a-z][a-z0-9+.-]*:\/\//i.test(part) ? scrubUrl(part) : part
-    )
-    .join(' ');
+const DROPPED_ATTRIBUTE =
+  /^(?:url\.query|url\.fragment|http\.query|http\.fragment|url\.path\.parameter\..*)$/;
+
+/** A span attribute value — raw, an array, or `{ value, unit? }` — with `scrubUrlsInText` applied. */
+function scrubAttributeValue(value: unknown): unknown {
+  if (typeof value === 'string') return scrubUrlsInText(value);
+  if (Array.isArray(value)) return value.map(scrubAttributeValue);
+  if (isRecord(value) && typeof value.value === 'string') {
+    return { ...value, value: scrubUrlsInText(value.value) };
+  }
+  return value;
 }
 
-/** Copy of `attributes` with URL values scrubbed and query, fragment and path-parameter values dropped. */
+/**
+ * Copy of span `attributes` with every URL and path in every value scrubbed —
+ * a rule, not a list of keys, so `url.full`, `http.url`, `next.span_name` and a
+ * header such as `referer` are all covered — and query, fragment and
+ * path-parameter attributes dropped.
+ */
 function scrubAttributes<T extends Record<string, unknown>>(attributes: T): T {
   const scrubbed: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(attributes)) {
-    if (SPAN_DROPPED_ATTRIBUTES.includes(key) || key.startsWith(SPAN_PATH_PARAMETER_PREFIX)) {
-      continue;
-    }
-    if (SPAN_URL_ATTRIBUTES.includes(key) || key === 'sentry.segment.name') {
-      // A streamed span attribute is either the raw value or `{ value, unit? }`.
-      const scrub = key === 'sentry.segment.name' ? scrubSpanName : scrubUrl;
-      if (typeof value === 'string') {
-        scrubbed[key] = scrub(value);
-        continue;
-      }
-      if (isRecord(value) && typeof value.value === 'string') {
-        scrubbed[key] = { ...value, value: scrub(value.value) };
-        continue;
-      }
-    }
-    scrubbed[key] = value;
+    if (!DROPPED_ATTRIBUTE.test(key)) scrubbed[key] = scrubAttributeValue(value);
   }
   // Same keys as the input, minus dropped ones, each holding the same shape.
   return scrubbed as T;
@@ -414,13 +381,18 @@ export function scrubSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
  * Sentry.init({ beforeSendSpan: scrubSentrySpan, ... });
  */
 export function scrubSentrySpan(span: StreamedSpanJSON): StreamedSpanJSON {
-  return { ...span, name: scrubSpanName(span.name), attributes: scrubAttributes(span.attributes) };
+  return {
+    ...span,
+    name: scrubUrlsInText(span.name),
+    attributes: scrubAttributes(span.attributes),
+  };
 }
 
 /**
  * `beforeSend` for `Sentry.init`: scrubs the page URL the SDK records on an
- * error event, its query string, the transaction name, the trace context's
- * span data and the attached breadcrumbs. Also usable as
+ * error event, its query string, the transaction name, the stack frames' file
+ * URLs (an inline script's frame is the page URL), the trace context's span
+ * data and the attached breadcrumbs. Also usable as
  * `beforeSendTransaction` under `traceLifecycle: 'static'`, where it scrubs
  * each child span the same way.
  *
@@ -436,12 +408,19 @@ export function scrubSentryEvent<T extends Event>(event: T): T {
     if (event.request.url) event.request.url = scrubUrl(event.request.url);
     delete event.request.query_string;
   }
-  if (event.transaction) event.transaction = scrubSpanName(event.transaction);
+  if (event.transaction) event.transaction = scrubUrlsInText(event.transaction);
+  event.exception?.values?.forEach((exception) => {
+    exception.stacktrace?.frames?.forEach((frame) => {
+      if (frame.filename) frame.filename = scrubUrl(frame.filename);
+      if (frame.abs_path) frame.abs_path = scrubUrl(frame.abs_path);
+    });
+  });
   const trace = event.contexts?.trace;
   if (trace?.data) trace.data = scrubAttributes(trace.data);
   event.spans?.forEach((span) => {
-    if (span.description) span.description = scrubSpanName(span.description);
-    span.data = scrubAttributes(span.data);
+    if (span.description) span.description = scrubUrlsInText(span.description);
+    // Typed as always present; a span another processor built may lack it.
+    if (span.data) span.data = scrubAttributes(span.data);
   });
   if (event.breadcrumbs) event.breadcrumbs = event.breadcrumbs.map(scrubSentryBreadcrumb);
   return event;

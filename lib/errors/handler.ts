@@ -32,7 +32,7 @@
 
 import { isRecord } from '@/lib/utils';
 import { logger } from '@/lib/logging';
-import { collapseDynamicSegments } from '@/lib/logging/redact-path';
+import { collapseDynamicSegments, scrubUrlsInText } from '@/lib/logging/redact-path';
 import { trackError, ErrorSeverity } from '@/lib/errors/sentry';
 
 /**
@@ -51,6 +51,9 @@ const SENSITIVE_FIELDS = [
   'refreshToken',
   'accessToken',
 ];
+
+/** Fields whose value can hold the page URL; their URLs are scrubbed, not the whole value. */
+const URL_BEARING_FIELDS = ['filename', 'stack'];
 
 /**
  * Track processed errors to prevent infinite loops
@@ -227,6 +230,14 @@ export function handleClientError(error: unknown, context: Record<string, unknow
   const scrubbedContext = isRecord(rawScrubbedContext) ? rawScrubbedContext : {};
   const rawScrubbedMetadata = scrubSensitiveData(normalized.metadata);
   const scrubbedMetadata = isRecord(rawScrubbedMetadata) ? rawScrubbedMetadata : {};
+  // An error from an inline script reports the page URL as its file, in
+  // `filename` and in the stack's frames.
+  for (const record of [scrubbedContext, scrubbedMetadata]) {
+    for (const key of URL_BEARING_FIELDS) {
+      const value = record[key];
+      if (typeof value === 'string') record[key] = scrubUrlsInText(value);
+    }
+  }
 
   // The page path, never `location.href`: the query and fragment can carry a
   // token or an email, and a path segment can be a credential (#952). The

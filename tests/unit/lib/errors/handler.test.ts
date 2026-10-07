@@ -742,6 +742,28 @@ describe('handleClientError', () => {
       }
     });
 
+    it('should scrub the page URL out of filename and stack', () => {
+      const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+      const pageUrl = `https://example.com/s/${token}?email=a%40example.com#t=1`;
+      vi.stubGlobal('window', { location: { href: pageUrl, pathname: `/s/${token}` } });
+      const error = new Error('inline script error');
+      error.stack = `Error: inline script error\n    at ${pageUrl}:3:7`;
+
+      handleClientError(error, { filename: pageUrl, lineno: 3 });
+
+      const meta = vi.mocked(logger.error).mock.calls[0][2];
+      const extra = vi.mocked(trackError).mock.calls[0][1]?.extra;
+      for (const recorded of [meta, extra]) {
+        expect(recorded).toMatchObject({
+          filename: 'https://example.com/s/[param]',
+          stack: 'Error: inline script error\n    at https://example.com/s/[param]:3:7',
+          lineno: 3,
+        });
+        expect(JSON.stringify(recorded)).not.toContain(token);
+        expect(JSON.stringify(recorded)).not.toContain('example.com#');
+      }
+    });
+
     it('should handle missing navigator gracefully', () => {
       vi.stubGlobal('navigator', undefined);
 
