@@ -1010,6 +1010,44 @@ describe('registerModels', () => {
     expect(after?.maxContext).toBe(64_000);
   });
 
+  it('forgets which figures a hydrate wrote once the registry is rebuilt from OpenRouter', async () => {
+    const row = {
+      id: 'partial',
+      name: 'Acme Partial',
+      provider: 'acme',
+      tier: 'mid' as const,
+      inputCostPerMillion: 9,
+      outputCostPerMillion: 9,
+      maxContext: 64_000,
+      supportsTools: true,
+    };
+    registry.registerModels([row]);
+
+    // The rebuild replaces the DB-only entry with OpenRouter's, which is a
+    // registry figure from here on and must not be beaten by the next hydrate.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'acme/partial',
+            name: 'Acme Partial',
+            context_length: 16_000,
+            pricing: { prompt: '0.000002', completion: '0.000004' },
+          },
+        ],
+      }),
+    });
+    await registry.refreshFromOpenRouter({ force: true });
+    registry.registerModels([row]);
+
+    const after = registry.getModel('partial');
+    expect(after?.inputCostPerMillion).toBeCloseTo(2);
+    expect(after?.outputCostPerMillion).toBeCloseTo(4);
+    expect(after?.maxContext).toBe(16_000);
+  });
+
   it('no-op when called with an empty array', () => {
     const before = registry.getAvailableModels().length;
     registry.registerModels([]);
