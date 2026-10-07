@@ -910,6 +910,16 @@ release process.
   `.context/privacy/data-export.md` into `lib/app/data-export.ts`, or used the
   same match anywhere else keyed by email, should change it the same way.
 
+- **Erasing an account now deletes the contact-form messages sent from its
+  address** (t-767). `ContactSubmission` has no FK to `User`, so the erasure
+  cascade never reached it: `eraseUser()` reported success and left the
+  person's name, address and messages behind, while the export already treated
+  those rows as theirs. They are now deleted inside the erasure transaction,
+  matched exactly on the trimmed, lower-cased address through
+  `contactSubmissionsOf()`, the matcher the export also uses. A fork with its own
+  table keyed by email needs the same step in an erasure hook's
+  `scrubInTransaction`; `.context/privacy/data-erasure.md` shows how.
+
 - **The email-preview server's copy of Next is no longer in the `next/og`
   remote-code-execution range** (t-758). `@react-email/ui` (dev-only) pins
   `next` 16.3.3; a scoped `overrides` entry makes it use the app's own `next`,

@@ -249,6 +249,11 @@ The guard casts **two nets**, because the first one missed both of these:
 section rather than through a manifest source. That allowlist is an accounting
 note, not an escape hatch — anything added to it still owes a reader a reason.
 
+Being invisible to the cascade means erasure needs its own step for each.
+`eraseUser()` deletes `ContactSubmission` rows through the same matcher the
+manifest uses (`contactSubmissionsOf()`); see
+[What `eraseUser()` Does Beyond the Cascade](./data-erasure.md#what-eraseuser-does-beyond-the-cascade).
+
 **Neither net can reach `ContactSubmission`.** It holds no user id in any
 column, only an email, so no mechanical scan finds it. That is the residual gap,
 and it is why the manifest still needs a human deciding what a new table holds
