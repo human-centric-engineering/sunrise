@@ -170,8 +170,9 @@ describe("logCost with operation='transcription'", () => {
     >;
     // Critical: chat path must NOT use the transcription per-minute calc even
     // if a stray durationMs slips in from the caller — and unknown models
-    // resolve to $0 via the model registry, not via duration.
+    // resolve to $0 via the model registry, not via duration. The only
+    // metadata is the unpriced marker — no `durationMs` stamp.
     expect(data.totalCostUsd).toBe(0);
-    expect(data.metadata).toBeUndefined();
+    expect(data.metadata).toEqual({ pricing: 'unknown' });
   });
 });

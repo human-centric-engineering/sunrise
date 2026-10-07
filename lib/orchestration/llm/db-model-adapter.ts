@@ -111,6 +111,8 @@ export function dbModelToModelInfo(row: AiProviderModel): ModelInfo {
     // this prop is for UX-level constraint only.
     capabilities: row.capabilities,
     ...(paramProfile ? { paramProfile } : {}),
+    // A null cost is "not priced", not "free" — an explicit 0 stays free.
+    ...(row.costPerMillionTokens === null ? { pricingUnknown: true as const } : {}),
   };
 }
 

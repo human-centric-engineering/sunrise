@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { ModelInfo } from '@/lib/orchestration/llm/types';
 
 vi.mock('@/lib/db/client', () => ({
   prisma: {
@@ -44,7 +45,11 @@ vi.mock('@/lib/orchestration/llm/model-registry', async () => {
 });
 
 const { prisma } = await import('@/lib/db/client');
-const { getAvailableModels } = await import('@/lib/orchestration/llm/model-registry');
+const {
+  getAvailableModels,
+  registerModels,
+  __resetForTests: resetRegistry,
+} = await import('@/lib/orchestration/llm/model-registry');
 const {
   calculateCost,
   logCost,
@@ -90,7 +95,108 @@ describe('calculateCost', () => {
     const cost = calculateCost('model-that-does-not-exist', 1_000, 1_000);
     expect(cost.totalCostUsd).toBe(0);
     expect(cost.isLocal).toBe(false);
+    expect(cost.unpriced).toBe(true);
     expect(logger.warn).toHaveBeenCalled();
+  });
+});
+
+// #813: a turn nobody could price was stored at $0 exactly like a free one.
+describe('calculateCost / logCost — unpriced turns (#813)', () => {
+  function entry(overrides: Partial<ModelInfo>): ModelInfo {
+    return {
+      id: 'matrix-only-model',
+      name: 'Matrix only',
+      provider: 'acme',
+      tier: 'mid',
+      inputCostPerMillion: 0,
+      outputCostPerMillion: 0,
+      maxContext: 32_000,
+      supportsTools: true,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    resetRegistry();
+    vi.mocked(prisma.aiCostLog.create).mockResolvedValue({} as never);
+  });
+
+  it('marks a model registered from a null-cost matrix row as unpriced, and says so', async () => {
+    const { logger } = await import('@/lib/logging');
+    registerModels([entry({ pricingUnknown: true })]);
+
+    const cost = calculateCost('matrix-only-model', 1_000, 1_000);
+
+    expect(cost).toEqual({
+      inputCostUsd: 0,
+      outputCostUsd: 0,
+      totalCostUsd: 0,
+      isLocal: false,
+      unpriced: true,
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Cost calculation: model has no price, treating as zero cost',
+      { model: 'matrix-only-model' }
+    );
+  });
+
+  it('does not mark a genuinely free model (rates 0, no flag) as unpriced', () => {
+    registerModels([entry({})]);
+    const cost = calculateCost('matrix-only-model', 1_000, 1_000);
+    expect(cost.totalCostUsd).toBe(0);
+    expect(cost).not.toHaveProperty('unpriced');
+  });
+
+  it('stamps pricing: unknown on the cost row for an unpriced turn', async () => {
+    registerModels([entry({ pricingUnknown: true })]);
+
+    await logCost({
+      model: 'matrix-only-model',
+      provider: 'acme',
+      inputTokens: 100,
+      outputTokens: 50,
+      operation: 'chat',
+      metadata: { purpose: 'chat' },
+    });
+
+    const data = vi.mocked(prisma.aiCostLog.create).mock.calls[0][0].data;
+    expect(data.totalCostUsd).toBe(0);
+    // Caller metadata survives alongside the marker.
+    expect(data.metadata).toEqual({ purpose: 'chat', pricing: 'unknown' });
+  });
+
+  it('stamps pricing: unknown for a model the registry has never heard of', async () => {
+    await logCost({
+      model: 'model-that-does-not-exist',
+      provider: 'acme',
+      inputTokens: 100,
+      outputTokens: 50,
+      operation: 'chat',
+    });
+    const data = vi.mocked(prisma.aiCostLog.create).mock.calls[0][0].data;
+    expect(data.metadata).toEqual({ pricing: 'unknown' });
+  });
+
+  it('leaves a priced turn and a free turn without the marker', async () => {
+    registerModels([entry({})]);
+    await logCost({
+      model: 'claude-sonnet-4-6',
+      provider: 'anthropic',
+      inputTokens: 100,
+      outputTokens: 50,
+      operation: 'chat',
+    });
+    await logCost({
+      model: 'matrix-only-model',
+      provider: 'acme',
+      inputTokens: 100,
+      outputTokens: 50,
+      operation: 'chat',
+    });
+    const [priced, free] = vi.mocked(prisma.aiCostLog.create).mock.calls.map(([a]) => a.data);
+    expect(priced.totalCostUsd).toBeGreaterThan(0);
+    expect(priced.metadata).toBeUndefined();
+    expect(free.metadata).toBeUndefined();
   });
 });
 

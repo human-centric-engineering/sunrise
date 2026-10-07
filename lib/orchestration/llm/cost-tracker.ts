@@ -30,8 +30,14 @@ export interface ComputedCost {
   inputCostUsd: number;
   outputCostUsd: number;
   totalCostUsd: number;
-  /** True when the model was resolved from the local tier (or not found). */
+  /** True when the model was resolved from the local tier. */
   isLocal: boolean;
+  /**
+   * Set when no rate was available — the model is not in the registry, or
+   * its only source is a matrix row with no cost. The zeros above then mean
+   * "not priced", not "free"; `logCost` records that on the row.
+   */
+  unpriced?: true;
 }
 
 /**
@@ -232,8 +238,9 @@ export interface BudgetStatus {
 
 /**
  * Compute the USD cost of an operation for the given model and token
- * counts. Returns zeroed costs for local models and for models not
- * present in the registry (logs a warning so the model can be added).
+ * counts. Returns zeroed costs for local models, and zeroed costs marked
+ * `unpriced` for a model with no rate (not in the registry, or registered
+ * from a matrix row with a null cost) — logging a warning so it can be added.
  */
 export function calculateCost(
   modelId: string,
@@ -265,11 +272,18 @@ export function calculateCost(
     // `calculateEmbeddingCost`. Callers running real local providers
     // (Ollama et al.) get the flag set explicitly via `logCost`'s
     // `params.isLocal ?? cost.isLocal` OR.
-    return { inputCostUsd: 0, outputCostUsd: 0, totalCostUsd: 0, isLocal: false };
+    return { inputCostUsd: 0, outputCostUsd: 0, totalCostUsd: 0, isLocal: false, unpriced: true };
   }
 
   if (model.tier === 'local') {
     return { inputCostUsd: 0, outputCostUsd: 0, totalCostUsd: 0, isLocal: true };
+  }
+
+  if (model.pricingUnknown) {
+    logger.warn('Cost calculation: model has no price, treating as zero cost', {
+      model: modelId,
+    });
+    return { inputCostUsd: 0, outputCostUsd: 0, totalCostUsd: 0, isLocal: false, unpriced: true };
   }
 
   const inputCostUsd = (inputTokens / 1_000_000) * model.inputCostPerMillion;
@@ -315,6 +329,11 @@ export async function logCost(params: LogCostParams): Promise<AiCostLog | null> 
       imageCount: params.imageCount ?? 0,
       pdfCount: params.pdfCount ?? 0,
     };
+  }
+  // A turn nobody could price is stored at $0 like a free one; this is what
+  // tells them apart on the row (#813).
+  if (cost.unpriced) {
+    metadata = { ...(metadata ?? {}), pricing: 'unknown' };
   }
 
   const data: Prisma.AiCostLogUncheckedCreateInput = {

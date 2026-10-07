@@ -108,10 +108,18 @@ describe('dbModelToModelInfo', () => {
     expect(info.supportsTools).toBe(false);
   });
 
-  it('handles a null costPerMillionTokens by zeroing both cost fields', () => {
+  it('handles a null costPerMillionTokens by zeroing both cost fields and marking it unpriced', () => {
     const info = dbModelToModelInfo(makeRow({ costPerMillionTokens: null }));
     expect(info.inputCostPerMillion).toBe(0);
     expect(info.outputCostPerMillion).toBe(0);
+    // Zero here means "nobody priced it", not "free" (#813).
+    expect(info.pricingUnknown).toBe(true);
+  });
+
+  it('treats an explicit zero cost as a free model, not an unpriced one', () => {
+    const info = dbModelToModelInfo(makeRow({ costPerMillionTokens: 0 }));
+    expect(info.inputCostPerMillion).toBe(0);
+    expect(info).not.toHaveProperty('pricingUnknown');
   });
 
   it('maps context length buckets to representative token ceilings', () => {

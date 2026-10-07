@@ -372,4 +372,11 @@ export interface ModelInfo {
    * uses this to disable toggles pre-emptively.
    */
   capabilities?: string[];
+  /**
+   * Set when nothing has supplied a price: the entry came from a matrix row
+   * whose cost is null and no registry figure filled it. Distinguishes "rate
+   * unknown" from a genuinely free model, whose rates are also 0 — so
+   * `calculateCost` can mark the turn unpriced instead of recording it as free.
+   */
+  pricingUnknown?: true;
 }

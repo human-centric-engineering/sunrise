@@ -1048,6 +1048,87 @@ describe('registerModels', () => {
     expect(after?.maxContext).toBe(16_000);
   });
 
+  // #813: a null-cost matrix row registers at 0/0. `pricingUnknown` is what
+  // keeps that apart from a free model, so it must hold exactly while nothing
+  // has priced the model, and never be set over a registry entry.
+  describe('pricingUnknown', () => {
+    const nullCostRow = {
+      id: 'acme-unpriced',
+      name: 'Acme Unpriced',
+      provider: 'acme',
+      tier: 'mid' as const,
+      inputCostPerMillion: 0,
+      outputCostPerMillion: 0,
+      maxContext: 32_000,
+      supportsTools: true,
+      pricingUnknown: true as const,
+    };
+
+    it('keeps the flag for a model only a null-cost row knows, across hydrates', () => {
+      registry.registerModels([nullCostRow]);
+      registry.registerModels([nullCostRow]);
+      expect(registry.getModel('acme-unpriced')?.pricingUnknown).toBe(true);
+    });
+
+    it('clears the flag once the row is given a price', () => {
+      registry.registerModels([nullCostRow]);
+      const { pricingUnknown: _flag, ...priced } = nullCostRow;
+      registry.registerModels([{ ...priced, inputCostPerMillion: 2, outputCostPerMillion: 2 }]);
+
+      const after = registry.getModel('acme-unpriced');
+      expect(after?.inputCostPerMillion).toBe(2);
+      expect(after).not.toHaveProperty('pricingUnknown');
+    });
+
+    it('never sets the flag over a registry entry that has a price', () => {
+      registry.registerModels([{ ...nullCostRow, id: 'gpt-4o-mini', provider: 'openai' }]);
+
+      const after = registry.getModel('gpt-4o-mini');
+      expect(after?.inputCostPerMillion).toBeGreaterThan(0);
+      expect(after).not.toHaveProperty('pricingUnknown');
+    });
+
+    it('never sets the flag over a free registry entry (OpenRouter at 0/0)', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue({
+          data: [
+            {
+              id: 'acme/acme-unpriced',
+              name: 'Acme Free',
+              context_length: 32_000,
+              pricing: { prompt: '0', completion: '0' },
+            },
+          ],
+        }),
+      });
+      await registry.refreshFromOpenRouter({ force: true });
+      expect(registry.getModel('acme-unpriced')?.provider).toBe('acme');
+
+      registry.registerModels([nullCostRow]);
+
+      const after = registry.getModel('acme-unpriced');
+      expect(after?.inputCostPerMillion).toBe(0);
+      expect(after).not.toHaveProperty('pricingUnknown');
+    });
+
+    it('keeps the flag across a cross-provider collision until a rate fills it', () => {
+      registry.registerModels([nullCostRow]);
+      registry.registerModels([{ ...nullCostRow, provider: 'other' }]);
+      expect(registry.getModel('acme-unpriced')?.pricingUnknown).toBe(true);
+
+      const { pricingUnknown: _flag, ...priced } = nullCostRow;
+      registry.registerModels([
+        { ...priced, provider: 'other', inputCostPerMillion: 3, outputCostPerMillion: 3 },
+      ]);
+      const after = registry.getModel('acme-unpriced');
+      expect(after?.provider).toBe('acme');
+      expect(after?.inputCostPerMillion).toBe(3);
+      expect(after).not.toHaveProperty('pricingUnknown');
+    });
+  });
+
   it('no-op when called with an empty array', () => {
     const before = registry.getAvailableModels().length;
     registry.registerModels([]);

@@ -184,6 +184,20 @@ function markDbSourced(id: string, fields: Record<DbSourcedField, number>): void
 }
 
 /**
+ * Set or clear `pricingUnknown` on a merged entry. It survives only while
+ * both rates are still 0 and `unpriced` says no source has priced the model —
+ * a registry entry at 0/0 is a free model, not an unpriced one.
+ */
+function settlePricingFlag(entry: ModelInfo, unpriced: boolean): ModelInfo {
+  const settled: ModelInfo = { ...entry };
+  delete settled.pricingUnknown;
+  if (unpriced && settled.inputCostPerMillion === 0 && settled.outputCostPerMillion === 0) {
+    settled.pricingUnknown = true;
+  }
+  return settled;
+}
+
+/**
  * Resolve one numeric field for a same-provider collision. A positive
  * registry figure is kept unless an earlier hydrate wrote it; a zero or
  * row-sourced one takes the row's value when that is positive.
@@ -215,7 +229,8 @@ function pickNumber(
  *     whenever it is positive; the incoming row only fills a field the
  *     registry has at zero. `AiProviderModel.costPerMillionTokens` is a
  *     single blended rate (nullable; unfilled rows coerce to 0 via
- *     `dbModelToModelInfo`) and `contextLength` is a coarse bucket, so
+ *     `dbModelToModelInfo`, marked `pricingUnknown` until something
+ *     prices them — see `settlePricingFlag`) and `contextLength` is a coarse bucket, so
  *     letting either beat the registry's exact input/output split and
  *     real window mis-prices turns and mis-sizes the history budget. A
  *     custom / local model the registry has never seen is unaffected —
@@ -255,18 +270,24 @@ export function registerModels(infos: ModelInfo[]): void {
       // existing entry was missing those signals and the incoming row
       // has them, since that's a useful enrichment regardless of which
       // provider's id we picked.
-      merged.set(info.id, {
-        ...existing,
-        inputCostPerMillion:
-          existing.inputCostPerMillion > 0
-            ? existing.inputCostPerMillion
-            : info.inputCostPerMillion,
-        outputCostPerMillion:
-          existing.outputCostPerMillion > 0
-            ? existing.outputCostPerMillion
-            : info.outputCostPerMillion,
-        maxContext: existing.maxContext > 0 ? existing.maxContext : info.maxContext,
-      });
+      merged.set(
+        info.id,
+        settlePricingFlag(
+          {
+            ...existing,
+            inputCostPerMillion:
+              existing.inputCostPerMillion > 0
+                ? existing.inputCostPerMillion
+                : info.inputCostPerMillion,
+            outputCostPerMillion:
+              existing.outputCostPerMillion > 0
+                ? existing.outputCostPerMillion
+                : info.outputCostPerMillion,
+            maxContext: existing.maxContext > 0 ? existing.maxContext : info.maxContext,
+          },
+          existing.pricingUnknown === true
+        )
+      );
       continue;
     }
     // Same provider: the incoming row wins on descriptive fields. On price
@@ -288,12 +309,20 @@ export function registerModels(infos: ModelInfo[]): void {
       sourced
     );
     const context = pickNumber('context', existing.maxContext, info.maxContext, sourced);
-    merged.set(info.id, {
-      ...info,
-      inputCostPerMillion: input.value,
-      outputCostPerMillion: output.value,
-      maxContext: context.value,
-    });
+    // Unpriced only if the row is AND the entry it lands on was (an earlier
+    // hydrate of the same null row); a registry entry is never unpriced.
+    merged.set(
+      info.id,
+      settlePricingFlag(
+        {
+          ...info,
+          inputCostPerMillion: input.value,
+          outputCostPerMillion: output.value,
+          maxContext: context.value,
+        },
+        info.pricingUnknown === true && existing.pricingUnknown === true
+      )
+    );
     markDbSourced(info.id, {
       input: input.fromDb ? input.value : 0,
       output: output.fromDb ? output.value : 0,
