@@ -182,6 +182,20 @@ describe('scrubUrlsInText', () => {
     expect(scrubUrlsInText(`["/s/${token}?a=1",'/x#y']`)).toBe(`["/s/[param]",'/x']`);
   });
 
+  it('drops a whole query or fragment even when it holds commas, brackets or parentheses', () => {
+    expect(
+      scrubUrlsInText(`fetch failed https://app.example.com/api?ids=1,2&token=${token} next`)
+    ).toBe('fetch failed https://app.example.com/api next');
+    expect(scrubUrlsInText(`/a?filter[x]=1&token=${token}`)).toBe('/a');
+    expect(scrubUrlsInText('see /p#a(b)&email=foo@bar.com.')).toBe('see /p.');
+  });
+
+  it('scrubs a scheme-less host followed directly by a query', () => {
+    expect(scrubUrlsInText(`redirect to app.example.com?token=${token}`)).toBe(
+      'redirect to app.example.com'
+    );
+  });
+
   it('scrubs a scheme-less host/path', () => {
     expect(scrubUrlsInText(`see h.com/s/${token}?email=a%40b.c`)).toBe('see h.com/s/[param]');
     expect(scrubUrlsInText(`at app.example.com:3000/s/${token}#t`)).toBe(
@@ -249,6 +263,34 @@ describe('scrubUrlsDeep', () => {
     expect(scrubbed.cause).toBeInstanceOf(Error);
     expect(scrubbed.cause).toMatchObject({ message: 'inner https://app.example.com/s/[param]' });
     expect(Object.keys(scrubbed)).not.toContain('cause');
+  });
+
+  it('copies a DOMException into a plain Error that can be read, keeping its name', () => {
+    const scrubbed = scrubUrlsInError(new DOMException(`aborted /s/${token}?a=1`, 'AbortError'));
+
+    expect(() => String(scrubbed)).not.toThrow();
+    expect(scrubbed.name).toBe('AbortError');
+    expect(scrubbed.message).toBe('aborted /s/[param]');
+  });
+
+  it('copies an error class with private-field getters without throwing on read', () => {
+    class CodedError extends Error {
+      #code = 'E_PRIVATE';
+      get code(): string {
+        return this.#code;
+      }
+    }
+    const scrubbed = scrubUrlsInError(new CodedError(`bad /s/${token}`));
+
+    expect(() => [scrubbed.name, String(scrubbed), Reflect.get(scrubbed, 'code')]).not.toThrow();
+    expect(scrubbed.message).toBe('bad /s/[param]');
+  });
+
+  it("keeps Sentry's already-captured marker so the copy is not reported twice", () => {
+    const error = new Error('caught');
+    Object.defineProperty(error, '__sentry_captured__', { value: true, enumerable: false });
+
+    expect(Reflect.get(scrubUrlsInError(error), '__sentry_captured__')).toBe(true);
   });
 
   it("scrubs an AggregateError's errors", () => {

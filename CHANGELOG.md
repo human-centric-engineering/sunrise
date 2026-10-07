@@ -795,7 +795,9 @@ release process.
   scrubbed with no fork change. **Forks with Sentry on should add
   `beforeSendSpan: scrubSentrySpan`** to each `Sentry.init` (spans are
   streamed past event processors in `@sentry/nextjs` 11), and
-  `beforeSend: scrubSentryEvent` to `sentry.edge.config.ts`. New helpers
+  `beforeSend: scrubSentryEvent` to `instrumentation-client.ts` (the client
+  registration runs after hydration, so load-time errors would miss it) and
+  `sentry.edge.config.ts`. New helpers
   `scrubUrl()`, `scrubUrlsInText()`, `scrubUrlsDeep()` and
   `scrubUrlsInError()` live in `lib/logging/redact-path.ts`. See
   [`sentry-setup.md`](./.context/monitoring/sentry-setup.md#page-urls).

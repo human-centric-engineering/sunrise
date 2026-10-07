@@ -692,6 +692,22 @@ describe('Sentry URL scrubbing', () => {
       expect(event.exception?.values?.[0].stacktrace?.frames?.[0]).toEqual(frame);
     });
 
+    it('scrubs logentry message and params, and request headers', () => {
+      const event = scrubSentryEvent({
+        logentry: {
+          message: `bad link %s at /s/${token}?a=1`,
+          params: [`https://h.example/s/${token}?e=1`],
+        },
+        request: { headers: { Referer: `https://h.example/s/${token}?email=a%40b.c` } },
+      });
+
+      expect(event.logentry).toEqual({
+        message: 'bad link %s at /s/[param]',
+        params: ['https://h.example/s/[param]'],
+      });
+      expect(event.request?.headers).toEqual({ Referer: 'https://h.example/s/[param]' });
+    });
+
     it('does not throw on a child span with no data', () => {
       const span = { span_id: 'c', trace_id: 't', start_timestamp: 0, status: 'ok' };
       // A span another processor built can lack the typed-required `data`.
@@ -758,6 +774,9 @@ describe('URL scrubber registration (#952)', () => {
   beforeEach(() => {
     vi.resetModules();
     mockAddEventProcessor.mockClear();
+    // The registered flag lives on globalThis (one per process, like Sentry's
+    // global scope); clear it so each test starts unregistered.
+    Reflect.deleteProperty(globalThis, Symbol.for('sunrise.sentry.urlScrubberRegistered'));
   });
   afterEach(() => {
     delete process.env.NEXT_PUBLIC_SENTRY_DSN;
@@ -774,6 +793,15 @@ describe('URL scrubber registration (#952)', () => {
 
     expect(mockAddEventProcessor).toHaveBeenCalledTimes(1);
     expect(mockAddEventProcessor).toHaveBeenCalledWith(fresh.scrubSentryEvent);
+  });
+
+  it('does not register again from a second copy of the module (HMR, another bundle)', async () => {
+    process.env.NEXT_PUBLIC_SENTRY_DSN = 'https://test@sentry.io/123';
+    (await import('@/lib/errors/sentry')).initErrorTracking();
+    vi.resetModules();
+    (await import('@/lib/errors/sentry')).initErrorTracking();
+
+    expect(mockAddEventProcessor).toHaveBeenCalledTimes(1);
   });
 
   it('registers nothing when Sentry is not configured', async () => {

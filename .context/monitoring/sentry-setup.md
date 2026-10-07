@@ -91,14 +91,15 @@ fork that turns Sentry on without setting this sends that data to Sentry. Set
 
 ```typescript
 import * as Sentry from '@sentry/nextjs';
-import { scrubSentrySpan } from '@/lib/errors/sentry';
+import { scrubSentryEvent, scrubSentrySpan } from '@/lib/errors/sentry';
 
 Sentry.init({
   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
-  // Page URLs in spans: drop query strings and fragments, collapse id- and
-  // credential-shaped path segments (see "Page URLs" below). Error events are
-  // scrubbed already; sentry.edge.config.ts also needs
-  // `beforeSend: scrubSentryEvent`.
+  // Page URLs: drop query strings and fragments, collapse id- and
+  // credential-shaped path segments (see "Page URLs" below). `beforeSend` is
+  // needed in instrumentation-client.ts and sentry.edge.config.ts; the Node
+  // server config can leave it out.
+  beforeSend: scrubSentryEvent,
   beforeSendSpan: scrubSentrySpan,
   // Collect nothing about the request, the user or the data by default.
   // (Session Replay is separate; see below.)
@@ -135,10 +136,14 @@ collected itself. `lib/errors/sentry.ts` covers the rest:
   script's frame is the page URL) and every string in `extra` (nested objects
   included) to origin plus path, and scrubs the trace context and the
   breadcrumbs the event carries (a fetch or xhr `url`, a navigation's `from` /
-  `to`, a console breadcrumb's message and arguments). No `beforeSend` or
-  `beforeBreadcrumb` is needed, except in `sentry.edge.config.ts`: the edge
-  runtime does not run `instrumentation.ts`'s Node branch, so set
-  `beforeSend: scrubSentryEvent` there.
+  `to`, a console breadcrumb's message and arguments), its `logentry` and any
+  request headers. The registration runs late in two places, so **also set
+  `beforeSend: scrubSentryEvent`** there: in `instrumentation-client.ts`,
+  because `ErrorHandlingProvider` registers only after hydration and an error
+  raised while the page loads would otherwise go out unscrubbed; and in
+  `sentry.edge.config.ts`, because the edge runtime does not run
+  `instrumentation.ts`'s Node branch. Scrubbing twice changes nothing.
+  `beforeBreadcrumb` is not needed.
 - **Spans: add `beforeSendSpan: scrubSentrySpan`** to each `Sentry.init`.
   Under v11's default `traceLifecycle: 'stream'`, spans go out one by one and
   never pass through an event processor. It scrubs every URL and path in each

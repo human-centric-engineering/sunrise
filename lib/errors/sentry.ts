@@ -117,7 +117,13 @@ function loadSentry(): typeof import('@sentry/nextjs') {
   return require('@sentry/nextjs');
 }
 
-let urlScrubberRegistered = false;
+/**
+ * Marks Sentry's global scope as already carrying the scrubber. On
+ * `globalThis`, not a module variable, because the global scope is
+ * process-wide while this module can be evaluated more than once (dev HMR, a
+ * second server bundle).
+ */
+const URL_SCRUBBER_REGISTERED = Symbol.for('sunrise.sentry.urlScrubberRegistered');
 
 /**
  * Register `scrubSentryEvent` on Sentry's global scope, once per process, so
@@ -127,9 +133,9 @@ let urlScrubberRegistered = false;
  * to the current request's isolation scope only.
  */
 function registerUrlScrubber(Sentry: typeof import('@sentry/nextjs')): void {
-  if (urlScrubberRegistered) return;
+  if (Reflect.get(globalThis, URL_SCRUBBER_REGISTERED) === true) return;
   Sentry.getGlobalScope().addEventProcessor(scrubSentryEvent);
-  urlScrubberRegistered = true;
+  Reflect.set(globalThis, URL_SCRUBBER_REGISTERED, true);
 }
 
 /**
@@ -406,20 +412,28 @@ export function scrubSentrySpan(span: StreamedSpanJSON): StreamedSpanJSON {
  * trace context's span data and the attached breadcrumbs. Sunrise registers
  * it on Sentry's global scope (see `registerUrlScrubber`), so it also runs on
  * transactions under `traceLifecycle: 'static'`, scrubbing each child span.
- * Pass it as `beforeSend` too where Sunrise's code may not have run first
- * (`sentry.edge.config.ts`).
+ * Pass it as `beforeSend` too where Sunrise's code may not have run first:
+ * `instrumentation-client.ts` (the client registers after hydration) and
+ * `sentry.edge.config.ts`.
  *
  * `dataCollection.urlQueryParams: false` drops query strings, but not the
  * fragment or a credential in the path (a `/s/<token>` share page), and only
  * for URLs the SDK collected itself (#952).
  *
  * @example
- * Sentry.init({ beforeSend: scrubSentryEvent, ... }); // edge runtime
+ * Sentry.init({ beforeSend: scrubSentryEvent, ... }); // client and edge
  */
 export function scrubSentryEvent<T extends Event>(event: T): T {
   if (event.request) {
     if (event.request.url) event.request.url = scrubUrl(event.request.url);
     delete event.request.query_string;
+    // A Referer, if a fork widens `dataCollection.httpHeaders`.
+    if (event.request.headers) scrubRecord(event.request.headers);
+  }
+  if (event.logentry) {
+    if (event.logentry.message) event.logentry.message = scrubUrlsInText(event.logentry.message);
+    if (event.logentry.params)
+      event.logentry.params = event.logentry.params.map((param) => scrubUrlsDeep(param));
   }
   if (event.transaction) event.transaction = scrubUrlsInText(event.transaction);
   if (typeof event.message === 'string') event.message = scrubUrlsInText(event.message);

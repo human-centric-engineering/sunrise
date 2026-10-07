@@ -119,16 +119,18 @@ export function scrubUrl(url: string): string {
  * A URL in free text: an absolute URL, a scheme-less `host.tld/path`, or a path
  * starting with `/` — not preceded by a word character, `/` or `.`, so
  * `GET /x`, `fetch(https://…)`, `at f (https://…:1:2)` and `see h.com/x`
- * match but `a/b` does not. It ends at whitespace, a bracket, a quote or a
- * comma, so a URL inside JSON or markup takes nothing after it. A scheme-less
+ * match but `a/b` does not. The path ends at whitespace, a bracket, a quote or
+ * a comma, so a URL inside JSON or markup takes nothing after it; a query or
+ * fragment runs on to whitespace, a quote or `<>`, so `?ids=1,2&token=…` is
+ * dropped whole. A scheme-less host may be followed by `/`, `?` or `#`. A scheme-less
  * host needs a dotted TLD, so a bare `localhost:3000/…` (dev only) is not
  * matched; with a scheme it is.
  */
 const URL_IN_TEXT =
-  /(?<![\w/.])(?:[a-z][a-z0-9+.-]*:\/\/|(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?=\/)|\/)[^\s()[\]{}<>"'`,]*/gi;
+  /(?<![\w/.])(?:[a-z][a-z0-9+.-]*:\/\/|(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?=[/?#])|\/)[^\s()[\]{}<>"'`,?#]*(?:[?#][^\s<>"'`]*)?/gi;
 
 /** Punctuation that ends a sentence or a quoted value, not the URL before it. */
-const TRAILING_PUNCTUATION = /[.,;:!?'"`\]}>&]+$/;
+const TRAILING_PUNCTUATION = /[.,;:!?'"`)\]}>&]+$/;
 
 /** A stack frame's `:line` or `:line:column` suffix. */
 const LINE_COLUMN = /(?::\d+){1,2}$/;
@@ -165,23 +167,67 @@ export function scrubUrlsInError(error: Error): Error {
   return scrubError(error, 0);
 }
 
+/**
+ * The non-enumerable flag `@sentry/core` sets on an exception it has captured
+ * (`checkOrSetAlreadyCaught`), so the same error is not reported twice.
+ */
+const SENTRY_CAPTURED_MARKER = '__sentry_captured__';
+
 /** Non-enumerable properties an object spread misses: `new Error(m, { cause })`, `AggregateError`. */
 const CHAINED_ERROR_KEYS = ['cause', 'errors'];
 
+/**
+ * The built-in error classes whose prototype a plain `Error` can take on safely.
+ * Others (a DOMException, a class whose getters read `#private` fields) have
+ * prototype getters that throw on an object they did not construct, so their
+ * copy stays a plain `Error` that keeps the original's name.
+ */
+const BUILT_IN_ERROR_PROTOTYPES: ReadonlySet<unknown> = new Set<unknown>([
+  Error.prototype,
+  TypeError.prototype,
+  RangeError.prototype,
+  ReferenceError.prototype,
+  SyntaxError.prototype,
+  EvalError.prototype,
+  URIError.prototype,
+  AggregateError.prototype,
+]);
+
+/** Read a property of a foreign object without letting a throwing getter escape. */
+function safeRead(source: object, key: string): unknown {
+  try {
+    return Reflect.get(source, key);
+  } catch {
+    return undefined;
+  }
+}
+
 function scrubError(error: Error, depth: number): Error {
-  const scrubbed = new Error(scrubUrlsInText(error.message));
-  // Keep the subclass (TypeError, AggregateError, a custom class) and its name.
+  const message = safeRead(error, 'message');
+  const scrubbed = new Error(typeof message === 'string' ? scrubUrlsInText(message) : '');
   const prototype: unknown = Object.getPrototypeOf(error);
-  if (typeof prototype === 'object') Object.setPrototypeOf(scrubbed, prototype);
-  if (Object.prototype.hasOwnProperty.call(error, 'name')) scrubbed.name = error.name;
-  scrubbed.stack = error.stack === undefined ? undefined : scrubUrlsInText(error.stack);
+  const name = safeRead(error, 'name');
+  if (BUILT_IN_ERROR_PROTOTYPES.has(prototype) && typeof prototype === 'object') {
+    // Keep the subclass (TypeError, AggregateError…) and an own name, if any.
+    Object.setPrototypeOf(scrubbed, prototype);
+    if (Object.prototype.hasOwnProperty.call(error, 'name') && typeof name === 'string') {
+      scrubbed.name = name;
+    }
+  } else if (typeof name === 'string' && name !== scrubbed.name) {
+    Object.defineProperty(scrubbed, 'name', { value: name, writable: true, configurable: true });
+  }
+  const stack = safeRead(error, 'stack');
+  scrubbed.stack = typeof stack === 'string' ? scrubUrlsInText(stack) : undefined;
   const own = scrubUrlsDeep({ ...error }, depth + 1);
   if (isPlainRecord(own)) Object.assign(scrubbed, own);
-  // Chained errors, scrubbed too, so Sentry's linkedErrors can still follow them.
-  for (const key of CHAINED_ERROR_KEYS) {
+  // Chained errors, scrubbed too, so Sentry's linkedErrors can still follow
+  // them; and Sentry's already-captured marker, so a second report of an
+  // error Sentry caught itself is still dropped as a duplicate.
+  for (const key of [...CHAINED_ERROR_KEYS, SENTRY_CAPTURED_MARKER]) {
     if (!Object.prototype.hasOwnProperty.call(error, key)) continue;
+    const value = safeRead(error, key);
     Object.defineProperty(scrubbed, key, {
-      value: scrubUrlsDeep(Reflect.get(error, key), depth + 1),
+      value: key === SENTRY_CAPTURED_MARKER ? value : scrubUrlsDeep(value, depth + 1),
       writable: true,
       configurable: true,
       enumerable: false,
