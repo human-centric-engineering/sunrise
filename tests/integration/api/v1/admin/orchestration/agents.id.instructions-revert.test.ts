@@ -215,6 +215,17 @@ describe('POST /api/v1/admin/orchestration/agents/:id/instructions-revert', () =
       expect(response.status).toBe(409);
     });
 
+    it('lets any other database error through as a 500, not a 409', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const agent = makeAgentRow();
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(agent as never);
+      vi.mocked(prisma.aiAgent.update).mockRejectedValueOnce(new Error('connection lost'));
+
+      const response = await POST(makeRequest({ versionIndex: 0 }), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(500);
+    });
+
     it('reverts to the correct version when versionIndex is 1', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       const agent = makeAgentRow({

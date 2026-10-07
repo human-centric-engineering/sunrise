@@ -210,6 +210,15 @@ describe('POST /api/v1/admin/orchestration/agents/bulk', () => {
     expect(res.status).toBe(409);
   });
 
+  it('lets any other database error through as a 500, not a 409', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(recordAgentVersion).mockRejectedValueOnce(new Error('connection lost'));
+
+    const res = await POST(makeRequest({ action: 'deactivate', agentIds: AGENT_IDS }));
+
+    expect(res.status).toBe(500);
+  });
+
   // ── Affected count ────────────────────────────────────────────────────────
 
   it('returns correct affected count when some agents are system', async () => {
