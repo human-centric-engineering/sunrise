@@ -792,7 +792,7 @@ release process.
   `lib/errors/sentry.ts` registers a new `scrubSentryEvent` on Sentry's
   global scope (client: `initErrorTracking()`; Node server: `instrumentation.ts`),
   so error and transaction events, their breadcrumbs and stack frames are
-  scrubbed with no fork change. **Forks with Sentry on should add
+  scrubbed from then on without a fork change. **Forks with Sentry on should add
   `beforeSendSpan: scrubSentrySpan`** to each `Sentry.init` (spans are
   streamed past event processors in `@sentry/nextjs` 11), and
   `beforeSend: scrubSentryEvent` to `instrumentation-client.ts` (the client
