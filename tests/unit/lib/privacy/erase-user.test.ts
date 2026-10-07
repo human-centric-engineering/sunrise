@@ -37,7 +37,7 @@ const {
   });
   const userDelete = vi.fn().mockResolvedValue({ id: 'user-1' });
   // The address as the user row holds it — what the contact delete matches on.
-  const userFind = vi.fn().mockResolvedValue({ email: 'foo@bar.com' });
+  const userFind = vi.fn().mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
 
   // Prisma mock — $transaction invokes its async callback with the same
   // prisma mock so tx.X === prisma.X; this is the pattern described in the
@@ -136,7 +136,7 @@ describe('eraseUser', () => {
     mockDeleteByPrefix.mockResolvedValue({ deleted: 1 });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     mockContactDeleteMany.mockResolvedValue({ count: 1 });
-    mockUserFind.mockResolvedValue({ email: 'foo@bar.com' });
+    mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
     mockReceiptCreate.mockResolvedValue({
       id: 'receipt-1',
       erasedAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -355,7 +355,7 @@ describe('eraseUser', () => {
 
   it('contact submissions — matched on the address the user row holds, normalised, as an exact match', async () => {
     // Arrange — a stored address that is not already in the canonical form
-    mockUserFind.mockResolvedValue({ email: '  Foo@BAR.com ' });
+    mockUserFind.mockResolvedValue({ email: '  Foo@BAR.com ', emailVerified: true });
 
     // Act
     await eraseUser(BASE_PARAMS);
@@ -364,7 +364,7 @@ describe('eraseUser', () => {
     // normalised string with no `mode`, so Prisma compiles it to `=`, not ILIKE
     expect(mockUserFind).toHaveBeenCalledWith({
       where: { id: BASE_PARAMS.userId },
-      select: { email: true },
+      select: { email: true, emailVerified: true },
     });
     expect(mockContactDeleteMany).toHaveBeenCalledTimes(1);
     expect(mockContactDeleteMany).toHaveBeenCalledWith({ where: { email: 'foo@bar.com' } });
@@ -372,7 +372,7 @@ describe('eraseUser', () => {
 
   it('contact submissions — a stale caller address is ignored; the stored one is matched', async () => {
     // Arrange — the caller's copy predates an email change (a cached session)
-    mockUserFind.mockResolvedValue({ email: 'new@bar.com' });
+    mockUserFind.mockResolvedValue({ email: 'new@bar.com', emailVerified: true });
 
     // Act
     await eraseUser({ ...BASE_PARAMS, userEmail: 'old@bar.com' });
@@ -381,11 +381,29 @@ describe('eraseUser', () => {
     expect(mockContactDeleteMany).toHaveBeenCalledWith({ where: { email: 'new@bar.com' } });
   });
 
+  it('contact submissions — none deleted for an unverified address, and the erasure still completes', async () => {
+    // Arrange — the account never proved it owns the address, so the messages
+    // under it may be a stranger's (anyone can type any address in the form)
+    mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: false });
+
+    // Act
+    const result = await eraseUser(BASE_PARAMS);
+
+    // Assert — nothing matched, the rest of the erasure ran, and the log says 0
+    expect(mockContactDeleteMany).not.toHaveBeenCalled();
+    expect(mockUserDelete).toHaveBeenCalledTimes(1);
+    expect(result.receiptId).toBe('receipt-1');
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      'User erased',
+      expect.objectContaining({ contactSubmissionsDeleted: 0 })
+    );
+  });
+
   it('contact submissions — an address with `_` and `%` is matched as a literal string, not a pattern', async () => {
     // Arrange — under `mode: 'insensitive'` (ILIKE) `_` matches any one
     // character and `%` any run, so this would also delete `aXb@ex.com`'s
     // messages. An equality match on the literal string cannot.
-    mockUserFind.mockResolvedValue({ email: 'a_b%c@ex.com' });
+    mockUserFind.mockResolvedValue({ email: 'a_b%c@ex.com', emailVerified: true });
 
     // Act
     await eraseUser(BASE_PARAMS);

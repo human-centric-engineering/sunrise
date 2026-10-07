@@ -186,6 +186,7 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
     // eraseUser reads the stored address for the contact delete
     vi.mocked(prisma.user.findUniqueOrThrow).mockResolvedValue({
       email: SESSION_USER_EMAIL,
+      emailVerified: true,
     } as never);
 
     // Default: user.delete resolves

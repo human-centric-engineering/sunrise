@@ -119,6 +119,7 @@ import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 const SUBJECT = {
   id: 'user-1',
   email: 'Subject@Example.com',
+  emailVerified: true,
   name: 'Subject',
   role: 'USER',
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -291,6 +292,20 @@ describe('exportUserData', () => {
       await exportUserData(PARAMS);
 
       expect(argsTo('contactSubmission').where).toEqual({ email: 'subject@example.com' });
+    });
+  });
+
+  describe('contact submissions for an unverified address', () => {
+    it('exports none, without reading the table', async () => {
+      // The contact form proves nothing about who typed an address, so an
+      // account that never verified its address could be anyone's: handing it
+      // the messages under that address could hand over a stranger's.
+      mockUserFindUnique.mockResolvedValue({ ...SUBJECT, emailVerified: false });
+
+      const bundle = await exportUserData(PARAMS);
+
+      expect(callsTo('contactSubmission')).toHaveLength(0);
+      expect(bundle.personalData.contactSubmissions).toEqual([]);
     });
   });
 

@@ -649,6 +649,7 @@ describe('DELETE /api/v1/users/:id', () => {
     // eraseUser reads the stored address for the contact delete
     vi.mocked(prisma.user.findUniqueOrThrow).mockResolvedValue({
       email: 'target@example.com',
+      emailVerified: true,
     } as never);
     vi.mocked(prisma.dataErasureReceipt.create).mockResolvedValue(RECEIPT_FIXTURE as never);
     vi.mocked(prisma.user.delete).mockResolvedValue(undefined as never);

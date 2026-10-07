@@ -81,6 +81,8 @@ async function main(): Promise<void> {
         // The `_` is load-bearing: the stranger's contact address below
         // differs only there, so a pattern match would erase their message.
         email: `${PREFIX}_subject-${stamp}@example.com`,
+        // Verified: contact messages are matched only to a proven address.
+        emailVerified: true,
         role: PLATFORM_ADMIN_ROLE,
       },
     });

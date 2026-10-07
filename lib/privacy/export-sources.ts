@@ -52,6 +52,8 @@ export interface SubjectQuery {
   userId: string;
   /** The subject's email — needed by sources that have no FK (see `ContactSubmission`). */
   email: string;
+  /** Whether the account has proven it owns `email` — a by-address source trusts it only then. */
+  emailVerified: boolean;
 }
 
 /** One row of "you created this", with none of the created thing's content. */
@@ -261,7 +263,8 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     model: 'ContactSubmission',
     section: 'contactSubmissions',
     disposition: 'export',
-    description: 'Messages sent through the public contact form from the subject’s email address.',
+    description:
+      'Messages sent through the public contact form from the subject’s email address. Included only once the account has verified that address: the form does not check who typed it.',
     // ⚠️ No FK to `User`, and no user id in any column — the public contact form
     // takes an address, not a session. So this table is invisible to the erasure
     // cascade AND to both of the guard's nets: the relation scan and the
@@ -274,11 +277,14 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     // writer normalises it — never `mode: 'insensitive'`, whose unescaped
     // `ILIKE` matches a stranger's address. `contactSubmissionsOf()` says why,
     // and erasure deletes through the same matcher.
-    fetch: ({ email }) =>
-      prisma.contactSubmission.findMany({
-        where: contactSubmissionsOf(email),
-        orderBy: byCreatedAt,
-      }),
+    //
+    // And only for a verified address: the form proves nothing about who
+    // typed it, so an unverified account gets none (see the matcher).
+    fetch: async (subject: SubjectQuery): Promise<unknown[]> => {
+      const where = contactSubmissionsOf(subject);
+      if (!where) return [];
+      return prisma.contactSubmission.findMany({ where, orderBy: byCreatedAt });
+    },
   },
   {
     model: 'AiCostLog',

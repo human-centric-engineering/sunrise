@@ -13,8 +13,9 @@
  *   2. Write an append-only `DataErasureReceipt` for accountability
  *      (Art. 5(2)) without re-introducing PII (opaque id + email hash).
  *   3. Remove the user's stored avatar blobs (object storage, not the DB).
- *   4. Delete the contact-form messages sent from the user's stored address.
- *      `ContactSubmission` has no FK to `User`, so no cascade reaches it.
+ *   4. Delete the contact-form messages sent from the user's stored address,
+ *      when the account has verified it. `ContactSubmission` has no FK to
+ *      `User`, so no cascade reaches it.
  *
  * The scrub, contact delete, receipt, and user delete run in one transaction
  * so they commit or roll back together. Avatar cleanup runs first as a
@@ -134,15 +135,16 @@ async function eraseRows(
     // The address is read from the user row, as the export reads it, not taken
     // from `userEmail`: a caller's copy can be stale (a cached session that
     // predates an email change), and then this would delete the old address's
-    // messages and leave the ones the export calls the subject's. A system
-    // model, so no org scope is needed at either tenancy mode.
-    const { email } = await tx.user.findUniqueOrThrow({
+    // messages and leave the ones the export calls the subject's. An
+    // unverified address matches nothing — the form proves nothing about who
+    // typed it, so they may be a stranger's. A system model, so no org scope
+    // is needed at either tenancy mode.
+    const account = await tx.user.findUniqueOrThrow({
       where: { id: userId },
-      select: { email: true },
+      select: { email: true, emailVerified: true },
     });
-    const contacts = await tx.contactSubmission.deleteMany({
-      where: contactSubmissionsOf(email),
-    });
+    const where = contactSubmissionsOf(account);
+    const contacts = where ? await tx.contactSubmission.deleteMany({ where }) : { count: 0 };
 
     // App-registered in-transaction scrub. Runs before `tx.user.delete()` so
     // hooks can still match retained rows on `userId`, and atomically with the
