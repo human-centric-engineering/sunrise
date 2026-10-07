@@ -35,10 +35,12 @@ export interface SendEmailResult {
 export async function sendEmail(options: SendEmailOptions): Promise<SendEmailResult> {
   const { to, subject, react, from, replyTo } = options;
   const sender = from || getDefaultSender();
+  // Logged under a PII-named key so production logs redact the addresses.
+  const recipientEmail = Array.isArray(to) ? to.join(', ') : to;
 
   // Log email attempt
   logger.info('Sending email', {
-    to: Array.isArray(to) ? to.join(', ') : to,
+    recipientEmail,
     subject,
     from: sender,
     deliveryEnabled: isEmailEnabled(),
@@ -52,7 +54,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
     // Development: Log and return mock success
     if (env.NODE_ENV === 'development') {
       logger.debug(message + ' - returning mock success in development', {
-        to,
+        recipientEmail,
         subject,
         from: sender,
       });
@@ -66,7 +68,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
     // Test: Warn and return mock success
     if (env.NODE_ENV === 'test') {
       logger.warn(message + ' - returning mock success in test environment', {
-        to,
+        recipientEmail,
         subject,
       });
       return {
@@ -103,7 +105,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
     // Check for error in response
     if ('error' in result && result.error) {
       logger.error('Failed to send email via Resend', result.error, {
-        to,
+        recipientEmail,
         subject,
         from: sender,
       });
@@ -118,7 +120,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
     const emailId = result.data?.id;
     logger.info('Email sent successfully', {
       id: emailId,
-      to,
+      recipientEmail,
       subject,
       from: sender,
     });
@@ -131,7 +133,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
   } catch (error) {
     // Log error but don't throw (non-blocking)
     logger.error('Error sending email', error, {
-      to,
+      recipientEmail,
       subject,
       from: sender,
     });

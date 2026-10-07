@@ -79,7 +79,7 @@ describe('lib/email/send', () => {
         'Email sent successfully',
         expect.objectContaining({
           id: 'email-123',
-          to: 'user@example.com',
+          recipientEmail: 'user@example.com',
           subject: 'Test Email',
         })
       );
@@ -340,7 +340,7 @@ describe('lib/email/send', () => {
       expect(logger.info).toHaveBeenCalledWith(
         'Sending email',
         expect.objectContaining({
-          to: 'user1@example.com, user2@example.com',
+          recipientEmail: 'user1@example.com, user2@example.com',
           subject: 'Log Test',
           from: 'noreply@sunrise.com',
           deliveryEnabled: true,

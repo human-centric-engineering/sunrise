@@ -104,20 +104,20 @@ interface LogEntry {
 /**
  * Fields containing secrets - ALWAYS redacted regardless of environment
  * These are security-critical and should never appear in logs
+ *
+ * One spelling per word, letters only: "apikey" also matches "api_key",
+ * "apiKey" and "x-api-key" (see `matchesSensitiveField`).
  */
 const SECRET_FIELDS = [
   'password',
   'token',
   'apikey',
-  'api_key',
   'secret',
   'creditcard',
-  'credit_card',
   'ssn',
   'authorization',
   'bearer',
   'credential',
-  'private_key',
   'privatekey',
 ];
 
@@ -136,21 +136,15 @@ const PII_FIELDS = [
   'phone',
   'mobile',
   'firstname',
-  'first_name',
   'lastname',
-  'last_name',
   'fullname',
-  'full_name',
   'address',
   'street',
   'postcode',
   'zipcode',
-  'zip_code',
   'ip',
   'ipaddress',
-  'ip_address',
   'useragent',
-  'user_agent',
 ];
 
 /**
@@ -187,7 +181,8 @@ const LONGEST_PATTERN = Math.max(...[...SECRET_WORDS, ...PII_WORDS].map((word) =
  * before a capitalised word ("APIKey" → [api, key]), and the end of an
  * acronym before lower case ("IPv4" → [ip, v], "APIkey" → [api, key]).
  * Splitting happens before lower-casing, because lower-casing is what erases
- * the boundary. Extra split points never lose a match, because matching
+ * the boundary; NFKC first turns compatibility letters such as the Kelvin sign
+ * into the ASCII letters lower-casing would have produced. Extra split points never lose a match, because matching
  * rejoins consecutive words.
  */
 const WORD_BOUNDARY =
@@ -195,6 +190,7 @@ const WORD_BOUNDARY =
 
 function toWords(fieldName: string): string[] {
   return fieldName
+    .normalize('NFKC')
     .split(WORD_BOUNDARY)
     .filter(Boolean)
     .map((word) => word.toLowerCase());

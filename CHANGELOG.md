@@ -226,6 +226,23 @@ release process.
 
 ### Changed
 
+- **Log keys renamed so word-based redaction leaves them readable** (#951).
+  The logger now redacts any key containing a sensitive word (see Security),
+  which would also hide non-secret keys such as `tokenId` or `hasApiKey`, as
+  their snake_case forms already were. Sunrise's own such keys are renamed;
+  dashboards or alerts reading the old keys should switch:
+  - `missingEnv` (a list of unset variable names) replaces the `has*`
+    booleans in the email, S3 and WhatsApp configuration warnings;
+  - `deliveryStatus` / `messageId` replace `emailStatus` / `emailId` in the
+    invitation and contact routes; `deliveryEnabled` replaces `emailEnabled`;
+    `verificationRequired` replaces `requireEmailVerification`;
+  - `grantedKey` replaces `tokenKey` (storage token mismatch); `recordId`
+    replaces `tokenId` (embed and invite token refusals, embed-token admin
+    routes); `keyId` replaces `apiKeyId` (unscoped MCP knowledge search);
+    `usage` replaces `tokenUsage` (evaluation completed).
+  - The sensitive-field lists drop their `_` spellings (`api_key`,
+    `first_name`, …): one letters-only spelling now covers every form.
+
 - **A `judge_call` step with a `threshold` now fails when the judge does not
   properly score** (§77 t-747). It used to report `passed: true` whenever the
   judge returned no score — a vendor error, no provider, the org's provider
@@ -749,26 +766,18 @@ release process.
   non-letter and at camelCase and acronym boundaries, and a pattern matches a
   run of consecutive words; every key redacted before is still redacted.
   Production log fields that change from clear text to `[REDACTED]` /
-  `[PII REDACTED]` include the sign-up hook's `userEmail` and the
-  invitation-delete route's `deletedByEmail`, and `clientIP` on the inbound
-  signature-failure and verification-handshake lines and the webhook-trigger
-  execution line (IP is in the PII list; set
-  `LOG_SANITIZE_PII=false` to keep it). PostHog's debug `apiKeyPrefix` is now
-  `[REDACTED]`.
-  - Non-secret keys that name a sensitive word (`tokenId`, `apiKeyId`,
-    `hasApiKey`, `emailStatus`) are now redacted too, as their snake_case forms
-    already were. Sunrise's own such log keys are renamed so they keep their
-    values: `missingEnv` (a list of unset variable names) replaces the
-    `has*` booleans in the email, S3 and WhatsApp configuration warnings;
-    `deliveryStatus` / `messageId` replace `emailStatus` / `emailId` in the
-    invitation and contact routes; `deliveryEnabled` replaces `emailEnabled`;
-    `verificationRequired` replaces `requireEmailVerification`; `grantedKey`
-    replaces `tokenKey` (storage token mismatch); `recordId` replaces
-    `tokenId` (embed and invite token refusals, embed-token admin routes);
-    `keyId` replaces `apiKeyId` (unscoped MCP knowledge search); `usage`
-    replaces `tokenUsage` (evaluation completed). Dashboards or alerts
-    reading the old keys should switch. The May 2026 provider migration
-    scripts' skip warnings now show `apiKeyEnvVar` as `[REDACTED]`.
+  `[PII REDACTED]`:
+  - the sign-up hook's `userEmail`, the OAuth invitation-mismatch line's
+    `invitationEmail` and `oauthEmail`, and the invitation-delete route's
+    `deletedByEmail`;
+  - `sendEmail`'s recipients, now logged as `recipientEmail` instead of `to`
+    on every send line, so invitation, contact and welcome mail no longer log
+    the address in production;
+  - `clientIP` on the inbound signature-failure and verification-handshake
+    lines and the webhook-trigger execution line (IP is in the PII list; set
+    `LOG_SANITIZE_PII=false` to keep it);
+  - PostHog's debug `apiKeyPrefix`, and `apiKeyEnvVar` in the May 2026
+    provider migration scripts' skip warnings.
 
 - **`csvEscape` quotes a lone CR, so free text can no longer start a CSV
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after

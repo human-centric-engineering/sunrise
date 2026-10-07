@@ -770,6 +770,8 @@ describe('Logger', () => {
         'clientIPv4',
         'remoteIPs',
         'billingZIPcode',
+        'recipientEmail',
+        'first_name',
       ])('should redact the PII field %s when PII sanitization is on', (key) => {
         vi.stubEnv('NODE_ENV', 'production');
         vi.stubEnv('LOG_SANITIZE_PII', 'true');
@@ -779,6 +781,37 @@ describe('Logger', () => {
         expect(meta[key]).toBe('[PII REDACTED]');
       });
 
+      it('should redact a key spelled with a compatibility letter that folds to ASCII', () => {
+        vi.stubEnv('NODE_ENV', 'production');
+        // U+212A KELVIN SIGN lower-cases to "k"
+        const key = 'api\u212Aey';
+
+        const meta = logAndParse({ [key]: 'sensitive-value' });
+
+        expect(meta[key]).toBe('[REDACTED]');
+      });
+
+      it.each([
+        'recordId',
+        'keyId',
+        'grantedKey',
+        'usage',
+        'deliveryStatus',
+        'messageId',
+        'deliveryEnabled',
+        'verificationRequired',
+        'missingEnv',
+      ])('should keep the renamed operational key %s in the clear', (key) => {
+        vi.stubEnv('NODE_ENV', 'production');
+        vi.stubEnv('LOG_SANITIZE_PII', 'true');
+
+        const meta = logAndParse({ [key]: 'plain-value' });
+
+        expect(meta[key]).toBe('plain-value');
+      });
+
+      // The default 5s test timeout is the bound: an unbounded run search took
+      // over a minute on this key.
       it('should still redact a sensitive word at the end of a key with many words', () => {
         vi.stubEnv('NODE_ENV', 'production');
         const key = `${'ab_'.repeat(5000)}password`;
