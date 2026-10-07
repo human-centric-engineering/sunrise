@@ -73,7 +73,8 @@ export const POST = withAdminAuth(
       }
       // A concurrent agent edit took a version number this restore was about
       // to write. The transaction rolled back, so the restore can be run again.
-      // Any other unique violation is not retryable and stays a 500.
+      // Any other unique violation is not retryable and goes to the shared API
+      // error handler.
       if (isAgentVersionConflict(err)) {
         throw new ConflictError('Backup import conflicted with a concurrent change. Please retry.');
       }

@@ -135,7 +135,9 @@ describe('POST /api/v1/admin/orchestration/agents/bulk', () => {
 
     const call = (prisma.aiAgent.updateMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(call.where.id.in).toEqual(AGENT_IDS);
-    expect(call.where.isSystem).toBe(false);
+    // System agents are excluded when choosing which agents to write.
+    const select = (prisma.aiAgent.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(select.where.isSystem).toBe(false);
     // test-review:accept tobe_true — structural boolean assertion on API response field
     expect(call.data.isActive).toBe(true);
   });
@@ -159,7 +161,8 @@ describe('POST /api/v1/admin/orchestration/agents/bulk', () => {
     expect(res.status).toBe(200);
 
     const call = (prisma.aiAgent.updateMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(call.where.isSystem).toBe(false);
+    const select = (prisma.aiAgent.findMany as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(select.where.isSystem).toBe(false);
     expect(call.data.isActive).toBe(false);
   });
 
@@ -186,6 +189,11 @@ describe('POST /api/v1/admin/orchestration/agents/bulk', () => {
     expect(prisma.aiAgent.findMany).toHaveBeenCalledWith({
       where: { id: { in: AGENT_IDS }, isSystem: false, isActive: action !== 'activate' },
       select: { id: true },
+    });
+    // The write touches exactly those agents, so none changes without a version.
+    expect(prisma.aiAgent.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: AGENT_IDS } },
+      data: { isActive: action === 'activate' },
     });
     const writeAt = (prisma.aiAgent.updateMany as ReturnType<typeof vi.fn>).mock
       .invocationCallOrder[0];

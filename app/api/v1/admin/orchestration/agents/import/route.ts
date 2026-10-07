@@ -347,7 +347,8 @@ export const POST = withAdminAuth(async (request, session) => {
     .catch((err: unknown) => {
       // A concurrent agent edit took a version number this import was about to
       // write. The transaction rolled back, so the import can be retried. Any
-      // other unique violation is not retryable and stays a 500.
+      // other unique violation is not retryable and goes to the shared API
+      // error handler.
       if (isAgentVersionConflict(err)) {
         throw new ConflictError('Agent import conflicted with a concurrent change. Please retry.');
       }

@@ -64,7 +64,12 @@ export const POST = withAdminAuth(async (request, session) => {
           await ensureBaselineVersion(tx, id, session.user.id);
         }
         // Delete is a soft delete, so it sets isActive = false like deactivate.
-        const result = await tx.aiAgent.updateMany({ where, data: { isActive } });
+        // Exactly the agents selected above: a wider `where` could also catch
+        // one a concurrent edit flipped meanwhile, which would get no version.
+        const result = await tx.aiAgent.updateMany({
+          where: { id: { in: targets.map((t) => t.id) } },
+          data: { isActive },
+        });
         for (const { id } of targets) {
           await recordAgentVersion(tx, id, { label, createdBy: session.user.id });
         }

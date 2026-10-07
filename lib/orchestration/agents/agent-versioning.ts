@@ -209,12 +209,12 @@ export async function recordAgentVersion(
   let changeSummary = label;
   if (newest) {
     const stored = isRecord(newest.snapshot) ? newest.snapshot : {};
-    // Compare only fields both sides record. A snapshot written before a
-    // field joined (or left) the registry lacks (or still carries) it, and
-    // that is not a change this write made.
-    const live = Object.fromEntries(Object.entries(snapshot).filter(([k]) => k in stored));
+    // Ignore fields the stored snapshot carries but the registry has since
+    // dropped: no write can change them. A field the stored snapshot LACKS
+    // still counts as changed, since the newest version does not record it
+    // and must, for the newest version to equal the live config.
     const previous = Object.fromEntries(Object.entries(stored).filter(([k]) => k in snapshot));
-    const changed = diffAgentSnapshots(live, previous).map((c) => c.field);
+    const changed = diffAgentSnapshots(snapshot, previous).map((c) => c.field);
     if (changed.length === 0) return null;
     changeSummary = `${label} — ${buildChangeSummary(changed)}`;
   }

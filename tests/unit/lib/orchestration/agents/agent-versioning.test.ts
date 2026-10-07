@@ -219,18 +219,31 @@ describe('agent-versioning helpers', () => {
   });
 
   describe('recordAgentVersion — fields only one side records', () => {
-    it('writes nothing when the stored snapshot lacks a field the registry added since', async () => {
+    it('writes a version when the stored snapshot lacks a field the live config has', async () => {
       const { systemInstructions: _dropped, ...olderShape } = LIVE_SNAPSHOT;
       const { tx, created } = makeTx([{ version: 2, snapshot: olderShape }]);
 
       const written = await recordAgentVersion(tx, 'agent-1', {
-        label: 'Bulk activate',
+        label: 'Overwritten by agent import',
         createdBy: 'admin-1',
       });
 
-      // The missing field is the snapshot's age, not a change this write made.
-      expect(written).toBeNull();
-      expect(created).toEqual([]);
+      // The newest version does not record the field, so it cannot equal the
+      // live config until one that does is written.
+      expect(written).toBe(3);
+      expect(created[0].snapshot).toEqual(LIVE_SNAPSHOT);
+    });
+
+    it('writes a version when the stored snapshot is malformed', async () => {
+      const { tx, created } = makeTx([{ version: 2, snapshot: 'not an object' }]);
+
+      const written = await recordAgentVersion(tx, 'agent-1', {
+        label: 'Overwritten by backup import',
+        createdBy: 'admin-1',
+      });
+
+      expect(written).toBe(3);
+      expect(created).toHaveLength(1);
     });
 
     it('writes nothing when the stored snapshot carries a field the registry dropped', async () => {
