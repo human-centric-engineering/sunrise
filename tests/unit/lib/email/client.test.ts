@@ -96,8 +96,7 @@ describe('lib/email/client', () => {
 
       expect(result).toBe(false);
       expect(logger.debug).toHaveBeenCalledWith('Email system not fully configured', {
-        hasApiKey: false,
-        hasEmailFrom: false,
+        missingEnv: ['RESEND_API_KEY', 'EMAIL_FROM'],
       });
     });
 
@@ -112,8 +111,7 @@ describe('lib/email/client', () => {
 
       expect(result).toBe(false);
       expect(logger.debug).toHaveBeenCalledWith('Email system not fully configured', {
-        hasApiKey: true,
-        hasEmailFrom: false,
+        missingEnv: ['EMAIL_FROM'],
       });
     });
 
@@ -128,8 +126,7 @@ describe('lib/email/client', () => {
 
       expect(result).toBe(false);
       expect(logger.debug).toHaveBeenCalledWith('Email system not fully configured', {
-        hasApiKey: false,
-        hasEmailFrom: true,
+        missingEnv: ['RESEND_API_KEY'],
       });
     });
 
@@ -234,9 +231,8 @@ describe('lib/email/client', () => {
       expect(logger.warn).toHaveBeenCalledWith(
         'Email verification is required but email provider is not configured',
         {
-          requireEmailVerification: true,
-          hasResendApiKey: false,
-          hasEmailFrom: false,
+          verificationRequired: true,
+          missingEnv: ['RESEND_API_KEY', 'EMAIL_FROM'],
           nodeEnv: 'production',
           recommendation:
             'Set RESEND_API_KEY and EMAIL_FROM, or set REQUIRE_EMAIL_VERIFICATION=false',
@@ -260,9 +256,8 @@ describe('lib/email/client', () => {
       expect(logger.warn).toHaveBeenCalledWith(
         'Email verification is required but email provider is not configured',
         {
-          requireEmailVerification: true,
-          hasResendApiKey: false,
-          hasEmailFrom: false,
+          verificationRequired: true,
+          missingEnv: ['RESEND_API_KEY', 'EMAIL_FROM'],
           nodeEnv: 'development',
           recommendation:
             'Set RESEND_API_KEY and EMAIL_FROM, or set REQUIRE_EMAIL_VERIFICATION=false',
@@ -338,9 +333,8 @@ describe('lib/email/client', () => {
       expect(logger.warn).toHaveBeenCalledWith(
         'Email verification is required but email provider is not configured',
         {
-          requireEmailVerification: true,
-          hasResendApiKey: true,
-          hasEmailFrom: false,
+          verificationRequired: true,
+          missingEnv: ['EMAIL_FROM'],
           nodeEnv: 'production',
           recommendation:
             'Set RESEND_API_KEY and EMAIL_FROM, or set REQUIRE_EMAIL_VERIFICATION=false',
@@ -364,9 +358,8 @@ describe('lib/email/client', () => {
       expect(logger.warn).toHaveBeenCalledWith(
         'Email verification is required but email provider is not configured',
         {
-          requireEmailVerification: true,
-          hasResendApiKey: false,
-          hasEmailFrom: true,
+          verificationRequired: true,
+          missingEnv: ['RESEND_API_KEY'],
           nodeEnv: 'production',
           recommendation:
             'Set RESEND_API_KEY and EMAIL_FROM, or set REQUIRE_EMAIL_VERIFICATION=false',

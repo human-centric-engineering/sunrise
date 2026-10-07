@@ -85,6 +85,6 @@ export const POST = withAdminAuth<Params>(async (request, session, { params }) =
     clientIp: clientIP,
   });
 
-  log.info('Embed token created', { agentId, tokenId: token.id });
+  log.info('Embed token created', { agentId, recordId: token.id });
   return successResponse(token, undefined, { status: 201 });
 });

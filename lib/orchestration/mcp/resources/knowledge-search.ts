@@ -53,7 +53,7 @@ export async function handleKnowledgeSearch(
     }
   } else {
     logger.info('MCP knowledge search via unscoped service key', {
-      apiKeyId: callContext.apiKeyId,
+      keyId: callContext.apiKeyId,
     });
   }
 

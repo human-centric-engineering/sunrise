@@ -52,7 +52,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   log.info('Evaluation session completed', {
     sessionId,
-    tokenUsage: result.tokenUsage,
+    usage: result.tokenUsage,
   });
 
   return successResponse({ session: result });

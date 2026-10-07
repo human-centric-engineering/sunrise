@@ -332,7 +332,7 @@ describe('POST /api/v1/users/invite', () => {
         'Failed to send invitation email',
         expect.objectContaining({
           error: 'SMTP connection failed',
-          emailStatus: 'failed',
+          deliveryStatus: 'failed',
         })
       );
     });
@@ -709,8 +709,8 @@ describe('POST /api/v1/users/invite', () => {
         'Invitation email sent',
         expect.objectContaining({
           email: 'test@example.com',
-          emailId: 'email-id-success-123',
-          emailStatus: 'sent',
+          messageId: 'email-id-success-123',
+          deliveryStatus: 'sent',
         })
       );
     });

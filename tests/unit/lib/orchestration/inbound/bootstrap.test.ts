@@ -35,6 +35,7 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+import { logger } from '@/lib/logging';
 import { registerInboundAdapter } from '@/lib/orchestration/inbound/registry';
 import { GenericHmacAdapter } from '@/lib/orchestration/inbound/adapters/generic-hmac';
 import { PostmarkAdapter } from '@/lib/orchestration/inbound/adapters/postmark';
@@ -211,6 +212,10 @@ describe('bootstrapInboundAdapters — WhatsAppCloudAdapter', () => {
     bootstrapInboundAdapters();
     const calls = vi.mocked(registerInboundAdapter).mock.calls;
     expect(calls.some((args) => args[0] instanceof WhatsAppCloudAdapter)).toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Inbound: WhatsApp Cloud adapter not registered — partial config',
+      { missingEnv: ['WHATSAPP_APP_SECRET'] }
+    );
   });
 
   it('does NOT register when only app secret is set (partial config)', () => {
@@ -218,6 +223,10 @@ describe('bootstrapInboundAdapters — WhatsAppCloudAdapter', () => {
     bootstrapInboundAdapters();
     const calls = vi.mocked(registerInboundAdapter).mock.calls;
     expect(calls.some((args) => args[0] instanceof WhatsAppCloudAdapter)).toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Inbound: WhatsApp Cloud adapter not registered — partial config',
+      { missingEnv: ['WHATSAPP_VERIFY_TOKEN'] }
+    );
   });
 
   it('does NOT register when both env vars are empty strings', () => {

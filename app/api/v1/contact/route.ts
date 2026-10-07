@@ -139,7 +139,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         if (emailResult.success) {
           log.info('Contact notification email sent', {
             submissionId: submission.id,
-            emailId: emailResult.id,
+            messageId: emailResult.id,
           });
         } else {
           log.warn('Failed to send contact notification email', {

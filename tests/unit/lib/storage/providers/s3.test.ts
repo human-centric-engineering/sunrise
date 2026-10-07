@@ -634,6 +634,19 @@ describe('lib/storage/providers/s3', () => {
       const provider = createS3ProviderFromEnv();
 
       expect(provider).toBeNull();
+      expect(logger.debug).toHaveBeenCalledWith(
+        'S3 provider not configured - missing required env vars',
+        { missingEnv: ['S3_SECRET_ACCESS_KEY'] }
+      );
+    });
+
+    it('should name every missing variable when none are set', () => {
+      createS3ProviderFromEnv();
+
+      expect(logger.debug).toHaveBeenCalledWith(
+        'S3 provider not configured - missing required env vars',
+        { missingEnv: ['S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'] }
+      );
     });
 
     it('reads privateObjects from S3_OBJECTS_PRIVATE_BY_DEFAULT', () => {

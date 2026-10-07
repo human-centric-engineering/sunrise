@@ -104,20 +104,20 @@ interface LogEntry {
 /**
  * Fields containing secrets - ALWAYS redacted regardless of environment
  * These are security-critical and should never appear in logs
+ *
+ * One spelling per word, letters only: "apikey" also matches "api_key",
+ * "apiKey" and "x-api-key" (see `matchesSensitiveField`).
  */
 const SECRET_FIELDS = [
   'password',
   'token',
   'apikey',
-  'api_key',
   'secret',
   'creditcard',
-  'credit_card',
   'ssn',
   'authorization',
   'bearer',
   'credential',
-  'private_key',
   'privatekey',
 ];
 
@@ -136,21 +136,15 @@ const PII_FIELDS = [
   'phone',
   'mobile',
   'firstname',
-  'first_name',
   'lastname',
-  'last_name',
   'fullname',
-  'full_name',
   'address',
   'street',
   'postcode',
   'zipcode',
-  'zip_code',
   'ip',
   'ipaddress',
-  'ip_address',
   'useragent',
-  'user_agent',
 ];
 
 /**
@@ -171,30 +165,58 @@ function shouldSanitizePII(): boolean {
 }
 
 /**
- * Check if a field name matches any sensitive pattern
- * Uses word boundary matching to avoid false positives like:
- * - "recipients" matching "ip"
- * - "credentials" matching "credential" (this one is intentionally matched)
- *
- * Matches if the field:
- * - Exactly equals the sensitive pattern
- * - Starts with the pattern followed by non-letter (e.g., "password123")
- * - Ends with the pattern preceded by non-letter (e.g., "userPassword")
- * - Contains the pattern surrounded by non-letters (e.g., "user_password_hash")
+ * The sensitive patterns as letter-only words ("api_key" → "apikey"), built
+ * once. Matching compares these against joined runs of a key's words, so
+ * "api_key", "apikey" and "apiKey" need only one spelling in the lists.
  */
-function matchesSensitiveField(fieldName: string, sensitivePatterns: string[]): boolean {
-  const lowerField = fieldName.toLowerCase();
-  return sensitivePatterns.some((pattern) => {
-    // Exact match
-    if (lowerField === pattern) return true;
+const toLetters = (pattern: string): string => pattern.toLowerCase().replace(/[^a-z]/g, '');
+const SECRET_WORDS: readonly string[] = SECRET_FIELDS.map(toLetters);
+const PII_WORDS: readonly string[] = PII_FIELDS.map(toLetters);
+const LONGEST_PATTERN = Math.max(...[...SECRET_WORDS, ...PII_WORDS].map((word) => word.length));
 
-    // Word boundary matching using regex
-    // Pattern should match as a complete word or camelCase boundary
-    // e.g., "password" matches "userPassword", "password_hash", "PASSWORD"
-    // but "ip" should NOT match "recipients" or "shipping"
-    const regex = new RegExp(`(^|[^a-z])${pattern}([^a-z]|$)`, 'i');
-    return regex.test(lowerField);
-  });
+/**
+ * Split a field name into lower-case words. Every non-letter (`_`, `-`,
+ * `.`, space, digit) separates words, and so does each case boundary:
+ * lower to upper ("userPassword" → [user, password]), the end of an acronym
+ * before a capitalised word ("APIKey" → [api, key]), and the end of an
+ * acronym before lower case ("IPv4" → [ip, v], "APIkey" → [api, key]).
+ * Splitting happens before lower-casing, because lower-casing is what erases
+ * the boundary; NFKC first turns compatibility letters such as the Kelvin sign
+ * into the ASCII letters lower-casing would have produced. Extra split points never lose a match, because matching
+ * rejoins consecutive words.
+ */
+const WORD_BOUNDARY =
+  /[^a-zA-Z]+|(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|(?<=[A-Z]{2})(?=[a-z])/;
+
+function toWords(fieldName: string): string[] {
+  return fieldName
+    .normalize('NFKC')
+    .split(WORD_BOUNDARY)
+    .filter(Boolean)
+    .map((word) => word.toLowerCase());
+}
+
+/**
+ * Check if a field's words (from `toWords`) match any sensitive pattern.
+ *
+ * Matches when one or more consecutive words of the field, joined, equal a
+ * pattern. So "password" matches "userPassword", "password_hash", "PASSWORD"
+ * and "password123"; "postcode" matches "billingPostCode"; and "apikey"
+ * matches "x-api-key" and "stripeAPIkey" (an acronym split in the wrong place
+ * still joins back up). A pattern inside a longer word never matches, which is
+ * what keeps "ip" out of "recipients" and "token" out of "inputTokens".
+ */
+function matchesSensitiveField(words: string[], sensitiveWords: readonly string[]): boolean {
+  for (let start = 0; start < words.length; start++) {
+    let joined = '';
+    // A run longer than the longest pattern can never match, which keeps this
+    // linear in the key's length.
+    for (let end = start; end < words.length && joined.length < LONGEST_PATTERN; end++) {
+      joined += words[end];
+      if (sensitiveWords.includes(joined)) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -264,15 +286,17 @@ export class Logger {
 
     const sanitized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
+      const words = toWords(key);
+
       // Check if field matches a secret pattern (always redact)
       // Uses word boundary matching to avoid false positives
-      if (matchesSensitiveField(key, SECRET_FIELDS)) {
+      if (matchesSensitiveField(words, SECRET_WORDS)) {
         sanitized[key] = '[REDACTED]';
         continue;
       }
 
       // Check if field matches a PII pattern (redact based on environment/config)
-      if (sanitizePII && matchesSensitiveField(key, PII_FIELDS)) {
+      if (sanitizePII && matchesSensitiveField(words, PII_WORDS)) {
         sanitized[key] = '[PII REDACTED]';
         continue;
       }

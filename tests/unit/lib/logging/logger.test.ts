@@ -723,6 +723,116 @@ describe('Logger', () => {
         expect((parsed.meta as any).recipients[1].email).toBe('[PII REDACTED]');
       });
     });
+
+    describe('Compound field names (camelCase, snake_case, kebab-case)', () => {
+      function logAndParse(meta: Record<string, unknown>): Record<string, unknown> {
+        const testLogger = new Logger(LogLevel.INFO);
+        testLogger.info('Compound keys', meta);
+        const output = consoleLogSpy.mock.calls[0]?.[0] as string;
+        const parsed = JSON.parse(output) as ParsedLogOutput;
+        assertDefined(parsed.meta);
+        return parsed.meta;
+      }
+
+      it.each([
+        'userPassword',
+        'newPassword',
+        'accessToken',
+        'refreshToken',
+        'sessionToken',
+        'clientSecret',
+        'APIKey',
+        'x-api-key',
+        'user password',
+        'password123',
+        'user_password_hash',
+        'x-APIkey',
+        'stripeAPIkey',
+        'oauth2Token',
+      ])('should always redact the secret field %s', (key) => {
+        vi.stubEnv('NODE_ENV', 'production');
+        vi.stubEnv('LOG_SANITIZE_PII', 'false');
+
+        const meta = logAndParse({ [key]: 'sensitive-value' });
+
+        expect(meta[key]).toBe('[REDACTED]');
+      });
+
+      it.each([
+        'userEmail',
+        'inviteeEmail',
+        'deletedByEmail',
+        'clientIP',
+        'ipAddress',
+        'zipCode',
+        'user_postCode',
+        'billingPostCode',
+        'clientIPv4',
+        'remoteIPs',
+        'billingZIPcode',
+        'recipientEmail',
+        'first_name',
+      ])('should redact the PII field %s when PII sanitization is on', (key) => {
+        vi.stubEnv('NODE_ENV', 'production');
+        vi.stubEnv('LOG_SANITIZE_PII', 'true');
+
+        const meta = logAndParse({ [key]: 'pii-value' });
+
+        expect(meta[key]).toBe('[PII REDACTED]');
+      });
+
+      it('should redact a key spelled with a compatibility letter that folds to ASCII', () => {
+        vi.stubEnv('NODE_ENV', 'production');
+        // U+212A KELVIN SIGN lower-cases to "k"
+        const key = 'api\u212Aey';
+
+        const meta = logAndParse({ [key]: 'sensitive-value' });
+
+        expect(meta[key]).toBe('[REDACTED]');
+      });
+
+      it.each([
+        'recordId',
+        'keyId',
+        'grantedKey',
+        'usage',
+        'deliveryStatus',
+        'messageId',
+        'deliveryEnabled',
+        'verificationRequired',
+        'missingEnv',
+      ])('should keep the renamed operational key %s in the clear', (key) => {
+        vi.stubEnv('NODE_ENV', 'production');
+        vi.stubEnv('LOG_SANITIZE_PII', 'true');
+
+        const meta = logAndParse({ [key]: 'plain-value' });
+
+        expect(meta[key]).toBe('plain-value');
+      });
+
+      // The default 5s test timeout is the bound: an unbounded run search took
+      // over a minute on this key.
+      it('should still redact a sensitive word at the end of a key with many words', () => {
+        vi.stubEnv('NODE_ENV', 'production');
+        const key = `${'ab_'.repeat(5000)}password`;
+
+        const meta = logAndParse({ [key]: 'sensitive-value' });
+
+        expect(meta[key]).toBe('[REDACTED]');
+      });
+
+      it.each(['recipients', 'shipping', 'description', 'tokens', 'inputTokens'])(
+        'should not redact %s, which only contains a sensitive word inside a longer word',
+        (key) => {
+          vi.stubEnv('NODE_ENV', 'production');
+          vi.stubEnv('LOG_SANITIZE_PII', 'true');
+
+          const meta = logAndParse({ [key]: 'plain-value' });
+
+          expect(meta[key]).toBe('plain-value');
+        }
+      );
+    });
   });
 
   describe('Output Formatting', () => {

@@ -264,11 +264,11 @@ logger.info('Auth attempt', {
 
 **Secret fields** (always redacted in all environments):
 
-- `password`, `token`, `apikey`, `api_key`, `secret`
-- `creditcard`, `credit_card`, `ssn`, `authorization`
-- `bearer`, `credential`, `privatekey`, `private_key`
+- `password`, `token`, `apikey`, `secret`
+- `creditcard`, `ssn`, `authorization`
+- `bearer`, `credential`, `privatekey`
 
-**Note:** Field matching is case-insensitive, so `apiKey`, `APIKEY`, and `apikey` all match.
+**Note:** Matching is by whole words of the key. A key is split into words at every non-letter (`_`, `-`, `.`, space, digit) and at each camelCase or acronym boundary (`APIKey`, `APIkey`, `IPv4`), and a pattern matches when one or more consecutive words, joined, equal it with its `_` removed. So `userPassword`, `accessToken`, `x-api-key`, `APIKEY`, `password_hash` and `billingPostCode` all match, while `recipients` does not match `ip` and `inputTokens` does not match `token`. An all-caps run gives no boundary to split on, so `XAPIKey` reads as `xapi` + `key` and is **not** matched — write `xApiKey` or `x_api_key`. The cost of word matching is that a non-secret key naming a sensitive word is redacted too (`tokenId`, `hasApiKey`, `emailStatus`): log those under a name without the word (`recordId`, `missingEnv: ['RESEND_API_KEY']`, `deliveryStatus`) if you need the value.
 
 ### Tier 2: PII (Environment-Aware)
 
@@ -291,9 +291,11 @@ logger.info('User created', {
 **PII fields** (redacted in production by default):
 
 - `email`, `phone`, `mobile`
-- `firstname`, `first_name`, `lastname`, `last_name`, `fullname`, `full_name`
-- `address`, `street`, `postcode`, `zipcode`, `zip_code`
-- `ip`, `ipaddress`, `ip_address`, `useragent`, `user_agent`
+- `firstname`, `lastname`, `fullname`
+- `address`, `street`, `postcode`, `zipcode`
+- `ip`, `ipaddress`, `useragent`
+
+Each list holds one spelling per word: `firstname` also matches `first_name`, `firstName` and `first-name`.
 
 ### LOG_SANITIZE_PII Configuration
 

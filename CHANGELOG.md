@@ -238,6 +238,22 @@ release process.
   bucket, at runtime and in `GET /admin/orchestration/models`. An operator who
   relied on editing the matrix to re-price a known model must now do it
   elsewhere; a model only the matrix knows is still priced from its row.
+- **Log keys renamed so word-based redaction leaves them readable** (#951).
+  The logger now redacts any key containing a sensitive word (see Security),
+  which would also hide non-secret keys such as `tokenId` or `hasApiKey`, as
+  their snake_case forms already were. Sunrise's own such keys are renamed;
+  dashboards or alerts reading the old keys should switch:
+  - `missingEnv` (a list of unset variable names) replaces the `has*`
+    booleans in the email, S3 and WhatsApp configuration warnings;
+  - `deliveryStatus` / `messageId` replace `emailStatus` / `emailId` in the
+    invitation and contact routes; `deliveryEnabled` replaces `emailEnabled`;
+    `verificationRequired` replaces `requireEmailVerification`;
+  - `grantedKey` replaces `tokenKey` (storage token mismatch); `recordId`
+    replaces `tokenId` (embed and invite token refusals, embed-token admin
+    routes); `keyId` replaces `apiKeyId` (unscoped MCP knowledge search);
+    `usage` replaces `tokenUsage` (evaluation completed).
+  - The sensitive-field lists drop their `_` spellings (`api_key`,
+    `first_name`, …): one letters-only spelling now covers every form.
 - **A `tool_call` step interpolates its `args`** (t-770). Every string in an
   authored `args` object now resolves `{{input.…}}`, `{{<stepId>.output}}`,
   `{{trigger.…}}` and the rest, as every other step type's config already did;
@@ -815,6 +831,27 @@ release process.
     their refusal and ownership lines; the auth catch-all's `authPath`
     (better-auth's `/reset-password/<token>`); and the rate-limit
     middleware's unknown-tier warning.
+
+- **The logger redacts camelCase and kebab-case keys** (#951). Key matching
+  lower-cased a key before looking for word boundaries, which erased the
+  camelCase boundary, so `userPassword`, `accessToken`, `clientSecret`,
+  `userEmail` and similar keys were written in the clear while `password` and
+  `user_email` were redacted. Keys are now split into words at every
+  non-letter and at camelCase and acronym boundaries, and a pattern matches a
+  run of consecutive words; every key redacted before is still redacted.
+  Production log fields that change from clear text to `[REDACTED]` /
+  `[PII REDACTED]`:
+  - the sign-up hook's `userEmail`, the OAuth invitation-mismatch line's
+    `invitationEmail` and `oauthEmail`, and the invitation-delete route's
+    `deletedByEmail`;
+  - `sendEmail`'s recipients, now logged as `recipientEmail` instead of `to`
+    on every send line, so invitation, contact and welcome mail no longer log
+    the address in production;
+  - `clientIP` on the inbound signature-failure and verification-handshake
+    lines and the webhook-trigger execution line (IP is in the PII list; set
+    `LOG_SANITIZE_PII=false` to keep it);
+  - PostHog's debug `apiKeyPrefix`, and `apiKeyEnvVar` in the May 2026
+    provider migration scripts' skip warnings.
 
 - **`csvEscape` quotes a lone CR, so free text can no longer start a CSV
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after
