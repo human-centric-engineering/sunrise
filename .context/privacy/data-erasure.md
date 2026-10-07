@@ -206,8 +206,10 @@ transaction):
    (the public form takes an address, not a session), so no cascade reaches it.
    The service deletes the rows sent from the subject's address, matched
    **exactly** on the trimmed, lower-cased form the contact route stores, through
-   `contactSubmissionsOf()` in `lib/privacy/contact-submissions.ts` — the same
-   matcher the subject-access export uses, so the two cannot drift. Never
+   `contactSubmissionsOf()` in `lib/privacy/contact-submissions.ts`. The export
+   uses the same matcher on the same input — the address on the user row, read
+   inside the transaction, not the caller's `userEmail`, which a cached session
+   can hold stale across an email change — so the two cannot drift. Never
    `mode: 'insensitive'`: Prisma compiles it to an unescaped `ILIKE`, so a `_`
    or `%` in the address would delete a stranger's messages too (#766).
    Deleted rather than anonymised, because the export already hands these rows

@@ -915,8 +915,8 @@ release process.
   cascade never reached it: `eraseUser()` reported success and left the
   person's name, address and messages behind, while the export already treated
   those rows as theirs. They are now deleted inside the erasure transaction,
-  matched exactly on the trimmed, lower-cased address through
-  `contactSubmissionsOf()`, the matcher the export also uses. A fork with its own
+  matched exactly on the account's stored address, trimmed and lower-cased,
+  through `contactSubmissionsOf()`, the matcher the export also uses. A fork with its own
   table keyed by email needs the same step in an erasure hook's
   `scrubInTransaction`; `.context/privacy/data-erasure.md` shows how.
 
