@@ -34,8 +34,9 @@ export function isEmailEnabled(): boolean {
 
   if (!enabled) {
     logger.debug('Email system not fully configured', {
-      hasApiKey: !!env.RESEND_API_KEY,
-      hasEmailFrom: !!env.EMAIL_FROM,
+      missingEnv: [!env.RESEND_API_KEY && 'RESEND_API_KEY', !env.EMAIL_FROM && 'EMAIL_FROM'].filter(
+        Boolean
+      ),
     });
   }
 
@@ -85,9 +86,10 @@ export function validateEmailConfig(): void {
   // Check for mismatch: verification required but email not configured
   if (requireEmailVerification && !isEmailEnabled()) {
     logger.warn('Email verification is required but email provider is not configured', {
-      requireEmailVerification,
-      hasResendApiKey: !!env.RESEND_API_KEY,
-      hasEmailFrom: !!env.EMAIL_FROM,
+      verificationRequired: requireEmailVerification,
+      missingEnv: [!env.RESEND_API_KEY && 'RESEND_API_KEY', !env.EMAIL_FROM && 'EMAIL_FROM'].filter(
+        Boolean
+      ),
       nodeEnv: env.NODE_ENV,
       recommendation: 'Set RESEND_API_KEY and EMAIL_FROM, or set REQUIRE_EMAIL_VERIFICATION=false',
     });

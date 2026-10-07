@@ -745,13 +745,23 @@ release process.
   lower-cased a key before looking for word boundaries, which erased the
   camelCase boundary, so `userPassword`, `accessToken`, `clientSecret`,
   `userEmail` and similar keys were written in the clear while `password` and
-  `user_email` were redacted. Keys are now split into words at camelCase,
-  `_`, `-` and spaces first. Production log fields that change from clear text
-  to `[REDACTED]` / `[PII REDACTED]` include the sign-up hook's `userEmail`
-  and the invitation-delete route's `deletedByEmail`; non-secret keys that
-  name a sensitive word (`tokenId`, `apiKeyId`, `hasApiKey`, `emailStatus`,
-  `clientIP`) are now redacted too, as their snake_case forms already were.
-  Dashboards or alerts reading those fields should switch to another key.
+  `user_email` were redacted. Keys are now split into words at every
+  non-letter and at camelCase and acronym boundaries, and a pattern matches a
+  run of consecutive words; every key redacted before is still redacted.
+  Production log fields that change from clear text to `[REDACTED]` /
+  `[PII REDACTED]` include the sign-up hook's `userEmail` and the
+  invitation-delete route's `deletedByEmail`.
+  - Non-secret keys that name a sensitive word (`tokenId`, `apiKeyId`,
+    `hasApiKey`, `emailStatus`) are now redacted too, as their snake_case forms
+    already were. Sunrise's own such log keys are renamed so they keep their
+    values: `missingEnv` (a list of unset variable names) replaces the
+    `has*` booleans in the email, S3 and WhatsApp configuration warnings;
+    `deliveryStatus` / `messageId` replace `emailStatus` / `emailId` in the
+    invitation and contact routes; `deliveryEnabled` replaces `emailEnabled`;
+    `verificationRequired` replaces `requireEmailVerification`; `grantedKey`,
+    `recordId` and `keyId` replace `tokenKey` (storage token mismatch),
+    `tokenId` (embed token refused) and `apiKeyId` (unscoped MCP knowledge
+    search). Dashboards or alerts reading the old keys should switch.
 
 - **`csvEscape` quotes a lone CR, so free text can no longer start a CSV
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after

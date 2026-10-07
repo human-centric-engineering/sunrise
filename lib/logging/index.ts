@@ -171,48 +171,50 @@ function shouldSanitizePII(): boolean {
 }
 
 /**
- * Normalise a field name to lower-case words joined by `_`, so camelCase,
- * PascalCase, kebab-case and spaced keys share snake_case word boundaries:
- * "userPassword" → "user_password", "APIKey" → "api_key",
- * "x-api-key" → "x_api_key". Splitting must happen before lower-casing,
+ * The sensitive patterns as letter-only words ("api_key" → "apikey"), built
+ * once. Matching compares these against joined runs of a key's words, so
+ * "api_key", "apikey" and "apiKey" need only one spelling in the lists.
+ */
+const toLetters = (pattern: string): string => pattern.replace(/[^a-z]/g, '');
+const SECRET_WORDS = new Set(SECRET_FIELDS.map(toLetters));
+const PII_WORDS = new Set(PII_FIELDS.map(toLetters));
+
+/**
+ * Split a field name into lower-case words. Every non-letter (`_`, `-`,
+ * `.`, space, digit) separates words, and so does each camelCase or
+ * acronym boundary: "userPassword" → [user, password], "APIKey" → [api, key],
+ * "oauth2Token" → [oauth, token]. Splitting happens before lower-casing,
  * because lower-casing is what erases the camelCase boundary.
  */
-function toSnakeWords(fieldName: string): string {
+function toWords(fieldName: string): string[] {
   return fieldName
-    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
-    .replace(/([A-Z])([A-Z][a-z])/g, '$1_$2')
-    .replace(/[-\s]+/g, '_')
-    .toLowerCase();
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter(Boolean);
 }
 
 /**
- * Check if a field name matches any sensitive pattern
- * Uses word boundary matching to avoid false positives like:
- * - "recipients" matching "ip"
- * - "credentials" matching "credential" (this one is intentionally matched)
+ * Check if a field name matches any sensitive pattern.
  *
- * Matches if the field, split into words (see `toSnakeWords`):
- * - Exactly equals the sensitive pattern
- * - Starts with the pattern followed by non-letter (e.g., "password123")
- * - Ends with the pattern preceded by non-letter (e.g., "userPassword")
- * - Contains the pattern surrounded by non-letters (e.g., "user_password_hash")
+ * Matches when one or more consecutive words of the field, joined, equal a
+ * pattern. So "password" matches "userPassword", "password_hash", "PASSWORD"
+ * and "password123"; "postcode" matches "billingPostCode"; and "apikey"
+ * matches "x-api-key" and "stripeAPIkey" (an acronym split in the wrong place
+ * still joins back up). A pattern inside a longer word never matches, which is
+ * what keeps "ip" out of "recipients" and "token" out of "inputTokens".
  */
-function matchesSensitiveField(fieldName: string, sensitivePatterns: string[]): boolean {
-  const lowerField = fieldName.toLowerCase();
-  const wordField = toSnakeWords(fieldName);
-  return sensitivePatterns.some((pattern) => {
-    // Exact match
-    if (lowerField === pattern) return true;
-
-    // Word boundary matching using regex
-    // e.g., "password" matches "userPassword", "password_hash", "PASSWORD"
-    // but "ip" should NOT match "recipients" or "shipping"
-    // Tested against both forms: the split form catches camelCase keys, and
-    // the unsplit form keeps every key the split could break apart
-    // (e.g. "user_postCode" → "user_post_code" no longer contains "postcode").
-    const regex = new RegExp(`(^|[^a-z])${pattern}([^a-z]|$)`);
-    return regex.test(wordField) || regex.test(lowerField);
-  });
+function matchesSensitiveField(fieldName: string, sensitiveWords: Set<string>): boolean {
+  const words = toWords(fieldName);
+  for (let start = 0; start < words.length; start++) {
+    let joined = '';
+    for (let end = start; end < words.length; end++) {
+      joined += words[end];
+      if (sensitiveWords.has(joined)) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -284,13 +286,13 @@ export class Logger {
     for (const [key, value] of Object.entries(obj)) {
       // Check if field matches a secret pattern (always redact)
       // Uses word boundary matching to avoid false positives
-      if (matchesSensitiveField(key, SECRET_FIELDS)) {
+      if (matchesSensitiveField(key, SECRET_WORDS)) {
         sanitized[key] = '[REDACTED]';
         continue;
       }
 
       // Check if field matches a PII pattern (redact based on environment/config)
-      if (sanitizePII && matchesSensitiveField(key, PII_FIELDS)) {
+      if (sanitizePII && matchesSensitiveField(key, PII_WORDS)) {
         sanitized[key] = '[PII REDACTED]';
         continue;
       }

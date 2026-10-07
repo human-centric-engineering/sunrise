@@ -264,13 +264,13 @@ export const POST = withAdminAuth(async (request, session) => {
     log.warn('Failed to send invitation email', {
       email: body.email,
       error: emailResult.error,
-      emailStatus: emailResult.status,
+      deliveryStatus: emailResult.status,
     });
   } else {
     log.info('Invitation email sent', {
       email: body.email,
-      emailId: emailResult.id,
-      emailStatus: emailResult.status,
+      messageId: emailResult.id,
+      deliveryStatus: emailResult.status,
     });
   }
 

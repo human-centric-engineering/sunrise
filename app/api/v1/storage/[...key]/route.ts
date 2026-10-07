@@ -65,7 +65,7 @@ export async function GET(
   if (tokenKey !== key) {
     logger.warn('Storage token presented for a different key', {
       requestedKey: key,
-      tokenKey,
+      grantedKey: tokenKey,
     });
     return errorResponse('This token does not grant access to the requested object', {
       code: 'TOKEN_KEY_MISMATCH',

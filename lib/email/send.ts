@@ -41,7 +41,7 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendEmailRes
     to: Array.isArray(to) ? to.join(', ') : to,
     subject,
     from: sender,
-    emailEnabled: isEmailEnabled(),
+    deliveryEnabled: isEmailEnabled(),
     nodeEnv: env.NODE_ENV,
   });
 

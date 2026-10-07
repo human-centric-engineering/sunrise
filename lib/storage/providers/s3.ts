@@ -303,9 +303,11 @@ export function createS3ProviderFromEnv(): S3Provider | null {
 
   if (!bucket || !accessKeyId || !secretAccessKey) {
     logger.debug('S3 provider not configured - missing required env vars', {
-      hasBucket: !!bucket,
-      hasAccessKeyId: !!accessKeyId,
-      hasSecretAccessKey: !!secretAccessKey,
+      missingEnv: [
+        !bucket && 'S3_BUCKET',
+        !accessKeyId && 'S3_ACCESS_KEY_ID',
+        !secretAccessKey && 'S3_SECRET_ACCESS_KEY',
+      ].filter(Boolean),
     });
     return null;
   }

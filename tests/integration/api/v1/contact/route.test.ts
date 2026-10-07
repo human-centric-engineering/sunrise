@@ -264,7 +264,7 @@ describe('POST /api/v1/contact', () => {
         'Contact notification email sent',
         expect.objectContaining({
           submissionId: mockSubmission.id,
-          emailId: 'email-id-456',
+          messageId: 'email-id-456',
         })
       );
     });

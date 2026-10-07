@@ -116,7 +116,7 @@ export async function resolveEmbedToken(
     );
     if ('refused' in entry) {
       logger.warn('resolveEmbedToken: token cannot enter its org', {
-        tokenId: record.id,
+        recordId: record.id,
         refused: entry.refused,
       });
       return null;

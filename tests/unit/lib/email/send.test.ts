@@ -343,7 +343,7 @@ describe('lib/email/send', () => {
           to: 'user1@example.com, user2@example.com',
           subject: 'Log Test',
           from: 'noreply@sunrise.com',
-          emailEnabled: true,
+          deliveryEnabled: true,
         })
       );
     });

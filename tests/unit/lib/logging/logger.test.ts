@@ -747,6 +747,8 @@ describe('Logger', () => {
         'password123',
         'user_password_hash',
         'x-APIkey',
+        'stripeAPIkey',
+        'oauth2Token',
       ])('should always redact the secret field %s', (key) => {
         vi.stubEnv('NODE_ENV', 'production');
         vi.stubEnv('LOG_SANITIZE_PII', 'false');
@@ -764,6 +766,8 @@ describe('Logger', () => {
         'ipAddress',
         'zipCode',
         'user_postCode',
+        'billingPostCode',
+        'billingZIPcode',
       ])('should redact the PII field %s when PII sanitization is on', (key) => {
         vi.stubEnv('NODE_ENV', 'production');
         vi.stubEnv('LOG_SANITIZE_PII', 'true');

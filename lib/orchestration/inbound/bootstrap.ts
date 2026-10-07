@@ -72,8 +72,7 @@ export function bootstrapInboundAdapters(): void {
     // Partial config — warn loudly. Most likely an env-var typo since both
     // are needed and they're commonly set together.
     logger.warn('Inbound: WhatsApp Cloud adapter not registered — partial config', {
-      hasVerifyToken: Boolean(whatsappVerifyToken),
-      hasAppSecret: Boolean(whatsappAppSecret),
+      missingEnv: whatsappVerifyToken ? ['WHATSAPP_APP_SECRET'] : ['WHATSAPP_VERIFY_TOKEN'],
     });
   }
 

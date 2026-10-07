@@ -268,7 +268,7 @@ logger.info('Auth attempt', {
 - `creditcard`, `credit_card`, `ssn`, `authorization`
 - `bearer`, `credential`, `privatekey`, `private_key`
 
-**Note:** Field matching is case-insensitive and matches whole words of the key. A key is split into words at camelCase, `_`, `-` and spaces before matching, so `userPassword`, `accessToken`, `x-api-key`, `APIKEY` and `password_hash` all match, while `recipients` does not match `ip` and `inputTokens` does not match `token`. The cost is that a non-secret key naming a sensitive word is redacted too (`tokenId`, `hasApiKey`, `emailStatus`) — log those under a different name if you need the value.
+**Note:** Matching is by whole words of the key. A key is split into words at every non-letter (`_`, `-`, `.`, space, digit) and at each camelCase or acronym boundary, and a pattern matches when one or more consecutive words, joined, equal it with its `_` removed. So `userPassword`, `accessToken`, `x-api-key`, `APIKEY`, `password_hash` and `billingPostCode` all match, while `recipients` does not match `ip` and `inputTokens` does not match `token`. An all-caps run gives no boundary to split on, so `XAPIKey` reads as `xapi` + `key` and is **not** matched — write `xApiKey` or `x_api_key`. The cost of word matching is that a non-secret key naming a sensitive word is redacted too (`tokenId`, `hasApiKey`, `emailStatus`): log those under a name without the word (`recordId`, `missingEnv: ['RESEND_API_KEY']`, `deliveryStatus`) if you need the value.
 
 ### Tier 2: PII (Environment-Aware)
 
