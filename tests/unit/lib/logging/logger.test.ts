@@ -746,6 +746,7 @@ describe('Logger', () => {
         'user password',
         'password123',
         'user_password_hash',
+        'x-APIkey',
       ])('should always redact the secret field %s', (key) => {
         vi.stubEnv('NODE_ENV', 'production');
         vi.stubEnv('LOG_SANITIZE_PII', 'false');
@@ -755,17 +756,22 @@ describe('Logger', () => {
         expect(meta[key]).toBe('[REDACTED]');
       });
 
-      it.each(['userEmail', 'inviteeEmail', 'deletedByEmail', 'clientIP', 'ipAddress', 'zipCode'])(
-        'should redact the PII field %s when PII sanitization is on',
-        (key) => {
-          vi.stubEnv('NODE_ENV', 'production');
-          vi.stubEnv('LOG_SANITIZE_PII', 'true');
+      it.each([
+        'userEmail',
+        'inviteeEmail',
+        'deletedByEmail',
+        'clientIP',
+        'ipAddress',
+        'zipCode',
+        'user_postCode',
+      ])('should redact the PII field %s when PII sanitization is on', (key) => {
+        vi.stubEnv('NODE_ENV', 'production');
+        vi.stubEnv('LOG_SANITIZE_PII', 'true');
 
-          const meta = logAndParse({ [key]: 'pii-value' });
+        const meta = logAndParse({ [key]: 'pii-value' });
 
-          expect(meta[key]).toBe('[PII REDACTED]');
-        }
-      );
+        expect(meta[key]).toBe('[PII REDACTED]');
+      });
 
       it.each(['recipients', 'shipping', 'description', 'tokens', 'inputTokens'])(
         'should not redact %s, which only contains a sensitive word inside a longer word',

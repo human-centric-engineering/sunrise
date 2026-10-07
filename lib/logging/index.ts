@@ -207,8 +207,11 @@ function matchesSensitiveField(fieldName: string, sensitivePatterns: string[]): 
     // Word boundary matching using regex
     // e.g., "password" matches "userPassword", "password_hash", "PASSWORD"
     // but "ip" should NOT match "recipients" or "shipping"
+    // Tested against both forms: the split form catches camelCase keys, and
+    // the unsplit form keeps every key the split could break apart
+    // (e.g. "user_postCode" → "user_post_code" no longer contains "postcode").
     const regex = new RegExp(`(^|[^a-z])${pattern}([^a-z]|$)`);
-    return regex.test(wordField);
+    return regex.test(wordField) || regex.test(lowerField);
   });
 }
 
