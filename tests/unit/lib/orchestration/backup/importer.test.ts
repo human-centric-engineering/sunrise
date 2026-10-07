@@ -49,6 +49,19 @@ const mockTx = {
   aiKnowledgeDocument: { findMany: vi.fn() },
 };
 
+// The version helpers read the agent back and write `AiAgentVersion` rows;
+// their behaviour is proved in agent-versioning's own tests. Here they are
+// stubbed so the test can assert WHEN the import calls them.
+vi.mock('@/lib/orchestration/agents/agent-versioning', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/agents/agent-versioning')>();
+  return {
+    ...actual,
+    ensureBaselineVersion: vi.fn(async () => undefined),
+    recordAgentVersion: vi.fn(async () => 2),
+  };
+});
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     $transaction: vi.fn((fn: (tx: typeof mockTx) => Promise<unknown>) => fn(mockTx)),
@@ -66,6 +79,11 @@ vi.mock('@/lib/logging', () => ({
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { importOrchestrationConfig } from '@/lib/orchestration/backup/importer';
+import {
+  INITIAL_VERSION_SUMMARY,
+  ensureBaselineVersion,
+  recordAgentVersion,
+} from '@/lib/orchestration/agents/agent-versioning';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -197,6 +215,9 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiWebhookSubscription.findFirst.mockReset();
     mockTx.aiWebhookSubscription.create.mockReset();
     mockTx.aiOrchestrationSettings.upsert.mockReset();
+    mockTx.aiAgentKnowledgeDocument.deleteMany.mockClear();
+    vi.mocked(ensureBaselineVersion).mockClear();
+    vi.mocked(recordAgentVersion).mockClear();
   });
 
   it('throws ZodError when schema is invalid (wrong schemaVersion)', async () => {
@@ -282,6 +303,44 @@ describe('importOrchestrationConfig', () => {
     expect(mockTx.aiAgent.create).not.toHaveBeenCalled();
     expect(result.agents.updated).toBe(1);
     expect(result.agents.created).toBe(0);
+  });
+
+  it("saves an overwritten agent's restored config as a new agent version, after its grants", async () => {
+    mockTx.aiAgent.findFirst.mockResolvedValue({ id: 'existing-id', slug: 'support-bot' });
+    mockTx.aiAgent.update.mockResolvedValue({});
+
+    const payload = { ...minPayload, data: { ...minPayload.data, agents: [makeAgent()] } };
+    await importOrchestrationConfig(payload, 'user-1');
+
+    expect(ensureBaselineVersion).toHaveBeenCalledWith(mockTx, 'existing-id', 'user-1');
+    expect(recordAgentVersion).toHaveBeenCalledWith(mockTx, 'existing-id', {
+      changeSummary: 'Overwritten by backup import',
+      createdBy: 'user-1',
+    });
+    // Baseline before the row changes; the version after the grant rebuild, or
+    // it would snapshot the agent's old grants.
+    expect(vi.mocked(ensureBaselineVersion).mock.invocationCallOrder[0]).toBeLessThan(
+      mockTx.aiAgent.update.mock.invocationCallOrder[0]
+    );
+    expect(vi.mocked(recordAgentVersion).mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockTx.aiAgentKnowledgeDocument.deleteMany.mock.invocationCallOrder[0]
+    );
+  });
+
+  it("saves a created agent's restored config as its v1", async () => {
+    mockTx.aiAgent.findFirst
+      .mockResolvedValueOnce(null) // no agent with this slug yet
+      .mockResolvedValueOnce({ id: 'new-id' }); // the grant step's lookup
+    mockTx.aiAgent.create.mockResolvedValue({ id: 'new-id' });
+
+    const payload = { ...minPayload, data: { ...minPayload.data, agents: [makeAgent()] } };
+    await importOrchestrationConfig(payload, 'user-1');
+
+    expect(recordAgentVersion).toHaveBeenCalledWith(mockTx, 'new-id', {
+      changeSummary: INITIAL_VERSION_SUMMARY,
+      createdBy: 'user-1',
+    });
+    expect(ensureBaselineVersion).not.toHaveBeenCalled();
   });
 
   it('creates a new capability → capabilities.created = 1', async () => {

@@ -52,6 +52,19 @@ vi.mock('next/headers', () => ({
  * with a transactional client (tx). The tx object mirrors the same models
  * we need in the import handler.
  */
+// The version helpers read the agent back and write `AiAgentVersion` rows;
+// their behaviour is proved in agent-versioning's own tests. Here they are
+// stubbed so the test can assert WHEN the import calls them.
+vi.mock('@/lib/orchestration/agents/agent-versioning', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/lib/orchestration/agents/agent-versioning')>();
+  return {
+    ...actual,
+    ensureBaselineVersion: vi.fn(async () => undefined),
+    recordAgentVersion: vi.fn(async () => 2),
+  };
+});
+
 vi.mock('@/lib/db/client', () => {
   const txMock = {
     aiAgent: {
@@ -99,6 +112,11 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
+import {
+  INITIAL_VERSION_SUMMARY,
+  ensureBaselineVersion,
+  recordAgentVersion,
+} from '@/lib/orchestration/agents/agent-versioning';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -255,6 +273,27 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       expect(data.data.overwritten).toBe(0);
     });
 
+    it("saves a new agent's imported config as its v1", async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const tx = getTxMock();
+      tx.aiAgent.findFirst.mockResolvedValue(null);
+
+      const response = await POST(
+        makeRequest({ bundle: makeBundle([makeBundledAgent('new-agent')]) })
+      );
+
+      expect(response.status).toBe(200);
+      expect(recordAgentVersion).toHaveBeenCalledWith(tx, AGENT_ID, {
+        changeSummary: INITIAL_VERSION_SUMMARY,
+        createdBy: ADMIN_ID,
+      });
+      expect(vi.mocked(recordAgentVersion).mock.invocationCallOrder[0]).toBeGreaterThan(
+        tx.aiAgent.create.mock.invocationCallOrder[0]
+      );
+      // A new agent has no earlier config to keep.
+      expect(ensureBaselineVersion).not.toHaveBeenCalled();
+    });
+
     it('creates capability pivot rows when capabilities exist in db', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([
@@ -368,6 +407,41 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
         expect.objectContaining({ where: { agentId: existingAgent.id } })
       );
       expect(tx.aiAgentCapability.createMany).toHaveBeenCalled();
+    });
+
+    it('saves the overwritten config as a new agent version, after every write', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const existingAgent = makeDbAgent(AGENT_ID, 'existing-agent');
+      const tx = getTxMock();
+      tx.aiAgent.findFirst.mockResolvedValue(existingAgent);
+
+      const response = await POST(
+        makeRequest({
+          bundle: makeBundle([makeBundledAgent('existing-agent')]),
+          conflictMode: 'overwrite',
+        })
+      );
+
+      expect(response.status).toBe(200);
+      // A pre-versioning agent keeps its current config as v1 before the write…
+      expect(ensureBaselineVersion).toHaveBeenCalledWith(tx, existingAgent.id, ADMIN_ID);
+      // …and the imported config becomes the newest version, inside the same tx.
+      expect(recordAgentVersion).toHaveBeenCalledWith(tx, existingAgent.id, {
+        changeSummary: 'Overwritten by agent import',
+        createdBy: ADMIN_ID,
+      });
+      const baselineAt = vi.mocked(ensureBaselineVersion).mock.invocationCallOrder[0];
+      const recordAt = vi.mocked(recordAgentVersion).mock.invocationCallOrder[0];
+      // Baseline before the row changes; the new version after the last grant
+      // write, or it would snapshot the agent's old grants.
+      expect(baselineAt).toBeLessThan(tx.aiAgent.update.mock.invocationCallOrder[0]);
+      expect(recordAt).toBeGreaterThan(
+        Math.max(
+          tx.aiAgent.update.mock.invocationCallOrder[0],
+          ...tx.aiAgentKnowledgeTag.deleteMany.mock.invocationCallOrder,
+          ...tx.aiAgentKnowledgeDocument.deleteMany.mock.invocationCallOrder
+        )
+      );
     });
 
     it('rebuilds knowledge-document grants by slug on overwrite (#338)', async () => {

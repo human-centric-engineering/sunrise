@@ -232,6 +232,16 @@ release process.
 
 ### Changed
 
+- **Reverting an agent's instructions, importing an agent bundle over an
+  agent, and restoring a backup over an agent now each add an agent version**
+  (t-779). `POST /admin/orchestration/agents/:id/instructions-revert`,
+  `POST /admin/orchestration/agents/import` and the backup import used to
+  change an agent's versioned config without one, so its newest version no
+  longer matched what it ran. Version history now shows these changes as a new
+  vN; an agent created by either import gets a v1. A backup that leaves an
+  agent unchanged adds nothing. The workflow `chat_turn` step also reads an
+  agent and its newest version in one snapshot, so an edit committed mid-read
+  cannot pin a turn to a version it did not run.
 - **The Model Matrix no longer overrides the price or context window of a
   model the registry already knows** (#813, t-769). A positive figure from the
   static map or OpenRouter now wins over the row's blended rate and context

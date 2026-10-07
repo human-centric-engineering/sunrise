@@ -29,6 +29,13 @@ import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import type { WorkflowDefinition } from '@/types/orchestration';
 import { importedAgentProviderWarnings } from '@/lib/orchestration/agents/provider-approval';
 import { findUnapprovedModelOverridesIn } from '@/lib/orchestration/workflows/semantic-validator';
+import {
+  INITIAL_VERSION_SUMMARY,
+  ensureBaselineVersion,
+  recordAgentVersion,
+} from '@/lib/orchestration/agents/agent-versioning';
+
+const BACKUP_CHANGE_SUMMARY = 'Overwritten by backup import';
 
 export interface ImportResult {
   agents: { created: number; updated: number };
@@ -143,6 +150,7 @@ export async function importOrchestrationConfig(
       const unapproved = agentProviders.bySlug.get(agent.slug);
       if (unapproved) result.warnings.push(unapproved);
       if (existing) {
+        await ensureBaselineVersion(tx, existing.id, userId);
         await tx.aiAgent.update({
           where: { id: existing.id },
           data: {
@@ -306,6 +314,14 @@ export async function importOrchestrationConfig(
           skipDuplicates: true,
         });
       }
+
+      // Save the restored config (row and grants) as the agent's next version
+      // (v1 for a new agent), so the newest version equals what it now runs.
+      // Nothing is written when the backup left the config unchanged.
+      await recordAgentVersion(tx, target.id, {
+        changeSummary: existing ? BACKUP_CHANGE_SUMMARY : INITIAL_VERSION_SUMMARY,
+        createdBy: userId,
+      });
     }
 
     // Import capabilities by slug upsert

@@ -7,7 +7,8 @@
  *   `systemInstructionsHistory[versionIndex]`. Before the swap, the
  *   current value is pushed onto history so the revert itself is
  *   auditable — otherwise the value you're reverting *from* would be
- *   lost forever.
+ *   lost forever. The revert also saves an agent version, like any other
+ *   change to versioned config.
  *
  *   `versionIndex` is interpreted against the stored (oldest→newest)
  *   history array, the same ordering used in the DB. The history GET
@@ -35,6 +36,12 @@ import {
 } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import {
+  ensureBaselineVersion,
+  recordAgentVersion,
+} from '@/lib/orchestration/agents/agent-versioning';
+
+const REVERT_CHANGE_SUMMARY = 'Instructions: reverted to an earlier version';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -95,12 +102,23 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     },
   ];
 
-  const agent = await prisma.aiAgent.update({
-    where: { id },
-    data: {
-      systemInstructions: target.instructions,
-      systemInstructionsHistory: nextHistory,
-    },
+  // Instructions are versioned, so the revert saves a version in the same
+  // transaction: the newest version must equal what the agent now runs, or
+  // every chat turn after it is pinned to a config it did not run.
+  const agent = await prisma.$transaction(async (tx) => {
+    await ensureBaselineVersion(tx, id, session.user.id);
+    const updated = await tx.aiAgent.update({
+      where: { id },
+      data: {
+        systemInstructions: target.instructions,
+        systemInstructionsHistory: nextHistory,
+      },
+    });
+    await recordAgentVersion(tx, id, {
+      changeSummary: REVERT_CHANGE_SUMMARY,
+      createdBy: session.user.id,
+    });
+    return updated;
   });
 
   log.info('Agent systemInstructions reverted', {

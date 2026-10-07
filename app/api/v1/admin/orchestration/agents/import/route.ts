@@ -10,6 +10,8 @@
  *     - If the slug already exists and `conflictMode === 'overwrite'`,
  *       update the row in place and rebuild its capability pivots.
  *     - Otherwise create the agent and attach its capabilities.
+ *     - Either way, save an agent version (v1 for a new agent), so the
+ *       newest version equals the imported config.
  *
  *   Capability slugs that don't exist in this environment are collected
  *   into `results.warnings` rather than failing the whole import — it's
@@ -44,6 +46,13 @@ import {
 } from '@/lib/orchestration/agents/platform-agent-guard';
 import { ValidationError } from '@/lib/api/errors';
 import { importedAgentProviderWarnings } from '@/lib/orchestration/agents/provider-approval';
+import {
+  INITIAL_VERSION_SUMMARY,
+  ensureBaselineVersion,
+  recordAgentVersion,
+} from '@/lib/orchestration/agents/agent-versioning';
+
+const IMPORT_CHANGE_SUMMARY = 'Overwritten by agent import';
 
 type ImportResults = {
   imported: number;
@@ -259,6 +268,7 @@ export const POST = withAdminAuth(async (request, session) => {
 
       if (existing) {
         // Overwrite: update the row, drop old pivots, recreate new ones.
+        await ensureBaselineVersion(tx, existing.id, session.user.id);
         await tx.aiAgent.update({
           where: { id: existing.id },
           data: agentData,
@@ -285,6 +295,12 @@ export const POST = withAdminAuth(async (request, session) => {
             skipDuplicates: true,
           });
         }
+        // The overwrite changed versioned config: save it as the next version
+        // so the newest version equals what the agent now runs.
+        await recordAgentVersion(tx, existing.id, {
+          changeSummary: IMPORT_CHANGE_SUMMARY,
+          createdBy: session.user.id,
+        });
         results.overwritten += 1;
       } else {
         const created = await tx.aiAgent.create({
@@ -311,6 +327,11 @@ export const POST = withAdminAuth(async (request, session) => {
             skipDuplicates: true,
           });
         }
+        // A restorable v1, as the create route writes for a new agent.
+        await recordAgentVersion(tx, created.id, {
+          changeSummary: INITIAL_VERSION_SUMMARY,
+          createdBy: session.user.id,
+        });
         results.imported += 1;
       }
     }
