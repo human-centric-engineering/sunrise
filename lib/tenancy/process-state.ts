@@ -232,10 +232,10 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/security/rate-limit-credentials.ts',
-    holders: ['verified'],
+    holders: ['verified', 'inFlight'],
     posture: 'row-keyed',
     keyedBy: 'a SHA-256 digest of the presented credential, mapping to the stored key or token id',
-    why: "Answers only which credential row a presented value names, for the rate-limit bucket (#701); a value and the row id it maps to are unique across orgs, and the org, scopes and access decision stay with the route's own resolver. The shared 1000-entry cap is a noisy-neighbour question: an evicted entry costs one more lookup, not a wrong bucket. The 60-second TTL is the window in which a revoked key still gets its own bucket (the route still refuses it).",
+    why: "Answers only which credential row a presented value names, for the rate-limit bucket (#701); a value and the row id it maps to are unique across orgs, and the org, scopes and access decision stay with the route's own resolver. The shared 1000-entry cap is a noisy-neighbour question: an evicted entry costs one more lookup, not a wrong bucket. The 60-second TTL is the window in which a revoked key still gets its own bucket (the route still refuses it); `inFlight` holds a lookup only until it settles, under the same digest.",
   },
   {
     file: 'lib/orchestration/mcp/singletons.ts',

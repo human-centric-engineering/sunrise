@@ -63,6 +63,11 @@ const verified = new LRUCache<string, string>({
   ttl: VERIFIED_TTL_MS,
 });
 
+// Lookups in progress, by the same digest, so the requests that find one
+// credential due a re-check at the same moment share a single query. An entry
+// lives only until its lookup settles.
+const inFlight = new Map<string, Promise<string | null>>();
+
 function cacheKey(kind: RateLimitCredentialKind, value: string): string {
   return createHash('sha256').update(`${kind}:${value}`).digest('hex');
 }
@@ -89,11 +94,20 @@ export function getCachedRateLimitCredential(
   return { id, stale: verified.getRemainingTTL(key) < REFRESH_BELOW_MS };
 }
 
-function isExpired(expiresAt: Date | null): boolean {
-  return expiresAt !== null && expiresAt < new Date();
+/** A live credential's bucket id and, when it has one, its expiry. */
+interface LiveCredential {
+  id: string;
+  expiresAt: Date | null;
 }
 
-async function lookup(kind: RateLimitCredentialKind, value: string): Promise<string | null> {
+function live(id: string, expiresAt: Date | null): LiveCredential | null {
+  return expiresAt === null || expiresAt > new Date() ? { id, expiresAt } : null;
+}
+
+async function lookup(
+  kind: RateLimitCredentialKind,
+  value: string
+): Promise<LiveCredential | null> {
   if (kind === 'embed-token') {
     const row = await runAsCredentialLookup('embed-token', () =>
       prisma.aiAgentEmbedToken.findUnique({
@@ -101,7 +115,7 @@ async function lookup(kind: RateLimitCredentialKind, value: string): Promise<str
         select: { id: true, isActive: true, agent: { select: { isActive: true } } },
       })
     );
-    return row?.isActive && row.agent.isActive ? row.id : null;
+    return row?.isActive && row.agent.isActive ? live(row.id, null) : null;
   }
 
   // Each key type is hashed by its own resolver's function, so a change to
@@ -113,7 +127,7 @@ async function lookup(kind: RateLimitCredentialKind, value: string): Promise<str
         select: { id: true, expiresAt: true },
       })
     );
-    return row && !isExpired(row.expiresAt) ? `sk:${row.id}` : null;
+    return row ? live(`sk:${row.id}`, row.expiresAt) : null;
   }
   if (value.startsWith(MCP_API_KEY_PREFIX)) {
     const row = await runAsCredentialLookup('mcp-key', () =>
@@ -122,31 +136,62 @@ async function lookup(kind: RateLimitCredentialKind, value: string): Promise<str
         select: { id: true, isActive: true, expiresAt: true },
       })
     );
-    return row?.isActive && !isExpired(row.expiresAt) ? `mcp:${row.id}` : null;
+    return row?.isActive ? live(`mcp:${row.id}`, row.expiresAt) : null;
   }
   // Not a credential format Sunrise issues: nothing to look up.
   return null;
 }
 
-/**
- * Look the credential up and return a stable id for its bucket, or `null`
- * when the value names no live credential. A verified id is cached for
- * {@link VERIFIED_TTL_MS}; a credential that no longer verifies (revoked,
- * expired, deactivated) loses its cached entry. Throws if the lookup itself
- * fails, leaving the cache as it was.
- */
-export async function verifyRateLimitCredential(
+async function verifyAndCache(
+  key: string,
   kind: RateLimitCredentialKind,
   value: string
 ): Promise<string | null> {
-  const id = await lookup(kind, value);
+  let found: LiveCredential | null;
+  try {
+    found = await lookup(kind, value);
+  } catch (error) {
+    // Re-arm a cached entry so a failing database is retried once per
+    // refresh window rather than on every request that finds it stale.
+    const cached = verified.get(key);
+    if (cached) verified.set(key, cached);
+    throw error;
+  }
+  if (!found) {
+    verified.delete(key);
+    return null;
+  }
+  // Never keep a key's bucket past the key's own expiry (and never pass 0,
+  // which lru-cache reads as "no TTL").
+  const ttl = found.expiresAt
+    ? Math.max(1, Math.min(VERIFIED_TTL_MS, found.expiresAt.getTime() - Date.now()))
+    : VERIFIED_TTL_MS;
+  verified.set(key, found.id, { ttl });
+  return found.id;
+}
+
+/**
+ * Look the credential up and return a stable id for its bucket, or `null`
+ * when the value names no live credential. A verified id is cached for
+ * {@link VERIFIED_TTL_MS}, or until the credential expires if that is sooner;
+ * a credential that no longer verifies (revoked, expired, deactivated) loses
+ * its cached entry. Concurrent calls for one credential share one lookup.
+ * Throws if the lookup itself fails, re-arming any cached entry.
+ */
+export function verifyRateLimitCredential(
+  kind: RateLimitCredentialKind,
+  value: string
+): Promise<string | null> {
   const key = cacheKey(kind, value);
-  if (id) verified.set(key, id);
-  else verified.delete(key);
-  return id;
+  const pending = inFlight.get(key);
+  if (pending) return pending;
+  const promise = verifyAndCache(key, kind, value).finally(() => inFlight.delete(key));
+  inFlight.set(key, promise);
+  return promise;
 }
 
 /** Test-only: drop every cached verification. */
 export function resetRateLimitCredentialCache(): void {
   verified.clear();
+  inFlight.clear();
 }

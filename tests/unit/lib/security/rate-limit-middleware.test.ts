@@ -617,6 +617,39 @@ describe('applyRateLimit', () => {
       RATE_LIMIT_TIERS.api.reset(keyToken);
     });
 
+    it("'api-key' moves a key whose re-check finds it revoked into the IP bucket", async () => {
+      const ip = '192.0.2.77';
+      const ipToken = `mw:api:api-key:ip:${ip}`;
+      const keyToken = 'mw:api:api-key:key:sk:row_e';
+      RATE_LIMIT_TIERS.api.reset(ipToken);
+      RATE_LIMIT_TIERS.api.reset(keyToken);
+      vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValueOnce({
+        id: 'row_e',
+        expiresAt: null,
+      } as never);
+      vi.mocked(findRateLimitRule).mockReturnValue({
+        match: /^\/api\/v1\/test-apikey-revoked\//,
+        tier: 'api',
+        key: 'api-key',
+      });
+      const path = '/api/v1/test-apikey-revoked/resource';
+      const keyed = { 'x-forwarded-for': ip, authorization: 'Bearer sk_revoked' };
+
+      expect(await applyRateLimit(makeRequest(path, keyed))).toBeNull();
+      await exhaust(path, 100, { 'x-forwarded-for': ip });
+      await advanceCacheClock(30_001);
+      // The re-check now finds no live key (the default mock answers null).
+
+      const response = await applyRateLimit(makeRequest(path, keyed));
+
+      // Refused from the full IP bucket; the key's own bucket was not used again.
+      expect(response?.status).toBe(429);
+      expect(RATE_LIMIT_TIERS.api.peek(keyToken).remaining).toBe(99);
+
+      RATE_LIMIT_TIERS.api.reset(ipToken);
+      RATE_LIMIT_TIERS.api.reset(keyToken);
+    });
+
     it("'api-key' keeps a stale verified key's bucket when the re-check fails", async () => {
       const ip = '192.0.2.76';
       const keyToken = 'mw:api:api-key:key:sk:row_d';

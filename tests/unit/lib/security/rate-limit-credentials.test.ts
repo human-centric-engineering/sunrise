@@ -159,4 +159,51 @@ describe('verifyRateLimitCredential', () => {
     await expect(verifyRateLimitCredential('api-key', 'sk_revoked_later')).resolves.toBeNull();
     expect(getCachedRateLimitCredential('api-key', 'sk_revoked_later')).toBeUndefined();
   });
+
+  it('caches a key that expires within the TTL only until it expires', async () => {
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
+      id: 'k1',
+      expiresAt: new Date(Date.now() + 10_000),
+    } as never);
+
+    await verifyRateLimitCredential('api-key', 'sk_expiring');
+    expect(getCachedRateLimitCredential('api-key', 'sk_expiring')?.id).toBe('sk:k1');
+
+    await advanceCacheClock(10_001);
+    expect(getCachedRateLimitCredential('api-key', 'sk_expiring')).toBeUndefined();
+  });
+
+  it('shares one lookup between concurrent calls for the same credential', async () => {
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({ id: 'k1', expiresAt: null } as never);
+
+    const results = await Promise.all([
+      verifyRateLimitCredential('api-key', 'sk_busy'),
+      verifyRateLimitCredential('api-key', 'sk_busy'),
+      verifyRateLimitCredential('api-key', 'sk_busy'),
+    ]);
+
+    expect(results).toEqual(['sk:k1', 'sk:k1', 'sk:k1']);
+    expect(prisma.aiApiKey.findFirst).toHaveBeenCalledTimes(1);
+    // Settled lookups are not reused: a later call queries again.
+    await verifyRateLimitCredential('api-key', 'sk_busy');
+    expect(prisma.aiApiKey.findFirst).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-arms a cached entry when its re-check fails, and rethrows', async () => {
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValueOnce({
+      id: 'k1',
+      expiresAt: null,
+    } as never);
+    await verifyRateLimitCredential('api-key', 'sk_db_flaky');
+    await advanceCacheClock(30_001);
+    expect(getCachedRateLimitCredential('api-key', 'sk_db_flaky')?.stale).toBe(true);
+
+    vi.mocked(prisma.aiApiKey.findFirst).mockRejectedValueOnce(new Error('db down'));
+    await expect(verifyRateLimitCredential('api-key', 'sk_db_flaky')).rejects.toThrow('db down');
+
+    expect(getCachedRateLimitCredential('api-key', 'sk_db_flaky')).toEqual({
+      id: 'sk:k1',
+      stale: false,
+    });
+  });
 });
