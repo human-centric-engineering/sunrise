@@ -85,13 +85,17 @@ export function loggablePath(pathname: string | undefined): string | undefined {
  * only. A value that does not parse as a URL is replaced, never echoed.
  *
  * The path inherits `collapseDynamicSegments`' limits: a secret segment it
- * does not recognise as one is kept.
+ * does not recognise as one is kept. `null` and `undefined` pass through, the
+ * way `loggablePath` passes an absent path through.
  *
  * @example
  * loggableUrl('https://user:pw@example.com/hooks/Ab3dEf6hIj9kLm2nOp5qRs8t?sig=x#y');
  * // 'https://example.com/hooks/[param]'
  */
-export function loggableUrl(url: string): string {
+export function loggableUrl(url: string): string;
+export function loggableUrl(url: string | null | undefined): string | null | undefined;
+export function loggableUrl(url: string | null | undefined): string | null | undefined {
+  if (url === null || url === undefined) return url;
   let parsed: URL;
   try {
     parsed = new URL(url);

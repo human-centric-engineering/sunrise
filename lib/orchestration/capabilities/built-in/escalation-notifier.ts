@@ -14,6 +14,7 @@ import { sendEmail } from '@/lib/email/send';
 import { EscalationNotification } from '@/emails/escalation-notification';
 import { env } from '@/lib/env';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
+import { loggableUrl } from '@/lib/logging/redact-path';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
 // Single implementation, deliberately shared: this used to be a private copy,
 // and hardening one while the settings API kept the other is what opened the
@@ -119,7 +120,7 @@ export async function notifyEscalation(payload: EscalationPayload): Promise<void
       });
       if (!targetCheck.ok) {
         logger.warn('Escalation webhook target rejected; skipping the POST', {
-          url: config.webhookUrl,
+          url: loggableUrl(config.webhookUrl),
           reason: targetCheck.reason,
           message: targetCheck.message,
         });
@@ -150,7 +151,7 @@ export async function notifyEscalation(payload: EscalationPayload): Promise<void
         if (!response.ok) {
           logger.warn('Escalation webhook returned non-OK', {
             status: response.status,
-            url: config.webhookUrl,
+            url: loggableUrl(config.webhookUrl),
           });
         }
       } catch (err) {
@@ -159,7 +160,7 @@ export async function notifyEscalation(payload: EscalationPayload): Promise<void
         // warning is the only signal there is, so it must name the cause.
         logger.warn('Escalation webhook call failed', {
           error: describeFetchFailure(err),
-          url: config.webhookUrl,
+          url: loggableUrl(config.webhookUrl),
         });
       }
     }

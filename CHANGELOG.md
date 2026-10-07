@@ -850,15 +850,18 @@ release process.
     middleware's unknown-tier warning.
 
 - **Outbound webhook and document URLs are no longer logged verbatim**
-  (#953). Hook and webhook-subscription delivery failures, the notification
-  step and knowledge-base URL fetches logged the target URL as configured, so
-  a credential carried in it (a Slack or Discord webhook path, a signed URL's
+  (#953). Hook and webhook-subscription deliveries, the escalation webhook,
+  the webhook create and test routes, the notification step and
+  knowledge-base URL fetches logged the target URL as configured, so a
+  credential carried in it (a Slack or Discord webhook path, a signed URL's
   query, userinfo) reached stdout and the admin log buffer. They now log
   `loggableUrl()` (new in `lib/logging/redact-path.ts`): origin plus the
-  collapsed path, with userinfo, query and fragment dropped.
+  collapsed path, with userinfo, query and fragment dropped. A blocked
+  redirect's error message carries the reduced form too.
   **For an operator:** a `send_notification` webhook step's stored
-  `output.url`, shown in the execution trace, now holds that reduced form too;
-  the delivery itself still goes to the full URL.
+  `output.url`, shown in the execution trace, now holds that reduced form;
+  the `webhookUrl` the step sends to `workflow_notification` subscribers is
+  unchanged.
 
 - **The logger redacts camelCase and kebab-case keys** (#951). Key matching
   lower-cased a key before looking for word boundaries, which erased the

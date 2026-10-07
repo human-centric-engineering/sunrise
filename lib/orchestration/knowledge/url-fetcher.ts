@@ -81,7 +81,7 @@ async function fetchRevalidatingRedirects(target: string, init: RequestInit): Pr
       throw new Error(
         hop === 0
           ? `URL blocked: ${urlCheck.message}`
-          : `URL blocked after ${hop} redirect(s) (${current}): ${urlCheck.message}`
+          : `URL blocked after ${hop} redirect(s) (${loggableUrl(current)}): ${urlCheck.message}`
       );
     }
 
@@ -112,7 +112,7 @@ async function fetchRevalidatingRedirects(target: string, init: RequestInit): Pr
       // Location may be relative; resolve against the URL that issued it.
       next = new URL(location, current).toString();
     } catch {
-      throw new Error(`Redirect to an unparseable Location: ${location}`);
+      throw new Error('Redirect to an unparseable Location');
     }
 
     logger.info('Following redirect while fetching document', {

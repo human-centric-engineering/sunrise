@@ -355,8 +355,7 @@ async function attemptDelivery(
   logger.warn('Webhook delivery failed', {
     deliveryId,
     channel: sub.channel,
-    destination:
-      sub.channel === 'email' ? sub.emailAddress : sub.url === null ? null : loggableUrl(sub.url),
+    destination: sub.channel === 'email' ? sub.emailAddress : loggableUrl(sub.url),
     attempt: newAttempts,
     maxAttempts: policy.maxAttempts,
     exhausted,

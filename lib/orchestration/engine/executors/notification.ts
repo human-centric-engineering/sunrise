@@ -214,7 +214,8 @@ async function executeNotification(
 
       // A webhook URL can carry its credential (path, query or userinfo), and
       // the step output is persisted and shown in the trace view — record the
-      // reduced form in both places (#953).
+      // reduced form in both places (#953). The event payload above is left
+      // as it was.
       const recordedUrl = loggableUrl(config.webhookUrl);
 
       logger.info('Notification step: webhook dispatched', {

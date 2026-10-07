@@ -89,9 +89,10 @@ context is built to hold nothing a value-blind redactor would miss:
   collapsed path, with userinfo, query and fragment dropped, and
   `[unparseable-url]` for a value that is not a URL. Webhook and signed URLs
   often carry their credential in one of those parts. Hook and
-  webhook-subscription delivery failures, the `send_notification` webhook
-  step (log line and stored `output.url`) and knowledge-base URL fetches use
-  it; a new log line that names a URL Sunrise calls out to should too.
+  webhook-subscription deliveries, the escalation webhook, the webhook create
+  and test routes, the `send_notification` webhook step (log line and stored
+  `output.url`) and knowledge-base URL fetches use it; a new log line that
+  names a URL Sunrise calls out to should too.
 
 The heuristic cannot see a secret under 20 characters, one with other
 characters (dots outside a JWT), a

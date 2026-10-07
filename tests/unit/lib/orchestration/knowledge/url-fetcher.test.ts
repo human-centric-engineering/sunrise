@@ -476,4 +476,31 @@ describe('fetchDocumentFromUrl log lines', () => {
     expect(logged).not.toContain('initial-secret');
     expect(logged).not.toContain('redirect-secret');
   });
+
+  it('keeps the credential out of the error thrown for a blocked redirect target', async () => {
+    vi.mocked(checkSafeProviderUrl)
+      .mockReturnValueOnce({ ok: true })
+      .mockReturnValueOnce({ ok: false, message: 'private address blocked' });
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ...makeFetchResponse({ status: 302, ok: false }),
+      status: 302,
+      headers: {
+        get: (k: string) =>
+          k.toLowerCase() === 'location'
+            ? `https://cdn.example.com/${SECRET}/doc.txt?sig=redirect-secret`
+            : null,
+      },
+      body: { cancel: vi.fn().mockResolvedValue(undefined) },
+    } as unknown as Response);
+
+    const err = await fetchDocumentFromUrl('https://files.example.com/doc.txt').catch(
+      (e: unknown) => e
+    );
+
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toContain('https://cdn.example.com/[param]/doc.txt');
+    expect(message).not.toContain(SECRET);
+    expect(message).not.toContain('redirect-secret');
+  });
 });

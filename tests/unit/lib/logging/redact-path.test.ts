@@ -107,6 +107,11 @@ describe('loggableUrl (#953)', () => {
     );
   });
 
+  it('passes null and undefined through', () => {
+    expect(loggableUrl(null)).toBeNull();
+    expect(loggableUrl(undefined)).toBeUndefined();
+  });
+
   it('never echoes a value it cannot parse', () => {
     expect(loggableUrl('not a url ?api_key=abc')).toBe('[unparseable-url]');
   });
