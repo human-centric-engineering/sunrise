@@ -116,14 +116,14 @@ The schema mirrors the supervisor-on-execution pattern: 5 indexed scalars + 1 JS
 
 ## What lands on each AiMessage
 
-| Column                | Source of truth                                                                                    | Use                                                                                    |
-| --------------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `agentVersionId`      | Pinned `AiAgentVersion.id` when the message was fired by a versioned agent                         | Filter "every message produced by agent vN". Null on direct chat with the live agent.  |
-| `workflowExecutionId` | `AiWorkflowExecution.id` of the last `run_workflow` capability call that completed during the turn | Self-describing join key back to the execution row. Non-FK (executions can be pruned). |
-| `workflowVersionId`   | `AiWorkflowExecution.versionId` snapshotted at message time                                        | Pin which workflow version produced the synthesised answer.                            |
-| `modelId`             | The model string resolved by `resolveAgentProviderAndModel` for this turn                          | "Show every message routed to model X."                                                |
-| `providerSlug`        | The provider slug resolved for this turn                                                           | Cost-attribution + audit.                                                              |
-| `provenance` (JSONB)  | Typed `MessageProvenance` shape (below)                                                            | Rich evidence tree for the audit bundle.                                               |
+| Column                | Source of truth                                                                                      | Use                                                                                    |
+| --------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `agentVersionId`      | The agent's latest `AiAgentVersion.id` at turn start, on every assistant message (chat and workflow) | Filter "every message produced by agent vN". Null for an agent with no version rows.   |
+| `workflowExecutionId` | `AiWorkflowExecution.id` of the last `run_workflow` capability call that completed during the turn   | Self-describing join key back to the execution row. Non-FK (executions can be pruned). |
+| `workflowVersionId`   | `AiWorkflowExecution.versionId` snapshotted at message time                                          | Pin which workflow version produced the synthesised answer.                            |
+| `modelId`             | The model string resolved by `resolveAgentProviderAndModel` for this turn                            | "Show every message routed to model X."                                                |
+| `providerSlug`        | The provider slug resolved for this turn                                                             | Cost-attribution + audit.                                                              |
+| `provenance` (JSONB)  | Typed `MessageProvenance` shape (below)                                                              | Rich evidence tree for the audit bundle.                                               |
 
 Indexes on `agentVersionId`, `workflowExecutionId`, `modelId` keep the queryable surface fast.
 
