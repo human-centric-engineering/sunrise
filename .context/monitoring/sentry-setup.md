@@ -91,14 +91,14 @@ fork that turns Sentry on without setting this sends that data to Sentry. Set
 
 ```typescript
 import * as Sentry from '@sentry/nextjs';
-import { scrubSentryBreadcrumb, scrubSentryEvent } from '@/lib/errors/sentry';
+import { scrubSentryBreadcrumb, scrubSentryEvent, scrubSentrySpan } from '@/lib/errors/sentry';
 
 Sentry.init({
   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
   // Page URLs: drop query strings and fragments, collapse id- and
   // credential-shaped path segments (see "Page URLs" below).
   beforeSend: scrubSentryEvent,
-  beforeSendTransaction: scrubSentryEvent,
+  beforeSendSpan: scrubSentrySpan,
   beforeBreadcrumb: scrubSentryBreadcrumb,
   // Collect nothing about the request, the user or the data by default.
   // (Session Replay is separate; see below.)
@@ -125,13 +125,23 @@ stops only the SDK filling in `user.*` from request data on its own.
 A page URL can carry a credential or personal data: a token or an email in the
 query string or the fragment, or a token as a path segment (a share page such
 as `/s/<token>`). `urlQueryParams: false` covers only query strings the SDK
-collected itself. `scrubSentryEvent` and `scrubSentryBreadcrumb` from
-`lib/errors/sentry.ts` cover the rest: they reduce the event's `request.url`, a
-raw-path transaction name and the `url` / `from` / `to` of fetch, xhr and
-navigation breadcrumbs to origin plus path, with each id- or credential-shaped
-segment replaced by `[param]` (`collapseDynamicSegments()` in
-`lib/logging/redact-path.ts`, which lists what it cannot catch). Set them in
-every `Sentry.init`, as above. The global client error handler
+collected itself. Three hooks from `lib/errors/sentry.ts` cover the rest:
+
+- `scrubSentryEvent` (`beforeSend`) reduces an error event's `request.url` and
+  its transaction name to origin plus path, and scrubs the trace context and
+  breadcrumbs it carries;
+- `scrubSentrySpan` (`beforeSendSpan`) does the same for each span's name and
+  its `url.*` / `http.url` attributes, and drops `url.fragment`, `url.query` and
+  the raw `url.path.parameter.*` values. With v11's default
+  `traceLifecycle: 'stream'`, spans pass through `beforeSendSpan` only;
+  `beforeSendTransaction` is not called (under `'static'`, use
+  `scrubSentryEvent` there);
+- `scrubSentryBreadcrumb` (`beforeBreadcrumb`) scrubs the `url` / `from` / `to`
+  of fetch, xhr and navigation breadcrumbs.
+
+Each id- or credential-shaped path segment becomes `[param]`
+(`collapseDynamicSegments()` in `lib/logging/redact-path.ts`, which lists what
+it cannot catch). Set them in every `Sentry.init`, as above. The global client error handler
 (`lib/errors/handler.ts`) already sends only the collapsed pathname, under
 `extra.path`.
 

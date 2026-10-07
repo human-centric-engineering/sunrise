@@ -10,8 +10,8 @@
  * - trackMessage: no-op paths for all severity levels, full Sentry path
  * - setErrorTrackingUser: no-op and Sentry user path
  * - clearErrorTrackingUser: no-op and Sentry clear path
- * - scrubUrl / scrubSentryBreadcrumb / scrubSentryEvent: URL scrubbing for
- *   Sentry's beforeSend / beforeBreadcrumb hooks (#952)
+ * - scrubUrl / scrubSentryBreadcrumb / scrubSentryEvent / scrubSentrySpan: URL
+ *   scrubbing for Sentry's beforeSend / beforeBreadcrumb / beforeSendSpan (#952)
  *
  * Mocking strategy:
  * - @sentry/nextjs: The source uses dynamic require() inside getSentry() which
@@ -88,6 +88,7 @@ import {
   scrubUrl,
   scrubSentryBreadcrumb,
   scrubSentryEvent,
+  scrubSentrySpan,
 } from '@/lib/errors/sentry';
 import { logger } from '@/lib/logging';
 
@@ -518,6 +519,14 @@ describe('Sentry URL scrubbing', () => {
       expect(fetchCrumb.data?.url).toBe('https://app.example.com/api/v1/x/[param]');
     });
 
+    it('returns a copy and leaves the SDK-owned data object untouched', () => {
+      const fetchData = { method: 'GET', url: `/api/v1/x/${token}?a=1` };
+      const scrubbed = scrubSentryBreadcrumb({ category: 'fetch', data: fetchData });
+
+      expect(scrubbed.data).toEqual({ method: 'GET', url: '/api/v1/x/[param]' });
+      expect(fetchData.url).toBe(`/api/v1/x/${token}?a=1`);
+    });
+
     it('returns a breadcrumb without data unchanged', () => {
       const breadcrumb = { category: 'ui.click', message: 'button' };
       expect(scrubSentryBreadcrumb(breadcrumb)).toEqual({
@@ -550,9 +559,85 @@ describe('Sentry URL scrubbing', () => {
       expect(JSON.stringify(event)).not.toContain('a%40b.c');
     });
 
+    it('scrubs a METHOD-prefixed transaction name, trace context data and child spans', () => {
+      const event = scrubSentryEvent({
+        type: 'transaction',
+        transaction: `middleware GET /s/${token}`,
+        contexts: {
+          trace: {
+            trace_id: 't',
+            span_id: 's',
+            data: {
+              'url.full': `https://app.example.com/s/${token}#t=${token}`,
+              'url.path': `/s/${token}`,
+              'url.fragment': `t=${token}`,
+              'url.path.parameter.token': token,
+              'sentry.op': 'pageload',
+            },
+          },
+        },
+        spans: [
+          {
+            span_id: 'c',
+            trace_id: 't',
+            start_timestamp: 0,
+            status: 'ok',
+            description: `GET https://app.example.com/api/v1/x/${token}?a=1`,
+            data: { 'http.url': `https://app.example.com/api/v1/x/${token}`, 'http.query': 'a=1' },
+          },
+        ],
+      });
+
+      expect(event.transaction).toBe('middleware GET /s/[param]');
+      expect(event.contexts?.trace?.data).toEqual({
+        'url.full': 'https://app.example.com/s/[param]',
+        'url.path': '/s/[param]',
+        'sentry.op': 'pageload',
+      });
+      expect(event.spans?.[0].description).toBe('GET https://app.example.com/api/v1/x/[param]');
+      expect(event.spans?.[0].data).toEqual({
+        'http.url': 'https://app.example.com/api/v1/x/[param]',
+      });
+      expect(JSON.stringify(event)).not.toContain(token);
+    });
+
     it('leaves a parameterised route name and an event with no request alone', () => {
       const event = scrubSentryEvent({ transaction: '/s/[token]', message: 'boom' });
       expect(event).toEqual({ transaction: '/s/[token]', message: 'boom' });
+    });
+  });
+
+  describe('scrubSentrySpan', () => {
+    it('scrubs the span name and URL attributes, raw or wrapped, and drops fragment and path parameters', () => {
+      const span = {
+        trace_id: 't',
+        span_id: 's',
+        name: `GET /s/${token}`,
+        start_timestamp: 0,
+        status: 'ok' as const,
+        is_segment: true,
+        attributes: {
+          'url.full': { value: `https://app.example.com/s/${token}#x`, type: 'string' },
+          'url.path': `/s/${token}`,
+          'url.fragment': 'x',
+          'url.query': 'email=a%40b.c',
+          'url.path.parameter.token': token,
+          'sentry.segment.name': `GET /s/${token}`,
+          'sentry.op': 'pageload',
+        },
+      };
+
+      const scrubbed = scrubSentrySpan(span);
+
+      expect(scrubbed.name).toBe('GET /s/[param]');
+      expect(scrubbed.attributes).toEqual({
+        'url.full': { value: 'https://app.example.com/s/[param]', type: 'string' },
+        'url.path': '/s/[param]',
+        'sentry.segment.name': 'GET /s/[param]',
+        'sentry.op': 'pageload',
+      });
+      expect(JSON.stringify(scrubbed)).not.toContain(token);
+      expect(span.attributes['url.path']).toBe(`/s/${token}`);
     });
   });
 });
