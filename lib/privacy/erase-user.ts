@@ -13,12 +13,12 @@
  *   2. Write an append-only `DataErasureReceipt` for accountability
  *      (Art. 5(2)) without re-introducing PII (opaque id + email hash).
  *   3. Remove the user's stored avatar blobs (object storage, not the DB).
- *   4. Delete the contact-form messages sent from the user's address.
+ *   4. Delete the contact-form messages sent from the user's stored address.
  *      `ContactSubmission` has no FK to `User`, so no cascade reaches it.
  *
  * The scrub, contact delete, receipt, and user delete run in one transaction
- * so they commit or roll back together. Avatar cleanup runs first as a best-effort side effect
- * (object storage cannot enlist in the DB transaction).
+ * so they commit or roll back together. Avatar cleanup runs first as a
+ * best-effort side effect (object storage cannot enlist in the DB transaction).
  */
 
 import { createHash } from 'node:crypto';
@@ -84,13 +84,23 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
       )
     : await eraseRows(params);
 
-  logger.info('User erased', { userId, actorUserId, reason, receiptId: receipt.id });
+  // The contact count is the one thing erased by address rather than by FK,
+  // so it is the one the receipt cannot vouch for: log what was taken.
+  logger.info('User erased', {
+    userId,
+    actorUserId,
+    reason,
+    receiptId: receipt.id,
+    contactSubmissionsDeleted: receipt.contactSubmissionsDeleted,
+  });
 
   return { receiptId: receipt.id, erasedAt: receipt.erasedAt };
 }
 
 /** The hooks and the transaction — at `multi`, as {@link eraseUser} runs them in the system scope. */
-async function eraseRows(params: EraseUserParams): Promise<{ id: string; erasedAt: Date }> {
+async function eraseRows(
+  params: EraseUserParams
+): Promise<{ id: string; erasedAt: Date; contactSubmissionsDeleted: number }> {
   const { userId, userEmail, actorUserId, reason } = params;
 
   // 1b. App-registered external cleanup (object storage, search indexes, …).
@@ -121,8 +131,18 @@ async function eraseRows(params: EraseUserParams): Promise<{ id: string; erasedA
     // cascade below never reaches them. The export hands these same rows to
     // the subject as their personal data, so they go — matched exactly, never
     // case-insensitively: an `ILIKE` here would delete a stranger's messages.
-    // A system model, so no org scope is needed at either tenancy mode.
-    await tx.contactSubmission.deleteMany({ where: contactSubmissionsOf(userEmail) });
+    // The address is read from the user row, as the export reads it, not taken
+    // from `userEmail`: a caller's copy can be stale (a cached session that
+    // predates an email change), and then this would delete the old address's
+    // messages and leave the ones the export calls the subject's. A system
+    // model, so no org scope is needed at either tenancy mode.
+    const { email } = await tx.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { email: true },
+    });
+    const contacts = await tx.contactSubmission.deleteMany({
+      where: contactSubmissionsOf(email),
+    });
 
     // App-registered in-transaction scrub. Runs before `tx.user.delete()` so
     // hooks can still match retained rows on `userId`, and atomically with the
@@ -144,6 +164,6 @@ async function eraseRows(params: EraseUserParams): Promise<{ id: string; erasedA
     // Cascades erase personal data; SetNull de-attributes retained config/audit.
     await tx.user.delete({ where: { id: userId } });
 
-    return created;
+    return { ...created, contactSubmissionsDeleted: contacts.count };
   });
 }

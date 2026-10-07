@@ -245,9 +245,12 @@ async function main(): Promise<void> {
       },
     });
     strangerContactId = strangerContact.id;
+    // The rows are stored as the contact route stores them (`emailSchema`:
+    // trimmed, lower-cased), which is the form erasure matches on. A fixture
+    // address outside that form would fail the delete check for the wrong reason.
     check(
-      strangerEmail !== subject.email && strangerEmail.length === subject.email.length,
-      'stranger address differs from the subject’s only where it holds `_`'
+      subject.email === subject.email.trim().toLowerCase(),
+      'subject address is already in the stored (normalised) form'
     );
 
     // Erase.

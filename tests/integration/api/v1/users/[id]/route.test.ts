@@ -66,6 +66,7 @@ vi.mock('@/lib/db/client', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
     },
     aiAdminAuditLog: {
       updateMany: vi.fn(),
@@ -645,6 +646,10 @@ describe('DELETE /api/v1/users/:id', () => {
     // Default sub-transaction collaborators — each test can override per-case.
     vi.mocked(prisma.aiAdminAuditLog.updateMany).mockResolvedValue({ count: 1 });
     vi.mocked(prisma.contactSubmission.deleteMany).mockResolvedValue({ count: 0 });
+    // eraseUser reads the stored address for the contact delete
+    vi.mocked(prisma.user.findUniqueOrThrow).mockResolvedValue({
+      email: 'target@example.com',
+    } as never);
     vi.mocked(prisma.dataErasureReceipt.create).mockResolvedValue(RECEIPT_FIXTURE as never);
     vi.mocked(prisma.user.delete).mockResolvedValue(undefined as never);
   });
@@ -738,7 +743,7 @@ describe('DELETE /api/v1/users/:id', () => {
       });
 
       // Inside $transaction: contact-form messages (no FK to User, so no
-      // cascade) are deleted by the erased user's own address, matched exactly.
+      // cascade) are deleted by the erased user's stored address, matched exactly.
       expect(prisma.contactSubmission.deleteMany).toHaveBeenCalledWith({
         where: { email: 'target@example.com' },
       });

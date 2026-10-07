@@ -66,6 +66,7 @@ vi.mock('@/lib/db/client', () => ({
     user: {
       count: vi.fn(),
       delete: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
     },
     aiAdminAuditLog: {
       updateMany: vi.fn(),
@@ -182,6 +183,10 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
     // Default: aiAdminAuditLog.updateMany resolves (returns void-like)
     vi.mocked(prisma.aiAdminAuditLog.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.contactSubmission.deleteMany).mockResolvedValue({ count: 0 });
+    // eraseUser reads the stored address for the contact delete
+    vi.mocked(prisma.user.findUniqueOrThrow).mockResolvedValue({
+      email: SESSION_USER_EMAIL,
+    } as never);
 
     // Default: user.delete resolves
     vi.mocked(prisma.user.delete).mockResolvedValue({ id: SESSION_USER_ID } as never);
@@ -286,7 +291,7 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       });
 
       // Inside $transaction: contact-form messages (no FK to User, so no
-      // cascade) are deleted by the erased user's own address, matched exactly.
+      // cascade) are deleted by the erased user's stored address, matched exactly.
       expect(prisma.contactSubmission.deleteMany).toHaveBeenCalledWith({
         where: { email: SESSION_USER_EMAIL },
       });

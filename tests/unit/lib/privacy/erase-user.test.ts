@@ -25,6 +25,7 @@ const {
   mockContactDeleteMany,
   mockReceiptCreate,
   mockUserDelete,
+  mockUserFind,
   mockPrisma,
   mockLogger,
 } = vi.hoisted(() => {
@@ -35,6 +36,8 @@ const {
     erasedAt: new Date('2026-01-01T00:00:00.000Z'),
   });
   const userDelete = vi.fn().mockResolvedValue({ id: 'user-1' });
+  // The address as the user row holds it — what the contact delete matches on.
+  const userFind = vi.fn().mockResolvedValue({ email: 'foo@bar.com' });
 
   // Prisma mock — $transaction invokes its async callback with the same
   // prisma mock so tx.X === prisma.X; this is the pattern described in the
@@ -45,7 +48,7 @@ const {
     aiAdminAuditLog: { updateMany },
     contactSubmission: { deleteMany: contactDeleteMany },
     dataErasureReceipt: { create: receiptCreate },
-    user: { delete: userDelete },
+    user: { delete: userDelete, findUniqueOrThrow: userFind },
   };
   prismaObj.$transaction.mockImplementation(
     (callback: (tx: typeof prismaObj) => Promise<unknown>) => callback(prismaObj)
@@ -65,6 +68,7 @@ const {
     mockContactDeleteMany: contactDeleteMany,
     mockReceiptCreate: receiptCreate,
     mockUserDelete: userDelete,
+    mockUserFind: userFind,
     mockPrisma: prismaObj,
     mockLogger: log,
   };
@@ -132,6 +136,7 @@ describe('eraseUser', () => {
     mockDeleteByPrefix.mockResolvedValue({ deleted: 1 });
     mockUpdateMany.mockResolvedValue({ count: 1 });
     mockContactDeleteMany.mockResolvedValue({ count: 1 });
+    mockUserFind.mockResolvedValue({ email: 'foo@bar.com' });
     mockReceiptCreate.mockResolvedValue({
       id: 'receipt-1',
       erasedAt: new Date('2026-01-01T00:00:00.000Z'),
@@ -348,53 +353,79 @@ describe('eraseUser', () => {
   // them; the service deletes them, matched exactly on the normalised address.
   // -------------------------------------------------------------------------
 
-  it('contact submissions — deleted on the trimmed, lower-cased address, as an exact match', async () => {
-    // Act — the address as a caller might hold it, padded and mixed-case
-    await eraseUser({ ...BASE_PARAMS, userEmail: '  Foo@BAR.com ' });
+  it('contact submissions — matched on the address the user row holds, normalised, as an exact match', async () => {
+    // Arrange — a stored address that is not already in the canonical form
+    mockUserFind.mockResolvedValue({ email: '  Foo@BAR.com ' });
 
-    // Assert — the stored form (`emailSchema` output) with no `mode`, so
-    // Prisma compiles it to `=` rather than `ILIKE`
+    // Act
+    await eraseUser(BASE_PARAMS);
+
+    // Assert — the address was read for THIS user, and the filter is the
+    // normalised string with no `mode`, so Prisma compiles it to `=`, not ILIKE
+    expect(mockUserFind).toHaveBeenCalledWith({
+      where: { id: BASE_PARAMS.userId },
+      select: { email: true },
+    });
     expect(mockContactDeleteMany).toHaveBeenCalledTimes(1);
     expect(mockContactDeleteMany).toHaveBeenCalledWith({ where: { email: 'foo@bar.com' } });
+  });
+
+  it('contact submissions — a stale caller address is ignored; the stored one is matched', async () => {
+    // Arrange — the caller's copy predates an email change (a cached session)
+    mockUserFind.mockResolvedValue({ email: 'new@bar.com' });
+
+    // Act
+    await eraseUser({ ...BASE_PARAMS, userEmail: 'old@bar.com' });
+
+    // Assert — the old address may be someone else's by now; never match it
+    expect(mockContactDeleteMany).toHaveBeenCalledWith({ where: { email: 'new@bar.com' } });
   });
 
   it('contact submissions — an address with `_` and `%` is matched as a literal string, not a pattern', async () => {
     // Arrange — under `mode: 'insensitive'` (ILIKE) `_` matches any one
     // character and `%` any run, so this would also delete `aXb@ex.com`'s
     // messages. An equality match on the literal string cannot.
-    await eraseUser({ ...BASE_PARAMS, userEmail: 'a_b%c@ex.com' });
+    mockUserFind.mockResolvedValue({ email: 'a_b%c@ex.com' });
+
+    // Act
+    await eraseUser(BASE_PARAMS);
 
     // Assert — exactly this filter: a plain string, no `mode`, no operator
     const [args] = mockContactDeleteMany.mock.calls[0] as [{ where: unknown }];
     expect(args).toEqual({ where: { email: 'a_b%c@ex.com' } });
   });
 
-  it('contact submissions — deleted inside the transaction, before the user row', async () => {
-    // Arrange — record whether the delete ran inside the $transaction callback
-    let insideTx = false;
-    let deletedInsideTx = false;
-    mockContactDeleteMany.mockImplementation(() => {
-      deletedInsideTx = insideTx;
-      return Promise.resolve({ count: 2 });
-    });
+  it('contact submissions — deleted through the transaction client, before the user row', async () => {
+    // Arrange — hand the callback a tx distinct from `prisma`, so a delete
+    // issued on the outer client (outside the transaction) would miss it
+    const txContactDeleteMany = vi.fn().mockResolvedValue({ count: 2 });
+    const tx = { ...mockPrisma, contactSubmission: { deleteMany: txContactDeleteMany } };
     mockPrisma.$transaction.mockImplementation(
-      async (callback: (tx: typeof mockPrisma) => Promise<unknown>) => {
-        insideTx = true;
-        try {
-          return await callback(mockPrisma);
-        } finally {
-          insideTx = false;
-        }
-      }
+      (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)
     );
 
     // Act
     await eraseUser(BASE_PARAMS);
 
-    // Assert — atomic with the erasure, and ordered ahead of the user delete
-    expect(deletedInsideTx).toBe(true);
-    expect(mockContactDeleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+    // Assert — on the tx, not the outer client, and ahead of the user delete
+    expect(txContactDeleteMany).toHaveBeenCalledTimes(1);
+    expect(mockContactDeleteMany).not.toHaveBeenCalled();
+    expect(txContactDeleteMany.mock.invocationCallOrder[0]).toBeLessThan(
       mockUserDelete.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('contact submissions — the number deleted is logged on the erasure line', async () => {
+    // Arrange
+    mockContactDeleteMany.mockResolvedValue({ count: 3 });
+
+    // Act
+    await eraseUser(BASE_PARAMS);
+
+    // Assert — erased by address, not FK, so the log is its only trace
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      'User erased',
+      expect.objectContaining({ contactSubmissionsDeleted: 3 })
     );
   });
 
