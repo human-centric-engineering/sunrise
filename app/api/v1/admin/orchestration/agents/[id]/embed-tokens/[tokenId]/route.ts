@@ -64,7 +64,7 @@ export const PATCH = withAdminAuth<Params>(async (request, session, { params }) 
     clientIp: clientIP,
   });
 
-  log.info('Embed token updated', { agentId, tokenId, changedKeys: Object.keys(body) });
+  log.info('Embed token updated', { agentId, recordId: tokenId, changedKeys: Object.keys(body) });
   return successResponse(updated);
 });
 
@@ -97,6 +97,6 @@ export const DELETE = withAdminAuth<Params>(async (request, session, { params })
     clientIp: clientIP,
   });
 
-  log.info('Embed token deleted', { agentId, tokenId });
+  log.info('Embed token deleted', { agentId, recordId: tokenId });
   return successResponse({ deleted: true });
 });

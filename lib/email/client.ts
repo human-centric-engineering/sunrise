@@ -26,6 +26,17 @@ export function getResendClient(): Resend | null {
 }
 
 /**
+ * Names of the unset variables email needs. Logged as names, not as
+ * `has*` booleans, because the logger redacts keys naming a secret.
+ */
+function missingEmailEnv(): string[] {
+  return [
+    ...(env.RESEND_API_KEY ? [] : ['RESEND_API_KEY']),
+    ...(env.EMAIL_FROM ? [] : ['EMAIL_FROM']),
+  ];
+}
+
+/**
  * Check if email system is fully configured and enabled
  * Requires both RESEND_API_KEY and EMAIL_FROM to be set
  */
@@ -34,9 +45,7 @@ export function isEmailEnabled(): boolean {
 
   if (!enabled) {
     logger.debug('Email system not fully configured', {
-      missingEnv: [!env.RESEND_API_KEY && 'RESEND_API_KEY', !env.EMAIL_FROM && 'EMAIL_FROM'].filter(
-        Boolean
-      ),
+      missingEnv: missingEmailEnv(),
     });
   }
 
@@ -87,9 +96,7 @@ export function validateEmailConfig(): void {
   if (requireEmailVerification && !isEmailEnabled()) {
     logger.warn('Email verification is required but email provider is not configured', {
       verificationRequired: requireEmailVerification,
-      missingEnv: [!env.RESEND_API_KEY && 'RESEND_API_KEY', !env.EMAIL_FROM && 'EMAIL_FROM'].filter(
-        Boolean
-      ),
+      missingEnv: missingEmailEnv(),
       nodeEnv: env.NODE_ENV,
       recommendation: 'Set RESEND_API_KEY and EMAIL_FROM, or set REQUIRE_EMAIL_VERIFICATION=false',
     });

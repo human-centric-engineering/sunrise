@@ -777,6 +777,15 @@ describe('Logger', () => {
         expect(meta[key]).toBe('[PII REDACTED]');
       });
 
+      it('should still redact a sensitive word at the end of a key with many words', () => {
+        vi.stubEnv('NODE_ENV', 'production');
+        const key = `${'ab_'.repeat(5000)}password`;
+
+        const meta = logAndParse({ [key]: 'sensitive-value' });
+
+        expect(meta[key]).toBe('[REDACTED]');
+      });
+
       it.each(['recipients', 'shipping', 'description', 'tokens', 'inputTokens'])(
         'should not redact %s, which only contains a sensitive word inside a longer word',
         (key) => {

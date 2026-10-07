@@ -128,7 +128,7 @@ describe('resolveInviteToken', () => {
       expect(await resolveInviteToken(AGENT, 'x')).toEqual({ ok: false, reason: 'wrong-org' });
       expect(logger.warn).toHaveBeenCalledWith(
         'invite token refused: the request acts in no org',
-        expect.objectContaining({ refused: 'no-request-org', tokenId: 'tok-1' })
+        expect.objectContaining({ refused: 'no-request-org', recordId: 'tok-1' })
       );
     });
 

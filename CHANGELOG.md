@@ -758,10 +758,14 @@ release process.
     `has*` booleans in the email, S3 and WhatsApp configuration warnings;
     `deliveryStatus` / `messageId` replace `emailStatus` / `emailId` in the
     invitation and contact routes; `deliveryEnabled` replaces `emailEnabled`;
-    `verificationRequired` replaces `requireEmailVerification`; `grantedKey`,
-    `recordId` and `keyId` replace `tokenKey` (storage token mismatch),
-    `tokenId` (embed token refused) and `apiKeyId` (unscoped MCP knowledge
-    search). Dashboards or alerts reading the old keys should switch.
+    `verificationRequired` replaces `requireEmailVerification`; `grantedKey`
+    replaces `tokenKey` (storage token mismatch); `recordId` replaces
+    `tokenId` (embed and invite token refusals, embed-token admin routes);
+    `keyId` replaces `apiKeyId` (unscoped MCP knowledge search); `usage`
+    replaces `tokenUsage` (evaluation completed); `keyPrefix` replaces
+    `apiKeyPrefix` (PostHog server capture); `envVarName` replaces
+    `apiKeyEnvVar` (two provider migration scripts). Dashboards or alerts
+    reading the old keys should switch.
 
 - **`csvEscape` quotes a lone CR, so free text can no longer start a CSV
   record of its own** (#768). It quoted on comma, quote and LF only; a CR after

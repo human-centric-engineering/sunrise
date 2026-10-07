@@ -220,7 +220,7 @@ async function trackPostHog(
     url: captureUrl,
     event: options.event,
     distinctId,
-    apiKeyPrefix: apiKey.substring(0, 8) + '...',
+    keyPrefix: apiKey.substring(0, 8) + '...',
   });
 
   const response = await fetch(captureUrl, {

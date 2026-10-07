@@ -80,7 +80,7 @@ export async function resolveInviteToken(
   if (requestOrg === null) {
     logger.warn('invite token refused: the request acts in no org', {
       agentId,
-      tokenId: row.id,
+      recordId: row.id,
       refused: 'no-request-org',
     });
     return { ok: false, reason: 'wrong-org' };

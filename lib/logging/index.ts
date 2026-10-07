@@ -178,6 +178,7 @@ function shouldSanitizePII(): boolean {
 const toLetters = (pattern: string): string => pattern.replace(/[^a-z]/g, '');
 const SECRET_WORDS = new Set(SECRET_FIELDS.map(toLetters));
 const PII_WORDS = new Set(PII_FIELDS.map(toLetters));
+const LONGEST_PATTERN = Math.max(...[...SECRET_WORDS, ...PII_WORDS].map((word) => word.length));
 
 /**
  * Split a field name into lower-case words. Every non-letter (`_`, `-`,
@@ -196,7 +197,7 @@ function toWords(fieldName: string): string[] {
 }
 
 /**
- * Check if a field name matches any sensitive pattern.
+ * Check if a field's words (from `toWords`) match any sensitive pattern.
  *
  * Matches when one or more consecutive words of the field, joined, equal a
  * pattern. So "password" matches "userPassword", "password_hash", "PASSWORD"
@@ -205,11 +206,12 @@ function toWords(fieldName: string): string[] {
  * still joins back up). A pattern inside a longer word never matches, which is
  * what keeps "ip" out of "recipients" and "token" out of "inputTokens".
  */
-function matchesSensitiveField(fieldName: string, sensitiveWords: Set<string>): boolean {
-  const words = toWords(fieldName);
+function matchesSensitiveField(words: string[], sensitiveWords: Set<string>): boolean {
   for (let start = 0; start < words.length; start++) {
     let joined = '';
-    for (let end = start; end < words.length; end++) {
+    // A run longer than the longest pattern can never match, which keeps this
+    // linear in the key's length.
+    for (let end = start; end < words.length && joined.length < LONGEST_PATTERN; end++) {
       joined += words[end];
       if (sensitiveWords.has(joined)) return true;
     }
@@ -284,15 +286,17 @@ export class Logger {
 
     const sanitized: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
+      const words = toWords(key);
+
       // Check if field matches a secret pattern (always redact)
       // Uses word boundary matching to avoid false positives
-      if (matchesSensitiveField(key, SECRET_WORDS)) {
+      if (matchesSensitiveField(words, SECRET_WORDS)) {
         sanitized[key] = '[REDACTED]';
         continue;
       }
 
       // Check if field matches a PII pattern (redact based on environment/config)
-      if (sanitizePII && matchesSensitiveField(key, PII_WORDS)) {
+      if (sanitizePII && matchesSensitiveField(words, PII_WORDS)) {
         sanitized[key] = '[PII REDACTED]';
         continue;
       }
