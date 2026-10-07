@@ -257,6 +257,7 @@ Validated by `instructionsRevertSchema`. `versionIndex` is an index into the sto
 3. Validates `versionIndex < history.length` → 400 if out of range.
 4. Pushes the **current** `systemInstructions` onto history with a new timestamp / `changedBy` entry — so the value you're reverting _from_ is recoverable.
 5. Writes the target version into `systemInstructions` and the grown history back to the column in a single Prisma `update`.
+6. In the same transaction, saves the result as a new `AiAgentVersion` (`ensureBaselineVersion` before the update, `recordAgentVersion` after it, from `lib/orchestration/agents/agent-versioning.ts`), so the newest version still equals what the agent runs and chat turns are pinned to it (t-779).
 
 Without step 4, an accidental revert would be permanent. Don't remove it.
 
@@ -372,6 +373,8 @@ Validated by `importAgentsSchema`. `conflictMode` defaults to `'skip'` — the s
 | ------------------------ | ----------------------------- | ---------------------------------------------------------- |
 | Slug exists in target DB | Increment `results.skipped`   | Update the row in place, `deleteMany` + rebuild pivot rows |
 | Slug does not exist      | Create the agent + pivot rows | Create the agent + pivot rows                              |
+
+A created or overwritten agent also gets an `AiAgentVersion` for its imported config (`v1` for a created one), so its newest version equals what it runs (t-779); an overwrite first saves an agent with no history as `v1`, so its prior config is kept.
 
 Capability slugs that don't exist in the target environment are collected into `results.warnings[]` rather than failing the whole import — bundles frequently come from superset environments. The entire import runs inside a single `prisma.$transaction`, so any failure rolls the whole operation back. `capabilityDispatcher.clearCache()` is called once at the very end.
 

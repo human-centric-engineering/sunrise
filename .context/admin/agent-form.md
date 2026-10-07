@@ -350,7 +350,7 @@ Per-row action. Calls `DELETE agentInviteTokenById(id, tokenId)`. Sets `revokedA
 
 **File:** `components/admin/orchestration/agent-version-history-tab.tsx` (client component, lazy-loaded).
 
-Displays the `AiAgentVersion` timeline — **point-in-time** snapshots, each holding the config _as of_ that version. Every agent has an explicit `v1` ("Initial configuration") from create/clone (or a seed backfill), and every versioned save appends a row. Each row shows version number (badge), change summary, and formatted date. Expanding a row lazy-loads its snapshot and that of its next-**older** neighbour and renders a Before→After diff for that save (the oldest row, having no older neighbour, shows the full initial config). The newest row equals the live agent by construction, so there's no live-agent fetch.
+Displays the `AiAgentVersion` timeline — **point-in-time** snapshots, each holding the config _as of_ that version. Every agent has an explicit `v1` ("Initial configuration") from create/clone/import (or a seed backfill), and every change to versioned config appends a row: a save, a restore, an instructions revert, an agent import over the agent, and a backup import that changes it (t-779). Each row shows version number (badge), change summary, and formatted date. Expanding a row lazy-loads its snapshot and that of its next-**older** neighbour and renders a Before→After diff for that save (the oldest row, having no older neighbour, shows the full initial config). The newest row equals the live agent by construction, so there's no live-agent fetch.
 
 ### Restore
 
