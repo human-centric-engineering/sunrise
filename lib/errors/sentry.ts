@@ -53,7 +53,9 @@
  * No code changes needed - the abstraction detects Sentry and uses it.
  */
 
+import type { Breadcrumb, Event } from '@sentry/nextjs';
 import { logger } from '@/lib/logging';
+import { collapseDynamicSegments } from '@/lib/logging/redact-path';
 
 /**
  * Error severity levels
@@ -307,4 +309,66 @@ export function clearErrorTrackingUser(): void {
   if (Sentry) {
     Sentry.setUser(null);
   }
+}
+
+/**
+ * Reduce a URL to its origin and its path, with the query string, the fragment
+ * and any `user:password@` dropped and every id- or credential-shaped path
+ * segment collapsed to `[param]` (see `collapseDynamicSegments`). Accepts an
+ * absolute URL or a relative path.
+ *
+ * @example
+ * scrubUrl('https://app.example.com/s/Xk9fQ2mZp4LrT7vB1nWc8sYd?email=a%40b.c#x');
+ * // 'https://app.example.com/s/[param]'
+ */
+export function scrubUrl(url: string): string {
+  const cut = url.search(/[?#]/);
+  const withoutQuery = cut === -1 ? url : url.slice(0, cut);
+  const match = /^([a-z][a-z0-9+.-]*:\/\/[^/]*)?(.*)$/is.exec(withoutQuery);
+  const origin = (match?.[1] ?? '').replace(/\/\/[^/]*@/, '//');
+  return origin + collapseDynamicSegments(match?.[2] ?? '');
+}
+
+/** Breadcrumb `data` keys that hold a URL (fetch/xhr `url`, navigation `from`/`to`). */
+const BREADCRUMB_URL_KEYS = ['url', 'from', 'to'] as const;
+
+/**
+ * `beforeBreadcrumb` for `Sentry.init`: scrubs the URLs a fetch, xhr or
+ * navigation breadcrumb records, with `scrubUrl`.
+ *
+ * @example
+ * Sentry.init({ beforeBreadcrumb: scrubSentryBreadcrumb, ... });
+ */
+export function scrubSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
+  const data = breadcrumb.data;
+  if (!data) return breadcrumb;
+  for (const key of BREADCRUMB_URL_KEYS) {
+    const value: unknown = data[key];
+    if (typeof value === 'string') data[key] = scrubUrl(value);
+  }
+  return breadcrumb;
+}
+
+/**
+ * `beforeSend` (and `beforeSendTransaction`) for `Sentry.init`: scrubs the page
+ * URL the SDK records on the event itself, its query string, a raw-path
+ * transaction name and the attached breadcrumbs.
+ *
+ * `dataCollection.urlQueryParams: false` drops query strings, but not the
+ * fragment or a credential in the path (a `/s/<token>` share page), and only
+ * for URLs the SDK collected itself (#952).
+ *
+ * @example
+ * Sentry.init({ beforeSend: scrubSentryEvent, beforeSendTransaction: scrubSentryEvent, ... });
+ */
+export function scrubSentryEvent<T extends Event>(event: T): T {
+  if (event.request) {
+    if (event.request.url) event.request.url = scrubUrl(event.request.url);
+    delete event.request.query_string;
+  }
+  if (event.transaction?.startsWith('/')) {
+    event.transaction = scrubUrl(event.transaction);
+  }
+  event.breadcrumbs?.forEach(scrubSentryBreadcrumb);
+  return event;
 }

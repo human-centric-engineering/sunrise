@@ -673,7 +673,7 @@ describe('handleClientError', () => {
     });
   });
 
-  describe('Browser context (userAgent and url)', () => {
+  describe('Browser context (userAgent and path)', () => {
     afterEach(() => {
       vi.unstubAllGlobals();
     });
@@ -696,50 +696,50 @@ describe('handleClientError', () => {
       );
     });
 
-    it('should include url when window is available', () => {
-      const mockWindow = {
+    it('should include the page path, without its query or fragment, when window is available', () => {
+      vi.stubGlobal('window', {
         location: {
-          href: 'https://example.com/test',
+          href: 'https://example.com/test?q=search+terms#section',
+          pathname: '/test',
         },
-      };
-      vi.stubGlobal('window', mockWindow);
+      });
 
       const error = new Error('test error');
       handleClientError(error);
 
-      expect(logger.error).toHaveBeenCalledWith(
-        'Unhandled client error',
-        error,
-        expect.objectContaining({
-          url: 'https://example.com/test',
-        })
-      );
+      const meta = vi.mocked(logger.error).mock.calls[0][2];
+      expect(meta).toMatchObject({ path: '/test' });
+      expect(JSON.stringify(meta)).not.toContain('search+terms');
+      expect(JSON.stringify(meta)).not.toContain('#section');
     });
 
-    it('should include both userAgent and url when both are available', () => {
-      const mockNavigator = {
-        userAgent: 'Mozilla/5.0 (Test Browser)',
-      };
-      const mockWindow = {
+    it('should collapse a credential-shaped path segment in the logged and tracked path', () => {
+      const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+      vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Test Browser)' });
+      vi.stubGlobal('window', {
         location: {
-          href: 'https://example.com/test',
+          href: `https://example.com/s/${token}?email=a%40example.com#t=${token}`,
+          pathname: `/s/${token}`,
         },
-      };
-      vi.stubGlobal('navigator', mockNavigator);
-      vi.stubGlobal('window', mockWindow);
+      });
 
       const error = new Error('test error');
       handleClientError(error);
 
-      expect(trackError).toHaveBeenCalledWith(
-        error,
-        expect.objectContaining({
-          extra: expect.objectContaining({
-            userAgent: 'Mozilla/5.0 (Test Browser)',
-            url: 'https://example.com/test',
-          }),
-        })
-      );
+      const meta = vi.mocked(logger.error).mock.calls[0][2];
+      const extra = vi.mocked(trackError).mock.calls[0][1]?.extra;
+      expect(meta).toMatchObject({ path: '/s/[param]' });
+      expect(extra).toMatchObject({
+        userAgent: 'Mozilla/5.0 (Test Browser)',
+        path: '/s/[param]',
+      });
+      for (const recorded of [meta, extra]) {
+        const serialised = JSON.stringify(recorded);
+        expect(serialised).not.toContain(token);
+        expect(serialised).not.toContain('example.com');
+        expect(serialised).not.toContain('?');
+        expect(recorded).not.toHaveProperty('url');
+      }
     });
 
     it('should handle missing navigator gracefully', () => {
@@ -767,7 +767,7 @@ describe('handleClientError', () => {
         'Unhandled client error',
         error,
         expect.objectContaining({
-          url: undefined,
+          path: undefined,
         })
       );
     });
@@ -1097,6 +1097,7 @@ describe('initGlobalErrorHandler', () => {
         removeEventListener: vi.fn(),
         location: {
           href: 'https://example.com',
+          pathname: '/',
         },
       };
       vi.stubGlobal('window', mockWindow);
@@ -1137,6 +1138,7 @@ describe('initGlobalErrorHandler', () => {
         removeEventListener: vi.fn(),
         location: {
           href: 'https://example.com',
+          pathname: '/',
         },
       };
       vi.stubGlobal('window', mockWindow);
@@ -1183,6 +1185,7 @@ describe('initGlobalErrorHandler', () => {
         removeEventListener: vi.fn(),
         location: {
           href: 'https://example.com',
+          pathname: '/',
         },
       };
       vi.stubGlobal('window', mockWindow);

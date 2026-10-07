@@ -10,6 +10,8 @@
  * - trackMessage: no-op paths for all severity levels, full Sentry path
  * - setErrorTrackingUser: no-op and Sentry user path
  * - clearErrorTrackingUser: no-op and Sentry clear path
+ * - scrubUrl / scrubSentryBreadcrumb / scrubSentryEvent: URL scrubbing for
+ *   Sentry's beforeSend / beforeBreadcrumb hooks (#952)
  *
  * Mocking strategy:
  * - @sentry/nextjs: The source uses dynamic require() inside getSentry() which
@@ -83,6 +85,9 @@ import {
   setErrorTrackingUser,
   clearErrorTrackingUser,
   ErrorSeverity,
+  scrubUrl,
+  scrubSentryBreadcrumb,
+  scrubSentryEvent,
 } from '@/lib/errors/sentry';
 import { logger } from '@/lib/logging';
 
@@ -461,5 +466,93 @@ describe('isSentryAvailable (via observable behaviour)', () => {
     // Assert: info branch = Sentry available
     expect(vi.mocked(logger.info)).toHaveBeenCalled();
     expect(vi.mocked(logger.debug)).not.toHaveBeenCalled();
+  });
+});
+
+// =============================================================================
+// Suite D — URL scrubbing for beforeSend / beforeBreadcrumb (#952)
+// =============================================================================
+
+describe('Sentry URL scrubbing', () => {
+  const token = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+
+  describe('scrubUrl', () => {
+    it('drops the query string and fragment and collapses a credential-shaped segment', () => {
+      expect(scrubUrl(`https://app.example.com/s/${token}?email=a%40b.c#t=${token}`)).toBe(
+        'https://app.example.com/s/[param]'
+      );
+    });
+
+    it('drops user:password from the authority', () => {
+      expect(scrubUrl('https://user:secret@app.example.com/admin?x=1')).toBe(
+        'https://app.example.com/admin'
+      );
+    });
+
+    it('scrubs a relative path and leaves readable segments alone', () => {
+      expect(scrubUrl(`/s/${token}?q=1`)).toBe('/s/[param]');
+      expect(scrubUrl('/admin/orchestration/agents#tab')).toBe('/admin/orchestration/agents');
+    });
+
+    it('keeps a bare origin intact', () => {
+      expect(scrubUrl('https://app.example.com?ref=x')).toBe('https://app.example.com');
+    });
+  });
+
+  describe('scrubSentryBreadcrumb', () => {
+    it('scrubs navigation from/to and fetch url data', () => {
+      const breadcrumb = scrubSentryBreadcrumb({
+        category: 'navigation',
+        data: { from: `/s/${token}?a=1`, to: '/reset-password?token=abc', status_code: 200 },
+      });
+      expect(breadcrumb.data).toEqual({
+        from: '/s/[param]',
+        to: '/reset-password',
+        status_code: 200,
+      });
+
+      const fetchCrumb = scrubSentryBreadcrumb({
+        category: 'fetch',
+        data: { url: `https://app.example.com/api/v1/x/${token}?email=a%40b.c` },
+      });
+      expect(fetchCrumb.data?.url).toBe('https://app.example.com/api/v1/x/[param]');
+    });
+
+    it('returns a breadcrumb without data unchanged', () => {
+      const breadcrumb = { category: 'ui.click', message: 'button' };
+      expect(scrubSentryBreadcrumb(breadcrumb)).toEqual({
+        category: 'ui.click',
+        message: 'button',
+      });
+    });
+  });
+
+  describe('scrubSentryEvent', () => {
+    it('scrubs the request URL, query string, raw-path transaction and breadcrumbs', () => {
+      const event = scrubSentryEvent({
+        request: {
+          url: `https://app.example.com/s/${token}?email=a%40b.c#t=${token}`,
+          query_string: 'email=a%40b.c',
+          headers: { 'User-Agent': 'test' },
+        },
+        transaction: `/s/${token}`,
+        breadcrumbs: [{ category: 'navigation', data: { to: `/s/${token}?x=1` } }],
+        extra: { path: '/s/[param]' },
+      });
+
+      expect(event.request).toEqual({
+        url: 'https://app.example.com/s/[param]',
+        headers: { 'User-Agent': 'test' },
+      });
+      expect(event.transaction).toBe('/s/[param]');
+      expect(event.breadcrumbs?.[0].data).toEqual({ to: '/s/[param]' });
+      expect(JSON.stringify(event)).not.toContain(token);
+      expect(JSON.stringify(event)).not.toContain('a%40b.c');
+    });
+
+    it('leaves a parameterised route name and an event with no request alone', () => {
+      const event = scrubSentryEvent({ transaction: '/s/[token]', message: 'boom' });
+      expect(event).toEqual({ transaction: '/s/[token]', message: 'boom' });
+    });
   });
 });
