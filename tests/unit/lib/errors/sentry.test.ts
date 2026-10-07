@@ -503,6 +503,24 @@ describe('Sentry URL scrubbing', () => {
       expect(fetchData.url).toBe(`/api/v1/x/${token}?a=1`);
     });
 
+    it('scrubs a console breadcrumb message and string arguments, and drops url.query and url.fragment', () => {
+      const scrubbed = scrubSentryBreadcrumb({
+        category: 'console',
+        message: `Error: boom at https://app.example.com/s/${token}?email=a%40b.c:3:7`,
+        data: {
+          arguments: [`at https://app.example.com/s/${token}#t=1`, 42],
+          'url.query': 'email=a%40b.c',
+          'url.fragment': `t=${token}`,
+        },
+      });
+
+      expect(scrubbed).toEqual({
+        category: 'console',
+        message: 'Error: boom at https://app.example.com/s/[param]:3:7',
+        data: { arguments: ['at https://app.example.com/s/[param]', 42] },
+      });
+    });
+
     it('returns a breadcrumb without data unchanged', () => {
       const breadcrumb = { category: 'ui.click', message: 'button' };
       expect(scrubSentryBreadcrumb(breadcrumb)).toEqual({
@@ -638,6 +656,18 @@ describe('Sentry URL scrubbing', () => {
       });
     });
 
+    it('scrubs the message, exception values and string extra values', () => {
+      const event = scrubSentryEvent({
+        message: `Bad link https://app.example.com/s/${token}?email=a%40b.c`,
+        exception: { values: [{ type: 'Error', value: `Bad link /s/${token}#t=1` }] },
+        extra: { link: `https://app.example.com/s/${token}?x=1`, count: 2 },
+      });
+
+      expect(event.message).toBe('Bad link https://app.example.com/s/[param]');
+      expect(event.exception?.values?.[0].value).toBe('Bad link /s/[param]');
+      expect(event.extra).toEqual({ link: 'https://app.example.com/s/[param]', count: 2 });
+    });
+
     it('does not throw on a child span with no data', () => {
       const span = { span_id: 'c', trace_id: 't', start_timestamp: 0, status: 'ok' };
       // A span another processor built can lack the typed-required `data`.
@@ -666,12 +696,23 @@ describe('Sentry URL scrubbing', () => {
           'url.fragment': 'x',
           'url.query': 'email=a%40b.c',
           'url.path.parameter.token': token,
+          'url.path.params.token': token,
+          'params.token': token,
           'sentry.segment.name': `GET /s/${token}`,
           'sentry.op': 'pageload',
         },
       };
 
-      const scrubbed = scrubSentrySpan(span);
+      const scrubbed = scrubSentrySpan({
+        ...span,
+        links: [
+          {
+            span_id: 'p',
+            trace_id: 't',
+            attributes: { 'url.full': `https://app.example.com/s/${token}` },
+          },
+        ],
+      });
 
       expect(scrubbed.name).toBe('GET /s/[param]');
       expect(scrubbed.attributes).toEqual({
@@ -679,6 +720,9 @@ describe('Sentry URL scrubbing', () => {
         'url.path': '/s/[param]',
         'sentry.segment.name': 'GET /s/[param]',
         'sentry.op': 'pageload',
+      });
+      expect(scrubbed.links?.[0].attributes).toEqual({
+        'url.full': 'https://app.example.com/s/[param]',
       });
       expect(JSON.stringify(scrubbed)).not.toContain(token);
       expect(span.attributes['url.path']).toBe(`/s/${token}`);

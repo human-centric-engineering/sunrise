@@ -78,8 +78,8 @@ export function loggablePath(pathname: string | undefined): string | undefined {
 }
 
 /**
- * Next.js build assets: their URLs carry no request data, and a source-map
- * lookup needs the path exactly as built.
+ * Next.js build assets (under any `basePath`): their URLs carry no request
+ * data, and a source-map lookup needs the path exactly as built.
  */
 const BUILD_ASSET_PATH = '/_next/static/';
 
@@ -102,7 +102,7 @@ export function scrubUrl(url: string): string {
   const match = ABSOLUTE_URL.exec(withoutQuery);
   const origin = (match?.[1] ?? '').replace(/\/\/[^/]*@/, '//');
   const path = match?.[2] ?? '';
-  return origin + (path.startsWith(BUILD_ASSET_PATH) ? path : collapseDynamicSegments(path));
+  return origin + (path.includes(BUILD_ASSET_PATH) ? path : collapseDynamicSegments(path));
 }
 
 /**
@@ -111,6 +111,9 @@ export function scrubUrl(url: string): string {
  * match, but `a/b` does not.
  */
 const URL_IN_TEXT = /(?<![\w/])(?:[a-z][a-z0-9+.-]*:\/\/|\/)[^\s()]*/gi;
+
+/** Punctuation that ends a sentence or a quoted value, not the URL before it. */
+const TRAILING_PUNCTUATION = /[.,;:!?'"`\]}>&]+$/;
 
 /** A stack frame's `:line` or `:line:column` suffix. */
 const LINE_COLUMN = /(?::\d+){1,2}$/;
@@ -126,7 +129,9 @@ const LINE_COLUMN = /(?::\d+){1,2}$/;
  */
 export function scrubUrlsInText(text: string): string {
   return text.replace(URL_IN_TEXT, (found) => {
-    const suffix = LINE_COLUMN.exec(found)?.[0] ?? '';
-    return scrubUrl(found.slice(0, found.length - suffix.length)) + suffix;
+    const punctuation = TRAILING_PUNCTUATION.exec(found)?.[0] ?? '';
+    const url = found.slice(0, found.length - punctuation.length);
+    const lineColumn = LINE_COLUMN.exec(url)?.[0] ?? '';
+    return scrubUrl(url.slice(0, url.length - lineColumn.length)) + lineColumn + punctuation;
   });
 }

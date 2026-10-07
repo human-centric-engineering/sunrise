@@ -128,15 +128,21 @@ as `/s/<token>`). `urlQueryParams: false` covers only query strings the SDK
 collected itself. Three hooks from `lib/errors/sentry.ts` cover the rest:
 
 - `scrubSentryEvent` (`beforeSend`) reduces an error event's `request.url`,
-  its transaction name and its stack frames' file URLs (an inline script's
-  frame is the page URL) to origin plus path, and scrubs the trace context
-  and breadcrumbs it carries;
+  transaction name, message and exception values, stack frames' file URLs (an
+  inline script's frame is the page URL) and the string values of `extra` to
+  origin plus path, and scrubs the trace context and breadcrumbs it carries;
 - `scrubSentrySpan` (`beforeSendSpan`) scrubs every URL and path in each
-  span's name and attribute values (`url.full`, `http.url`, `next.span_name`,
-  a captured `referer` header…), and drops `url.fragment`, `url.query` and the
-  raw `url.path.parameter.*` values;
-- `scrubSentryBreadcrumb` (`beforeBreadcrumb`) scrubs the `url` / `from` / `to`
-  of fetch, xhr and navigation breadcrumbs.
+  span's name and attribute values, and in its links' attributes (`url.full`,
+  `http.url`, `next.span_name`, a captured `referer` header…), and drops
+  `url.fragment`, `url.query` and the raw path-parameter values
+  (`url.path.parameter.*`, `url.path.params.*`, `params.*`);
+- `scrubSentryBreadcrumb` (`beforeBreadcrumb`) does the same for a
+  breadcrumb's message and data: a fetch or xhr `url`, a navigation's `from` /
+  `to`, a console breadcrumb's string arguments.
+
+URLs inside an object argument of a console breadcrumb (an `Error` passed to
+`console.error`) are not reached; neither are tags or request headers. Keep
+`httpHeaders` off, as above.
 
 **If you set `traceLifecycle: 'static'`**, the SDK never calls
 `beforeSendSpan: scrubSentrySpan`; set `beforeSendTransaction: scrubSentryEvent`

@@ -317,15 +317,13 @@ type StreamedSpanJSON = Parameters<
   NonNullable<NonNullable<Parameters<typeof sentryInit>[0]>['beforeSendSpan']>
 >[0];
 
-/** Breadcrumb `data` keys that hold a URL (fetch/xhr `url`, navigation `from`/`to`). */
-const BREADCRUMB_URL_KEYS = ['url', 'from', 'to'];
-
 /**
- * Span attributes dropped outright: the query string, the fragment, and the
- * raw value of each dynamic path segment (`url.path.parameter.<key>`).
+ * Span attributes and breadcrumb data dropped outright: the query string, the
+ * fragment, and the raw value of each dynamic path segment
+ * (`url.path.parameter.<key>`, `url.path.params.<key>`, `params.<key>`).
  */
 const DROPPED_ATTRIBUTE =
-  /^(?:url\.query|url\.fragment|http\.query|http\.fragment|url\.path\.parameter\..*)$/;
+  /^(?:url\.query|url\.fragment|http\.query|http\.fragment|url\.path\.parameters?\..*|url\.path\.params\..*|params\..*)$/;
 
 /** A span attribute value — raw, an array, or `{ value, unit? }` — with `scrubUrlsInText` applied. */
 function scrubAttributeValue(value: unknown): unknown {
@@ -353,22 +351,21 @@ function scrubAttributes<T extends Record<string, unknown>>(attributes: T): T {
 }
 
 /**
- * `beforeBreadcrumb` for `Sentry.init`: scrubs the URLs a fetch, xhr or
- * navigation breadcrumb records, with `scrubUrl`. Returns a copy: a fetch
- * breadcrumb's `data` is the SDK's own request object, shared with its other
- * fetch handlers.
+ * `beforeBreadcrumb` for `Sentry.init`: scrubs every URL and path in a
+ * breadcrumb's message and data (a fetch or xhr `url`, a navigation's `from` /
+ * `to`, a console breadcrumb's string arguments) and drops `url.query` /
+ * `url.fragment`. Returns a copy: a fetch breadcrumb's `data` is the SDK's own
+ * request object, shared with its other fetch handlers.
  *
  * @example
  * Sentry.init({ beforeBreadcrumb: scrubSentryBreadcrumb, ... });
  */
 export function scrubSentryBreadcrumb(breadcrumb: Breadcrumb): Breadcrumb {
-  if (!breadcrumb.data) return breadcrumb;
-  const data: Record<string, unknown> = { ...breadcrumb.data };
-  for (const key of BREADCRUMB_URL_KEYS) {
-    const value = data[key];
-    if (typeof value === 'string') data[key] = scrubUrl(value);
-  }
-  return { ...breadcrumb, data };
+  return {
+    ...breadcrumb,
+    ...(breadcrumb.message !== undefined && { message: scrubUrlsInText(breadcrumb.message) }),
+    ...(breadcrumb.data && { data: scrubAttributes(breadcrumb.data) }),
+  };
 }
 
 /**
@@ -385,14 +382,20 @@ export function scrubSentrySpan(span: StreamedSpanJSON): StreamedSpanJSON {
     ...span,
     name: scrubUrlsInText(span.name),
     attributes: scrubAttributes(span.attributes),
+    ...(span.links && {
+      links: span.links.map((link) =>
+        link.attributes ? { ...link, attributes: scrubAttributes(link.attributes) } : link
+      ),
+    }),
   };
 }
 
 /**
  * `beforeSend` for `Sentry.init`: scrubs the page URL the SDK records on an
- * error event, its query string, the transaction name, the stack frames' file
- * URLs (an inline script's frame is the page URL), the trace context's span
- * data and the attached breadcrumbs. Also usable as
+ * error event, its query string, the transaction name, the message and
+ * exception values, the stack frames' file URLs (an inline script's frame is
+ * the page URL), the string values of `extra`, the trace context's span data
+ * and the attached breadcrumbs. Also usable as
  * `beforeSendTransaction` under `traceLifecycle: 'static'`, where it scrubs
  * each child span the same way.
  *
@@ -409,7 +412,10 @@ export function scrubSentryEvent<T extends Event>(event: T): T {
     delete event.request.query_string;
   }
   if (event.transaction) event.transaction = scrubUrlsInText(event.transaction);
+  if (typeof event.message === 'string') event.message = scrubUrlsInText(event.message);
+  if (event.extra) event.extra = scrubAttributes(event.extra);
   event.exception?.values?.forEach((exception) => {
+    if (exception.value) exception.value = scrubUrlsInText(exception.value);
     exception.stacktrace?.frames?.forEach((frame) => {
       if (frame.filename) frame.filename = scrubUrl(frame.filename);
       if (frame.abs_path) frame.abs_path = scrubUrl(frame.abs_path);

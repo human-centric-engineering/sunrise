@@ -113,6 +113,12 @@ describe('scrubUrl', () => {
     expect(scrubUrl('https://app.example.com?ref=x')).toBe('https://app.example.com');
   });
 
+  it('keeps a build asset path intact under a basePath', () => {
+    expect(scrubUrl('https://host/app/_next/static/AbCdEf0123456789xYz12/_buildManifest.js')).toBe(
+      'https://host/app/_next/static/AbCdEf0123456789xYz12/_buildManifest.js'
+    );
+  });
+
   it('keeps a Next.js build asset path intact, minus its query', () => {
     expect(
       scrubUrl('https://app.example.com/_next/static/AbCdEf0123456789xYz12/_buildManifest.js?dpl=1')
@@ -137,6 +143,15 @@ describe('scrubUrlsInText', () => {
     const stack = `Error: boom\n    at f (https://app.example.com/s/${token}?email=a%40b.c:12:34)\n    at g (https://app.example.com/_next/static/chunks/main-abc.js:1:2)`;
     expect(scrubUrlsInText(stack)).toBe(
       'Error: boom\n    at f (https://app.example.com/s/[param]:12:34)\n    at g (https://app.example.com/_next/static/chunks/main-abc.js:1:2)'
+    );
+  });
+
+  it('does not let trailing punctuation shield a credential segment', () => {
+    expect(scrubUrlsInText(`Failed to load https://app.example.com/s/${token}, status 404`)).toBe(
+      'Failed to load https://app.example.com/s/[param], status 404'
+    );
+    expect(scrubUrlsInText(`{"url":"https://app.example.com/s/${token}"}`)).toBe(
+      '{"url":"https://app.example.com/s/[param]"}'
     );
   });
 

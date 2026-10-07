@@ -32,7 +32,7 @@
 
 import { isRecord } from '@/lib/utils';
 import { logger } from '@/lib/logging';
-import { collapseDynamicSegments, scrubUrlsInText } from '@/lib/logging/redact-path';
+import { loggablePath, scrubUrlsInText } from '@/lib/logging/redact-path';
 import { trackError, ErrorSeverity } from '@/lib/errors/sentry';
 
 /**
@@ -242,8 +242,7 @@ export function handleClientError(error: unknown, context: Record<string, unknow
   // The page path, never `location.href`: the query and fragment can carry a
   // token or an email, and a path segment can be a credential (#952). The
   // scrubbers above match key names, so they cannot clean a URL value.
-  const path =
-    typeof window !== 'undefined' ? collapseDynamicSegments(window.location.pathname) : undefined;
+  const path = loggablePath(typeof window !== 'undefined' ? window.location.pathname : undefined);
 
   // Log the error with structured logger
   logger.error('Unhandled client error', normalized.error, {
