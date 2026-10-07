@@ -747,6 +747,17 @@ release process.
 
 ### Security
 
+- **The `api-key` and `embed-token` rate-limit key strategies key on a
+  verified credential** (#701). Both built the bucket from the header value
+  as presented, so a caller could open a new bucket per request and the cap
+  never engaged. The middleware now looks the presented key or token up
+  (`lib/security/rate-limit-credentials.ts`, cached 60s per verified
+  credential) and keys on the stored row's id; a value that names no live
+  credential gets the IP bucket. A fork rule using either strategy (via
+  `registerRateLimitRule()`) gets the same behaviour, and the identifier
+  segment changes from the raw value to `key:sk:<id>` / `key:mcp:<id>` /
+  `embed:<id>:<ip>`.
+
 - **`send_message_to_channel` sends only within the conversation being
   handled** (t-770). It sent on whatever `conversationId` its caller passed, so
   a model steered by the person chatting, by an inbound message or by content

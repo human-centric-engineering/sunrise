@@ -56,18 +56,18 @@ A request to `/api/v1/admin/orchestration/chat/stream` gets BOTH: the orchestrat
 
 Single source of truth. First match wins; rules are evaluated top to bottom.
 
-| #   | Path matcher                   | Tier            | Key strategy   | Notes                                                  |
-| --- | ------------------------------ | --------------- | -------------- | ------------------------------------------------------ |
-| 1   | `/api/v1/admin/orchestration/` | `orchestration` | `session-user` | 120/min — chatty editor UI                             |
-| 2   | `/api/v1/admin/`               | `admin`         | `session-user` | 30/min — core admin (users, logs, invitations, flags)  |
-| 3   | `/api/v1/auth/`                | `auth`          | `ip`           | 5/min — app-layer auth endpoints                       |
-| 4   | `/api/auth/`                   | `auth`          | `ip`           | 5/min — better-auth's own routes                       |
-| 5   | `/api/v1/mcp/`                 | `mcp`           | `api-key`      | 300/min — LLM-agent transport keyed per api-key        |
-| 6   | `/api/v1/webhooks/`            | `api`           | `api-key`      | 100/min keyed on `Authorization: Bearer <key>`         |
-| 7   | `/api/v1/embed/`               | `api`           | `embed-token`  | 100/min keyed on `X-Embed-Token` header + IP composite |
-| 8   | `/api/v1/inbound/`             | `api`           | `ip`           | 100/min — server-to-server (Slack, Postmark, etc.)     |
-| 9   | `/api/v1/contact`              | `api`           | `ip`           | 100/min — unauthenticated public submission            |
-| 10  | `/api/v1/` (catch-all)         | `api`           | `session-user` | 100/min — everything else                              |
+| #   | Path matcher                   | Tier            | Key strategy   | Notes                                                 |
+| --- | ------------------------------ | --------------- | -------------- | ----------------------------------------------------- |
+| 1   | `/api/v1/admin/orchestration/` | `orchestration` | `session-user` | 120/min — chatty editor UI                            |
+| 2   | `/api/v1/admin/`               | `admin`         | `session-user` | 30/min — core admin (users, logs, invitations, flags) |
+| 3   | `/api/v1/auth/`                | `auth`          | `ip`           | 5/min — app-layer auth endpoints                      |
+| 4   | `/api/auth/`                   | `auth`          | `ip`           | 5/min — better-auth's own routes                      |
+| 5   | `/api/v1/mcp/`                 | `mcp`           | `api-key`      | 300/min — LLM-agent transport keyed per api-key       |
+| 6   | `/api/v1/webhooks/`            | `api`           | `api-key`      | 100/min keyed on the verified API key                 |
+| 7   | `/api/v1/embed/`               | `api`           | `embed-token`  | 100/min keyed on the verified embed token + IP        |
+| 8   | `/api/v1/inbound/`             | `api`           | `ip`           | 100/min — server-to-server (Slack, Postmark, etc.)    |
+| 9   | `/api/v1/contact`              | `api`           | `ip`           | 100/min — unauthenticated public submission           |
+| 10  | `/api/v1/` (catch-all)         | `api`           | `session-user` | 100/min — everything else                             |
 
 **Order matters.** The orchestration rule (1) must come before the broader admin rule (2) — otherwise `/api/v1/admin/orchestration/agents` would match `/api/v1/admin/` first and land on the tighter 30/min admin tier. The MCP rule (5) and the consumer-specific rules (6–9) must come before the catch-all (10) — otherwise MCP would key on session-user (and fall back to IP, defeating the api-key keying), webhooks would key on session-user, and so on.
 
@@ -93,16 +93,18 @@ Caps are per-window (1 minute) using the sliding-window algorithm from `lib/secu
 
 How the dispatcher identifies the caller when building the bucket token. Token format: `mw:${tier}:${key}:${identifier}`.
 
-| Strategy       | Identifier source                                                      | Fallback                 |
-| -------------- | ---------------------------------------------------------------------- | ------------------------ |
-| `ip`           | `getClientIP(request)` — `X-Forwarded-For` (leftmost) then `X-Real-IP` | `127.0.0.1`              |
-| `session-user` | better-auth `session.user.id`                                          | IP (`ip:${getClientIP}`) |
-| `api-key`      | `Authorization: Bearer <key>` header value                             | IP (`ip:${getClientIP}`) |
-| `embed-token`  | `X-Embed-Token` header + IP composite                                  | IP (`ip:${getClientIP}`) |
+| Strategy       | Identifier source                                                                  | Fallback                 |
+| -------------- | ---------------------------------------------------------------------------------- | ------------------------ |
+| `ip`           | `getClientIP(request)` — `X-Forwarded-For` (leftmost) then `X-Real-IP`             | `127.0.0.1`              |
+| `session-user` | better-auth `session.user.id`                                                      | IP (`ip:${getClientIP}`) |
+| `api-key`      | Stored id of the API key in `Authorization: Bearer <key>` (`sk:<id>` / `mcp:<id>`) | IP (`ip:${getClientIP}`) |
+| `embed-token`  | Stored id of the `X-Embed-Token` token + IP composite                              | IP (`ip:${getClientIP}`) |
 
 **Why fallbacks exist.** Rate-limiting is best-effort defense in depth — if we can't identify the caller more precisely (auth provider down, session not yet established, missing header), we still want _some_ bucket rather than letting the request through unlimited. The fallback to IP gives unauthenticated/can't-resolve traffic a per-IP cap without changing the rule's intent for authenticated callers.
 
 **The key space is open to forks.** These four are the built-in strategies; an app/fork registers its own (an org, a workspace, a device id) via `registerRateLimitKeyResolver()` — see [App / Fork Extension](#app--fork-extension). A custom resolver returns the identifier segment (`org:123`) or `null` for the same IP fallback as the built-ins; a resolver that throws is logged as an error and falls back to IP (a fork bug must be loud, but must not fail open or take the API down). Identifiers must come from something the caller cannot freely choose. Compositing with `getClientIP()` is **not** a substitute for that: a caller who can vary the label mints a fresh bucket per request whatever else is in the token, so the cap never engages — see the example's comment.
+
+**Credential strategies key on what the credential resolves to, never on the header.** `api-key` and `embed-token` look the presented value up (`lib/security/rate-limit-credentials.ts`) and key on the stored row's id; a value that names no live credential (unknown, revoked, inactive, or a format Sunrise does not issue) gets the IP bucket. A verified id is cached per process for 60s, so a real caller costs one indexed lookup per minute rather than one per request. Unverified values are not cached; instead the lookup is skipped once the IP bucket they would fall back to is full, so the lookups they can cause are bounded by the IP cap. A failed lookup falls back to IP and logs a warning. The check here is only "does this credential exist and is it live" — scopes, expiry, org entry and origin checks stay with the route's own resolver, which still refuses a bad credential.
 
 **Session resolution failure is a behaviour, not a panic.** When `auth.api.getSession` throws (DB outage, etc.), the dispatcher catches the error and falls back to IP keying — it does NOT propagate the auth error as the request's response. Route handlers that require authentication surface their own 401 downstream.
 
