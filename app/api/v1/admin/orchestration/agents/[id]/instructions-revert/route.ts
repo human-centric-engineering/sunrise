@@ -21,10 +21,11 @@
  * Authentication: Admin role required.
  */
 
+import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
-import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validatePathParam, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
@@ -41,7 +42,7 @@ import {
   recordAgentVersion,
 } from '@/lib/orchestration/agents/agent-versioning';
 
-const REVERT_CHANGE_SUMMARY = 'Instructions: reverted to an earlier version';
+const REVERT_VERSION_LABEL = 'Reverted from instruction history';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -105,21 +106,30 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   // Instructions are versioned, so the revert saves a version in the same
   // transaction: the newest version must equal what the agent now runs, or
   // every chat turn after it is pinned to a config it did not run.
-  const agent = await prisma.$transaction(async (tx) => {
-    await ensureBaselineVersion(tx, id, session.user.id);
-    const updated = await tx.aiAgent.update({
-      where: { id },
-      data: {
-        systemInstructions: target.instructions,
-        systemInstructionsHistory: nextHistory,
-      },
+  const agent = await prisma
+    .$transaction(async (tx) => {
+      await ensureBaselineVersion(tx, id, session.user.id);
+      const updated = await tx.aiAgent.update({
+        where: { id },
+        data: {
+          systemInstructions: target.instructions,
+          systemInstructionsHistory: nextHistory,
+        },
+      });
+      await recordAgentVersion(tx, id, {
+        label: REVERT_VERSION_LABEL,
+        createdBy: session.user.id,
+      });
+      return updated;
+    })
+    .catch((err: unknown) => {
+      // The only unique write is the version number, so a collision means a
+      // concurrent edit to this agent took it. Retryable, as PATCH reports it.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictError('Revert conflicted with a concurrent change. Please retry.');
+      }
+      throw err;
     });
-    await recordAgentVersion(tx, id, {
-      changeSummary: REVERT_CHANGE_SUMMARY,
-      createdBy: session.user.id,
-    });
-    return updated;
-  });
 
   log.info('Agent systemInstructions reverted', {
     agentId: id,

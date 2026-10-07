@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { Prisma } from '@prisma/client';
 
 import type { prisma } from '@/lib/db/client';
+import { buildChangeSummary } from '@/lib/orchestration/agent-version-diff';
 import {
   INITIAL_VERSION_SUMMARY,
   LATEST_AGENT_VERSION_ID_INCLUDE,
@@ -129,11 +130,17 @@ describe('agent-versioning helpers', () => {
   });
 
   describe('recordAgentVersion', () => {
-    it('saves the live row and grants as the next version', async () => {
-      const { tx, created } = makeTx([{ version: 3, snapshot: { model: 'older' } }]);
+    it('saves the live row and grants as the next version, summarising what changed', async () => {
+      // The newest version differs from the live config in two fields.
+      const { tx, created } = makeTx([
+        {
+          version: 3,
+          snapshot: { ...LIVE_SNAPSHOT, model: 'older-model', systemInstructions: 'Old.' },
+        },
+      ]);
 
       const written = await recordAgentVersion(tx, 'agent-1', {
-        changeSummary: 'Overwritten by agent import',
+        label: 'Overwritten by agent import',
         createdBy: 'admin-1',
       });
 
@@ -143,7 +150,11 @@ describe('agent-versioning helpers', () => {
           agentId: 'agent-1',
           version: 4,
           snapshot: LIVE_SNAPSHOT,
-          changeSummary: 'Overwritten by agent import',
+          // The label, then the changed fields grouped by tab as PATCH writes them.
+          changeSummary: `Overwritten by agent import — ${buildChangeSummary([
+            'model',
+            'systemInstructions',
+          ])}`,
           createdBy: 'admin-1',
         },
       ]);
@@ -161,12 +172,13 @@ describe('agent-versioning helpers', () => {
       const { tx, created } = makeTx([]);
 
       const written = await recordAgentVersion(tx, 'agent-1', {
-        changeSummary: INITIAL_VERSION_SUMMARY,
+        label: INITIAL_VERSION_SUMMARY,
         createdBy: 'admin-1',
       });
 
       expect(written).toBe(1);
       expect(created).toHaveLength(1);
+      // A first version has nothing to diff against: the label alone.
       expect(created[0]).toMatchObject({ version: 1, changeSummary: INITIAL_VERSION_SUMMARY });
     });
 
@@ -179,7 +191,7 @@ describe('agent-versioning helpers', () => {
       const { tx, created } = makeTx([{ version: 5, snapshot: keysReversed }]);
 
       const written = await recordAgentVersion(tx, 'agent-1', {
-        changeSummary: 'Overwritten by backup import',
+        label: 'Overwritten by backup import',
         createdBy: 'admin-1',
       });
 
@@ -193,12 +205,15 @@ describe('agent-versioning helpers', () => {
       ]);
 
       const written = await recordAgentVersion(tx, 'agent-1', {
-        changeSummary: 'Overwritten by backup import',
+        label: 'Overwritten by backup import',
         createdBy: 'admin-1',
       });
 
       expect(written).toBe(6);
       expect(created).toHaveLength(1);
+      expect(created[0].changeSummary).toBe(
+        `Overwritten by backup import — ${buildChangeSummary(['providerConfig'])}`
+      );
     });
   });
 
@@ -217,6 +232,32 @@ describe('agent-versioning helpers', () => {
           createdBy: 'admin-1',
         },
       ]);
+    });
+
+    it('reads the live config one query at a time on the transaction connection', async () => {
+      // pg deprecates concurrent queries on one client, and an interactive
+      // transaction holds exactly one: no read may start before the last ends.
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const slow =
+        <T>(value: T) =>
+        async () => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 1));
+          inFlight -= 1;
+          return value;
+        };
+      const tx = {
+        aiAgent: { findUniqueOrThrow: vi.fn(slow(LIVE_AGENT)) },
+        aiAgentKnowledgeTag: { findMany: vi.fn(slow([])) },
+        aiAgentKnowledgeDocument: { findMany: vi.fn(slow([])) },
+        aiAgentVersion: { findFirst: vi.fn(slow(null)), create: vi.fn(slow({})) },
+      } as unknown as Prisma.TransactionClient;
+
+      await recordAgentVersion(tx, 'agent-1', { label: 'x', createdBy: 'admin-1' });
+
+      expect(maxInFlight).toBe(1);
     });
 
     it('writes nothing when the agent already has versions', async () => {

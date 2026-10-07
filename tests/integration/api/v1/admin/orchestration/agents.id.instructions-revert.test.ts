@@ -62,6 +62,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import {
   ensureBaselineVersion,
@@ -189,12 +190,29 @@ describe('POST /api/v1/admin/orchestration/agents/:id/instructions-revert', () =
       // …and the reverted instructions become the newest version, so a chat
       // turn after the revert is pinned to the config it actually runs.
       expect(recordAgentVersion).toHaveBeenCalledWith(prisma, AGENT_ID, {
-        changeSummary: 'Instructions: reverted to an earlier version',
+        label: 'Reverted from instruction history',
         createdBy: ADMIN_ID,
       });
       const updateAt = vi.mocked(prisma.aiAgent.update).mock.invocationCallOrder[0];
       expect(vi.mocked(ensureBaselineVersion).mock.invocationCallOrder[0]).toBeLessThan(updateAt);
       expect(vi.mocked(recordAgentVersion).mock.invocationCallOrder[0]).toBeGreaterThan(updateAt);
+    });
+
+    it('returns a retryable 409 when a concurrent edit takes the version number', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const agent = makeAgentRow();
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(agent as never);
+      vi.mocked(prisma.aiAgent.update).mockResolvedValue(agent as never);
+      vi.mocked(recordAgentVersion).mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+        })
+      );
+
+      const response = await POST(makeRequest({ versionIndex: 0 }), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(409);
     });
 
     it('reverts to the correct version when versionIndex is 1', async () => {

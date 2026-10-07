@@ -232,16 +232,21 @@ release process.
 
 ### Changed
 
-- **Reverting an agent's instructions, importing an agent bundle over an
-  agent, and restoring a backup over an agent now each add an agent version**
-  (t-779). `POST /admin/orchestration/agents/:id/instructions-revert`,
-  `POST /admin/orchestration/agents/import` and the backup import used to
-  change an agent's versioned config without one, so its newest version no
-  longer matched what it ran. Version history now shows these changes as a new
-  vN; an agent created by either import gets a v1. A backup that leaves an
-  agent unchanged adds nothing. The workflow `chat_turn` step also reads an
-  agent and its newest version in one snapshot, so an edit committed mid-read
-  cannot pin a turn to a version it did not run.
+- **Reverting an agent's instructions, importing an agent over it, restoring a
+  backup over it, and bulk activate / deactivate / delete now each add an agent
+  version** (t-779). `POST /admin/orchestration/agents/:id/instructions-revert`,
+  `POST /admin/orchestration/agents/import`, `POST /admin/orchestration/backup/import`
+  and `POST /admin/orchestration/agents/bulk` used to change an agent's
+  versioned config without one, so its newest version no longer matched what
+  it ran. Version history now shows each such change as a new vN, summarised by
+  the fields it changed; an agent created by an import gets a v1, and an agent
+  with no history keeps its prior config as v1 first. A write that leaves an
+  agent matching its newest version adds none. These routes, like PATCH, now
+  return a retryable `409` when a concurrent edit takes the version number. The
+  version-history diff also stops reporting an object field as changed when only
+  its key order differs. The workflow `chat_turn` step reads an agent and its
+  newest version in one snapshot, so an edit committed mid-read cannot pin a
+  turn to a version it did not run.
 - **The Model Matrix no longer overrides the price or context window of a
   model the registry already knows** (#813, t-769). A positive figure from the
   static map or OpenRouter now wins over the row's blended rate and context

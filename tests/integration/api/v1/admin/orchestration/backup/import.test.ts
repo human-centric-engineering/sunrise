@@ -15,6 +15,7 @@ import {
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
 import { ZodError, ZodIssueCode } from 'zod';
+import { Prisma } from '@prisma/client';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -178,6 +179,23 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
       // return 400 VALIDATION_ERROR. The rethrow must NOT produce a 400.
       expect(status).not.toBe(400);
       // The rethrow fires before the success audit — logAdminAction must not have been called.
+      expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+    });
+
+    it('returns a retryable 409 when a concurrent write collides on a unique key', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(importOrchestrationConfig).mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+        })
+      );
+
+      const res = await POST(makePostRequest(makeValidPayload()));
+
+      // Most often an agent edit taking the version number the restore was
+      // about to write; the transaction rolled back, so a retry is safe.
+      expect(res.status).toBe(409);
       expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
     });
   });

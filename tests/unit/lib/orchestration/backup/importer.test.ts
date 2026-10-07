@@ -314,7 +314,7 @@ describe('importOrchestrationConfig', () => {
 
     expect(ensureBaselineVersion).toHaveBeenCalledWith(mockTx, 'existing-id', 'user-1');
     expect(recordAgentVersion).toHaveBeenCalledWith(mockTx, 'existing-id', {
-      changeSummary: 'Overwritten by backup import',
+      label: 'Overwritten by backup import',
       createdBy: 'user-1',
     });
     // Baseline before the row changes; the version after the grant rebuild, or
@@ -337,7 +337,7 @@ describe('importOrchestrationConfig', () => {
     await importOrchestrationConfig(payload, 'user-1');
 
     expect(recordAgentVersion).toHaveBeenCalledWith(mockTx, 'new-id', {
-      changeSummary: INITIAL_VERSION_SUMMARY,
+      label: INITIAL_VERSION_SUMMARY,
       createdBy: 'user-1',
     });
     expect(ensureBaselineVersion).not.toHaveBeenCalled();

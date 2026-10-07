@@ -150,6 +150,20 @@ describe('diffAgentSnapshots', () => {
     expect(changes.map((c) => c.field)).toContain('knowledgeCategories');
   });
 
+  it('treats an object with its keys in another order as unchanged', () => {
+    // JSONB hands a stored snapshot's object keys back reordered; the same
+    // config built from a live row must still diff as unchanged.
+    const before = { ...baseSnapshot, providerConfig: { b: 2, a: { y: 1, x: 2 } } };
+    const after = { ...baseSnapshot, providerConfig: { a: { x: 2, y: 1 }, b: 2 } };
+    expect(diffAgentSnapshots(after, before)).toEqual([]);
+  });
+
+  it('still reports a nested object value that changed', () => {
+    const before = { ...baseSnapshot, providerConfig: { a: { x: 2 } } };
+    const after = { ...baseSnapshot, providerConfig: { a: { x: 3 } } };
+    expect(diffAgentSnapshots(after, before).map((c) => c.field)).toEqual(['providerConfig']);
+  });
+
   it('treats identical arrays as unchanged', () => {
     const after = { ...baseSnapshot, knowledgeCategories: ['docs', 'faq'] };
     expect(diffAgentSnapshots(after, baseSnapshot)).toEqual([]);
