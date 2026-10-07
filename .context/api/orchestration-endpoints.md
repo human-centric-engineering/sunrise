@@ -252,7 +252,7 @@ Optional body: `{ name?: string, slug?: string }`. Defaults: name = `"{source.na
 
 Bulk agent operations. Body: `{ action: 'activate' | 'deactivate' | 'delete', agentIds: string[] }`. System agents (`isSystem = true`) are excluded from all mutations. Delete is a soft delete (sets `isActive = false`).
 
-Response: `{ action, requested, affected }` — `affected` may be less than `requested` when system agents are filtered out.
+Response: `{ action, requested, affected }` — `affected` may be less than `requested` when system agents are filtered out. `isActive` is versioned, so each agent the action changes gets a new agent version in the same transaction; a concurrent edit that takes a version number returns a retryable `409`.
 
 ### `GET /agents/compare`
 
