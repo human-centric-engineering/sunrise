@@ -61,67 +61,73 @@ vi.mock('@/lib/orchestration/engine/executor-registry', () => ({
   registerStepType: vi.fn(),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
-    aiConversation: {
-      findUnique: vi.fn(
-        async ({ where }: { where: { id: string } }) =>
-          conversationStore.find((c) => c.id === where.id) ?? null
+vi.mock('@/lib/db/client', () => {
+  const aiAgent = {
+    findFirst: vi.fn(async () => ({
+      id: 'agent_chatbot',
+      slug: 'inbound-chatbot',
+      systemInstructions: 'You answer concisely.',
+      persona: null,
+      brandVoiceInstructions: null,
+      guardrails: null,
+      personaMode: 'override',
+      voiceMode: 'override',
+      guardrailsMode: 'override',
+      profile: null,
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      fallbackProviders: [],
+      temperature: 0.4,
+      maxTokens: 500,
+      reasoningEffort: null,
+      versions: [],
+    })),
+  };
+  return {
+    prisma: {
+      aiConversation: {
+        findUnique: vi.fn(
+          async ({ where }: { where: { id: string } }) =>
+            conversationStore.find((c) => c.id === where.id) ?? null
+        ),
+      },
+      aiAgent,
+      aiMessage: {
+        findMany: vi.fn(
+          async ({ where, take }: { where: { conversationId: string }; take?: number }) => {
+            // Sort DESC by createdAt (newest first), as the real query does, then `take`.
+            const all = messageStore
+              .filter((m) => m.conversationId === where.conversationId)
+              .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+            return typeof take === 'number' ? all.slice(0, take) : all;
+          }
+        ),
+      },
+      // Typed loosely-as-`unknown` then cast at the boundary so the vi.fn
+      // signature satisfies Prisma's strict `$transaction` overload set
+      // without us re-importing all of the Prisma type plumbing into a
+      // test helper. The runtime fn body is fully type-safe.
+      // The executor's agent read runs in its own transaction too, so the tx
+      // exposes the same `aiAgent` mock as the client.
+      $transaction: vi.fn((fn: unknown) =>
+        (fn as (tx: unknown) => Promise<unknown>)({
+          aiAgent,
+          aiMessage: {
+            create: vi.fn(async ({ data }: { data: InMemoryMessage }) => {
+              messageStore.push({
+                conversationId: data.conversationId,
+                role: data.role,
+                content: data.content,
+                createdAt: nextWriteTime(),
+              });
+              return { id: `msg_${messageStore.length}` };
+            }),
+          },
+        })
       ),
     },
-    aiAgent: {
-      findFirst: vi.fn(async () => ({
-        id: 'agent_chatbot',
-        slug: 'inbound-chatbot',
-        systemInstructions: 'You answer concisely.',
-        persona: null,
-        brandVoiceInstructions: null,
-        guardrails: null,
-        personaMode: 'override',
-        voiceMode: 'override',
-        guardrailsMode: 'override',
-        profile: null,
-        provider: 'openai',
-        model: 'gpt-4o-mini',
-        fallbackProviders: [],
-        temperature: 0.4,
-        maxTokens: 500,
-        reasoningEffort: null,
-        versions: [],
-      })),
-    },
-    aiMessage: {
-      findMany: vi.fn(
-        async ({ where, take }: { where: { conversationId: string }; take?: number }) => {
-          // Sort DESC by createdAt (newest first), as the real query does, then `take`.
-          const all = messageStore
-            .filter((m) => m.conversationId === where.conversationId)
-            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-          return typeof take === 'number' ? all.slice(0, take) : all;
-        }
-      ),
-    },
-    // Typed loosely-as-`unknown` then cast at the boundary so the vi.fn
-    // signature satisfies Prisma's strict `$transaction` overload set
-    // without us re-importing all of the Prisma type plumbing into a
-    // test helper. The runtime fn body is fully type-safe.
-    $transaction: vi.fn((fn: unknown) =>
-      (fn as (tx: unknown) => Promise<unknown>)({
-        aiMessage: {
-          create: vi.fn(async ({ data }: { data: InMemoryMessage }) => {
-            messageStore.push({
-              conversationId: data.conversationId,
-              role: data.role,
-              content: data.content,
-              createdAt: nextWriteTime(),
-            });
-            return { id: `msg_${messageStore.length}` };
-          }),
-        },
-      })
-    ),
-  },
-}));
+  };
+});
 
 // ─── LLM provider mock — deterministic per-turn responses ───────────────────
 
