@@ -168,6 +168,18 @@ describe('executeHttpRequest', () => {
     ).rejects.toMatchObject({ code: 'host_not_allowed', retriable: false });
   });
 
+  it('keeps the query and userinfo out of the host_not_allowed message (#953)', async () => {
+    const err = await executeHttpRequest({
+      url: 'https://u:pw@evil.example.com/x?key=qs-secret',
+      method: 'GET',
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(HttpError);
+    expect((err as HttpError).message).toContain('https://evil.example.com/x');
+    expect((err as HttpError).message).not.toContain('qs-secret');
+    expect((err as HttpError).message).not.toContain('pw@');
+  });
+
   it('attaches bearer auth header from env-var secret', async () => {
     process.env.MY_TOKEN = 'sk_test_abc';
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(

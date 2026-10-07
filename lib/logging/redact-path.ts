@@ -82,7 +82,8 @@ export function loggablePath(pathname: string | undefined): string | undefined {
  * path from `collapseDynamicSegments`. Userinfo, the query string and the
  * fragment are dropped — a webhook or signed URL often carries its credential
  * in one of those, or in a path segment, and the logger redacts by key name
- * only. A value that does not parse as a URL is replaced, never echoed.
+ * only. A value that does not parse as a URL, or is not http(s) — whose origin
+ * would be `null` with the payload left in the path — is replaced, never echoed.
  *
  * The path inherits `collapseDynamicSegments`' limits: a secret segment it
  * does not recognise as one is kept. `null` and `undefined` pass through, the
@@ -102,5 +103,6 @@ export function loggableUrl(url: string | null | undefined): string | null | und
   } catch {
     return '[unparseable-url]';
   }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '[non-http-url]';
   return `${parsed.origin}${collapseDynamicSegments(parsed.pathname)}`;
 }

@@ -494,7 +494,25 @@ describe('fetchDocumentFromUrl log lines', () => {
     expect(message).not.toContain(SECRET);
     expect(message).not.toContain('pw@');
     expect((err as Error).cause).toBeUndefined();
-    expect((err as Error).name).toBe('TypeError');
+    expect(err).toBeInstanceOf(TypeError);
+  });
+
+  it('keeps the network error code from the cause on the rethrown error', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(
+      Object.assign(new TypeError('fetch failed'), {
+        cause: Object.assign(new Error('getaddrinfo ENOTFOUND files.example.com'), {
+          code: 'ENOTFOUND',
+        }),
+      })
+    );
+
+    const err = await fetchDocumentFromUrl('https://files.example.com/doc.txt').catch(
+      (e: unknown) => e
+    );
+
+    expect(err).toBeInstanceOf(TypeError);
+    expect((err as NodeJS.ErrnoException).code).toBe('ENOTFOUND');
+    expect((err as Error).message).toBe('fetch failed: getaddrinfo ENOTFOUND files.example.com');
   });
 
   it('keeps the credential out of the error thrown for a blocked redirect target', async () => {

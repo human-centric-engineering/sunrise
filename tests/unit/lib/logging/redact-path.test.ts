@@ -112,6 +112,21 @@ describe('loggableUrl (#953)', () => {
     expect(loggableUrl(undefined)).toBeUndefined();
   });
 
+  it.each([
+    ['a data: URL', 'data:text/plain,qs-secret'],
+    ['a non-http scheme with userinfo', 'foo://user:pw@host.example.com/p'],
+  ])('replaces %s rather than logging what follows a null origin', (_label, url) => {
+    expect(loggableUrl(url)).toBe('[non-http-url]');
+  });
+
+  // Documented limit, recorded so a change to it is deliberate: a path segment
+  // containing `:` is outside LONG_TOKEN, so it is kept.
+  it('keeps a token-shaped path segment that contains a colon (documented limit)', () => {
+    expect(loggableUrl('https://api.example.com/bot123456789:AbCdEfGhIjKlMnOpQrStUvWx/send')).toBe(
+      'https://api.example.com/bot123456789:AbCdEfGhIjKlMnOpQrStUvWx/send'
+    );
+  });
+
   it('never echoes a value it cannot parse', () => {
     expect(loggableUrl('not a url ?api_key=abc')).toBe('[unparseable-url]');
   });

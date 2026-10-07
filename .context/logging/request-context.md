@@ -87,13 +87,15 @@ context is built to hold nothing a value-blind redactor would miss:
   `collapseDynamicSegments()` / `loggablePath()` too.
 - **Outbound URLs go through `loggableUrl()`** (#953): origin plus the
   collapsed path, with userinfo, query and fragment dropped, and
-  `[unparseable-url]` for a value that is not a URL. Webhook and signed URLs
+  `[unparseable-url]` or `[non-http-url]` for anything else. Webhook and signed URLs
   often carry their credential in one of those parts. Hook and
   webhook-subscription deliveries, the escalation webhook, the webhook create
-  and test routes, the `send_notification` webhook step (log line and stored
-  `output.url`) and knowledge-base URL fetches use it; a new log line that
-  names a URL Sunrise calls out to should too. `describeFetchFailure()`
-  reduces any URL quoted in a fetch error the same way.
+  and test routes, the `send_notification` webhook step's log line and
+  knowledge-base URL fetches use it; a new log line that names a URL Sunrise
+  calls out to should too. `describeFetchFailure()` reduces any URL quoted in
+  a fetch error the same way. Only log lines and error text are reduced: a
+  step's `output` keeps the working URL, because later steps and resumed runs
+  read it, so the execution trace still shows the configured URL.
 
 The heuristic cannot see a secret under 20 characters, one with other
 characters (dots outside a JWT), a

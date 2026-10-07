@@ -18,6 +18,9 @@ import { loggableUrl } from '@/lib/logging/redact-path';
 // Stops before trailing punctuation: a `,` or `)` left on the last segment
 // would stop `collapseDynamicSegments` recognising a token there.
 const URL_IN_TEXT = /\bhttps?:\/\/[^\s'"<>]*[^\s'"<>.,;:!?)\]}]/gi;
+// Userinfo is stripped first, up to its `@`, so a quote or other character
+// inside a password cannot end the URL match before the password does.
+const USERINFO_IN_TEXT = /\b(https?:\/\/)[^\s/@]*@/gi;
 
 /**
  * Replace every URL quoted in `text` with its `loggableUrl()` form (#953).
@@ -26,7 +29,7 @@ const URL_IN_TEXT = /\bhttps?:\/\/[^\s'"<>]*[^\s'"<>.,;:!?)\]}]/gi;
  * in stored delivery rows.
  */
 function reduceUrls(text: string): string {
-  return text.replace(URL_IN_TEXT, (url) => loggableUrl(url));
+  return text.replace(USERINFO_IN_TEXT, '$1').replace(URL_IN_TEXT, (url) => loggableUrl(url));
 }
 
 /**

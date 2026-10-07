@@ -129,4 +129,16 @@ describe('describeFetchFailure', () => {
     expect(described).toContain('https://h.example.com/x/[param]');
     expect(described).not.toContain('AbCdEfGhIjKlMnOpQrStUvWx');
   });
+
+  it('drops the whole userinfo even when it contains a quote', () => {
+    const described = describeFetchFailure(
+      new TypeError(
+        "Request cannot be constructed from a URL that includes credentials: https://bot:pa'ssw0rd@host.example.com/hook"
+      )
+    );
+
+    expect(described).toBe(
+      'Request cannot be constructed from a URL that includes credentials: https://host.example.com/hook'
+    );
+  });
 });

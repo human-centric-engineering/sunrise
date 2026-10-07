@@ -458,14 +458,14 @@ export async function fetchWithTimeout(
     // and `toProviderError` takes `err.message || fallback`, so the bare form
     // is what a caller ends up logging. Describe it first.
     //
-    // The substitution only happens when there IS a cause to add, which means a
-    // network-layer failure, which carries no `.status` — so nothing is lost
-    // from `extractStatus`, and an HTTP error passes through untouched.
+    // The description also reduces any URL the message quotes (#953), so it
+    // differs from `err.message` when there is a cause to add OR a URL to
+    // reduce. Either way this is a rejection from `fetch()` itself, which
+    // carries no `.status`, so nothing is lost from `extractStatus`. The
+    // original is not kept as `cause`: its message is the unreduced one.
     const described = describeFetchFailure(err);
     throw toProviderError(
-      err instanceof Error && described !== err.message
-        ? Object.assign(new Error(described), { cause: err })
-        : err,
+      err instanceof Error && described !== err.message ? new Error(described) : err,
       'fetch failed'
     );
   } finally {

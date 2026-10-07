@@ -212,19 +212,17 @@ async function executeNotification(
         stepId: step.id,
       });
 
-      // A webhook URL can carry its credential (path, query or userinfo), and
-      // the step output is persisted and shown in the trace view — record the
-      // reduced form in both places (#953). The event payload above is left
-      // as it was.
-      const recordedUrl = loggableUrl(config.webhookUrl);
-
+      // A webhook URL can carry its credential (path, query or userinfo), so
+      // the log line gets the reduced form (#953). `output.url` keeps the
+      // working URL: later steps read it as `{{steps.<id>.output.url}}`, and a
+      // resumed run rehydrates it from the persisted trace.
       logger.info('Notification step: webhook dispatched', {
         stepId: step.id,
-        webhookUrl: recordedUrl,
+        webhookUrl: loggableUrl(config.webhookUrl),
       });
 
       stepResult = {
-        output: { sent: true, channel: 'webhook', url: recordedUrl },
+        output: { sent: true, channel: 'webhook', url: config.webhookUrl },
         tokensUsed: 0,
         costUsd: 0,
       };

@@ -352,7 +352,7 @@ describe('executeNotification', () => {
   // ── Webhook channel ────────────────────────────────────────────────────────
 
   describe('webhook channel', () => {
-    it('keeps a credential in the webhook URL out of the log line and the step output (#953)', async () => {
+    it('keeps a credential in the webhook URL out of the log line, but not out of the step output (#953)', async () => {
       const secret = 'AbCdEfGhIjKlMnOpQrStUvWx';
       const step = makeWebhookStep({
         webhookUrl: `https://hooks.slack.com/services/T0000/B0000/${secret}?token=qs-secret`,
@@ -365,14 +365,22 @@ describe('executeNotification', () => {
         'workflow_notification',
         expect.objectContaining({ webhookUrl: step.config.webhookUrl })
       );
+      // `output` is merged into the context (`{{steps.<id>.output.url}}`) and
+      // rehydrated from the trace on resume, so it keeps the working URL.
       expect(result.output).toEqual({
         sent: true,
         channel: 'webhook',
-        url: 'https://hooks.slack.com/services/T0000/B0000/[param]',
+        url: step.config.webhookUrl,
       });
-      const recorded = JSON.stringify([vi.mocked(logger.info).mock.calls, result.output]);
-      expect(recorded).not.toContain(secret);
-      expect(recorded).not.toContain('qs-secret');
+      expect(logger.info).toHaveBeenCalledWith(
+        'Notification step: webhook dispatched',
+        expect.objectContaining({
+          webhookUrl: 'https://hooks.slack.com/services/T0000/B0000/[param]',
+        })
+      );
+      const logged = JSON.stringify(vi.mocked(logger.info).mock.calls);
+      expect(logged).not.toContain(secret);
+      expect(logged).not.toContain('qs-secret');
     });
 
     it('calls dispatchWebhookEvent and returns { sent: true, channel: "webhook" }', async () => {
