@@ -78,11 +78,14 @@ export function loggablePath(pathname: string | undefined): string | undefined {
 }
 
 /**
- * Paths kept whole: Next.js build assets (under any `basePath`) and installed
- * packages (`node_modules/@scope/pkg/…`). They carry no request data, and a
- * source-map lookup or Sentry's issue grouping needs them exactly as built.
+ * Path tails kept as they are: Next.js build assets (under any `basePath`) and,
+ * in a file path only, installed packages (`node_modules/@scope/pkg/…`). They
+ * carry no request data, and a source-map lookup or Sentry's issue grouping
+ * needs them exactly as built. The segments before the tail are still
+ * collapsed, so a token placed ahead of one is not exempt.
  */
-const KEPT_PATHS = ['/_next/static/', '/node_modules/'];
+const BUILD_ASSETS = '/_next/static/';
+const FILE_PATH_KEPT = [BUILD_ASSETS, '/node_modules/'];
 
 /** An absolute URL's `scheme://authority`, and the rest. */
 const ABSOLUTE_URL = /^([a-z][a-z0-9+.-]*:\/\/[^/]*)?(.*)$/is;
@@ -91,8 +94,8 @@ const ABSOLUTE_URL = /^([a-z][a-z0-9+.-]*:\/\/[^/]*)?(.*)$/is;
  * Reduce a URL to its origin and its path for logging or error tracking (#952):
  * the query string, the fragment and any `user:password@` are dropped, and
  * every id- or credential-shaped path segment is collapsed to `[param]`. Accepts
- * an absolute URL or a relative path. A build asset or package path keeps its
- * path.
+ * an absolute URL or a relative path. A build-asset or package tail keeps its
+ * path (see `FILE_PATH_KEPT`).
  *
  * @example
  * scrubUrl('https://app.example.com/s/Xk9fQ2mZp4LrT7vB1nWc8sYd?email=a%40b.c#x');
@@ -104,8 +107,12 @@ export function scrubUrl(url: string): string {
   const match = ABSOLUTE_URL.exec(withoutQuery);
   const origin = (match?.[1] ?? '').replace(/\/\/[^/]*@/, '//');
   const path = match?.[2] ?? '';
-  const kept = KEPT_PATHS.some((prefix) => path.includes(prefix));
-  return origin + (kept ? path : collapseDynamicSegments(path));
+  // A web URL keeps only a build-asset tail; a file path (no origin, or a
+  // non-http scheme such as `file://` or `app://`) also keeps a package tail.
+  const kept = /^https?:/i.test(origin) ? [BUILD_ASSETS] : FILE_PATH_KEPT;
+  const tail = Math.min(...kept.map((prefix) => path.indexOf(prefix)).filter((i) => i >= 0));
+  if (!Number.isFinite(tail)) return origin + collapseDynamicSegments(path);
+  return origin + collapseDynamicSegments(path.slice(0, tail)) + path.slice(tail);
 }
 
 /**
@@ -113,7 +120,9 @@ export function scrubUrl(url: string): string {
  * starting with `/` — not preceded by a word character, `/` or `.`, so
  * `GET /x`, `fetch(https://…)`, `at f (https://…:1:2)` and `see h.com/x`
  * match but `a/b` does not. It ends at whitespace, a bracket, a quote or a
- * comma, so a URL inside JSON or markup takes nothing after it.
+ * comma, so a URL inside JSON or markup takes nothing after it. A scheme-less
+ * host needs a dotted TLD, so a bare `localhost:3000/…` (dev only) is not
+ * matched; with a scheme it is.
  */
 const URL_IN_TEXT =
   /(?<![\w/.])(?:[a-z][a-z0-9+.-]*:\/\/|(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?=\/)|\/)[^\s()[\]{}<>"'`,]*/gi;
@@ -153,12 +162,28 @@ export function scrubUrlsInError(error: Error): Error {
   return scrubError(error, 0);
 }
 
+/** Non-enumerable properties an object spread misses: `new Error(m, { cause })`, `AggregateError`. */
+const CHAINED_ERROR_KEYS = ['cause', 'errors'];
+
 function scrubError(error: Error, depth: number): Error {
   const scrubbed = new Error(scrubUrlsInText(error.message));
-  scrubbed.name = error.name;
+  // Keep the subclass (TypeError, AggregateError, a custom class) and its name.
+  const prototype: unknown = Object.getPrototypeOf(error);
+  if (typeof prototype === 'object') Object.setPrototypeOf(scrubbed, prototype);
+  if (Object.prototype.hasOwnProperty.call(error, 'name')) scrubbed.name = error.name;
   scrubbed.stack = error.stack === undefined ? undefined : scrubUrlsInText(error.stack);
   const own = scrubUrlsDeep({ ...error }, depth + 1);
   if (isPlainRecord(own)) Object.assign(scrubbed, own);
+  // Chained errors, scrubbed too, so Sentry's linkedErrors can still follow them.
+  for (const key of CHAINED_ERROR_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(error, key)) continue;
+    Object.defineProperty(scrubbed, key, {
+      value: scrubUrlsDeep(Reflect.get(error, key), depth + 1),
+      writable: true,
+      configurable: true,
+      enumerable: false,
+    });
+  }
   return scrubbed;
 }
 
@@ -170,8 +195,9 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * `scrubUrlsInText` applied to every string in a value: strings, arrays, plain
- * objects (to a bounded depth) and Errors, each copied. Other objects (a Date,
- * a class instance) are returned unchanged.
+ * objects (to a bounded depth) and Errors (with their `cause` chain), each
+ * copied; a `URL` object becomes its scrubbed href. Other objects (a Date, a
+ * class instance) are returned unchanged.
  *
  * @example
  * scrubUrlsDeep({ request: { url: 'https://app.example.com/s/Xk9fQ2mZp4LrT7vB1nWc8sYd?a=1' } });
@@ -181,6 +207,8 @@ export function scrubUrlsDeep(value: unknown, depth = 0): unknown {
   if (typeof value === 'string') return scrubUrlsInText(value);
   if (depth >= MAX_SCRUB_DEPTH) return value;
   if (value instanceof Error) return scrubError(value, depth + 1);
+  // A URL object would print its full href through `toJSON()`.
+  if (value instanceof URL) return scrubUrl(value.href);
   if (Array.isArray(value)) return value.map((item: unknown) => scrubUrlsDeep(item, depth + 1));
   if (isPlainRecord(value)) {
     const scrubbed: Record<string, unknown> = {};

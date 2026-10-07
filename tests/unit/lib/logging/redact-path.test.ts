@@ -115,6 +115,18 @@ describe('scrubUrl', () => {
     expect(scrubUrl('https://app.example.com?ref=x')).toBe('https://app.example.com');
   });
 
+  it('does not exempt a web URL because it contains /node_modules/', () => {
+    expect(scrubUrl(`https://h.example/s/${token}/node_modules/x`)).toBe(
+      'https://h.example/s/[param]/node_modules/x'
+    );
+  });
+
+  it('collapses segments ahead of a build-asset tail', () => {
+    expect(scrubUrl(`https://h.example/s/${token}/_next/static/chunks/a.js`)).toBe(
+      'https://h.example/s/[param]/_next/static/chunks/a.js'
+    );
+  });
+
   it('keeps installed package paths whole, scoped packages included', () => {
     expect(scrubUrl('/var/task/node_modules/@prisma/client/runtime/library.js')).toBe(
       '/var/task/node_modules/@prisma/client/runtime/library.js'
@@ -224,6 +236,37 @@ describe('scrubUrlsDeep', () => {
       code: 'E_LINK',
     });
     expect(error.message).toBe(`bad link /s/${token}?a=1`);
+  });
+
+  it('keeps the subclass and scrubs the cause chain, so linked errors survive', () => {
+    const inner = new Error(`inner https://app.example.com/s/${token}?a=1`);
+    const outer = new TypeError('outer', { cause: inner });
+
+    const scrubbed = scrubUrlsInError(outer);
+
+    expect(scrubbed).toBeInstanceOf(TypeError);
+    expect(scrubbed.name).toBe('TypeError');
+    expect(scrubbed.cause).toBeInstanceOf(Error);
+    expect(scrubbed.cause).toMatchObject({ message: 'inner https://app.example.com/s/[param]' });
+    expect(Object.keys(scrubbed)).not.toContain('cause');
+  });
+
+  it("scrubs an AggregateError's errors", () => {
+    const scrubbed = scrubUrlsInError(
+      new AggregateError([new Error(`failed /s/${token}?a=1`)], 'several failed')
+    );
+
+    expect(scrubbed).toBeInstanceOf(AggregateError);
+    expect(scrubbed).toHaveProperty('errors');
+    expect(Reflect.get(scrubbed, 'errors')).toEqual([
+      expect.objectContaining({ message: 'failed /s/[param]' }),
+    ]);
+  });
+
+  it('turns a URL object into its scrubbed href', () => {
+    expect(scrubUrlsDeep({ a: new URL(`https://h.example/s/${token}?x=1`) })).toEqual({
+      a: 'https://h.example/s/[param]',
+    });
   });
 
   it('terminates on an Error that references itself', () => {

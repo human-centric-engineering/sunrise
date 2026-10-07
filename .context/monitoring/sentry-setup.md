@@ -149,8 +149,10 @@ collected itself. `lib/errors/sentry.ts` covers the rest:
 
 Each id- or credential-shaped path segment becomes `[param]`
 (`collapseDynamicSegments()` in `lib/logging/redact-path.ts`, which lists what
-it cannot catch); Next.js build assets and `node_modules` paths are kept whole
-so source maps and issue grouping still work. The global client error handler
+it cannot catch). The tail of a path from `/_next/static/` on, and in a file
+path (a server stack frame) from `/node_modules/` on, is kept as built so source
+maps and issue grouping still work; segments before it are still collapsed. An
+Error keeps its class and its `cause` / `errors` chain, scrubbed the same way. The global client error handler
 (`lib/errors/handler.ts`) already sends the page as the collapsed pathname,
 under `extra.path`, and scrubs the URLs in its context and in the error it
 reports. Tags and request headers are not scrubbed; keep `httpHeaders` off, as
