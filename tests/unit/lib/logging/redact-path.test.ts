@@ -269,6 +269,17 @@ describe('scrubUrlsDeep', () => {
     });
   });
 
+  it('replaces an object nested past the depth cap instead of passing it on raw', () => {
+    let nested: unknown = { url: `https://h.example/s/${token}?email=a%40b.c` };
+    for (let i = 0; i < 9; i++) nested = { next: nested };
+
+    const serialised = JSON.stringify(scrubUrlsDeep(nested));
+
+    expect(serialised).toContain('[depth limit]');
+    expect(serialised).not.toContain(token);
+    expect(serialised).not.toContain('email=');
+  });
+
   it('terminates on an Error that references itself', () => {
     const error = new Error('loop') as Error & { self?: unknown };
     error.self = error;

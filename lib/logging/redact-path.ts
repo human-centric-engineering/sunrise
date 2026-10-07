@@ -154,6 +154,9 @@ export function scrubUrlsInText(text: string): string {
 /** How deep `scrubUrlsDeep` follows nested objects and arrays. */
 const MAX_SCRUB_DEPTH = 8;
 
+/** What `scrubUrlsDeep` puts in place of an object nested past `MAX_SCRUB_DEPTH`. */
+const DEPTH_LIMIT = '[depth limit]';
+
 /**
  * Copy of an Error with `scrubUrlsInText` applied to its message, its stack
  * and its own properties (such as `code`), keeping its name.
@@ -197,7 +200,8 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  * `scrubUrlsInText` applied to every string in a value: strings, arrays, plain
  * objects (to a bounded depth) and Errors (with their `cause` chain), each
  * copied; a `URL` object becomes its scrubbed href. Other objects (a Date, a
- * class instance) are returned unchanged.
+ * class instance) are returned unchanged, and an object nested past the depth
+ * cap becomes `'[depth limit]'`.
  *
  * @example
  * scrubUrlsDeep({ request: { url: 'https://app.example.com/s/Xk9fQ2mZp4LrT7vB1nWc8sYd?a=1' } });
@@ -205,7 +209,11 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  */
 export function scrubUrlsDeep(value: unknown, depth = 0): unknown {
   if (typeof value === 'string') return scrubUrlsInText(value);
-  if (depth >= MAX_SCRUB_DEPTH) return value;
+  // Fail closed at the cap: an object nested deeper is replaced, not passed on
+  // unscrubbed.
+  if (depth >= MAX_SCRUB_DEPTH) {
+    return typeof value === 'object' && value !== null ? DEPTH_LIMIT : value;
+  }
   if (value instanceof Error) return scrubError(value, depth + 1);
   // A URL object would print its full href through `toJSON()`.
   if (value instanceof URL) return scrubUrl(value.href);
