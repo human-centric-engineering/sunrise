@@ -177,6 +177,20 @@ describe('calculateCost / logCost — unpriced turns (#813)', () => {
     expect(data.metadata).toEqual({ pricing: 'unknown' });
   });
 
+  it('does not mark a local turn unpriced, even for a model the registry lacks', async () => {
+    await logCost({
+      model: 'ollama-model-the-registry-lacks',
+      provider: 'ollama',
+      inputTokens: 100,
+      outputTokens: 50,
+      operation: 'chat',
+      isLocal: true,
+    });
+    const data = vi.mocked(prisma.aiCostLog.create).mock.calls[0][0].data;
+    expect(data.isLocal).toBe(true);
+    expect(data.metadata).toBeUndefined();
+  });
+
   it('leaves a priced turn and a free turn without the marker', async () => {
     registerModels([entry({})]);
     await logCost({

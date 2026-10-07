@@ -321,15 +321,15 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   // ───────────────────────────────────────────────────────────────────────
   {
     file: 'lib/orchestration/llm/model-registry-db-hydrate.ts',
-    holders: ['dbHydratedAt', 'inflight'],
+    holders: ['dbHydratedAt', 'dbFailedAt', 'inflight'],
     posture: 'global-config',
-    why: 'Hydrates the model registry from AiProviderModel, a global-config model, and holds only the freshness stamp and the in-flight promise that de-duplicates concurrent hydrations.',
+    why: 'Hydrates the model registry from AiProviderModel, a global-config model, and holds only the freshness and failure stamps and the in-flight promise that de-duplicates concurrent hydrations.',
   },
   {
     file: 'lib/orchestration/llm/model-registry.ts',
-    holders: ['state', 'dbSourced', 'inflightRefresh'],
+    holders: ['state', 'dbSourced', 'lastRegistered', 'inflightRefresh'],
     posture: 'global-config',
-    why: 'The AiProviderModel catalogue with its fallback map, refreshed behind one in-flight promise; no row in it belongs to an org. `dbSourced` records which of its figures a hydrate wrote, so the catalogue and its provenance move together.',
+    why: 'The AiProviderModel catalogue with its fallback map, refreshed behind one in-flight promise; no row in it belongs to an org. `dbSourced` records which of its figures a hydrate wrote, so the catalogue and its provenance move together, and `lastRegistered` holds the rows last hydrated so an OpenRouter rebuild re-applies them.',
   },
   {
     file: 'lib/orchestration/llm/provider-manager.ts',

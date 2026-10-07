@@ -119,6 +119,24 @@ describe('hydrateFromDb', () => {
     );
   });
 
+  it('backs off after a failed query rather than retrying on every call', async () => {
+    vi.useFakeTimers();
+    try {
+      mockFindMany.mockRejectedValueOnce(new Error('connection refused'));
+      await hydrate.hydrateFromDb();
+      await hydrate.hydrateFromDb();
+      expect(mockFindMany).toHaveBeenCalledTimes(1);
+
+      mockFindMany.mockResolvedValue([makeRow()]);
+      vi.advanceTimersByTime(10_001);
+      await hydrate.hydrateFromDb();
+      expect(mockFindMany).toHaveBeenCalledTimes(2);
+      expect(registry.getModel(CUSTOM_MODEL_ID)).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('DB row overrides a same-id fallback entry — admin matrix beats hardcoded list', async () => {
     mockFindMany.mockResolvedValue([
       makeRow({

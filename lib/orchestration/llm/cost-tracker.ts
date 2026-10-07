@@ -331,8 +331,8 @@ export async function logCost(params: LogCostParams): Promise<AiCostLog | null> 
     };
   }
   // A turn nobody could price is stored at $0 like a free one; this is what
-  // tells them apart on the row (#813).
-  if (cost.unpriced) {
+  // tells them apart on the row (#813). A local turn is free, not unpriced.
+  if (cost.unpriced && !isLocal) {
     metadata = { ...(metadata ?? {}), pricing: 'unknown' };
   }
 

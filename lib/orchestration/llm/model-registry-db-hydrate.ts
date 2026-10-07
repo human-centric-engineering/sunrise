@@ -36,11 +36,19 @@ import { dbModelToModelInfo } from '@/lib/orchestration/llm/db-model-adapter';
 import { registerModels } from '@/lib/orchestration/llm/model-registry';
 
 const DB_HYDRATE_TTL_MS = 60_000;
+/**
+ * After a failed SELECT, wait this long before trying again. The hydrate runs
+ * ahead of every LLM call (`getProvider`), so without it a degraded database
+ * would take one more failing query per call.
+ */
+const DB_HYDRATE_FAILURE_BACKOFF_MS = 10_000;
 let dbHydratedAt = 0;
+let dbFailedAt = 0;
 let inflight: Promise<void> | null = null;
 
 export async function hydrateFromDb(): Promise<void> {
   if (Date.now() - dbHydratedAt < DB_HYDRATE_TTL_MS) return;
+  if (Date.now() - dbFailedAt < DB_HYDRATE_FAILURE_BACKOFF_MS) return;
   if (inflight) return inflight;
   inflight = (async () => {
     try {
@@ -48,6 +56,7 @@ export async function hydrateFromDb(): Promise<void> {
       registerModels(rows.map(dbModelToModelInfo));
       dbHydratedAt = Date.now();
     } catch (err) {
+      dbFailedAt = Date.now();
       logger.warn('Model registry: hydrateFromDb failed', {
         error: err instanceof Error ? err.message : String(err),
       });
@@ -61,5 +70,6 @@ export async function hydrateFromDb(): Promise<void> {
 /** Test-only reset of the throttle state. */
 export function __resetForTests(): void {
   dbHydratedAt = 0;
+  dbFailedAt = 0;
   inflight = null;
 }
