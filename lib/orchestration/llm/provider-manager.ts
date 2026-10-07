@@ -223,8 +223,8 @@ async function acquireProvider(slugOrName: string, context: CallOrigin): Promise
   // Every LLM call resolves its provider here before its cost is computed, so
   // the registry must hold the matrix's models by now — otherwise a model only
   // the matrix knows is costed at $0 in a module graph that never hydrated
-  // (#813). Throttled and soft-failing: one SELECT a minute (one per 10 s while
-  // it fails), awaited only until the first one lands.
+  // (#813). Throttled and soft-failing: one SELECT a minute at most once it has
+  // landed, one per 10 s while it then fails.
   await hydrateModelRegistryFromDb();
   let row = instanceCache.get(slugOrName);
   if (!isFresh(row)) {

@@ -586,16 +586,16 @@ release process.
     context bucket (`high` → 200,000) replaced the model's real window, which
     the chat handler uses as its history budget. `registerModels()` now keeps a
     positive registry figure and lets a row fill only a zero. A model only the
-    matrix knows keeps the row's figures, and an edit to them, clearing
-    included, takes effect on the next hydrate. See **Changed** for what this
+    matrix knows keeps its own row's figures, and an edit to that row,
+    clearing included, takes effect on the next hydrate. See **Changed** for what this
     takes away from operators.
   - A model only the matrix knows (a dated snapshot id such as
     `gpt-4o-mini-2024-07-18`, a discovered model) was costed at \$0 on the chat
     path and in the evaluation worker: neither ever loaded the matrix into the
     registry. `getProvider`, `resolveAgentProviderAndModel`, `runLlmCall`,
     keyword enrichment, the cleanup page's context window and the retroactive
-    execution review now do: one query a minute (every 10 s while it fails),
-    awaited only until the first one lands. An OpenRouter refresh no longer
+    execution review now do: one query a minute (every 10 s while it fails,
+    once one has landed). An OpenRouter refresh no longer
     drops the matrix's models until the next hydrate.
   - A turn with no price (a model the registry still does not know, or a
     matrix row whose cost is null) was stored at \$0 exactly like a free one,

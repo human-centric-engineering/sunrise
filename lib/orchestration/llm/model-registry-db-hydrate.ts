@@ -37,9 +37,11 @@ import { registerModels } from '@/lib/orchestration/llm/model-registry';
 
 const DB_HYDRATE_TTL_MS = 60_000;
 /**
- * After a failed SELECT, wait this long before trying again. The hydrate runs
- * ahead of every LLM call (`getProvider`), so without it a degraded database
- * would take one more failing query per call.
+ * After a failed SELECT, wait this long before trying again — once a hydrate
+ * has landed. The hydrate runs ahead of every LLM call (`getProvider`), so
+ * without it a degraded database would take one more failing query per call.
+ * Before the first success every call retries: the matrix's models are
+ * missing, not merely stale, so skipping would mis-price and reject them.
  */
 const DB_HYDRATE_FAILURE_BACKOFF_MS = 10_000;
 let dbHydratedAt = 0;
@@ -48,14 +50,10 @@ let inflight: Promise<void> | null = null;
 
 export async function hydrateFromDb(): Promise<void> {
   if (Date.now() - dbHydratedAt < DB_HYDRATE_TTL_MS) return;
-  if (Date.now() - dbFailedAt < DB_HYDRATE_FAILURE_BACKOFF_MS) return;
-  const run = inflight ?? startHydrate();
-  // Once the registry holds the matrix, a refresh only picks up edits, so it
-  // runs behind the caller rather than ahead of an LLM call (#813). The first
-  // hydrate in a process is awaited: until it lands the matrix's models are
-  // missing, not merely stale.
-  if (dbHydratedAt !== 0) return;
-  return run;
+  if (dbHydratedAt !== 0 && Date.now() - dbFailedAt < DB_HYDRATE_FAILURE_BACKOFF_MS) return;
+  // Always awaited: the settings route and the semantic validator hydrate so a
+  // model an operator has just added validates (#302).
+  return inflight ?? startHydrate();
 }
 
 function startHydrate(): Promise<void> {

@@ -128,36 +128,50 @@ describe('hydrateFromDb', () => {
     });
   });
 
-  it('awaits the first hydrate, then refreshes behind the caller once one has landed', async () => {
+  it('awaits a due refresh, so a model just added to the matrix resolves (#302)', async () => {
     vi.useFakeTimers();
     try {
+      mockFindMany.mockResolvedValue([]);
+      await hydrate.hydrateFromDb();
+      expect(registry.getModel(CUSTOM_MODEL_ID)).toBeUndefined();
+
+      // The operator adds a model; past the TTL the next caller must see it.
       mockFindMany.mockResolvedValue([makeRow()]);
+      vi.advanceTimersByTime(60_001);
       await hydrate.hydrateFromDb();
       expect(registry.getModel(CUSTOM_MODEL_ID)).toBeDefined();
-
-      // Past the TTL, with a query that never settles: the caller must not
-      // wait on it — the registry already holds the matrix.
-      vi.advanceTimersByTime(60_001);
-      mockFindMany.mockReturnValue(new Promise(() => {}));
-      await expect(hydrate.hydrateFromDb()).resolves.toBeUndefined();
-      expect(mockFindMany).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('backs off after a failed query rather than retrying on every call', async () => {
+  it('retries on the next call while no hydrate has landed yet', async () => {
+    mockFindMany.mockRejectedValueOnce(new Error('connection refused'));
+    await hydrate.hydrateFromDb();
+
+    mockFindMany.mockResolvedValue([makeRow()]);
+    await hydrate.hydrateFromDb();
+
+    expect(mockFindMany).toHaveBeenCalledTimes(2);
+    expect(registry.getModel(CUSTOM_MODEL_ID)).toBeDefined();
+  });
+
+  it('backs off after a failed refresh rather than retrying on every call', async () => {
     vi.useFakeTimers();
     try {
+      mockFindMany.mockResolvedValueOnce([]);
+      await hydrate.hydrateFromDb();
+      vi.advanceTimersByTime(60_001);
+
       mockFindMany.mockRejectedValueOnce(new Error('connection refused'));
       await hydrate.hydrateFromDb();
       await hydrate.hydrateFromDb();
-      expect(mockFindMany).toHaveBeenCalledTimes(1);
+      expect(mockFindMany).toHaveBeenCalledTimes(2);
 
       mockFindMany.mockResolvedValue([makeRow()]);
       vi.advanceTimersByTime(10_001);
       await hydrate.hydrateFromDb();
-      expect(mockFindMany).toHaveBeenCalledTimes(2);
+      expect(mockFindMany).toHaveBeenCalledTimes(3);
       expect(registry.getModel(CUSTOM_MODEL_ID)).toBeDefined();
     } finally {
       vi.useRealTimers();
