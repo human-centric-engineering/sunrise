@@ -55,6 +55,7 @@ import {
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { narrowReasoningEffort } from '@/lib/orchestration/llm/model-heuristics';
 import { platformSlugWhere } from '@/lib/orchestration/agents/platform-agent-guard';
+import { LATEST_AGENT_VERSION_ID_INCLUDE } from '@/lib/orchestration/agents/agent-versioning';
 
 const DEFAULT_HISTORY_LIMIT = 20;
 const ROLES_TO_LOAD = ['user', 'assistant'] as const;
@@ -95,7 +96,7 @@ export async function executeChatTurn(
       where: { slug: config.agentSlug, ...platformSlugWhere(config.agentSlug) },
       include: {
         profile: true,
-        versions: { orderBy: { version: 'desc' }, take: 1, select: { id: true } },
+        versions: LATEST_AGENT_VERSION_ID_INCLUDE,
       },
     }),
   ]);

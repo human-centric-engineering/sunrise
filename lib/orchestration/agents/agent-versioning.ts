@@ -42,6 +42,18 @@ export function buildAgentSnapshot(
   });
 }
 
+/**
+ * Prisma `include` value that loads only the id of an agent's newest
+ * `AiAgentVersion`, for stamping `AiMessage.agentVersionId` (#811). Shared by
+ * the streaming chat handler and the workflow `chat_turn` executor so the two
+ * surfaces pin against the same row.
+ */
+export const LATEST_AGENT_VERSION_ID_INCLUDE = {
+  orderBy: { version: 'desc' },
+  take: 1,
+  select: { id: true },
+} as const;
+
 /** Minimal client surface these helpers touch — satisfied by both the base
  *  client and a `$transaction` client, so callers can pass either. */
 type AgentVersionClient = {

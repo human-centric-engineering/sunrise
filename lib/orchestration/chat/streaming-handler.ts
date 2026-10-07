@@ -80,6 +80,7 @@ import {
 } from '@/lib/orchestration/chat/guard-floor';
 import { emitGuardEvent, type GuardEventContext } from '@/lib/orchestration/chat/guard-events';
 import { platformSlugWhere } from '@/lib/orchestration/agents/platform-agent-guard';
+import { LATEST_AGENT_VERSION_ID_INCLUDE } from '@/lib/orchestration/agents/agent-versioning';
 import { buildMessagesAndBreakdown } from '@/lib/orchestration/chat/message-builder';
 import { estimateTokens } from '@/lib/orchestration/chat/token-estimator';
 import {
@@ -417,11 +418,11 @@ export class StreamingChatHandler {
         : logger;
     let conversationId: string | null = null;
     let resolvedProviderSlug: string | null = null;
-    // The latest AiAgentVersion at turn start, stamped on every assistant
-    // message so a transcript can be traced to the agent config that produced
-    // it (#811). Spread-able and empty for an agent with no version history.
+    // The latest AiAgentVersion at turn start, stamped on the turn's user and
+    // assistant messages so a transcript can be traced to the agent config that
+    // produced it (#811). Undefined for an agent with no version history.
     // Lives out here so the error marker, which runs outside the try, sees it.
-    let agentVersionPin: { agentVersionId?: string } = {};
+    let agentVersionId: string | undefined;
     // The breaker key for the credential in use (§120 t-744): the slug for the
     // shared credential, slug + identity for a per-org one.
     let resolvedBreakerKey: string | null = null;
@@ -430,8 +431,7 @@ export class StreamingChatHandler {
       registerBuiltInCapabilities();
 
       const agent = await this.loadAgent(request.agentSlug);
-      const latestVersionId = agent.versions[0]?.id;
-      if (latestVersionId) agentVersionPin = { agentVersionId: latestVersionId };
+      agentVersionId = agent.versions[0]?.id;
       // Resolve provider + model once. Empty agent.provider/agent.model fall
       // back to the active provider with a key set + the system default-model
       // map; explicit values pass through unchanged.
@@ -711,6 +711,7 @@ export class StreamingChatHandler {
             conversationId: conversation.id,
             role: 'user',
             content: turnText,
+            agentVersionId,
             // Fork-owned marker (#475), stored under a namespaced key so it can
             // never collide with a platform metadata field.
             ...(request.messageMetadata ? { metadata: { app: request.messageMetadata } } : {}),
@@ -1842,7 +1843,7 @@ export class StreamingChatHandler {
             conversationId: conversation.id,
             role: 'assistant',
             content: assistantText,
-            ...agentVersionPin,
+            agentVersionId,
             modelId: resolvedModel,
             providerSlug: currentProviderSlug,
             ...(assistantWorkflowExecutionId
@@ -2061,7 +2062,7 @@ export class StreamingChatHandler {
             conversationId: conversation.id,
             role: 'assistant',
             content: assistantText,
-            ...agentVersionPin,
+            agentVersionId,
             modelId: resolvedModel,
             providerSlug: resolvedProviderSlug ?? resolvedBinding.providerSlug,
             metadata: {
@@ -2341,7 +2342,7 @@ export class StreamingChatHandler {
               conversationId: conversation.id,
               role: 'assistant',
               content: '',
-              ...agentVersionPin,
+              agentVersionId,
               modelId: resolvedModel,
               providerSlug: currentProviderSlug,
               metadata: { pendingApproval },
@@ -2636,7 +2637,7 @@ export class StreamingChatHandler {
                 conversationId: conversation.id,
                 role: 'assistant',
                 content: '',
-                ...agentVersionPin,
+                agentVersionId,
                 modelId: resolvedModel,
                 providerSlug: currentProviderSlug,
                 metadata: { pendingApproval: pa },
@@ -2702,7 +2703,7 @@ export class StreamingChatHandler {
             conversationId,
             role: 'assistant',
             content: '[An error occurred and the response could not be completed.]',
-            ...agentVersionPin,
+            agentVersionId,
             // Pin provider only — `resolvedModel` lives inside the try
             // and isn't reliably in scope here. modelId stays null on
             // error markers; the audit trail reads that as "model in
@@ -2796,7 +2797,7 @@ export class StreamingChatHandler {
       where: { slug, isActive: true, ...platformSlugWhere(slug) },
       include: {
         profile: true,
-        versions: { orderBy: { version: 'desc' }, take: 1, select: { id: true } },
+        versions: LATEST_AGENT_VERSION_ID_INCLUDE,
       },
     });
     if (!agent) {
