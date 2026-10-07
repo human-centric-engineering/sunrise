@@ -18,6 +18,12 @@ release process.
 
 ### Added
 
+- **`ComputedCost.unpriced`, `ModelInfo.pricingUnknown` and
+  `isMatrixOwnedFigure(id, field)`** (#813, t-769). `calculateCost` returns
+  `unpriced: true` when no rate was available, so a caller can tell "not
+  priced" from "free"; `pricingUnknown` marks a registry entry that only a
+  null-cost Model Matrix row supplied; `isMatrixOwnedFigure` says whether a
+  registry figure follows its matrix row. See **Fixed**.
 - **Platform agents: Sunrise's own agents, defined in code, with one instance
   per org** (multi-tenancy §116 t-724). The sixteen agents seeds used to write
   once, as the install org's rows, are now definitions in
@@ -226,6 +232,12 @@ release process.
 
 ### Changed
 
+- **The Model Matrix no longer overrides the price or context window of a
+  model the registry already knows** (#813, t-769). A positive figure from the
+  static map or OpenRouter now wins over the row's blended rate and context
+  bucket, at runtime and in `GET /admin/orchestration/models`. An operator who
+  relied on editing the matrix to re-price a known model must now do it
+  elsewhere; a model only the matrix knows is still priced from its row.
 - **A `tool_call` step interpolates its `args`** (t-770). Every string in an
   authored `args` object now resolves `{{input.…}}`, `{{<stepId>.output}}`,
   `{{trigger.…}}` and the rest, as every other step type's config already did;
@@ -574,21 +586,22 @@ release process.
     context bucket (`high` → 200,000) replaced the model's real window, which
     the chat handler uses as its history budget. `registerModels()` now keeps a
     positive registry figure and lets a row fill only a zero. A model only the
-    matrix knows keeps the row's figures, and an edit to them takes effect on
-    the next hydrate. **An operator can no longer override a known model's
-    price or context window from the matrix.**
+    matrix knows keeps the row's figures, and an edit to them, clearing
+    included, takes effect on the next hydrate. See **Changed** for what this
+    takes away from operators.
   - A model only the matrix knows (a dated snapshot id such as
     `gpt-4o-mini-2024-07-18`, a discovered model) was costed at \$0 on the chat
     path and in the evaluation worker: neither ever loaded the matrix into the
     registry. `getProvider`, `resolveAgentProviderAndModel`, `runLlmCall`,
-    keyword enrichment and the retroactive execution review now do, throttled
-    to one query a minute.
+    keyword enrichment, the cleanup page's context window and the retroactive
+    execution review now do: one query a minute (every 10 s while it fails),
+    awaited only until the first one lands. An OpenRouter refresh no longer
+    drops the matrix's models until the next hydrate.
   - A turn with no price (a model the registry still does not know, or a
     matrix row whose cost is null) was stored at \$0 exactly like a free one,
     and a null-cost row did not even log the "unknown model" warning.
-    `calculateCost` now returns `unpriced: true` for it, `ModelInfo` carries
-    `pricingUnknown`, and `logCost` stamps `metadata.pricing = 'unknown'` on
-    the `AiCostLog` row. An explicit cost of 0 is still a free model.
+    `logCost` now stamps `metadata.pricing = 'unknown'` on the `AiCostLog`
+    row (not on a local turn). An explicit cost of 0 is still a free model.
 - **The SMS / WhatsApp inbound-reply template sends its reply** (t-770). Its
   `send_reply` step is a `tool_call`, and `tool_call` was the one step type
   that did not interpolate its config, so `{{trigger.conversationId}}` and

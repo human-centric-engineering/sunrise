@@ -9,6 +9,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
+import { hydrateFromDb as hydrateModelRegistryFromDb } from '@/lib/orchestration/llm/model-registry-db-hydrate';
 
 // Modern frontier minimum. Used when no cleanup conversation exists yet, or
 // when the bound model isn't in the registry. Under-promises rather than
@@ -35,6 +36,9 @@ export async function resolveCleanupAgentContextWindow(documentId: string): Prom
   });
   if (!agent?.model) return FALLBACK_CONTEXT_WINDOW;
 
+  // The refine route reaches the window through the resolver, which hydrates;
+  // this page must see the same registry or the two disagree (#813).
+  await hydrateModelRegistryFromDb();
   const modelInfo = getModel(agent.model);
   return modelInfo?.maxContext ?? FALLBACK_CONTEXT_WINDOW;
 }

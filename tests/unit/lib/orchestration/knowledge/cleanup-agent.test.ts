@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { mockConvFindFirst, mockAgentFindUnique, mockGetModel } = vi.hoisted(() => ({
+const { mockConvFindFirst, mockAgentFindUnique, mockGetModel, mockHydrate } = vi.hoisted(() => ({
   mockConvFindFirst: vi.fn(),
   mockAgentFindUnique: vi.fn(),
   mockGetModel: vi.fn(),
+  mockHydrate: vi.fn(),
 }));
 
 vi.mock('@/lib/db/client', () => ({
@@ -15,6 +16,10 @@ vi.mock('@/lib/db/client', () => ({
 
 vi.mock('@/lib/orchestration/llm/model-registry', () => ({
   getModel: mockGetModel,
+}));
+
+vi.mock('@/lib/orchestration/llm/model-registry-db-hydrate', () => ({
+  hydrateFromDb: mockHydrate,
 }));
 
 import { resolveCleanupAgentContextWindow } from '@/lib/orchestration/knowledge/cleanup-agent';
@@ -72,5 +77,21 @@ describe('resolveCleanupAgentContextWindow', () => {
     const ctx = await resolveCleanupAgentContextWindow(DOC_ID);
 
     expect(ctx).toBe(1_000_000);
+  });
+
+  it('hydrates the model registry before reading the window (#813)', async () => {
+    // The refine route reaches the window through the resolver, which
+    // hydrates; a matrix-only model must read the same here.
+    mockHydrate.mockResolvedValue(undefined);
+    mockConvFindFirst.mockResolvedValue({ agentId: 'agent-1' });
+    mockAgentFindUnique.mockResolvedValue({ model: 'matrix-only-model' });
+    mockGetModel.mockReturnValue({ maxContext: 32_000 });
+
+    await resolveCleanupAgentContextWindow(DOC_ID);
+
+    expect(mockHydrate.mock.invocationCallOrder[0]).toBeDefined();
+    expect(mockHydrate.mock.invocationCallOrder[0]).toBeLessThan(
+      mockGetModel.mock.invocationCallOrder[0]
+    );
   });
 });

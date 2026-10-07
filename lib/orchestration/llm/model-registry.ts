@@ -319,8 +319,8 @@ export function registerModels(infos: ModelInfo[]): void {
     markDbSourced(info.id, { input: input.fromDb, output: output.fromDb, context: context.fromDb });
   }
   for (const info of crossProvider) {
-    const existing = merged.get(info.id);
-    if (!existing) continue;
+    // Pushed only once an entry existed, and the map only grows.
+    const existing = merged.get(info.id)!;
     // Different-provider id collision — keep the existing entry's
     // provider as the bare-id canonical so runtime resolution stays
     // stable. Still let pricing / context fall through when the
@@ -348,6 +348,16 @@ export function registerModels(infos: ModelInfo[]): void {
     markDbSourced(info.id, { input: fillInput, output: fillOutput, context: fillContext });
   }
   state = { ...state, models: merged };
+}
+
+/**
+ * Whether `field` of model `id` holds a figure a hydrate wrote from its matrix
+ * row (and so follows that row) rather than a registry one (static map /
+ * OpenRouter, which a row never replaces). For a caller merging matrix rows
+ * itself, so it applies the same rule `registerModels` does.
+ */
+export function isMatrixOwnedFigure(id: string, field: 'input' | 'output' | 'context'): boolean {
+  return dbSourced.get(id)?.has(field) ?? false;
 }
 
 /** Return all models, optionally filtered to a single provider. */

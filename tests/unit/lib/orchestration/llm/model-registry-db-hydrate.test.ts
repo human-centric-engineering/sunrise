@@ -119,6 +119,33 @@ describe('hydrateFromDb', () => {
     );
   });
 
+  it('reads rows oldest first, so a shared model id settles on the same entry', async () => {
+    mockFindMany.mockResolvedValue([]);
+    await hydrate.hydrateFromDb();
+    expect(mockFindMany).toHaveBeenCalledWith({
+      where: { isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+  });
+
+  it('awaits the first hydrate, then refreshes behind the caller once one has landed', async () => {
+    vi.useFakeTimers();
+    try {
+      mockFindMany.mockResolvedValue([makeRow()]);
+      await hydrate.hydrateFromDb();
+      expect(registry.getModel(CUSTOM_MODEL_ID)).toBeDefined();
+
+      // Past the TTL, with a query that never settles: the caller must not
+      // wait on it — the registry already holds the matrix.
+      vi.advanceTimersByTime(60_001);
+      mockFindMany.mockReturnValue(new Promise(() => {}));
+      await expect(hydrate.hydrateFromDb()).resolves.toBeUndefined();
+      expect(mockFindMany).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('backs off after a failed query rather than retrying on every call', async () => {
     vi.useFakeTimers();
     try {

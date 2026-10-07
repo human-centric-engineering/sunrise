@@ -38,6 +38,7 @@ vi.mock('@/lib/orchestration/llm/model-registry', () => ({
   getAvailableModels: vi.fn(() => []),
   getRegistryFetchedAt: vi.fn(() => 0),
   refreshFromOpenRouter: vi.fn(() => Promise.resolve()),
+  isMatrixOwnedFigure: vi.fn(() => false),
 }));
 
 vi.mock('@/lib/db/client', () => ({
@@ -194,9 +195,9 @@ describe('GET /api/v1/admin/orchestration/models', () => {
     });
 
     it('lets the DB row win when a (provider, modelId) pair exists in both sources', async () => {
-      // Operator curation is the source of truth: if the matrix and the
-      // registry disagree on a model's tier or cost, the matrix value
-      // is what the operator approved and the dropdown reflects that.
+      // Operator curation is the source of truth for what a model IS (name,
+      // tier). Its price and window are the registry's when the registry has
+      // them, as at runtime (#813) — the list shows what billing uses.
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(getAvailableModels).mockReturnValue([
         {
@@ -228,11 +229,25 @@ describe('GET /api/v1/admin/orchestration/models', () => {
       const response = await GET(makeGetRequest());
 
       const data = await parseJson<{
-        data: { models: Array<{ id: string; name: string; tier: string }> };
+        data: {
+          models: Array<{
+            id: string;
+            name: string;
+            tier: string;
+            inputCostPerMillion: number;
+            outputCostPerMillion: number;
+            maxContext: number;
+          }>;
+        };
       }>(response);
       expect(data.data.models).toHaveLength(1);
       expect(data.data.models[0].name).toBe('GPT-4o (DB override)');
       expect(data.data.models[0].tier).toBe('mid'); // worker → mid
+      expect(data.data.models[0]).toMatchObject({
+        inputCostPerMillion: 5,
+        outputCostPerMillion: 15,
+        maxContext: 128000,
+      });
     });
 
     it('queries AiProviderModel with isActive: true filter', async () => {

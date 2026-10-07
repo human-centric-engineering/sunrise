@@ -49,10 +49,24 @@ let inflight: Promise<void> | null = null;
 export async function hydrateFromDb(): Promise<void> {
   if (Date.now() - dbHydratedAt < DB_HYDRATE_TTL_MS) return;
   if (Date.now() - dbFailedAt < DB_HYDRATE_FAILURE_BACKOFF_MS) return;
-  if (inflight) return inflight;
+  const run = inflight ?? startHydrate();
+  // Once the registry holds the matrix, a refresh only picks up edits, so it
+  // runs behind the caller rather than ahead of an LLM call (#813). The first
+  // hydrate in a process is awaited: until it lands the matrix's models are
+  // missing, not merely stale.
+  if (dbHydratedAt !== 0) return;
+  return run;
+}
+
+function startHydrate(): Promise<void> {
   inflight = (async () => {
     try {
-      const rows = await prisma.aiProviderModel.findMany({ where: { isActive: true } });
+      // Oldest first, so when two providers' rows share a model id the same
+      // one becomes the bare-id entry on every hydrate.
+      const rows = await prisma.aiProviderModel.findMany({
+        where: { isActive: true },
+        orderBy: { createdAt: 'asc' },
+      });
       registerModels(rows.map(dbModelToModelInfo));
       dbHydratedAt = Date.now();
     } catch (err) {

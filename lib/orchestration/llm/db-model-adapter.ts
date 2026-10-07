@@ -20,6 +20,7 @@
 
 import type { AiProviderModel } from '@/types/prisma';
 import type { ModelInfo, ModelTier, ParamProfile } from '@/lib/orchestration/llm/types';
+import { isMatrixOwnedFigure } from '@/lib/orchestration/llm/model-registry';
 
 /**
  * Map the DB row's `tierRole` (admin matrix vocabulary) and
@@ -120,7 +121,9 @@ export function dbModelToModelInfo(row: AiProviderModel): ModelInfo {
  * Merge the operator-curated DB rows on top of the registry view.
  * Conflicts on `(provider, modelId)` resolve to the DB row — the
  * matrix is the source of truth for "is this model usable right now",
- * the registry is the fallback catalogue.
+ * the registry is the fallback catalogue — EXCEPT on price and context,
+ * where a positive registry figure wins exactly as `registerModels` keeps
+ * it at runtime (#813), so the list shows what costs and history budgets use.
  */
 export function mergeDbModelsWithRegistry(
   registryModels: ModelInfo[],
@@ -136,7 +139,7 @@ export function mergeDbModelsWithRegistry(
   for (const m of registryModels) {
     const key = `${m.provider}::${m.id}`;
     const override = dbBySlug.get(key);
-    merged.push(override ?? m);
+    merged.push(override ? keepRegistryFigures(m, override) : m);
     seen.add(key);
   }
 
@@ -145,5 +148,31 @@ export function mergeDbModelsWithRegistry(
     if (!seen.has(key)) merged.push(m);
   }
 
+  return merged;
+}
+
+/**
+ * A matrix row over its registry entry, with price and context resolved the
+ * way `registerModels` resolves them (its `pickNumber`): the row owns a field
+ * a hydrate already gave it, or one the registry has at zero and the row
+ * fills; a positive registry figure is otherwise kept. `pricingUnknown`
+ * survives only if the row owns both rates, as at runtime.
+ */
+function keepRegistryFigures(registry: ModelInfo, row: ModelInfo): ModelInfo {
+  const rowOwns = (
+    field: 'input' | 'output' | 'context',
+    registryValue: number,
+    rowValue: number
+  ): boolean => isMatrixOwnedFigure(registry.id, field) || (registryValue === 0 && rowValue > 0);
+  const ownsInput = rowOwns('input', registry.inputCostPerMillion, row.inputCostPerMillion);
+  const ownsOutput = rowOwns('output', registry.outputCostPerMillion, row.outputCostPerMillion);
+  const ownsContext = rowOwns('context', registry.maxContext, row.maxContext);
+  const merged: ModelInfo = {
+    ...row,
+    inputCostPerMillion: ownsInput ? row.inputCostPerMillion : registry.inputCostPerMillion,
+    outputCostPerMillion: ownsOutput ? row.outputCostPerMillion : registry.outputCostPerMillion,
+    maxContext: ownsContext ? row.maxContext : registry.maxContext,
+  };
+  if (!(row.pricingUnknown && ownsInput && ownsOutput)) delete merged.pricingUnknown;
   return merged;
 }

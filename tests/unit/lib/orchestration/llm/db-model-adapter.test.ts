@@ -16,6 +16,11 @@ import {
   mapTierRoleToTier,
   mergeDbModelsWithRegistry,
 } from '@/lib/orchestration/llm/db-model-adapter';
+import {
+  __resetForTests as resetRegistry,
+  getModel,
+  registerModels,
+} from '@/lib/orchestration/llm/model-registry';
 
 function makeRow(overrides: Partial<AiProviderModel> = {}): AiProviderModel {
   return {
@@ -179,7 +184,7 @@ describe('mergeDbModelsWithRegistry', () => {
     expect(merged.map((m) => m.id).sort()).toEqual(['claude-opus-4-6', 'gpt-4o', 'gpt-5']);
   });
 
-  it('lets the DB row win on (provider, modelId) collision', () => {
+  it('lets the DB row win on descriptive fields on a (provider, modelId) collision', () => {
     const override = makeRow({
       modelId: 'gpt-4o',
       slug: 'openai-gpt-4o',
@@ -194,7 +199,63 @@ describe('mergeDbModelsWithRegistry', () => {
     const gpt4o = merged.find((m) => m.id === 'gpt-4o');
     expect(gpt4o?.name).toBe('GPT-4o (DB override)');
     expect(gpt4o?.tier).toBe('mid');
-    expect(gpt4o?.maxContext).toBe(200_000);
+    // Price and window stay the registry's, as at runtime (#813): the row's
+    // blended 3 and its `high` bucket (200k) are not what billing uses.
+    expect(gpt4o).toMatchObject({
+      inputCostPerMillion: 5,
+      outputCostPerMillion: 15,
+      maxContext: 128_000,
+    });
+  });
+
+  it("shows the row's figures where the registry has none, and only then flags it unpriced", () => {
+    const free: ModelInfo = {
+      id: 'free-model',
+      name: 'Free',
+      provider: 'openai',
+      tier: 'budget',
+      inputCostPerMillion: 0,
+      outputCostPerMillion: 0,
+      maxContext: 0,
+      supportsTools: true,
+    };
+    const priced = mergeDbModelsWithRegistry(
+      [free],
+      [makeRow({ modelId: 'free-model', costPerMillionTokens: 2, contextLength: 'medium' })]
+    )[0];
+    expect(priced).toMatchObject({
+      inputCostPerMillion: 2,
+      outputCostPerMillion: 2,
+      maxContext: 32_000,
+    });
+
+    // A null-cost row over a registry entry at 0/0 is a free model, as at
+    // runtime — not an unpriced one.
+    const stillFree = mergeDbModelsWithRegistry(
+      [free],
+      [makeRow({ modelId: 'free-model', costPerMillionTokens: null })]
+    )[0];
+    expect(stillFree.inputCostPerMillion).toBe(0);
+    expect(stillFree).not.toHaveProperty('pricingUnknown');
+  });
+
+  it("shows the row's current figures for a model whose registry copy came from the matrix", () => {
+    // A hydrate registered this model from its row at 9; the operator has
+    // since edited the row to 4. The registry copy is the matrix's own, so
+    // the list must show the row's current value, as the next hydrate will.
+    resetRegistry();
+    registerModels([
+      dbModelToModelInfo(makeRow({ modelId: 'acme-owned', costPerMillionTokens: 9 })),
+    ]);
+    const hydrated = getModel('acme-owned');
+    expect(hydrated?.inputCostPerMillion).toBe(9);
+
+    const listed = mergeDbModelsWithRegistry(
+      [hydrated!],
+      [makeRow({ modelId: 'acme-owned', costPerMillionTokens: 4 })]
+    )[0];
+    expect(listed.inputCostPerMillion).toBe(4);
+    resetRegistry();
   });
 
   it('returns the registry untouched when no DB rows are passed', () => {
