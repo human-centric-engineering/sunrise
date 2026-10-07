@@ -565,6 +565,30 @@ release process.
 
 ### Fixed
 
+- **Recorded AI costs use the model's real rates, and a turn nobody could
+  price is marked as such** (#813, t-769). **Recorded costs change.** Three
+  defects, one fix each:
+  - Once the Model Matrix had been loaded into the model registry, a matrix
+    row's single blended rate replaced the registry's separate input and output
+    rates (gpt-4o-mini cost its 0.375 blend on both sides), and its coarse
+    context bucket (`high` → 200,000) replaced the model's real window, which
+    the chat handler uses as its history budget. `registerModels()` now keeps a
+    positive registry figure and lets a row fill only a zero. A model only the
+    matrix knows keeps the row's figures, and an edit to them takes effect on
+    the next hydrate. **An operator can no longer override a known model's
+    price or context window from the matrix.**
+  - A model only the matrix knows (a dated snapshot id such as
+    `gpt-4o-mini-2024-07-18`, a discovered model) was costed at \$0 on the chat
+    path and in the evaluation worker: neither ever loaded the matrix into the
+    registry. `getProvider`, `resolveAgentProviderAndModel`, `runLlmCall`,
+    keyword enrichment and the retroactive execution review now do, throttled
+    to one query a minute.
+  - A turn with no price (a model the registry still does not know, or a
+    matrix row whose cost is null) was stored at \$0 exactly like a free one,
+    and a null-cost row did not even log the "unknown model" warning.
+    `calculateCost` now returns `unpriced: true` for it, `ModelInfo` carries
+    `pricingUnknown`, and `logCost` stamps `metadata.pricing = 'unknown'` on
+    the `AiCostLog` row. An explicit cost of 0 is still a free model.
 - **The SMS / WhatsApp inbound-reply template sends its reply** (t-770). Its
   `send_reply` step is a `tool_call`, and `tool_call` was the one step type
   that did not interpolate its config, so `{{trigger.conversationId}}` and
