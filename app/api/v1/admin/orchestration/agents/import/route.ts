@@ -50,6 +50,7 @@ import {
   AGENT_BATCH_TRANSACTION_TIMEOUT_MS,
   INITIAL_VERSION_SUMMARY,
   ensureBaselineVersion,
+  isAgentVersionConflict,
   recordAgentVersion,
 } from '@/lib/orchestration/agents/agent-versioning';
 
@@ -344,10 +345,10 @@ export const POST = withAdminAuth(async (request, session) => {
       { timeout: AGENT_BATCH_TRANSACTION_TIMEOUT_MS }
     )
     .catch((err: unknown) => {
-      // A unique collision is a concurrent write: an agent edit taking the
-      // version number this import was about to write, or another import creating
-      // the same slug. The transaction rolled back, so the import can be retried.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      // A concurrent agent edit took a version number this import was about to
+      // write. The transaction rolled back, so the import can be retried. Any
+      // other unique violation is not retryable and stays a 500.
+      if (isAgentVersionConflict(err)) {
         throw new ConflictError('Agent import conflicted with a concurrent change. Please retry.');
       }
       throw err;

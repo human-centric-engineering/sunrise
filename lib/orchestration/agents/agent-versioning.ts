@@ -108,7 +108,27 @@ export function readAgentConsistently<T>(
 ): Promise<T> {
   return db.$transaction(read, {
     isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+    // Wait for a pool connection as long as a plain query would (the pool's
+    // `connectionTimeoutMillis`), not Prisma's 2s default, so a busy one-
+    // connection pool queues a turn rather than failing it.
+    maxWait: 10_000,
   });
+}
+
+/**
+ * True when `err` is a collision on an agent version number: a concurrent
+ * edit to the same agent took the number this write was about to use. The
+ * transaction rolled back, so the write can be retried — routes report it as
+ * a 409. Any other unique violation is not this, and may never succeed.
+ */
+export function isAgentVersionConflict(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === 'P2002' &&
+    // The driver adapter names the model, not the constraint's fields;
+    // `@@unique([agentId, version])` is AiAgentVersion's only unique key.
+    err.meta?.modelName === 'AiAgentVersion'
+  );
 }
 
 /**
@@ -188,8 +208,13 @@ export async function recordAgentVersion(
   });
   let changeSummary = label;
   if (newest) {
-    const previous = isRecord(newest.snapshot) ? newest.snapshot : {};
-    const changed = diffAgentSnapshots(snapshot, previous).map((c) => c.field);
+    const stored = isRecord(newest.snapshot) ? newest.snapshot : {};
+    // Compare only fields both sides record. A snapshot written before a
+    // field joined (or left) the registry lacks (or still carries) it, and
+    // that is not a change this write made.
+    const live = Object.fromEntries(Object.entries(snapshot).filter(([k]) => k in stored));
+    const previous = Object.fromEntries(Object.entries(stored).filter(([k]) => k in snapshot));
+    const changed = diffAgentSnapshots(live, previous).map((c) => c.field);
     if (changed.length === 0) return null;
     changeSummary = `${label} — ${buildChangeSummary(changed)}`;
   }

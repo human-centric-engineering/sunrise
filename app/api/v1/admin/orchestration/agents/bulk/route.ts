@@ -13,7 +13,6 @@
  * Authentication: Admin role required.
  */
 
-import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -26,6 +25,7 @@ import { ConflictError } from '@/lib/api/errors';
 import {
   AGENT_BATCH_TRANSACTION_TIMEOUT_MS,
   ensureBaselineVersion,
+  isAgentVersionConflict,
   recordAgentVersion,
 } from '@/lib/orchestration/agents/agent-versioning';
 
@@ -48,13 +48,18 @@ export const POST = withAdminAuth(async (request, session) => {
 
   // `isActive` is a versioned field, so each agent the action changes gets a
   // new version in the same transaction, keeping its newest version equal to
-  // its live config. An agent the action leaves as it was gets none.
+  // its live config.
   const isActive = action === 'activate';
   const label = BULK_VERSION_LABELS[action];
   const affected = await prisma
     .$transaction(
       async (tx) => {
-        const targets = await tx.aiAgent.findMany({ where, select: { id: true } });
+        // Only the agents this action changes need a version; one already in
+        // the requested state is left alone by the write too.
+        const targets = await tx.aiAgent.findMany({
+          where: { ...where, isActive: !isActive },
+          select: { id: true },
+        });
         for (const { id } of targets) {
           await ensureBaselineVersion(tx, id, session.user.id);
         }
@@ -68,9 +73,9 @@ export const POST = withAdminAuth(async (request, session) => {
       { timeout: AGENT_BATCH_TRANSACTION_TIMEOUT_MS }
     )
     .catch((err: unknown) => {
-      // The only unique write is a version number, so a collision means a
-      // concurrent edit to one of these agents took it. Retryable.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      // A concurrent edit to one of these agents took a version number. The
+      // transaction rolled back, so the action can be retried.
+      if (isAgentVersionConflict(err)) {
         throw new ConflictError('Bulk action conflicted with a concurrent change. Please retry.');
       }
       throw err;

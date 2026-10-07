@@ -181,9 +181,10 @@ describe('POST /api/v1/admin/orchestration/agents/bulk', () => {
       expect(ensureBaselineVersion).toHaveBeenCalledWith(prisma, id, adminId);
       expect(recordAgentVersion).toHaveBeenCalledWith(prisma, id, { label, createdBy: adminId });
     }
-    // The targets are the agents the write will touch — system agents excluded.
+    // The targets are the agents the write will change: system agents
+    // excluded, and so is any agent already in the requested state.
     expect(prisma.aiAgent.findMany).toHaveBeenCalledWith({
-      where: { id: { in: AGENT_IDS }, isSystem: false },
+      where: { id: { in: AGENT_IDS }, isSystem: false, isActive: action !== 'activate' },
       select: { id: true },
     });
     const writeAt = (prisma.aiAgent.updateMany as ReturnType<typeof vi.fn>).mock
@@ -202,6 +203,7 @@ describe('POST /api/v1/admin/orchestration/agents/bulk', () => {
       new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
         code: 'P2002',
         clientVersion: 'test',
+        meta: { modelName: 'AiAgentVersion' },
       })
     );
 

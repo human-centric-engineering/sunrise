@@ -207,6 +207,7 @@ describe('POST /api/v1/admin/orchestration/agents/:id/instructions-revert', () =
         new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
           code: 'P2002',
           clientVersion: 'test',
+          meta: { modelName: 'AiAgentVersion' },
         })
       );
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 import type { prisma } from '@/lib/db/client';
 import { buildChangeSummary } from '@/lib/orchestration/agent-version-diff';
@@ -10,6 +10,7 @@ import {
   asSnapshotJson,
   buildAgentSnapshot,
   ensureBaselineVersion,
+  isAgentVersionConflict,
   nextAgentVersionNumber,
   readAgentConsistently,
   recordAgentVersion,
@@ -217,6 +218,67 @@ describe('agent-versioning helpers', () => {
     });
   });
 
+  describe('recordAgentVersion — fields only one side records', () => {
+    it('writes nothing when the stored snapshot lacks a field the registry added since', async () => {
+      const { systemInstructions: _dropped, ...olderShape } = LIVE_SNAPSHOT;
+      const { tx, created } = makeTx([{ version: 2, snapshot: olderShape }]);
+
+      const written = await recordAgentVersion(tx, 'agent-1', {
+        label: 'Bulk activate',
+        createdBy: 'admin-1',
+      });
+
+      // The missing field is the snapshot's age, not a change this write made.
+      expect(written).toBeNull();
+      expect(created).toEqual([]);
+    });
+
+    it('writes nothing when the stored snapshot carries a field the registry dropped', async () => {
+      const { tx, created } = makeTx([
+        { version: 2, snapshot: { ...LIVE_SNAPSHOT, knowledgeCategories: ['docs'] } },
+      ]);
+
+      const written = await recordAgentVersion(tx, 'agent-1', {
+        label: 'Bulk activate',
+        createdBy: 'admin-1',
+      });
+
+      expect(written).toBeNull();
+      expect(created).toEqual([]);
+    });
+  });
+
+  describe('isAgentVersionConflict', () => {
+    const p2002 = (modelName: string) =>
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+        meta: { modelName },
+      });
+
+    it('is true for a unique violation on an agent version number', () => {
+      expect(isAgentVersionConflict(p2002('AiAgentVersion'))).toBe(true);
+    });
+
+    it('is false for a unique violation on any other model', () => {
+      // e.g. a duplicate capability pivot: retrying can never succeed.
+      expect(isAgentVersionConflict(p2002('AiAgentCapability'))).toBe(false);
+    });
+
+    it('is false for other errors', () => {
+      expect(
+        isAgentVersionConflict(
+          new Prisma.PrismaClientKnownRequestError('Not found', {
+            code: 'P2025',
+            clientVersion: 'test',
+            meta: { modelName: 'AiAgentVersion' },
+          })
+        )
+      ).toBe(false);
+      expect(isAgentVersionConflict(new Error('boom'))).toBe(false);
+    });
+  });
+
   describe('ensureBaselineVersion', () => {
     it('saves the current config as v1 when the agent has no versions', async () => {
       const { tx, created } = makeTx([]);
@@ -281,6 +343,8 @@ describe('agent-versioning helpers', () => {
 
       expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), {
         isolationLevel: 'RepeatableRead',
+        // As long as a plain query waits for the pool, not Prisma's 2s.
+        maxWait: 10_000,
       });
       // The read gets the transaction client, so its include shares the snapshot.
       expect(read).toHaveBeenCalledWith(tx);

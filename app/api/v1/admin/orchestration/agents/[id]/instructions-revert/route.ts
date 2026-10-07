@@ -21,7 +21,6 @@
  * Authentication: Admin role required.
  */
 
-import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -39,6 +38,7 @@ import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   ensureBaselineVersion,
+  isAgentVersionConflict,
   recordAgentVersion,
 } from '@/lib/orchestration/agents/agent-versioning';
 
@@ -123,9 +123,9 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       return updated;
     })
     .catch((err: unknown) => {
-      // The only unique write is the version number, so a collision means a
-      // concurrent edit to this agent took it. Retryable, as PATCH reports it.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      // A concurrent edit to this agent took the version number. The
+      // transaction rolled back, so the revert can be retried.
+      if (isAgentVersionConflict(err)) {
         throw new ConflictError('Revert conflicted with a concurrent change. Please retry.');
       }
       throw err;

@@ -465,6 +465,7 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
         new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
           code: 'P2002',
           clientVersion: 'test',
+          meta: { modelName: 'AiAgentVersion' },
         })
       );
 
@@ -476,6 +477,32 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       );
 
       expect(response.status).toBe(409);
+    });
+
+    it('leaves a unique violation a retry cannot fix to the shared handler, not a 409', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      getTxMock().aiAgent.findFirst.mockResolvedValue(null);
+      // e.g. a bundle listing the same capability twice: it fails every time.
+      getTxMock().aiAgentCapability.createMany.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+          meta: { modelName: 'AiAgentCapability' },
+        })
+      );
+      vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([
+        { id: CAPABILITY_ID, slug: 'search-web' },
+      ] as never);
+
+      const response = await POST(
+        makeRequest({
+          bundle: makeBundle([makeBundledAgent('new-agent', [{ slug: 'search-web' }])]),
+        })
+      );
+
+      // The shared API error handler's answer for a unique violation (400),
+      // not "conflicted with a concurrent change, please retry".
+      expect(response.status).toBe(400);
     });
 
     it('rebuilds knowledge-document grants by slug on overwrite (#338)', async () => {
