@@ -327,9 +327,9 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/orchestration/llm/model-registry.ts',
-    holders: ['state', 'inflightRefresh'],
+    holders: ['state', 'dbSourced', 'inflightRefresh'],
     posture: 'global-config',
-    why: 'The AiProviderModel catalogue with its fallback map, refreshed behind one in-flight promise; no row in it belongs to an org.',
+    why: 'The AiProviderModel catalogue with its fallback map, refreshed behind one in-flight promise; no row in it belongs to an org. `dbSourced` records which of its figures a hydrate wrote, so the catalogue and its provenance move together.',
   },
   {
     file: 'lib/orchestration/llm/provider-manager.ts',
