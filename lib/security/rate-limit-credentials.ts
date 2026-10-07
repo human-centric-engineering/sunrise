@@ -20,6 +20,9 @@
  * and the middleware skips the lookup once that bucket is full, so the
  * lookups such a caller can cause are bounded by the IP cap.
  *
+ * Tenancy posture: row-keyed — a digest of the presented credential maps to
+ * the stored row's id, both unique across orgs; see `lib/tenancy/process-state.ts`.
+ *
  * @see lib/security/rate-limit-middleware.ts — the consumer
  */
 
