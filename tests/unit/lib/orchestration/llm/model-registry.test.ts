@@ -936,23 +936,64 @@ describe('registerModels', () => {
     expect(after?.maxContext).toBe(before?.maxContext);
   });
 
-  it('fills a same-provider field from the DB row only where the existing value is zero', () => {
-    registry.registerModels([
-      {
-        id: 'acme-partial',
-        name: 'Acme Partial',
-        provider: 'acme',
-        tier: 'mid',
-        inputCostPerMillion: 2,
-        outputCostPerMillion: 0,
-        maxContext: 0,
-        supportsTools: true,
-      },
-    ]);
+  it('lets an operator edit a DB-only model on the next hydrate, but still shields registry figures', () => {
+    // A model the registry never knew gets its figures from the matrix row.
+    // Those figures are the matrix's own, so a later edit to the row must
+    // take effect on the next hydrate — the "existing wins" rule is about
+    // registry-sourced figures, not about whatever the previous hydrate wrote.
+    const row = (cost: number, maxContext: number) => ({
+      id: 'acme-db-only',
+      name: 'Acme DB Only',
+      provider: 'acme',
+      tier: 'mid' as const,
+      inputCostPerMillion: cost,
+      outputCostPerMillion: cost,
+      maxContext,
+      supportsTools: true,
+    });
+
+    registry.registerModels([row(5, 32_000)]);
+    registry.registerModels([row(2, 200_000)]);
+
+    const edited = registry.getModel('acme-db-only');
+    expect(edited?.inputCostPerMillion).toBe(2);
+    expect(edited?.outputCostPerMillion).toBe(2);
+    expect(edited?.maxContext).toBe(200_000);
+
+    // A registry model hydrated twice is still never overridden.
+    const before = registry.getModel('gpt-4o-mini');
+    const blended = {
+      ...row(0.375, 200_000),
+      id: 'gpt-4o-mini',
+      provider: 'openai',
+      tier: 'budget' as const,
+    };
+    registry.registerModels([blended]);
+    registry.registerModels([blended]);
+
+    const after = registry.getModel('gpt-4o-mini');
+    expect(after?.inputCostPerMillion).toBe(before?.inputCostPerMillion);
+    expect(after?.outputCostPerMillion).toBe(before?.outputCostPerMillion);
+    expect(after?.maxContext).toBe(before?.maxContext);
+  });
+
+  it('fills a same-provider field from the DB row only where the registry value is zero', async () => {
+    // A registry (OpenRouter) entry that publishes a prompt price but no
+    // completion price and no context window.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        data: [{ id: 'acme/partial', name: 'Acme Partial', pricing: { prompt: '0.000002' } }],
+      }),
+    });
+    await registry.refreshFromOpenRouter({ force: true });
+    expect(registry.getModel('partial')?.inputCostPerMillion).toBeCloseTo(2);
+    expect(registry.getModel('partial')?.outputCostPerMillion).toBe(0);
 
     registry.registerModels([
       {
-        id: 'acme-partial',
+        id: 'partial',
         name: 'Acme Partial',
         provider: 'acme',
         tier: 'mid',
@@ -963,8 +1004,8 @@ describe('registerModels', () => {
       },
     ]);
 
-    const after = registry.getModel('acme-partial');
-    expect(after?.inputCostPerMillion).toBe(2);
+    const after = registry.getModel('partial');
+    expect(after?.inputCostPerMillion).toBeCloseTo(2);
     expect(after?.outputCostPerMillion).toBe(6);
     expect(after?.maxContext).toBe(64_000);
   });

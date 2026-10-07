@@ -56,6 +56,18 @@ interface RegistryState {
 }
 
 let state: RegistryState = { models: buildFallbackMap(), fetchedAt: 0, failedAt: 0 };
+
+/** The numeric fields a registry entry can take from an `AiProviderModel` row. */
+type DbSourcedField = 'input' | 'output' | 'context';
+
+/**
+ * Per model id, the fields whose current value was written by
+ * `registerModels` — i.e. it is the matrix row's own figure, not a registry
+ * one. Lets a later edit to that row take effect on the next hydrate while a
+ * registry figure (static map / OpenRouter) is never overwritten by a row.
+ * Cleared whenever the map is rebuilt from the fallback + OpenRouter.
+ */
+const dbSourced = new Map<string, Set<DbSourcedField>>();
 let inflightRefresh: Promise<void> | null = null;
 
 /**
@@ -115,6 +127,7 @@ export async function refreshFromOpenRouter(options: { force?: boolean } = {}): 
       // Successful refresh — clear the failure timestamp so the next
       // expiry of the success TTL gets a clean retry, not a backoff.
       state = { models: merged, fetchedAt: Date.now(), failedAt: 0 };
+      dbSourced.clear();
       logger.info('Model registry refreshed from OpenRouter', { modelCount: added });
     } catch (err) {
       logger.warn('Model registry refresh failed; using fallback map', {
@@ -161,6 +174,31 @@ export async function refreshFromProvider(provider: LlmProvider): Promise<ModelI
   }
 }
 
+/** Record which fields of `id` now hold a matrix-row figure (positive values only). */
+function markDbSourced(id: string, fields: Record<DbSourcedField, number>): void {
+  const names = (Object.keys(fields) as DbSourcedField[]).filter((f) => fields[f] > 0);
+  if (names.length === 0) return;
+  const set = dbSourced.get(id) ?? new Set<DbSourcedField>();
+  for (const name of names) set.add(name);
+  dbSourced.set(id, set);
+}
+
+/**
+ * Resolve one numeric field for a same-provider collision. A positive
+ * registry figure is kept unless an earlier hydrate wrote it; a zero or
+ * row-sourced one takes the row's value when that is positive.
+ */
+function pickNumber(
+  field: DbSourcedField,
+  existing: number,
+  incoming: number,
+  sourced: Set<DbSourcedField> | undefined
+): { value: number; fromDb: boolean } {
+  if (existing > 0 && !sourced?.has(field)) return { value: existing, fromDb: false };
+  if (incoming > 0) return { value: incoming, fromDb: true };
+  return { value: existing, fromDb: existing > 0 && Boolean(sourced?.has(field)) };
+}
+
 /**
  * Sync merge of externally-sourced models into the registry state.
  *
@@ -181,7 +219,9 @@ export async function refreshFromProvider(provider: LlmProvider): Promise<ModelI
  *     letting either beat the registry's exact input/output split and
  *     real window mis-prices turns and mis-sizes the history budget. A
  *     custom / local model the registry has never seen is unaffected —
- *     its row is the only source and is registered as-is.
+ *     its row is the only source and is registered as-is, and a figure
+ *     an earlier hydrate wrote stays replaceable by the row's current
+ *     value so operator edits take effect.
  *
  *   - **Cross-provider id collisions are dropped.** The bare-id key
  *     drives runtime provider resolution (`getModel(id).provider →
@@ -201,6 +241,11 @@ export function registerModels(infos: ModelInfo[]): void {
     const existing = merged.get(info.id);
     if (!existing) {
       merged.set(info.id, info);
+      markDbSourced(info.id, {
+        input: info.inputCostPerMillion,
+        output: info.outputCostPerMillion,
+        context: info.maxContext,
+      });
       continue;
     }
     if (existing.provider !== info.provider) {
@@ -224,19 +269,35 @@ export function registerModels(infos: ModelInfo[]): void {
       });
       continue;
     }
-    // Same provider: the incoming row wins on descriptive fields, but a
-    // positive figure already in the registry wins on price and context.
-    // A matrix row carries one blended rate and a coarse context bucket;
-    // the registry's input/output split and real window are the exact ones.
+    // Same provider: the incoming row wins on descriptive fields. On price
+    // and context a positive REGISTRY figure wins — a matrix row carries one
+    // blended rate and a coarse context bucket, the registry's input/output
+    // split and real window are the exact ones. A figure a previous hydrate
+    // wrote is the row's own, so the row's current value replaces it.
+    const sourced = dbSourced.get(info.id);
+    const input = pickNumber(
+      'input',
+      existing.inputCostPerMillion,
+      info.inputCostPerMillion,
+      sourced
+    );
+    const output = pickNumber(
+      'output',
+      existing.outputCostPerMillion,
+      info.outputCostPerMillion,
+      sourced
+    );
+    const context = pickNumber('context', existing.maxContext, info.maxContext, sourced);
     merged.set(info.id, {
       ...info,
-      inputCostPerMillion:
-        existing.inputCostPerMillion > 0 ? existing.inputCostPerMillion : info.inputCostPerMillion,
-      outputCostPerMillion:
-        existing.outputCostPerMillion > 0
-          ? existing.outputCostPerMillion
-          : info.outputCostPerMillion,
-      maxContext: existing.maxContext > 0 ? existing.maxContext : info.maxContext,
+      inputCostPerMillion: input.value,
+      outputCostPerMillion: output.value,
+      maxContext: context.value,
+    });
+    markDbSourced(info.id, {
+      input: input.fromDb ? input.value : 0,
+      output: output.fromDb ? output.value : 0,
+      context: context.fromDb ? context.value : 0,
     });
   }
   state = { ...state, models: merged };
@@ -279,6 +340,7 @@ export function getRegistryFetchedAt(): number {
  */
 export function __resetForTests(): void {
   state = { models: buildFallbackMap(), fetchedAt: 0, failedAt: 0 };
+  dbSourced.clear();
   inflightRefresh = null;
 }
 
