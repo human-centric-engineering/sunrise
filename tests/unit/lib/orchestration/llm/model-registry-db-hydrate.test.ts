@@ -129,20 +129,21 @@ describe('hydrateFromDb', () => {
   });
 
   it('awaits a due refresh, so a model just added to the matrix resolves (#302)', async () => {
-    vi.useFakeTimers();
-    try {
-      mockFindMany.mockResolvedValue([]);
-      await hydrate.hydrateFromDb();
-      expect(registry.getModel(CUSTOM_MODEL_ID)).toBeUndefined();
+    mockFindMany.mockResolvedValue([]);
+    await hydrate.hydrateFromDb();
+    expect(registry.getModel(CUSTOM_MODEL_ID)).toBeUndefined();
 
-      // The operator adds a model; past the TTL the next caller must see it.
-      mockFindMany.mockResolvedValue([makeRow()]);
-      vi.advanceTimersByTime(60_001);
-      await hydrate.hydrateFromDb();
-      expect(registry.getModel(CUSTOM_MODEL_ID)).toBeDefined();
-    } finally {
-      vi.useRealTimers();
-    }
+    // The operator adds a model; past the TTL the next caller must see it
+    // when its await returns — the query takes real time, so a caller that
+    // did not wait would read the registry before the row lands.
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now + 60_001);
+    mockFindMany.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve([makeRow()]), 20))
+    );
+    await hydrate.hydrateFromDb();
+    expect(registry.getModel(CUSTOM_MODEL_ID)).toBeDefined();
+    vi.mocked(Date.now).mockRestore();
   });
 
   it('retries on the next call while no hydrate has landed yet', async () => {
