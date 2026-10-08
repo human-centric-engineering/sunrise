@@ -17,6 +17,7 @@ npm run smoke:transcribe     # Audio (speech-to-text): getAudioProvider → tran
 npm run smoke:capability-ownership  # #598 guard vs. Postgres jsonb key re-ordering
 npm run smoke:epub                  # EPUB ingestion through a real (ideally production) server
 npm run smoke:tenancy               # the install-org invariant, org lifecycle, export/erase (CI: `smoke`)
+npm run smoke:delivery-destination  # webhook/hook deliveries record their destination and outlive their sender (CI: `smoke`)
 npm run smoke:tenancy-isolation     # two orgs at TENANCY_MODE=multi as the restricted role — THROWAWAY DB only (CI: `smoke-multi`)
 ```
 
