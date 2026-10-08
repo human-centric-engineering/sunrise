@@ -16,6 +16,85 @@ release process.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-10-08
+
+> **Alpha release.** Twentieth tagged Sunrise release. **MINOR bump**. It
+> carries two multi-tenancy features, platform-owned system agents (§116) and
+> per-org provider policy (§120), plus the install-org rules for shared
+> settings (§107 t-751–t-753) and a security batch on logging, exports and
+> outbound messages. Measured against `v0.13.0`: 50 PRs merged, no direct
+> commits, 25 issues closed; the suite is 1,261 files and 25,968 tests.
+>
+> **`TENANCY_MODE=single` stays the default.** Entries that apply only at
+> `multi` say so. §120 shipped without its check against a deployed `multi`
+> install (an owner ruling); its behaviour is proved by its tests only.
+>
+> ## What a fork has to do
+>
+> **Six migrations**, none of them a large rewrite:
+> `20260929180000_chunk_key_per_org`, `20260930120000_retire_builtin_template_rows`,
+> `20261001100000_provider_jurisdiction`, `20261006120000_embed_visitor_conversations`,
+> `20261006130000_conversation_owner_exclusive` and
+> `20261006140000_execution_reply_conversation`. **Check each deployed database
+> before applying `retire_builtin_template_rows`.** It switches off the twelve
+> seeded `tpl-*` workflow rows, so a schedule wired to one is skipped and a run
+> waiting on approval fails when approved. The entry under **Changed** gives a
+> query that lists what is wired to each.
+>
+> **Before your first `db:seed` after merging: clone any system agent whose
+> prompt you customised.** The seed and every reconcile after it write each
+> platform agent's behavioural fields back to Sunrise's definition, and the
+> admin API now refuses those edits (the §116 entries under **Changed**).
+> Provider, model, budgets, rate limit and retention stay yours. The
+> agent-only seed units and the built-in template seeds are removed (see
+> **Removed**), so a fork that edited one will see a modify/delete conflict.
+> Carry an agent edit into a replacement registered from
+> `lib/app/platform-agents.ts`. A template seed edit has nothing to carry over.
+>
+> **Already at `TENANCY_MODE=multi` with customer orgs?** Grant each org its
+> providers (`PUT /api/v1/admin/orgs/[id]/providers`) when you take this
+> release, or their AI calls are refused with `provider_not_permitted`. Erasure
+> hooks and `collectAppSubjectData()` now run as the system scope at `multi`,
+> so `requireOrgId()` throws inside them and a row they create needs an
+> explicit `orgId`. Backup import runs from the install org only, until §109
+> t-738.
+>
+> **Changes a build will not catch:**
+>
+> - **Sentry 11** collects request bodies, headers, cookies and gen-AI inputs
+>   by default. A fork with Sentry on should set `dataCollection`, and add the
+>   `scrubSentrySpan` / `scrubSentryEvent` hooks (both in **Security**).
+> - **dotenv 18's `-r dotenv/config` preload ignores `dotenv_config_path=`.**
+>   Set `DOTENV_CONFIG_PATH` instead.
+> - **Logs.** `url` is gone from the request log context, `endpoint` collapses
+>   ids and tokens to `[param]`, and a dozen log keys are renamed. Dashboards
+>   and alerts on the old keys need updating.
+> - **Behaviour.**
+>   - A `judge_call` with a `threshold` fails when the judge returns no
+>     usable score.
+>   - A `tool_call` step now interpolates its `args`.
+>   - Workflows can no longer send outreach on a conversation they were not
+>     handling: pass `replyConversationId` only for a genuine reply.
+>   - Recorded costs change: they use the model's real rates, and unpriced
+>     turns are flagged.
+>   - Reverts, imports and bulk agent actions now add agent versions, and
+>     those routes return a retryable `409` on a version clash.
+> - **Embed visitors.** Hook and webhook payloads for an embed visitor carry
+>   `userId: null` plus `embedVisitorId`. Check `isEmbedUserId` before writing
+>   a caller id into a `User` foreign key.
+> - **Knowledge embedding.** A keyless remote embedding row now fails with
+>   `missing_api_key`: mark a self-hosted one Local. The bare
+>   `OPENAI_API_KEY` embedding fallback is removed.
+>
+> **Dependency alerts accepted for this release:**
+>
+> - `deepmerge-ts` (high), under the Prisma CLI.
+> - `postcss-selector-parser` (moderate), under `@tailwindcss/typography`.
+>   Both have a fix only in a new major version under their parents.
+> - `katex` (low), under mermaid.
+> - `sprintf-js` (moderate). No patched release exists.
+> - `braces` / `micromatch` / `fast-glob`. Lint-only.
+
 ### Added
 
 - **`ComputedCost.unpriced`, `ModelInfo.pricingUnknown` and
@@ -7848,7 +7927,8 @@ Sunrise safe to fork and to merge upstream releases into.
 
 ---
 
-[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/human-centric-engineering/sunrise/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.12.1...v0.13.0
 [0.12.1]: https://github.com/human-centric-engineering/sunrise/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/human-centric-engineering/sunrise/compare/v0.11.2...v0.12.0
