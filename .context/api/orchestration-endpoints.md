@@ -116,7 +116,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/observability/dashboard-stats`          | GET                | Aggregated observability metrics                                                                                                                                                                                           | 5.1     |
 | `/webhooks/:id/test`                      | POST               | Send test ping (requires signing secret)                                                                                                                                                                                   | 5.1     |
 | `/webhooks/:id/deliveries`                | GET                | List delivery history (owner-scoped)                                                                                                                                                                                       | 5.1     |
-| `/webhooks/deliveries/:id/retry`          | POST               | Retry a failed delivery (owner-scoped)                                                                                                                                                                                     | 5.1     |
+| `/webhooks/deliveries/:id/retry`          | POST               | Retry a failed delivery (owner-scoped). 409 when its subscription was deleted                                                                                                                                              | 5.1     |
 | `/webhooks/deliveries/:id`                | DELETE             | Discard a single delivery row from the DLQ (owner-scoped)                                                                                                                                                                  | 5.1     |
 | `/webhooks/dlq`                           | GET                | Cross-subscription dead-letter list (owner-scoped, `status=exhausted`); filters: `subscriptionId?`, `eventType?`, `since?`, `until?`                                                                                       | 5.1     |
 | `/webhooks/dlq/stats`                     | GET                | DLQ depth signal: `exhausted24h`, `exhaustedTotal`, `oldestExhaustedAt`                                                                                                                                                    | 5.1     |
@@ -1336,23 +1336,23 @@ Create an event subscription. Channel-discriminated body:
 
 ### `GET / PATCH / DELETE /webhooks/:id`
 
-Standard CRUD for a single event subscription. Scoped to `session.user.id` — cross-user returns 404. `PATCH` body: `{ channel?, url?, secret?, emailAddress?, events?, description?, isActive?, maxAttempts?, retryBackoffMs? }`. Channel coherence is enforced: if the patch flips the row's channel, the destination field for the new channel must be present (either in the patch or already on the row). `DELETE` is a hard delete.
+Standard CRUD for a single event subscription. Scoped to `session.user.id` — cross-user returns 404. `PATCH` body: `{ channel?, url?, secret?, emailAddress?, events?, description?, isActive?, maxAttempts?, retryBackoffMs? }`. Channel coherence is enforced: if the patch flips the row's channel, the destination field for the new channel must be present (either in the patch or already on the row). `DELETE` is a hard delete of the subscription; its deliveries are kept, with `subscriptionId` set to null, as the record of where its events went (see [Where a delivery went](../admin/orchestration-webhooks.md#where-a-delivery-went)).
 
 ### `DELETE /webhooks/deliveries/:id`
 
-Permanently delete a single webhook delivery row (typically used from the DLQ to discard a reviewed failure). Verifies the calling admin owns the parent subscription; audit-logged as `webhook_delivery.delete`.
+Permanently delete a single webhook delivery row (typically used from the DLQ to discard a reviewed failure). Verifies the calling admin owns the parent subscription, or that the subscription was deleted (any admin may then act on it). Audit-logged as `webhook_delivery.delete`, naming the delivery's recorded `destination` (reduced, so it holds no URL secret).
 
 ### `GET /webhooks/dlq`
 
-List exhausted deliveries across all subscriptions the calling admin owns. Query: `page`, `pageSize`, `subscriptionId?`, `eventType?`, `since?` (ISO date), `until?` (ISO date). Always filtered to `status=exhausted` + the caller's subscriptions.
+List exhausted deliveries across all subscriptions the calling admin owns, plus deliveries whose subscription was deleted. Query: `page`, `pageSize`, `subscriptionId?`, `eventType?`, `since?` (ISO date), `until?` (ISO date). Always filtered to `status=exhausted` + that scope. Each row carries `destination` and `destinationFingerprint`; `subscription` is null for an orphan.
 
 ### `GET /webhooks/dlq/stats`
 
-Lightweight depth signal for the health dashboard. Returns `{ exhausted24h, exhaustedTotal, oldestExhaustedAt }` scoped to the caller's subscriptions. Improvement #41 (health dashboard) will surface this.
+Lightweight depth signal for the health dashboard. Returns `{ exhausted24h, exhaustedTotal, oldestExhaustedAt }` scoped to the caller's subscriptions and orphaned deliveries. Improvement #41 (health dashboard) will surface this.
 
 ### `POST /webhooks/dlq/replay`
 
-Bulk re-dispatch of exhausted deliveries. Body is either `{ deliveryIds: string[] }` (max 500 entries) or `{ subscriptionId, before?: ISO date }` (replay all exhausted rows for a single subscription, optionally capped by `createdAt < before`). Loops the per-row `retryDelivery()` with concurrency cap 5. Rows not owned by the caller are silently skipped (a partial selection doesn't 403 the batch). Returns `{ replayed, skipped, deliveryIds }`. Audit-logged as `webhook_delivery.replay_batch`.
+Bulk re-dispatch of exhausted deliveries. Body is either `{ deliveryIds: string[] }` (max 500 entries) or `{ subscriptionId, before?: ISO date }` (replay all exhausted rows for a single subscription, optionally capped by `createdAt < before`). Loops the per-row `retryDelivery()` with concurrency cap 5. Rows not owned by the caller are silently skipped (a partial selection doesn't 403 the batch), and so are orphaned rows, which have nowhere to be sent. Returns `{ replayed, skipped, deliveryIds }`. Audit-logged as `webhook_delivery.replay_batch`.
 
 ---
 

@@ -16,6 +16,28 @@ release process.
 
 ## [Unreleased]
 
+### Changed
+
+- **A webhook or event-hook delivery records where it was sent, and outlives
+  the subscription or hook that sent it** (§109 t-739). `AiWebhookDelivery` and
+  `AiEventHookDelivery` gain `destination` (the URL reduced to origin and path,
+  so it holds no URL secret, or the email address), `destinationFingerprint` (a
+  keyed HMAC of the full destination; `fingerprintDestination()` in
+  `lib/orchestration/webhooks/destination.ts` checks a URL against it) and
+  `previousDestinations` (the earlier ones, when a retry followed an edited
+  URL). Their parent FK, `subscriptionId` / `hookId`, is now **nullable** with
+  `ON DELETE SET NULL`: deleting a subscription or hook, or erasing the admin
+  who created a subscription, keeps its deliveries. Code that reads
+  `delivery.subscription` or `delivery.hook` must handle null. A retry of such a
+  delivery is refused (`POST /webhooks/deliveries/:id/retry` answers `409`),
+  the webhook DLQ routes show it to every admin of the org, and retention
+  prunes it by age as before. The `webhook_delivery.delete` audit entry now
+  names the reduced destination rather than the subscription's full URL.
+  **Migration** `20261008120000_delivery_destination`; then run
+  `npm run db:seed` so the `022-delivery-destinations` unit fills existing rows
+  from their current subscription or hook (the best available value, not a
+  record). Rows whose parent is deleted before it runs stay unrecorded.
+
 ## [0.14.0] — 2026-10-08
 
 > **Alpha release.** Twentieth tagged Sunrise release. **MINOR bump**. It
