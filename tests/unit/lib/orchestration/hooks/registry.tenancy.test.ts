@@ -20,9 +20,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 // ─── Module mocks ───────────────────────────────────────────────────────
 
-// Only `TENANCY_MODE` is read from `env` anywhere in this module's import
-// graph (`lib/tenancy/context.ts`), so a one-field stand-in is complete.
-const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'single' }));
+// `env` is read in two places in this module's import graph: `TENANCY_MODE`
+// by `lib/tenancy/context.ts`, and `BETTER_AUTH_SECRET` by the delivery
+// destination fingerprint (`webhooks/destination.ts`). Without the second,
+// every delivery row's create throws before the fetch.
+const mockEnv = vi.hoisted(() => ({
+  TENANCY_MODE: 'single',
+  BETTER_AUTH_SECRET: 'test-secret-at-least-thirty-two-characters-long',
+}));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
 
 const mockFindMany = vi.hoisted(() => vi.fn());

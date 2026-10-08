@@ -52,10 +52,13 @@ model AiWebhookSubscription {
   @@map("ai_webhook_subscription")
 }
 
-// Webhook delivery tracking — records each delivery attempt for audit + retry
+// Webhook delivery tracking — records each delivery attempt for audit + retry.
+// The row is the record of where an event went, so it outlives the
+// subscription that sent it (`SetNull`) and carries its own destination
+// (§109 t-739). See lib/orchestration/webhooks/destination.ts.
 model AiWebhookDelivery {
   id               String    @id @default(cuid())
-  subscriptionId   String
+  subscriptionId   String? // null once the subscription is deleted; the row is kept as the record
   eventType        String
   payload          Json
   status           String    @default("pending") // pending, delivered, failed, exhausted
@@ -66,7 +69,18 @@ model AiWebhookDelivery {
   lastError        String?   @db.Text
   createdAt        DateTime  @default(now())
 
-  subscription AiWebhookSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  // Where the latest attempt was sent: the URL reduced by `loggableUrl` (no
+  // query, userinfo or fragment), or the email address. Null on rows that
+  // predate destination recording and were never backfilled.
+  destination            String? @db.Text
+  // Keyed HMAC of the full destination, so an operator can confirm an exact URL
+  // without the row holding the secret a webhook URL often carries.
+  destinationFingerprint String?
+  // Earlier destinations, when a retry followed an edited subscription:
+  // [{ destination, destinationFingerprint, until }]. Null when there were none.
+  previousDestinations   Json?
+
+  subscription AiWebhookSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
 
   orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
   org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)

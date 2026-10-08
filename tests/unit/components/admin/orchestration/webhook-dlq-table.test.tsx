@@ -28,7 +28,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { WebhookDlqTable } from '@/components/admin/orchestration/webhook-dlq-table';
+import {
+  WebhookDlqTable,
+  type DlqDelivery,
+} from '@/components/admin/orchestration/webhook-dlq-table';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -68,18 +71,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
-type Delivery = {
-  id: string;
-  eventType: string;
-  status: 'exhausted';
-  lastResponseCode: number | null;
-  lastError: string | null;
-  attempts: number;
-  createdAt: string;
-  lastAttemptAt: string | null;
-  subscriptionId: string;
-  subscription: { id: string; url: string; description: string | null };
-};
+type Delivery = DlqDelivery;
 
 function makeDelivery(overrides: Partial<Delivery> = {}): Delivery {
   return {
@@ -91,6 +83,7 @@ function makeDelivery(overrides: Partial<Delivery> = {}): Delivery {
     attempts: 3,
     createdAt: '2026-05-20T10:00:00.000Z',
     lastAttemptAt: '2026-05-20T10:05:00.000Z',
+    destination: 'https://example.test/hook',
     subscriptionId: 'sub-1',
     subscription: {
       id: 'sub-1',

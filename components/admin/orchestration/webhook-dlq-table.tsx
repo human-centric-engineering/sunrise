@@ -6,6 +6,10 @@
  * Cross-subscription view of `exhausted` webhook deliveries. Replaces the
  * per-subscription drill-down when an operator just wants "show me
  * everything in the dead-letter state right now."
+ *
+ * Each row shows the destination recorded on the delivery itself, which
+ * outlives its subscription (§109 t-739). A row whose subscription was
+ * deleted has no link and cannot be retried; it is kept as a record.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -51,7 +55,7 @@ import type { PaginationMeta } from '@/types/api';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-interface DlqDelivery {
+export interface DlqDelivery {
   id: string;
   eventType: string;
   status: 'exhausted';
@@ -60,12 +64,15 @@ interface DlqDelivery {
   attempts: number;
   createdAt: string;
   lastAttemptAt: string | null;
-  subscriptionId: string;
+  /** Reduced URL or email address the delivery was sent to; null on rows that predate recording. */
+  destination: string | null;
+  /** Null once the subscription was deleted. */
+  subscriptionId: string | null;
   subscription: {
     id: string;
     url: string;
     description: string | null;
-  };
+  } | null;
 }
 
 export interface WebhookDlqTableProps {
@@ -289,17 +296,28 @@ export function WebhookDlqTable({
                     {new Date(d.createdAt).toLocaleString()}
                   </TableCell>
                   <TableCell>
-                    <Link
-                      href={`/admin/orchestration/event-subscriptions/${d.subscription.id}`}
-                      className="hover:underline"
-                    >
-                      <span className="block max-w-[220px] truncate text-sm">
-                        {d.subscription.description ?? d.subscription.url}
-                      </span>
-                      <span className="text-muted-foreground block max-w-[220px] truncate text-xs">
-                        {d.subscription.url}
-                      </span>
-                    </Link>
+                    {d.subscription ? (
+                      <Link
+                        href={`/admin/orchestration/event-subscriptions/${d.subscription.id}`}
+                        className="hover:underline"
+                      >
+                        <span className="block max-w-[220px] truncate text-sm">
+                          {d.subscription.description ?? d.destination ?? d.subscription.url}
+                        </span>
+                        <span className="text-muted-foreground block max-w-[220px] truncate text-xs">
+                          {d.destination ?? d.subscription.url}
+                        </span>
+                      </Link>
+                    ) : (
+                      <>
+                        <span className="text-muted-foreground block text-sm italic">
+                          Deleted subscription
+                        </span>
+                        <span className="text-muted-foreground block max-w-[220px] truncate text-xs">
+                          {d.destination ?? 'Destination not recorded'}
+                        </span>
+                      </>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary" className="text-[10px]">
@@ -316,9 +334,13 @@ export function WebhookDlqTable({
                       <Button
                         variant="ghost"
                         size="icon"
-                        disabled={actionId === d.id}
+                        disabled={actionId === d.id || !d.subscription}
                         onClick={() => void handleRetry(d.id)}
-                        title="Retry delivery"
+                        title={
+                          d.subscription
+                            ? 'Retry delivery'
+                            : 'Its subscription was deleted, so there is nowhere to retry it'
+                        }
                       >
                         {actionId === d.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />

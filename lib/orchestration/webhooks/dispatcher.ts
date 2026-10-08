@@ -6,7 +6,9 @@
  * the payload to each URL with HMAC-SHA256 signature verification.
  *
  * Delivery tracking: each dispatch creates an `AiWebhookDelivery` record
- * so admins can audit delivery history and manually retry failures.
+ * so admins can audit delivery history and manually retry failures. The
+ * record carries where it was sent and outlives its subscription (§109
+ * t-739): see `destination.ts` for the shape and why.
  *
  * Retry strategy: configured per-subscription via `maxAttempts` +
  * `retryBackoffMs`. Defaults match the historical hardcoded values
@@ -27,6 +29,11 @@ import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/c
 import EventNotification from '@/emails/event-notification';
 import { matchesEntityScope } from '@/lib/orchestration/webhooks/event-entity-keys';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
+import {
+  destinationUpdate,
+  subscriptionDestination,
+  type RecordedDestination,
+} from '@/lib/orchestration/webhooks/destination';
 
 const DISPATCH_TIMEOUT_MS = 5000;
 
@@ -64,6 +71,11 @@ interface SubscriptionLike {
   emailAddress: string | null;
   maxAttempts?: number | null;
   retryBackoffMs?: number[] | null;
+}
+
+/** The delivery row fields an attempt reads: its id and what it already records. */
+interface DeliveryLike extends RecordedDestination {
+  id: string;
 }
 
 function resolveRetryPolicy(sub: {
@@ -151,10 +163,11 @@ export async function dispatchWebhookEvent(
               data: payload,
             } as unknown as import('@prisma/client').Prisma.InputJsonValue,
             status: 'pending',
+            ...subscriptionDestination(sub),
           },
         });
 
-        await attemptDelivery(delivery.id, sub, body, resolveRetryPolicy(sub));
+        await attemptDelivery(delivery, sub, body, resolveRetryPolicy(sub));
       })
     );
   } catch (err) {
@@ -184,6 +197,10 @@ export async function retryDelivery(
   });
 
   if (!delivery) return false;
+  // The subscription was deleted: the row is kept as the record of where the
+  // event went, and there is nowhere current to send it. Left untouched, so
+  // its last real error stays on it.
+  if (!delivery.subscription) return false;
 
   // Reset status for retry
   await prisma.aiWebhookDelivery.update({
@@ -205,7 +222,7 @@ export async function retryDelivery(
   });
 
   const attempt = attemptDelivery(
-    deliveryId,
+    delivery,
     delivery.subscription,
     body,
     resolveRetryPolicy(delivery.subscription)
@@ -243,10 +260,14 @@ export async function processPendingRetries(): Promise<number> {
 
   await Promise.allSettled(
     pending.map(async (delivery) => {
-      if (!delivery.subscription.isActive) {
+      if (!delivery.subscription || !delivery.subscription.isActive) {
         await prisma.aiWebhookDelivery.update({
           where: { id: delivery.id },
-          data: { status: 'exhausted', nextRetryAt: null, lastError: 'Subscription deactivated' },
+          data: {
+            status: 'exhausted',
+            nextRetryAt: null,
+            lastError: delivery.subscription ? 'Subscription deactivated' : SUBSCRIPTION_DELETED,
+          },
         });
         return;
       }
@@ -258,7 +279,7 @@ export async function processPendingRetries(): Promise<number> {
       });
 
       await attemptDelivery(
-        delivery.id,
+        delivery,
         delivery.subscription,
         body,
         resolveRetryPolicy(delivery.subscription)
@@ -272,6 +293,9 @@ export async function processPendingRetries(): Promise<number> {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/** Why a retry stopped when its subscription was deleted in the meantime. */
+const SUBSCRIPTION_DELETED = 'Subscription deleted; not retried';
 
 /**
  * Outcome shape returned by each per-channel adapter.
@@ -287,12 +311,17 @@ type DeliveryOutcome =
   | { delivered: false; error: string; statusCode?: number; terminal?: boolean };
 
 async function attemptDelivery(
-  deliveryId: string,
+  record: DeliveryLike,
   sub: SubscriptionLike,
   body: string,
   policy: RetryPolicy
 ): Promise<void> {
+  const deliveryId = record.id;
   const now = new Date();
+  // Where this attempt goes, recorded in the same write as its outcome. A
+  // retry after the subscription was edited moves the old destination into
+  // the row's history rather than overwriting it.
+  const recordDestination = destinationUpdate(record, subscriptionDestination(sub), now);
 
   const outcome: DeliveryOutcome =
     sub.channel === 'email'
@@ -309,6 +338,7 @@ async function attemptDelivery(
         lastResponseCode: outcome.statusCode ?? null,
         lastError: null,
         nextRetryAt: null,
+        ...recordDestination,
       },
     });
     return;
@@ -341,11 +371,12 @@ async function attemptDelivery(
       lastResponseCode: outcome.statusCode ?? null,
       lastError: outcome.error,
       nextRetryAt,
+      ...recordDestination,
     },
   });
 
   if (!exhausted && nextRetryAt && retryDelay) {
-    scheduleRetry(deliveryId, delivery.subscriptionId, retryDelay);
+    scheduleRetry(deliveryId, sub.id, retryDelay);
     // The in-process timer above is the normal retry path; the maintenance tick
     // drains anything it loses. Tell the tick's idle gate a row is now waiting,
     // so it does not skip past it (#442).
@@ -407,9 +438,9 @@ async function attemptDelivery(
  *
  * Under multi-tenancy the *allowlist* question reopens, because "which third
  * parties see our data" becomes an org-level concern rather than an operator
- * one — that work is scoped on the `f-mt-external` feature, along with
- * recording the destination on the delivery row (today it is only reachable by
- * joining to a subscription that may since have been edited or deleted).
+ * one — that work is scoped on the `f-mt-external` feature. The other half of
+ * that question, where a given delivery actually went, is answered by the
+ * delivery row itself (`destination.ts`, §109 t-739).
  */
 async function attemptWebhookDelivery(
   sub: SubscriptionLike,
@@ -579,7 +610,8 @@ async function attemptEmailDelivery(sub: SubscriptionLike, body: string): Promis
  *
  * Re-reads the delivery and subscription from the DB so the retry uses
  * a fresh timestamp (for HMAC freshness) and the current subscription
- * URL/secret (in case they were updated between attempts).
+ * URL/secret (in case they were updated between attempts). The attempt
+ * records the destination it used, so an edited URL is on the row.
  *
  * The timeout is unref'd so it doesn't prevent Node from exiting.
  * If the process restarts before the retry fires, `processPendingRetries()`
@@ -598,7 +630,11 @@ function scheduleRetry(deliveryId: string, subscriptionId: string, delayMs: numb
             if (delivery) {
               await prisma.aiWebhookDelivery.update({
                 where: { id: deliveryId },
-                data: { status: 'exhausted', nextRetryAt: null },
+                data: {
+                  status: 'exhausted',
+                  nextRetryAt: null,
+                  lastError: sub ? 'Subscription deactivated' : SUBSCRIPTION_DELETED,
+                },
               });
             }
             return;
@@ -608,7 +644,7 @@ function scheduleRetry(deliveryId: string, subscriptionId: string, delayMs: numb
             ...storedPayload,
             timestamp: new Date().toISOString(),
           });
-          await attemptDelivery(deliveryId, sub, body, resolveRetryPolicy(sub));
+          await attemptDelivery(delivery, sub, body, resolveRetryPolicy(sub));
         } catch (err) {
           logger.error('Webhook scheduled retry error', {
             deliveryId,

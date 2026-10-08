@@ -15,7 +15,9 @@
  *
  * Authentication: Admin only. Every targeted delivery must belong to
  * one of the caller's subscriptions; mismatches are skipped silently
- * so a partial selection doesn't 403 the whole batch.
+ * so a partial selection doesn't 403 the whole batch. A delivery whose
+ * subscription was deleted is visible (see `delivery-scope.ts`) but has
+ * nowhere to go, so `retryDelivery` refuses it and it counts as skipped.
  */
 
 import { z } from 'zod';
@@ -28,6 +30,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { retryDelivery } from '@/lib/orchestration/webhooks/dispatcher';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { webhookDeliveriesVisibleTo } from '@/lib/orchestration/webhooks/delivery-scope';
 
 /** Cap concurrent in-flight retries so a large batch doesn't burst on the receiver. */
 const REPLAY_CONCURRENCY = 5;
@@ -104,7 +107,7 @@ async function resolveTargetIds(
     const owned = await prisma.aiWebhookDelivery.findMany({
       where: {
         id: { in: body.deliveryIds },
-        subscription: { createdBy: userId },
+        ...webhookDeliveriesVisibleTo(userId),
       },
       select: { id: true },
     });

@@ -96,7 +96,7 @@ describe('POST /webhooks/dlq/replay', () => {
     expect(prisma.aiWebhookDelivery.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          subscription: { createdBy: ADMIN_ID },
+          OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }],
         }),
       })
     );

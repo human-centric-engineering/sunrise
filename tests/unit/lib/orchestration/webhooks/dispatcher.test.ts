@@ -106,6 +106,9 @@ function makeDelivery(overrides: Record<string, unknown> = {}) {
     lastResponseCode: null,
     lastError: null,
     createdAt: new Date(),
+    destination: null,
+    destinationFingerprint: null,
+    previousDestinations: null,
     ...overrides,
   };
 }

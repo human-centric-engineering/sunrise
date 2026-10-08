@@ -22,22 +22,12 @@ import {
   WebhooksTable,
   type WebhookListItem,
 } from '@/components/admin/orchestration/webhooks-table';
-import { WebhookDlqTable } from '@/components/admin/orchestration/webhook-dlq-table';
+import {
+  WebhookDlqTable,
+  type DlqDelivery,
+} from '@/components/admin/orchestration/webhook-dlq-table';
 import { useUrlTabs } from '@/lib/hooks/use-url-tabs';
 import type { PaginationMeta } from '@/types/api';
-
-interface DlqDelivery {
-  id: string;
-  eventType: string;
-  status: 'exhausted';
-  lastResponseCode: number | null;
-  lastError: string | null;
-  attempts: number;
-  createdAt: string;
-  lastAttemptAt: string | null;
-  subscriptionId: string;
-  subscription: { id: string; url: string; description: string | null };
-}
 
 interface DlqSubscriptionOption {
   id: string;

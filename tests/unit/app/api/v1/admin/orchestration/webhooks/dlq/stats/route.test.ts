@@ -73,16 +73,16 @@ describe('GET /webhooks/dlq/stats', () => {
     const countCalls = vi.mocked(prisma.aiWebhookDelivery.count).mock.calls;
     expect(countCalls[0][0]?.where).toMatchObject({
       status: 'exhausted',
-      subscription: { createdBy: ADMIN_ID },
+      OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }],
     });
     expect(countCalls[1][0]?.where).toMatchObject({
       status: 'exhausted',
-      subscription: { createdBy: ADMIN_ID },
+      OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }],
     });
     const findCall = vi.mocked(prisma.aiWebhookDelivery.findFirst).mock.calls[0][0];
     expect(findCall?.where).toMatchObject({
       status: 'exhausted',
-      subscription: { createdBy: ADMIN_ID },
+      OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }],
     });
   });
 

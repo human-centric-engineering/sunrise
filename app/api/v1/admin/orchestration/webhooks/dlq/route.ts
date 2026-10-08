@@ -4,7 +4,10 @@
  * GET /api/v1/admin/orchestration/webhooks/dlq
  *
  * Lists all `exhausted` deliveries across the calling admin's
- * subscriptions. The single per-subscription delivery view does not
+ * subscriptions, plus those whose subscription was deleted (see
+ * `delivery-scope.ts`). Each row carries its own `destination`, so one
+ * without a subscription still says where it went. The single
+ * per-subscription delivery view does not
  * scale when an operator manages multiple subscriptions — partners
  * need one console to see what failed and why.
  *
@@ -23,6 +26,7 @@ import { ValidationError } from '@/lib/api/errors';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
+import { webhookDeliveriesVisibleTo } from '@/lib/orchestration/webhooks/delivery-scope';
 
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -57,7 +61,7 @@ export const GET = withAdminAuth(async (request: NextRequest, session) => {
 
   const where = {
     status: 'exhausted' as const,
-    subscription: { createdBy: session.user.id },
+    ...webhookDeliveriesVisibleTo(session.user.id),
     ...(query.subscriptionId ? { subscriptionId: query.subscriptionId } : {}),
     ...(query.eventType ? { eventType: query.eventType } : {}),
     ...(query.since || query.until

@@ -63,11 +63,13 @@ describe('GET /webhooks/dlq', () => {
 
     // The query MUST be scoped to `status: exhausted` AND the admin's
     // subscriptions — that's the whole point of the DLQ endpoint, so a
-    // permissive scope here would be a security regression.
+    // permissive scope here would be a security regression. The one widening
+    // is deliberate (§109 t-739): a delivery whose subscription was deleted
+    // has no creator to scope by, and is shown to every admin as a record.
     const call = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0];
-    expect(call?.where).toMatchObject({
+    expect(call?.where).toEqual({
       status: 'exhausted',
-      subscription: { createdBy: ADMIN_ID },
+      OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }],
     });
     expect(call?.skip).toBe(5); // (page-1) * pageSize
     expect(call?.take).toBe(5);
