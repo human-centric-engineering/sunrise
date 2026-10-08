@@ -112,4 +112,44 @@ describe('GET /webhooks/dlq', () => {
     const res = await GET(makeRequest());
     expect(res.status).toBe(401);
   });
+
+  it('passes each delivery’s own destination through to the response', async () => {
+    vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([
+      {
+        id: 'd1',
+        destination: 'https://hooks.example.com/in',
+        subscriptionId: null,
+        subscription: null,
+      },
+      { id: 'd2', destination: null, subscriptionId: null, subscription: null },
+    ] as never);
+    vi.mocked(prisma.aiWebhookDelivery.count).mockResolvedValue(2);
+
+    const res = await GET(makeRequest());
+    const json = JSON.parse(await res.text());
+
+    expect(res.status).toBe(200);
+    expect(json.data).toHaveLength(2);
+    expect(json.data[0]).toMatchObject({ id: 'd1', destination: 'https://hooks.example.com/in' });
+    expect(json.data[1]).toMatchObject({ id: 'd2', destination: null });
+    // `include` (not `select`) keeps every scalar column, so destination is
+    // returned; a top-level `select` without it would silently drop the field.
+    const call = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0];
+    expect(call).not.toHaveProperty('select');
+    expect(call?.include).toHaveProperty('subscription');
+  });
+
+  it('keeps the visibility OR when the subscriptionId filter is also present', async () => {
+    await GET(makeRequest(`?subscriptionId=${SUB_ID}`));
+
+    const call = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0];
+    expect(call?.where).toEqual({
+      status: 'exhausted',
+      OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }],
+      subscriptionId: SUB_ID,
+    });
+    // The count query must use the identical where, or pagination totals drift.
+    const countCall = vi.mocked(prisma.aiWebhookDelivery.count).mock.calls[0][0];
+    expect(countCall?.where).toEqual(call?.where);
+  });
 });

@@ -37,6 +37,7 @@ vi.mock('@/lib/security/ip', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { retryHookDelivery } from '@/lib/orchestration/hooks/registry';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   mockAdminUser,
   mockAuthenticatedUser,
@@ -126,5 +127,31 @@ describe('POST /hooks/deliveries/:id/retry', () => {
     // Guard must short-circuit BEFORE the registry call; catches regressions where
     // the cuidSchema.safeParse check is moved below retryHookDelivery(id).
     expect(retryHookDelivery).not.toHaveBeenCalled();
+  });
+
+  it('writes no audit entry when the hook delivery cannot be retried (deleted hook)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(retryHookDelivery).mockResolvedValue(false);
+
+    const response = await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
+
+    expect(response.status).toBe(404);
+    expect(retryHookDelivery).toHaveBeenCalledWith(DELIVERY_ID);
+    expect(logAdminAction).not.toHaveBeenCalled();
+  });
+
+  it('audits a successful hook retry', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(retryHookDelivery).mockResolvedValue(true);
+
+    await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
+
+    expect(logAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'hook_delivery.retry',
+        entityType: 'delivery',
+        entityId: DELIVERY_ID,
+      })
+    );
   });
 });

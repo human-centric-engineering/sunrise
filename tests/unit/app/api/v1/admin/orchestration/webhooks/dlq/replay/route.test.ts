@@ -222,4 +222,30 @@ describe('POST /webhooks/dlq/replay', () => {
     const call = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0];
     expect(call?.where).not.toHaveProperty('createdAt');
   });
+
+  it('lets orphans through the ownership filter but counts them as skipped when retryDelivery refuses', async () => {
+    const live = 'cmjbv4i3x00003wsldelivlive';
+    const orphan = 'cmjbv4i3x00003wsldeliorph1';
+    // The ownership query keeps both: the live one is the caller's, the orphan has no subscription.
+    vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([
+      { id: live },
+      { id: orphan },
+    ] as never);
+    vi.mocked(retryDelivery).mockImplementation(async (id: string) => id === live);
+
+    const res = await POST(makeRequest({ deliveryIds: [live, orphan] }));
+    const json = JSON.parse(await res.text());
+
+    expect(res.status).toBe(200);
+    expect(retryDelivery).toHaveBeenCalledWith(orphan, { awaitDelivery: true });
+    expect(json.data).toMatchObject({ replayed: 1, skipped: 1, deliveryIds: [live] });
+    expect(logAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: { replayed: 1, skipped: 1 } })
+    );
+    const where = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0]?.where;
+    expect(where).toEqual({
+      id: { in: [live, orphan] },
+      OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }],
+    });
+  });
 });

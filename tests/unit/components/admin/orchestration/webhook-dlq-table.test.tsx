@@ -533,4 +533,92 @@ describe('WebhookDlqTable', () => {
       });
     });
   });
+
+  describe('destination and orphaned rows', () => {
+    const orphan = (overrides: Partial<Delivery> = {}) =>
+      makeDelivery({
+        id: 'del-orphan',
+        subscriptionId: null,
+        subscription: null,
+        destination: 'https://hooks.example.com/in',
+        ...overrides,
+      });
+
+    function renderWith(rows: Delivery[]) {
+      stubListFetch(rows);
+      return render(
+        <WebhookDlqTable
+          initialDeliveries={rows}
+          initialMeta={META}
+          subscriptions={SUBSCRIPTIONS}
+        />
+      );
+    }
+
+    it('shows "Deleted subscription" and the recorded destination for an orphan, with no link', async () => {
+      renderWith([orphan()]);
+
+      expect(await screen.findByText('Deleted subscription')).toBeInTheDocument();
+      expect(screen.getByText('https://hooks.example.com/in')).toBeInTheDocument();
+      expect(screen.queryByText('Destination not recorded')).not.toBeInTheDocument();
+      expect(document.querySelector('a[href*="/event-subscriptions/"]')).not.toBeInTheDocument();
+    });
+
+    it('says "Destination not recorded" when an orphan has no destination', async () => {
+      renderWith([orphan({ destination: null })]);
+
+      expect(await screen.findByText('Deleted subscription')).toBeInTheDocument();
+      expect(screen.getByText('Destination not recorded')).toBeInTheDocument();
+    });
+
+    it('disables the retry button for an orphan and does not call the API on click', async () => {
+      renderWith([orphan()]);
+      const user = userEvent.setup();
+
+      const button = await screen.findByTitle(/nowhere to retry/i);
+      expect(button).toBeDisabled();
+      expect(screen.queryByTitle('Retry delivery')).not.toBeInTheDocument();
+
+      await user.click(button);
+      expect(apiClient.post).not.toHaveBeenCalled();
+    });
+
+    it('keeps retry enabled for a row that still has a subscription', async () => {
+      renderWith([makeDelivery()]);
+
+      expect(await screen.findByTitle('Retry delivery')).toBeEnabled();
+    });
+
+    it('links a row with a subscription and prefers the recorded destination over the raw subscription URL', async () => {
+      renderWith([
+        makeDelivery({
+          destination: 'https://reduced.example.com/hook',
+          subscription: {
+            id: 'sub-1',
+            url: 'https://reduced.example.com/hook?token=secret',
+            description: null,
+          },
+        }),
+      ]);
+
+      const link = await screen.findByRole('link', { name: /reduced\.example\.com/ });
+      expect(link).toHaveAttribute('href', '/admin/orchestration/event-subscriptions/sub-1');
+      // Description absent: the title falls back to the destination, and the
+      // secret-bearing subscription URL is not rendered anywhere.
+      expect(screen.getAllByText('https://reduced.example.com/hook').length).toBeGreaterThan(0);
+      expect(document.body.textContent).not.toContain('token=secret');
+    });
+
+    it('falls back to the subscription URL when the delivery has no destination', async () => {
+      renderWith([
+        makeDelivery({
+          destination: null,
+          subscription: { id: 'sub-1', url: 'https://legacy.example.com/hook', description: null },
+        }),
+      ]);
+
+      await screen.findByRole('link');
+      expect(screen.getAllByText('https://legacy.example.com/hook').length).toBeGreaterThan(0);
+    });
+  });
 });

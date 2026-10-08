@@ -128,4 +128,84 @@ describe('DELETE /webhooks/deliveries/:id', () => {
 
     expect(res.status).toBe(401);
   });
+
+  describe('orphaned deliveries and the audit entity name', () => {
+    const SECRET_URL = 'https://hooks.example.com/in?token=secret';
+
+    function deliveryRow(overrides: Record<string, unknown>) {
+      return {
+        id: DELIVERY_ID,
+        status: 'exhausted',
+        eventType: 'workflow_failed',
+        destination: 'https://hooks.example.com/in',
+        subscription: { createdBy: ADMIN_ID, url: SECRET_URL },
+        ...overrides,
+      };
+    }
+
+    it('lets any admin delete an orphan whose subscription is gone', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+        deliveryRow({ subscription: null }) as never
+      );
+
+      const res = await DELETE(makeRequest(), { params: Promise.resolve({ id: DELIVERY_ID }) });
+
+      expect(res.status).toBe(200);
+      expect(prisma.aiWebhookDelivery.delete).toHaveBeenCalledWith({ where: { id: DELIVERY_ID } });
+    });
+
+    it('still returns 404 and deletes nothing for a non-creator on a live subscription', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+        deliveryRow({ subscription: { createdBy: 'other-admin', url: SECRET_URL } }) as never
+      );
+
+      const res = await DELETE(makeRequest(), { params: Promise.resolve({ id: DELIVERY_ID }) });
+
+      expect(res.status).toBe(404);
+      expect(prisma.aiWebhookDelivery.delete).not.toHaveBeenCalled();
+      expect(logAdminAction).not.toHaveBeenCalled();
+    });
+
+    it('reads the delivery destination in the lookup so the audit name does not need the subscription URL', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(deliveryRow({}) as never);
+
+      await DELETE(makeRequest(), { params: Promise.resolve({ id: DELIVERY_ID }) });
+
+      const arg = vi.mocked(prisma.aiWebhookDelivery.findUnique).mock.calls[0][0];
+      expect(arg?.select).toMatchObject({
+        destination: true,
+        subscription: { select: { createdBy: true } },
+      });
+      // The full subscription URL (which may carry a secret) is never selected.
+      expect(JSON.stringify(arg?.select)).not.toContain('url');
+    });
+
+    it('audits the delivery destination, never the subscription URL', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(deliveryRow({}) as never);
+
+      await DELETE(makeRequest(), { params: Promise.resolve({ id: DELIVERY_ID }) });
+
+      expect(logAdminAction).toHaveBeenCalledWith(
+        expect.objectContaining({ entityName: 'https://hooks.example.com/in' })
+      );
+      for (const call of vi.mocked(logAdminAction).mock.calls) {
+        expect(JSON.stringify(call)).not.toContain('token=secret');
+      }
+    });
+
+    it('falls back to the delivery id as the audit name when no destination was recorded', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+        deliveryRow({ destination: null }) as never
+      );
+
+      await DELETE(makeRequest(), { params: Promise.resolve({ id: DELIVERY_ID }) });
+
+      expect(logAdminAction).toHaveBeenCalledWith(
+        expect.objectContaining({ entityName: DELIVERY_ID })
+      );
+      for (const call of vi.mocked(logAdminAction).mock.calls) {
+        expect(JSON.stringify(call)).not.toContain('token=secret');
+      }
+    });
+  });
 });
