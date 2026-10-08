@@ -166,11 +166,13 @@
       "next": "$next"
     },
     "hono": "^4.11.7",
+    "mysql2": "^3.23.1",
     "valibot": "^1.2.0"
   },
   "overrideReasons": {
     "@react-email/ui": "Added 2026-10-05 (t-758): @react-email/ui 6.11.0, its latest, pins next to exactly 16.3.3, inside the critical next/og ImageResponse RCE range (next 16.2.0–16.3.5, fixed in 16.3.6). This makes the email-preview server's copy use the app's own next. Remove it once @react-email/ui pins a next outside that range.",
     "hono": "Added 2026-02-13 for a Dependabot alert on @prisma/dev's transitive hono. Nothing in the tree has declared hono since v0.8.0, so this entry currently forces nothing — kept as a floor in case it returns. Verify against the lockfile before removing.",
+    "mysql2": "Added 2026-10-08 (t-781) for Dependabot alerts GHSA-3f6p-5ww8-9rcr (high, fixed in 3.22.0) and GHSA-rgwj-5xj2-c3m3 (medium, fixed in 3.23.1). mysql2 arrives only through better-auth's and prisma's MySQL adapters, which Sunrise (Postgres) never loads, and both parents still pull 3.15.3. Same major, so the force is safe. Remove it once neither better-auth nor prisma resolves a mysql2 below 3.23.1.",
     "valibot": "Added 2026-02-13 for a Dependabot alert on @prisma/dev's transitive valibot. @prisma/dev pins 1.4.2 today, which already satisfies this range, so the entry is a floor rather than a live force."
   },
   "devDependencies": {
