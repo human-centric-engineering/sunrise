@@ -31,7 +31,11 @@ release process.
 >
 > ## What a fork has to do
 >
-> **Six migrations**, none of them a large rewrite:
+> **Six migrations.** None rewrites rows, but two take locks that scale with
+> table size, so apply them off-peak on a large install:
+> `chunk_key_per_org` builds a unique index on `ai_knowledge_chunk` (not
+> `CONCURRENTLY`), and `conversation_owner_exclusive` validates a CHECK
+> constraint by scanning `ai_conversation`. All six:
 > `20260929180000_chunk_key_per_org`, `20260930120000_retire_builtin_template_rows`,
 > `20261001100000_provider_jurisdiction`, `20261006120000_embed_visitor_conversations`,
 > `20261006130000_conversation_owner_exclusive` and
@@ -41,19 +45,23 @@ release process.
 > waiting on approval fails when approved. The entry under **Changed** gives a
 > query that lists what is wired to each.
 >
-> **Before your first `db:seed` after merging: clone any system agent whose
-> prompt you customised.** The seed and every reconcile after it write each
-> platform agent's behavioural fields back to Sunrise's definition, and the
-> admin API now refuses those edits (the §116 entries under **Changed**).
+> **Before you deploy: clone any system agent whose prompt you customised.**
+> Where the maintenance tick is scheduled, its `platformAgents` task reconciles
+> each org within 15 minutes of the new code running; the first `db:seed` does
+> too, whichever comes first. Both write each platform agent's behavioural
+> fields back to Sunrise's definition, and the admin API now refuses those
+> edits (the §116 entries under **Changed**).
 > Provider, model, budgets, rate limit and retention stay yours. The
 > agent-only seed units and the built-in template seeds are removed (see
 > **Removed**), so a fork that edited one will see a modify/delete conflict.
 > Carry an agent edit into a replacement registered from
 > `lib/app/platform-agents.ts`. A template seed edit has nothing to carry over.
 >
-> **Already at `TENANCY_MODE=multi` with customer orgs?** Grant each org its
-> providers (`PUT /api/v1/admin/orgs/[id]/providers`) when you take this
-> release, or their AI calls are refused with `provider_not_permitted`. Erasure
+> **Already at `TENANCY_MODE=multi` with customer orgs?** From the moment the
+> new code is live, every org but the install org is refused all AI calls
+> (`provider_not_permitted`) until it is granted providers. The route that
+> grants them, `PUT /api/v1/admin/orgs/[id]/providers`, arrives with the same
+> deploy, so script the grants as an immediate post-deploy step. Erasure
 > hooks and `collectAppSubjectData()` now run as the system scope at `multi`,
 > so `requireOrgId()` throws inside them and a row they create needs an
 > explicit `orgId`. Backup import runs from the install org only, until §109
@@ -70,8 +78,10 @@ release process.
 >   ids and tokens to `[param]`, and a dozen log keys are renamed. Dashboards
 >   and alerts on the old keys need updating.
 > - **Behaviour.**
->   - A `judge_call` with a `threshold` fails when the judge returns no
->     usable score.
+>   - A `judge_call` with a `threshold` now fails the step when the judge
+>     returns no score, finds its criterion not applicable, or scores outside
+>     0–1. A custom judge scoring 1–10 or 0–100, or a gate on
+>     `eval-judge-context-precision`, fails on every run.
 >   - A `tool_call` step now interpolates its `args`.
 >   - Workflows can no longer send outreach on a conversation they were not
 >     handling: pass `replyConversationId` only for a genuine reply.
@@ -92,8 +102,13 @@ release process.
 > - `postcss-selector-parser` (moderate), under `@tailwindcss/typography`.
 >   Both have a fix only in a new major version under their parents.
 > - `katex` (low), under mermaid.
-> - `sprintf-js` (moderate). No patched release exists.
-> - `braces` / `micromatch` / `fast-glob`. Lint-only.
+> - `sprintf-js` (moderate), under `mammoth` → `argparse`. No patched
+>   release exists, and only mammoth's command-line tool uses argparse, which
+>   Sunrise never runs.
+> - `braces` / `micromatch` / `fast-glob` (high), under
+>   `@next/eslint-plugin-next`. Lint-only. With `eslint-config-next` and the
+>   plugin itself, this chain accounts for 5 of the 8 highs `npm audit`
+>   reports.
 
 ### Added
 
@@ -462,7 +477,9 @@ release process.
 
 - **Admin edits to a system agent's platform-owned fields no longer
   survive** (§116 t-724). This is the upgrade to look at. On the first
-  `db:seed` after merging, and on every reconcile after that, each
+  reconcile after deploying (the maintenance tick runs one within 15 minutes,
+  and so does the first `db:seed`, whichever comes first), and on every
+  reconcile after that, each
   platform agent's name, description, instructions, temperature, max tokens,
   knowledge settings, visibility, persona, guardrails and brand voice are
   written back to the definition's. So are its capability bindings (stray ones removed, disabled ones re-enabled), except `mcp-system`'s, which stay the org's so strict-mode grants survive, and its knowledge-tag grants
@@ -560,7 +577,12 @@ release process.
     (SELECT count(*) FROM ai_agent_capability c
        WHERE c."customConfig" -> 'allowedWorkflowSlugs' ? w.slug) AS run_workflow_bindings
   FROM ai_workflow w
-  WHERE w.slug LIKE 'tpl-%' AND w.slug <> 'tpl-provider-model-audit'
+  WHERE w."isTemplate" AND NOT w."isSystem"
+    AND w.slug IN ('tpl-customer-support', 'tpl-content-pipeline',
+      'tpl-saas-backend', 'tpl-research-agent', 'tpl-conversational-learning',
+      'tpl-data-pipeline', 'tpl-outreach-safety', 'tpl-code-review',
+      'tpl-autonomous-research', 'tpl-cited-knowledge-advisor',
+      'tpl-scheduled-source-monitor', 'tpl-inbound-conversation-handler')
   ORDER BY w.slug;
   ```
 
@@ -1054,8 +1076,8 @@ release process.
   with its removal condition in `overrideReasons`. engine.io, undici,
   brace-expansion and fast-uri move to fixed versions in range. The highs
   `npm audit` still reports are pre-existing: Prisma 7.10's CLI pins
-  `deepmerge-ts`, and `braces` has no fixed release (its `mysql2` pin is
-  overridden by t-781, above).
+  `deepmerge-ts`, and `braces` (lint-only) has no fixed release. Prisma's
+  `mysql2` pin is overridden by t-781, above.
 
 ## [0.13.0] — 2026-09-24
 
