@@ -123,7 +123,8 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/webhooks/dlq/replay`                    | POST               | Bulk re-dispatch: `{ deliveryIds[] }` (max 500) OR `{ subscriptionId, before? }`. Non-owned ids are silently skipped                                                                                                       | 5.1     |
 | `/hooks/:id/deliveries`                   | GET                | Paginated delivery history for an event hook                                                                                                                                                                               | 5.1     |
 | `/hooks/:id/rotate-secret`                | POST, DELETE       | Rotate or clear event hook HMAC signing secret                                                                                                                                                                             | 5.1     |
-| `/hooks/deliveries/:id/retry`             | POST               | Retry a failed / exhausted event-hook delivery                                                                                                                                                                             | 5.1     |
+| `/hooks/deliveries`                       | GET                | Event-hook deliveries across every hook, including those whose hook was deleted (`?status`, `?hookId`, `?orphaned=true`)                                                                                                   | 5.1     |
+| `/hooks/deliveries/:id/retry`             | POST               | Retry a failed / exhausted event-hook delivery. 409 when its hook was deleted                                                                                                                                              | 5.1     |
 | `/analytics/engagement`                   | GET                | Conversation volume, avg length, retention                                                                                                                                                                                 | 6       |
 | `/analytics/topics`                       | GET                | Popular topics grouped by frequency                                                                                                                                                                                        | 6       |
 | `/analytics/unanswered`                   | GET                | Messages with hedging phrases / low confidence                                                                                                                                                                             | 6       |
@@ -1340,11 +1341,11 @@ Standard CRUD for a single event subscription. Scoped to `session.user.id` — c
 
 ### `DELETE /webhooks/deliveries/:id`
 
-Permanently delete a single webhook delivery row (typically used from the DLQ to discard a reviewed failure). Verifies the calling admin owns the parent subscription, or that the subscription was deleted (any admin may then act on it). Audit-logged as `webhook_delivery.delete`, naming the delivery's recorded `destination` (reduced, so it holds no URL secret).
+Permanently delete a single webhook delivery row (typically used from the DLQ to discard a reviewed failure). Verifies the calling admin owns the parent subscription, or — when the subscription was deleted — that the authorization policy permits them an unattributed read (`webhookDelivery` kind; platform admins by default). Audit-logged as `webhook_delivery.delete`, naming the delivery's reduced URL; an email-channel delivery's address is not written to the audit log.
 
 ### `GET /webhooks/dlq`
 
-List exhausted deliveries across all subscriptions the calling admin owns, plus deliveries whose subscription was deleted. Query: `page`, `pageSize`, `subscriptionId?`, `eventType?`, `since?` (ISO date), `until?` (ISO date). Always filtered to `status=exhausted` + that scope. Each row carries `destination` and `destinationFingerprint`; `subscription` is null for an orphan.
+List exhausted deliveries across all subscriptions the calling admin owns, plus deliveries whose subscription was deleted where the authorization policy permits an unattributed read. Query: `page`, `pageSize`, `subscriptionId?`, `eventType?`, `since?` (ISO date), `until?` (ISO date). Always filtered to `status=exhausted` + that scope. Each row carries `destination` and `destinationFingerprint`; `subscription` is `{ id, description }`, or null for an orphan (it no longer includes the subscription's `url`, which can carry a credential).
 
 ### `GET /webhooks/dlq/stats`
 

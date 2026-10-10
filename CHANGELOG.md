@@ -16,6 +16,19 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`GET /admin/orchestration/hooks/deliveries`** (§109 t-739). Event-hook
+  deliveries across every hook, filterable by `status`, `hookId` and
+  `orphaned=true` — the only route that reaches a delivery whose hook was
+  deleted, now that such deliveries are kept (below).
+- **`'webhookDelivery'` joins `UNATTRIBUTED_READ_KINDS`** (§109 t-739), so
+  `session.unattributedReads` and `UnattributedReads` gain a `webhookDelivery`
+  key. A fork that builds that record by hand (in a test fixture, say) must add
+  it; a fork policy's `canRead` `'unattributed'` arm is now also asked about
+  webhook deliveries whose subscription was deleted, and decides who sees them
+  in the dead-letter queue (`lib/orchestration/access/webhook-delivery-access.ts`).
+
 ### Changed
 
 - **A webhook or event-hook delivery records where it was sent, and outlives
@@ -29,10 +42,16 @@ release process.
   `ON DELETE SET NULL`: deleting a subscription or hook, or erasing the admin
   who created a subscription, keeps its deliveries. Code that reads
   `delivery.subscription` or `delivery.hook` must handle null. A retry of such a
-  delivery is refused (`POST /webhooks/deliveries/:id/retry` answers `409`),
-  the webhook DLQ routes show it to every admin of the org, and retention
-  prunes it by age as before. The `webhook_delivery.delete` audit entry now
-  names the reduced destination rather than the subscription's full URL.
+  delivery is refused with `409` on both retry routes (the hook route used to
+  answer `404` for a delivery it could not retry), and a retry the maintenance
+  tick abandons keeps its last real error with `(not retried: …)` appended. The
+  webhook DLQ routes show such a delivery to the admins the authorization
+  policy permits an unattributed read (platform admins by default), and
+  retention prunes it by age as before. `eraseUser()` redacts the erased
+  person's own address from the deliveries their subscriptions sent. `GET
+  /webhooks/dlq` no longer returns the subscription's `url` (which can carry a
+  credential), and the `webhook_delivery.delete` audit entry names the reduced
+  URL rather than the subscription's full one, and no email address.
   **Migration** `20261008120000_delivery_destination`; then run
   `npm run db:seed` so the `022-delivery-destinations` unit fills existing rows
   from their current subscription or hook (the best available value, not a

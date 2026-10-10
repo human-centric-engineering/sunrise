@@ -42,6 +42,7 @@ import {
   signHookPayload,
 } from '@/lib/orchestration/hooks/signing';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
+import { notRetried } from '@/lib/orchestration/webhooks/not-retried';
 import {
   describeDestination,
   destinationUpdate,
@@ -62,7 +63,7 @@ const MAX_ATTEMPTS = 3;
 const RETRY_DELAYS_MS = [10_000, 60_000, 300_000];
 
 /** Why a retry stopped when its hook was deleted in the meantime. */
-const HOOK_DELETED = 'Hook deleted; not retried';
+const HOOK_DELETED = 'hook deleted';
 
 /** The delivery row fields an attempt reads: its id and what it already records. */
 interface DeliveryLike extends RecordedDestination {
@@ -463,7 +464,9 @@ function scheduleRetry(deliveryId: string, delayMs: number): void {
                 data: {
                   status: 'exhausted',
                   nextRetryAt: null,
-                  ...(delivery.hook ? {} : { lastError: HOOK_DELETED }),
+                  ...(delivery.hook
+                    ? {}
+                    : { lastError: notRetried(delivery.lastError, HOOK_DELETED) }),
                 },
               });
             }
@@ -520,7 +523,7 @@ export async function processPendingHookRetries(): Promise<number> {
           data: {
             status: 'exhausted',
             nextRetryAt: null,
-            ...(delivery.hook ? {} : { lastError: HOOK_DELETED }),
+            ...(delivery.hook ? {} : { lastError: notRetried(delivery.lastError, HOOK_DELETED) }),
           },
         });
         return;

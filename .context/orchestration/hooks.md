@@ -295,17 +295,18 @@ Dispatch uses the cached secret — in multi-instance deployments, each instance
 
 All routes require admin auth (`withAdminAuth`). Mutations are rate-limited via `adminLimiter`.
 
-| Method   | Path                                                     | Description                                                                        |
-| -------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `GET`    | `/api/v1/admin/orchestration/hooks`                      | Paginated list (`?page`, `?limit`, `?eventType`). Returns `hasSecret` flag.        |
-| `POST`   | `/api/v1/admin/orchestration/hooks`                      | Create a hook (any `secret` field in the body is silently dropped)                 |
-| `GET`    | `/api/v1/admin/orchestration/hooks/:id`                  | Fetch one hook. Returns `hasSecret` flag; never the secret itself.                 |
-| `PATCH`  | `/api/v1/admin/orchestration/hooks/:id`                  | Update (all fields optional; `secret` field is silently dropped)                   |
-| `DELETE` | `/api/v1/admin/orchestration/hooks/:id`                  | Hard delete                                                                        |
-| `GET`    | `/api/v1/admin/orchestration/hooks/:id/deliveries`       | Paginated delivery history (`?page`, `?pageSize`, `?status`)                       |
-| `POST`   | `/api/v1/admin/orchestration/hooks/deliveries/:id/retry` | Manually re-dispatch a `failed` / `exhausted` delivery                             |
-| `POST`   | `/api/v1/admin/orchestration/hooks/:id/rotate-secret`    | Generate a fresh HMAC secret; returns the plaintext once. See [Signing](#signing). |
-| `DELETE` | `/api/v1/admin/orchestration/hooks/:id/rotate-secret`    | Clear the stored secret so dispatches go out unsigned                              |
+| Method   | Path                                                     | Description                                                                            |
+| -------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `GET`    | `/api/v1/admin/orchestration/hooks`                      | Paginated list (`?page`, `?limit`, `?eventType`). Returns `hasSecret` flag.            |
+| `POST`   | `/api/v1/admin/orchestration/hooks`                      | Create a hook (any `secret` field in the body is silently dropped)                     |
+| `GET`    | `/api/v1/admin/orchestration/hooks/:id`                  | Fetch one hook. Returns `hasSecret` flag; never the secret itself.                     |
+| `PATCH`  | `/api/v1/admin/orchestration/hooks/:id`                  | Update (all fields optional; `secret` field is silently dropped)                       |
+| `DELETE` | `/api/v1/admin/orchestration/hooks/:id`                  | Hard delete                                                                            |
+| `GET`    | `/api/v1/admin/orchestration/hooks/:id/deliveries`       | Paginated delivery history (`?page`, `?pageSize`, `?status`)                           |
+| `GET`    | `/api/v1/admin/orchestration/hooks/deliveries`           | Deliveries across every hook, incl. deleted hooks' (`?status`, `?hookId`, `?orphaned`) |
+| `POST`   | `/api/v1/admin/orchestration/hooks/deliveries/:id/retry` | Manually re-dispatch a `failed` / `exhausted` delivery                                 |
+| `POST`   | `/api/v1/admin/orchestration/hooks/:id/rotate-secret`    | Generate a fresh HMAC secret; returns the plaintext once. See [Signing](#signing).     |
+| `DELETE` | `/api/v1/admin/orchestration/hooks/:id/rotate-secret`    | Clear the stored secret so dispatches go out unsigned                                  |
 
 Validation: `createHookSchema` / `updateHookSchema` in the route files enforce `action.type === 'webhook'`. Webhook URLs pass through `isSafeProviderUrl`; the `id` path param must be a CUID.
 
@@ -316,11 +317,12 @@ Event hooks currently have no dedicated admin UI — manage them via the API abo
 Every dispatch attempt creates an `AiEventHookDelivery` row (see [Webhook Action](#webhook-action) above for the lifecycle). The two delivery routes make that history queryable:
 
 - **List** (`GET /hooks/:id/deliveries`) — ordered by `createdAt desc`. The `?status` filter accepts `pending`, `delivered`, `failed`, or `exhausted`. Returns 404 if the parent hook doesn't exist.
+- **List across hooks** (`GET /hooks/deliveries`) — the same rows for every hook, and the only route that reaches a delivery whose hook was deleted: `?orphaned=true` selects those, `?hookId` narrows to one hook, `?status` as above. Hooks are admin-global, so there is no owner clause.
 - **Retry** (`POST /hooks/deliveries/:id/retry`) — calls `retryHookDelivery()`, which resets `attempts` to 0 and re-dispatches. Only retriable deliveries (`failed` / `exhausted`) are accepted; `pending` / `delivered` rows return 404 with "no longer retriable".
 
 ## Retention
 
-Each row records where it was sent (`destination`, the reduced URL, and `destinationFingerprint`, a keyed HMAC of the full one), and outlives its hook: deleting a hook sets `hookId` to null rather than deleting its history. A retry follows the hook's current URL and keeps the previous destination in `previousDestinations`; a retry of a delivery whose hook was deleted is refused (the retry route answers 404) and the maintenance tick marks it `exhausted` with `Hook deleted; not retried`. The rules are the webhook subscriptions' — see [Where a delivery went](../admin/orchestration-webhooks.md#where-a-delivery-went).
+Each row records where it was sent (`destination`, the reduced URL, and `destinationFingerprint`, a keyed HMAC of the full one), and outlives its hook: deleting a hook sets `hookId` to null rather than deleting its history. A retry follows the hook's current URL and keeps the previous destination in `previousDestinations`; a retry of a delivery whose hook was deleted is refused (the retry route answers `409`) and the maintenance tick marks it `exhausted`, appending `(not retried: hook deleted)` to its last real error. The rules are the webhook subscriptions' — see [Where a delivery went](../admin/orchestration-webhooks.md#where-a-delivery-went).
 
 Delivery rows persist across process restarts so admins can audit failures and manually retry. They are pruned by `pruneHookDeliveries()` in `lib/orchestration/retention.ts`, invoked from the unified maintenance tick alongside the other retention sweeps.
 

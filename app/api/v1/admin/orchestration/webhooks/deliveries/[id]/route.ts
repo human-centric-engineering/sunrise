@@ -9,9 +9,10 @@
  * targeted "I've reviewed this one, drop it" action.
  *
  * Authentication: Admin only. The delivery's parent subscription must
- * belong to the calling admin, or have been deleted (see
- * `delivery-scope.ts`). The audit entry names the delivery's recorded
- * `destination`, which is reduced and holds no URL secret.
+ * belong to the calling admin, or have been deleted where the authorization
+ * policy permits it (`webhook-delivery-access.ts`). The audit entry names the
+ * delivery's recorded URL, reduced so it holds no secret; an email address is
+ * not written to the audit log, which outlives erasure.
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
@@ -22,7 +23,8 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { isWebhookDeliveryVisibleTo } from '@/lib/orchestration/webhooks/delivery-scope';
+import { webhookDeliveryAccessBasis } from '@/lib/orchestration/access/webhook-delivery-access';
+import { auditableDestination } from '@/lib/orchestration/webhooks/destination';
 
 export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -46,7 +48,7 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
       subscription: { select: { createdBy: true } },
     },
   });
-  if (!delivery || !isWebhookDeliveryVisibleTo(delivery, session.user.id)) {
+  if (!delivery || !webhookDeliveryAccessBasis(delivery, session)) {
     throw new NotFoundError('Webhook delivery not found');
   }
 
@@ -57,7 +59,7 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     action: 'webhook_delivery.delete',
     entityType: 'delivery',
     entityId: id,
-    entityName: delivery.destination ?? id,
+    entityName: auditableDestination(delivery.destination) ?? id,
     metadata: { status: delivery.status, eventType: delivery.eventType },
     clientIp: clientIP,
   });

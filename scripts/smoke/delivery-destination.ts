@@ -14,7 +14,9 @@
  *      `previousDestinations`.
  *   3. Erasing the admin who created the subscription deletes the subscription
  *      (its `createdBy` cascade) but not the delivery, whose destination stays.
- *      A retry of that orphan is refused and leaves the row untouched.
+ *      A retry of that orphan is refused and leaves the row untouched. An
+ *      email-channel subscription the admin pointed at their own address keeps
+ *      its delivery too, but with the address redacted to `[erased]`.
  *   4. The same for an event hook: the delivery records its URL, and survives
  *      the hook's deletion.
  *   5. The org export carries the orphaned rows without the URL secret.
@@ -104,6 +106,7 @@ async function main(): Promise<void> {
   let userId: string | null = null;
   let subscriptionId: string | null = null;
   let hookId: string | null = null;
+  let emailSubscriptionId: string | null = null;
   let receiptId: string | null = null;
   const webhookDeliveryIds: string[] = [];
   const hookDeliveryIds: string[] = [];
@@ -184,6 +187,37 @@ async function main(): Promise<void> {
     );
     check(holdsNoSecret(retried), 'neither destination leaks the secret');
 
+    // An email-channel subscription to the admin's own address, in a different
+    // case, so the redaction's case-insensitive match is what is tested. The
+    // attempt fails and exhausts at once either way: with email unconfigured
+    // it is terminal, and with a Resend key set the SDK's request meets the
+    // stubbed `fetch` (500), so nothing is sent. The destination is recorded
+    // at create regardless.
+    const emailSub = await prisma.aiWebhookSubscription.create({
+      data: {
+        channel: 'email',
+        emailAddress: user.email.toUpperCase(),
+        events: [EVENT_TYPE],
+        description: `${PREFIX} self-notify`,
+        maxAttempts: 1,
+        createdBy: user.id,
+      },
+    });
+    emailSubscriptionId = emailSub.id;
+    await prisma.aiWebhookSubscription.update({
+      where: { id: sub.id },
+      data: { isActive: false },
+    });
+    await dispatchWebhookEvent(EVENT_TYPE, { smoke: PREFIX });
+    const selfNotified = await prisma.aiWebhookDelivery.findFirstOrThrow({
+      where: { subscriptionId: emailSub.id },
+    });
+    webhookDeliveryIds.push(selfNotified.id);
+    check(
+      selfNotified.destination === user.email.toUpperCase(),
+      'an email-channel delivery records the address'
+    );
+
     // ── 3. Erase the creator: the subscription goes, the delivery stays ──
     console.log('Erasing the subscription creator:');
     const erased = await eraseUser({
@@ -201,6 +235,15 @@ async function main(): Promise<void> {
     check(orphan !== null, 'the delivery survived');
     check(orphan?.subscriptionId === null, 'its subscription link is now null');
     check(orphan?.destination === retried.destination, 'its destination is intact');
+    emailSubscriptionId = null;
+    const redacted = await prisma.aiWebhookDelivery.findUnique({
+      where: { id: selfNotified.id },
+    });
+    check(redacted !== null, 'the self-notify delivery survived too');
+    check(
+      redacted?.destination === '[erased]' && redacted.destinationFingerprint === null,
+      'but the erased person’s own address and its fingerprint are redacted'
+    );
 
     const orphanRetry = await retryDelivery(sent.id, { awaitDelivery: true });
     const afterOrphanRetry = await prisma.aiWebhookDelivery.findUniqueOrThrow({
@@ -303,6 +346,11 @@ async function main(): Promise<void> {
       await prisma.aiEventHookDelivery.deleteMany({ where: { id: { in: hookDeliveryIds } } });
     }
     if (hookId) await prisma.aiEventHook.delete({ where: { id: hookId } }).catch(() => undefined);
+    if (emailSubscriptionId) {
+      await prisma.aiWebhookSubscription
+        .delete({ where: { id: emailSubscriptionId } })
+        .catch(() => undefined);
+    }
     if (subscriptionId) {
       await prisma.aiWebhookSubscription
         .delete({ where: { id: subscriptionId } })

@@ -29,6 +29,7 @@ import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/c
 import EventNotification from '@/emails/event-notification';
 import { matchesEntityScope } from '@/lib/orchestration/webhooks/event-entity-keys';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
+import { notRetried } from '@/lib/orchestration/webhooks/not-retried';
 import {
   destinationUpdate,
   subscriptionDestination,
@@ -266,7 +267,9 @@ export async function processPendingRetries(): Promise<number> {
           data: {
             status: 'exhausted',
             nextRetryAt: null,
-            lastError: delivery.subscription ? 'Subscription deactivated' : SUBSCRIPTION_DELETED,
+            lastError: delivery.subscription
+              ? 'Subscription deactivated'
+              : notRetried(delivery.lastError, SUBSCRIPTION_DELETED),
           },
         });
         return;
@@ -295,7 +298,7 @@ export async function processPendingRetries(): Promise<number> {
 // ---------------------------------------------------------------------------
 
 /** Why a retry stopped when its subscription was deleted in the meantime. */
-const SUBSCRIPTION_DELETED = 'Subscription deleted; not retried';
+const SUBSCRIPTION_DELETED = 'subscription deleted';
 
 /**
  * Outcome shape returned by each per-channel adapter.
@@ -633,7 +636,9 @@ function scheduleRetry(deliveryId: string, subscriptionId: string, delayMs: numb
                 data: {
                   status: 'exhausted',
                   nextRetryAt: null,
-                  lastError: sub ? 'Subscription deactivated' : SUBSCRIPTION_DELETED,
+                  lastError: sub
+                    ? 'Subscription deactivated'
+                    : notRetried(delivery.lastError, SUBSCRIPTION_DELETED),
                 },
               });
             }

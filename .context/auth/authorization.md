@@ -615,17 +615,18 @@ site, which gaps you have accepted.
 declared `onDelete: SetNull`**, every one of which can hold a row an Art. 17
 erasure detached, plus the models whose rows are born ownerless.
 
-**Four models have a read path that asks the policy about it**, and those four
+**Five models have a read path that asks the policy about it**, and those five
 are what the guards precompute. The rest are admin-global — every admin reads
 every row — so there is no owner clause for an orphan to fall outside of, and
 nothing to precompute:
 
-| Model                 | Owner column | `onDelete` | A null owner means             |
-| --------------------- | ------------ | ---------- | ------------------------------ |
-| `AiConversation`      | `userId`     | `Cascade`  | born ownerless — inbound       |
-| `AiWorkflowExecution` | `userId`     | `Cascade`  | born ownerless — scheduled     |
-| `AiDataset`           | `userId`     | `SetNull`  | an Art. 17 erasure detached it |
-| `AiExperiment`        | `createdBy`  | `SetNull`  | an Art. 17 erasure detached it |
+| Model                 | Owner column                                              | `onDelete` | A null owner means                                               |
+| --------------------- | --------------------------------------------------------- | ---------- | ---------------------------------------------------------------- |
+| `AiConversation`      | `userId`                                                  | `Cascade`  | born ownerless — inbound                                         |
+| `AiWorkflowExecution` | `userId`                                                  | `Cascade`  | born ownerless — scheduled                                       |
+| `AiDataset`           | `userId`                                                  | `SetNull`  | an Art. 17 erasure detached it                                   |
+| `AiExperiment`        | `createdBy`                                               | `SetNull`  | an Art. 17 erasure detached it                                   |
+| `AiWebhookDelivery`   | `subscriptionId` (owned through `subscription.createdBy`) | `SetNull`  | its subscription was deleted, or went with its creator's erasure |
 
 **Born ownerless and left ownerless are disjoint by database constraint**, which
 is why the helpers give them different names — `'system'` versus `'orphan'` — and
@@ -635,7 +636,7 @@ null from the start, because erasing the user would have deleted the row; a
 correspondence and a de-attributed test fixture are not the same thing to read.
 
 Either way, a `where` clause keyed on the caller answers "not yours" for all
-four, which turns a deliberately retained row into an unreachable one — invisible
+five, which turns a deliberately retained row into an unreachable one — invisible
 to every admin, deletable by none, pruned by nothing.
 
 **So `UNATTRIBUTED_READ_KINDS` is a consequence, not a roster**, and that is what
@@ -713,12 +714,13 @@ same failure direction, one call.
 model's visible _set_ comes from a helper in `lib/orchestration/access/`, one
 module per model. That directory is the roster:
 
-| Model                 | Owner column | Helper                                            | Bases it can return           | Reaches the policy |
-| --------------------- | ------------ | ------------------------------------------------- | ----------------------------- | ------------------ |
-| `AiConversation`      | `userId`     | `lib/orchestration/access/conversation-access.ts` | `owner` / `shared` / `system` | from the record    |
-| `AiWorkflowExecution` | `userId`     | `lib/orchestration/access/execution-access.ts`    | `owner` / `system`            | from the record    |
-| `AiDataset`           | `userId`     | `lib/orchestration/access/dataset-access.ts`      | `owner` / `orphan`            | from the record    |
-| `AiExperiment`        | `createdBy`  | `lib/orchestration/access/experiment-access.ts`   | `owner` / `orphan`            | from the record    |
+| Model                 | Owner column             | Helper                                                | Bases it can return           | Reaches the policy |
+| --------------------- | ------------------------ | ----------------------------------------------------- | ----------------------------- | ------------------ |
+| `AiConversation`      | `userId`                 | `lib/orchestration/access/conversation-access.ts`     | `owner` / `shared` / `system` | from the record    |
+| `AiWorkflowExecution` | `userId`                 | `lib/orchestration/access/execution-access.ts`        | `owner` / `system`            | from the record    |
+| `AiDataset`           | `userId`                 | `lib/orchestration/access/dataset-access.ts`          | `owner` / `orphan`            | from the record    |
+| `AiExperiment`        | `createdBy`              | `lib/orchestration/access/experiment-access.ts`       | `owner` / `orphan`            | from the record    |
+| `AiWebhookDelivery`   | `subscription.createdBy` | `lib/orchestration/access/webhook-delivery-access.ts` | `owner` / `orphan`            | from the record    |
 
 **Four production call sites read the record directly rather than through a
 helper, and each is a shape a `where` fragment cannot serve.** The conversation
@@ -741,7 +743,7 @@ answering the same question through `mayReadUnattributed` and a
 `*_RESOURCE_KIND` constant, and nothing in the tree put the two side by side.
 
 Executions moved onto the record in t-685, conversations in t-686, and datasets
-and experiments in t-687, which finished the axis. All four helpers are
+and experiments in t-687, which finished the axis; webhook deliveries joined in §109 t-739. Every helper is
 **synchronous** — that is what the eager resolution bought, and what lets the
 live-engine snapshot build fragments inline inside a larger object. None of them
 declares a resource-kind constant any more: the record's keys _are_

@@ -323,8 +323,9 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
             <AlertDialogTitle>Delete subscription?</AlertDialogTitle>
             <AlertDialogDescription>
               This will permanently delete the event subscription to{' '}
-              <code className="text-xs">{deleteTarget?.url}</code>. Delivery history will also be
-              removed. This action cannot be undone.
+              <code className="text-xs">{deleteTarget?.url}</code>. This action cannot be undone.
+              Its delivery history is kept, as the record of where its events went, until retention
+              prunes it.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -119,10 +119,15 @@ its reasoning live in `lib/orchestration/webhooks/destination.ts`; in short:
 - **Deleting a subscription keeps its deliveries** (`subscriptionId` becomes
   null). So does erasing the admin who created it: the subscription goes with
   them, but the deliveries are the org's record of where its customers' data
-  went. A retry of an orphaned delivery is refused; the DLQ shows orphans to
-  every admin, since there is no creator left to scope them by. Erasing the
-  org still removes its deliveries, and retention prunes orphans by age like
-  any other row.
+  went — minus the erased person's own address, which `eraseUser()` redacts
+  to `[erased]` (see [data erasure](../privacy/data-erasure.md)). A retry of
+  an orphaned delivery is refused (`409`). With no creator left to scope by,
+  an orphan is shown to the admins the authorization policy permits an
+  unattributed read — platform admins by default — through the
+  `webhookDelivery` kind and `lib/orchestration/access/webhook-delivery-access.ts`
+  (see [Rows nobody owns](../auth/authorization.md#rows-nobody-owns)). Erasing
+  the org still removes its deliveries, and retention prunes orphans by age
+  like any other row.
 - **Rows that predate recording** are filled from their subscription's
   current destination by the `022-delivery-destinations` seed unit, which is
   the best value available rather than a record. Rows whose subscription was

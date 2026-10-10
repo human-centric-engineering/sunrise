@@ -19,7 +19,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { retryDelivery } from '@/lib/orchestration/webhooks/dispatcher';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
-import { isWebhookDeliveryVisibleTo } from '@/lib/orchestration/webhooks/delivery-scope';
+import { webhookDeliveryAccessBasis } from '@/lib/orchestration/access/webhook-delivery-access';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -35,7 +35,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     where: { id },
     select: { subscription: { select: { createdBy: true } } },
   });
-  if (!delivery || !isWebhookDeliveryVisibleTo(delivery, session.user.id)) {
+  if (!delivery || !webhookDeliveryAccessBasis(delivery, session)) {
     throw new NotFoundError('Webhook delivery not found');
   }
   if (!delivery.subscription) {

@@ -16,6 +16,11 @@
  *   4. Delete the contact-form messages sent from the user's stored address,
  *      when the account has verified it. `ContactSubmission` has no FK to
  *      `User`, so no cascade reaches it.
+ *   5. Redact the user's own address from the webhook deliveries their
+ *      subscriptions sent. The subscriptions cascade away with the user, but
+ *      their deliveries are kept (`SetNull`, §109 t-739) as the org's record
+ *      of where its events went — and an email-channel subscription a person
+ *      pointed at themselves would leave their address on every one.
  *
  * The scrub, contact delete, receipt, and user delete run in one transaction
  * so they commit or roll back together. Avatar cleanup runs first as a
@@ -23,11 +28,16 @@
  */
 
 import { createHash } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 import { contactSubmissionsOf, contactSubmissionsUnder } from '@/lib/privacy/contact-submissions';
 import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
+import {
+  ERASED_DESTINATION,
+  redactAddressInHistory,
+} from '@/lib/orchestration/webhooks/destination';
 
 export type ErasureReason = 'self_service' | 'admin_action';
 
@@ -166,6 +176,34 @@ async function eraseRows(params: EraseUserParams): Promise<{
     const left = where
       ? 0
       : await tx.contactSubmission.count({ where: contactSubmissionsUnder(account.email) });
+
+    // The webhook deliveries this person's subscriptions sent outlive them
+    // (the subscription cascades, the delivery is `SetNull`), as the org's
+    // record of where its events went. That record must not keep the person's
+    // own address: an email-channel subscription they pointed at themselves
+    // would leave it on every delivery, and on the fingerprint that confirms
+    // it. Redacted, not deleted, and matched case-insensitively — this
+    // rewrites a column rather than removing a stranger's row, so the wider
+    // match only errs towards erasing more. Before `tx.user.delete()`, while
+    // the join through `subscription.createdBy` still resolves.
+    const ownDeliveries = { subscription: { createdBy: userId } };
+    await tx.aiWebhookDelivery.updateMany({
+      where: { ...ownDeliveries, destination: { equals: account.email, mode: 'insensitive' } },
+      data: { destination: ERASED_DESTINATION, destinationFingerprint: null },
+    });
+    const withHistory = await tx.aiWebhookDelivery.findMany({
+      where: { ...ownDeliveries, previousDestinations: { not: Prisma.AnyNull } },
+      select: { id: true, previousDestinations: true },
+    });
+    for (const row of withHistory) {
+      const redacted = redactAddressInHistory(row.previousDestinations, account.email);
+      if (redacted) {
+        await tx.aiWebhookDelivery.update({
+          where: { id: row.id },
+          data: { previousDestinations: redacted },
+        });
+      }
+    }
 
     // App-registered in-transaction scrub. Runs before `tx.user.delete()` so
     // hooks can still match retained rows on `userId`, and atomically with the

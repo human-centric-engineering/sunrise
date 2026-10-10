@@ -57,8 +57,21 @@ that against a real database: row retained, `userId` null, amount unchanged.
 ownership — any admin can already manage any agent/workflow/provider regardless
 of who created it. So a departing creator's config keeps working; only the
 `createdBy`/`uploadedBy` link is nulled. Child rows (messages, embeddings,
-deliveries, steps) already cascade from their parents, so only the root `User`
-relations carry the policy.
+steps) already cascade from their parents, so only the root `User` relations
+carry the policy.
+
+**Webhook deliveries are the exception, deliberately** (§109 t-739). A
+subscription cascades with its creator, but its `AiWebhookDelivery` rows do
+not: their parent FK is `SetNull`, so they survive as the org's record of where
+its events went — the payloads are about the org's customers, not about the
+admin who configured the subscription. Each row records its destination, and
+for an email-channel subscription a person pointed at themselves that is their
+own address, so `eraseUser()` redacts it: a destination equal to the subject's
+address (case-insensitive) becomes `[erased]`, its fingerprint is dropped, and
+the same goes for any earlier destination in `previousDestinations`. What the
+payloads say about other people — an escalated customer's id, say — is not
+reached by any erasure today; that is t-783. Event-hook deliveries behave the
+same way (`SetNull` on the hook), and hooks already survive their creator.
 
 **Two of them are owner-scoped, and they need a third rule.** `AiExperiment`
 (`createdBy`) and `AiDataset` (`userId`) narrow every one of their routes to the
@@ -83,8 +96,11 @@ Both **log** access to a row nobody owns — the detail read and every write car
 erasure is answerable. Experiments gained that in t-687; datasets have had it
 since t-679. The definitions live in `lib/orchestration/access/dataset-access.ts`
 and `lib/orchestration/access/experiment-access.ts` — one module per model, all
-four of them in that directory, each reading the policy answer
-`session.unattributedReads` carries.
+of them in that directory, each reading the policy answer
+`session.unattributedReads` carries. Webhook deliveries are the third
+owner-scoped `SetNull` case (`webhook-delivery-access.ts`, owned through the
+subscription's creator); they can be discarded but not claimed, since a
+delivery whose subscription is gone has nothing to re-enter.
 
 The two differ on one point, and it is the one to decide rather than copy when
 you add a model: experiments log a **write** whoever makes it, owner included,

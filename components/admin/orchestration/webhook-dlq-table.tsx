@@ -68,9 +68,9 @@ export interface DlqDelivery {
   destination: string | null;
   /** Null once the subscription was deleted. */
   subscriptionId: string | null;
+  /** Null once the subscription was deleted. No `url`: it can carry a credential. */
   subscription: {
     id: string;
-    url: string;
     description: string | null;
   } | null;
 }
@@ -302,10 +302,10 @@ export function WebhookDlqTable({
                         className="hover:underline"
                       >
                         <span className="block max-w-[220px] truncate text-sm">
-                          {d.subscription.description ?? d.destination ?? d.subscription.url}
+                          {d.subscription.description ?? d.destination ?? 'Subscription'}
                         </span>
                         <span className="text-muted-foreground block max-w-[220px] truncate text-xs">
-                          {d.destination ?? d.subscription.url}
+                          {d.destination ?? 'Destination not recorded'}
                         </span>
                       </Link>
                     ) : (

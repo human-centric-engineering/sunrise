@@ -4,8 +4,8 @@
  * GET /api/v1/admin/orchestration/webhooks/dlq
  *
  * Lists all `exhausted` deliveries across the calling admin's
- * subscriptions, plus those whose subscription was deleted (see
- * `delivery-scope.ts`). Each row carries its own `destination`, so one
+ * subscriptions, plus those whose subscription was deleted where the
+ * authorization policy permits it (`webhook-delivery-access.ts`). Each row carries its own `destination`, so one
  * without a subscription still says where it went. The single
  * per-subscription delivery view does not
  * scale when an operator manages multiple subscriptions — partners
@@ -26,7 +26,7 @@ import { ValidationError } from '@/lib/api/errors';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
-import { webhookDeliveriesVisibleTo } from '@/lib/orchestration/webhooks/delivery-scope';
+import { webhookDeliveryVisibilityWhere } from '@/lib/orchestration/access/webhook-delivery-access';
 
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -59,9 +59,10 @@ export const GET = withAdminAuth(async (request: NextRequest, session) => {
   }
   const query = parsed.data;
 
-  const where = {
+  // AND, not a spread: the visibility fragment's key can be `OR`, which a
+  // spread of further filters would replace.
+  const filters = {
     status: 'exhausted' as const,
-    ...webhookDeliveriesVisibleTo(session.user.id),
     ...(query.subscriptionId ? { subscriptionId: query.subscriptionId } : {}),
     ...(query.eventType ? { eventType: query.eventType } : {}),
     ...(query.since || query.until
@@ -73,6 +74,7 @@ export const GET = withAdminAuth(async (request: NextRequest, session) => {
         }
       : {}),
   };
+  const where = { AND: [webhookDeliveryVisibilityWhere(session), filters] };
 
   const [deliveries, total] = await Promise.all([
     prisma.aiWebhookDelivery.findMany({
@@ -81,8 +83,10 @@ export const GET = withAdminAuth(async (request: NextRequest, session) => {
       skip: (query.page - 1) * query.pageSize,
       take: query.pageSize,
       include: {
+        // Not `url`: it can carry the subscription's credential, and the row's
+        // own `destination` already says where the delivery went.
         subscription: {
-          select: { id: true, url: true, description: true },
+          select: { id: true, description: true },
         },
       },
     }),

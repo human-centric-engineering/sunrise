@@ -68,7 +68,8 @@ export interface RecordedDestination {
 const previousDestinationsSchema = z.array(
   z.object({
     destination: z.string(),
-    destinationFingerprint: z.string(),
+    /** Null once erased: see {@link redactAddressInHistory}. */
+    destinationFingerprint: z.string().nullable(),
     /** When the payload stopped going here: the first attempt at the next destination. */
     until: z.string(),
   })
@@ -119,6 +120,48 @@ export function subscriptionDestination(sub: {
     return sub.emailAddress ? describeDestination('email', sub.emailAddress) : null;
   }
   return sub.url ? describeDestination('webhook', sub.url) : null;
+}
+
+/**
+ * A recorded destination that may be written somewhere longer-lived than the
+ * delivery row, such as the admin audit log: the reduced URL, or `null` for an
+ * email address. The audit log is kept through a person's erasure (its actor
+ * is `SetNull`), so an address written there would outlive the erasure of the
+ * person it belongs to. A reduced URL is always `http(s)://…`; an email
+ * address never is.
+ */
+export function auditableDestination(destination: string | null): string | null {
+  if (destination === null) return null;
+  return destination.startsWith('https://') || destination.startsWith('http://')
+    ? destination
+    : null;
+}
+
+/**
+ * What an erased email destination reads as. The delivery row stays — it is
+ * the org's record that an event was sent — but the address was the erased
+ * person's own, so it does not.
+ */
+export const ERASED_DESTINATION = '[erased]';
+
+/**
+ * `previousDestinations` with every entry for `address` (compared
+ * case-insensitively) redacted to {@link ERASED_DESTINATION}, fingerprint and
+ * all. `null` when nothing matched, so the caller writes only rows that change.
+ */
+export function redactAddressInHistory(
+  value: Prisma.JsonValue | null,
+  address: string
+): PreviousDestination[] | null {
+  const history = readPreviousDestinations(value);
+  const target = address.toLowerCase();
+  let changed = false;
+  const redacted = history.map((entry) => {
+    if (entry.destination.toLowerCase() !== target) return entry;
+    changed = true;
+    return { ...entry, destination: ERASED_DESTINATION, destinationFingerprint: null };
+  });
+  return changed ? redacted : null;
 }
 
 /** The recorded history, validated. A row this module did not write reads as empty. */
