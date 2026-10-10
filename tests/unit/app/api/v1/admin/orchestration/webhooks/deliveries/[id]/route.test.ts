@@ -11,7 +11,7 @@
  * - 401 unauthenticated
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 
 vi.mock('@/lib/auth/config', () => ({ auth: { api: { getSession: vi.fn() } } }));
@@ -36,6 +36,11 @@ import { DELETE } from '@/app/api/v1/admin/orchestration/webhooks/deliveries/[id
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import {
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+  DEFAULT_AUTHORIZATION_POLICY,
+} from '@/lib/auth/authorization';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
@@ -55,11 +60,16 @@ describe('DELETE /webhooks/deliveries/:id', () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
   });
 
+  afterEach(() => {
+    __resetAuthorizationPolicyForTests();
+  });
+
   it('deletes the row and writes an audit entry when admin owns the parent subscription', async () => {
     vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
       id: DELIVERY_ID,
       status: 'exhausted',
       eventType: 'workflow_failed',
+      destination: 'https://x.com/hook',
       subscription: { id: 'sub-1', createdBy: ADMIN_ID, url: 'https://x.com' },
     } as never);
 
@@ -74,6 +84,7 @@ describe('DELETE /webhooks/deliveries/:id', () => {
         action: 'webhook_delivery.delete',
         entityType: 'delivery',
         entityId: DELIVERY_ID,
+        entityName: 'https://x.com/hook',
       })
     );
   });
@@ -143,7 +154,7 @@ describe('DELETE /webhooks/deliveries/:id', () => {
       };
     }
 
-    it('lets any admin delete an orphan whose subscription is gone', async () => {
+    it('lets an admin delete an orphan whose subscription is gone, when the policy permits', async () => {
       vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
         deliveryRow({ subscription: null }) as never
       );
@@ -152,6 +163,41 @@ describe('DELETE /webhooks/deliveries/:id', () => {
 
       expect(res.status).toBe(200);
       expect(prisma.aiWebhookDelivery.delete).toHaveBeenCalledWith({ where: { id: DELIVERY_ID } });
+    });
+
+    it('returns 404 and deletes nothing for an orphan when the policy refuses unattributed reads', async () => {
+      registerAuthorizationPolicy({
+        ...DEFAULT_AUTHORIZATION_POLICY,
+        canRead: (viewer, target, scope) =>
+          target.kind === 'unattributed'
+            ? Promise.resolve(false)
+            : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+      });
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+        deliveryRow({ subscription: null }) as never
+      );
+
+      const res = await DELETE(makeRequest(), { params: Promise.resolve({ id: DELIVERY_ID }) });
+
+      expect(res.status).toBe(404);
+      expect(prisma.aiWebhookDelivery.delete).not.toHaveBeenCalled();
+      expect(logAdminAction).not.toHaveBeenCalled();
+    });
+
+    it('still deletes the admin’s own live delivery when the policy refuses unattributed reads', async () => {
+      registerAuthorizationPolicy({
+        ...DEFAULT_AUTHORIZATION_POLICY,
+        canRead: (viewer, target, scope) =>
+          target.kind === 'unattributed'
+            ? Promise.resolve(false)
+            : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+      });
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(deliveryRow({}) as never);
+
+      const res = await DELETE(makeRequest(), { params: Promise.resolve({ id: DELIVERY_ID }) });
+
+      expect(res.status).toBe(200);
+      expect(prisma.aiWebhookDelivery.delete).toHaveBeenCalledTimes(1);
     });
 
     it('still returns 404 and deletes nothing for a non-creator on a live subscription', async () => {
@@ -206,6 +252,25 @@ describe('DELETE /webhooks/deliveries/:id', () => {
       for (const call of vi.mocked(logAdminAction).mock.calls) {
         expect(JSON.stringify(call)).not.toContain('token=secret');
       }
+    });
+
+    it('names an email-channel delivery by its id and writes the address to no audit argument', async () => {
+      const ADDRESS = 'Person@Example.com';
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+        deliveryRow({ destination: ADDRESS }) as never
+      );
+
+      const res = await DELETE(makeRequest(), { params: Promise.resolve({ id: DELIVERY_ID }) });
+
+      // Population: the delete went ahead and was audited.
+      expect(res.status).toBe(200);
+      expect(logAdminAction).toHaveBeenCalledTimes(1);
+      expect(logAdminAction).toHaveBeenCalledWith(
+        expect.objectContaining({ entityName: DELIVERY_ID })
+      );
+      expect(JSON.stringify(vi.mocked(logAdminAction).mock.calls).toLowerCase()).not.toContain(
+        ADDRESS.toLowerCase()
+      );
     });
   });
 });

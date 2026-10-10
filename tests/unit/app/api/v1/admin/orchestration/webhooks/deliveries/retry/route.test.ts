@@ -4,7 +4,7 @@
  * POST /api/v1/admin/orchestration/webhooks/deliveries/:id/retry
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // ─── Module mocks ───────────────────────────────────────────────────────
@@ -43,6 +43,11 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { retryDelivery } from '@/lib/orchestration/webhooks/dispatcher';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import {
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+  DEFAULT_AUTHORIZATION_POLICY,
+} from '@/lib/auth/authorization';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { POST as RetryDelivery } from '@/app/api/v1/admin/orchestration/webhooks/deliveries/[id]/retry/route';
 
@@ -70,6 +75,10 @@ async function parseJson<T>(response: Response): Promise<T> {
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────
+
+afterEach(() => {
+  __resetAuthorizationPolicyForTests();
+});
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -211,6 +220,27 @@ describe('POST /webhooks/deliveries/:id/retry', () => {
       const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('CONFLICT');
+      expect(retryDelivery).not.toHaveBeenCalled();
+      expect(logAdminAction).not.toHaveBeenCalled();
+    });
+
+    it('returns 404, not 409, for an orphan when the policy refuses unattributed reads', async () => {
+      registerAuthorizationPolicy({
+        ...DEFAULT_AUTHORIZATION_POLICY,
+        canRead: (viewer, target, scope) =>
+          target.kind === 'unattributed'
+            ? Promise.resolve(false)
+            : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+      });
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+        subscription: null,
+      } as never);
+
+      const response = await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
+
+      // The 409 would confirm to an admin who may not see it that the row exists.
+      expect(response.status).toBe(404);
       expect(retryDelivery).not.toHaveBeenCalled();
       expect(logAdminAction).not.toHaveBeenCalled();
     });

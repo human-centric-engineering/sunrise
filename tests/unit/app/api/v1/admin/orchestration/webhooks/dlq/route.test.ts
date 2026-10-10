@@ -11,7 +11,7 @@
  * - Authentication: unauthenticated → 401
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 
 vi.mock('@/lib/auth/config', () => ({ auth: { api: { getSession: vi.fn() } } }));
@@ -32,6 +32,11 @@ vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 import { GET } from '@/app/api/v1/admin/orchestration/webhooks/dlq/route';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import {
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+  DEFAULT_AUTHORIZATION_POLICY,
+} from '@/lib/auth/authorization';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
@@ -53,6 +58,21 @@ describe('GET /webhooks/dlq', () => {
     vi.mocked(prisma.aiWebhookDelivery.count).mockResolvedValue(0);
   });
 
+  afterEach(() => {
+    __resetAuthorizationPolicyForTests();
+  });
+
+  /** A fork that lets admins read their own rows and nobody's orphans. */
+  function refuseUnattributedReads(): void {
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canRead: (viewer, target, scope) =>
+        target.kind === 'unattributed'
+          ? Promise.resolve(false)
+          : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+    });
+  }
+
   it('returns paginated deliveries scoped to admin and exhausted status', async () => {
     const res = await GET(makeRequest('?page=2&pageSize=5'));
     const json = JSON.parse(await res.text());
@@ -68,8 +88,10 @@ describe('GET /webhooks/dlq', () => {
     // has no creator to scope by, and is shown to every admin as a record.
     const call = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0];
     expect(call?.where).toEqual({
-      status: 'exhausted',
-      OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }],
+      AND: [
+        { OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }] },
+        { status: 'exhausted' },
+      ],
     });
     expect(call?.skip).toBe(5); // (page-1) * pageSize
     expect(call?.take).toBe(5);
@@ -85,13 +107,16 @@ describe('GET /webhooks/dlq', () => {
     );
 
     const call = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0];
-    expect(call?.where).toMatchObject({
-      subscriptionId: SUB_ID,
-      eventType: 'workflow_failed',
-    });
-    expect((call?.where as Record<string, unknown>).createdAt).toMatchObject({
-      gte: new Date(since),
-      lt: new Date(until),
+    expect(call?.where).toEqual({
+      AND: [
+        { OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }] },
+        {
+          status: 'exhausted',
+          subscriptionId: SUB_ID,
+          eventType: 'workflow_failed',
+          createdAt: { gte: new Date(since), lt: new Date(until) },
+        },
+      ],
     });
   });
 
@@ -139,17 +164,47 @@ describe('GET /webhooks/dlq', () => {
     expect(call?.include).toHaveProperty('subscription');
   });
 
-  it('keeps the visibility OR when the subscriptionId filter is also present', async () => {
+  it('keeps the visibility fragment intact when the subscriptionId filter is also present', async () => {
     await GET(makeRequest(`?subscriptionId=${SUB_ID}`));
 
     const call = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0];
+    // AND, not a spread: a spread would let the filters replace the fragment's OR key.
     expect(call?.where).toEqual({
-      status: 'exhausted',
-      OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }],
-      subscriptionId: SUB_ID,
+      AND: [
+        { OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }] },
+        { status: 'exhausted', subscriptionId: SUB_ID },
+      ],
     });
     // The count query must use the identical where, or pagination totals drift.
     const countCall = vi.mocked(prisma.aiWebhookDelivery.count).mock.calls[0][0];
     expect(countCall?.where).toEqual(call?.where);
+  });
+
+  it('drops the orphan arm for both queries when the policy refuses unattributed reads', async () => {
+    refuseUnattributedReads();
+
+    const res = await GET(makeRequest(`?subscriptionId=${SUB_ID}`));
+
+    expect(res.status).toBe(200);
+    const expected = {
+      AND: [
+        { subscription: { createdBy: ADMIN_ID } },
+        { status: 'exhausted', subscriptionId: SUB_ID },
+      ],
+    };
+    expect(vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0]?.where).toEqual(expected);
+    expect(vi.mocked(prisma.aiWebhookDelivery.count).mock.calls[0][0]?.where).toEqual(expected);
+    expect(JSON.stringify(expected)).not.toContain('"OR"');
+  });
+
+  it('does not select the subscription url, which can carry a credential', async () => {
+    await GET(makeRequest());
+
+    const call = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0];
+    // Population first: the subscription is included, with exactly these fields.
+    expect(call?.include).toEqual({
+      subscription: { select: { id: true, description: true } },
+    });
+    expect(JSON.stringify(call?.include)).not.toContain('url');
   });
 });

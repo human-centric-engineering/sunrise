@@ -53,6 +53,7 @@ import {
 import type { AuthorizationPolicy } from '@/lib/auth/authorization';
 import { datasetVisibilityWhere } from '@/lib/orchestration/access/dataset-access';
 import { experimentVisibilityWhere } from '@/lib/orchestration/access/experiment-access';
+import { webhookDeliveryVisibilityWhere } from '@/lib/orchestration/access/webhook-delivery-access';
 import { executionVisibilityWhere } from '@/lib/orchestration/access/execution-access';
 import { conversationVisibilityWhere } from '@/lib/orchestration/access/conversation-access';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
@@ -111,6 +112,11 @@ describe('the roster of kinds', () => {
     expect(conversationVisibilityWhere(session, { excludeShared: true })).toEqual({
       OR: [{ userId: ADMIN.userId }],
     });
+    // Only `dataset` was answered yes, so a webhook reader that read the wrong
+    // key (`.dataset`) would widen to an OR here.
+    expect(webhookDeliveryVisibilityWhere(session)).toEqual({
+      subscription: { createdBy: ADMIN.userId },
+    });
   });
 
   it('names each model once, so a second spelling cannot split the answer', () => {
@@ -124,6 +130,7 @@ describe('the roster of kinds', () => {
       'dataset',
       'execution',
       'experiment',
+      'webhookDelivery',
     ]);
     expect(new Set(UNATTRIBUTED_READ_KINDS).size).toBe(UNATTRIBUTED_READ_KINDS.length);
   });
@@ -136,12 +143,14 @@ describe('the answer comes from the policy', () => {
       dataset: true,
       execution: true,
       experiment: true,
+      webhookDelivery: true,
     });
     await expect(resolveUnattributedReads(MEMBER)).resolves.toEqual({
       conversation: false,
       dataset: false,
       execution: false,
       experiment: false,
+      webhookDelivery: false,
     });
   });
 
@@ -164,6 +173,7 @@ describe('the answer comes from the policy', () => {
       dataset: true,
       execution: false,
       experiment: false,
+      webhookDelivery: false,
     });
   });
 
@@ -184,6 +194,7 @@ describe('the answer comes from the policy', () => {
       dataset: false,
       execution: false,
       experiment: false,
+      webhookDelivery: false,
     });
   });
 
@@ -301,6 +312,8 @@ describe('checkOwnerlessReachability', () => {
     expect(messageFor('conversation')).toContain('DELETE /conversations/:id');
     expect(messageFor('execution')).toContain('human_approval');
     expect(messageFor('execution')).toContain('7-day');
+    expect(messageFor('webhookDelivery')).toContain('dead-letter queue');
+    expect(messageFor('webhookDelivery')).toContain('webhook delivery');
   });
 
   it('passes once any one principal on the roster reaches the kind', async () => {
@@ -403,6 +416,7 @@ describe('checkOwnerlessReachability', () => {
       dataset: false,
       execution: false,
       experiment: false,
+      webhookDelivery: false,
     });
   });
 

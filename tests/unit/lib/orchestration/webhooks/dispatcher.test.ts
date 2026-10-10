@@ -1266,19 +1266,41 @@ describe('delivery destination recording', () => {
 
     it('processPendingRetries marks the row exhausted with a deleted reason and does not send', async () => {
       vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([
-        { ...makeDelivery({ id: 'del-gone', status: 'failed', attempts: 1 }), subscription: null },
+        {
+          ...makeDelivery({
+            id: 'del-gone',
+            status: 'failed',
+            attempts: 1,
+            lastError: 'HTTP 503',
+          }),
+          subscription: null,
+        },
       ] as never);
 
       await processPendingRetries();
 
       expect(mockFetch).not.toHaveBeenCalled();
+      // The real failure survives; the reason retries stopped is appended to it.
       expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith({
         where: { id: 'del-gone' },
         data: {
           status: 'exhausted',
           nextRetryAt: null,
-          lastError: 'Subscription deleted; not retried',
+          lastError: 'HTTP 503 (not retried: subscription deleted)',
         },
+      });
+    });
+
+    it('processPendingRetries writes only the reason when the row had no earlier error', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([
+        { ...makeDelivery({ id: 'del-gone', status: 'failed', attempts: 1 }), subscription: null },
+      ] as never);
+
+      await processPendingRetries();
+
+      expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith({
+        where: { id: 'del-gone' },
+        data: expect.objectContaining({ lastError: 'Not retried: subscription deleted' }),
       });
     });
 
@@ -1306,6 +1328,10 @@ describe('delivery destination recording', () => {
       vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
       mockFetch.mockResolvedValue({ ok: false, status: 503 });
       vi.mocked(prisma.aiWebhookSubscription.findUnique).mockResolvedValue(null);
+      // The row the retry timer re-reads carries the failure the first attempt recorded.
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+        makeDelivery({ lastError: 'HTTP 503' })
+      );
 
       await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
       await vi.runAllTimersAsync();
@@ -1317,7 +1343,7 @@ describe('delivery destination recording', () => {
         data: {
           status: 'exhausted',
           nextRetryAt: null,
-          lastError: 'Subscription deleted; not retried',
+          lastError: 'HTTP 503 (not retried: subscription deleted)',
         },
       });
     });

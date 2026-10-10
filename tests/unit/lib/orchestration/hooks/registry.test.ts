@@ -1266,15 +1266,36 @@ describe('delivery destination recording', () => {
 
     it('processPendingHookRetries marks the row exhausted with a deleted reason and does not send', async () => {
       vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([
-        { ...makeDelivery({ id: 'del-gone', status: 'failed', attempts: 1 }), hook: null },
+        {
+          ...makeDelivery({ id: 'del-gone', status: 'failed', attempts: 1, lastError: 'HTTP 500' }),
+          hook: null,
+        },
       ] as never);
 
       await processPendingHookRetries();
 
       expect(mockFetch).not.toHaveBeenCalled();
+      // The real failure survives; the reason retries stopped is appended to it.
       expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith({
         where: { id: 'del-gone' },
-        data: { status: 'exhausted', nextRetryAt: null, lastError: 'Hook deleted; not retried' },
+        data: {
+          status: 'exhausted',
+          nextRetryAt: null,
+          lastError: 'HTTP 500 (not retried: hook deleted)',
+        },
+      });
+    });
+
+    it('processPendingHookRetries writes only the reason when the row had no earlier error', async () => {
+      vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([
+        { ...makeDelivery({ id: 'del-gone', status: 'failed', attempts: 1 }), hook: null },
+      ] as never);
+
+      await processPendingHookRetries();
+
+      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith({
+        where: { id: 'del-gone' },
+        data: expect.objectContaining({ lastError: 'Not retried: hook deleted' }),
       });
     });
 
@@ -1301,7 +1322,10 @@ describe('delivery destination recording', () => {
       // 1st lookup: the failure path reading attempts; 2nd: the timer, hook gone.
       vi.mocked(prisma.aiEventHookDelivery.findUnique)
         .mockResolvedValueOnce(makeDelivery({ attempts: 0 }))
-        .mockResolvedValueOnce({ ...makeDelivery({ attempts: 1 }), hook: null } as never);
+        .mockResolvedValueOnce({
+          ...makeDelivery({ attempts: 1, lastError: 'HTTP 500' }),
+          hook: null,
+        } as never);
 
       emitHookEvent('conversation.started', { conversationId: 'conv-1' });
       await vi.waitFor(() => {
@@ -1312,7 +1336,11 @@ describe('delivery destination recording', () => {
       expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(prisma.aiEventHookDelivery.update).toHaveBeenLastCalledWith({
         where: { id: 'del-1' },
-        data: { status: 'exhausted', nextRetryAt: null, lastError: 'Hook deleted; not retried' },
+        data: {
+          status: 'exhausted',
+          nextRetryAt: null,
+          lastError: 'HTTP 500 (not retried: hook deleted)',
+        },
       });
     });
 

@@ -74,6 +74,11 @@ vi.mock('@/lib/db/client', () => ({
     contactSubmission: {
       deleteMany: vi.fn(),
     },
+    aiWebhookDelivery: {
+      updateMany: vi.fn(),
+      findMany: vi.fn(),
+      update: vi.fn(),
+    },
     orgMembership: {
       upsert: vi.fn(),
     },
@@ -646,6 +651,8 @@ describe('DELETE /api/v1/users/:id', () => {
     // Default sub-transaction collaborators — each test can override per-case.
     vi.mocked(prisma.aiAdminAuditLog.updateMany).mockResolvedValue({ count: 1 });
     vi.mocked(prisma.contactSubmission.deleteMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([]);
     // eraseUser reads the stored address for the contact delete. Deliberately
     // NOT the address the route passes in, so the assertion below can tell the
     // two apart: a stale session address must never be the one matched.

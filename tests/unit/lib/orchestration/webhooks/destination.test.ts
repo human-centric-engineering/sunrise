@@ -18,9 +18,12 @@ vi.mock('@/lib/logging', () => ({
 
 import { logger } from '@/lib/logging';
 import {
+  ERASED_DESTINATION,
+  auditableDestination,
   describeDestination,
   destinationUpdate,
   fingerprintDestination,
+  redactAddressInHistory,
   subscriptionDestination,
 } from '@/lib/orchestration/webhooks/destination';
 
@@ -197,5 +200,103 @@ describe('destinationUpdate', () => {
     destinationUpdate({ ...oldPair, previousDestinations: [] }, newPair, NOW);
 
     expect(logger.error).not.toHaveBeenCalled();
+  });
+});
+
+describe('auditableDestination', () => {
+  it.each(['https://hooks.example.com/services/[param]', 'http://hooks.example.com/a'])(
+    'passes the reduced URL %s through',
+    (url) => {
+      expect(auditableDestination(url)).toBe(url);
+    }
+  );
+
+  it('returns null for an email address, so it never reaches the audit log', () => {
+    // Population: the same function does return a value for a URL, above.
+    expect(auditableDestination('person@example.com')).toBeNull();
+  });
+
+  it('returns null for the erased marker and for null', () => {
+    expect(auditableDestination(ERASED_DESTINATION)).toBeNull();
+    expect(auditableDestination(null)).toBeNull();
+  });
+});
+
+describe('redactAddressInHistory', () => {
+  const UNTIL = '2026-01-01T00:00:00.000Z';
+  const mine = {
+    destination: 'Person@Example.com',
+    destinationFingerprint: 'v1:mine',
+    until: UNTIL,
+  };
+  const other = {
+    destination: 'someone-else@example.com',
+    destinationFingerprint: 'v1:other',
+    until: UNTIL,
+  };
+
+  it('exposes the marker as [erased]', () => {
+    expect(ERASED_DESTINATION).toBe('[erased]');
+  });
+
+  it('redacts only the matching entries, case-insensitively, clearing the fingerprint', () => {
+    const result = redactAddressInHistory([other, mine], 'person@example.com');
+
+    expect(result).toEqual([
+      other,
+      { destination: '[erased]', destinationFingerprint: null, until: UNTIL },
+    ]);
+  });
+
+  it('redacts every entry for the address when it appears more than once', () => {
+    const result = redactAddressInHistory(
+      [mine, other, { ...mine, until: 'later' }],
+      'PERSON@EXAMPLE.COM'
+    );
+
+    expect(result?.map((e) => e.destination)).toEqual([
+      '[erased]',
+      'someone-else@example.com',
+      '[erased]',
+    ]);
+    expect(result?.filter((e) => e.destinationFingerprint === null)).toHaveLength(2);
+  });
+
+  it('returns null when nothing matched, so the caller writes no row', () => {
+    expect(redactAddressInHistory([other], 'person@example.com')).toBeNull();
+  });
+
+  it('returns null for a null or empty history', () => {
+    expect(redactAddressInHistory(null, 'person@example.com')).toBeNull();
+    expect(redactAddressInHistory([], 'person@example.com')).toBeNull();
+  });
+
+  it('accepts history that already holds a null fingerprint (idempotent re-run)', () => {
+    const erased = { destination: '[erased]', destinationFingerprint: null, until: UNTIL };
+
+    // Parses without the malformed-history error and finds nothing further to do.
+    expect(redactAddressInHistory([erased], 'person@example.com')).toBeNull();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('treats malformed history as empty and logs, rather than throwing', () => {
+    expect(redactAddressInHistory({ not: 'an array' }, 'person@example.com')).toBeNull();
+    expect(logger.error).toHaveBeenCalled();
+  });
+});
+
+describe('destinationUpdate with an erased pair', () => {
+  it('does not mistake an erased (null-fingerprint) record for a destination to preserve', () => {
+    const NOW = new Date('2026-02-02T00:00:00.000Z');
+    const target = describeDestination('webhook', 'https://example.com/new');
+
+    const result = destinationUpdate(
+      { destination: '[erased]', destinationFingerprint: null, previousDestinations: null },
+      target,
+      NOW
+    );
+
+    expect(result).toEqual({ ...target });
+    expect(result).not.toHaveProperty('previousDestinations');
   });
 });

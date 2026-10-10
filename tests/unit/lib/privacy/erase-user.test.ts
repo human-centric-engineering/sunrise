@@ -27,6 +27,9 @@ const {
   mockReceiptCreate,
   mockUserDelete,
   mockUserFind,
+  mockDeliveryUpdateMany,
+  mockDeliveryFindMany,
+  mockDeliveryUpdate,
   mockPrisma,
   mockLogger,
 } = vi.hoisted(() => {
@@ -39,6 +42,9 @@ const {
   });
   const userDelete = vi.fn().mockResolvedValue({ id: 'user-1' });
   // The address as the user row holds it — what the contact delete matches on.
+  const deliveryUpdateMany = vi.fn().mockResolvedValue({ count: 0 });
+  const deliveryFindMany = vi.fn().mockResolvedValue([]);
+  const deliveryUpdate = vi.fn().mockResolvedValue({});
   const userFind = vi.fn().mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
 
   // Prisma mock — $transaction invokes its async callback with the same
@@ -50,6 +56,11 @@ const {
     aiAdminAuditLog: { updateMany },
     contactSubmission: { deleteMany: contactDeleteMany, count: contactCount },
     dataErasureReceipt: { create: receiptCreate },
+    aiWebhookDelivery: {
+      updateMany: deliveryUpdateMany,
+      findMany: deliveryFindMany,
+      update: deliveryUpdate,
+    },
     user: { delete: userDelete, findUniqueOrThrow: userFind },
   };
   prismaObj.$transaction.mockImplementation(
@@ -72,6 +83,9 @@ const {
     mockReceiptCreate: receiptCreate,
     mockUserDelete: userDelete,
     mockUserFind: userFind,
+    mockDeliveryUpdateMany: deliveryUpdateMany,
+    mockDeliveryFindMany: deliveryFindMany,
+    mockDeliveryUpdate: deliveryUpdate,
     mockPrisma: prismaObj,
     mockLogger: log,
   };
@@ -140,6 +154,9 @@ describe('eraseUser', () => {
     mockUpdateMany.mockResolvedValue({ count: 1 });
     mockContactDeleteMany.mockResolvedValue({ count: 1 });
     mockContactCount.mockResolvedValue(0);
+    mockDeliveryUpdateMany.mockResolvedValue({ count: 0 });
+    mockDeliveryFindMany.mockResolvedValue([]);
+    mockDeliveryUpdate.mockResolvedValue({});
     mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
     mockReceiptCreate.mockResolvedValue({
       id: 'receipt-1',
@@ -491,6 +508,149 @@ describe('eraseUser', () => {
     await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('contact delete failed');
     expect(mockReceiptCreate).not.toHaveBeenCalled();
     expect(mockUserDelete).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Webhook deliveries outlive the subscription: the person's own address is
+  // redacted from them (and from previousDestinations) inside the transaction
+  // -------------------------------------------------------------------------
+
+  describe('webhook delivery redaction', () => {
+    it('redacts the STORED address (not the caller-supplied one), case-insensitively, on the subject’s own subscriptions only', async () => {
+      // Arrange — the caller and the row disagree; the row is the authority
+      mockUserFind.mockResolvedValue({ email: 'Stored@Bar.com', emailVerified: true });
+
+      // Act
+      await eraseUser({ ...BASE_PARAMS, userEmail: 'caller-supplied@bar.com' });
+
+      // Assert
+      expect(mockDeliveryUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockDeliveryUpdateMany).toHaveBeenCalledWith({
+        where: {
+          subscription: { createdBy: BASE_PARAMS.userId },
+          destination: { equals: 'Stored@Bar.com', mode: 'insensitive' },
+        },
+        data: { destination: '[erased]', destinationFingerprint: null },
+      });
+      expect(JSON.stringify(mockDeliveryUpdateMany.mock.calls)).not.toContain(
+        'caller-supplied@bar.com'
+      );
+    });
+
+    it('queries only the subject’s deliveries that have a history, then rewrites just the rows that matched', async () => {
+      // Arrange — population: three rows come back, one matches, one does not,
+      // one is already erased
+      const UNTIL = '2026-01-01T00:00:00.000Z';
+      mockDeliveryFindMany.mockResolvedValue([
+        {
+          id: 'd-match',
+          previousDestinations: [
+            { destination: 'FOO@bar.com', destinationFingerprint: 'v1:a', until: UNTIL },
+            {
+              destination: 'https://hooks.example.com/x',
+              destinationFingerprint: 'v1:b',
+              until: UNTIL,
+            },
+          ],
+        },
+        {
+          id: 'd-other',
+          previousDestinations: [
+            { destination: 'someone-else@bar.com', destinationFingerprint: 'v1:c', until: UNTIL },
+          ],
+        },
+        {
+          id: 'd-erased',
+          previousDestinations: [
+            { destination: '[erased]', destinationFingerprint: null, until: UNTIL },
+          ],
+        },
+      ]);
+
+      // Act
+      await eraseUser(BASE_PARAMS);
+
+      // Assert — the scoping of the read
+      const [findArgs] = mockDeliveryFindMany.mock.calls[0] as [{ where: Record<string, unknown> }];
+      expect(findArgs.where).toMatchObject({
+        subscription: { createdBy: BASE_PARAMS.userId },
+      });
+      expect(findArgs.where.previousDestinations).toBeDefined();
+
+      // Assert — only the matching row is written, with the matching entry
+      // redacted and its neighbour untouched
+      expect(mockDeliveryUpdate).toHaveBeenCalledTimes(1);
+      expect(mockDeliveryUpdate).toHaveBeenCalledWith({
+        where: { id: 'd-match' },
+        data: {
+          previousDestinations: [
+            { destination: '[erased]', destinationFingerprint: null, until: UNTIL },
+            {
+              destination: 'https://hooks.example.com/x',
+              destinationFingerprint: 'v1:b',
+              until: UNTIL,
+            },
+          ],
+        },
+      });
+    });
+
+    it('writes no history row when none of them mention the address', async () => {
+      mockDeliveryFindMany.mockResolvedValue([
+        {
+          id: 'd-1',
+          previousDestinations: [
+            { destination: 'other@bar.com', destinationFingerprint: 'v1:x', until: 'u' },
+          ],
+        },
+      ]);
+
+      await eraseUser(BASE_PARAMS);
+
+      // Population: the history was read; nothing needed rewriting.
+      expect(mockDeliveryFindMany).toHaveBeenCalledTimes(1);
+      expect(mockDeliveryUpdate).not.toHaveBeenCalled();
+    });
+
+    it('runs the redaction before tx.user.delete, while the subscription join still resolves', async () => {
+      const callOrder: string[] = [];
+      mockDeliveryUpdateMany.mockImplementation(async () => {
+        callOrder.push('updateMany');
+        return { count: 1 };
+      });
+      mockDeliveryFindMany.mockImplementation(async () => {
+        callOrder.push('findMany');
+        return [
+          {
+            id: 'd-1',
+            previousDestinations: [
+              { destination: 'foo@bar.com', destinationFingerprint: 'v1:a', until: 'u' },
+            ],
+          },
+        ];
+      });
+      mockDeliveryUpdate.mockImplementation(async () => {
+        callOrder.push('update');
+        return {};
+      });
+      mockUserDelete.mockImplementation(async () => {
+        callOrder.push('user.delete');
+        return { id: BASE_PARAMS.userId };
+      });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(callOrder).toEqual(['updateMany', 'findMany', 'update', 'user.delete']);
+    });
+
+    it('a failed redaction rolls the erasure back: the user row is never deleted', async () => {
+      mockDeliveryUpdateMany.mockRejectedValue(new Error('redaction failed'));
+
+      await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('redaction failed');
+
+      expect(mockUserDelete).not.toHaveBeenCalled();
+      expect(mockReceiptCreate).not.toHaveBeenCalled();
+    });
   });
 
   // -------------------------------------------------------------------------

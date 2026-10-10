@@ -441,7 +441,15 @@ describe('WebhooksTable', () => {
     await user.click(deleteItem);
 
     // Assert — confirm dialog appears
-    expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toBeInTheDocument();
+    // The dialog names the subscription being deleted (population), says the
+    // delivery history is kept until retention prunes it, and no longer
+    // claims it is removed.
+    expect(dialog).toHaveTextContent(MOCK_WEBHOOKS[0].url);
+    expect(dialog).toHaveTextContent(/delivery history is kept/i);
+    expect(dialog).toHaveTextContent(/until retention prunes it/i);
+    expect(dialog).not.toHaveTextContent(/will also be removed/i);
 
     // Click the confirmation "Delete" button in the dialog
     const confirmBtn = screen.getByRole('button', { name: /^delete$/i });

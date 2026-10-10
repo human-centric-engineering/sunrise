@@ -25,7 +25,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import {
@@ -87,7 +87,6 @@ function makeDelivery(overrides: Partial<Delivery> = {}): Delivery {
     subscriptionId: 'sub-1',
     subscription: {
       id: 'sub-1',
-      url: 'https://example.test/hook',
       description: 'Slack relay',
     },
     ...overrides,
@@ -589,36 +588,40 @@ describe('WebhookDlqTable', () => {
       expect(await screen.findByTitle('Retry delivery')).toBeEnabled();
     });
 
-    it('links a row with a subscription and prefers the recorded destination over the raw subscription URL', async () => {
+    it('links a row with a subscription and, with no description, titles it by the recorded destination', async () => {
       renderWith([
         makeDelivery({
           destination: 'https://reduced.example.com/hook',
-          subscription: {
-            id: 'sub-1',
-            url: 'https://reduced.example.com/hook?token=secret',
-            description: null,
-          },
+          subscription: { id: 'sub-1', description: null },
         }),
       ]);
 
       const link = await screen.findByRole('link', { name: /reduced\.example\.com/ });
       expect(link).toHaveAttribute('href', '/admin/orchestration/event-subscriptions/sub-1');
-      // Description absent: the title falls back to the destination, and the
-      // secret-bearing subscription URL is not rendered anywhere.
-      expect(screen.getAllByText('https://reduced.example.com/hook').length).toBeGreaterThan(0);
-      expect(document.body.textContent).not.toContain('token=secret');
+      // Title and subtitle both read the destination.
+      expect(screen.getAllByText('https://reduced.example.com/hook')).toHaveLength(2);
+      expect(within(link).queryByText('Subscription')).not.toBeInTheDocument();
     });
 
-    it('falls back to the subscription URL when the delivery has no destination', async () => {
+    it('prefers the description as the title when the subscription has one', async () => {
+      renderWith([makeDelivery({ destination: 'https://reduced.example.com/hook' })]);
+
+      const link = await screen.findByRole('link');
+      expect(within(link).getByText('Slack relay')).toBeInTheDocument();
+      expect(within(link).getByText('https://reduced.example.com/hook')).toBeInTheDocument();
+    });
+
+    it('falls back to "Subscription" / "Destination not recorded" when a live row has neither description nor destination', async () => {
       renderWith([
         makeDelivery({
           destination: null,
-          subscription: { id: 'sub-1', url: 'https://legacy.example.com/hook', description: null },
+          subscription: { id: 'sub-1', description: null },
         }),
       ]);
 
-      await screen.findByRole('link');
-      expect(screen.getAllByText('https://legacy.example.com/hook').length).toBeGreaterThan(0);
+      const link = await screen.findByRole('link');
+      expect(within(link).getByText('Subscription')).toBeInTheDocument();
+      expect(within(link).getByText('Destination not recorded')).toBeInTheDocument();
     });
   });
 });
