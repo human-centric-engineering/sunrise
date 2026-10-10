@@ -64,7 +64,7 @@ export interface DlqDelivery {
   attempts: number;
   createdAt: string;
   lastAttemptAt: string | null;
-  /** Reduced URL or email address the delivery was sent to; null on rows that predate recording. */
+  /** URL origin or email address the delivery was sent to; null on rows that predate recording. */
   destination: string | null;
   /** Null once the subscription was deleted. */
   subscriptionId: string | null;

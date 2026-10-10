@@ -102,12 +102,13 @@ A delivery row records its own destination, because its subscription holds
 only the current one and can be edited or deleted (§109 t-739). The rule and
 its reasoning live in `lib/orchestration/webhooks/destination.ts`; in short:
 
-- **`destination`** is what an admin reads: the URL reduced to its origin and
-  path (`loggableUrl`: no query string, userinfo or fragment, and id-like path
-  segments collapsed to `[param]`), or the email address. A webhook URL often
-  carries its credential in one of those parts, so the row never stores it.
+- **`destination`** is what an admin reads: the URL's **origin only**
+  (`https://hooks.slack.com`), or the email address, trimmed and lower-cased.
+  A webhook URL often carries its credential in the path, the query, the
+  userinfo or the fragment, and no heuristic can tell a short path token from
+  a route name, so the row keeps none of them.
 - **`destinationFingerprint`** is a keyed HMAC of the full destination
-  (`v1:…`). The reduced form cannot tell one Slack webhook from another; the
+  (`v1:…`). The origin cannot tell one Slack webhook from another; the
   fingerprint can. From a server shell, `fingerprintDestination('webhook', url)`
   answers "was this delivery sent to exactly this URL?". It is keyed from
   `BETTER_AUTH_SECRET`, so rotating that secret makes earlier fingerprints
@@ -165,7 +166,7 @@ Uses admin orchestration webhook endpoints:
 - `POST /webhooks/:id/test` — send test ping event
 - `GET /webhooks/:id/deliveries` — delivery history (scoped to `session.user.id`)
 - `POST /webhooks/deliveries/:id/retry` — retry failed delivery (verifies parent subscription ownership; 409 when the subscription was deleted)
-- `DELETE /webhooks/deliveries/:id` — permanently delete a delivery row (verifies parent subscription ownership, or that it was deleted; audit-logged as `webhook_delivery.delete`, naming the reduced destination)
+- `DELETE /webhooks/deliveries/:id` — permanently delete a delivery row (verifies parent subscription ownership, or that it was deleted; audit-logged as `webhook_delivery.delete`, naming the delivery's origin, never an email address)
 - `GET /webhooks/dlq?page=&pageSize=&subscriptionId=&eventType=&since=&until=` — list exhausted deliveries across all subscriptions the calling admin owns, plus orphaned ones. Always scoped to `status=exhausted` and that scope; filters narrow further.
 - `GET /webhooks/dlq/stats` — depth signal for the health dashboard. Returns `{ exhausted24h, exhaustedTotal, oldestExhaustedAt }` over the same scope. Consumed by improvement #41 (health dashboard).
 - `POST /webhooks/dlq/replay` — bulk replay. Body either `{ deliveryIds: string[] }` (explicit selection, max 500) or `{ subscriptionId, before? }` (replay all exhausted rows for one subscription, optionally capped by `createdAt < before`). Loops `retryDelivery()` with concurrency cap of 5. Ownership filter skips rows the caller doesn't own. Audit-logged as `webhook_delivery.replay_batch`.

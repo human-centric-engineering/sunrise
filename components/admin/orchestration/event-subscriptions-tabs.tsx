@@ -90,8 +90,9 @@ export function EventSubscriptionsTabs({
       <TabsContent value="dlq">
         <p className="text-muted-foreground mb-4 flex items-center gap-1.5 text-sm">
           <span>
-            Exhausted webhook deliveries across all subscriptions you own. Retry once the receiver
-            is fixed, or discard rows you&apos;ve already reviewed.
+            Exhausted webhook deliveries across all subscriptions you own, and those kept after
+            their subscription was deleted. Retry once the receiver is fixed, or discard rows
+            you&apos;ve already reviewed.
           </span>
           <FieldHelp title="Dead letter queue overview" contentClassName="w-96">
             <p>

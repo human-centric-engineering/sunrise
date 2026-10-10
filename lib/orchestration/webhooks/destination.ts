@@ -5,21 +5,24 @@
  * (the subscription or hook) holds only the CURRENT destination, can be edited,
  * and can be deleted, so the row carries its own:
  *
- * - `destination`: readable, and safe to show and export. A URL is reduced by
- *   `loggableUrl` to its origin plus collapsed path; the query string, userinfo
- *   and fragment are dropped, because a webhook URL often carries its
- *   credential in one of those, or in a path segment. An email address is kept
- *   as it is.
- * - `destinationFingerprint`: a keyed HMAC of the FULL destination. The reduced
- *   form cannot tell one `https://hooks.slack.com/services/[param]/…` from
- *   another, which is exactly the question an auditor asks ("was it sent to OUR
- *   Slack?"). With the fingerprint, an operator with server access can confirm
+ * - `destination`: readable, and safe to show and export. A URL is recorded
+ *   as its **origin only** — scheme, host and port. A webhook URL often
+ *   carries its credential in the path, the query, the userinfo or the
+ *   fragment, and no heuristic can tell a short path token from a route name
+ *   (`loggableUrl`, built for log lines, keeps any segment it does not
+ *   recognise as an id), so none of them is kept. An email address is kept,
+ *   trimmed and lower-cased so that subject access and erasure can find it by
+ *   an exact match (see {@link webhookDeliveriesAddressedTo}).
+ * - `destinationFingerprint`: a keyed HMAC of the FULL destination. The origin
+ *   cannot tell one `https://hooks.slack.com` webhook from another, which is
+ *   exactly the question an auditor asks ("was it sent to OUR Slack?"). With the fingerprint, an operator with server access can confirm
  *   an exact URL (`fingerprintDestination`) and tell whether two deliveries went
  *   to the same place, without the row holding the secret.
  *
  * **Keyed, not a plain hash.** Delivery rows go out in the org export
  * (`lib/privacy/org-sources.ts`), and a plain SHA-256 of a URL whose secret is a
- * short path segment could be brute-forced offline from that file. The key is
+ * short path segment could be brute-forced offline from that file, given the
+ * rest of the URL. The key is
  * an HKDF subkey of `BETTER_AUTH_SECRET`, domain-separated by its `info` label
  * the way `lib/logging/visitor-id.ts` separates its own. So rotating that
  * secret makes older fingerprints unverifiable. A retry after rotation then
@@ -39,7 +42,6 @@ import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logging';
-import { loggableUrl } from '@/lib/logging/redact-path';
 
 /**
  * HKDF `info` label. It separates this subkey from every other use of
@@ -63,6 +65,11 @@ export interface RecordedDestination {
   destination: string | null;
   destinationFingerprint: string | null;
   previousDestinations: Prisma.JsonValue | null;
+}
+
+/** The delivery row fields an attempt reads: its id and what it already records. */
+export interface DeliveryLike extends RecordedDestination {
+  id: string;
 }
 
 const previousDestinationsSchema = z.array(
@@ -98,11 +105,74 @@ export function fingerprintDestination(channel: DestinationChannel, raw: string)
   return `${FINGERPRINT_VERSION}:${mac}`;
 }
 
-/** The readable form and the fingerprint of one full destination. */
+/** An email address as a delivery row records it: trimmed and lower-cased. */
+export function normaliseAddress(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
+/**
+ * A URL's origin — the only part of it a delivery row records. Anything that
+ * does not parse as an http(s) URL is replaced, never echoed, the way
+ * `loggableUrl` treats it.
+ */
+function originOf(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return '[unparseable-url]';
+  }
+  return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+    ? parsed.origin
+    : '[non-http-url]';
+}
+
+/**
+ * The readable form and the fingerprint of one full destination. An email
+ * address is normalised before both, so the same inbox always yields the same
+ * pair however the subscription spelled it.
+ */
 export function describeDestination(channel: DestinationChannel, raw: string): DeliveryDestination {
+  if (channel === 'email') {
+    const address = normaliseAddress(raw);
+    return {
+      destination: address,
+      destinationFingerprint: fingerprintDestination('email', address),
+    };
+  }
   return {
-    destination: channel === 'email' ? raw : loggableUrl(raw),
-    destinationFingerprint: fingerprintDestination(channel, raw),
+    destination: originOf(raw),
+    destinationFingerprint: fingerprintDestination('webhook', raw),
+  };
+}
+
+/**
+ * The `where` that selects the webhook deliveries sent to a data subject's
+ * email address — now or before a retry moved them on — or `null` when none can
+ * be attributed to them. Subject access (`export-sources.ts`) and erasure
+ * (`erase-user.ts`) both match through this, so the two cannot drift apart.
+ *
+ * Only for a **verified** address, on the contact-form rule
+ * (`lib/privacy/contact-submissions.ts`): with verification off anyone can open
+ * an account under someone else's address, and matching it would hand them the
+ * notifications another person received, or erase that person's record.
+ *
+ * ⚠️ Exact, on the normalised address {@link describeDestination} writes —
+ * never `mode: 'insensitive'`, which Prisma compiles to an unescaped `ILIKE`, so
+ * `_` and `%` in an address would match other people's rows. The JSON half is a
+ * `@>` containment, exact for the same reason.
+ */
+export function webhookDeliveriesAddressedTo(subject: {
+  email: string;
+  emailVerified: boolean;
+}): Prisma.AiWebhookDeliveryWhereInput | null {
+  if (!subject.emailVerified) return null;
+  const address = normaliseAddress(subject.email);
+  return {
+    OR: [
+      { destination: address },
+      { previousDestinations: { array_contains: [{ destination: address }] } },
+    ],
   };
 }
 
@@ -124,10 +194,10 @@ export function subscriptionDestination(sub: {
 
 /**
  * A recorded destination that may be written somewhere longer-lived than the
- * delivery row, such as the admin audit log: the reduced URL, or `null` for an
+ * delivery row, such as the admin audit log: the URL's origin, or `null` for an
  * email address. The audit log is kept through a person's erasure (its actor
  * is `SetNull`), so an address written there would outlive the erasure of the
- * person it belongs to. A reduced URL is always `http(s)://…`; an email
+ * person it belongs to. A recorded URL is always `http(s)://…`; an email
  * address never is.
  */
 export function auditableDestination(destination: string | null): string | null {
@@ -154,10 +224,10 @@ export function redactAddressInHistory(
   address: string
 ): PreviousDestination[] | null {
   const history = readPreviousDestinations(value);
-  const target = address.toLowerCase();
+  const target = normaliseAddress(address);
   let changed = false;
   const redacted = history.map((entry) => {
-    if (entry.destination.toLowerCase() !== target) return entry;
+    if (entry.destination !== target) return entry;
     changed = true;
     return { ...entry, destination: ERASED_DESTINATION, destinationFingerprint: null };
   });

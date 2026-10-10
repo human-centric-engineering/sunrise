@@ -7,7 +7,7 @@
  * on the parent FK), not by any line of application code, so only a real
  * database can show it. In order:
  *
- *   1. A webhook delivery records the reduced URL and a keyed fingerprint of
+ *   1. A webhook delivery records the URL's origin and a keyed fingerprint of
  *      the full one, and neither holds the URL's query secret or path token.
  *   2. Editing the subscription changes nothing on the row; a retry after the
  *      edit records the new destination and keeps the old one in
@@ -38,6 +38,7 @@
 import { prisma } from '@/lib/db/client';
 import { eraseUser } from '@/lib/privacy/erase-user';
 import { ORG_DATA_SOURCES } from '@/lib/privacy/org-sources';
+import { SUBJECT_DATA_SOURCES } from '@/lib/privacy/export-sources';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
@@ -149,8 +150,8 @@ async function main(): Promise<void> {
     webhookDeliveryIds.push(sent.id);
     check(sent.status === 'exhausted', 'the failed delivery is exhausted (one attempt)');
     check(
-      sent.destination === 'https://hooks.smoke-test.example/services/[param]',
-      `destination is the reduced URL (${sent.destination})`
+      sent.destination === 'https://hooks.smoke-test.example',
+      `destination is the URL's origin (${sent.destination})`
     );
     check(
       sent.destinationFingerprint === fingerprintDestination('webhook', FIRST_URL),
@@ -175,7 +176,7 @@ async function main(): Promise<void> {
     const retried = await prisma.aiWebhookDelivery.findUniqueOrThrow({ where: { id: sent.id } });
     check(retried.status === 'delivered', 'the retry delivered');
     check(
-      retried.destination === 'https://edited.smoke-test.example/in/[param]',
+      retried.destination === 'https://edited.smoke-test.example',
       'the row now names the edited destination'
     );
     const previous = retried.previousDestinations;
@@ -214,8 +215,25 @@ async function main(): Promise<void> {
     });
     webhookDeliveryIds.push(selfNotified.id);
     check(
-      selfNotified.destination === user.email.toUpperCase(),
-      'an email-channel delivery records the address'
+      selfNotified.destination === user.email.toLowerCase(),
+      'an email-channel delivery records the address, normalised'
+    );
+    const subjectSource = SUBJECT_DATA_SOURCES.find((s) => s.section === 'notificationsSentToYou');
+    if (!subjectSource) throw new Error('no subject source for notificationsSentToYou');
+    const theirs = await subjectSource.fetch({
+      userId: user.id,
+      email: user.email,
+      emailVerified: true,
+    });
+    check(
+      theirs.some(
+        (r) => typeof r === 'object' && r !== null && 'id' in r && r.id === selfNotified.id
+      ),
+      'the subject-access export finds the notification emailed to them'
+    );
+    check(
+      !theirs.some((r) => typeof r === 'object' && r !== null && 'payload' in r),
+      'without its event payload'
     );
 
     // ── 3. Erase the creator: the subscription goes, the delivery stays ──
@@ -277,8 +295,8 @@ async function main(): Promise<void> {
     if (!hookDelivery) throw new Error('no hook delivery row');
     hookDeliveryIds.push(hookDelivery.id);
     check(
-      hookDelivery.destination === 'https://hook.smoke-test.example/events/[param]',
-      `the hook delivery records the reduced URL (${hookDelivery.destination})`
+      hookDelivery.destination === 'https://hook.smoke-test.example',
+      `the hook delivery records the URL's origin (${hookDelivery.destination})`
     );
     check(
       hookDelivery.destinationFingerprint === fingerprintDestination('webhook', HOOK_URL),

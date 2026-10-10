@@ -33,7 +33,7 @@ import { notRetried } from '@/lib/orchestration/webhooks/not-retried';
 import {
   destinationUpdate,
   subscriptionDestination,
-  type RecordedDestination,
+  type DeliveryLike,
 } from '@/lib/orchestration/webhooks/destination';
 
 const DISPATCH_TIMEOUT_MS = 5000;
@@ -72,11 +72,6 @@ interface SubscriptionLike {
   emailAddress: string | null;
   maxAttempts?: number | null;
   retryBackoffMs?: number[] | null;
-}
-
-/** The delivery row fields an attempt reads: its id and what it already records. */
-interface DeliveryLike extends RecordedDestination {
-  id: string;
 }
 
 function resolveRetryPolicy(sub: {

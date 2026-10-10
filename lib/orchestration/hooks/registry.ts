@@ -46,7 +46,7 @@ import { notRetried } from '@/lib/orchestration/webhooks/not-retried';
 import {
   describeDestination,
   destinationUpdate,
-  type RecordedDestination,
+  type DeliveryLike,
 } from '@/lib/orchestration/webhooks/destination';
 import { requireTenantContext } from '@/lib/tenancy/context';
 
@@ -64,11 +64,6 @@ const RETRY_DELAYS_MS = [10_000, 60_000, 300_000];
 
 /** Why a retry stopped when its hook was deleted in the meantime. */
 const HOOK_DELETED = 'hook deleted';
-
-/** The delivery row fields an attempt reads: its id and what it already records. */
-interface DeliveryLike extends RecordedDestination {
-  id: string;
-}
 
 interface CachedHook {
   id: string;

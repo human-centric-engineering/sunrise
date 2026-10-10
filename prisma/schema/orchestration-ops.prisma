@@ -69,9 +69,9 @@ model AiWebhookDelivery {
   lastError        String?   @db.Text
   createdAt        DateTime  @default(now())
 
-  // Where the latest attempt was sent: the URL reduced by `loggableUrl` (no
-  // query, userinfo or fragment), or the email address. Null on rows that
-  // predate destination recording and were never backfilled.
+  // Where the latest attempt was sent: the URL's origin only (no path, query,
+  // userinfo or fragment), or the email address, trimmed and lower-cased. Null
+  // on rows that predate destination recording and were never backfilled.
   destination            String? @db.Text
   // Keyed HMAC of the full destination, so an operator can confirm an exact URL
   // without the row holding the secret a webhook URL often carries.

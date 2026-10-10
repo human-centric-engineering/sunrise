@@ -14,7 +14,7 @@
  * points now. Rows whose parent is already gone stay NULL, which the admin UI
  * shows as "Destination not recorded".
  *
- * Not SQL in the migration, because the reduced form (`loggableUrl`) and the
+ * Not SQL in the migration, because the reduced form (the URL's origin) and the
  * keyed fingerprint are computed in application code with a key the database
  * cannot see. Runs in the system scope so it reaches every org's rows at
  * `TENANCY_MODE=multi`, including suspended orgs, which `forEachOrg` skips.

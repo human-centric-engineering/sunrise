@@ -298,7 +298,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     section: 'eventHookDeliveries',
     disposition: 'export',
     description:
-      'Each attempt to deliver an event to a hook: the payload, the outcome, and where it was sent. The address is reduced to its origin and path, so it holds no credential, and carries a keyed fingerprint of the full address.',
+      'Each attempt to deliver an event to a hook: the payload, the outcome, and where it was sent. The address is recorded as its origin only, so it holds no credential, with a keyed fingerprint of the full address.',
     fetch: ({ orgId }) =>
       prisma.aiEventHookDelivery.findMany({
         where: ownedBy(orgId),
@@ -323,7 +323,7 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
     section: 'webhookDeliveries',
     disposition: 'export',
     description:
-      'Each attempt to deliver an event to a webhook subscription: the payload, the outcome, and where it was sent. A URL is reduced to its origin and path, so it holds no credential, and carries a keyed fingerprint of the full address.',
+      'Each attempt to deliver an event to a webhook subscription: the payload, the outcome, and where it was sent. A URL is recorded as its origin only, so it holds no credential, with a keyed fingerprint of the full address.',
     fetch: ({ orgId }) =>
       prisma.aiWebhookDelivery.findMany({
         where: ownedBy(orgId),

@@ -7,8 +7,8 @@
 -- The org_isolation policies on both tables key on "orgId" and are unaffected.
 --
 -- The three new columns are left NULL here. Existing rows are backfilled by the
--- `022-delivery-destinations` seed unit, because the reduced form
--- (`loggableUrl`) and the keyed fingerprint are computed in application code
+-- `022-delivery-destinations` seed unit, because the reduced form (the URL's
+-- origin) and the keyed fingerprint are computed in application code
 -- with a key SQL cannot see. That backfill reads each row's CURRENT parent, so
 -- it is the best available value, not a record of where the row was sent.
 

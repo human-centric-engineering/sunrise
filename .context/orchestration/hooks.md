@@ -322,7 +322,7 @@ Every dispatch attempt creates an `AiEventHookDelivery` row (see [Webhook Action
 
 ## Retention
 
-Each row records where it was sent (`destination`, the reduced URL, and `destinationFingerprint`, a keyed HMAC of the full one), and outlives its hook: deleting a hook sets `hookId` to null rather than deleting its history. A retry follows the hook's current URL and keeps the previous destination in `previousDestinations`; a retry of a delivery whose hook was deleted is refused (the retry route answers `409`) and the maintenance tick marks it `exhausted`, appending `(not retried: hook deleted)` to its last real error. The rules are the webhook subscriptions' — see [Where a delivery went](../admin/orchestration-webhooks.md#where-a-delivery-went).
+Each row records where it was sent (`destination`, the URL's origin, and `destinationFingerprint`, a keyed HMAC of the full URL), and outlives its hook: deleting a hook sets `hookId` to null rather than deleting its history. A retry follows the hook's current URL and keeps the previous destination in `previousDestinations`; a retry of a delivery whose hook was deleted is refused (the retry route answers `409`) and the maintenance tick marks it `exhausted`, appending `(not retried: hook deleted)` to its last real error. The rules are the webhook subscriptions' — see [Where a delivery went](../admin/orchestration-webhooks.md#where-a-delivery-went).
 
 Delivery rows persist across process restarts so admins can audit failures and manually retry. They are pruned by `pruneHookDeliveries()` in `lib/orchestration/retention.ts`, invoked from the unified maintenance tick alongside the other retention sweeps.
 

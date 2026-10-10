@@ -229,12 +229,13 @@ erased — `smoke:erasure` is where that assertion belongs.
 
 A table can identify a person without declaring a Prisma relation to `User` —
 and then it is invisible to a relation-based scan, **and to the erasure
-cascade**. Sunrise has two, both in the manifest by hand:
+cascade**. Sunrise has three, all in the manifest by hand:
 
-| Table               | Identified by                    | How it is matched                                    |
-| ------------------- | -------------------------------- | ---------------------------------------------------- |
-| `ContactSubmission` | `email` — no user id at all      | `email`, exactly, normalised; verified accounts only |
-| `FeatureFlag`       | `createdBy String?`, no relation | `createdBy`, as an attribution source                |
+| Table               | Identified by                                       | How it is matched                                                                              |
+| ------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `ContactSubmission` | `email` — no user id at all                         | `email`, exactly, normalised; verified accounts only                                           |
+| `FeatureFlag`       | `createdBy String?`, no relation                    | `createdBy`, as an attribution source                                                          |
+| `AiWebhookDelivery` | `destination` — an email-channel delivery's address | `destination` (or a `previousDestinations` entry), exactly, normalised; verified accounts only |
 
 The guard casts **two nets**, because the first one missed both of these:
 
@@ -251,7 +252,12 @@ note, not an escape hatch — anything added to it still owes a reader a reason.
 
 Being invisible to the cascade means erasure needs its own step for each.
 `eraseUser()` deletes `ContactSubmission` rows through the same matcher the
-manifest uses (`contactSubmissionsOf()`); see
+manifest uses (`contactSubmissionsOf()`), and redacts the address on
+`AiWebhookDelivery` rows through `webhookDeliveriesAddressedTo()` — a
+delivery outlives its subscription (§109 t-739), so the address a
+notification was emailed to stays on the row after the exported subscription
+is gone. The export section (`notificationsSentToYou`) carries when, which
+event and whether it was delivered, not the event payload; see
 [What `eraseUser()` Does Beyond the Cascade](./data-erasure.md#what-eraseuser-does-beyond-the-cascade).
 
 **Neither net can reach `ContactSubmission`.** It holds no user id in any

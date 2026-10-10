@@ -41,6 +41,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { contactSubmissionsOf } from '@/lib/privacy/contact-submissions';
+import { webhookDeliveriesAddressedTo } from '@/lib/orchestration/webhooks/destination';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 
 /** How a `User`-linked model is represented in a subject export. */
@@ -284,6 +285,36 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
       const where = contactSubmissionsOf(subject);
       if (!where) return [];
       return prisma.contactSubmission.findMany({ where, orderBy: byCreatedAt });
+    },
+  },
+  {
+    model: 'AiWebhookDelivery',
+    section: 'notificationsSentToYou',
+    disposition: 'export',
+    description:
+      'Event notifications the organisation emailed to the subject’s address: when, which event, and whether it was delivered — not the event itself, which describes the organisation’s activity rather than the subject. These records outlive the subscription that sent them. Included only once the account has verified that address.',
+    // ⚠️ Keyed by address, like `ContactSubmission` above, and for the same
+    // reason no net finds it: a delivery has no user column, and since §109
+    // t-739 it outlives its subscription, so the address it was emailed to
+    // can stay on the row after the subscription (which this manifest exports
+    // under `notificationSubscriptions`) is gone. Matched through the rule
+    // erasure redacts with — exact on the normalised address, verified only.
+    fetch: async (subject: SubjectQuery): Promise<unknown[]> => {
+      const where = webhookDeliveriesAddressedTo(subject);
+      if (!where) return [];
+      return prisma.aiWebhookDelivery.findMany({
+        where,
+        select: {
+          id: true,
+          eventType: true,
+          status: true,
+          destination: true,
+          previousDestinations: true,
+          lastAttemptAt: true,
+          createdAt: true,
+        },
+        orderBy: byCreatedAt,
+      });
     },
   },
   {

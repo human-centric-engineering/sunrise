@@ -33,8 +33,8 @@ release process.
 
 - **A webhook or event-hook delivery records where it was sent, and outlives
   the subscription or hook that sent it** (§109 t-739). `AiWebhookDelivery` and
-  `AiEventHookDelivery` gain `destination` (the URL reduced to origin and path,
-  so it holds no URL secret, or the email address), `destinationFingerprint` (a
+  `AiEventHookDelivery` gain `destination` (the URL's origin only, so it holds
+  no URL secret, or the email address, normalised), `destinationFingerprint` (a
   keyed HMAC of the full destination; `fingerprintDestination()` in
   `lib/orchestration/webhooks/destination.ts` checks a URL against it) and
   `previousDestinations` (the earlier ones, when a retry followed an edited
@@ -47,11 +47,14 @@ release process.
   tick abandons keeps its last real error with `(not retried: …)` appended. The
   webhook DLQ routes show such a delivery to the admins the authorization
   policy permits an unattributed read (platform admins by default), and
-  retention prunes it by age as before. `eraseUser()` redacts the erased
-  person's own address from the deliveries their subscriptions sent. `GET
-  /webhooks/dlq` no longer returns the subscription's `url` (which can carry a
-  credential), and the `webhook_delivery.delete` audit entry names the reduced
-  URL rather than the subscription's full one, and no email address.
+  retention prunes it by age as before. A delivery emailed to a person is
+  theirs to see and to have erased: the subject-access export gains a
+  `notificationsSentToYou` section, and `eraseUser()` redacts the address on
+  every such delivery to `[erased]` — both for a verified address only, matched
+  exactly on the normalised form. `GET /webhooks/dlq` no longer returns the
+  subscription's `url` (which can carry a credential), and the
+  `webhook_delivery.delete` audit entry names the delivery's origin rather than
+  the subscription's full URL, and no email address.
   **Migration** `20261008120000_delivery_destination`; then run
   `npm run db:seed` so the `022-delivery-destinations` unit fills existing rows
   from their current subscription or hook (the best available value, not a

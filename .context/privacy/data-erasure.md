@@ -65,10 +65,14 @@ subscription cascades with its creator, but its `AiWebhookDelivery` rows do
 not: their parent FK is `SetNull`, so they survive as the org's record of where
 its events went — the payloads are about the org's customers, not about the
 admin who configured the subscription. Each row records its destination, and
-for an email-channel subscription a person pointed at themselves that is their
-own address, so `eraseUser()` redacts it: a destination equal to the subject's
-address (case-insensitive) becomes `[erased]`, its fingerprint is dropped, and
-the same goes for any earlier destination in `previousDestinations`. What the
+for a notification emailed to a person that is their own address — whoever's
+subscription sent it, and whether or not it still exists — so `eraseUser()`
+redacts it: a destination equal to the subject's verified address becomes
+`[erased]`, its fingerprint is dropped, and the same goes for any earlier
+destination in `previousDestinations`. It matches through the same rule as
+subject access (`webhookDeliveriesAddressedTo()`: exact on the normalised
+address, never `ILIKE`), so an unverified account's address, which may be a
+stranger's inbox, is left alone. What the
 payloads say about other people — an escalated customer's id, say — is not
 reached by any erasure today; that is t-783. Event-hook deliveries behave the
 same way (`SetNull` on the hook), and hooks already survive their creator.

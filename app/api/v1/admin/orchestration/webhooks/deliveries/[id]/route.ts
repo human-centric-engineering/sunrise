@@ -11,7 +11,7 @@
  * Authentication: Admin only. The delivery's parent subscription must
  * belong to the calling admin, or have been deleted where the authorization
  * policy permits it (`webhook-delivery-access.ts`). The audit entry names the
- * delivery's recorded URL, reduced so it holds no secret; an email address is
+ * delivery's recorded URL origin, which holds no secret; an email address is
  * not written to the audit log, which outlives erasure.
  */
 

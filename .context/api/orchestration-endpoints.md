@@ -1341,7 +1341,7 @@ Standard CRUD for a single event subscription. Scoped to `session.user.id` — c
 
 ### `DELETE /webhooks/deliveries/:id`
 
-Permanently delete a single webhook delivery row (typically used from the DLQ to discard a reviewed failure). Verifies the calling admin owns the parent subscription, or — when the subscription was deleted — that the authorization policy permits them an unattributed read (`webhookDelivery` kind; platform admins by default). Audit-logged as `webhook_delivery.delete`, naming the delivery's reduced URL; an email-channel delivery's address is not written to the audit log.
+Permanently delete a single webhook delivery row (typically used from the DLQ to discard a reviewed failure). Verifies the calling admin owns the parent subscription, or — when the subscription was deleted — that the authorization policy permits them an unattributed read (`webhookDelivery` kind; platform admins by default). Audit-logged as `webhook_delivery.delete`, naming the delivery's origin; an email-channel delivery's address is not written to the audit log.
 
 ### `GET /webhooks/dlq`
 
