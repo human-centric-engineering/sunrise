@@ -74,6 +74,18 @@ describe('EventSubscriptionsTabs', () => {
     expect(screen.getByTestId('webhook-dlq-table-mock')).toBeInTheDocument();
   });
 
+  it('describes the DLQ as covering deliveries kept after their subscription was deleted', () => {
+    activeTabState = 'dlq';
+
+    render(<EventSubscriptionsTabs {...baseProps} />);
+
+    expect(
+      screen.getByText(
+        /Exhausted webhook deliveries across all subscriptions you own, and those kept after their subscription was deleted\./
+      )
+    ).toBeInTheDocument();
+  });
+
   it('clicking the DLQ tab invokes setActiveTab("dlq")', async () => {
     activeTabState = 'subscriptions';
     setActiveTabMock.mockClear();

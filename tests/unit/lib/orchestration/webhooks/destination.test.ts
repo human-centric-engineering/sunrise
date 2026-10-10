@@ -23,8 +23,10 @@ import {
   describeDestination,
   destinationUpdate,
   fingerprintDestination,
+  normaliseAddress,
   redactAddressInHistory,
   subscriptionDestination,
+  webhookDeliveriesAddressedTo,
 } from '@/lib/orchestration/webhooks/destination';
 
 const TOKEN = 'Ab3dEf6hIj9kLm2nOp5qRs8t';
@@ -35,25 +37,78 @@ beforeEach(() => {
 });
 
 describe('describeDestination', () => {
-  it('drops query, userinfo, fragment and a token-like path segment from both columns', () => {
+  it('records a webhook URL as its origin only: no path, query, userinfo or fragment', () => {
     const raw = `https://user:pa55word@hooks.example.com/services/${TOKEN}/send?key=QSECRET#FSECRET`;
 
     const result = describeDestination('webhook', raw);
 
-    // Population first: the reduced form is a real URL on the right host, so
-    // the absence checks below are not vacuous.
-    expect(result.destination).toBe('https://hooks.example.com/services/[param]/send');
-    for (const secret of [TOKEN, 'QSECRET', 'FSECRET', 'pa55word', 'user:']) {
+    // Population first: the origin is a real URL on the right host, so the
+    // absence checks below are not vacuous.
+    expect(result.destination).toBe('https://hooks.example.com');
+    for (const secret of [TOKEN, 'QSECRET', 'FSECRET', 'pa55word', 'user:', 'services', 'send']) {
       expect(result.destination).not.toContain(secret);
       expect(result.destinationFingerprint).not.toContain(secret);
     }
   });
 
-  it('keeps an email address verbatim', () => {
-    const result = describeDestination('email', 'Alerts@Example.com');
+  it('keeps a non-default port in the origin and drops the default one', () => {
+    expect(describeDestination('webhook', 'https://hooks.example.com:8443/a/b').destination).toBe(
+      'https://hooks.example.com:8443'
+    );
+    expect(describeDestination('webhook', 'https://hooks.example.com:443/a/b').destination).toBe(
+      'https://hooks.example.com'
+    );
+  });
 
-    expect(result.destination).toBe('Alerts@Example.com');
-    expect(result.destinationFingerprint).toMatch(/^v1:/);
+  it('replaces a non-http URL and an unparseable string, never echoing them', () => {
+    const ftp = describeDestination('webhook', 'ftp://host.example.com/secret-path');
+    const junk = describeDestination('webhook', 'not a url secret-token');
+
+    expect(ftp.destination).toBe('[non-http-url]');
+    expect(junk.destination).toBe('[unparseable-url]');
+    expect(junk.destination).not.toContain('secret-token');
+    // The fingerprint is still over the full raw value, so each stays distinguishable.
+    expect(ftp.destinationFingerprint).toBe(
+      fingerprintDestination('webhook', 'ftp://host.example.com/secret-path')
+    );
+  });
+
+  it('fingerprints the FULL raw URL, not the origin', () => {
+    const raw = `https://hooks.example.com/services/${TOKEN}?k=1`;
+
+    const { destinationFingerprint } = describeDestination('webhook', raw);
+
+    expect(destinationFingerprint).toBe(fingerprintDestination('webhook', raw));
+    expect(destinationFingerprint).not.toBe(
+      fingerprintDestination('webhook', 'https://hooks.example.com')
+    );
+  });
+
+  it('gives two URLs with the same origin but different paths different fingerprints', () => {
+    const a = describeDestination('webhook', `https://hooks.slack.com/services/${TOKEN}`);
+    const b = describeDestination(
+      'webhook',
+      'https://hooks.slack.com/services/Zy9xWv8uTs7rQp6oNm5lKj4i'
+    );
+
+    expect(a.destination).toBe('https://hooks.slack.com');
+    expect(b.destination).toBe(a.destination);
+    expect(a.destinationFingerprint).not.toBe(b.destinationFingerprint);
+  });
+
+  it('stores an email address trimmed and lower-cased, fingerprinted over the normalised form', () => {
+    const result = describeDestination('email', ' Alerts@Example.com ');
+
+    expect(result.destination).toBe('alerts@example.com');
+    expect(result.destinationFingerprint).toBe(
+      fingerprintDestination('email', 'alerts@example.com')
+    );
+  });
+
+  it('gives identical pairs for differently-spelled forms of the same address', () => {
+    expect(describeDestination('email', 'A@X.com ')).toEqual(
+      describeDestination('email', 'a@x.com')
+    );
   });
 
   it('prefixes the fingerprint with v1: followed by a base64url MAC', () => {
@@ -61,17 +116,53 @@ describe('describeDestination', () => {
 
     expect(destinationFingerprint).toMatch(/^v1:[A-Za-z0-9_-]{43}$/);
   });
+});
 
-  it('gives two URLs with the same reduced form different fingerprints', () => {
-    const a = describeDestination('webhook', `https://hooks.slack.com/services/${TOKEN}`);
-    const b = describeDestination(
-      'webhook',
-      'https://hooks.slack.com/services/Zy9xWv8uTs7rQp6oNm5lKj4i'
-    );
+describe('normaliseAddress', () => {
+  it('trims and lower-cases', () => {
+    expect(normaliseAddress('  Person@Example.COM\t')).toBe('person@example.com');
+  });
+});
 
-    expect(a.destination).toBe('https://hooks.slack.com/services/[param]');
-    expect(b.destination).toBe(a.destination);
-    expect(a.destinationFingerprint).not.toBe(b.destinationFingerprint);
+describe('webhookDeliveriesAddressedTo', () => {
+  it('returns null for an unverified account', () => {
+    expect(
+      webhookDeliveriesAddressedTo({ email: 'person@example.com', emailVerified: false })
+    ).toBeNull();
+  });
+
+  it('returns the exact destination / history-containment where for a verified account, on the normalised address', () => {
+    const where = webhookDeliveriesAddressedTo({
+      email: ' Person@Example.com ',
+      emailVerified: true,
+    });
+
+    expect(where).toEqual({
+      OR: [
+        { destination: 'person@example.com' },
+        { previousDestinations: { array_contains: [{ destination: 'person@example.com' }] } },
+      ],
+    });
+  });
+
+  it('never uses a case-insensitive (ILIKE) mode anywhere in the where', () => {
+    const where = webhookDeliveriesAddressedTo({ email: 'a_b%c@example.com', emailVerified: true });
+
+    // Population first: a real where came back.
+    expect(where).not.toBeNull();
+    expect(JSON.stringify(where)).not.toContain('mode');
+    expect(JSON.stringify(where)).not.toContain('insensitive');
+  });
+
+  it('passes an address containing _ or % through literally', () => {
+    const where = webhookDeliveriesAddressedTo({ email: 'a_b%c@Example.com', emailVerified: true });
+
+    expect(where).toEqual({
+      OR: [
+        { destination: 'a_b%c@example.com' },
+        { previousDestinations: { array_contains: [{ destination: 'a_b%c@example.com' }] } },
+      ],
+    });
   });
 });
 
@@ -204,7 +295,7 @@ describe('destinationUpdate', () => {
 });
 
 describe('auditableDestination', () => {
-  it.each(['https://hooks.example.com/services/[param]', 'http://hooks.example.com/a'])(
+  it.each(['https://hooks.example.com', 'http://hooks.example.com:8080'])(
     'passes the reduced URL %s through',
     (url) => {
       expect(auditableDestination(url)).toBe(url);
@@ -225,7 +316,7 @@ describe('auditableDestination', () => {
 describe('redactAddressInHistory', () => {
   const UNTIL = '2026-01-01T00:00:00.000Z';
   const mine = {
-    destination: 'Person@Example.com',
+    destination: 'person@example.com',
     destinationFingerprint: 'v1:mine',
     until: UNTIL,
   };
@@ -239,8 +330,8 @@ describe('redactAddressInHistory', () => {
     expect(ERASED_DESTINATION).toBe('[erased]');
   });
 
-  it('redacts only the matching entries, case-insensitively, clearing the fingerprint', () => {
-    const result = redactAddressInHistory([other, mine], 'person@example.com');
+  it('redacts only the matching entries, normalising the supplied address, clearing the fingerprint', () => {
+    const result = redactAddressInHistory([other, mine], ' Person@Example.com ');
 
     expect(result).toEqual([
       other,
@@ -260,6 +351,14 @@ describe('redactAddressInHistory', () => {
       '[erased]',
     ]);
     expect(result?.filter((e) => e.destinationFingerprint === null)).toHaveLength(2);
+  });
+
+  it('compares exactly: a stored entry that is not normalised is not matched', () => {
+    // Stored entries are written normalised, so a differently-cased one is not
+    // this module's; the comparison is `===`, not case-insensitive.
+    const stray = { ...mine, destination: 'Person@Example.com' };
+
+    expect(redactAddressInHistory([stray], 'person@example.com')).toBeNull();
   });
 
   it('returns null when nothing matched, so the caller writes no row', () => {

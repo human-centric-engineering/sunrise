@@ -73,6 +73,7 @@ vi.mock('@/lib/db/client', () => ({
     },
     contactSubmission: {
       deleteMany: vi.fn(),
+      count: vi.fn(),
     },
     aiWebhookDelivery: {
       updateMany: vi.fn(),
@@ -773,6 +774,58 @@ describe('DELETE /api/v1/users/:id', () => {
       expect(prisma.user.delete).toHaveBeenCalledWith({
         where: { id: TARGET_USER_ID },
       });
+    });
+
+    it('redacts the stored address on deliveries sent to it, from the user row rather than the session, before deleting the user', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(makeUserFixture({ role: 'USER' }));
+      vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([
+        { id: 'del-1', destination: 'stored-target@example.com', previousDestinations: null },
+      ] as never);
+
+      const response = await DELETE(makeDeleteRequest(TARGET_USER_ID), makeContext(TARGET_USER_ID));
+
+      expect(response.status).toBe(200);
+      expect(prisma.aiWebhookDelivery.findMany).toHaveBeenCalledWith({
+        where: {
+          OR: [
+            { destination: 'stored-target@example.com' },
+            {
+              previousDestinations: {
+                array_contains: [{ destination: 'stored-target@example.com' }],
+              },
+            },
+          ],
+        },
+        select: { id: true, destination: true, previousDestinations: true },
+      });
+      expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith({
+        where: { id: 'del-1' },
+        data: { destination: '[erased]', destinationFingerprint: null },
+      });
+      expect(prisma.aiWebhookDelivery.updateMany).not.toHaveBeenCalled();
+      const updateOrder = vi.mocked(prisma.aiWebhookDelivery.update).mock.invocationCallOrder[0];
+      const deleteOrder = vi.mocked(prisma.user.delete).mock.invocationCallOrder[0];
+      expect(updateOrder).toBeLessThan(deleteOrder);
+    });
+
+    it('touches no deliveries when the stored address is unverified', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(makeUserFixture({ role: 'USER' }));
+      vi.mocked(prisma.user.findUniqueOrThrow).mockResolvedValue({
+        email: 'stored-target@example.com',
+        emailVerified: false,
+      } as never);
+      // An unverified address skips the delete and only counts what it left behind.
+      vi.mocked(prisma.contactSubmission.count).mockResolvedValue(0);
+
+      const response = await DELETE(makeDeleteRequest(TARGET_USER_ID), makeContext(TARGET_USER_ID));
+
+      // Population: the erasure ran.
+      expect(response.status).toBe(200);
+      expect(prisma.user.delete).toHaveBeenCalledTimes(1);
+      expect(prisma.aiWebhookDelivery.findMany).not.toHaveBeenCalled();
+      expect(prisma.aiWebhookDelivery.update).not.toHaveBeenCalled();
     });
   });
 

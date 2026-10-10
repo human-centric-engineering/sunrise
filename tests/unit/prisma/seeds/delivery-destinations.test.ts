@@ -92,8 +92,8 @@ describe('022-delivery-destinations seed', () => {
       where: { subscriptionId: 'sub-1', destination: null },
       data: expected,
     });
-    // The write carries the reduced form, never the raw secret-bearing URL.
-    expect(expected.destination).toBe('https://hooks.example.com/services/[param]');
+    // The write carries the origin only, never the raw secret-bearing URL.
+    expect(expected.destination).toBe('https://hooks.example.com');
     expect(JSON.stringify(expected)).not.toContain('Ab3dEf6hIj9kLm2nOp5qRs8t');
   });
 

@@ -309,6 +309,59 @@ describe('exportUserData', () => {
     });
   });
 
+  describe('webhook deliveries sent to the subject (notificationsSentToYou)', () => {
+    const NORMALISED = 'subject@example.com';
+
+    it('reads exactly the deliveries addressed to the normalised address, selecting no payload', async () => {
+      // SUBJECT.email is 'Subject@Example.com': the where must carry the
+      // normalised form, since that is how a delivery row records it.
+      await exportUserData(PARAMS);
+
+      expect(callsTo('aiWebhookDelivery')).toHaveLength(1);
+      expect(argsTo('aiWebhookDelivery')).toEqual({
+        where: {
+          OR: [
+            { destination: NORMALISED },
+            { previousDestinations: { array_contains: [{ destination: NORMALISED }] } },
+          ],
+        },
+        select: {
+          id: true,
+          eventType: true,
+          status: true,
+          destination: true,
+          previousDestinations: true,
+          lastAttemptAt: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+      const select = argsTo('aiWebhookDelivery').select as Record<string, unknown>;
+      expect(Object.keys(select)).not.toContain('payload');
+      expect(JSON.stringify(argsTo('aiWebhookDelivery'))).not.toContain('insensitive');
+    });
+
+    it('returns the rows the read produced under notificationsSentToYou', async () => {
+      const rows = [{ id: 'd-1', eventType: 'budget_exceeded', status: 'delivered' }];
+      delegateFor('aiWebhookDelivery').findMany.mockResolvedValue(rows);
+
+      const bundle = await exportUserData(PARAMS);
+
+      expect(bundle.personalData.notificationsSentToYou).toEqual(rows);
+    });
+
+    it('exports none, without reading the table, for an unverified address', async () => {
+      mockUserFindUnique.mockResolvedValue({ ...SUBJECT, emailVerified: false });
+      // Population: were the read made, this row would be exported.
+      delegateFor('aiWebhookDelivery').findMany.mockResolvedValue([{ id: 'd-stranger' }]);
+
+      const bundle = await exportUserData(PARAMS);
+
+      expect(callsTo('aiWebhookDelivery')).toHaveLength(0);
+      expect(bundle.personalData.notificationsSentToYou).toEqual([]);
+    });
+  });
+
   describe('reading across every org at multi (§107 t-748)', () => {
     // The email as the contact form stores it: trimmed and lower-cased.
     const NORMALISED_EMAIL = SUBJECT.email.trim().toLowerCase();
@@ -330,6 +383,13 @@ describe('exportUserData', () => {
       if (isSubject(value)) return true;
       if (!isRecord(value)) return false;
       const keys = Object.keys(value);
+      // JSON containment (`@>`) of the subject's address: exact, like `equals`.
+      if (keys.length === 1 && Array.isArray(value.array_contains)) {
+        return (
+          value.array_contains.length > 0 &&
+          value.array_contains.every((entry) => isRecord(entry) && isSubject(entry.destination))
+        );
+      }
       // An exact `equals` only. With `mode: 'insensitive'` Prisma emits an
       // unescaped ILIKE, so `_` or `%` in the value match other people's rows.
       if (keys.every((k) => k === 'equals' || k === 'mode')) {
@@ -344,7 +404,7 @@ describe('exportUserData', () => {
     /**
      * Whether `where` pins `model`'s rows to the subject: their id or email
      * on one of the row's own fields, at the top level or under `AND` —
-     * never through `OR`, `NOT` or a negating operator (`not`, `notIn`,
+     * through an `OR` only when every branch pins, never through `NOT` or a negating operator (`not`, `notIn`,
      * `none`, `every`), which do not narrow the read to them and under the
      * bypass would read other people's rows in every org.
      */
@@ -355,7 +415,17 @@ describe('exportUserData', () => {
           const parts = Array.isArray(value) ? value : [value];
           return parts.some((part) => pinsSubject(model, part));
         }
-        if (key === 'OR' || key === 'NOT') return false;
+        // An `OR` narrows to the subject only when EVERY branch does: a
+        // delivery is addressed to them either by its current destination or
+        // by one it was moved on from. One unpinned branch would read others'.
+        if (key === 'OR') {
+          return (
+            Array.isArray(value) &&
+            value.length > 0 &&
+            value.every((part) => pinsSubject(model, part))
+          );
+        }
+        if (key === 'NOT') return false;
         if (RELATION_PINS.has(`${model}.${key}`)) {
           return isRecord(value) && isRecord(value.some) && pinsSubject(model, value.some);
         }
@@ -486,6 +556,29 @@ describe('exportUserData', () => {
       // A case-insensitive match is a pattern match in Postgres, not a pin.
       expect(
         pinsSubject('ContactSubmission', { email: { equals: SUBJECT.email, mode: 'insensitive' } })
+      ).toBe(false);
+
+      // An `OR` pins only when every branch does (t-739's delivery source).
+      const toThem = { destination: NORMALISED_EMAIL };
+      const movedOnFromThem = {
+        previousDestinations: { array_contains: [{ destination: NORMALISED_EMAIL }] },
+      };
+      expect(pinsSubject('AiWebhookDelivery', { OR: [toThem, movedOnFromThem] })).toBe(true);
+      expect(
+        pinsSubject('AiWebhookDelivery', { OR: [toThem, { status: 'delivered' }] }),
+        'one unpinned branch reads everyone else’s rows'
+      ).toBe(false);
+      expect(pinsSubject('AiWebhookDelivery', { OR: [] })).toBe(false);
+      expect(
+        pinsSubject('AiWebhookDelivery', {
+          previousDestinations: { array_contains: [{ destination: 'someone@else.example' }] },
+        })
+      ).toBe(false);
+      expect(
+        pinsSubject('AiWebhookDelivery', {
+          previousDestinations: { array_contains: [{ destination: NORMALISED_EMAIL }], path: [] },
+        }),
+        'containment plus another operator is not the bare match the guard knows'
       ).toBe(false);
     });
 

@@ -1204,7 +1204,7 @@ describe('delivery destination recording', () => {
       string,
       unknown
     >;
-    expect(data.destination).toBe('https://hooks.example.com/h/[param]');
+    expect(data.destination).toBe('https://hooks.example.com');
     expect(data.destinationFingerprint).toBe(
       describeDestination('webhook', url).destinationFingerprint
     );
