@@ -422,6 +422,124 @@ describe('lib/storage/providers/s3', () => {
         });
       });
 
+      describe('pagination and per-key failures', () => {
+        const config = {
+          bucket: 'test-bucket',
+          region: 'us-east-1',
+          accessKeyId: 'test-key',
+          secretAccessKey: 'test-secret',
+        };
+
+        it('follows the continuation token and deletes the keys from every page', async () => {
+          const provider = new S3Provider(config);
+          mockSend
+            .mockResolvedValueOnce({
+              Contents: [{ Key: 'orgs/a/1.pdf' }, { Key: 'orgs/a/2.pdf' }],
+              IsTruncated: true,
+              NextContinuationToken: 'token-page-2',
+            })
+            .mockResolvedValueOnce({}) // delete page 1
+            .mockResolvedValueOnce({
+              Contents: [{ Key: 'orgs/a/3.pdf' }],
+              IsTruncated: false,
+            })
+            .mockResolvedValueOnce({}); // delete page 2
+
+          const result = await provider.deletePrefix('orgs/a/');
+
+          expect(ListObjectsV2Command).toHaveBeenCalledTimes(2);
+          expect(ListObjectsV2Command).toHaveBeenNthCalledWith(1, {
+            Bucket: 'test-bucket',
+            Prefix: 'orgs/a/',
+          });
+          expect(ListObjectsV2Command).toHaveBeenNthCalledWith(2, {
+            Bucket: 'test-bucket',
+            Prefix: 'orgs/a/',
+            ContinuationToken: 'token-page-2',
+          });
+          expect(DeleteObjectsCommand).toHaveBeenCalledTimes(2);
+          expect(DeleteObjectsCommand).toHaveBeenNthCalledWith(1, {
+            Bucket: 'test-bucket',
+            Delete: { Objects: [{ Key: 'orgs/a/1.pdf' }, { Key: 'orgs/a/2.pdf' }] },
+          });
+          expect(DeleteObjectsCommand).toHaveBeenNthCalledWith(2, {
+            Bucket: 'test-bucket',
+            Delete: { Objects: [{ Key: 'orgs/a/3.pdf' }] },
+          });
+          expect(result).toEqual({ success: true, key: 'orgs/a/' });
+          expect(logger.info).toHaveBeenCalledWith(
+            'Objects deleted from S3 by prefix',
+            expect.objectContaining({ prefix: 'orgs/a/', count: 3 })
+          );
+        });
+
+        it('reports failure and logs when DeleteObjects returns per-key Errors', async () => {
+          const provider = new S3Provider(config);
+          mockSend
+            .mockResolvedValueOnce({
+              Contents: [{ Key: 'orgs/a/1.pdf' }, { Key: 'orgs/a/2.pdf' }],
+            })
+            .mockResolvedValueOnce({
+              Errors: [{ Key: 'orgs/a/2.pdf', Code: 'AccessDenied', Message: 'denied' }],
+            });
+
+          const result = await provider.deletePrefix('orgs/a/');
+
+          expect(result).toEqual({ success: false, key: 'orgs/a/' });
+          expect(logger.error).toHaveBeenCalledWith(
+            'Some objects under the prefix could not be deleted from S3',
+            undefined,
+            { prefix: 'orgs/a/', deleted: 1, failed: 1 }
+          );
+          expect(logger.info).not.toHaveBeenCalled();
+        });
+
+        it('still deletes later pages after an earlier page reported Errors', async () => {
+          const provider = new S3Provider(config);
+          mockSend
+            .mockResolvedValueOnce({
+              Contents: [{ Key: 'orgs/a/1.pdf' }],
+              IsTruncated: true,
+              NextContinuationToken: 't2',
+            })
+            .mockResolvedValueOnce({ Errors: [{ Key: 'orgs/a/1.pdf', Code: 'InternalError' }] })
+            .mockResolvedValueOnce({ Contents: [{ Key: 'orgs/a/2.pdf' }] })
+            .mockResolvedValueOnce({});
+
+          const result = await provider.deletePrefix('orgs/a/');
+
+          expect(DeleteObjectsCommand).toHaveBeenCalledTimes(2);
+          expect(DeleteObjectsCommand).toHaveBeenLastCalledWith({
+            Bucket: 'test-bucket',
+            Delete: { Objects: [{ Key: 'orgs/a/2.pdf' }] },
+          });
+          expect(result.success).toBe(false);
+        });
+
+        it('succeeds when a truncated first page is followed by an empty page', async () => {
+          const provider = new S3Provider(config);
+          mockSend
+            .mockResolvedValueOnce({
+              Contents: [{ Key: 'orgs/a/1.pdf' }],
+              IsTruncated: true,
+              NextContinuationToken: 'token-page-2',
+            })
+            .mockResolvedValueOnce({}) // delete page 1
+            .mockResolvedValueOnce({ Contents: [], IsTruncated: false });
+
+          const result = await provider.deletePrefix('orgs/a/');
+
+          expect(ListObjectsV2Command).toHaveBeenNthCalledWith(2, {
+            Bucket: 'test-bucket',
+            Prefix: 'orgs/a/',
+            ContinuationToken: 'token-page-2',
+          });
+          expect(DeleteObjectsCommand).toHaveBeenCalledTimes(1);
+          expect(result).toEqual({ success: true, key: 'orgs/a/' });
+          expect(logger.error).not.toHaveBeenCalled();
+        });
+      });
+
       it('should handle errors gracefully', async () => {
         const provider = new S3Provider({
           bucket: 'test-bucket',

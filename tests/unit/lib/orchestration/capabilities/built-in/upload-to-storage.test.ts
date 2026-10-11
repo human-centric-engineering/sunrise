@@ -1121,6 +1121,47 @@ describe('UploadToStorageCapability.execute() at TENANCY_MODE=multi', () => {
     });
   });
 
+  describe('provider that cannot store private objects (default binding)', () => {
+    it('on s3, names the deployment setting and public: true, not signedUrlTtlSeconds', async () => {
+      noBinding();
+      mockStorageClient = {
+        name: 's3',
+        upload: mockUpload,
+        getSignedUrl: mockGetSignedUrl,
+        capabilities: { privateObjects: false, signedUrls: true },
+      };
+
+      const result = await executeAsOrg();
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('private_objects_not_supported');
+      expect(result.error?.message).toContain('S3_OBJECTS_PRIVATE_BY_DEFAULT');
+      expect(result.error?.message).toContain('public: true');
+      expect(result.error?.message).not.toContain('signedUrlTtlSeconds');
+      expect(mockUpload).not.toHaveBeenCalled();
+      expect(mockGetSignedUrl).not.toHaveBeenCalled();
+    });
+
+    it('on a non-s3 provider, points only at public: true with no env var named', async () => {
+      noBinding();
+      mockStorageClient = {
+        name: 'fork-provider',
+        upload: mockUpload,
+        getSignedUrl: mockGetSignedUrl,
+        capabilities: { privateObjects: false, signedUrls: true },
+      };
+
+      const result = await executeAsOrg();
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('private_objects_not_supported');
+      expect(result.error?.message).toContain('public: true');
+      expect(result.error?.message).not.toContain('S3_');
+      expect(result.error?.message).not.toContain('signedUrlTtlSeconds');
+      expect(mockUpload).not.toHaveBeenCalled();
+    });
+  });
+
   describe('provider without signed URLs (Vercel-Blob-like)', () => {
     beforeEach(() => {
       mockStorageClient = {
@@ -1176,6 +1217,51 @@ describe('UploadToStorageCapability.execute() at TENANCY_MODE=single (regression
     expect(result.error?.code).toBe('invalid_binding');
     expect(result.error?.message).toContain('orgs/');
     expect(mockUpload).not.toHaveBeenCalled();
+  });
+});
+
+describe('UploadToStorageCapability.execute() at single — private-objects remedy', () => {
+  it('keeps the explicit-binding remedy for public: false on a provider without privateObjects', async () => {
+    expect(env.TENANCY_MODE).toBe('single');
+    bindCustomConfig({ public: false });
+    mockStorageClient = {
+      name: 'local',
+      upload: mockUpload,
+      capabilities: { privateObjects: false },
+    };
+
+    const result = await new UploadToStorageCapability().execute(BASE_ARGS, BASE_CONTEXT);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('private_objects_not_supported');
+    expect(result.error?.message).toMatch(/signedUrlTtlSeconds/);
+    expect(result.error?.message).toMatch(/public:\s?false/);
+    expect(result.error?.message).not.toContain('private by default');
+    expect(mockUpload).not.toHaveBeenCalled();
+  });
+});
+
+describe('UploadToStorageCapability.execute() — keyPrefix segment validation', () => {
+  it.each(['./orgs/x/', 'a/./b/', 'a//b/', 'a/../b/'])(
+    'refuses keyPrefix %j as invalid_binding without uploading',
+    async (keyPrefix) => {
+      bindCustomConfig({ keyPrefix });
+
+      const result = await new UploadToStorageCapability().execute(BASE_ARGS, BASE_CONTEXT);
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('invalid_binding');
+      expect(mockUpload).not.toHaveBeenCalled();
+    }
+  );
+
+  it('accepts a plain nested keyPrefix and uploads under it', async () => {
+    bindCustomConfig({ keyPrefix: 'reports/2026/' });
+
+    const result = await new UploadToStorageCapability().execute(BASE_ARGS, BASE_CONTEXT);
+
+    expect(result.success).toBe(true);
+    expect(mockUpload.mock.calls[0][1].key.startsWith('reports/2026/')).toBe(true);
   });
 });
 

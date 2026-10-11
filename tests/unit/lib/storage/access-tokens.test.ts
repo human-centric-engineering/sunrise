@@ -31,6 +31,7 @@ import {
   generateStorageAccessToken,
   verifyStorageAccessToken,
   buildStorageAccessUrl,
+  tokenOrgMatchesKey,
   MAX_EXPIRY_SECONDS,
 } from '@/lib/storage/access-tokens';
 
@@ -333,6 +334,39 @@ describe('storage access tokens', () => {
       const forged = Buffer.from(JSON.stringify(swapped), 'utf8').toString('base64url');
 
       expect(() => verifyStorageAccessToken(`${forged}.${signature}`)).toThrow(/signature/i);
+    });
+  });
+
+  describe('tokenOrgMatchesKey', () => {
+    const ORG_KEY = 'orgs/org-a/reports/q3.pdf';
+
+    it('matches an org-owned key against the org it belongs to', () => {
+      expect(tokenOrgMatchesKey('org-a', ORG_KEY)).toBe(true);
+    });
+
+    it('does not match an org-owned key against a different org', () => {
+      expect(tokenOrgMatchesKey('org-b', ORG_KEY)).toBe(false);
+    });
+
+    it('does not match a sibling org whose id merely starts the same way', () => {
+      expect(tokenOrgMatchesKey('org-a', 'orgs/org-ab/x.pdf')).toBe(false);
+    });
+
+    it('does not match an org-owned key when the token carries no org (undefined)', () => {
+      expect(tokenOrgMatchesKey(undefined, ORG_KEY)).toBe(false);
+    });
+
+    it('does not match an org-owned key when the token carries no org (null)', () => {
+      expect(tokenOrgMatchesKey(null, ORG_KEY)).toBe(false);
+    });
+
+    it('does not match a legacy key against any org', () => {
+      expect(tokenOrgMatchesKey('org-a', KEY)).toBe(false);
+    });
+
+    it('matches a legacy key only when the token carries no org', () => {
+      expect(tokenOrgMatchesKey(undefined, KEY)).toBe(true);
+      expect(tokenOrgMatchesKey(null, KEY)).toBe(true);
     });
   });
 

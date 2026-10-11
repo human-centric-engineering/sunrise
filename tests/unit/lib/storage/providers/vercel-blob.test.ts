@@ -161,6 +161,48 @@ describe('lib/storage/providers/vercel-blob', () => {
         expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
 
+      it('follows the cursor and deletes the blobs from every page', async () => {
+        const { list, del } = await import('@vercel/blob');
+        const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
+        const { logger } = await import('@/lib/logging');
+
+        vi.mocked(list)
+          .mockResolvedValueOnce({
+            blobs: [{ url: 'https://blob.example/orgs/a/1.pdf' }],
+            hasMore: true,
+            cursor: 'cursor-2',
+          } as never)
+          .mockResolvedValueOnce({
+            blobs: [{ url: 'https://blob.example/orgs/a/2.pdf' }],
+            hasMore: false,
+          } as never);
+        vi.mocked(del).mockResolvedValue(undefined);
+
+        const provider = new VercelBlobProvider({ token: 'test-token' });
+
+        const result = await provider.deletePrefix('orgs/a/');
+
+        expect(list).toHaveBeenCalledTimes(2);
+        expect(list).toHaveBeenNthCalledWith(1, { prefix: 'orgs/a/', token: 'test-token' });
+        expect(list).toHaveBeenNthCalledWith(2, {
+          prefix: 'orgs/a/',
+          token: 'test-token',
+          cursor: 'cursor-2',
+        });
+        expect(del).toHaveBeenCalledTimes(2);
+        expect(del).toHaveBeenNthCalledWith(1, ['https://blob.example/orgs/a/1.pdf'], {
+          token: 'test-token',
+        });
+        expect(del).toHaveBeenNthCalledWith(2, ['https://blob.example/orgs/a/2.pdf'], {
+          token: 'test-token',
+        });
+        expect(result).toEqual({ success: true, key: 'orgs/a/' });
+        expect(logger.info).toHaveBeenCalledWith(
+          'Blobs deleted from Vercel Blob by prefix',
+          expect.objectContaining({ prefix: 'orgs/a/', count: 2 })
+        );
+      });
+
       it('should handle empty prefix results', async () => {
         const { list, del } = await import('@vercel/blob');
         const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
