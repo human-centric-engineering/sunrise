@@ -102,7 +102,24 @@ export const DEFAULT_MULTI_SIGNED_URL_TTL_SECONDS = 24 * 60 * 60;
 
 const customConfigSchema = z
   .object({
-    keyPrefix: z.string().min(1).max(200).regex(/\/$/, 'keyPrefix must end with /').optional(),
+    keyPrefix: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/\/$/, 'keyPrefix must end with /')
+      // No `.`, `..` or empty segments: the local provider resolves keys as
+      // paths, so `./orgs/x/` or `a//b/` would land somewhere other than the
+      // string says, and every prefix rule here (the reserved `orgs/` root,
+      // `orgOfKey`) reads the string.
+      .refine(
+        (p) =>
+          p
+            .slice(0, -1)
+            .split('/')
+            .every((seg) => seg !== '' && seg !== '.' && seg !== '..'),
+        'keyPrefix must not contain empty, "." or ".." segments'
+      )
+      .optional(),
     allowedContentTypes: z.array(z.string().regex(CONTENT_TYPE_RE)).min(1).max(20).optional(),
     maxFileSizeBytes: z
       .number()
@@ -303,9 +320,18 @@ export class UploadToStorageCapability extends BaseCapability<Args, Data> {
     // whole point of the capability contract: the alternative is an upload
     // that succeeds and hands the user a world-readable URL.
     if (!isPublic && !caps.privateObjects) {
+      // A binding that chose nothing is private only because of the `multi`
+      // default, so the generic remedy ("remove signedUrlTtlSeconds and
+      // public:false") would name settings it never had. S3 without
+      // S3_OBJECTS_PRIVATE_BY_DEFAULT or S3_USE_ACL lands here.
       return this.error(
         `The configured storage provider (${storage.name}) cannot store private objects, ` +
-          `so this binding would publish the file. ${privateObjectsRemedy(storage.name)}`,
+          `so this binding would publish the file. ` +
+          (signedByDefault
+            ? `Uploads are private by default when the deployment runs several organisations. ` +
+              `${privateObjectsDeploymentRemedy(storage.name)}Or set public: true on the binding ` +
+              `to publish the file instead.`
+            : privateObjectsRemedy(storage.name)),
         'private_objects_not_supported'
       );
     }
@@ -494,6 +520,16 @@ function privateObjectsRemedy(providerName: string): string {
     default:
       return 'Remove signedUrlTtlSeconds and public:false from the binding, or configure a provider that supports private objects.';
   }
+}
+
+/**
+ * The deployment-side fix for a provider that cannot store privately, for a
+ * binding that set nothing: only the provider can change, so only S3 has one.
+ */
+function privateObjectsDeploymentRemedy(providerName: string): string {
+  return providerName === 's3'
+    ? 'Set S3_OBJECTS_PRIVATE_BY_DEFAULT=true if the bucket blocks public access, or S3_USE_ACL=true on a legacy ACL bucket. '
+    : '';
 }
 
 /**

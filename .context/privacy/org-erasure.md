@@ -84,6 +84,13 @@ One transaction, in this order, and then a storage sweep:
    failed; logged, and a re-run of the prefix delete finishes it), or `null`
    (no storage configured).
 
+   **The sweep runs once.** An agent upload already in flight in the org when
+   it is erased can land in `orgs/{orgId}/` after the sweep. Suspend the org
+   first (below) so no new turn starts, then erase. If `storageSwept` was
+   `false`, or you erased without suspending, delete the prefix again by hand.
+   S3 and Vercel Blob prefix deletes follow every page of the listing, and an
+   S3 per-object failure makes the result `false`.
+
    **Files uploaded before org prefixes existed stay.** Keys like
    `agent-uploads/{agentId}/…` name no org, so nothing can say they were this
    org's, and the prefix sweep does not reach them. Avatars stay too: they are

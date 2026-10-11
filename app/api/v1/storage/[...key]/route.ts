@@ -29,7 +29,7 @@ import { errorResponse } from '@/lib/api/responses';
 import { logger } from '@/lib/logging';
 import { getStorageClient } from '@/lib/storage/client';
 import { getStorageCapabilities } from '@/lib/storage/providers/types';
-import { verifyStorageAccessToken } from '@/lib/storage/access-tokens';
+import { tokenOrgMatchesKey, verifyStorageAccessToken } from '@/lib/storage/access-tokens';
 import { validateStorageKey } from '@/lib/storage/providers/validate-key';
 import { orgOfKey } from '@/lib/storage/org-keys';
 
@@ -82,11 +82,10 @@ export async function GET(
   // for a key no org owns. Minting already refuses a key outside the org, so
   // this only refuses a token minted wrongly; it is here so a mistake in that
   // one function cannot become a cross-org read (`access-tokens.ts` header).
-  const keyOrg = orgOfKey(key);
-  if (tokenOrg !== keyOrg) {
+  if (!tokenOrgMatchesKey(tokenOrg, key)) {
     logger.warn('Storage token presented with an org claim that does not match the key', {
       requestedKey: key,
-      keyOrg,
+      keyOrg: orgOfKey(key),
       tokenOrg,
     });
     return errorResponse('This token does not grant access to the requested object', {

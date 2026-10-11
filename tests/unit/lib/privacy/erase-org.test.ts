@@ -32,10 +32,10 @@ const mockLogger = vi.hoisted(() => ({
 vi.mock('@/lib/logging', () => ({ logger: mockLogger }));
 
 const storage = vi.hoisted(() => ({
-  isStorageEnabled: vi.fn(),
-  deleteByPrefix: vi.fn(),
+  deletePrefix: vi.fn(),
+  getStorageClient: vi.fn(),
 }));
-vi.mock('@/lib/storage/upload', () => storage);
+vi.mock('@/lib/storage/client', () => ({ getStorageClient: storage.getStorageClient }));
 
 import { eraseOrg } from '@/lib/privacy/erase-org';
 import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
@@ -50,8 +50,8 @@ beforeEach(() => {
   tx.verification.deleteMany.mockResolvedValue({ count: 2 });
   tx.session.updateMany.mockResolvedValue({ count: 4 });
   tx.org.delete.mockResolvedValue({ id: ORG });
-  storage.isStorageEnabled.mockReturnValue(true);
-  storage.deleteByPrefix.mockResolvedValue({ success: true, key: `orgs/${ORG}/` });
+  storage.getStorageClient.mockReturnValue({ deletePrefix: storage.deletePrefix });
+  storage.deletePrefix.mockResolvedValue({ success: true, key: `orgs/${ORG}/` });
 });
 
 describe('eraseOrg', () => {
@@ -96,33 +96,33 @@ describe('eraseOrg', () => {
       return out;
     });
     let committedAtSweep: boolean | undefined;
-    storage.deleteByPrefix.mockImplementation(() => {
+    storage.deletePrefix.mockImplementation(() => {
       committedAtSweep = committed;
       return Promise.resolve({ success: true, key: `orgs/${ORG}/` });
     });
 
     await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
 
-    expect(storage.deleteByPrefix).toHaveBeenCalledTimes(1);
-    expect(storage.deleteByPrefix).toHaveBeenCalledWith(`orgs/${ORG}/`);
+    expect(storage.deletePrefix).toHaveBeenCalledTimes(1);
+    expect(storage.deletePrefix).toHaveBeenCalledWith(`orgs/${ORG}/`);
     expect(committedAtSweep).toBe(true);
   });
 
   it('does not touch storage when the transaction fails', async () => {
     tx.org.delete.mockRejectedValue(new Error('FK'));
     await expect(eraseOrg({ orgId: ORG, actorUserId: ADMIN })).rejects.toThrow('FK');
-    expect(storage.deleteByPrefix).not.toHaveBeenCalled();
+    expect(storage.deletePrefix).not.toHaveBeenCalled();
   });
 
   it('reports storageSwept false, and still resolves, when the provider reports failure', async () => {
-    storage.deleteByPrefix.mockResolvedValue({ success: false, key: `orgs/${ORG}/` });
+    storage.deletePrefix.mockResolvedValue({ success: false, key: `orgs/${ORG}/` });
     const result = await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
     expect(result.storageSwept).toBe(false);
     expect(tx.org.delete).toHaveBeenCalled();
   });
 
   it('reports storageSwept false and logs, rather than throwing, when the sweep throws', async () => {
-    storage.deleteByPrefix.mockRejectedValue(new Error('bucket unreachable'));
+    storage.deletePrefix.mockRejectedValue(new Error('bucket unreachable'));
     const result = await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
     expect(result.storageSwept).toBe(false);
     expect(mockLogger.error).toHaveBeenCalledWith(
@@ -132,11 +132,25 @@ describe('eraseOrg', () => {
     );
   });
 
+  it('reports storageSwept false, rather than throwing after the commit, when the provider cannot even be built', async () => {
+    storage.getStorageClient.mockImplementation(() => {
+      throw new Error('bad storage config');
+    });
+    const result = await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
+    expect(result.storageSwept).toBe(false);
+    expect(tx.org.delete).toHaveBeenCalled();
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'Org erased, but deleting its storage prefix failed',
+      expect.any(Error),
+      { orgId: ORG }
+    );
+  });
+
   it('reports storageSwept null and makes no storage call when storage is not configured', async () => {
-    storage.isStorageEnabled.mockReturnValue(false);
+    storage.getStorageClient.mockReturnValue(null);
     const result = await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
     expect(result.storageSwept).toBeNull();
-    expect(storage.deleteByPrefix).not.toHaveBeenCalled();
+    expect(storage.deletePrefix).not.toHaveBeenCalled();
   });
 
   it('never deletes a user (ruling a)', async () => {

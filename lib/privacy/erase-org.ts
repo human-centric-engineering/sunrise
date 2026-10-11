@@ -140,10 +140,15 @@ export async function eraseOrg(params: EraseOrgParams): Promise<EraseOrgResult> 
  * has committed, so it reports failure instead of throwing (module header).
  */
 async function sweepOrgStorage(orgId: string): Promise<boolean | null> {
-  const { deleteByPrefix, isStorageEnabled } = await import('@/lib/storage/upload');
-  if (!isStorageEnabled()) return null;
+  // Everything inside the try, the import and the provider lookup included:
+  // provider initialisation reads configuration and can throw, and a throw here
+  // would reach the caller after the org is already gone. From `client.ts`,
+  // not `upload.ts`, which would also load the image pipeline for nothing.
   try {
-    const { success } = await deleteByPrefix(orgKeyPrefix(orgId));
+    const { getStorageClient } = await import('@/lib/storage/client');
+    const storage = getStorageClient();
+    if (!storage) return null;
+    const { success } = await storage.deletePrefix(orgKeyPrefix(orgId));
     return success;
   } catch (err) {
     logger.error('Org erased, but deleting its storage prefix failed', err, { orgId });

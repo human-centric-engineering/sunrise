@@ -114,26 +114,34 @@ export class VercelBlobProvider implements StorageProvider {
     }
   }
 
+  /**
+   * Delete every blob under a prefix, page by page. `list()` returns one page
+   * and a `cursor` while `hasMore` is true; reading only the first page would
+   * let org erasure report its files gone while later pages remained
+   * (§109 t-736).
+   */
   async deletePrefix(prefix: string): Promise<DeleteResult> {
     validateStorageKey(prefix);
     try {
-      // List all blobs matching the prefix
-      const { blobs } = await list({ prefix, token: this.token });
+      let cursor: string | undefined;
+      let count = 0;
+      do {
+        const page = await list({ prefix, token: this.token, ...(cursor ? { cursor } : {}) });
+        if (page.blobs.length > 0) {
+          await del(
+            page.blobs.map((blob) => blob.url),
+            { token: this.token }
+          );
+          count += page.blobs.length;
+        }
+        cursor = page.hasMore ? page.cursor : undefined;
+      } while (cursor);
 
-      if (blobs.length === 0) {
+      if (count === 0) {
         logger.debug('No blobs found for prefix', { prefix });
-        return { success: true, key: prefix };
+      } else {
+        logger.info('Blobs deleted from Vercel Blob by prefix', { prefix, count });
       }
-
-      // Delete all matching blobs
-      const urls = blobs.map((blob) => blob.url);
-      await del(urls, { token: this.token });
-
-      logger.info('Blobs deleted from Vercel Blob by prefix', {
-        prefix,
-        count: blobs.length,
-      });
-
       return { success: true, key: prefix };
     } catch (error) {
       logger.error('Failed to delete blobs from Vercel Blob by prefix', error, { prefix });

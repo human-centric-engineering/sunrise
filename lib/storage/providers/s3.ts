@@ -194,48 +194,68 @@ export class S3Provider implements StorageProvider {
     }
   }
 
+  /**
+   * Delete every object under a prefix, page by page.
+   *
+   * `ListObjectsV2` returns at most 1000 keys per call and `DeleteObjects`
+   * takes at most 1000, so this loops on the continuation token until the
+   * listing is exhausted. Success means every listed key was deleted: a page
+   * whose `DeleteObjects` response carries `Errors` (per-key failures arrive
+   * there with an HTTP 200, not as a thrown error) makes the result `false`.
+   * Org erasure (`eraseOrg`) reports this verdict as `storageSwept`, so a
+   * first-page-only sweep would claim an org's files were gone while
+   * everything after the first thousand remained (§109 t-736).
+   */
   async deletePrefix(prefix: string): Promise<DeleteResult> {
     validateStorageKey(prefix);
     try {
-      // List all objects with the prefix
-      const listCommand = new ListObjectsV2Command({
-        Bucket: this.bucket,
-        Prefix: prefix,
-      });
+      let continuationToken: string | undefined;
+      let deleted = 0;
+      let failed = 0;
 
-      const listResult = await this.client.send(listCommand);
-      const objects = listResult.Contents;
+      do {
+        const listResult = await this.client.send(
+          new ListObjectsV2Command({
+            Bucket: this.bucket,
+            Prefix: prefix,
+            ...(continuationToken ? { ContinuationToken: continuationToken } : {}),
+          })
+        );
 
-      if (!objects || objects.length === 0) {
+        const keysToDelete = (listResult.Contents ?? [])
+          .map((obj) => obj.Key)
+          .filter((key): key is string => key !== undefined);
+
+        if (keysToDelete.length > 0) {
+          const deleteResult = await this.client.send(
+            new DeleteObjectsCommand({
+              Bucket: this.bucket,
+              Delete: { Objects: keysToDelete.map((key) => ({ Key: key })) },
+            })
+          );
+          const errors = deleteResult.Errors?.length ?? 0;
+          failed += errors;
+          deleted += keysToDelete.length - errors;
+        }
+
+        continuationToken = listResult.IsTruncated ? listResult.NextContinuationToken : undefined;
+      } while (continuationToken);
+
+      if (deleted === 0 && failed === 0) {
         logger.debug('No objects found for prefix', { prefix });
         return { success: true, key: prefix };
       }
 
-      // Filter out objects with undefined keys
-      const keysToDelete = objects
-        .map((obj) => obj.Key)
-        .filter((key): key is string => key !== undefined);
-
-      if (keysToDelete.length === 0) {
-        logger.debug('No valid keys found for prefix', { prefix });
-        return { success: true, key: prefix };
+      if (failed > 0) {
+        logger.error('Some objects under the prefix could not be deleted from S3', undefined, {
+          prefix,
+          deleted,
+          failed,
+        });
+        return { success: false, key: prefix };
       }
 
-      // Batch delete all objects
-      const deleteCommand = new DeleteObjectsCommand({
-        Bucket: this.bucket,
-        Delete: {
-          Objects: keysToDelete.map((key) => ({ Key: key })),
-        },
-      });
-
-      await this.client.send(deleteCommand);
-
-      logger.info('Objects deleted from S3 by prefix', {
-        prefix,
-        count: objects.length,
-      });
-
+      logger.info('Objects deleted from S3 by prefix', { prefix, count: deleted });
       return { success: true, key: prefix };
     } catch (error) {
       logger.error('Failed to delete objects from S3 by prefix', error, { prefix });

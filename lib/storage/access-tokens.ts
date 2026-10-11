@@ -91,6 +91,15 @@ function sign(payloadJson: string): string {
   return createHmac('sha256', getSecret()).update(payloadJson, 'utf8').digest('base64url');
 }
 
+/**
+ * The one rule tying a token's `org` claim to a key: the claim must name the
+ * org the key belongs to, and be absent exactly when no org owns the key.
+ * Minting and the read route both ask it, so the two checks cannot drift.
+ */
+export function tokenOrgMatchesKey(org: string | null | undefined, key: string): boolean {
+  return (org ?? null) === orgOfKey(key);
+}
+
 /** Who a token is minted for. */
 export interface StorageAccessTokenOptions {
   /**
@@ -118,14 +127,12 @@ export function generateStorageAccessToken(
     throw new Error('Storage access token requires a key');
   }
 
-  const keyOrg = orgOfKey(key);
   const { orgId } = options;
-  if (orgId !== undefined && keyOrg !== orgId) {
-    throw new Error('Storage access token refused: the key is outside the org it was minted for');
-  }
-  if (orgId === undefined && keyOrg !== null) {
+  if (!tokenOrgMatchesKey(orgId, key)) {
     throw new Error(
-      'Storage access token refused: an org-owned key can only be signed for its own org'
+      orgId === undefined
+        ? 'Storage access token refused: an org-owned key can only be signed for its own org'
+        : 'Storage access token refused: the key is outside the org it was minted for'
     );
   }
 
