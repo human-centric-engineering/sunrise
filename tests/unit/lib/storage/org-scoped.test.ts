@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { scopeStorageToOrg } from '@/lib/storage/org-scoped';
+import { excludeOrgKeys, scopeStorageToOrg } from '@/lib/storage/org-scoped';
 import { getStorageCapabilities } from '@/lib/storage/providers/types';
 import type { StorageObject, StorageProvider } from '@/lib/storage/providers/types';
 
@@ -193,6 +193,72 @@ describe('lib/storage/org-scoped', () => {
   describe('construction', () => {
     it.each(['', 'a/b'])('throws for an unusable org id %j', (id) => {
       expect(() => scopeStorageToOrg(makeInner(), id)).toThrow();
+    });
+  });
+
+  describe('excludeOrgKeys (the unbound guard)', () => {
+    const RESERVED = [
+      ['an org key', 'orgs/a/x'],
+      ['a capitalised root', 'Orgs/a/x'],
+      ['an empty org segment', 'orgs//a/x'],
+    ] as const;
+
+    for (const [methodName] of methods(makeInner())) {
+      describe(methodName, () => {
+        it.each(RESERVED)(
+          'rejects (not throws) for %s and never reaches the inner provider',
+          async (_label, key) => {
+            const inner = makeInner();
+            const guarded = excludeOrgKeys(inner);
+            const call = methods(guarded).find(([n]) => n === methodName)![1];
+
+            let pending: Promise<unknown> | undefined;
+            expect(() => {
+              pending = call(key);
+            }).not.toThrow();
+            await expect(pending).rejects.toThrow(/refused.*reserved orgs\/ root/);
+
+            expect(inner[methodName]).not.toHaveBeenCalled();
+          }
+        );
+      });
+    }
+
+    it('passes an unowned key through to every method', async () => {
+      const inner = makeInner();
+      const guarded = excludeOrgKeys(inner);
+      const key = 'avatars/u/a.jpg';
+      const opts = uploadOpts(key);
+
+      await guarded.upload(buf, opts);
+      await guarded.delete(key);
+      await guarded.deletePrefix('avatars/u/');
+      await guarded.download!(key);
+
+      expect(inner.upload).toHaveBeenCalledWith(buf, opts);
+      expect(inner.delete).toHaveBeenCalledWith(key);
+      expect(inner.deletePrefix).toHaveBeenCalledWith('avatars/u/');
+      expect(inner.download).toHaveBeenCalledWith(key);
+    });
+
+    it('signs an unowned key with empty options (no org) and ignores caller options', async () => {
+      const inner = makeInner();
+      await excludeOrgKeys(inner).getSignedUrl!('avatars/u/a.jpg', 60, { orgId: 'sneaky' });
+
+      expect(inner.getSignedUrl).toHaveBeenCalledTimes(1);
+      expect(inner.getSignedUrl).toHaveBeenCalledWith('avatars/u/a.jpg', 60, {});
+    });
+
+    it('omits getSignedUrl and download when the inner provider lacks them', () => {
+      const bare: StorageProvider = {
+        name: 'bare',
+        upload: vi.fn(),
+        delete: vi.fn(),
+        deletePrefix: vi.fn(),
+      };
+      const guarded = excludeOrgKeys(bare);
+      expect('getSignedUrl' in guarded).toBe(false);
+      expect('download' in guarded).toBe(false);
     });
   });
 });

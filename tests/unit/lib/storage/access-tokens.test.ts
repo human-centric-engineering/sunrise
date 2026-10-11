@@ -364,6 +364,26 @@ describe('storage access tokens', () => {
       expect(tokenOrgMatchesKey('org-a', KEY)).toBe(false);
     });
 
+    it.each(['orgs//orgB/f', 'Orgs/orgB/f'])(
+      'never matches the malformed reserved-root key %s, whatever the claim',
+      (key) => {
+        expect(tokenOrgMatchesKey(undefined, key)).toBe(false);
+        expect(tokenOrgMatchesKey(null, key)).toBe(false);
+        expect(tokenOrgMatchesKey('orgB', key)).toBe(false);
+        expect(tokenOrgMatchesKey('', key)).toBe(false);
+      }
+    );
+
+    it('refuses to mint a token for a malformed reserved-root key without an org', () => {
+      expect(() => generateStorageAccessToken('orgs//orgB/f')).toThrow(
+        /only be signed for its own org/i
+      );
+    });
+
+    it('refuses to mint a token for a malformed reserved-root key even with an org', () => {
+      expect(() => generateStorageAccessToken('orgs//orgB/f', 300, { orgId: 'orgB' })).toThrow();
+    });
+
     it('matches a legacy key only when the token carries no org', () => {
       expect(tokenOrgMatchesKey(undefined, KEY)).toBe(true);
       expect(tokenOrgMatchesKey(null, KEY)).toBe(true);

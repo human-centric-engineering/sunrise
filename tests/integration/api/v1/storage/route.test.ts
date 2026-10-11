@@ -263,6 +263,37 @@ describe('GET /api/v1/storage/[...key]', () => {
       expect(mockDownload).toHaveBeenCalledWith(ORG_KEY);
     });
 
+    it("reads an org-claimed token's object through that org's storage client", async () => {
+      const { getStorageClient } = await import('@/lib/storage/client');
+      const { token } = generateStorageAccessToken(ORG_KEY, 300, { orgId: 'org-a' });
+
+      await call(ORG_SEGMENTS, token);
+
+      expect(getStorageClient).toHaveBeenCalledTimes(1);
+      expect(getStorageClient).toHaveBeenCalledWith({ orgId: 'org-a' });
+    });
+
+    it('asks for the unbound client (no org) when the token carries no claim', async () => {
+      const { getStorageClient } = await import('@/lib/storage/client');
+      const { token } = generateStorageAccessToken(KEY, 300);
+
+      await call(SEGMENTS, token);
+
+      expect(getStorageClient).toHaveBeenCalledTimes(1);
+      expect(getStorageClient).toHaveBeenCalledWith({});
+    });
+
+    it.each(['orgs//org-a/x.pdf', 'Orgs/org-a/x.pdf'])(
+      'refuses the malformed reserved-root key %s even for a claimless token',
+      async (key) => {
+        const response = await call(key.split('/'), signToken(key));
+
+        expect(response.status).toBe(403);
+        expect((await response.json()).error.code).toBe('TOKEN_ORG_MISMATCH');
+        expect(mockDownload).not.toHaveBeenCalled();
+      }
+    );
+
     it('refuses a token claiming org B for a key under orgs/org-a/', async () => {
       const response = await call(ORG_SEGMENTS, signToken(ORG_KEY, 'org-b'));
 

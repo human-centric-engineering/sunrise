@@ -138,12 +138,14 @@ describe('lib/storage/providers/vercel-blob', () => {
         const { list, del } = await import('@vercel/blob');
         const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
 
-        vi.mocked(list).mockResolvedValue({
-          blobs: [
-            { url: 'https://blob.vercel-storage.com/avatars/user-123/avatar.jpg' },
-            { url: 'https://blob.vercel-storage.com/avatars/user-123/thumb.jpg' },
-          ],
-        } as never);
+        vi.mocked(list)
+          .mockResolvedValueOnce({
+            blobs: [
+              { url: 'https://blob.vercel-storage.com/avatars/user-123/avatar.jpg' },
+              { url: 'https://blob.vercel-storage.com/avatars/user-123/thumb.jpg' },
+            ],
+          } as never)
+          .mockResolvedValueOnce({ blobs: [] } as never);
         vi.mocked(del).mockResolvedValue(undefined);
 
         const provider = new VercelBlobProvider({ token: 'test-token' });
@@ -161,11 +163,12 @@ describe('lib/storage/providers/vercel-blob', () => {
         expect(result.success).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
       });
 
-      it('follows the cursor and deletes the blobs from every page', async () => {
+      it('re-lists until a listing is empty and never passes a cursor', async () => {
         const { list, del } = await import('@vercel/blob');
         const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
         const { logger } = await import('@/lib/logging');
 
+        // hasMore/cursor are present on purpose: the provider must ignore them.
         vi.mocked(list)
           .mockResolvedValueOnce({
             blobs: [{ url: 'https://blob.example/orgs/a/1.pdf' }],
@@ -174,21 +177,21 @@ describe('lib/storage/providers/vercel-blob', () => {
           } as never)
           .mockResolvedValueOnce({
             blobs: [{ url: 'https://blob.example/orgs/a/2.pdf' }],
-            hasMore: false,
-          } as never);
+            hasMore: true,
+            cursor: 'cursor-3',
+          } as never)
+          .mockResolvedValueOnce({ blobs: [] } as never);
         vi.mocked(del).mockResolvedValue(undefined);
 
         const provider = new VercelBlobProvider({ token: 'test-token' });
 
         const result = await provider.deletePrefix('orgs/a/');
 
-        expect(list).toHaveBeenCalledTimes(2);
-        expect(list).toHaveBeenNthCalledWith(1, { prefix: 'orgs/a/', token: 'test-token' });
-        expect(list).toHaveBeenNthCalledWith(2, {
-          prefix: 'orgs/a/',
-          token: 'test-token',
-          cursor: 'cursor-2',
-        });
+        expect(list).toHaveBeenCalledTimes(3);
+        for (const [args] of vi.mocked(list).mock.calls) {
+          expect(args).toEqual({ prefix: 'orgs/a/', token: 'test-token' });
+          expect(args).not.toHaveProperty('cursor');
+        }
         expect(del).toHaveBeenCalledTimes(2);
         expect(del).toHaveBeenNthCalledWith(1, ['https://blob.example/orgs/a/1.pdf'], {
           token: 'test-token',
@@ -200,6 +203,31 @@ describe('lib/storage/providers/vercel-blob', () => {
         expect(logger.info).toHaveBeenCalledWith(
           'Blobs deleted from Vercel Blob by prefix',
           expect.objectContaining({ prefix: 'orgs/a/', count: 2 })
+        );
+      });
+
+      it('gives up with success:false after 1000 rounds when the listing never empties', async () => {
+        const { list, del } = await import('@vercel/blob');
+        const { VercelBlobProvider } = await import('@/lib/storage/providers/vercel-blob');
+        const { logger } = await import('@/lib/logging');
+
+        // A `del` that "succeeds" without removing anything (eventual consistency).
+        vi.mocked(list).mockResolvedValue({
+          blobs: [{ url: 'https://blob.example/orgs/a/stuck.pdf' }],
+        } as never);
+        vi.mocked(del).mockResolvedValue(undefined);
+
+        const provider = new VercelBlobProvider({ token: 'test-token' });
+
+        const result = await provider.deletePrefix('orgs/a/');
+
+        expect(result).toEqual({ success: false, key: 'orgs/a/' });
+        expect(list).toHaveBeenCalledTimes(1000);
+        expect(del).toHaveBeenCalledTimes(1000);
+        expect(logger.error).toHaveBeenCalledWith(
+          'Vercel Blob prefix delete gave up with blobs still listed',
+          undefined,
+          expect.objectContaining({ prefix: 'orgs/a/', deleted: 1000, rounds: 1000 })
         );
       });
 

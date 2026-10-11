@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { ORG_KEY_ROOT, isKeyInOrg, orgKeyPrefix, orgOfKey } from '@/lib/storage/org-keys';
+import {
+  ORG_KEY_ROOT,
+  isKeyInOrg,
+  isUnderOrgRoot,
+  orgKeyPrefix,
+  orgOfKey,
+} from '@/lib/storage/org-keys';
 
 describe('lib/storage/org-keys', () => {
   describe('orgKeyPrefix', () => {
@@ -10,11 +16,31 @@ describe('lib/storage/org-keys', () => {
 
     it.each([
       ['empty', ''],
+      ['a dot (resolves to the orgs/ root)', '.'],
+      ['a space', ' '],
+      ['containing a dot', 'a.b'],
       ['containing a slash', 'a/b'],
       ['leading slash', '/a'],
       ['trailing slash', 'a/'],
     ])('rejects an id that is %s', (_label, id) => {
-      expect(() => orgKeyPrefix(id)).toThrow(/no "\/" in it/);
+      expect(() => orgKeyPrefix(id)).toThrow(/letters, digits, "_" or "-"/);
+    });
+
+    it.each([
+      ['a cuid', 'cmtd5heg2001804ky8pgo6odx', 'orgs/cmtd5heg2001804ky8pgo6odx/'],
+      ['the install org', 'install', 'orgs/install/'],
+    ])('accepts %s', (_label, id, expected) => {
+      expect(orgKeyPrefix(id)).toBe(expected);
+    });
+  });
+
+  describe('isUnderOrgRoot', () => {
+    it.each(['orgs/x/y', 'Orgs/x/y', 'ORGS/x', 'orgs//x'])('is true for %s', (key) => {
+      expect(isUnderOrgRoot(key)).toBe(true);
+    });
+
+    it.each(['avatars/x', 'xorgs/a', 'org/x'])('is false for %s', (key) => {
+      expect(isUnderOrgRoot(key)).toBe(false);
     });
   });
 
