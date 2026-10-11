@@ -31,6 +31,12 @@ vi.mock('@/lib/env', () => ({
   },
 }));
 
+// The read route checks an org-claimed token's org is live; there is no DB here.
+const mockOrgFindUnique = vi.fn();
+vi.mock('@/lib/db/client', () => ({
+  prisma: { org: { findUnique: (args: unknown) => mockOrgFindUnique(args) } },
+}));
+
 let provider: import('@/lib/storage/providers/local').LocalProvider | null = null;
 
 vi.mock('@/lib/storage/client', () => ({
@@ -44,6 +50,7 @@ const { GET } = await import('@/app/api/v1/storage/[...key]/route');
 let root: string;
 
 beforeEach(async () => {
+  mockOrgFindUnique.mockResolvedValue({ status: 'ACTIVE' });
   await mkdir(SCRATCH_PARENT, { recursive: true });
   root = await mkdtemp(join(SCRATCH_PARENT, 'signed-read-'));
   provider = new LocalProvider({

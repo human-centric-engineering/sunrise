@@ -1242,6 +1242,16 @@ describe('UploadToStorageCapability.execute() at single — private-objects reme
 });
 
 describe('UploadToStorageCapability.execute() — keyPrefix segment validation', () => {
+  it('refuses a mixed-case reserved root (Orgs/) at single as invalid_binding', async () => {
+    bindCustomConfig({ keyPrefix: 'Orgs/reports/' });
+
+    const result = await new UploadToStorageCapability().execute(BASE_ARGS, BASE_CONTEXT);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('invalid_binding');
+    expect(mockUpload).not.toHaveBeenCalled();
+  });
+
   it.each(['./orgs/x/', 'a/./b/', 'a//b/', 'a/../b/'])(
     'refuses keyPrefix %j as invalid_binding without uploading',
     async (keyPrefix) => {
@@ -1275,6 +1285,48 @@ describe('UploadToStorageCapability.execute() — orgs/ binding prefix at multi'
       );
       expect(result.success).toBe(true);
       expect(mockUpload.mock.calls[0][1].key.startsWith('orgs/org-acme/orgs/acme/')).toBe(true);
+    } finally {
+      env.TENANCY_MODE = 'single';
+    }
+  });
+});
+
+describe('UploadToStorageCapability.execute() — org id unusable as a path segment', () => {
+  it('resolves to an error result (not an exception) from the key-prefix step and does not upload', async () => {
+    // The mocked client does not validate the org id, so this reaches the
+    // `orgKeyPrefix` call that sits inside the capability's error handling.
+    env.TENANCY_MODE = 'multi';
+    try {
+      noBinding();
+      const result = await runAsOrg('bad.id', () =>
+        new UploadToStorageCapability().execute(BASE_ARGS, BASE_CONTEXT)
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('invalid_binding');
+      expect(mockUpload).not.toHaveBeenCalled();
+    } finally {
+      env.TENANCY_MODE = 'single';
+    }
+  });
+
+  it('resolves to invalid_org when binding the storage client rejects the org id', async () => {
+    // Bind through the real org scoper, which validates the id like the real
+    // `getStorageClient({ orgId })` does.
+    const { scopeStorageToOrg } = await import('@/lib/storage/org-scoped');
+    vi.mocked(getStorageClient).mockImplementationOnce((opts?: { orgId?: string }) =>
+      scopeStorageToOrg(mockStorageClient as never, opts?.orgId as string)
+    );
+    env.TENANCY_MODE = 'multi';
+    try {
+      noBinding();
+      const result = await runAsOrg('bad.id', () =>
+        new UploadToStorageCapability().execute(BASE_ARGS, BASE_CONTEXT)
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe('invalid_org');
+      expect(mockUpload).not.toHaveBeenCalled();
     } finally {
       env.TENANCY_MODE = 'single';
     }

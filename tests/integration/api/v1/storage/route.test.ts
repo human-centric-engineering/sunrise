@@ -40,6 +40,12 @@ vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+const mockOrgFindUnique = vi.fn<(args: unknown) => Promise<{ status: string } | null>>();
+
+vi.mock('@/lib/db/client', () => ({
+  prisma: { org: { findUnique: (args: unknown) => mockOrgFindUnique(args) } },
+}));
+
 const mockDownload = vi.fn<(key: string) => Promise<StorageObject>>();
 
 type MockStorage = {
@@ -104,6 +110,7 @@ beforeEach(() => {
     body: Buffer.from('confidential contents'),
     size: Buffer.byteLength('confidential contents'),
   });
+  mockOrgFindUnique.mockResolvedValue({ status: 'ACTIVE' });
 });
 
 describe('GET /api/v1/storage/[...key]', () => {
@@ -323,6 +330,48 @@ describe('GET /api/v1/storage/[...key]', () => {
 
       expect(response.status).toBe(200);
       expect(mockDownload).toHaveBeenCalledWith(KEY);
+    });
+
+    it('looks up the claimed org by id and serves only when it is ACTIVE', async () => {
+      const { token } = generateStorageAccessToken(ORG_KEY, 300, { orgId: 'org-a' });
+
+      const response = await call(ORG_SEGMENTS, token);
+
+      expect(response.status).toBe(200);
+      expect(mockOrgFindUnique).toHaveBeenCalledTimes(1);
+      expect(mockOrgFindUnique).toHaveBeenCalledWith({
+        where: { id: 'org-a' },
+        select: { status: true },
+      });
+    });
+
+    it('refuses with 403 ORG_UNAVAILABLE when the claimed org no longer exists', async () => {
+      mockOrgFindUnique.mockResolvedValue(null);
+      const { token } = generateStorageAccessToken(ORG_KEY, 300, { orgId: 'org-a' });
+
+      const response = await call(ORG_SEGMENTS, token);
+
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.code).toBe('ORG_UNAVAILABLE');
+      expect(mockDownload).not.toHaveBeenCalled();
+    });
+
+    it('refuses with 403 ORG_UNAVAILABLE when the claimed org is SUSPENDED', async () => {
+      mockOrgFindUnique.mockResolvedValue({ status: 'SUSPENDED' });
+      const { token } = generateStorageAccessToken(ORG_KEY, 300, { orgId: 'org-a' });
+
+      const response = await call(ORG_SEGMENTS, token);
+
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.code).toBe('ORG_UNAVAILABLE');
+      expect(mockDownload).not.toHaveBeenCalled();
+    });
+
+    it('does not query orgs for a claimless token on a legacy key', async () => {
+      const response = await call(SEGMENTS, signToken(KEY));
+
+      expect(response.status).toBe(200);
+      expect(mockOrgFindUnique).not.toHaveBeenCalled();
     });
   });
 

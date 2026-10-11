@@ -384,6 +384,10 @@ describe('storage access tokens', () => {
       expect(() => generateStorageAccessToken('orgs//orgB/f', 300, { orgId: 'orgB' })).toThrow();
     });
 
+    it('refuses to mint for a malformed org key whose segment is no valid org id', () => {
+      expect(() => generateStorageAccessToken('orgs/a b/x', 60, { orgId: 'a b' })).toThrow();
+    });
+
     it('matches a legacy key only when the token carries no org', () => {
       expect(tokenOrgMatchesKey(undefined, KEY)).toBe(true);
       expect(tokenOrgMatchesKey(null, KEY)).toBe(true);

@@ -42,6 +42,24 @@ describe('lib/storage/org-keys', () => {
     it.each(['avatars/x', 'xorgs/a', 'org/x'])('is false for %s', (key) => {
       expect(isUnderOrgRoot(key)).toBe(false);
     });
+
+    it.each(['orgs', 'org', 'or', 'o', 'ORGS', 'Org', ''])(
+      'is true for %j, a prefix of the root that would match every org tree',
+      (prefix) => {
+        expect(isUnderOrgRoot(prefix)).toBe(true);
+      }
+    );
+
+    it('judges a full blob URL by its path: true under orgs/', () => {
+      expect(isUnderOrgRoot('https://x.public.blob.vercel-storage.com/orgs/b/f.pdf')).toBe(true);
+    });
+
+    it.each(['avatars/u/x', 'xorgs/b/x'])(
+      'judges a full blob URL by its path: false for %s',
+      (path) => {
+        expect(isUnderOrgRoot(`https://x.public.blob.vercel-storage.com/${path}`)).toBe(false);
+      }
+    );
   });
 
   describe('orgOfKey', () => {
@@ -62,7 +80,21 @@ describe('lib/storage/org-keys', () => {
     });
   });
 
+  describe('orgOfKey with an id no org prefix could hold', () => {
+    it.each(['orgs/a b/x', 'orgs/a.b/x'])('returns null for %s', (key) => {
+      expect(orgOfKey(key)).toBeNull();
+    });
+  });
+
   describe('isKeyInOrg', () => {
+    it('accepts a blob URL whose path is inside the org', () => {
+      expect(isKeyInOrg('https://x.public.blob.vercel-storage.com/orgs/a/f.pdf', 'a')).toBe(true);
+    });
+
+    it('rejects a blob URL whose path is in another org', () => {
+      expect(isKeyInOrg('https://x.public.blob.vercel-storage.com/orgs/b/f.pdf', 'a')).toBe(false);
+    });
+
     it('accepts a key under the org prefix', () => {
       expect(isKeyInOrg('orgs/a/x', 'a')).toBe(true);
     });

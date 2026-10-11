@@ -70,6 +70,29 @@ describe('lib/storage/org-scoped', () => {
     }
   });
 
+  describe('blob URLs', () => {
+    const URL_BASE = 'https://x.public.blob.vercel-storage.com';
+
+    it('accepts delete of a blob URL whose path is inside the org and forwards it unchanged', async () => {
+      const inner = makeInner();
+      const url = `${URL_BASE}/orgs/${ORG}/f.pdf`;
+
+      await scopeStorageToOrg(inner, ORG).delete(url);
+
+      expect(inner.delete).toHaveBeenCalledWith(url);
+    });
+
+    it('refuses delete of a blob URL under another org without reaching the provider', async () => {
+      const inner = makeInner();
+
+      await expect(
+        scopeStorageToOrg(inner, ORG).delete(`${URL_BASE}/orgs/c/f.pdf`)
+      ).rejects.toThrow(/outside this org/i);
+
+      expect(inner.delete).not.toHaveBeenCalled();
+    });
+  });
+
   describe('pass-through for in-org keys', () => {
     it('upload forwards the same buffer and options and returns the inner result', async () => {
       const inner = makeInner();
@@ -223,6 +246,29 @@ describe('lib/storage/org-scoped', () => {
         );
       });
     }
+
+    it.each(['orgs', 'org'])(
+      'refuses deletePrefix(%j), a prefix of the root that would sweep every org',
+      async (prefix) => {
+        const inner = makeInner();
+
+        await expect(excludeOrgKeys(inner).deletePrefix(prefix)).rejects.toThrow(
+          /reserved orgs\/ root/
+        );
+
+        expect(inner.deletePrefix).not.toHaveBeenCalled();
+      }
+    );
+
+    it('refuses to delete a blob URL whose path is under /orgs/b/', async () => {
+      const inner = makeInner();
+
+      await expect(
+        excludeOrgKeys(inner).delete('https://x.public.blob.vercel-storage.com/orgs/b/f.pdf')
+      ).rejects.toThrow(/reserved orgs\/ root/);
+
+      expect(inner.delete).not.toHaveBeenCalled();
+    });
 
     it('passes an unowned key through to every method', async () => {
       const inner = makeInner();
