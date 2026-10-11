@@ -283,7 +283,7 @@ export class UploadToStorageCapability extends BaseCapability<Args, Data> {
       }
     }
 
-    const storage = getStorageClient(orgId !== undefined ? { orgId } : {});
+    const storage = getStorageClient({ orgId });
     if (!storage) {
       return this.error(
         'Storage is not configured for this deployment — set STORAGE_PROVIDER and credentials',
@@ -439,7 +439,6 @@ export class UploadToStorageCapability extends BaseCapability<Args, Data> {
     }
 
     if (signedTtl !== undefined) {
-      const expiresIn = signedTtl;
       // The capability check above already passed, so a missing method means
       // the provider declares `signedUrls` without implementing it. Fail
       // rather than fall through to the public-URL return below, which would
@@ -455,8 +454,8 @@ export class UploadToStorageCapability extends BaseCapability<Args, Data> {
         );
       }
       try {
-        const signedUrl = await storage.getSignedUrl(upload.key, expiresIn);
-        const expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+        const signedUrl = await storage.getSignedUrl(upload.key, signedTtl);
+        const expiresAt = new Date(Date.now() + signedTtl * 1000).toISOString();
         return this.success({
           key: upload.key,
           url: signedUrl,
@@ -527,9 +526,7 @@ function privateObjectsRemedy(providerName: string): string {
  * binding that set nothing: only the provider can change, so only S3 has one.
  */
 function privateObjectsDeploymentRemedy(providerName: string): string {
-  return providerName === 's3'
-    ? 'Set S3_OBJECTS_PRIVATE_BY_DEFAULT=true if the bucket blocks public access, or S3_USE_ACL=true on a legacy ACL bucket. '
-    : '';
+  return providerName === 's3' ? `${privateObjectsRemedy('s3')} ` : '';
 }
 
 /**

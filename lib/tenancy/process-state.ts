@@ -694,9 +694,9 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/storage/client.ts',
-    holders: ['storageClient', 'initWarningLogged'],
+    holders: ['storageClient', 'unboundClient', 'initWarningLogged'],
     posture: 'no-tenant-data',
-    why: 'The configured storage provider handle and a warn-once latch. The org-bound client `getStorageClient({ orgId })` returns (§109 t-736) is built per call around this handle and never stored, so the holder stays one org-free provider.',
+    why: 'The configured storage provider handle, the same handle behind the guard that refuses every key under the reserved `orgs/` root, and a warn-once latch. The org-bound client `getStorageClient({ orgId })` returns (§109 t-736) is built per call and never stored, so nothing here holds an org.',
   },
   {
     file: 'lib/tenancy/classification.ts',

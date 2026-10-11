@@ -46,7 +46,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { z } from 'zod';
 import { env } from '@/lib/env';
 import { isRecord } from '@/lib/utils';
-import { orgOfKey } from '@/lib/storage/org-keys';
+import { isUnderOrgRoot, orgOfKey } from '@/lib/storage/org-keys';
 
 /** Default token lifetime when the caller doesn't specify one. */
 const DEFAULT_EXPIRY_SECONDS = 3600; // 1 hour
@@ -97,7 +97,13 @@ function sign(payloadJson: string): string {
  * Minting and the read route both ask it, so the two checks cannot drift.
  */
 export function tokenOrgMatchesKey(org: string | null | undefined, key: string): boolean {
-  return (org ?? null) === orgOfKey(key);
+  const keyOrg = orgOfKey(key);
+  // Under the reserved root but naming no org (`orgs//x/…`, `Orgs/x/…`): no
+  // claim matches, so no token can be minted for it or read it. Treating it as
+  // unowned would let a claimless token reach a path the filesystem resolves
+  // into some org's tree.
+  if (keyOrg === null && isUnderOrgRoot(key)) return false;
+  return (org ?? null) === keyOrg;
 }
 
 /** Who a token is minted for. */

@@ -81,13 +81,16 @@ One transaction, in this order, and then a storage sweep:
    afterwards because an object store cannot join a database transaction:
    deleting first would leave a rolled-back org with its files gone. The
    result's `storageSwept` says how it went — `true`, `false` (the provider
-   failed; logged, and a re-run of the prefix delete finishes it), or `null`
+   failed; logged, and `sweepErasedOrgStorage` finishes it, below), or `null`
    (no storage configured).
 
    **The sweep runs once.** An agent upload already in flight in the org when
    it is erased can land in `orgs/{orgId}/` after the sweep. Suspend the org
    first (below) so no new turn starts, then erase. If `storageSwept` was
-   `false`, or you erased without suspending, delete the prefix again by hand.
+   `false`, or you erased without suspending, run
+   `sweepErasedOrgStorage(orgId)` (same file) from a one-off script: a second
+   `DELETE` cannot, because the org row is gone and it answers `404
+ORG_NOT_FOUND`. It refuses an org that still exists.
    S3 and Vercel Blob prefix deletes follow every page of the listing, and an
    S3 per-object failure makes the result `false`.
 

@@ -82,17 +82,21 @@ release process.
   `S3_USE_ACL=true`, or such a binding is refused with
   `private_objects_not_supported`. A dispatch with no org
   in its tenant context is refused with `no_org_context`. `orgs/` is now a
-  reserved root: at `single`, a binding whose `keyPrefix` starts with it is
-  refused with `invalid_binding`. Local storage access
+  reserved root: **`getStorageClient()` without `orgId` now refuses any key
+  under `orgs/`** (in any letter case), so an org's files are reachable only
+  through that org's client, and at `single` a binding whose `keyPrefix`
+  starts with it is refused with `invalid_binding`. A binding `keyPrefix` with
+  `.`, `..` or empty segments is refused too. Local storage access
   tokens gain an optional `org` claim: `generateStorageAccessToken()` and
   `buildStorageAccessUrl()` take `{ orgId }`, refuse an org-owned key signed
   for any other org (or for none), and the read route answers `403
   TOKEN_ORG_MISMATCH` when the claim does not match the key. `StorageProvider.getSignedUrl`
   gains an optional third `options` argument (`SignedUrlOptions`); a fork's
-  custom provider that ignores it still compiles, but should pass `orgId` into
-  any claim its URLs can carry. `eraseOrg()` deletes the org's prefix after its
-  transaction commits, best-effort, and reports `storageSwept` (also on
-  `DELETE /api/v1/admin/orgs/[id]`). **Unchanged at `single`**: no prefix, and
+  custom provider that ignores it still compiles, but one that mints
+  local-style tokens must forward it, or signing an org key fails. `eraseOrg()`
+  deletes the org's prefix after its transaction commits, best-effort, and
+  reports `storageSwept` (also on `DELETE /api/v1/admin/orgs/[id]`);
+  `sweepErasedOrgStorage(orgId)` re-runs that sweep for an org already erased. **Unchanged at `single`**: no prefix, and
   the public default stays. Avatars and files uploaded before this stay where
   they are, and org erasure does not reach the older ones. See
   `.context/storage/tenancy.md`.
@@ -102,9 +106,9 @@ release process.
 - **S3 and Vercel Blob `deletePrefix` now delete past the first page**
   (§109 t-736). Both read only the first listing page (1,000 objects on S3),
   so a prefix holding more kept the rest while reporting success; S3 also
-  reported success when `DeleteObjects` returned per-key `Errors`. Both now
-  follow the listing to the end, and an S3 per-key failure returns
-  `{ success: false }`. `eraseUser()`'s avatar sweep and `eraseOrg()`'s org
+  reported success when `DeleteObjects` returned per-key `Errors`. S3 now
+  follows the listing to the end, Vercel Blob re-lists until the prefix is
+  empty, and an S3 per-key failure returns `{ success: false }`. `eraseUser()`'s avatar sweep and `eraseOrg()`'s org
   sweep both go through it.
 
 

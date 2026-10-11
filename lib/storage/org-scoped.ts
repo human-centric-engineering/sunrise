@@ -1,56 +1,59 @@
 /**
- * The org-bound storage client (§109 t-736).
+ * The org-bound and unbound storage clients (§109 t-736).
  *
- * Wraps the configured provider so that every key it is handed must sit
- * inside one org's prefix (`orgs/{orgId}/…`, `lib/storage/org-keys.ts`).
- * Upload, read, delete, prefix delete and signing all refuse a key outside
- * it, which is what makes the prefix an enforced boundary rather than a
- * naming convention a caller could forget.
+ * Both wrap the configured provider with a rule about which keys it will
+ * touch, checked on upload, read, delete, prefix delete and signing:
  *
- * Reach it through `getStorageClient({ orgId })`. It is built per call and
- * holds nothing but the inner provider and the org id, so the process-wide
- * singleton in `client.ts` stays a single, org-free provider handle.
+ * - **Org-bound** (`scopeStorageToOrg`, via `getStorageClient({ orgId })`):
+ *   every key must sit inside one org's prefix, `orgs/{orgId}/…`
+ *   (`lib/storage/org-keys.ts`). Signing also passes the org down to the
+ *   provider, which local writes into the token's claim.
+ * - **Unbound** (`excludeOrgKeys`, via `getStorageClient()`): no key may sit
+ *   under the reserved `orgs/` root at all. Keys no org owns (avatars) go
+ *   here.
  *
- * **What it cannot do** is check a key that never passes through it. A caller
- * using the unbound `getStorageClient()` can still write anywhere; the rule
- * is that tenant-owned writes at `multi` go through this client, and today
- * the one such writer is `upload_to_storage`.
+ * Together they make the prefix an enforced boundary rather than a naming
+ * convention: there is no client that will write, read or delete an org's
+ * key except the one bound to that org. Code that needs an org's files —
+ * `upload_to_storage`, the signed read route for an org-claimed token, org
+ * erasure — asks for that org's client.
  */
 
 import type { StorageProvider } from '@/lib/storage/providers/types';
-import { isKeyInOrg, orgKeyPrefix } from '@/lib/storage/org-keys';
+import { isKeyInOrg, isUnderOrgRoot, orgKeyPrefix, ORG_KEY_ROOT } from '@/lib/storage/org-keys';
 
 /**
- * Bind `inner` to `orgId`.
- *
- * @throws when `orgId` is not a usable prefix segment (see `orgKeyPrefix`)
+ * Wrap `inner` so every key passes `allowed`, refusing the rest with a
+ * rejected promise that says why. `orgId`, when given, is passed to the
+ * provider's signer.
  */
-export function scopeStorageToOrg(inner: StorageProvider, orgId: string): StorageProvider {
-  const prefix = orgKeyPrefix(orgId);
-
+function guardKeys(
+  inner: StorageProvider,
+  allowed: (key: string) => boolean,
+  why: (key: string) => string,
+  orgId?: string
+): StorageProvider {
   // Async so a refusal comes back as a rejected promise: every method on the
   // interface returns one, and a synchronous throw would slip past a caller's
   // `.catch()`.
-  const inOrg = (key: string, op: string): Promise<void> => {
-    if (isKeyInOrg(key, orgId)) return Promise.resolve();
-    return Promise.reject(
-      new Error(`Storage ${op} refused: "${key}" is outside this org's prefix (${prefix})`)
-    );
-  };
+  const check = (key: string, op: string): Promise<void> =>
+    allowed(key)
+      ? Promise.resolve()
+      : Promise.reject(new Error(`Storage ${op} refused: ${why(key)}`));
 
-  const scoped: StorageProvider = {
+  const guarded: StorageProvider = {
     name: inner.name,
     ...(inner.capabilities ? { capabilities: inner.capabilities } : {}),
     upload: async (file, options) => {
-      await inOrg(options.key, 'upload');
+      await check(options.key, 'upload');
       return inner.upload(file, options);
     },
     delete: async (key) => {
-      await inOrg(key, 'delete');
+      await check(key, 'delete');
       return inner.delete(key);
     },
     deletePrefix: async (keyPrefix) => {
-      await inOrg(keyPrefix, 'prefix delete');
+      await check(keyPrefix, 'prefix delete');
       return inner.deletePrefix(keyPrefix);
     },
   };
@@ -59,20 +62,50 @@ export function scopeStorageToOrg(inner: StorageProvider, orgId: string): Storag
   const getSignedUrl = inner.getSignedUrl?.bind(inner);
   const download = inner.download?.bind(inner);
   if (getSignedUrl) {
-    scoped.getSignedUrl = async (key, expiresIn) => {
-      await inOrg(key, 'signing');
+    guarded.getSignedUrl = async (key, expiresIn) => {
+      await check(key, 'signing');
       // The org goes down with the key. Local writes it into the token's
       // claim; S3 has nowhere to put it, which is why the check above is the
-      // control for presigned URLs.
-      return getSignedUrl(key, expiresIn, { orgId });
+      // control for presigned URLs. Whatever options the caller passed are
+      // ignored: a caller cannot sign for an org through a client not bound
+      // to it.
+      return getSignedUrl(key, expiresIn, orgId !== undefined ? { orgId } : {});
     };
   }
   if (download) {
-    scoped.download = async (key) => {
-      await inOrg(key, 'read');
+    guarded.download = async (key) => {
+      await check(key, 'read');
       return download(key);
     };
   }
 
-  return scoped;
+  return guarded;
+}
+
+/**
+ * Bind `inner` to `orgId`: every key must sit inside `orgs/{orgId}/`.
+ *
+ * @throws when `orgId` is not a usable prefix segment (see `orgKeyPrefix`)
+ */
+export function scopeStorageToOrg(inner: StorageProvider, orgId: string): StorageProvider {
+  const prefix = orgKeyPrefix(orgId);
+  return guardKeys(
+    inner,
+    (key) => isKeyInOrg(key, orgId),
+    (key) => `"${key}" is outside this org's prefix (${prefix})`,
+    orgId
+  );
+}
+
+/**
+ * Wrap `inner` so no key under the reserved `orgs/` root gets through, in any
+ * letter case: those keys are reachable only through the owning org's client.
+ */
+export function excludeOrgKeys(inner: StorageProvider): StorageProvider {
+  return guardKeys(
+    inner,
+    (key) => !isUnderOrgRoot(key),
+    (key) =>
+      `"${key}" is under the reserved ${ORG_KEY_ROOT} root; use getStorageClient({ orgId }) for an org's files`
+  );
 }

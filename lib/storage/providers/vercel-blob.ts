@@ -32,6 +32,12 @@ export interface VercelBlobProviderConfig {
  *
  * Simple, CDN-backed blob storage integrated with Vercel.
  */
+/**
+ * Listing rounds `deletePrefix` makes before giving up. `list()` returns up to
+ * 1000 blobs a page, so this covers a prefix of a million blobs.
+ */
+const MAX_PREFIX_DELETE_ROUNDS = 1000;
+
 export class VercelBlobProvider implements StorageProvider {
   readonly name = 'vercel-blob';
   private token: string;
@@ -115,34 +121,45 @@ export class VercelBlobProvider implements StorageProvider {
   }
 
   /**
-   * Delete every blob under a prefix, page by page. `list()` returns one page
-   * and a `cursor` while `hasMore` is true; reading only the first page would
-   * let org erasure report its files gone while later pages remained
-   * (§109 t-736).
+   * Delete every blob under a prefix.
+   *
+   * Re-lists from the start after each deleted page rather than following the
+   * listing's `cursor`: nothing documents whether that cursor survives the
+   * deletion of the page it came from, and if it is positional, deleting page
+   * one would make the next listing skip blobs while this still reported
+   * success. Listing until the prefix comes back empty is correct either way.
+   * Org erasure reports this verdict as `storageSwept` (§109 t-736).
+   *
+   * {@link MAX_PREFIX_DELETE_ROUNDS} bounds it: a `del` that succeeds without
+   * removing anything (eventual consistency) would otherwise list the same
+   * page for ever, so the round limit ends it and reports failure.
    */
   async deletePrefix(prefix: string): Promise<DeleteResult> {
     validateStorageKey(prefix);
     try {
-      let cursor: string | undefined;
       let count = 0;
-      do {
-        const page = await list({ prefix, token: this.token, ...(cursor ? { cursor } : {}) });
-        if (page.blobs.length > 0) {
-          await del(
-            page.blobs.map((blob) => blob.url),
-            { token: this.token }
-          );
-          count += page.blobs.length;
+      for (let round = 0; round < MAX_PREFIX_DELETE_ROUNDS; round++) {
+        const { blobs } = await list({ prefix, token: this.token });
+        if (blobs.length === 0) {
+          if (count === 0) {
+            logger.debug('No blobs found for prefix', { prefix });
+          } else {
+            logger.info('Blobs deleted from Vercel Blob by prefix', { prefix, count });
+          }
+          return { success: true, key: prefix };
         }
-        cursor = page.hasMore ? page.cursor : undefined;
-      } while (cursor);
-
-      if (count === 0) {
-        logger.debug('No blobs found for prefix', { prefix });
-      } else {
-        logger.info('Blobs deleted from Vercel Blob by prefix', { prefix, count });
+        await del(
+          blobs.map((blob) => blob.url),
+          { token: this.token }
+        );
+        count += blobs.length;
       }
-      return { success: true, key: prefix };
+      logger.error('Vercel Blob prefix delete gave up with blobs still listed', undefined, {
+        prefix,
+        deleted: count,
+        rounds: MAX_PREFIX_DELETE_ROUNDS,
+      });
+      return { success: false, key: prefix };
     } catch (error) {
       logger.error('Failed to delete blobs from Vercel Blob by prefix', error, { prefix });
       return { success: false, key: prefix };

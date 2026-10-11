@@ -35,8 +35,9 @@
  * org's objects live under `orgs/{orgId}/` (`lib/storage/org-keys.ts`), and an
  * object store cannot join a database transaction. Deleting first would leave
  * a rolled-back org with its files gone; deleting after leaves, at worst, an
- * erased org with files still on disk, which a re-run of the prefix delete
- * clears. So the sweep is best-effort, like the avatar sweep in
+ * erased org with files still on disk, which {@link sweepErasedOrgStorage}
+ * clears (a second `eraseOrg` cannot: the org row is gone, so it refuses with
+ * `ORG_NOT_FOUND` before reaching the sweep). So the sweep is best-effort, like the avatar sweep in
  * `eraseUser()`: a failure is logged and reported on the result as
  * `storageSwept: false`, never thrown, because the org is already gone and a
  * throw would tell the caller it was not.
@@ -136,6 +137,30 @@ export async function eraseOrg(params: EraseOrgParams): Promise<EraseOrgResult> 
 }
 
 /**
+ * Re-run the storage sweep for an org that has already been erased: after
+ * `eraseOrg` reported `storageSwept: false`, or when an upload in flight
+ * during the erasure landed after the sweep. Call it from a one-off script
+ * or console; there is deliberately no route.
+ *
+ * Refuses an org that still exists. Deleting a live org's files is not a
+ * repair, and erasing the org is what `eraseOrg` is for.
+ *
+ * @returns the same verdict as `storageSwept`
+ * @throws when the org has not been erased
+ */
+export async function sweepErasedOrgStorage(orgId: string): Promise<boolean | null> {
+  const org = await prisma.org.findUnique({ where: { id: orgId }, select: { id: true } });
+  if (org) {
+    throw new Error(
+      'This organisation still exists; erase it with eraseOrg rather than deleting its files'
+    );
+  }
+  const storageSwept = await sweepOrgStorage(orgId);
+  logger.info('Erased org storage swept again', { orgId, storageSwept });
+  return storageSwept;
+}
+
+/**
  * Delete the org's storage prefix. Best-effort: runs after the transaction
  * has committed, so it reports failure instead of throwing (module header).
  */
@@ -146,7 +171,8 @@ async function sweepOrgStorage(orgId: string): Promise<boolean | null> {
   // not `upload.ts`, which would also load the image pipeline for nothing.
   try {
     const { getStorageClient } = await import('@/lib/storage/client');
-    const storage = getStorageClient();
+    // The org's own client: the unbound one refuses every key under `orgs/`.
+    const storage = getStorageClient({ orgId });
     if (!storage) return null;
     const { success } = await storage.deletePrefix(orgKeyPrefix(orgId));
     return success;

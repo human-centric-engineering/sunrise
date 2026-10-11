@@ -23,16 +23,39 @@
 export const ORG_KEY_ROOT = 'orgs/';
 
 /**
+ * What an org id may be, to become a prefix segment. Org ids are cuids, plus
+ * the literal `install`; anything else — `.`, an empty string, a `/`, a
+ * space — could make the prefix resolve to the `orgs/` root itself on a
+ * filesystem (`orgs/./`) or to another org's tree, and the prefix is what
+ * erasure deletes.
+ */
+const ORG_ID_SEGMENT = /^[A-Za-z0-9_-]+$/;
+
+/**
  * The prefix an org's objects live under: `orgs/{orgId}/`.
  *
- * @throws when `orgId` is empty or contains a `/`, either of which would let
- *   the prefix name another org's keys or the root itself
+ * @throws when `orgId` is not letters, digits, `_` or `-`
  */
 export function orgKeyPrefix(orgId: string): string {
-  if (!orgId || orgId.includes('/')) {
-    throw new Error('An org storage prefix needs an org id with no "/" in it');
+  if (!ORG_ID_SEGMENT.test(orgId)) {
+    throw new Error('An org storage prefix needs an org id of letters, digits, "_" or "-"');
   }
   return `${ORG_KEY_ROOT}${orgId}/`;
+}
+
+/**
+ * True for any key under the reserved `orgs/` root, compared without regard
+ * to case: on a case-insensitive filesystem (the macOS default) `Orgs/x/…`
+ * is the same directory as `orgs/x/…`.
+ *
+ * Wider than {@link orgOfKey} on purpose. A key this returns true for but
+ * `orgOfKey` cannot name an org for (`orgs//x/…`, `Orgs/x/…`) is malformed,
+ * and every check treats it as belonging to no org that can use it: the
+ * unbound client refuses it, no org-bound client accepts it, and no token
+ * can be minted for it.
+ */
+export function isUnderOrgRoot(key: string): boolean {
+  return key.slice(0, ORG_KEY_ROOT.length).toLowerCase() === ORG_KEY_ROOT;
 }
 
 /**

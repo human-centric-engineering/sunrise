@@ -102,7 +102,10 @@ export async function GET(
     return errorResponse('Invalid storage key', { code: 'INVALID_KEY', status: 400 });
   }
 
-  const storage = getStorageClient();
+  // The token's org, now known to match the key's: an org's files are
+  // reachable only through that org's client, and the unbound one refuses
+  // every key under `orgs/`.
+  const storage = getStorageClient(tokenOrg !== null ? { orgId: tokenOrg } : {});
   if (!storage) {
     return errorResponse('Storage is not configured for this deployment', {
       code: 'STORAGE_NOT_CONFIGURED',

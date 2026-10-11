@@ -42,8 +42,10 @@ export interface SignedUrlOptions {
    * (`lib/storage/org-scoped.ts`) passes it after checking the key is inside
    * that org.
    *
-   * What a provider can do with it differs, and a provider that ignores it
-   * still compiles:
+   * What a provider can do with it differs. A provider that ignores it still
+   * compiles, but one that mints local-style tokens (`buildStorageAccessUrl`)
+   * must forward it: minting refuses an org-owned key without its org, so
+   * signing every org key would fail at runtime.
    * - **local** writes it into the token as the `org` claim, and the read
    *   route refuses a token whose claim does not match the key's prefix;
    * - **S3** cannot: a presigned URL is AWS's format and carries no claim of
