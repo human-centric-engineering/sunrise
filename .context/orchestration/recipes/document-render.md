@@ -99,7 +99,7 @@ Notes:
 - **`timeoutMs: 60000`** — rendering takes seconds, sometimes 10+. The default 30s is borderline
 - **Binary response shape.** PDFShift returns `application/pdf`; the HTTP module wraps the body as `{ encoding: 'base64', contentType: 'application/pdf', data: '<base64>' }` rather than UTF-8-decoding (which would corrupt the bytes). The agent passes the `data` field directly to `upload_to_storage` — never try to interpret base64 inline
 - **`allowedContentTypes` on Step 2** restricts the binding to PDFs only. Without it the agent could upload any content type to the same prefix
-- **`signedUrlTtlSeconds: 604800`** (7 days) returns a time-limited signed URL instead of a public one. Only S3 supports signed URLs; on Vercel Blob / local the call fails closed with `signed_url_not_supported`. Drop the field for a public URL
+- **`signedUrlTtlSeconds: 604800`** (7 days) returns a time-limited signed URL instead of a public one. S3 and local sign URLs; on Vercel Blob the call fails closed with `signed_url_not_supported`. Drop the field for a public URL at `single`; at `TENANCY_MODE=multi`, dropping it gives a 24-hour signed URL instead, and a public one needs `public: true` ([Storage and Tenancy](../../storage/tenancy.md))
 - **No `defaultResponseTransform` on Step 1** — JMESPath only makes sense for structured (JSON) responses. Skip the transform for binary
 - **PDFShift uses Basic auth** with the API key as username and an empty password. Set `PDFSHIFT_API_KEY=sk_xxx:` (with trailing colon) for the Basic encoder to produce the right value
 
@@ -281,7 +281,7 @@ Body: `{ "source": "<html>", "filename": "...", "use_print": true }`. With the r
 - **Multi-page reports.** Beyond ~10 pages the LLM-emitted HTML body becomes too large for a tool call. Move to a workflow that builds the HTML with `llm_call` steps and a final `external_call` step (then an `external_call` to `upload_to_storage` if you want Pattern B retention)
 - **Templated rendering.** DocRaptor and similar accept a `document_url` instead of inline `document_content` — point at a template URL on your own host and pass `data` as variables. Reduces the size of the LLM-emitted body
 - **Self-hosted with auth.** If your Gotenberg instance is on a public network, front it with Basic auth or an API key check in your reverse proxy. Then bind `call_external_api` with `auth: { type: 'basic', ... }`
-- **Public vs signed URLs in Pattern B.** Drop `signedUrlTtlSeconds` for a permanent public URL (suitable for sharing on a public site). Keep it set for time-limited private access (suitable for invoices, receipts, anything user-specific). Signed URLs are S3-only — Vercel Blob URLs are publish-once-public and can be deleted but not signed; local storage has no signing concept
+- **Public vs signed URLs in Pattern B.** For a permanent public URL (suitable for sharing on a public site), drop `signedUrlTtlSeconds` — and at `TENANCY_MODE=multi` also set `public: true`, since there an unconfigured binding is private and signed for 24 hours. Keep `signedUrlTtlSeconds` set for time-limited private access (suitable for invoices, receipts, anything user-specific). S3 and local sign URLs; Vercel Blob URLs are publish-once-public and can be deleted but not signed
 - **Multipart bodies.** Gotenberg expects `multipart/form-data` with file parts. The capability's `multipart` arg covers this directly — no adapter service required. See [`external-calls.md` → Multipart bodies](../external-calls.md) for the full spec.
 
 ## 10. Anti-patterns
@@ -325,7 +325,7 @@ Body: `{ "source": "<html>", "filename": "...", "use_print": true }`. With the r
    - The URL serves a real PDF
    - Storage path matches `keyPrefix` + `<uuid>.pdf` — no LLM-controlled segments
 8. **Negative tests:**
-   - Drop `signedUrlTtlSeconds` and switch `STORAGE_PROVIDER=local`; the upload returns a public URL (not signed)
+   - Drop `signedUrlTtlSeconds` and switch `STORAGE_PROVIDER=local`; at `single` the upload returns a public URL (not signed), at `multi` a 24-hour signed one
    - Set `STORAGE_PROVIDER=vercel-blob` with `signedUrlTtlSeconds` still set — the call fails with `signed_url_not_supported`
    - Restrict `allowedContentTypes` to `["image/png"]` and try the PDF flow — fails with `content_type_not_allowed`
    - Set `maxFileSizeBytes: 1024` and render a large PDF — fails with `file_too_large`

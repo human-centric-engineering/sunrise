@@ -778,16 +778,17 @@ Persists a binary artefact (PDF from a renderer, image from a generator, CSV fro
 
 Per-agent binding `customConfig`:
 
-- `keyPrefix?: string` — optional path prefix, must end with `/`. Defaults to `agent-uploads/<agentId>/`. Forced through `validateStorageKey` at upload time so a malformed prefix can't escape the bucket.
+- `keyPrefix?: string` — optional path prefix, must end with `/`. Defaults to `agent-uploads/<agentId>/`. Forced through `validateStorageKey` at upload time so a malformed prefix can't escape the bucket. At `TENANCY_MODE=multi` it is wrapped in the org's prefix, `orgs/<orgId>/<keyPrefix>`, and written through the org-bound client ([Storage and Tenancy](../storage/tenancy.md)).
 - `allowedContentTypes?: string[]` — optional MIME allowlist (e.g. `['application/pdf']`). When set, an upload with a non-matching `contentType` fails closed with `content_type_not_allowed`. Recommended for narrow bindings.
 - `maxFileSizeBytes?: number` — optional per-binding cap. Defaults to the deployment's `MAX_FILE_SIZE_MB` (5 MB if unset).
-- `signedUrlTtlSeconds?: number` — when set, the result returns a time-limited signed URL instead of a public one. **Only S3 supports signed URLs**; on Vercel Blob / local the call fails with `signed_url_not_supported`. Implies `public: false` at upload time.
-- `public?: boolean` — defaults `true`. Ignored when `signedUrlTtlSeconds` is set (signed implies private).
+- `signedUrlTtlSeconds?: number` — when set, the result returns a time-limited signed URL instead of a public one. S3 and local sign URLs; on Vercel Blob the call fails with `signed_url_not_supported`. Implies `public: false` at upload time.
+- `public?: boolean` — defaults `true` at `single`. Ignored when `signedUrlTtlSeconds` is set (signed implies private).
+- **At `TENANCY_MODE=multi`, a binding that sets neither** uploads privately and returns a signed URL valid for 24 hours; set `public: true` for a public link. On Vercel Blob such a binding fails with `signed_url_not_supported` until it does. A call with no org in its tenant context fails with `no_org_context`.
 
 Result `data`:
 
 - `key` — canonical storage key (use this for any future delete capability; never derive from `url`)
-- `url` — public URL (or signed URL when `signedUrlTtlSeconds` is set)
+- `url` — public URL, or a signed URL when the upload is private and signed (`signedUrlTtlSeconds`, or the default at `multi`)
 - `size` — uploaded bytes
 - `contentType` — echoed for the LLM's narration
 - `signed` — boolean

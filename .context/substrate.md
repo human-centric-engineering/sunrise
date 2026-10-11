@@ -30,7 +30,7 @@ Entry point for the `.context/` documentation system. Load specific domains base
 | **UI Patterns**    | `ui/`            | Tabs, forms, marketing components                 |
 | **Admin**          | `admin/`         | Dashboard, user management, feature flags         |
 | **Privacy**        | `privacy/`       | Cookie consent, GDPR                              |
-| **Storage**        | `storage/`       | File uploads, S3/Vercel Blob                      |
+| **Storage**        | `storage/`       | File uploads, S3/Vercel Blob, org-owned keys      |
 | **Analytics**      | `analytics/`     | Event tracking, providers                         |
 | **SEO**            | `seo/`           | Sitemap, robots.txt, metadata                     |
 | **Email**          | `email/`         | React Email templates, sending                    |
