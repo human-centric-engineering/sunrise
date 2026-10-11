@@ -37,6 +37,12 @@ that org; the signed read route and org erasure ask for it like everything
 else. The org-bound wrapper is built per call and holds nothing but the
 provider and the org id; the process-wide provider stays org-free.
 
+`getStorageClient()` therefore returns a wrapper exposing the
+`StorageProvider` interface, not the provider instance itself. Keys with `.`
+or empty path segments are rejected by `validateStorageKey()` for every
+provider, because the local provider resolves keys as paths and `./orgs/b/x`
+would otherwise reach org `b`'s directory past a string check.
+
 A key that starts `orgs/` but names no org cleanly (`orgs//x/…`, `Orgs/x/…`)
 is malformed: no client accepts it and no token can be minted for it. Org ids
 used as prefixes must be letters, digits, `_` or `-` (cuids and `install`), so
@@ -93,11 +99,11 @@ fails loudly rather than publishing the file.
 
 ## What each URL kind protects
 
-| URL kind               | What it carries                             | Org protection                                                                                                                                                                      |
-| ---------------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Local signed token** | One key, an expiry, and an `org` claim      | Minting refuses a key outside the org; the read route (`/api/v1/storage/<key>`) refuses a token whose `org` claim does not match the key's prefix (`TOKEN_ORG_MISMATCH`, 403).      |
-| **S3 presigned URL**   | AWS's own signature over one key and expiry | **None in the URL.** A presigned URL is AWS's format and has nowhere to put a claim of ours. The org-bound client's check before signing is the whole control.                      |
-| **Public URL**         | Nothing                                     | **None.** Anyone holding it can read the file for as long as it exists. Local public files are served statically from `/uploads/<key>`. This is why the default changed at `multi`. |
+| URL kind               | What it carries                             | Org protection                                                                                                                                                                                                                               |
+| ---------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Local signed token** | One key, an expiry, and an `org` claim      | Minting refuses a key outside the org; the read route (`/api/v1/storage/<key>`) refuses a token whose `org` claim does not match the key's prefix (`TOKEN_ORG_MISMATCH`, 403), or whose org is erased or suspended (`ORG_UNAVAILABLE`, 403). |
+| **S3 presigned URL**   | AWS's own signature over one key and expiry | **None in the URL.** A presigned URL is AWS's format and has nowhere to put a claim of ours. The org-bound client's check before signing is the whole control.                                                                               |
+| **Public URL**         | Nothing                                     | **None.** Anyone holding it can read the file for as long as it exists. Local public files are served statically from `/uploads/<key>`. This is why the default changed at `multi`.                                                          |
 
 **The local token's claim, in detail** (`lib/storage/access-tokens.ts`). The
 payload is `{ typ: 'storage-read', key, expiresAt, org? }`. An org-owned key

@@ -26,6 +26,7 @@
 
 import type { NextRequest } from 'next/server';
 import { errorResponse } from '@/lib/api/responses';
+import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { getStorageClient } from '@/lib/storage/client';
 import { getStorageCapabilities } from '@/lib/storage/providers/types';
@@ -92,6 +93,28 @@ export async function GET(
       code: 'TOKEN_ORG_MISMATCH',
       status: 403,
     });
+  }
+
+  // An org-claimed token reads only while its org is live. A link minted for
+  // an org that has since been erased (when the post-commit storage sweep
+  // failed, its files are still there) or suspended stops working now, not at
+  // its expiry, which at `multi` is a day by default and up to seven.
+  if (tokenOrg !== null) {
+    const org = await prisma.org.findUnique({
+      where: { id: tokenOrg },
+      select: { status: true },
+    });
+    if (!org || org.status !== 'ACTIVE') {
+      logger.info('Storage token refused: its org is erased or suspended', {
+        requestedKey: key,
+        tokenOrg,
+        orgStatus: org?.status ?? 'erased',
+      });
+      return errorResponse('This link is no longer valid', {
+        code: 'ORG_UNAVAILABLE',
+        status: 403,
+      });
+    }
   }
 
   try {

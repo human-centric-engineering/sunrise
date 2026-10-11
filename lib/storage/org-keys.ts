@@ -19,6 +19,8 @@
  * keys do not change.
  */
 
+import { storagePathOf } from '@/lib/storage/providers/validate-key';
+
 /** The segment every org-owned key starts with. */
 export const ORG_KEY_ROOT = 'orgs/';
 
@@ -44,8 +46,9 @@ export function orgKeyPrefix(orgId: string): string {
 }
 
 /**
- * True for any key under the reserved `orgs/` root, compared without regard
- * to case: on a case-insensitive filesystem (the macOS default) `Orgs/x/…`
+ * True for any key under the reserved `orgs/` root, or any prefix of the
+ * root itself, compared without regard to case and judged by the path a full
+ * blob URL names: on a case-insensitive filesystem (the macOS default) `Orgs/x/…`
  * is the same directory as `orgs/x/…`.
  *
  * Wider than {@link orgOfKey} on purpose. A key this returns true for but
@@ -55,7 +58,11 @@ export function orgKeyPrefix(orgId: string): string {
  * can be minted for it.
  */
 export function isUnderOrgRoot(key: string): boolean {
-  return key.slice(0, ORG_KEY_ROOT.length).toLowerCase() === ORG_KEY_ROOT;
+  const path = storagePathOf(key).toLowerCase();
+  // Under the root, or a prefix of it: `orgs`, `org` or `o` as a prefix-delete
+  // or listing prefix matches every org's keys on S3 and Vercel Blob, and
+  // `orgs` resolves to the whole tree on the local disk.
+  return path.startsWith(ORG_KEY_ROOT) || ORG_KEY_ROOT.startsWith(path);
 }
 
 /**
@@ -71,7 +78,10 @@ export function orgOfKey(key: string): string | null {
   const rest = key.slice(ORG_KEY_ROOT.length);
   const slash = rest.indexOf('/');
   if (slash <= 0) return null;
-  return rest.slice(0, slash);
+  const segment = rest.slice(0, slash);
+  // Only an id that could have made the prefix names an org; anything else
+  // (`orgs/a b/…`) is malformed, the same as an empty segment.
+  return ORG_ID_SEGMENT.test(segment) ? segment : null;
 }
 
 /**
@@ -83,5 +93,5 @@ export function orgOfKey(key: string): string | null {
  * trailing `/`.
  */
 export function isKeyInOrg(key: string, orgId: string): boolean {
-  return key.startsWith(orgKeyPrefix(orgId));
+  return storagePathOf(key).startsWith(orgKeyPrefix(orgId));
 }

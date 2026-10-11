@@ -200,6 +200,7 @@ The payload is `{ typ: 'storage-read', key, expiresAt, org? }` (`org` since §10
 | 401    | `INVALID_TOKEN`          | Expired, tampered, or malformed             |
 | 403    | `TOKEN_KEY_MISMATCH`     | Valid token, but minted for a different key |
 | 403    | `TOKEN_ORG_MISMATCH`     | The token's org claim is not the key's org  |
+| 403    | `ORG_UNAVAILABLE`        | The claimed org is erased or suspended      |
 | 404    | `NOT_FOUND`              | No such object                              |
 | 501    | `DOWNLOAD_NOT_SUPPORTED` | Provider has no `download` capability       |
 | 503    | `STORAGE_NOT_CONFIGURED` | No provider configured                      |

@@ -298,12 +298,34 @@ describe('lib/storage/providers/validate-key', () => {
 
     // Edge cases and special scenarios
     describe('edge cases', () => {
-      it('should accept key with consecutive slashes (valid in object storage)', () => {
-        expect(() => validateStorageKey('avatars//user//file.jpg')).not.toThrow();
+      // Both used to be accepted. The local provider resolves keys as paths,
+      // so `./orgs/b/x` or `orgs//b/x` reached another org's directory while
+      // every ownership rule read the string (§109 t-736).
+      it('rejects a key with consecutive slashes (an empty segment)', () => {
+        expect(() => validateStorageKey('avatars//user//file.jpg')).toThrow(
+          'must not contain "." or empty path segments'
+        );
       });
 
-      it('should accept key with dot-slash pattern (not ..)', () => {
-        expect(() => validateStorageKey('./file.jpg')).not.toThrow();
+      it('rejects a key with a "." segment', () => {
+        expect(() => validateStorageKey('./file.jpg')).toThrow(
+          'must not contain "." or empty path segments'
+        );
+        expect(() => validateStorageKey('./orgs/b/x.pdf')).toThrow();
+        expect(() => validateStorageKey('a/./b')).toThrow();
+      });
+
+      it('accepts a prefix with a trailing slash', () => {
+        expect(() => validateStorageKey('orgs/a/')).not.toThrow();
+      });
+
+      it('judges a full blob URL by its path, not its scheme', () => {
+        expect(() =>
+          validateStorageKey('https://x.public.blob.vercel-storage.com/avatars/u/a.jpg')
+        ).not.toThrow();
+        expect(() =>
+          validateStorageKey('https://x.public.blob.vercel-storage.com/avatars//a.jpg')
+        ).toThrow();
       });
 
       it('should accept key with many dots', () => {

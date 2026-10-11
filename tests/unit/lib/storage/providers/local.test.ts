@@ -70,6 +70,10 @@ vi.mock('@/lib/env', () => ({
   },
 }));
 
+/** Either layer may refuse a root-resolving key; see `root-equivalent prefixes`. */
+const ROOT_KEY_REFUSAL =
+  /Storage key must not resolve to the storage root|must not contain "\." or empty path segments/;
+
 describe('lib/storage/providers/local', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -247,6 +251,10 @@ describe('lib/storage/providers/local', () => {
       // reach `rm(root, { recursive: true })` and erase every object the
       // provider holds. `existsSync` returns true throughout so the delete is
       // reached if the guard is absent.
+      // Since §109 t-736 `validateStorageKey` refuses `.` segments itself, so
+      // these keys stop there; `resolveWithin` stays as the backstop behind it.
+      // Either refusal satisfies the guard these tests exist for: nothing is
+      // deleted, written or read.
       describe('root-equivalent prefixes', () => {
         it.each([['.'], ['./'], ['./.'], ['././']])(
           'refuses %j without deleting anything',
@@ -258,9 +266,7 @@ describe('lib/storage/providers/local', () => {
               privateDir: '/srv/test-private',
             });
 
-            await expect(provider.deletePrefix(prefix)).rejects.toThrow(
-              'Storage key must not resolve to the storage root'
-            );
+            await expect(provider.deletePrefix(prefix)).rejects.toThrow(ROOT_KEY_REFUSAL);
             expect(rm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — the whole point of the guard is that the recursive delete never runs
           }
         );
@@ -294,9 +300,7 @@ describe('lib/storage/providers/local', () => {
             privateDir: '/srv/test-private',
           });
 
-          await expect(provider.deletePrefix('.')).rejects.toThrow(
-            'Storage key must not resolve to the storage root'
-          );
+          await expect(provider.deletePrefix('.')).rejects.toThrow(ROOT_KEY_REFUSAL);
           expect(rm).not.toHaveBeenCalled(); // test-review:accept no_arg_called — asserts the private root survived too
         });
 
@@ -328,7 +332,7 @@ describe('lib/storage/providers/local', () => {
 
           await expect(
             provider.upload(Buffer.from('x'), { key: '.', contentType: 'text/plain' })
-          ).rejects.toThrow('Storage key must not resolve to the storage root');
+          ).rejects.toThrow(ROOT_KEY_REFUSAL);
           expect(mkdir).not.toHaveBeenCalled(); // test-review:accept no_arg_called — mkdir would create a directory OUTSIDE the storage root
           expect(writeFile).not.toHaveBeenCalled(); // test-review:accept no_arg_called — writeFile would turn the storage root into a file
         });
@@ -340,9 +344,7 @@ describe('lib/storage/providers/local', () => {
 
             const provider = new LocalProvider({ baseDir: '/srv/test-uploads' });
 
-            await expect(provider[method]('.')).rejects.toThrow(
-              'Storage key must not resolve to the storage root'
-            );
+            await expect(provider[method]('.')).rejects.toThrow(ROOT_KEY_REFUSAL);
           }
         );
       });

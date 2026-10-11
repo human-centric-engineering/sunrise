@@ -69,7 +69,7 @@ import type {
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
 import { getStorageClient } from '@/lib/storage/client';
-import { ORG_KEY_ROOT, orgKeyPrefix } from '@/lib/storage/org-keys';
+import { isUnderOrgRoot, ORG_KEY_ROOT, orgKeyPrefix } from '@/lib/storage/org-keys';
 import { isMultiTenant, requireOrgId } from '@/lib/tenancy/context';
 import { getStorageCapabilities } from '@/lib/storage/providers/types';
 import { validateStorageKey } from '@/lib/storage/providers/validate-key';
@@ -283,7 +283,21 @@ export class UploadToStorageCapability extends BaseCapability<Args, Data> {
       }
     }
 
-    const storage = getStorageClient({ orgId });
+    let storage: ReturnType<typeof getStorageClient>;
+    try {
+      storage = getStorageClient({ orgId });
+    } catch (err) {
+      // Binding the client validates the org id as a path segment.
+      logger.error('upload_to_storage: refusing call — org id is not usable as a storage prefix', {
+        agentId: context.agentId,
+        orgId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return this.error(
+        'This organisation cannot be given a storage location — contact the platform operator',
+        'invalid_org'
+      );
+    }
     if (!storage) {
       return this.error(
         'Storage is not configured for this deployment — set STORAGE_PROVIDER and credentials',
@@ -381,12 +395,11 @@ export class UploadToStorageCapability extends BaseCapability<Args, Data> {
     // The org prefix wraps the admin's rather than replacing it, so a binding's
     // own layout survives the move to `multi`.
     const bindingPrefix = customConfig?.keyPrefix ?? `agent-uploads/${context.agentId}/`;
-    const prefix = orgId !== undefined ? `${orgKeyPrefix(orgId)}${bindingPrefix}` : bindingPrefix;
-    // `orgs/` is where org-owned keys live, and the signer refuses an `orgs/…`
-    // key not minted for its org. At `single` nothing names an org, so a
-    // binding prefix there would upload and then fail to sign. Refuse before
-    // the upload rather than after it.
-    if (orgId === undefined && bindingPrefix.startsWith(ORG_KEY_ROOT)) {
+    // `orgs/` is where org-owned keys live, and the unbound client refuses any
+    // key under it, in any case. At `single` nothing names an org, so such a
+    // binding could never upload; say so as a binding error, before decoding
+    // anything, rather than as a failed upload.
+    if (orgId === undefined && isUnderOrgRoot(bindingPrefix)) {
       logger.error('upload_to_storage: keyPrefix uses the reserved orgs/ root', {
         agentId: context.agentId,
         keyPrefix: bindingPrefix,
@@ -397,9 +410,14 @@ export class UploadToStorageCapability extends BaseCapability<Args, Data> {
       );
     }
     const extension = deriveExtension(args.filename, args.contentType);
-    const key = `${prefix}${randomUUID()}${extension}`;
+    let prefix = bindingPrefix;
+    let key = '';
 
     try {
+      // Inside the try: `orgKeyPrefix` throws for an org id it cannot use as a
+      // path segment, and that must come back as a result, not an exception.
+      prefix = orgId !== undefined ? `${orgKeyPrefix(orgId)}${bindingPrefix}` : bindingPrefix;
+      key = `${prefix}${randomUUID()}${extension}`;
       validateStorageKey(prefix);
       validateStorageKey(key);
     } catch (err) {

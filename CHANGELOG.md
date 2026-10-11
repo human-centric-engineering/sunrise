@@ -85,12 +85,19 @@ release process.
   reserved root: **`getStorageClient()` without `orgId` now refuses any key
   under `orgs/`** (in any letter case), so an org's files are reachable only
   through that org's client, and at `single` a binding whose `keyPrefix`
-  starts with it is refused with `invalid_binding`. A binding `keyPrefix` with
-  `.`, `..` or empty segments is refused too. Local storage access
+  starts with it is refused with `invalid_binding`. **`getStorageClient()`
+  therefore returns a guarded wrapper, not the provider instance**: it exposes
+  the `StorageProvider` interface only, so a fork that reached a provider's own
+  extra methods through it must keep its own reference to the provider.
+  **`validateStorageKey()` now rejects `.` and empty path segments** (a
+  trailing `/` on a prefix is fine; a full blob URL is judged by its path):
+  the local provider resolves keys as paths, so `./orgs/b/x` reached another
+  org's directory. Local storage access
   tokens gain an optional `org` claim: `generateStorageAccessToken()` and
   `buildStorageAccessUrl()` take `{ orgId }`, refuse an org-owned key signed
   for any other org (or for none), and the read route answers `403
-  TOKEN_ORG_MISMATCH` when the claim does not match the key. `StorageProvider.getSignedUrl`
+  TOKEN_ORG_MISMATCH` when the claim does not match the key, or `403
+  ORG_UNAVAILABLE` once the claimed org is erased or suspended. `StorageProvider.getSignedUrl`
   gains an optional third `options` argument (`SignedUrlOptions`); a fork's
   custom provider that ignores it still compiles, but one that mints
   local-style tokens must forward it, or signing an org key fails. `eraseOrg()`
