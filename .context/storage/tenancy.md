@@ -14,6 +14,7 @@ The provider mechanics (S3, Vercel Blob, local, the signed read route) are in
 | An org's key prefix                 | `orgKeyPrefix(orgId)` → `orgs/{orgId}/` — `lib/storage/org-keys.ts`             |
 | Which org a key belongs to          | `orgOfKey(key)` — same file; `null` for a key no org owns                       |
 | Delete an org's files               | `eraseOrg()` does it after its transaction commits                              |
+| Re-run that after a failed sweep    | `sweepErasedOrgStorage(orgId)` — `lib/privacy/erase-org.ts`                     |
 | Upload from an agent                | the `upload_to_storage` capability (prefixed and private by default at `multi`) |
 
 ## Org-owned keys
@@ -27,9 +28,19 @@ file is.
 returns the configured provider wrapped by `scopeStorageToOrg`
 (`lib/storage/org-scoped.ts`). Upload, read, delete, prefix delete and signing
 all refuse a key outside `orgs/{orgId}/`, with a rejected promise naming the
-key and the prefix. The wrapper is built per call and holds nothing but the
-provider and the org id; the process-wide singleton stays one org-free
-provider handle.
+key and the prefix. **And the unbound client refuses the other way round:**
+`getStorageClient()` with no `orgId` returns the provider wrapped by
+`excludeOrgKeys`, which refuses every key under the reserved `orgs/` root, in
+any letter case (on a case-insensitive disk `Orgs/` is the same directory).
+So there is no client that will touch an org's file except the one bound to
+that org; the signed read route and org erasure ask for it like everything
+else. The org-bound wrapper is built per call and holds nothing but the
+provider and the org id; the process-wide provider stays org-free.
+
+A key that starts `orgs/` but names no org cleanly (`orgs//x/…`, `Orgs/x/…`)
+is malformed: no client accepts it and no token can be minted for it. Org ids
+used as prefixes must be letters, digits, `_` or `-` (cuids and `install`), so
+no id can make a prefix that resolves to the `orgs/` root itself.
 
 **`upload_to_storage` is today's one tenant-owned writer.** At `multi` it takes
 the org from the tenant context the dispatch already runs in
@@ -49,14 +60,15 @@ with `no_org_context`.
   them: not the org-bound client, not the token claim, not erasure.
 - **At `single`, nothing is prefixed.** A single-tenant fork's keys, and its
   `upload_to_storage` results, do not change — with one exception: `orgs/` is
-  reserved for org-owned keys at both modes, so a binding whose own
-  `keyPrefix` starts with it is refused with `invalid_binding` at `single`
-  (where nothing could sign such a key). At `multi` it is simply nested inside
-  the org's prefix.
+  reserved at both modes, so a binding whose own `keyPrefix` starts with it is
+  refused with `invalid_binding` at `single`, and the unbound client refuses
+  such keys for any caller. At `multi` a binding prefix like that is simply
+  nested inside the org's prefix. (A binding `keyPrefix` with `.`, `..` or
+  empty segments is refused at both modes.)
 
-A fork writing tenant-owned files of its own should go through
-`getStorageClient({ orgId: requireOrgId() })` too. The wrapper cannot check a
-key that never passes through it.
+A fork writing tenant-owned files of its own goes through
+`getStorageClient({ orgId: requireOrgId() })`; the unbound client will refuse
+the key otherwise.
 
 ## Private by default at `multi`
 
