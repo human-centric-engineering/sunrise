@@ -235,6 +235,25 @@ async function main(): Promise<void> {
       !theirs.some((r) => typeof r === 'object' && r !== null && 'payload' in r),
       'without its event payload'
     );
+    check(
+      theirs.every(
+        (r) =>
+          typeof r === 'object' &&
+          r !== null &&
+          !('destination' in r) &&
+          !('previousDestinations' in r) &&
+          'sentTo' in r &&
+          r.sentTo === user.email.toLowerCase()
+      ),
+      'naming only their own address, never the row’s destination columns'
+    );
+
+    // Put the notification back into a retry, as a receiver outage would, to
+    // prove erasure stops it rather than letting it email the person again.
+    await prisma.aiWebhookDelivery.update({
+      where: { id: selfNotified.id },
+      data: { status: 'failed', nextRetryAt: new Date(Date.now() + 60_000) },
+    });
 
     // ── 3. Erase the creator: the subscription goes, the delivery stays ──
     console.log('Erasing the subscription creator:');
@@ -261,6 +280,12 @@ async function main(): Promise<void> {
     check(
       redacted?.destination === '[erased]' && redacted.destinationFingerprint === null,
       'but the erased person’s own address and its fingerprint are redacted'
+    );
+    check(
+      redacted?.status === 'exhausted' &&
+        redacted.nextRetryAt === null &&
+        (redacted.lastError ?? '').includes('not retried: recipient erased'),
+      'and its pending retry is stopped, keeping the real error'
     );
 
     const orphanRetry = await retryDelivery(sent.id, { awaitDelivery: true });

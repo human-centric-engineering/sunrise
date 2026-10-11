@@ -165,6 +165,7 @@ Uses admin orchestration webhook endpoints:
 - `DELETE /webhooks/:id` — delete (its deliveries are kept; see [Where a delivery went](#where-a-delivery-went))
 - `POST /webhooks/:id/test` — send test ping event
 - `GET /webhooks/:id/deliveries` — delivery history (scoped to `session.user.id`)
+- `GET /webhooks/deliveries?status=&subscriptionId=&orphaned=` — deliveries in any status across the subscriptions the caller may see, including those whose subscription was deleted (where the policy permits); the route that reaches a delivered orphan, which neither the per-subscription list nor the DLQ can
 - `POST /webhooks/deliveries/:id/retry` — retry failed delivery (verifies parent subscription ownership; 409 when the subscription was deleted)
 - `DELETE /webhooks/deliveries/:id` — permanently delete a delivery row (verifies parent subscription ownership, or that it was deleted; audit-logged as `webhook_delivery.delete`, naming the delivery's origin, never an email address)
 - `GET /webhooks/dlq?page=&pageSize=&subscriptionId=&eventType=&since=&until=` — list exhausted deliveries across all subscriptions the calling admin owns, plus orphaned ones. Always scoped to `status=exhausted` and that scope; filters narrow further.

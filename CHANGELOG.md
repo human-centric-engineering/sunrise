@@ -18,10 +18,13 @@ release process.
 
 ### Added
 
-- **`GET /admin/orchestration/hooks/deliveries`** (§109 t-739). Event-hook
-  deliveries across every hook, filterable by `status`, `hookId` and
-  `orphaned=true` — the only route that reaches a delivery whose hook was
-  deleted, now that such deliveries are kept (below).
+- **`GET /admin/orchestration/hooks/deliveries`** and **`GET
+  /admin/orchestration/webhooks/deliveries`** (§109 t-739). Deliveries across
+  every hook, or every subscription the admin may see, in any status,
+  filterable by `status`, the parent's id and `orphaned=true` — the routes that
+  reach a delivery whose hook or subscription was deleted, now that such
+  deliveries are kept (below). The per-parent lists 404 once the parent is
+  gone, and the dead-letter list shows only `exhausted` rows.
 - **`'webhookDelivery'` joins `UNATTRIBUTED_READ_KINDS`** (§109 t-739), so
   `session.unattributedReads` and `UnattributedReads` gain a `webhookDelivery`
   key. A fork that builds that record by hand (in a test fixture, say) must add
@@ -49,13 +52,18 @@ release process.
   policy permits an unattributed read (platform admins by default), and
   retention prunes it by age as before. A delivery emailed to a person is
   theirs to see and to have erased: the subject-access export gains a
-  `notificationsSentToYou` section, and `eraseUser()` redacts the address on
-  every such delivery to `[erased]` — both for a verified address only, matched
+  `notificationsSentToYou` section (when, which event, the outcome, and their
+  own address — never another inbox a re-pointed row also names), and
+  `eraseUser()` redacts the address on every such delivery to `[erased]` and
+  stops any of them still retrying — both for a verified address only, matched
   exactly on the normalised form. `GET /webhooks/dlq` no longer returns the
   subscription's `url` (which can carry a credential), and the
   `webhook_delivery.delete` audit entry names the delivery's origin rather than
   the subscription's full URL, and no email address.
-  **Migration** `20261008120000_delivery_destination`; then run
+  **Migrations** `20261008120000_delivery_destination` and
+  `20261011120000_delivery_destination_index` (two indexes on
+  `ai_webhook_delivery`, built without `CONCURRENTLY`, so apply off-peak on a
+  large install); then run
   `npm run db:seed` so the `022-delivery-destinations` unit fills existing rows
   from their current subscription or hook (the best available value, not a
   record). Rows whose parent is deleted before it runs stay unrecorded.

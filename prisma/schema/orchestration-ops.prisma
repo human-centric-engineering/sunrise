@@ -89,6 +89,12 @@ model AiWebhookDelivery {
   @@index([subscriptionId])
   @@index([status])
   @@index([nextRetryAt])
+  // Subject access and erasure find a person's notifications by exact address,
+  // now or as an earlier destination (`webhookDeliveriesAddressedTo`): both
+  // halves of that OR indexed, so neither scans the table — inside the erasure
+  // transaction least of all.
+  @@index([destination])
+  @@index([previousDestinations(ops: JsonbPathOps)], type: Gin)
   @@map("ai_webhook_delivery")
 }
 

@@ -257,7 +257,9 @@ manifest uses (`contactSubmissionsOf()`), and redacts the address on
 delivery outlives its subscription (§109 t-739), so the address a
 notification was emailed to stays on the row after the exported subscription
 is gone. The export section (`notificationsSentToYou`) carries when, which
-event and whether it was delivered, not the event payload; see
+event, whether it was delivered and the subject's own address (`sentTo`) — not
+the event payload, and never the row's `destination` or history, which after a
+re-pointed retry can name a second person's inbox; see
 [What `eraseUser()` Does Beyond the Cascade](./data-erasure.md#what-eraseuser-does-beyond-the-cascade).
 
 **Neither net can reach `ContactSubmission`.** It holds no user id in any

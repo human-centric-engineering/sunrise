@@ -158,10 +158,17 @@ export function WebhookDlqTable({
         body.subscriptionId = subscriptionFilter;
         if (until) body.before = new Date(until).toISOString();
       } else {
-        // No subscription selected: replay everything visible on this page.
-        body.deliveryIds = deliveries.map((d) => d.id);
+        // No subscription selected: replay everything visible on this page
+        // that still has a subscription to send to. A row whose subscription
+        // was deleted is kept as a record and cannot be retried; the server
+        // would only skip it, and say nothing.
+        body.deliveryIds = deliveries.filter((d) => d.subscription).map((d) => d.id);
         if ((body.deliveryIds as string[]).length === 0) {
-          setActionError('Nothing to replay on this page.');
+          setActionError(
+            deliveries.length > 0
+              ? 'Nothing to replay on this page: every row’s subscription was deleted.'
+              : 'Nothing to replay on this page.'
+          );
           setActionId(null);
           return;
         }

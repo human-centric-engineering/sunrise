@@ -69,7 +69,9 @@ for a notification emailed to a person that is their own address — whoever's
 subscription sent it, and whether or not it still exists — so `eraseUser()`
 redacts it: a destination equal to the subject's verified address becomes
 `[erased]`, its fingerprint is dropped, and the same goes for any earlier
-destination in `previousDestinations`. It matches through the same rule as
+destination in `previousDestinations`; a delivery still retrying is stopped
+too, since its next attempt would email the erased person again. It matches
+through the same rule as
 subject access (`webhookDeliveriesAddressedTo()`: exact on the normalised
 address, never `ILIKE`), so an unverified account's address, which may be a
 stranger's inbox, is left alone. What the
