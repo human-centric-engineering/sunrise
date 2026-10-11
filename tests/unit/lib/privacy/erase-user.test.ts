@@ -518,36 +518,68 @@ describe('eraseUser', () => {
   describe('webhook delivery redaction', () => {
     const UNTIL = '2026-01-01T00:00:00.000Z';
 
-    it('builds the findMany where from the STORED address on the user row, normalised, not the caller-supplied one', async () => {
+    type Row = Record<string, unknown>;
+
+    /**
+     * Route the two findMany passes by the shape of their where, so a test
+     * states what each pass returns instead of depending on call order:
+     * the retrying pass is `{ AND: [...] }`, the history pass is a bare
+     * `previousDestinations` match.
+     */
+    function seed(rows: { retrying?: Row[]; movedOn?: Row[]; updateManyCount?: number }): void {
+      mockDeliveryFindMany.mockImplementation(async (args: { where: Record<string, unknown> }) =>
+        'AND' in args.where ? (rows.retrying ?? []) : (rows.movedOn ?? [])
+      );
+      mockDeliveryUpdateMany.mockResolvedValue({ count: rows.updateManyCount ?? 0 });
+    }
+
+    it('reads the retrying rows from the STORED address, normalised, restricted to pending/failed', async () => {
       // Arrange — the caller and the row disagree; the row is the authority
       mockUserFind.mockResolvedValue({ email: ' Stored@Bar.com ', emailVerified: true });
 
       // Act
       await eraseUser({ ...BASE_PARAMS, userEmail: 'caller-supplied@bar.com' });
 
-      // Assert — exact shape, normalised, with no ILIKE mode
-      expect(mockDeliveryFindMany).toHaveBeenCalledTimes(1);
-      expect(mockDeliveryFindMany).toHaveBeenCalledWith({
+      // Assert — pass (a): exact shape, normalised, no ILIKE mode
+      expect(mockDeliveryFindMany).toHaveBeenCalledTimes(2);
+      expect(mockDeliveryFindMany).toHaveBeenNthCalledWith(1, {
         where: {
-          OR: [
-            { destination: 'stored@bar.com' },
-            { previousDestinations: { array_contains: [{ destination: 'stored@bar.com' }] } },
+          AND: [
+            {
+              OR: [
+                { destination: 'stored@bar.com' },
+                { previousDestinations: { array_contains: [{ destination: 'stored@bar.com' }] } },
+              ],
+            },
+            { status: { in: ['pending', 'failed'] } },
           ],
         },
-        select: { id: true, destination: true, previousDestinations: true },
+        select: { id: true, destination: true, previousDestinations: true, lastError: true },
+      });
+      // Pass (b) and (c) use the same stored address
+      expect(mockDeliveryUpdateMany).toHaveBeenCalledWith({
+        where: { destination: 'stored@bar.com' },
+        data: { destination: '[erased]', destinationFingerprint: null },
+      });
+      expect(mockDeliveryFindMany).toHaveBeenNthCalledWith(2, {
+        where: { previousDestinations: { array_contains: [{ destination: 'stored@bar.com' }] } },
+        select: { id: true, previousDestinations: true },
       });
       expect(JSON.stringify(mockDeliveryFindMany.mock.calls)).not.toContain('caller-supplied');
+      expect(JSON.stringify(mockDeliveryUpdateMany.mock.calls)).not.toContain('caller-supplied');
       expect(JSON.stringify(mockDeliveryFindMany.mock.calls)).not.toContain('insensitive');
     });
 
-    it('is not scoped by the subscription the person owns: it reads every delivery sent to the address', async () => {
+    it('is not scoped by the subscription the person owns: no pass filters on subscription or the user id', async () => {
       await eraseUser(BASE_PARAMS);
 
-      const [args] = mockDeliveryFindMany.mock.calls[0] as [{ where: Record<string, unknown> }];
-      expect(Object.keys(args.where)).toEqual(['OR']);
-      expect(JSON.stringify(args.where)).not.toContain('subscription');
-      expect(JSON.stringify(args.where)).not.toContain('createdBy');
-      expect(JSON.stringify(args.where)).not.toContain(BASE_PARAMS.userId);
+      const wheres = JSON.stringify([
+        ...mockDeliveryFindMany.mock.calls,
+        ...mockDeliveryUpdateMany.mock.calls,
+      ]);
+      expect(wheres).not.toContain('subscription');
+      expect(wheres).not.toContain('createdBy');
+      expect(wheres).not.toContain(BASE_PARAMS.userId);
     });
 
     it('makes no aiWebhookDelivery call at all for an unverified account', async () => {
@@ -562,49 +594,112 @@ describe('eraseUser', () => {
       expect(mockDeliveryUpdateMany).not.toHaveBeenCalled();
     });
 
-    it('erases the destination and fingerprint on a row addressed to them, writing one update per row and no updateMany', async () => {
-      mockDeliveryFindMany.mockResolvedValue([
-        { id: 'd-1', destination: 'foo@bar.com', previousDestinations: null },
-        { id: 'd-2', destination: 'foo@bar.com', previousDestinations: null },
-      ]);
+    it('exhausts a retrying row to the composed lastError, keeping the real error, and erases its destination', async () => {
+      seed({
+        retrying: [
+          {
+            id: 'd-retry',
+            destination: 'foo@bar.com',
+            previousDestinations: null,
+            lastError: 'SMTP 550 mailbox full',
+          },
+        ],
+      });
 
       await eraseUser(BASE_PARAMS);
 
-      expect(mockDeliveryUpdate).toHaveBeenCalledTimes(2);
-      expect(mockDeliveryUpdate).toHaveBeenNthCalledWith(1, {
-        where: { id: 'd-1' },
-        data: { destination: '[erased]', destinationFingerprint: null },
-      });
-      expect(mockDeliveryUpdate).toHaveBeenNthCalledWith(2, {
-        where: { id: 'd-2' },
-        data: { destination: '[erased]', destinationFingerprint: null },
-      });
-      expect(mockDeliveryUpdateMany).not.toHaveBeenCalled();
-    });
-
-    it('writes both the destination and the redacted history when a row matches in both', async () => {
-      mockDeliveryFindMany.mockResolvedValue([
-        {
-          id: 'd-both',
-          destination: 'foo@bar.com',
-          previousDestinations: [
-            { destination: 'foo@bar.com', destinationFingerprint: 'v1:a', until: UNTIL },
-            {
-              destination: 'https://hooks.example.com',
-              destinationFingerprint: 'v1:b',
-              until: UNTIL,
-            },
-          ],
-        },
-      ]);
-
-      await eraseUser(BASE_PARAMS);
-
+      expect(mockDeliveryUpdate).toHaveBeenCalledTimes(1);
       expect(mockDeliveryUpdate).toHaveBeenCalledWith({
-        where: { id: 'd-both' },
+        where: { id: 'd-retry' },
         data: {
+          status: 'exhausted',
+          nextRetryAt: null,
+          lastError: 'SMTP 550 mailbox full (not retried: recipient erased)',
           destination: '[erased]',
           destinationFingerprint: null,
+        },
+      });
+    });
+
+    it('exhausts a retrying row with no recorded error to the bare "Not retried" message', async () => {
+      seed({
+        retrying: [
+          { id: 'd-new', destination: 'foo@bar.com', previousDestinations: null, lastError: null },
+        ],
+      });
+
+      await eraseUser(BASE_PARAMS);
+
+      const [args] = mockDeliveryUpdate.mock.calls[0] as [{ data: Record<string, unknown> }];
+      expect(args.data.lastError).toBe('Not retried: recipient erased');
+      expect(args.data.status).toBe('exhausted');
+    });
+
+    it('stops a retrying row whose destination is someone else and only the history names them, without touching the destination', async () => {
+      seed({
+        retrying: [
+          {
+            id: 'd-moved',
+            destination: 'someone-else@bar.com',
+            lastError: 'boom',
+            previousDestinations: [
+              { destination: 'foo@bar.com', destinationFingerprint: 'v1:a', until: UNTIL },
+            ],
+          },
+        ],
+      });
+
+      await eraseUser(BASE_PARAMS);
+
+      const [args] = mockDeliveryUpdate.mock.calls[0] as [{ data: Record<string, unknown> }];
+      expect(args.data).toEqual({
+        status: 'exhausted',
+        nextRetryAt: null,
+        lastError: 'boom (not retried: recipient erased)',
+        previousDestinations: [
+          { destination: '[erased]', destinationFingerprint: null, until: UNTIL },
+        ],
+      });
+      expect(args.data).not.toHaveProperty('destination');
+    });
+
+    it('redacts a delivered row only through updateMany, with no per-row update', async () => {
+      // A delivered row is not "retrying", so pass (a) returns nothing for it.
+      seed({ retrying: [], updateManyCount: 3 });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockDeliveryUpdateMany).toHaveBeenCalledTimes(1);
+      expect(mockDeliveryUpdateMany).toHaveBeenCalledWith({
+        where: { destination: 'foo@bar.com' },
+        data: { destination: '[erased]', destinationFingerprint: null },
+      });
+      expect(mockDeliveryUpdate).not.toHaveBeenCalled();
+    });
+
+    it('writes only previousDestinations for a history-only row, and never touches its status', async () => {
+      seed({
+        movedOn: [
+          {
+            id: 'd-history',
+            previousDestinations: [
+              { destination: 'foo@bar.com', destinationFingerprint: 'v1:a', until: UNTIL },
+              {
+                destination: 'https://hooks.example.com',
+                destinationFingerprint: 'v1:b',
+                until: UNTIL,
+              },
+            ],
+          },
+        ],
+      });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockDeliveryUpdate).toHaveBeenCalledTimes(1);
+      expect(mockDeliveryUpdate).toHaveBeenCalledWith({
+        where: { id: 'd-history' },
+        data: {
           previousDestinations: [
             { destination: '[erased]', destinationFingerprint: null, until: UNTIL },
             {
@@ -617,53 +712,102 @@ describe('eraseUser', () => {
       });
     });
 
-    it('writes only previousDestinations for a row that matches only in its history', async () => {
-      mockDeliveryFindMany.mockResolvedValue([
-        {
-          id: 'd-history',
-          destination: 'someone-else@bar.com',
-          previousDestinations: [
-            { destination: 'foo@bar.com', destinationFingerprint: 'v1:a', until: UNTIL },
-          ],
-        },
-      ]);
-
-      await eraseUser(BASE_PARAMS);
-
-      expect(mockDeliveryUpdate).toHaveBeenCalledTimes(1);
-      const [args] = mockDeliveryUpdate.mock.calls[0] as [{ data: Record<string, unknown> }];
-      expect(args.data).toEqual({
-        previousDestinations: [
-          { destination: '[erased]', destinationFingerprint: null, until: UNTIL },
+    it('skips the update for a history row whose entries name nobody erased', async () => {
+      // e.g. the JSONB containment matched but the normalised compare does not
+      seed({
+        movedOn: [
+          {
+            id: 'd-nochange',
+            previousDestinations: [
+              { destination: 'other@bar.com', destinationFingerprint: 'v1:x', until: UNTIL },
+            ],
+          },
         ],
       });
-      // The current destination belongs to someone else and is left alone.
-      expect(args.data).not.toHaveProperty('destination');
-      expect(args.data).not.toHaveProperty('destinationFingerprint');
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockDeliveryUpdate).not.toHaveBeenCalled();
     });
 
-    it('does not write previousDestinations when the history names nobody erased', async () => {
-      mockDeliveryFindMany.mockResolvedValue([
-        {
-          id: 'd-current',
-          destination: 'foo@bar.com',
-          previousDestinations: [
-            { destination: 'other@bar.com', destinationFingerprint: 'v1:x', until: UNTIL },
-          ],
-        },
-      ]);
+    it('does not write previousDestinations on a retrying row whose history names nobody erased', async () => {
+      seed({
+        retrying: [
+          {
+            id: 'd-current',
+            destination: 'foo@bar.com',
+            lastError: null,
+            previousDestinations: [
+              { destination: 'other@bar.com', destinationFingerprint: 'v1:x', until: UNTIL },
+            ],
+          },
+        ],
+      });
 
       await eraseUser(BASE_PARAMS);
 
       const [args] = mockDeliveryUpdate.mock.calls[0] as [{ data: Record<string, unknown> }];
-      expect(args.data).toEqual({ destination: '[erased]', destinationFingerprint: null });
+      expect(args.data).not.toHaveProperty('previousDestinations');
     });
 
-    it('runs every delivery read and write before tx.user.delete', async () => {
+    it('logs webhookDeliveriesRedacted as retrying + updateMany count + history rows', async () => {
+      seed({
+        retrying: [
+          { id: 'r1', destination: 'foo@bar.com', previousDestinations: null, lastError: null },
+          { id: 'r2', destination: 'foo@bar.com', previousDestinations: null, lastError: null },
+        ],
+        updateManyCount: 5,
+        movedOn: [
+          {
+            id: 'm1',
+            previousDestinations: [
+              { destination: 'foo@bar.com', destinationFingerprint: 'v1:a', until: UNTIL },
+            ],
+          },
+        ],
+      });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'User erased',
+        expect.objectContaining({ webhookDeliveriesRedacted: 2 + 5 + 1 })
+      );
+    });
+
+    it('logs webhookDeliveriesRedacted as 0 for an unverified account', async () => {
+      mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: false });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'User erased',
+        expect.objectContaining({ webhookDeliveriesRedacted: 0 })
+      );
+    });
+
+    it('runs every delivery pass before tx.user.delete', async () => {
       const callOrder: string[] = [];
-      mockDeliveryFindMany.mockImplementation(async () => {
-        callOrder.push('findMany');
-        return [{ id: 'd-1', destination: 'foo@bar.com', previousDestinations: null }];
+      mockDeliveryFindMany.mockImplementation(async (args: { where: Record<string, unknown> }) => {
+        if ('AND' in args.where) {
+          callOrder.push('findMany:retrying');
+          return [
+            { id: 'r1', destination: 'foo@bar.com', previousDestinations: null, lastError: null },
+          ];
+        }
+        callOrder.push('findMany:history');
+        return [
+          {
+            id: 'm1',
+            previousDestinations: [
+              { destination: 'foo@bar.com', destinationFingerprint: 'v1:a', until: UNTIL },
+            ],
+          },
+        ];
+      });
+      mockDeliveryUpdateMany.mockImplementation(async () => {
+        callOrder.push('updateMany');
+        return { count: 1 };
       });
       mockDeliveryUpdate.mockImplementation(async () => {
         callOrder.push('update');
@@ -676,19 +820,36 @@ describe('eraseUser', () => {
 
       await eraseUser(BASE_PARAMS);
 
-      expect(callOrder).toEqual(['findMany', 'update', 'user.delete']);
+      expect(callOrder).toEqual([
+        'findMany:retrying',
+        'update',
+        'updateMany',
+        'findMany:history',
+        'update',
+        'user.delete',
+      ]);
     });
 
     it('a failed redaction rolls the erasure back: the user row is never deleted', async () => {
-      mockDeliveryFindMany.mockResolvedValue([
-        { id: 'd-1', destination: 'foo@bar.com', previousDestinations: null },
-      ]);
+      seed({
+        retrying: [
+          { id: 'd-1', destination: 'foo@bar.com', previousDestinations: null, lastError: null },
+        ],
+      });
       mockDeliveryUpdate.mockRejectedValue(new Error('redaction failed'));
 
       await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('redaction failed');
 
       expect(mockUserDelete).not.toHaveBeenCalled();
       expect(mockReceiptCreate).not.toHaveBeenCalled();
+    });
+
+    it('a failed updateMany rolls the erasure back too', async () => {
+      mockDeliveryUpdateMany.mockRejectedValue(new Error('bulk redaction failed'));
+
+      await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('bulk redaction failed');
+
+      expect(mockUserDelete).not.toHaveBeenCalled();
     });
   });
 

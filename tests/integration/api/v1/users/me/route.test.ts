@@ -363,34 +363,70 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
     it('redacts the stored address on deliveries sent to it, from the user row rather than the session, before deleting the user', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.user.count).mockResolvedValue(2);
-      vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([
-        { id: 'del-1', destination: 'stored-self@example.com', previousDestinations: null },
-      ] as never);
+      // Pass (a) reads retrying rows; pass (c) reads history-only rows.
+      vi.mocked(prisma.aiWebhookDelivery.findMany).mockImplementation((async (args: {
+        where: Record<string, unknown>;
+      }) =>
+        'AND' in args.where
+          ? [
+              {
+                id: 'del-1',
+                destination: 'stored-self@example.com',
+                previousDestinations: null,
+                lastError: 'SMTP 550',
+              },
+            ]
+          : []) as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValue({ count: 4 });
 
       const response = await DELETE(makeDeleteRequest({ confirmation: 'DELETE' }));
 
       expect(response.status).toBe(200);
-      expect(prisma.aiWebhookDelivery.findMany).toHaveBeenCalledWith({
+      expect(prisma.aiWebhookDelivery.findMany).toHaveBeenCalledTimes(2);
+      expect(prisma.aiWebhookDelivery.findMany).toHaveBeenNthCalledWith(1, {
         where: {
-          OR: [
-            { destination: 'stored-self@example.com' },
+          AND: [
             {
-              previousDestinations: {
-                array_contains: [{ destination: 'stored-self@example.com' }],
-              },
+              OR: [
+                { destination: 'stored-self@example.com' },
+                {
+                  previousDestinations: {
+                    array_contains: [{ destination: 'stored-self@example.com' }],
+                  },
+                },
+              ],
             },
+            { status: { in: ['pending', 'failed'] } },
           ],
         },
-        select: { id: true, destination: true, previousDestinations: true },
+        select: { id: true, destination: true, previousDestinations: true, lastError: true },
       });
+      // The retrying row is stopped, keeping its real error, and its address erased.
       expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith({
         where: { id: 'del-1' },
+        data: {
+          status: 'exhausted',
+          nextRetryAt: null,
+          lastError: 'SMTP 550 (not retried: recipient erased)',
+          destination: '[erased]',
+          destinationFingerprint: null,
+        },
+      });
+      // Every other row sent to the address is redacted in one statement.
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith({
+        where: { destination: 'stored-self@example.com' },
         data: { destination: '[erased]', destinationFingerprint: null },
       });
-      expect(prisma.aiWebhookDelivery.updateMany).not.toHaveBeenCalled();
-      const updateOrder = vi.mocked(prisma.aiWebhookDelivery.update).mock.invocationCallOrder[0];
       const deleteOrder = vi.mocked(prisma.user.delete).mock.invocationCallOrder[0];
-      expect(updateOrder).toBeLessThan(deleteOrder);
+      for (const fn of [
+        prisma.aiWebhookDelivery.findMany,
+        prisma.aiWebhookDelivery.update,
+        prisma.aiWebhookDelivery.updateMany,
+      ]) {
+        for (const order of vi.mocked(fn).mock.invocationCallOrder) {
+          expect(order).toBeLessThan(deleteOrder);
+        }
+      }
     });
 
     it('touches no deliveries when the stored address is unverified', async () => {
@@ -410,6 +446,7 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       expect(prisma.user.delete).toHaveBeenCalledTimes(1);
       expect(prisma.aiWebhookDelivery.findMany).not.toHaveBeenCalled();
       expect(prisma.aiWebhookDelivery.update).not.toHaveBeenCalled();
+      expect(prisma.aiWebhookDelivery.updateMany).not.toHaveBeenCalled();
     });
 
     it('returns 200 { deleted:true } for a regular USER role (no admin count check)', async () => {

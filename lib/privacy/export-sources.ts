@@ -318,7 +318,16 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
         orderBy: byCreatedAt,
       });
       const sentTo = normaliseAddress(subject.email);
-      return rows.map((row) => ({ ...row, sentTo }));
+      // Field by field, not a spread: widening the select above must not be
+      // enough to put a row's own address columns in front of the subject.
+      return rows.map((row) => ({
+        id: row.id,
+        eventType: row.eventType,
+        status: row.status,
+        lastAttemptAt: row.lastAttemptAt,
+        createdAt: row.createdAt,
+        sentTo,
+      }));
     },
   },
   {

@@ -329,8 +329,6 @@ describe('exportUserData', () => {
           id: true,
           eventType: true,
           status: true,
-          destination: true,
-          previousDestinations: true,
           lastAttemptAt: true,
           createdAt: true,
         },
@@ -338,16 +336,76 @@ describe('exportUserData', () => {
       });
       const select = argsTo('aiWebhookDelivery').select as Record<string, unknown>;
       expect(Object.keys(select)).not.toContain('payload');
+      // One row can name two inboxes after a re-pointed retry, so neither
+      // address column may be read at all.
+      expect(Object.keys(select)).not.toContain('destination');
+      expect(Object.keys(select)).not.toContain('previousDestinations');
+      expect(Object.keys(select)).not.toContain('destinationFingerprint');
       expect(JSON.stringify(argsTo('aiWebhookDelivery'))).not.toContain('insensitive');
     });
 
-    it('returns the rows the read produced under notificationsSentToYou', async () => {
-      const rows = [{ id: 'd-1', eventType: 'budget_exceeded', status: 'delivered' }];
-      delegateFor('aiWebhookDelivery').findMany.mockResolvedValue(rows);
+    it('adds the subject’s own normalised address to every row as sentTo, keeping the selected fields', async () => {
+      const lastAttemptAt = new Date('2026-02-01T00:00:00.000Z');
+      const createdAt = new Date('2026-01-31T00:00:00.000Z');
+      delegateFor('aiWebhookDelivery').findMany.mockResolvedValue([
+        { id: 'd-1', eventType: 'budget_exceeded', status: 'delivered', lastAttemptAt, createdAt },
+        {
+          id: 'd-2',
+          eventType: 'workflow_failed',
+          status: 'failed',
+          lastAttemptAt: null,
+          createdAt,
+        },
+      ]);
 
       const bundle = await exportUserData(PARAMS);
 
-      expect(bundle.personalData.notificationsSentToYou).toEqual(rows);
+      expect(bundle.personalData.notificationsSentToYou).toEqual([
+        {
+          id: 'd-1',
+          eventType: 'budget_exceeded',
+          status: 'delivered',
+          lastAttemptAt,
+          createdAt,
+          sentTo: NORMALISED,
+        },
+        {
+          id: 'd-2',
+          eventType: 'workflow_failed',
+          status: 'failed',
+          lastAttemptAt: null,
+          createdAt,
+          sentTo: NORMALISED,
+        },
+      ]);
+    });
+
+    it('never exports a second person’s address, even if a row in the read carries one', async () => {
+      // Probe: the select excludes these columns, so a real DB never returns
+      // them; but if a row did arrive carrying a colleague's address (a wider
+      // select, a mock), the export must still state only the subject's own
+      // address as sentTo and must not invent it from the row.
+      delegateFor('aiWebhookDelivery').findMany.mockResolvedValue([
+        {
+          id: 'd-x',
+          eventType: 'budget_exceeded',
+          status: 'delivered',
+          destination: 'colleague@example.com',
+          previousDestinations: [{ destination: NORMALISED }],
+        },
+      ]);
+
+      const bundle = await exportUserData(PARAMS);
+
+      const rows = bundle.personalData.notificationsSentToYou as Array<{ sentTo: string }>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0].sentTo).toBe(NORMALISED);
+      expect(rows[0].sentTo).not.toContain('colleague');
+      // Even a row that carries its address columns (a widened select) does not
+      // reach the subject: the source builds each row field by field.
+      expect(rows[0]).not.toHaveProperty('destination');
+      expect(rows[0]).not.toHaveProperty('previousDestinations');
+      expect(JSON.stringify(bundle.personalData.notificationsSentToYou)).not.toContain('colleague');
     });
 
     it('exports none, without reading the table, for an unverified address', async () => {

@@ -397,6 +397,65 @@ describe('WebhookDlqTable', () => {
       expect(apiClient.post).not.toHaveBeenCalled();
     });
 
+    it('with "all subscriptions" leaves orphaned rows out of deliveryIds and replays only rows that have a subscription', async () => {
+      const deliveries = [
+        makeDelivery({ id: 'kept-1' }),
+        makeDelivery({ id: 'orphan-1', subscriptionId: null, subscription: null }),
+        makeDelivery({ id: 'kept-2' }),
+      ];
+      stubListFetch(deliveries);
+      vi.mocked(apiClient.post).mockResolvedValue(undefined);
+
+      const user = userEvent.setup();
+      render(
+        <WebhookDlqTable
+          initialDeliveries={deliveries}
+          initialMeta={META}
+          subscriptions={SUBSCRIPTIONS}
+        />
+      );
+      await screen.findByText('Deleted subscription');
+
+      await user.click(screen.getByRole('button', { name: /bulk replay/i }));
+
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(1));
+      const [, options] = vi.mocked(apiClient.post).mock.calls[0] as [
+        string,
+        { body: { deliveryIds: string[] } },
+      ];
+      expect(options.body.deliveryIds).toEqual(['kept-1', 'kept-2']);
+      expect(options.body.deliveryIds).not.toContain('orphan-1');
+    });
+
+    it('with "all subscriptions" and every row orphaned sets the deleted-subscription error and makes no API call', async () => {
+      const deliveries = [
+        makeDelivery({ id: 'o1', subscriptionId: null, subscription: null }),
+        makeDelivery({ id: 'o2', subscriptionId: null, subscription: null }),
+      ];
+      stubListFetch(deliveries);
+
+      const user = userEvent.setup();
+      render(
+        <WebhookDlqTable
+          initialDeliveries={deliveries}
+          initialMeta={META}
+          subscriptions={SUBSCRIPTIONS}
+        />
+      );
+      await waitFor(() => expect(screen.getAllByText('Deleted subscription')).toHaveLength(2));
+
+      await user.click(screen.getByRole('button', { name: /bulk replay/i }));
+
+      expect(
+        await screen.findByText(
+          'Nothing to replay on this page: every row’s subscription was deleted.'
+        )
+      ).toBeInTheDocument();
+      // Distinct from the empty-page message.
+      expect(screen.queryByText('Nothing to replay on this page.')).not.toBeInTheDocument();
+      expect(apiClient.post).not.toHaveBeenCalled();
+    });
+
     it('surfaces an APIClientError when bulk replay fails on the server', async () => {
       stubListFetch([makeDelivery()]);
       vi.mocked(apiClient.post).mockRejectedValue(new APIClientError('Worker offline'));
