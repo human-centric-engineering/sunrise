@@ -573,6 +573,10 @@ jobs:
       # the unit suite mocks Prisma, so it never runs them
       # (see .context/privacy/data-export.md).
       - run: npx tsx scripts/smoke/export.ts
+      # Proves a webhook / event-hook delivery records where it was sent and
+      # survives its subscription's deletion — the FK's ON DELETE SET NULL,
+      # which the unit suite's mocked Prisma never exercises (§109 t-739).
+      - run: npx tsx scripts/smoke/delivery-destination.ts
       # Proves the org-identity invariant on a FRESH database — migrate then
       # seed, the order a new install runs — which is the case the unit tests
       # cannot reach and the one the 001 seed exists to keep true

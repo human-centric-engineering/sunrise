@@ -9,7 +9,10 @@
  * targeted "I've reviewed this one, drop it" action.
  *
  * Authentication: Admin only. The delivery's parent subscription must
- * belong to the calling admin.
+ * belong to the calling admin, or have been deleted where the authorization
+ * policy permits it (`webhook-delivery-access.ts`). The audit entry names the
+ * delivery's recorded URL origin, which holds no secret; an email address is
+ * not written to the audit log, which outlives erasure.
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
@@ -20,6 +23,8 @@ import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { webhookDeliveryAccessBasis } from '@/lib/orchestration/access/webhook-delivery-access';
+import { auditableDestination } from '@/lib/orchestration/webhooks/destination';
 
 export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -39,10 +44,11 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
       id: true,
       status: true,
       eventType: true,
-      subscription: { select: { id: true, createdBy: true, url: true } },
+      destination: true,
+      subscription: { select: { createdBy: true } },
     },
   });
-  if (!delivery || delivery.subscription.createdBy !== session.user.id) {
+  if (!delivery || !webhookDeliveryAccessBasis(delivery, session)) {
     throw new NotFoundError('Webhook delivery not found');
   }
 
@@ -53,7 +59,7 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     action: 'webhook_delivery.delete',
     entityType: 'delivery',
     entityId: id,
-    entityName: delivery.subscription.url,
+    entityName: auditableDestination(delivery.destination) ?? id,
     metadata: { status: delivery.status, eventType: delivery.eventType },
     clientIp: clientIP,
   });

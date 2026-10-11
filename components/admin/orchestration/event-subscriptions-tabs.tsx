@@ -22,22 +22,12 @@ import {
   WebhooksTable,
   type WebhookListItem,
 } from '@/components/admin/orchestration/webhooks-table';
-import { WebhookDlqTable } from '@/components/admin/orchestration/webhook-dlq-table';
+import {
+  WebhookDlqTable,
+  type DlqDelivery,
+} from '@/components/admin/orchestration/webhook-dlq-table';
 import { useUrlTabs } from '@/lib/hooks/use-url-tabs';
 import type { PaginationMeta } from '@/types/api';
-
-interface DlqDelivery {
-  id: string;
-  eventType: string;
-  status: 'exhausted';
-  lastResponseCode: number | null;
-  lastError: string | null;
-  attempts: number;
-  createdAt: string;
-  lastAttemptAt: string | null;
-  subscriptionId: string;
-  subscription: { id: string; url: string; description: string | null };
-}
 
 interface DlqSubscriptionOption {
   id: string;
@@ -100,8 +90,9 @@ export function EventSubscriptionsTabs({
       <TabsContent value="dlq">
         <p className="text-muted-foreground mb-4 flex items-center gap-1.5 text-sm">
           <span>
-            Exhausted webhook deliveries across all subscriptions you own. Retry once the receiver
-            is fixed, or discard rows you&apos;ve already reviewed.
+            Exhausted webhook deliveries across all subscriptions you own, and those kept after
+            their subscription was deleted. Retry once the receiver is fixed, or discard rows
+            you&apos;ve already reviewed.
           </span>
           <FieldHelp title="Dead letter queue overview" contentClassName="w-96">
             <p>

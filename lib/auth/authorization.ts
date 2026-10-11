@@ -14,7 +14,7 @@
  * `withAuth` route.
  *
  * **But `canRead` is no longer only `withAuth`'s question.** Both guards ask it
- * — four times per request, once per kind — to fill `session.unattributedReads`
+ * — once per kind, every request — to fill `session.unattributedReads`
  * (`lib/auth/orphan-reads.ts`). Those calls decide nothing about admission; they
  * answer "may this caller read rows nobody owns?" for the handler. So a fork
  * overriding `canRead` alone still admits every admin its `canAdminister` admits,

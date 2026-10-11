@@ -37,13 +37,14 @@
  * - **One request cannot disagree with itself.** A list and the rows it links to
  *   ask the policy once, together, rather than once each.
  *
- * **Both properties now hold for all four kinds**, which is what makes this
+ * **Both properties hold for every kind**, which is what makes this
  * module the single primitive: it is called once per request, by the guard, and
  * by nothing else in core. Every reader is a helper in
  * `lib/orchestration/access/` — one module per model — and every one of them is
  * synchronous because it reads the record rather than asking again. Executions
- * arrived in t-685, conversations in t-686, datasets and experiments in t-687.
- * Until then the cost below was paid in full while two of the four still asked
+ * arrived in t-685, conversations in t-686, datasets and experiments in t-687,
+ * webhook deliveries in §109 t-739 (born a kind, never asked on demand). Until
+ * t-687 the cost below was paid in full while two of the four still asked
  * on demand, which was the deliberate shape of an integration checkpoint rather
  * than an oversight.
  *
@@ -60,7 +61,7 @@
  * **It is also paid by a request that is about to be shed.** The guard runs
  * before the handler body, and 38 guarded routes open with an in-handler
  * per-flow cap (`return createRateLimitResponse(...)`), so a caller being rate
- * limited still costs a fork four policy lookups. The eager argument does not
+ * limited still costs a fork one policy lookup per kind. The eager argument does not
  * cover that case — nothing in the guard can see a cap that lives inside the
  * handler — and moving the work later would mean the route opt-in this scheme
  * deliberately does not have.
@@ -134,7 +135,7 @@ import type { AuthorizationPolicy, AuthorizationPrincipal } from '@/lib/auth/aut
  * list.** The schema has 19 nullable `User` relations declared `onDelete:
  * SetNull`, every one of which can hold a row an Art. 17 erasure detached:
  * `AiWorkflow`, `AiAgent`, `AiKnowledgeDocument`, `McpApiKey` and a dozen more.
- * What these four have that the others do not is a **read path that asks the
+ * What these kinds have that the others do not is a **read path that asks the
  * policy about it**. The rest are admin-global — every admin reads every row —
  * so there is no owner clause for an orphan to fall outside of, and nothing to
  * precompute.
@@ -182,6 +183,13 @@ export const UNATTRIBUTED_READ_KINDS = [
   'execution',
   /** `AiExperiment.createdBy` — `SetNull`, so null means an erasure detached it. */
   'experiment',
+  /**
+   * `AiWebhookDelivery.subscriptionId` — `SetNull`: owned through its
+   * subscription's creator, so a null means the subscription was deleted (or
+   * went with its creator's erasure) and the delivery was kept as the record
+   * of where an event went (§109 t-739).
+   */
+  'webhookDelivery',
 ] as const;
 
 /** One of the core ownerless-capable models. See {@link UNATTRIBUTED_READ_KINDS}. */
@@ -225,12 +233,12 @@ export function mayReadUnattributed(
  * Ask the policy about every core kind at once. Called by the guards.
  *
  * Sequential rather than `Promise.all`, and the trade is real in both
- * directions: sequential lets a fork's per-request cache serve calls two to four
- * from the first one's lookup, while `Promise.all` would fire all four before
- * any of them populated it — but an **uncached** fork policy pays four
- * serialized round trips where it could have paid one. Sequential is the
+ * directions: sequential lets a fork's per-request cache serve every call after
+ * the first from that one's lookup, while `Promise.all` would fire them all before
+ * any of them populated it — but an **uncached** fork policy pays one serialized
+ * round trip per kind where it could have paid one. Sequential is the
  * conservative half of that: its worst case is bounded latency, whereas running
- * a fork's policy four times concurrently assumes a concurrency-safety property
+ * a fork's policy once per kind concurrently assumes a concurrency-safety property
  * nothing here can check. There is no I/O to overlap on a default install.
  *
  * Asked with an empty {@link AuthorizationScope}, which is what every core
@@ -255,6 +263,7 @@ export async function resolveUnattributedReads(
     dataset: false,
     execution: false,
     experiment: false,
+    webhookDelivery: false,
   };
   for (const kind of UNATTRIBUTED_READ_KINDS) {
     reads[kind] = await mayReadUnattributed(principal, kind);
@@ -308,6 +317,8 @@ const OWNERLESS_KIND_CONSEQUENCE: Readonly<Record<UnattributedReadKind, string>>
     'a scheduled or inbound-triggered run is invisible to every admin you named; one paused at a `human_approval` gate can be found by none of them and waits for the 7-day abandoned-approval reap.',
   experiment:
     'an experiment an erasure de-attributed is readable and claimable by nobody you named, and pruned by nothing.',
+  webhookDelivery:
+    'a webhook delivery whose subscription was deleted — the record of where an event went — is invisible to every admin you named in the dead-letter queue, and can be discarded by none of them.',
 };
 
 function isCoreKind(kind: string): kind is UnattributedReadKind {

@@ -16,6 +16,58 @@ release process.
 
 ## [Unreleased]
 
+### Added
+
+- **`GET /admin/orchestration/hooks/deliveries`** and **`GET
+  /admin/orchestration/webhooks/deliveries`** (§109 t-739). Deliveries across
+  every hook, or every subscription the admin may see, in any status,
+  filterable by `status`, the parent's id and `orphaned=true` — the routes that
+  reach a delivery whose hook or subscription was deleted, now that such
+  deliveries are kept (below). The per-parent lists 404 once the parent is
+  gone, and the dead-letter list shows only `exhausted` rows.
+- **`'webhookDelivery'` joins `UNATTRIBUTED_READ_KINDS`** (§109 t-739), so
+  `session.unattributedReads` and `UnattributedReads` gain a `webhookDelivery`
+  key. A fork that builds that record by hand (in a test fixture, say) must add
+  it; a fork policy's `canRead` `'unattributed'` arm is now also asked about
+  webhook deliveries whose subscription was deleted, and decides who sees them
+  in the dead-letter queue (`lib/orchestration/access/webhook-delivery-access.ts`).
+
+### Changed
+
+- **A webhook or event-hook delivery records where it was sent, and outlives
+  the subscription or hook that sent it** (§109 t-739). `AiWebhookDelivery` and
+  `AiEventHookDelivery` gain `destination` (the URL's origin only, so it holds
+  no URL secret, or the email address, normalised), `destinationFingerprint` (a
+  keyed HMAC of the full destination; `fingerprintDestination()` in
+  `lib/orchestration/webhooks/destination.ts` checks a URL against it) and
+  `previousDestinations` (the earlier ones, when a retry followed an edited
+  URL). Their parent FK, `subscriptionId` / `hookId`, is now **nullable** with
+  `ON DELETE SET NULL`: deleting a subscription or hook, or erasing the admin
+  who created a subscription, keeps its deliveries. Code that reads
+  `delivery.subscription` or `delivery.hook` must handle null. A retry of such a
+  delivery is refused with `409` on both retry routes (the hook route used to
+  answer `404` for a delivery it could not retry), and a retry the maintenance
+  tick abandons keeps its last real error with `(not retried: …)` appended. The
+  webhook DLQ routes show such a delivery to the admins the authorization
+  policy permits an unattributed read (platform admins by default), and
+  retention prunes it by age as before. A delivery emailed to a person is
+  theirs to see and to have erased: the subject-access export gains a
+  `notificationsSentToYou` section (when, which event, the outcome, and their
+  own address — never another inbox a re-pointed row also names), and
+  `eraseUser()` redacts the address on every such delivery to `[erased]` and
+  stops any of them still retrying — both for a verified address only, matched
+  exactly on the normalised form. `GET /webhooks/dlq` no longer returns the
+  subscription's `url` (which can carry a credential), and the
+  `webhook_delivery.delete` audit entry names the delivery's origin rather than
+  the subscription's full URL, and no email address.
+  **Migrations** `20261008120000_delivery_destination` and
+  `20261011120000_delivery_destination_index` (two indexes on
+  `ai_webhook_delivery`, built without `CONCURRENTLY`, so apply off-peak on a
+  large install); then run
+  `npm run db:seed` so the `022-delivery-destinations` unit fills existing rows
+  from their current subscription or hook (the best available value, not a
+  record). Rows whose parent is deleted before it runs stay unrecorded.
+
 ## [0.14.0] — 2026-10-08
 
 > **Alpha release.** Twentieth tagged Sunrise release. **MINOR bump**. It

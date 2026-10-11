@@ -441,7 +441,15 @@ describe('WebhooksTable', () => {
     await user.click(deleteItem);
 
     // Assert — confirm dialog appears
-    expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toBeInTheDocument();
+    // The dialog names the subscription being deleted (population), says the
+    // delivery history is kept until retention prunes it, and no longer
+    // claims it is removed.
+    expect(dialog).toHaveTextContent(MOCK_WEBHOOKS[0].url);
+    expect(dialog).toHaveTextContent(/delivery history is kept/i);
+    expect(dialog).toHaveTextContent(/until retention prunes it/i);
+    expect(dialog).not.toHaveTextContent(/will also be removed/i);
 
     // Click the confirmation "Delete" button in the dialog
     const confirmBtn = screen.getByRole('button', { name: /^delete$/i });
@@ -453,16 +461,127 @@ describe('WebhooksTable', () => {
     });
   });
 
-  // BUG: fetchPage has no catch block — only a finally. A network error is swallowed via
-  // `void fetchPage(1)` and listError is never set, so no error message reaches the UI.
-  // This todo documents the CORRECT expected behavior; enable it once the source adds a
-  // catch block in fetchPage that calls setListError.
-  it.todo('shows an error message when fetchPage encounters a network failure');
+  // ── Error and fallback paths ────────────────────────────────────────────────
 
-  // BUG: handleDelete has no catch block — only a finally. A delete API error is swallowed
-  // and no error message reaches the UI. This todo documents the CORRECT expected behavior;
-  // enable it once the source adds a catch block in handleDelete that calls setListError.
-  it.todo('shows an error message when apiClient.delete fails during delete confirmation');
+  it('shows the API error when the list fetch fails with an APIClientError', async () => {
+    const { APIClientError } = await import('@/lib/api/client');
+    mockFetch.mockRejectedValue(new APIClientError('list exploded', 'X', 500));
+
+    render(
+      <WebhooksTable
+        initialWebhooks={MOCK_WEBHOOKS}
+        initialMeta={{ ...META, total: 2, totalPages: 1 }}
+      />
+    );
+
+    expect(await screen.findByText('list exploded')).toBeInTheDocument();
+  });
+
+  it('shows a generic message when the list fetch fails with anything else', async () => {
+    mockFetch.mockRejectedValue(new TypeError('network down'));
+
+    render(
+      <WebhooksTable
+        initialWebhooks={MOCK_WEBHOOKS}
+        initialMeta={{ ...META, total: 2, totalPages: 1 }}
+      />
+    );
+
+    expect(await screen.findByText('Failed to load webhooks')).toBeInTheDocument();
+    expect(screen.queryByText(/network down/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the rows it has when the list response is unsuccessful', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ success: false, error: { code: 'X', message: 'nope' } }),
+    });
+
+    render(
+      <WebhooksTable
+        initialWebhooks={MOCK_WEBHOOKS}
+        initialMeta={{ ...META, total: 2, totalPages: 1 }}
+      />
+    );
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalled());
+    // The refetch on mount came back unsuccessful; the initial rows stay.
+    expect(screen.getByText('Slack alerts')).toBeInTheDocument();
+    expect(screen.getByText(MOCK_WEBHOOKS[1].url)).toBeInTheDocument();
+  });
+
+  it('keeps its pagination when the list response carries no usable meta', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true, data: MOCK_WEBHOOKS, meta: 'garbage' }),
+    });
+
+    render(
+      <WebhooksTable
+        initialWebhooks={MOCK_WEBHOOKS}
+        initialMeta={{ page: 1, limit: 25, total: 60, totalPages: 3 }}
+      />
+    );
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalled());
+    expect(await screen.findByText(/page 1 of 3/i)).toBeInTheDocument();
+  });
+
+  async function confirmDeleteOfFirstRow() {
+    const userEvent = await import('@testing-library/user-event');
+    const user = userEvent.default.setup();
+    render(
+      <WebhooksTable
+        initialWebhooks={MOCK_WEBHOOKS}
+        initialMeta={{ ...META, total: 2, totalPages: 1 }}
+      />
+    );
+    await user.click(screen.getAllByRole('button', { name: /row actions/i })[0]);
+    await user.click(await screen.findByRole('menuitem', { name: /delete/i }));
+    await screen.findByRole('alertdialog');
+    await user.click(screen.getByRole('button', { name: /^delete$/i }));
+  }
+
+  it('shows the API error when deleting fails with an APIClientError', async () => {
+    const { apiClient, APIClientError } = await import('@/lib/api/client');
+    vi.mocked(apiClient.delete).mockRejectedValue(new APIClientError('locked', 'X', 409));
+
+    await confirmDeleteOfFirstRow();
+
+    expect(await screen.findByText('Delete failed: locked')).toBeInTheDocument();
+    // The dialog closes either way.
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+  });
+
+  it('shows a generic message when deleting fails with anything else', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.delete).mockRejectedValue(new TypeError('socket hang up'));
+
+    await confirmDeleteOfFirstRow();
+
+    expect(await screen.findByText('Could not delete webhook. Try again.')).toBeInTheDocument();
+    expect(screen.queryByText(/socket hang up/)).not.toBeInTheDocument();
+  });
+
+  it('shows a generic message when toggling fails with a non-API error, and reverts', async () => {
+    const { apiClient } = await import('@/lib/api/client');
+    vi.mocked(apiClient.patch).mockRejectedValue(new TypeError('offline'));
+    const userEvent = await import('@testing-library/user-event');
+    const user = userEvent.default.setup();
+
+    render(
+      <WebhooksTable
+        initialWebhooks={MOCK_WEBHOOKS}
+        initialMeta={{ ...META, total: 2, totalPages: 1 }}
+      />
+    );
+    const switches = screen.getAllByRole('switch');
+    expect(switches[0]).toHaveAttribute('aria-checked', 'true');
+    await user.click(switches[0]);
+
+    expect(await screen.findByText('Could not update webhook. Try again.')).toBeInTheDocument();
+    await waitFor(() => expect(switches[0]).toHaveAttribute('aria-checked', 'true'));
+  });
 
   it('toggle-active optimistic revert: reverts switch and shows error banner on patch failure', async () => {
     // Arrange
@@ -554,6 +673,21 @@ describe('WebhooksTable', () => {
       'title',
       'Scoped to 0 agent(s), 2 workflow(s)'
     );
+  });
+
+  it('does NOT render the Scoped badge when a row carries no filter arrays at all', () => {
+    // A row from an API that predates entity scoping has neither field; the
+    // table reads them defensively rather than crashing.
+    const legacy = {
+      ...MOCK_WEBHOOKS[0],
+      agentIds: undefined,
+      workflowIds: undefined,
+    } as unknown as WebhookListItem;
+
+    render(<WebhooksTable initialWebhooks={[legacy]} initialMeta={{ ...META, total: 1 }} />);
+
+    expect(screen.getByText('Slack alerts')).toBeInTheDocument();
+    expect(screen.queryByText('Scoped')).not.toBeInTheDocument();
   });
 
   it('does NOT render the Scoped badge when both filter arrays are empty', () => {

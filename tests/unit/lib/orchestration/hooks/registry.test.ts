@@ -47,6 +47,7 @@ import {
   retryHookDelivery,
   processPendingHookRetries,
 } from '@/lib/orchestration/hooks/registry';
+import { describeDestination } from '@/lib/orchestration/webhooks/destination';
 
 // ─── Fixtures ───────────────────────────────────────────────────────────
 
@@ -81,6 +82,9 @@ function makeDelivery(overrides: Record<string, unknown> = {}) {
     lastResponseCode: null,
     lastError: null,
     createdAt: new Date(),
+    destination: null,
+    destinationFingerprint: null,
+    previousDestinations: null,
     ...overrides,
   };
 }
@@ -1170,5 +1174,197 @@ describe('webhook URL in log lines', () => {
     });
     expect(loggedText()).not.toContain(SECRET);
     expect(loggedText()).not.toContain('qs-secret');
+  });
+});
+
+// ─── Delivery destination recording (§109 t-739) ────────────────────────
+
+describe('delivery destination recording', () => {
+  const OLD_URL = 'https://old.example.com/hook';
+  const NEW_URL = 'https://new.example.com/hook';
+  const oldPair = describeDestination('webhook', OLD_URL);
+  const newPair = describeDestination('webhook', NEW_URL);
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('carries the destination derived from action.url on the created row', async () => {
+    const url = 'https://hooks.example.com/h/Ab3dEf6hIj9kLm2nOp5qRs8t?token=SECRETQ';
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([
+      makeHook({ action: { type: 'webhook', url } }),
+    ] as never);
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHookDelivery.create).toHaveBeenCalled();
+    });
+    const data = vi.mocked(prisma.aiEventHookDelivery.create).mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
+    expect(data.destination).toBe('https://hooks.example.com');
+    expect(data.destinationFingerprint).toBe(
+      describeDestination('webhook', url).destinationFingerprint
+    );
+    expect(JSON.stringify(data)).not.toContain('SECRETQ');
+  });
+
+  it('records the edited URL and the old one as history in the retry outcome update', async () => {
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
+      ...makeDelivery({ status: 'failed', attempts: 1, ...oldPair }),
+      hook: makeHook({ action: { type: 'webhook', url: NEW_URL } }),
+    } as never);
+
+    const ok = await retryHookDelivery('del-1');
+    expect(ok).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledTimes(2);
+    });
+    expect(mockFetch).toHaveBeenCalledWith(NEW_URL, expect.anything());
+    const outcome = vi.mocked(prisma.aiEventHookDelivery.update).mock.calls[1][0].data;
+    expect(outcome).toMatchObject({
+      status: 'delivered',
+      ...newPair,
+      previousDestinations: [{ ...oldPair, until: expect.any(String) }],
+    });
+  });
+
+  it('adds no destination keys to the outcome update when the URL is unchanged', async () => {
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
+      ...makeDelivery({ status: 'failed', attempts: 1, ...oldPair }),
+      hook: makeHook({ action: { type: 'webhook', url: OLD_URL } }),
+    } as never);
+
+    await retryHookDelivery('del-1');
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledTimes(2);
+    });
+
+    const outcome = vi.mocked(prisma.aiEventHookDelivery.update).mock.calls[1][0].data;
+    expect(outcome).toMatchObject({ status: 'delivered' });
+    expect(outcome).not.toHaveProperty('destination');
+    expect(outcome).not.toHaveProperty('destinationFingerprint');
+    expect(outcome).not.toHaveProperty('previousDestinations');
+  });
+
+  describe('when the hook has been deleted', () => {
+    it('retryHookDelivery returns false without writing or sending', async () => {
+      vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
+        ...makeDelivery({ status: 'exhausted', ...oldPair }),
+        hook: null,
+      } as never);
+
+      const result = await retryHookDelivery('del-1');
+
+      expect(result).toBe(false);
+      expect(prisma.aiEventHookDelivery.update).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('processPendingHookRetries marks the row exhausted with a deleted reason and does not send', async () => {
+      vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([
+        {
+          ...makeDelivery({ id: 'del-gone', status: 'failed', attempts: 1, lastError: 'HTTP 500' }),
+          hook: null,
+        },
+      ] as never);
+
+      await processPendingHookRetries();
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      // The real failure survives; the reason retries stopped is appended to it.
+      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith({
+        where: { id: 'del-gone' },
+        data: {
+          status: 'exhausted',
+          nextRetryAt: null,
+          lastError: 'HTTP 500 (not retried: hook deleted)',
+        },
+      });
+    });
+
+    it('processPendingHookRetries writes only the reason when the row had no earlier error', async () => {
+      vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([
+        { ...makeDelivery({ id: 'del-gone', status: 'failed', attempts: 1 }), hook: null },
+      ] as never);
+
+      await processPendingHookRetries();
+
+      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith({
+        where: { id: 'del-gone' },
+        data: expect.objectContaining({ lastError: 'Not retried: hook deleted' }),
+      });
+    });
+
+    it('processPendingHookRetries leaves lastError alone for a disabled (non-null) hook', async () => {
+      vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([
+        {
+          ...makeDelivery({ id: 'del-off', status: 'failed', attempts: 1 }),
+          hook: makeHook({ isEnabled: false }),
+        },
+      ] as never);
+
+      await processPendingHookRetries();
+
+      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith({
+        where: { id: 'del-off' },
+        data: { status: 'exhausted', nextRetryAt: null },
+      });
+    });
+
+    it('the in-process retry marks the row exhausted with a deleted reason', async () => {
+      vi.useFakeTimers();
+      vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([makeHook()] as never);
+      mockFetch.mockResolvedValue({ ok: false, status: 500 });
+      // 1st lookup: the failure path reading attempts; 2nd: the timer, hook gone.
+      vi.mocked(prisma.aiEventHookDelivery.findUnique)
+        .mockResolvedValueOnce(makeDelivery({ attempts: 0 }))
+        .mockResolvedValueOnce({
+          ...makeDelivery({ attempts: 1, lastError: 'HTTP 500' }),
+          hook: null,
+        } as never);
+
+      emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+      await vi.waitFor(() => {
+        expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledTimes(1);
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(prisma.aiEventHookDelivery.update).toHaveBeenLastCalledWith({
+        where: { id: 'del-1' },
+        data: {
+          status: 'exhausted',
+          nextRetryAt: null,
+          lastError: 'HTTP 500 (not retried: hook deleted)',
+        },
+      });
+    });
+
+    it('the in-process retry on a disabled hook does not set the deleted reason', async () => {
+      vi.useFakeTimers();
+      vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([makeHook()] as never);
+      mockFetch.mockResolvedValue({ ok: false, status: 500 });
+      vi.mocked(prisma.aiEventHookDelivery.findUnique)
+        .mockResolvedValueOnce(makeDelivery({ attempts: 0 }))
+        .mockResolvedValueOnce({
+          ...makeDelivery({ attempts: 1 }),
+          hook: makeHook({ isEnabled: false }),
+        } as never);
+
+      emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+      await vi.waitFor(() => {
+        expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledTimes(1);
+      });
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(prisma.aiEventHookDelivery.update).toHaveBeenLastCalledWith({
+        where: { id: 'del-1' },
+        data: { status: 'exhausted', nextRetryAt: null },
+      });
+    });
   });
 });

@@ -52,6 +52,7 @@ import {
   retryDelivery,
   processPendingRetries,
 } from '@/lib/orchestration/webhooks/dispatcher';
+import { describeDestination } from '@/lib/orchestration/webhooks/destination';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -106,6 +107,9 @@ function makeDelivery(overrides: Record<string, unknown> = {}) {
     lastResponseCode: null,
     lastError: null,
     createdAt: new Date(),
+    destination: null,
+    destinationFingerprint: null,
+    previousDestinations: null,
     ...overrides,
   };
 }
@@ -1125,5 +1129,242 @@ describe('dispatchWebhookEvent: entity-scoped matching', () => {
       .mocked(prisma.aiWebhookDelivery.create)
       .mock.calls.map((c) => (c[0]?.data as Record<string, unknown>)?.subscriptionId);
     expect(createdSubIds).toEqual(['sub-global']);
+  });
+});
+
+// ─── Delivery destination recording (§109 t-739) ────────────────────────────
+
+describe('delivery destination recording', () => {
+  const OLD_URL = 'https://old.example.com/webhook';
+  const NEW_URL = 'https://new.example.com/webhook';
+  const oldPair = describeDestination('webhook', OLD_URL);
+  const newPair = describeDestination('webhook', NEW_URL);
+
+  /** The data of the last outcome update written for the delivery. */
+  function lastUpdateData(): Record<string, unknown> {
+    const calls = vi.mocked(prisma.aiWebhookDelivery.update).mock.calls;
+    return calls.at(-1)![0].data;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
+    mockResendSend.mockResolvedValue({ data: { id: 'resend_msg_id' }, error: null });
+    vi.mocked(prisma.aiWebhookDelivery.create).mockResolvedValue(makeDelivery());
+    vi.mocked(prisma.aiWebhookDelivery.update).mockResolvedValue(makeDelivery());
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(makeDelivery());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  describe('at create', () => {
+    it('records the reduced destination and fingerprint for a webhook subscription', async () => {
+      const url = 'https://hooks.example.com/services/Ab3dEf6hIj9kLm2nOp5qRs8t?key=SECRETQ';
+      vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([
+        makeSub({ url }),
+      ] as never);
+
+      await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+
+      const data = vi.mocked(prisma.aiWebhookDelivery.create).mock.calls[0][0].data as Record<
+        string,
+        unknown
+      >;
+      expect(data.destination).toBe('https://hooks.example.com');
+      expect(data.destinationFingerprint).toBe(
+        describeDestination('webhook', url).destinationFingerprint
+      );
+      expect(JSON.stringify(data)).not.toContain('SECRETQ');
+    });
+
+    it('records the address verbatim for an email subscription', async () => {
+      vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeEmailSub()] as never);
+
+      await dispatchWebhookEvent('agent_updated', { agentName: 'Bot' });
+
+      expect(prisma.aiWebhookDelivery.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            destination: 'alerts@example.com',
+            destinationFingerprint: describeDestination('email', 'alerts@example.com')
+              .destinationFingerprint,
+          }),
+        })
+      );
+    });
+  });
+
+  describe('at an attempt', () => {
+    it('writes the new destination and the old one as history in the same update as a delivered outcome', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+        ...makeDelivery({ status: 'failed', attempts: 1, ...oldPair }),
+        subscription: makeSub({ url: NEW_URL }),
+      } as never);
+
+      await retryDelivery('del-1', { awaitDelivery: true });
+
+      expect(mockFetch).toHaveBeenCalledWith(NEW_URL, expect.anything());
+      const data = lastUpdateData();
+      expect(data).toMatchObject({
+        status: 'delivered',
+        ...newPair,
+        previousDestinations: [{ ...oldPair, until: expect.any(String) }],
+      });
+    });
+
+    it('writes the new destination and history in the same update as a failed outcome', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 500 });
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+        ...makeDelivery({ status: 'failed', attempts: 1, ...oldPair }),
+        subscription: makeSub({ url: NEW_URL }),
+      } as never);
+
+      await retryDelivery('del-1', { awaitDelivery: true });
+
+      const data = lastUpdateData();
+      expect(data).toMatchObject({
+        status: 'failed',
+        lastResponseCode: 500,
+        ...newPair,
+        previousDestinations: [{ ...oldPair, until: expect.any(String) }],
+      });
+    });
+
+    it('adds no destination keys to the outcome update when the destination is unchanged', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+        ...makeDelivery({ status: 'failed', attempts: 1, ...oldPair }),
+        subscription: makeSub({ url: OLD_URL }),
+      } as never);
+
+      await retryDelivery('del-1', { awaitDelivery: true });
+
+      // Population first: the attempt did write a delivered outcome.
+      const data = lastUpdateData();
+      expect(data.status).toBe('delivered');
+      expect(data).not.toHaveProperty('destination');
+      expect(data).not.toHaveProperty('destinationFingerprint');
+      expect(data).not.toHaveProperty('previousDestinations');
+    });
+  });
+
+  describe('when the subscription has been deleted', () => {
+    it('retryDelivery returns false without writing or sending', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+        ...makeDelivery({ status: 'exhausted', ...oldPair }),
+        subscription: null,
+      } as never);
+
+      const result = await retryDelivery('del-1', { awaitDelivery: true });
+
+      expect(result).toBe(false);
+      expect(prisma.aiWebhookDelivery.update).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('processPendingRetries marks the row exhausted with a deleted reason and does not send', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([
+        {
+          ...makeDelivery({
+            id: 'del-gone',
+            status: 'failed',
+            attempts: 1,
+            lastError: 'HTTP 503',
+          }),
+          subscription: null,
+        },
+      ] as never);
+
+      await processPendingRetries();
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      // The real failure survives; the reason retries stopped is appended to it.
+      expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith({
+        where: { id: 'del-gone' },
+        data: {
+          status: 'exhausted',
+          nextRetryAt: null,
+          lastError: 'HTTP 503 (not retried: subscription deleted)',
+        },
+      });
+    });
+
+    it('processPendingRetries writes only the reason when the row had no earlier error', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([
+        { ...makeDelivery({ id: 'del-gone', status: 'failed', attempts: 1 }), subscription: null },
+      ] as never);
+
+      await processPendingRetries();
+
+      expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith({
+        where: { id: 'del-gone' },
+        data: expect.objectContaining({ lastError: 'Not retried: subscription deleted' }),
+      });
+    });
+
+    it('processPendingRetries keeps "Subscription deactivated" for an inactive subscription', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([
+        {
+          ...makeDelivery({ id: 'del-off', status: 'failed', attempts: 1 }),
+          subscription: makeSub({ isActive: false }),
+        },
+      ] as never);
+
+      await processPendingRetries();
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith({
+        where: { id: 'del-off' },
+        data: expect.objectContaining({
+          status: 'exhausted',
+          lastError: 'Subscription deactivated',
+        }),
+      });
+    });
+
+    it('the in-process retry marks the row exhausted with a deleted reason', async () => {
+      vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+      mockFetch.mockResolvedValue({ ok: false, status: 503 });
+      vi.mocked(prisma.aiWebhookSubscription.findUnique).mockResolvedValue(null);
+      // The row the retry timer re-reads carries the failure the first attempt recorded.
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+        makeDelivery({ lastError: 'HTTP 503' })
+      );
+
+      await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+      await vi.runAllTimersAsync();
+
+      // Only the initial attempt reached the network; the retry did not.
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(prisma.aiWebhookDelivery.update).toHaveBeenLastCalledWith({
+        where: { id: 'del-1' },
+        data: {
+          status: 'exhausted',
+          nextRetryAt: null,
+          lastError: 'HTTP 503 (not retried: subscription deleted)',
+        },
+      });
+    });
+
+    it('the in-process retry on an inactive subscription says deactivated, not deleted', async () => {
+      vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+      mockFetch.mockResolvedValue({ ok: false, status: 503 });
+      vi.mocked(prisma.aiWebhookSubscription.findUnique).mockResolvedValue(
+        makeSub({ isActive: false })
+      );
+
+      await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+      await vi.runAllTimersAsync();
+
+      expect(prisma.aiWebhookDelivery.update).toHaveBeenLastCalledWith({
+        where: { id: 'del-1' },
+        data: expect.objectContaining({
+          status: 'exhausted',
+          lastError: 'Subscription deactivated',
+        }),
+      });
+    });
   });
 });

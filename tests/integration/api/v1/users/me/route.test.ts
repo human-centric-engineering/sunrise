@@ -73,6 +73,12 @@ vi.mock('@/lib/db/client', () => ({
     },
     contactSubmission: {
       deleteMany: vi.fn(),
+      count: vi.fn(),
+    },
+    aiWebhookDelivery: {
+      updateMany: vi.fn(),
+      findMany: vi.fn(),
+      update: vi.fn(),
     },
     dataErasureReceipt: {
       create: vi.fn(),
@@ -183,6 +189,8 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
     // Default: aiAdminAuditLog.updateMany resolves (returns void-like)
     vi.mocked(prisma.aiAdminAuditLog.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.contactSubmission.deleteMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValue({ count: 0 });
+    vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([]);
     // eraseUser reads the stored address for the contact delete. Deliberately
     // NOT the address the route passes in, so the assertion below can tell the
     // two apart: a stale session address must never be the one matched.
@@ -350,6 +358,95 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       // Total cookie teardown: 4 deletes + 4 secure sets
       expect(mockCookieStore.delete).toHaveBeenCalledTimes(4);
       expect(mockCookieStore.set).toHaveBeenCalledTimes(4);
+    });
+
+    it('redacts the stored address on deliveries sent to it, from the user row rather than the session, before deleting the user', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.user.count).mockResolvedValue(2);
+      // Pass (a) reads retrying rows; pass (c) reads history-only rows.
+      vi.mocked(prisma.aiWebhookDelivery.findMany).mockImplementation((async (args: {
+        where: Record<string, unknown>;
+      }) =>
+        'AND' in args.where
+          ? [
+              {
+                id: 'del-1',
+                destination: 'stored-self@example.com',
+                previousDestinations: null,
+                lastError: 'SMTP 550',
+              },
+            ]
+          : []) as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValue({ count: 4 });
+
+      const response = await DELETE(makeDeleteRequest({ confirmation: 'DELETE' }));
+
+      expect(response.status).toBe(200);
+      expect(prisma.aiWebhookDelivery.findMany).toHaveBeenCalledTimes(2);
+      expect(prisma.aiWebhookDelivery.findMany).toHaveBeenNthCalledWith(1, {
+        where: {
+          AND: [
+            {
+              OR: [
+                { destination: 'stored-self@example.com' },
+                {
+                  previousDestinations: {
+                    array_contains: [{ destination: 'stored-self@example.com' }],
+                  },
+                },
+              ],
+            },
+            { status: { in: ['pending', 'failed'] } },
+          ],
+        },
+        select: { id: true, destination: true, previousDestinations: true, lastError: true },
+      });
+      // The retrying row is stopped, keeping its real error, and its address erased.
+      expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith({
+        where: { id: 'del-1' },
+        data: {
+          status: 'exhausted',
+          nextRetryAt: null,
+          lastError: 'SMTP 550 (not retried: recipient erased)',
+          destination: '[erased]',
+          destinationFingerprint: null,
+        },
+      });
+      // Every other row sent to the address is redacted in one statement.
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith({
+        where: { destination: 'stored-self@example.com' },
+        data: { destination: '[erased]', destinationFingerprint: null },
+      });
+      const deleteOrder = vi.mocked(prisma.user.delete).mock.invocationCallOrder[0];
+      for (const fn of [
+        prisma.aiWebhookDelivery.findMany,
+        prisma.aiWebhookDelivery.update,
+        prisma.aiWebhookDelivery.updateMany,
+      ]) {
+        for (const order of vi.mocked(fn).mock.invocationCallOrder) {
+          expect(order).toBeLessThan(deleteOrder);
+        }
+      }
+    });
+
+    it('touches no deliveries when the stored address is unverified', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.user.count).mockResolvedValue(2);
+      vi.mocked(prisma.user.findUniqueOrThrow).mockResolvedValue({
+        email: 'stored-self@example.com',
+        emailVerified: false,
+      } as never);
+      // An unverified address skips the delete and only counts what it left behind.
+      vi.mocked(prisma.contactSubmission.count).mockResolvedValue(0);
+
+      const response = await DELETE(makeDeleteRequest({ confirmation: 'DELETE' }));
+
+      // Population: the erasure ran.
+      expect(response.status).toBe(200);
+      expect(prisma.user.delete).toHaveBeenCalledTimes(1);
+      expect(prisma.aiWebhookDelivery.findMany).not.toHaveBeenCalled();
+      expect(prisma.aiWebhookDelivery.update).not.toHaveBeenCalled();
+      expect(prisma.aiWebhookDelivery.updateMany).not.toHaveBeenCalled();
     });
 
     it('returns 200 { deleted:true } for a regular USER role (no admin count check)', async () => {

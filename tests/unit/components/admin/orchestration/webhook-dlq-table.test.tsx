@@ -25,10 +25,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { WebhookDlqTable } from '@/components/admin/orchestration/webhook-dlq-table';
+import {
+  WebhookDlqTable,
+  type DlqDelivery,
+} from '@/components/admin/orchestration/webhook-dlq-table';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -68,18 +71,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
-type Delivery = {
-  id: string;
-  eventType: string;
-  status: 'exhausted';
-  lastResponseCode: number | null;
-  lastError: string | null;
-  attempts: number;
-  createdAt: string;
-  lastAttemptAt: string | null;
-  subscriptionId: string;
-  subscription: { id: string; url: string; description: string | null };
-};
+type Delivery = DlqDelivery;
 
 function makeDelivery(overrides: Partial<Delivery> = {}): Delivery {
   return {
@@ -91,10 +83,10 @@ function makeDelivery(overrides: Partial<Delivery> = {}): Delivery {
     attempts: 3,
     createdAt: '2026-05-20T10:00:00.000Z',
     lastAttemptAt: '2026-05-20T10:05:00.000Z',
+    destination: 'https://example.test/hook',
     subscriptionId: 'sub-1',
     subscription: {
       id: 'sub-1',
-      url: 'https://example.test/hook',
       description: 'Slack relay',
     },
     ...overrides,
@@ -405,6 +397,65 @@ describe('WebhookDlqTable', () => {
       expect(apiClient.post).not.toHaveBeenCalled();
     });
 
+    it('with "all subscriptions" leaves orphaned rows out of deliveryIds and replays only rows that have a subscription', async () => {
+      const deliveries = [
+        makeDelivery({ id: 'kept-1' }),
+        makeDelivery({ id: 'orphan-1', subscriptionId: null, subscription: null }),
+        makeDelivery({ id: 'kept-2' }),
+      ];
+      stubListFetch(deliveries);
+      vi.mocked(apiClient.post).mockResolvedValue(undefined);
+
+      const user = userEvent.setup();
+      render(
+        <WebhookDlqTable
+          initialDeliveries={deliveries}
+          initialMeta={META}
+          subscriptions={SUBSCRIPTIONS}
+        />
+      );
+      await screen.findByText('Deleted subscription');
+
+      await user.click(screen.getByRole('button', { name: /bulk replay/i }));
+
+      await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(1));
+      const [, options] = vi.mocked(apiClient.post).mock.calls[0] as [
+        string,
+        { body: { deliveryIds: string[] } },
+      ];
+      expect(options.body.deliveryIds).toEqual(['kept-1', 'kept-2']);
+      expect(options.body.deliveryIds).not.toContain('orphan-1');
+    });
+
+    it('with "all subscriptions" and every row orphaned sets the deleted-subscription error and makes no API call', async () => {
+      const deliveries = [
+        makeDelivery({ id: 'o1', subscriptionId: null, subscription: null }),
+        makeDelivery({ id: 'o2', subscriptionId: null, subscription: null }),
+      ];
+      stubListFetch(deliveries);
+
+      const user = userEvent.setup();
+      render(
+        <WebhookDlqTable
+          initialDeliveries={deliveries}
+          initialMeta={META}
+          subscriptions={SUBSCRIPTIONS}
+        />
+      );
+      await waitFor(() => expect(screen.getAllByText('Deleted subscription')).toHaveLength(2));
+
+      await user.click(screen.getByRole('button', { name: /bulk replay/i }));
+
+      expect(
+        await screen.findByText(
+          'Nothing to replay on this page: every row’s subscription was deleted.'
+        )
+      ).toBeInTheDocument();
+      // Distinct from the empty-page message.
+      expect(screen.queryByText('Nothing to replay on this page.')).not.toBeInTheDocument();
+      expect(apiClient.post).not.toHaveBeenCalled();
+    });
+
     it('surfaces an APIClientError when bulk replay fails on the server', async () => {
       stubListFetch([makeDelivery()]);
       vi.mocked(apiClient.post).mockRejectedValue(new APIClientError('Worker offline'));
@@ -538,6 +589,98 @@ describe('WebhookDlqTable', () => {
         const urls = fetchSpy.mock.calls.map((c) => c[0] as string);
         expect(urls.some((u) => u.includes('page=1'))).toBe(true);
       });
+    });
+  });
+
+  describe('destination and orphaned rows', () => {
+    const orphan = (overrides: Partial<Delivery> = {}) =>
+      makeDelivery({
+        id: 'del-orphan',
+        subscriptionId: null,
+        subscription: null,
+        destination: 'https://hooks.example.com/in',
+        ...overrides,
+      });
+
+    function renderWith(rows: Delivery[]) {
+      stubListFetch(rows);
+      return render(
+        <WebhookDlqTable
+          initialDeliveries={rows}
+          initialMeta={META}
+          subscriptions={SUBSCRIPTIONS}
+        />
+      );
+    }
+
+    it('shows "Deleted subscription" and the recorded destination for an orphan, with no link', async () => {
+      renderWith([orphan()]);
+
+      expect(await screen.findByText('Deleted subscription')).toBeInTheDocument();
+      expect(screen.getByText('https://hooks.example.com/in')).toBeInTheDocument();
+      expect(screen.queryByText('Destination not recorded')).not.toBeInTheDocument();
+      expect(document.querySelector('a[href*="/event-subscriptions/"]')).not.toBeInTheDocument();
+    });
+
+    it('says "Destination not recorded" when an orphan has no destination', async () => {
+      renderWith([orphan({ destination: null })]);
+
+      expect(await screen.findByText('Deleted subscription')).toBeInTheDocument();
+      expect(screen.getByText('Destination not recorded')).toBeInTheDocument();
+    });
+
+    it('disables the retry button for an orphan and does not call the API on click', async () => {
+      renderWith([orphan()]);
+      const user = userEvent.setup();
+
+      const button = await screen.findByTitle(/nowhere to retry/i);
+      expect(button).toBeDisabled();
+      expect(screen.queryByTitle('Retry delivery')).not.toBeInTheDocument();
+
+      await user.click(button);
+      expect(apiClient.post).not.toHaveBeenCalled();
+    });
+
+    it('keeps retry enabled for a row that still has a subscription', async () => {
+      renderWith([makeDelivery()]);
+
+      expect(await screen.findByTitle('Retry delivery')).toBeEnabled();
+    });
+
+    it('links a row with a subscription and, with no description, titles it by the recorded destination', async () => {
+      renderWith([
+        makeDelivery({
+          destination: 'https://reduced.example.com/hook',
+          subscription: { id: 'sub-1', description: null },
+        }),
+      ]);
+
+      const link = await screen.findByRole('link', { name: /reduced\.example\.com/ });
+      expect(link).toHaveAttribute('href', '/admin/orchestration/event-subscriptions/sub-1');
+      // Title and subtitle both read the destination.
+      expect(screen.getAllByText('https://reduced.example.com/hook')).toHaveLength(2);
+      expect(within(link).queryByText('Subscription')).not.toBeInTheDocument();
+    });
+
+    it('prefers the description as the title when the subscription has one', async () => {
+      renderWith([makeDelivery({ destination: 'https://reduced.example.com/hook' })]);
+
+      const link = await screen.findByRole('link');
+      expect(within(link).getByText('Slack relay')).toBeInTheDocument();
+      expect(within(link).getByText('https://reduced.example.com/hook')).toBeInTheDocument();
+    });
+
+    it('falls back to "Subscription" / "Destination not recorded" when a live row has neither description nor destination', async () => {
+      renderWith([
+        makeDelivery({
+          destination: null,
+          subscription: { id: 'sub-1', description: null },
+        }),
+      ]);
+
+      const link = await screen.findByRole('link');
+      expect(within(link).getByText('Subscription')).toBeInTheDocument();
+      expect(within(link).getByText('Destination not recorded')).toBeInTheDocument();
     });
   });
 });

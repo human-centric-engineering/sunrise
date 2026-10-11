@@ -6,6 +6,10 @@
  * Cross-subscription view of `exhausted` webhook deliveries. Replaces the
  * per-subscription drill-down when an operator just wants "show me
  * everything in the dead-letter state right now."
+ *
+ * Each row shows the destination recorded on the delivery itself, which
+ * outlives its subscription (§109 t-739). A row whose subscription was
+ * deleted has no link and cannot be retried; it is kept as a record.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -51,7 +55,7 @@ import type { PaginationMeta } from '@/types/api';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-interface DlqDelivery {
+export interface DlqDelivery {
   id: string;
   eventType: string;
   status: 'exhausted';
@@ -60,12 +64,15 @@ interface DlqDelivery {
   attempts: number;
   createdAt: string;
   lastAttemptAt: string | null;
-  subscriptionId: string;
+  /** URL origin or email address the delivery was sent to; null on rows that predate recording. */
+  destination: string | null;
+  /** Null once the subscription was deleted. */
+  subscriptionId: string | null;
+  /** Null once the subscription was deleted. No `url`: it can carry a credential. */
   subscription: {
     id: string;
-    url: string;
     description: string | null;
-  };
+  } | null;
 }
 
 export interface WebhookDlqTableProps {
@@ -151,10 +158,17 @@ export function WebhookDlqTable({
         body.subscriptionId = subscriptionFilter;
         if (until) body.before = new Date(until).toISOString();
       } else {
-        // No subscription selected: replay everything visible on this page.
-        body.deliveryIds = deliveries.map((d) => d.id);
+        // No subscription selected: replay everything visible on this page
+        // that still has a subscription to send to. A row whose subscription
+        // was deleted is kept as a record and cannot be retried; the server
+        // would only skip it, and say nothing.
+        body.deliveryIds = deliveries.filter((d) => d.subscription).map((d) => d.id);
         if ((body.deliveryIds as string[]).length === 0) {
-          setActionError('Nothing to replay on this page.');
+          setActionError(
+            deliveries.length > 0
+              ? 'Nothing to replay on this page: every row’s subscription was deleted.'
+              : 'Nothing to replay on this page.'
+          );
           setActionId(null);
           return;
         }
@@ -289,17 +303,28 @@ export function WebhookDlqTable({
                     {new Date(d.createdAt).toLocaleString()}
                   </TableCell>
                   <TableCell>
-                    <Link
-                      href={`/admin/orchestration/event-subscriptions/${d.subscription.id}`}
-                      className="hover:underline"
-                    >
-                      <span className="block max-w-[220px] truncate text-sm">
-                        {d.subscription.description ?? d.subscription.url}
-                      </span>
-                      <span className="text-muted-foreground block max-w-[220px] truncate text-xs">
-                        {d.subscription.url}
-                      </span>
-                    </Link>
+                    {d.subscription ? (
+                      <Link
+                        href={`/admin/orchestration/event-subscriptions/${d.subscription.id}`}
+                        className="hover:underline"
+                      >
+                        <span className="block max-w-[220px] truncate text-sm">
+                          {d.subscription.description ?? d.destination ?? 'Subscription'}
+                        </span>
+                        <span className="text-muted-foreground block max-w-[220px] truncate text-xs">
+                          {d.destination ?? 'Destination not recorded'}
+                        </span>
+                      </Link>
+                    ) : (
+                      <>
+                        <span className="text-muted-foreground block text-sm italic">
+                          Deleted subscription
+                        </span>
+                        <span className="text-muted-foreground block max-w-[220px] truncate text-xs">
+                          {d.destination ?? 'Destination not recorded'}
+                        </span>
+                      </>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge variant="secondary" className="text-[10px]">
@@ -316,9 +341,13 @@ export function WebhookDlqTable({
                       <Button
                         variant="ghost"
                         size="icon"
-                        disabled={actionId === d.id}
+                        disabled={actionId === d.id || !d.subscription}
                         onClick={() => void handleRetry(d.id)}
-                        title="Retry delivery"
+                        title={
+                          d.subscription
+                            ? 'Retry delivery'
+                            : 'Its subscription was deleted, so there is nowhere to retry it'
+                        }
                       >
                         {actionId === d.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />

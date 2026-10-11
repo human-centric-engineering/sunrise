@@ -16,6 +16,10 @@
  *   4. Delete the contact-form messages sent from the user's stored address,
  *      when the account has verified it. `ContactSubmission` has no FK to
  *      `User`, so no cascade reaches it.
+ *   5. Redact the user's own (verified) address from every webhook delivery
+ *      sent to it. Deliveries outlive their subscription (`SetNull`, §109
+ *      t-739) as the org's record of where its events went, so a notification
+ *      emailed to this person would otherwise keep their address for ever.
  *
  * The scrub, contact delete, receipt, and user delete run in one transaction
  * so they commit or roll back together. Avatar cleanup runs first as a
@@ -28,6 +32,13 @@ import { logger } from '@/lib/logging';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 import { contactSubmissionsOf, contactSubmissionsUnder } from '@/lib/privacy/contact-submissions';
 import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
+import { notRetried } from '@/lib/orchestration/webhooks/not-retried';
+import {
+  ERASED_DESTINATION,
+  normaliseAddress,
+  redactAddressInHistory,
+  webhookDeliveriesAddressedTo,
+} from '@/lib/orchestration/webhooks/destination';
 
 export type ErasureReason = 'self_service' | 'admin_action';
 
@@ -85,14 +96,16 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
       )
     : await eraseRows(params);
 
-  // The contact count is the one thing erased by address rather than by FK,
-  // so it is the one the receipt cannot vouch for: log what was taken.
+  // Contact messages and webhook deliveries are the things erased by address
+  // rather than by FK, so they are what the receipt cannot vouch for: log what
+  // was taken.
   logger.info('User erased', {
     userId,
     actorUserId,
     reason,
     receiptId: receipt.id,
     contactSubmissionsDeleted: receipt.contactSubmissionsDeleted,
+    webhookDeliveriesRedacted: receipt.webhookDeliveriesRedacted,
   });
   // An unverified address matched nothing, so contact messages sent under it
   // are still there, and only a person can decide whether they were this
@@ -116,6 +129,8 @@ async function eraseRows(params: EraseUserParams): Promise<{
   erasedAt: Date;
   contactSubmissionsDeleted: number;
   contactSubmissionsLeft: number;
+  /** Rows touched by the delivery redaction; a row can count in two passes. */
+  webhookDeliveriesRedacted: number;
 }> {
   const { userId, userEmail, actorUserId, reason } = params;
 
@@ -167,6 +182,70 @@ async function eraseRows(params: EraseUserParams): Promise<{
       ? 0
       : await tx.contactSubmission.count({ where: contactSubmissionsUnder(account.email) });
 
+    // Webhook deliveries now outlive the subscription that sent them (§109
+    // t-739), as the org's record of where its events went. An email-channel
+    // delivery records the address it went to, and when that is this person's
+    // the record must not keep it — whichever subscription sent it, and
+    // whether or not that subscription still exists. Redacted, not deleted:
+    // the row stays the org's record that an event was sent. Matched through
+    // the same rule subject access uses (`webhookDeliveriesAddressedTo`):
+    // exact on the normalised address, never `ILIKE`, and only for a verified
+    // address — an unverified one may be a stranger's inbox, whose record
+    // this must not touch.
+    //
+    // Three passes, shaped so the transaction's cost tracks the rare cases
+    // rather than the number of notifications the person ever received:
+    let webhookDeliveriesRedacted = 0;
+    const addressed = webhookDeliveriesAddressedTo(account);
+    if (addressed) {
+      const address = normaliseAddress(account.email);
+      // 1. Rows still retrying. Their next attempt would email the erased
+      //    person again and write the address back onto the row, so they stop
+      //    here — one by one, so each keeps its last real error. Retries are
+      //    short-lived, so this is a handful of rows at most.
+      const retrying = await tx.aiWebhookDelivery.findMany({
+        where: { AND: [addressed, { status: { in: ['pending', 'failed'] } }] },
+        select: { id: true, destination: true, previousDestinations: true, lastError: true },
+      });
+      for (const row of retrying) {
+        const history = redactAddressInHistory(row.previousDestinations, address);
+        await tx.aiWebhookDelivery.update({
+          where: { id: row.id },
+          data: {
+            status: 'exhausted',
+            nextRetryAt: null,
+            lastError: notRetried(row.lastError, 'recipient erased'),
+            ...(row.destination === address
+              ? { destination: ERASED_DESTINATION, destinationFingerprint: null }
+              : {}),
+            ...(history ? { previousDestinations: history } : {}),
+          },
+        });
+      }
+      // 2. Every other row sent to the address: one statement.
+      const current = await tx.aiWebhookDelivery.updateMany({
+        where: { destination: address },
+        data: { destination: ERASED_DESTINATION, destinationFingerprint: null },
+      });
+      // 3. Rows the address appears on only as an earlier destination — which
+      //    needs a retry to have followed an edited subscription, so is rare.
+      //    A JSON array cannot be rewritten in place by `updateMany`.
+      const movedOn = await tx.aiWebhookDelivery.findMany({
+        where: { previousDestinations: { array_contains: [{ destination: address }] } },
+        select: { id: true, previousDestinations: true },
+      });
+      for (const row of movedOn) {
+        const history = redactAddressInHistory(row.previousDestinations, address);
+        if (history) {
+          await tx.aiWebhookDelivery.update({
+            where: { id: row.id },
+            data: { previousDestinations: history },
+          });
+        }
+      }
+      webhookDeliveriesRedacted = retrying.length + current.count + movedOn.length;
+    }
+
     // App-registered in-transaction scrub. Runs before `tx.user.delete()` so
     // hooks can still match retained rows on `userId`, and atomically with the
     // delete — a throw here rolls the entire erasure back.
@@ -191,6 +270,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
       ...created,
       contactSubmissionsDeleted: contacts.count,
       contactSubmissionsLeft: left,
+      webhookDeliveriesRedacted,
     };
   });
 }

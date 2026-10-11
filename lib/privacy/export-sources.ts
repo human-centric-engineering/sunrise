@@ -41,6 +41,10 @@
 
 import { prisma } from '@/lib/db/client';
 import { contactSubmissionsOf } from '@/lib/privacy/contact-submissions';
+import {
+  normaliseAddress,
+  webhookDeliveriesAddressedTo,
+} from '@/lib/orchestration/webhooks/destination';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 
 /** How a `User`-linked model is represented in a subject export. */
@@ -284,6 +288,46 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
       const where = contactSubmissionsOf(subject);
       if (!where) return [];
       return prisma.contactSubmission.findMany({ where, orderBy: byCreatedAt });
+    },
+  },
+  {
+    model: 'AiWebhookDelivery',
+    section: 'notificationsSentToYou',
+    disposition: 'export',
+    description:
+      'Event notifications the organisation emailed to the subject’s address: when, which event, and whether it was delivered — not the event itself, which describes the organisation’s activity rather than the subject. These records outlive the subscription that sent them. Included only once the account has verified that address.',
+    // ⚠️ Keyed by address, like `ContactSubmission` above, and for the same
+    // reason no net finds it: a delivery has no user column, and since §109
+    // t-739 it outlives its subscription, so the address it was emailed to
+    // can stay on the row after the subscription (which this manifest exports
+    // under `notificationSubscriptions`) is gone. Matched through the rule
+    // erasure redacts with — exact on the normalised address, verified only.
+    //
+    // ⚠️ Never the row's own `destination` or `previousDestinations`. A retry
+    // after the subscription was re-pointed leaves one row naming two inboxes —
+    // say the subject's in the history and a colleague's as the current one —
+    // and either column would hand the subject someone else's address. The
+    // match already proves the row went to the subject's address, so that,
+    // and only that, is what the export says.
+    fetch: async (subject: SubjectQuery): Promise<unknown[]> => {
+      const where = webhookDeliveriesAddressedTo(subject);
+      if (!where) return [];
+      const rows = await prisma.aiWebhookDelivery.findMany({
+        where,
+        select: { id: true, eventType: true, status: true, lastAttemptAt: true, createdAt: true },
+        orderBy: byCreatedAt,
+      });
+      const sentTo = normaliseAddress(subject.email);
+      // Field by field, not a spread: widening the select above must not be
+      // enough to put a row's own address columns in front of the subject.
+      return rows.map((row) => ({
+        id: row.id,
+        eventType: row.eventType,
+        status: row.status,
+        lastAttemptAt: row.lastAttemptAt,
+        createdAt: row.createdAt,
+        sentTo,
+      }));
     },
   },
   {

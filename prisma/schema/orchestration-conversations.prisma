@@ -264,10 +264,12 @@ model AiEventHook {
 }
 
 // Delivery history / retry queue for webhook-type AiEventHook dispatches.
-// Internal handlers run in-process and are not tracked here.
+// Internal handlers run in-process and are not tracked here. The row outlives
+// the hook that sent it (`SetNull`) and carries its own destination (§109
+// t-739); see lib/orchestration/webhooks/destination.ts.
 model AiEventHookDelivery {
   id               String    @id @default(cuid())
-  hookId           String
+  hookId           String? // null once the hook is deleted; the row is kept as the record
   eventType        String
   payload          Json
   status           String    @default("pending") // pending, delivered, failed, exhausted
@@ -278,7 +280,12 @@ model AiEventHookDelivery {
   lastError        String?   @db.Text
   createdAt        DateTime  @default(now())
 
-  hook AiEventHook @relation(fields: [hookId], references: [id], onDelete: Cascade)
+  // Same three fields, same meaning, as on `AiWebhookDelivery`.
+  destination            String? @db.Text
+  destinationFingerprint String?
+  previousDestinations   Json?
+
+  hook AiEventHook? @relation(fields: [hookId], references: [id], onDelete: SetNull)
 
   orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage
   org   Org?    @relation(fields: [orgId], references: [id], onDelete: Cascade)

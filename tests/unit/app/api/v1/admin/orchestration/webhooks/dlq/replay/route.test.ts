@@ -13,7 +13,7 @@
  * - 401 unauthenticated
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 
 vi.mock('@/lib/auth/config', () => ({ auth: { api: { getSession: vi.fn() } } }));
@@ -44,6 +44,11 @@ import { prisma } from '@/lib/db/client';
 import { retryDelivery } from '@/lib/orchestration/webhooks/dispatcher';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { adminLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import {
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+  DEFAULT_AUTHORIZATION_POLICY,
+} from '@/lib/auth/authorization';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
@@ -62,6 +67,10 @@ describe('POST /webhooks/dlq/replay', () => {
     vi.clearAllMocks();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(retryDelivery).mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    __resetAuthorizationPolicyForTests();
   });
 
   it('rejects an empty body', async () => {
@@ -95,9 +104,20 @@ describe('POST /webhooks/dlq/replay', () => {
     // Ownership filter must include the admin's id and the submitted ids.
     expect(prisma.aiWebhookDelivery.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
-          subscription: { createdBy: ADMIN_ID },
-        }),
+        where: {
+          AND: [
+            { OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }] },
+            {
+              id: {
+                in: [
+                  'cmjbv4i3x00003wsldelivone',
+                  'cmjbv4i3x00003wsldelivtwo',
+                  'cmjbv4i3x00003wsldelivthr',
+                ],
+              },
+            },
+          ],
+        },
       })
     );
   });
@@ -221,5 +241,55 @@ describe('POST /webhooks/dlq/replay', () => {
     expect(res.status).toBe(200);
     const call = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0];
     expect(call?.where).not.toHaveProperty('createdAt');
+  });
+
+  it('lets orphans through the ownership filter but counts them as skipped when retryDelivery refuses', async () => {
+    const live = 'cmjbv4i3x00003wsldelivlive';
+    const orphan = 'cmjbv4i3x00003wsldeliorph1';
+    // The ownership query keeps both: the live one is the caller's, the orphan has no subscription.
+    vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([
+      { id: live },
+      { id: orphan },
+    ] as never);
+    vi.mocked(retryDelivery).mockImplementation(async (id: string) => id === live);
+
+    const res = await POST(makeRequest({ deliveryIds: [live, orphan] }));
+    const json = JSON.parse(await res.text());
+
+    expect(res.status).toBe(200);
+    expect(retryDelivery).toHaveBeenCalledWith(orphan, { awaitDelivery: true });
+    expect(json.data).toMatchObject({ replayed: 1, skipped: 1, deliveryIds: [live] });
+    expect(logAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: { replayed: 1, skipped: 1 } })
+    );
+    const where = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0]?.where;
+    expect(where).toEqual({
+      AND: [
+        { OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }] },
+        { id: { in: [live, orphan] } },
+      ],
+    });
+  });
+
+  it('drops the orphan arm from the ids query when the policy refuses unattributed reads', async () => {
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canRead: (viewer, target, scope) =>
+        target.kind === 'unattributed'
+          ? Promise.resolve(false)
+          : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+    });
+    const live = 'cmjbv4i3x00003wsldelivlive';
+    vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([{ id: live }] as never);
+
+    const res = await POST(makeRequest({ deliveryIds: [live] }));
+
+    expect(res.status).toBe(200);
+    const where = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0]?.where;
+    expect(where).toEqual({
+      AND: [{ subscription: { createdBy: ADMIN_ID } }, { id: { in: [live] } }],
+    });
+    expect(JSON.stringify(where)).not.toContain('"OR"');
+    expect(retryDelivery).toHaveBeenCalledWith(live, { awaitDelivery: true });
   });
 });

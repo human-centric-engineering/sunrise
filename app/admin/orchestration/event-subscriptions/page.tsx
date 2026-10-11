@@ -3,6 +3,7 @@ import Link from 'next/link';
 
 import { EventSubscriptionsTabs } from '@/components/admin/orchestration/event-subscriptions-tabs';
 import { type WebhookListItem } from '@/components/admin/orchestration/webhooks-table';
+import type { DlqDelivery } from '@/components/admin/orchestration/webhook-dlq-table';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
@@ -14,19 +15,6 @@ export const metadata: Metadata = {
   title: 'Event Subscriptions · AI Orchestration',
   description: 'Manage webhook subscriptions and the dead-letter queue.',
 };
-
-interface DlqDelivery {
-  id: string;
-  eventType: string;
-  status: 'exhausted';
-  lastResponseCode: number | null;
-  lastError: string | null;
-  attempts: number;
-  createdAt: string;
-  lastAttemptAt: string | null;
-  subscriptionId: string;
-  subscription: { id: string; url: string; description: string | null };
-}
 
 const EMPTY_META: PaginationMeta = {
   page: 1,

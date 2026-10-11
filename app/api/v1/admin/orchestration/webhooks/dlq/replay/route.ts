@@ -15,7 +15,9 @@
  *
  * Authentication: Admin only. Every targeted delivery must belong to
  * one of the caller's subscriptions; mismatches are skipped silently
- * so a partial selection doesn't 403 the whole batch.
+ * so a partial selection doesn't 403 the whole batch. A delivery whose
+ * subscription was deleted may be visible (`webhook-delivery-access.ts`) but
+ * has nowhere to go, so `retryDelivery` refuses it and it counts as skipped.
  */
 
 import { z } from 'zod';
@@ -28,6 +30,8 @@ import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { retryDelivery } from '@/lib/orchestration/webhooks/dispatcher';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import type { AuthenticatedSession } from '@/lib/auth/guards';
+import { webhookDeliveryVisibilityWhere } from '@/lib/orchestration/access/webhook-delivery-access';
 
 /** Cap concurrent in-flight retries so a large batch doesn't burst on the receiver. */
 const REPLAY_CONCURRENCY = 5;
@@ -58,7 +62,7 @@ export const POST = withAdminAuth(async (request, session) => {
   }
   const body = parsed.data;
 
-  const ids = await resolveTargetIds(body, session.user.id);
+  const ids = await resolveTargetIds(body, session);
 
   const replayed: string[] = [];
   const skipped: string[] = [];
@@ -95,7 +99,7 @@ export const POST = withAdminAuth(async (request, session) => {
 
 async function resolveTargetIds(
   body: { deliveryIds: string[] } | { subscriptionId: string; before?: Date },
-  userId: string
+  session: AuthenticatedSession
 ): Promise<string[]> {
   if ('deliveryIds' in body) {
     // Ownership filter — only return rows whose parent subscription the
@@ -103,8 +107,7 @@ async function resolveTargetIds(
     // whole batch over one stale ID.
     const owned = await prisma.aiWebhookDelivery.findMany({
       where: {
-        id: { in: body.deliveryIds },
-        subscription: { createdBy: userId },
+        AND: [webhookDeliveryVisibilityWhere(session), { id: { in: body.deliveryIds } }],
       },
       select: { id: true },
     });
@@ -112,7 +115,7 @@ async function resolveTargetIds(
   }
 
   const subscription = await prisma.aiWebhookSubscription.findFirst({
-    where: { id: body.subscriptionId, createdBy: userId },
+    where: { id: body.subscriptionId, createdBy: session.user.id },
     select: { id: true },
   });
   if (!subscription) return [];
