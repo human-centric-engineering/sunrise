@@ -8,6 +8,7 @@ import {
 } from '@/lib/storage/providers/local';
 import { getStorageCapabilities } from '@/lib/storage/providers/types';
 import { logger } from '@/lib/logging';
+import { verifyStorageAccessToken } from '@/lib/storage/access-tokens';
 
 // Root paths here are inert strings — `fs` is mocked, so nothing is ever
 // written. They deliberately avoid `/tmp`: CodeQL's js/insecure-temporary-file
@@ -433,6 +434,34 @@ describe('lib/storage/providers/local', () => {
         const url = await provider.getSignedUrl('documents/user-1/contract.pdf', 300);
 
         expect(url).toMatch(/^\/api\/v1\/storage\/documents\/user-1\/contract\.pdf\?token=/);
+      });
+
+      it('mints an org-scoped token when given an orgId option', async () => {
+        const provider = new LocalProvider(TWO_ROOTS);
+
+        const url = await provider.getSignedUrl('orgs/org-a/report.pdf', 300, { orgId: 'org-a' });
+        const token = decodeURIComponent(url.split('token=')[1]);
+
+        expect(verifyStorageAccessToken(token)).toMatchObject({
+          key: 'orgs/org-a/report.pdf',
+          org: 'org-a',
+        });
+      });
+
+      it('rejects when the key is outside the orgId option', async () => {
+        const provider = new LocalProvider(TWO_ROOTS);
+
+        await expect(
+          provider.getSignedUrl('orgs/org-a/report.pdf', 300, { orgId: 'org-b' })
+        ).rejects.toThrow(/outside the org/i);
+      });
+
+      it('rejects an org-owned key signed with no orgId', async () => {
+        const provider = new LocalProvider(TWO_ROOTS);
+
+        await expect(provider.getSignedUrl('orgs/org-a/report.pdf', 300)).rejects.toThrow(
+          /only be signed for its own org/i
+        );
       });
 
       it('refuses to sign a traversal key', async () => {

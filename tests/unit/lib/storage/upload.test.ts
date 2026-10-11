@@ -158,6 +158,50 @@ describe('lib/storage/upload', () => {
     });
   });
 
+  describe('uploadAvatar at TENANCY_MODE=multi', () => {
+    it('keeps avatars at avatars/{userId}/ with an unscoped client, even inside an org', async () => {
+      const mockProvider = {
+        name: 'mock',
+        upload: vi.fn().mockResolvedValue({
+          key: 'avatars/user-123/avatar.jpg',
+          url: 'https://storage.example.com/avatars/user-123/avatar.jpg',
+          size: 1000,
+        }),
+        delete: vi.fn(),
+        deletePrefix: vi.fn(),
+      };
+      const { getStorageClient } = await import('@/lib/storage/client');
+      vi.mocked(getStorageClient).mockReturnValue(mockProvider);
+      const { processImage } = await import('@/lib/storage/image');
+      vi.mocked(processImage).mockResolvedValue({
+        buffer: Buffer.from('processed'),
+        mimeType: 'image/jpeg',
+        width: 500,
+        height: 500,
+      });
+      const { env } = await import('@/lib/env');
+      const { runAsOrg } = await import('@/lib/tenancy/context');
+      const { uploadAvatar } = await import('@/lib/storage/upload');
+
+      const previous = env.TENANCY_MODE;
+      env.TENANCY_MODE = 'multi';
+      try {
+        await runAsOrg('org-acme', () =>
+          uploadAvatar(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]), {
+            userId: 'user-123',
+          })
+        );
+      } finally {
+        env.TENANCY_MODE = previous;
+      }
+
+      const uploadedKey = mockProvider.upload.mock.calls[0][1].key as string;
+      expect(uploadedKey.startsWith('avatars/user-123/')).toBe(true);
+      expect(uploadedKey).not.toContain('orgs/');
+      expect(getStorageClient).toHaveBeenCalledWith();
+    });
+  });
+
   describe('deleteFile', () => {
     it('should return failure when storage is not configured', async () => {
       const { getStorageClient } = await import('@/lib/storage/client');

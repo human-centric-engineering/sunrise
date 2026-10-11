@@ -256,7 +256,102 @@ describe('storage access tokens', () => {
     });
   });
 
+  // §109 t-736: the `org` claim. Minting is the one rule that decides whose
+  // key a token may name; the read route re-checks it (route test).
+  describe('org claim', () => {
+    const ORG_KEY = 'orgs/org-a/reports/q3.pdf';
+
+    /** Decode the payload a token carries, without verifying it. */
+    function decodePayload(token: string): Record<string, unknown> {
+      const parsed: unknown = JSON.parse(
+        Buffer.from(token.slice(0, token.indexOf('.')), 'base64url').toString('utf8')
+      );
+      if (typeof parsed !== 'object' || parsed === null) throw new Error('payload not an object');
+      return Object.fromEntries(Object.entries(parsed));
+    }
+
+    it('writes the org into the payload for an org-owned key minted for that org', () => {
+      const { token } = generateStorageAccessToken(ORG_KEY, 300, { orgId: 'org-a' });
+
+      expect(decodePayload(token)).toMatchObject({ key: ORG_KEY, org: 'org-a' });
+    });
+
+    it('refuses an org-owned key minted for a different org', () => {
+      expect(() => generateStorageAccessToken(ORG_KEY, 300, { orgId: 'org-b' })).toThrow(
+        /outside the org/i
+      );
+    });
+
+    it('refuses an org-owned key minted with no org', () => {
+      expect(() => generateStorageAccessToken(ORG_KEY, 300)).toThrow(
+        /only be signed for its own org/i
+      );
+    });
+
+    it('refuses a sibling org whose id merely starts the same way', () => {
+      expect(() =>
+        generateStorageAccessToken('orgs/org-ab/x.pdf', 300, { orgId: 'org-a' })
+      ).toThrow(/outside the org/i);
+    });
+
+    it('refuses a legacy (non-org) key minted for an org', () => {
+      expect(() => generateStorageAccessToken(KEY, 300, { orgId: 'org-a' })).toThrow(
+        /outside the org/i
+      );
+    });
+
+    it('leaves the org property off entirely for a legacy key with no org', () => {
+      const { token } = generateStorageAccessToken(KEY, 300);
+
+      // Pre-claim shape preserved: absent, not `org: undefined`.
+      expect('org' in decodePayload(token)).toBe(false);
+    });
+
+    it('round-trips the org claim through verify', () => {
+      const { token } = generateStorageAccessToken(ORG_KEY, 300, { orgId: 'org-a' });
+
+      expect(verifyStorageAccessToken(token)).toMatchObject({ key: ORG_KEY, org: 'org-a' });
+    });
+
+    it('still verifies a token minted before the claim existed, with no org', () => {
+      const token = signPayload({
+        typ: 'storage-read',
+        key: KEY,
+        expiresAt: '2026-07-30T12:05:00.000Z',
+      });
+
+      const payload = verifyStorageAccessToken(token);
+
+      expect(payload.key).toBe(KEY);
+      expect(payload.org).toBeUndefined();
+    });
+
+    it('covers the org claim with the signature, so it cannot be swapped', () => {
+      const { token } = generateStorageAccessToken(ORG_KEY, 300, { orgId: 'org-a' });
+      const signature = token.slice(token.indexOf('.') + 1);
+      const swapped = { ...decodePayload(token), org: 'org-b' };
+      const forged = Buffer.from(JSON.stringify(swapped), 'utf8').toString('base64url');
+
+      expect(() => verifyStorageAccessToken(`${forged}.${signature}`)).toThrow(/signature/i);
+    });
+  });
+
   describe('buildStorageAccessUrl', () => {
+    it('passes the org option through to the minted token', () => {
+      const { url } = buildStorageAccessUrl('orgs/org-a/x.pdf', 300, undefined, {
+        orgId: 'org-a',
+      });
+      const token = decodeURIComponent(url.split('token=')[1]);
+
+      expect(verifyStorageAccessToken(token).org).toBe('org-a');
+    });
+
+    it('refuses an org-owned key for another org rather than building a URL', () => {
+      expect(() =>
+        buildStorageAccessUrl('orgs/org-a/x.pdf', 300, undefined, { orgId: 'org-b' })
+      ).toThrow(/outside the org/i);
+    });
+
     it('builds a relative URL the read route can serve', () => {
       const { url } = buildStorageAccessUrl(KEY, 300);
 

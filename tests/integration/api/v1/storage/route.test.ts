@@ -14,6 +14,7 @@
  * - Happy path: valid token → bytes, with headers that prevent inline render
  * - Missing / malformed / expired / tampered token → 401
  * - Token minted for a different key → 403 (the cross-object read)
+ * - Token whose org claim does not match the key's org → 403 TOKEN_ORG_MISMATCH
  * - Storage unconfigured → 503; provider without `download` → 501
  * - Object missing → 404
  * - Multi-segment keys reassemble correctly
@@ -22,6 +23,7 @@
  * @see lib/storage/access-tokens.ts
  */
 
+import { createHmac } from 'crypto';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 import type { StorageCapabilities, StorageObject } from '@/lib/storage/providers/types';
@@ -63,6 +65,24 @@ function buildRequest(key: string, token?: string): NextRequest {
   const url = new URL(`https://app.example.com/api/v1/storage/${key}`);
   if (token !== undefined) url.searchParams.set('token', token);
   return { nextUrl: url } as unknown as NextRequest;
+}
+
+const SECRET = 'test-secret-that-is-at-least-32-characters-long';
+
+/**
+ * Sign a payload by hand. Minting refuses an org/key mismatch, so the only way
+ * to present one to the route is to sign it ourselves — the construction is
+ * `<base64url(json)>.<base64url(HMAC-SHA256(secret, json))>`.
+ */
+function signToken(key: string, org?: string): string {
+  const json = JSON.stringify({
+    typ: 'storage-read',
+    key,
+    expiresAt: new Date(Date.now() + 300_000).toISOString(),
+    ...(org !== undefined ? { org } : {}),
+  });
+  const signature = createHmac('sha256', SECRET).update(json, 'utf8').digest('base64url');
+  return `${Buffer.from(json, 'utf8').toString('base64url')}.${signature}`;
 }
 
 function call(segments: string[], token?: string): Promise<Response> {
@@ -221,6 +241,57 @@ describe('GET /api/v1/storage/[...key]', () => {
 
       expect(response.status).toBe(401);
       expect((await response.json()).error.code).toBe('TOKEN_REQUIRED');
+    });
+  });
+
+  describe('org claim', () => {
+    const ORG_KEY = 'orgs/org-a/reports/q3.pdf';
+    const ORG_SEGMENTS = ORG_KEY.split('/');
+
+    it('serves an org-owned key when the claim names that org', async () => {
+      mockDownload.mockResolvedValue({
+        key: ORG_KEY,
+        body: Buffer.from('org a report'),
+        size: 12,
+      });
+      const { token } = generateStorageAccessToken(ORG_KEY, 300, { orgId: 'org-a' });
+
+      const response = await call(ORG_SEGMENTS, token);
+
+      expect(response.status).toBe(200);
+      expect(Buffer.from(await response.arrayBuffer()).toString()).toBe('org a report');
+      expect(mockDownload).toHaveBeenCalledWith(ORG_KEY);
+    });
+
+    it('refuses a token claiming org B for a key under orgs/org-a/', async () => {
+      const response = await call(ORG_SEGMENTS, signToken(ORG_KEY, 'org-b'));
+
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.code).toBe('TOKEN_ORG_MISMATCH');
+      expect(mockDownload).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+    });
+
+    it('refuses a token with no claim for a key under orgs/org-a/', async () => {
+      const response = await call(ORG_SEGMENTS, signToken(ORG_KEY));
+
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.code).toBe('TOKEN_ORG_MISMATCH');
+      expect(mockDownload).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+    });
+
+    it('refuses a token claiming org A for a legacy key no org owns', async () => {
+      const response = await call(SEGMENTS, signToken(KEY, 'org-a'));
+
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.code).toBe('TOKEN_ORG_MISMATCH');
+      expect(mockDownload).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+    });
+
+    it('still serves a legacy key from a token with no claim', async () => {
+      const response = await call(SEGMENTS, signToken(KEY));
+
+      expect(response.status).toBe(200);
+      expect(mockDownload).toHaveBeenCalledWith(KEY);
     });
   });
 

@@ -216,6 +216,78 @@ describe('lib/storage/client', () => {
     });
   });
 
+  describe('getStorageClient({ orgId })', () => {
+    it('refuses an out-of-org upload when bound, but not when unbound (same singleton)', async () => {
+      vi.stubEnv('NODE_ENV', 'development');
+      vi.stubEnv('STORAGE_PROVIDER', '');
+
+      const { createLocalProviderFromEnv } = await import('@/lib/storage/providers/local');
+      const innerUpload = vi.fn().mockResolvedValue({ key: 'avatars/u/x', url: 'u', size: 1 });
+      vi.mocked(createLocalProviderFromEnv).mockReturnValue({
+        name: 'local',
+        upload: innerUpload,
+        delete: vi.fn(),
+        deletePrefix: vi.fn(),
+      } as never);
+
+      const { getStorageClient, resetStorageClient } = await import('@/lib/storage/client');
+      resetStorageClient();
+      const opts = { key: 'avatars/u/x', contentType: 'image/png' };
+
+      const bound = getStorageClient({ orgId: 'org1' });
+      await expect(bound?.upload(Buffer.from('x'), opts)).rejects.toThrow(
+        /outside this org's prefix/
+      );
+      expect(innerUpload).not.toHaveBeenCalled();
+
+      await getStorageClient()?.upload(Buffer.from('x'), opts);
+      expect(innerUpload).toHaveBeenCalledTimes(1);
+      expect(createLocalProviderFromEnv).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets a bound client write inside its own org prefix', async () => {
+      vi.stubEnv('NODE_ENV', 'development');
+      vi.stubEnv('STORAGE_PROVIDER', '');
+
+      const { createLocalProviderFromEnv } = await import('@/lib/storage/providers/local');
+      const innerUpload = vi.fn().mockResolvedValue({ key: 'k', url: 'u', size: 1 });
+      vi.mocked(createLocalProviderFromEnv).mockReturnValue({
+        name: 'local',
+        upload: innerUpload,
+        delete: vi.fn(),
+        deletePrefix: vi.fn(),
+      } as never);
+
+      const { getStorageClient, resetStorageClient } = await import('@/lib/storage/client');
+      resetStorageClient();
+      const opts = { key: 'orgs/org1/a.pdf', contentType: 'application/pdf' };
+
+      await getStorageClient({ orgId: 'org1' })?.upload(Buffer.from('x'), opts);
+
+      expect(innerUpload).toHaveBeenCalledWith(expect.any(Buffer), opts);
+    });
+
+    it('returns null for a bound request when storage is not configured', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('STORAGE_PROVIDER', '');
+
+      const { getStorageClient, resetStorageClient } = await import('@/lib/storage/client');
+      resetStorageClient();
+
+      expect(getStorageClient({ orgId: 'org1' })).toBeNull();
+    });
+
+    it('rejects an unusable org id instead of returning an unscoped client', async () => {
+      vi.stubEnv('NODE_ENV', 'development');
+      vi.stubEnv('STORAGE_PROVIDER', '');
+
+      const { getStorageClient, resetStorageClient } = await import('@/lib/storage/client');
+      resetStorageClient();
+
+      expect(() => getStorageClient({ orgId: '' })).toThrow();
+    });
+  });
+
   describe('auto-detection', () => {
     it('should auto-detect S3 when createS3ProviderFromEnv returns a provider', async () => {
       vi.stubEnv('NODE_ENV', 'production');
