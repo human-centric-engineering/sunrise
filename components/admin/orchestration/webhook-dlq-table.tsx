@@ -256,7 +256,7 @@ export function WebhookDlqTable({
       <div className="flex items-center justify-between">
         <p className="text-muted-foreground text-xs">
           {subscriptionFilter === 'all'
-            ? 'Bulk replay re-dispatches every row visible on this page.'
+            ? 'Bulk replay re-dispatches every row on this page whose subscription still exists.'
             : 'Bulk replay re-dispatches every exhausted delivery for the selected subscription (optionally before the "To" date).'}
         </p>
         <Button

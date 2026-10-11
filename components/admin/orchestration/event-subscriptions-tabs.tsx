@@ -113,7 +113,8 @@ export function EventSubscriptionsTabs({
               </li>
               <li>
                 <span className="font-medium">Bulk replay</span> — re-dispatch every exhausted row
-                for the selected subscription (or every row visible on the current page).
+                for the selected subscription (or every row on the current page whose subscription
+                still exists).
               </li>
             </ul>
           </FieldHelp>

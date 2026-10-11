@@ -83,7 +83,7 @@ which destination fields are used.
 - Each row links to its parent subscription's edit page and shows the destination recorded on the delivery, event, last response code, attempts, last error.
 - A row whose subscription was deleted reads "Deleted subscription" with its recorded destination ("Destination not recorded" on rows that predate recording), has no link, and cannot be retried. It can still be discarded.
 - Row actions: retry (calls `POST /webhooks/deliveries/:id/retry`, same path as the per-subscription view) and discard (calls `DELETE /webhooks/deliveries/:id`, AlertDialog confirmation).
-- **Bulk replay** button hits `POST /webhooks/dlq/replay`. With a subscription filter active, replays every exhausted row for that subscription (and respects the "To" date as a cutoff); without one, replays the rows visible on the current page.
+- **Bulk replay** button hits `POST /webhooks/dlq/replay`. With a subscription filter active, replays every exhausted row for that subscription (and respects the "To" date as a cutoff); without one, replays the rows visible on the current page whose subscription still exists.
 - Pagination through `parsePaginationMeta`.
 
 ### `WebhookDeliveries`
