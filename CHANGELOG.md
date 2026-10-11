@@ -78,7 +78,9 @@ release process.
   returns a signed URL valid for 24 hours; set `public: true` to keep a public
   link. On Vercel Blob, which cannot sign, such a binding is refused with
   `signed_url_not_supported` until it opts into public. A dispatch with no org
-  in its tenant context is refused with `no_org_context`. Local storage access
+  in its tenant context is refused with `no_org_context`. `orgs/` is now a
+  reserved root: at `single`, a binding whose `keyPrefix` starts with it is
+  refused with `invalid_binding`. Local storage access
   tokens gain an optional `org` claim: `generateStorageAccessToken()` and
   `buildStorageAccessUrl()` take `{ orgId }`, refuse an org-owned key signed
   for any other org (or for none), and the read route answers `403

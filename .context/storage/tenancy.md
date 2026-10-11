@@ -48,7 +48,11 @@ with `no_org_context`.
   private ones through tokens already issued), and nothing org-scoped reaches
   them: not the org-bound client, not the token claim, not erasure.
 - **At `single`, nothing is prefixed.** A single-tenant fork's keys, and its
-  `upload_to_storage` results, do not change.
+  `upload_to_storage` results, do not change — with one exception: `orgs/` is
+  reserved for org-owned keys at both modes, so a binding whose own
+  `keyPrefix` starts with it is refused with `invalid_binding` at `single`
+  (where nothing could sign such a key). At `multi` it is simply nested inside
+  the org's prefix.
 
 A fork writing tenant-owned files of its own should go through
 `getStorageClient({ orgId: requireOrgId() })` too. The wrapper cannot check a
