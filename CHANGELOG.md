@@ -67,6 +67,30 @@ release process.
   `npm run db:seed` so the `022-delivery-destinations` unit fills existing rows
   from their current subscription or hook (the best available value, not a
   record). Rows whose parent is deleted before it runs stay unrecorded.
+- **At `TENANCY_MODE=multi`, an org's stored files live under `orgs/{orgId}/`,
+  and agent uploads are private by default** (§109 t-736). The
+  `upload_to_storage` capability writes `orgs/{orgId}/{keyPrefix}{uuid}.{ext}`
+  (the org prefix wraps a binding's own `keyPrefix`), through
+  `getStorageClient({ orgId })`, a new optional argument that returns the
+  provider wrapped to refuse any key outside that org on upload, read, delete,
+  prefix delete and signing (`lib/storage/org-scoped.ts`). A binding that sets
+  **neither `public` nor `signedUrlTtlSeconds`** now uploads privately and
+  returns a signed URL valid for 24 hours; set `public: true` to keep a public
+  link. On Vercel Blob, which cannot sign, such a binding is refused with
+  `signed_url_not_supported` until it opts into public. A dispatch with no org
+  in its tenant context is refused with `no_org_context`. Local storage access
+  tokens gain an optional `org` claim: `generateStorageAccessToken()` and
+  `buildStorageAccessUrl()` take `{ orgId }`, refuse an org-owned key signed
+  for any other org (or for none), and the read route answers `403
+  TOKEN_ORG_MISMATCH` when the claim does not match the key. `StorageProvider.getSignedUrl`
+  gains an optional third `options` argument (`SignedUrlOptions`); a fork's
+  custom provider that ignores it still compiles, but should pass `orgId` into
+  any claim its URLs can carry. `eraseOrg()` deletes the org's prefix after its
+  transaction commits, best-effort, and reports `storageSwept` (also on
+  `DELETE /api/v1/admin/orgs/[id]`). **Unchanged at `single`**: no prefix, and
+  the public default stays. Avatars and files uploaded before this stay where
+  they are, and org erasure does not reach the older ones. See
+  `.context/storage/tenancy.md`.
 
 ## [0.14.0] — 2026-10-08
 

@@ -2,11 +2,15 @@
 
 The storage system provides multi-provider file storage for Sunrise, following the same patterns as the email system (singleton client with graceful degradation).
 
+At `TENANCY_MODE=multi`, org-owned files live under `orgs/{orgId}/` and are reached through an org-bound client; agent uploads are private by default. That, what each URL kind protects, and the storage ladder are in [Storage and Tenancy](./tenancy.md).
+
 ## Architecture
 
 ```
 lib/storage/
-├── client.ts              # getStorageClient(), isStorageEnabled(), getStorageProviderName()
+├── client.ts              # getStorageClient({ orgId? }), isStorageEnabled(), getStorageProviderName()
+├── org-keys.ts            # orgKeyPrefix(), orgOfKey(), isKeyInOrg() - org-owned keys at multi
+├── org-scoped.ts          # scopeStorageToOrg() - the org-bound client
 ├── upload.ts              # uploadAvatar(), deleteFile(), deleteAvatar(), deleteByPrefix()
 ├── image.ts               # validateImageMagicBytes(), processImage(), getExtensionForMimeType(), isSupportedImageType()
 ├── constants.ts           # Client-safe constants (SUPPORTED_IMAGE_TYPES, IMAGE_EXTENSIONS)
@@ -78,7 +82,7 @@ await storage.upload(buffer, { key, contentType, public: false });
 - **Vercel Blob** — **throws**. Every blob is served from a public CDN URL; there is no configuration that makes this work, so an ambiguous warning would be dishonest.
 - **Local** — writes to a separate private root (`.storage/private/`, gitignored) that Next does not serve. Public uploads still go to `public/uploads/`. Read a private object back with `download()`.
 
-The `upload_to_storage` agent capability enforces this automatically: a binding with `public: false` or `signedUrlTtlSeconds` on a provider that lacks `privateObjects` fails with `private_objects_not_supported` rather than handing the user a world-readable URL.
+The `upload_to_storage` agent capability enforces this automatically: a binding with `public: false` or `signedUrlTtlSeconds` on a provider that lacks `privateObjects` fails with `private_objects_not_supported` rather than handing the user a world-readable URL. At `TENANCY_MODE=multi` a binding that sets neither is private and signed by default ([Storage and Tenancy](./tenancy.md#private-by-default-at-multi)).
 
 ## Providers
 
@@ -177,11 +181,11 @@ const url = await storage!.getSignedUrl('documents/user-1/contract.pdf', 300); /
 
 Provider-agnostic — it works with anything declaring the `download` capability — but in practice it exists for the local provider, since S3 signs its own URLs directly against the bucket.
 
-**The token is the only credential, and it grants exactly one key.** There is deliberately no session fallback. Storage keys carry no ownership (`agent-uploads/{agentId}/{uuid}` names no user), so `withAuth()` here would let any authenticated user read any private object — worse than having no read path. The route compares the key inside the token against the key requested and 403s on a mismatch.
+**The token is the only credential, and it grants exactly one key.** There is deliberately no session fallback. Storage keys name no user, so `withAuth()` here would let any authenticated user read any private object — worse than having no read path. The route compares the key inside the token against the key requested and 403s on a mismatch, then compares the token's `org` claim against the org the key belongs to (`orgs/{orgId}/…`, or none) and 403s on that mismatch too. Minting refuses an org-owned key unless it is signed for that org — see [Storage and Tenancy](./tenancy.md#what-each-url-kind-protects).
 
 Tokens are stateless HMAC-SHA256 over `BETTER_AUTH_SECRET` (`lib/storage/access-tokens.ts`, same shape as `lib/orchestration/approval-tokens.ts`) — no table, no migration. **Rotating `BETTER_AUTH_SECRET` invalidates every outstanding URL**, which is the intended lever if one leaks. Lifetime is capped at 7 days.
 
-The payload is `{ typ: 'storage-read', key, expiresAt }`. `typ` is the domain separator against the approval scheme, which signs the same construction with the same secret: without a tag in the signed bytes, the MAC cannot tell the two protocols apart, and the only thing preventing cross-scheme replay is that the two payload schemas happen to be disjoint on required fields. Verification asserts the tag (#507).
+The payload is `{ typ: 'storage-read', key, expiresAt, org? }` (`org` since §109 t-736). `typ` is the domain separator against the approval scheme, which signs the same construction with the same secret: without a tag in the signed bytes, the MAC cannot tell the two protocols apart, and the only thing preventing cross-scheme replay is that the two payload schemas happen to be disjoint on required fields. Verification asserts the tag (#507).
 
 **Adding another signed scheme? Derive a subkey, don't reuse the raw secret.** These two token modules HMAC `BETTER_AUTH_SECRET` directly, which is why they need `typ` at all — and they are not the only things rooted in that secret: better-auth signs its own sessions and JWTs with it (`lib/auth/config.ts`, `lib/auth/change-email.ts`), and `lib/logging/visitor-id.ts` signs the visitor cookie. Treat this as a non-exhaustive list and grep before assuming.
 
@@ -195,6 +199,7 @@ The payload is `{ typ: 'storage-read', key, expiresAt }`. `typ` is the domain se
 | 401    | `TOKEN_REQUIRED`         | No `token` query parameter                  |
 | 401    | `INVALID_TOKEN`          | Expired, tampered, or malformed             |
 | 403    | `TOKEN_KEY_MISMATCH`     | Valid token, but minted for a different key |
+| 403    | `TOKEN_ORG_MISMATCH`     | The token's org claim is not the key's org  |
 | 404    | `NOT_FOUND`              | No such object                              |
 | 501    | `DOWNLOAD_NOT_SUPPORTED` | Provider has no `download` capability       |
 | 503    | `STORAGE_NOT_CONFIGURED` | No provider configured                      |

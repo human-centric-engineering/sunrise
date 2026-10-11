@@ -30,9 +30,10 @@ await prisma.org.delete({ where: { id: orgId } });
 
 ```typescript
 // ✅ One transaction: invitations, session pointers, the org — and the cascade.
+//    Then, after it commits, the org's storage prefix.
 import { eraseOrg } from '@/lib/privacy/erase-org';
 
-const { members, pendingInvitations, sessionsCleared } = await eraseOrg({
+const { members, pendingInvitations, sessionsCleared, storageSwept } = await eraseOrg({
   orgId,
   actorUserId: session.user.id,
 });
@@ -40,7 +41,7 @@ const { members, pendingInvitations, sessionsCleared } = await eraseOrg({
 
 ## What goes, and what stays
 
-One transaction, in this order:
+One transaction, in this order, and then a storage sweep:
 
 1. **Pending invitations into the org** — `Verification` rows whose metadata
    names it. They have no FK to `Org`, so nothing else would remove them, and
@@ -73,6 +74,21 @@ One transaction, in this order:
    actions bypass row security. So it works from inside another org (an
    admin's session) and from no org (an admin API key) alike.
 
+4. **The org's stored files, after the commit** (§109 t-736). At `multi`,
+   files the org's agents upload live under `orgs/{orgId}/`
+   ([Storage tenancy](../storage/tenancy.md)), and
+   `eraseOrg` deletes that prefix once the transaction has committed. It runs
+   afterwards because an object store cannot join a database transaction:
+   deleting first would leave a rolled-back org with its files gone. The
+   result's `storageSwept` says how it went — `true`, `false` (the provider
+   failed; logged, and a re-run of the prefix delete finishes it), or `null`
+   (no storage configured).
+
+   **Files uploaded before org prefixes existed stay.** Keys like
+   `agent-uploads/{agentId}/…` name no org, so nothing can say they were this
+   org's, and the prefix sweep does not reach them. Avatars stay too: they are
+   the user's (`avatars/{userId}/…`), and users are not erased with an org.
+
 **Users are never deleted.** This is ruling a on the feature, and the docblock
 in `erase-org.ts` records the alternatives so it reads as a decision rather
 than an omission:
@@ -96,14 +112,20 @@ transaction, and the endpoint answers 400 with that code.
 are exported to their subjects while they exist, not after. The acting admin
 and the counts are logged.
 
-## Nothing is best-effort
+## The database part is all-or-nothing; the storage sweep is not
 
 A throw inside the transaction rolls the whole erasure back — the org either
-exists with everything, or is gone with everything. This is the opposite of
+exists with every row, or is gone with every row. This is the opposite of
 `eraseUser()`, where app-side cleanup hooks are swallowed so app trouble can
 never block a person's erasure. The asymmetry is deliberate: an org erasure is
 an operator action with an operator watching, and a half-erased org is worse
 than a refused one.
+
+The storage sweep (step 4) is the exception, and the only one. It runs after
+the commit, so by then the org is gone; a sweep failure is reported as
+`storageSwept: false` and logged, never thrown, because a throw would tell the
+operator the org still exists. The operator watching is the reason it is
+reported rather than swallowed.
 
 ## Suspension is not erasure
 

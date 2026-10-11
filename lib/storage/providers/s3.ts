@@ -271,6 +271,14 @@ export class S3Provider implements StorageProvider {
     };
   }
 
+  /**
+   * Presign a GET for one key.
+   *
+   * There is no `options` parameter, deliberately: a presigned URL is AWS's
+   * format and has nowhere to carry an org claim of ours (§109 t-736). The
+   * org-bound client (`lib/storage/org-scoped.ts`) refuses a key outside its
+   * org before it gets here, and that check is the whole control for S3.
+   */
   async getSignedUrl(key: string, expiresIn: number = 3600): Promise<string> {
     validateStorageKey(key);
     const command = new GetObjectCommand({

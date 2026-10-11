@@ -34,6 +34,7 @@ import type {
   UploadOptions,
   UploadResult,
   DeleteResult,
+  SignedUrlOptions,
 } from '@/lib/storage/providers/types';
 import { validateStorageKey } from '@/lib/storage/providers/validate-key';
 import { buildStorageAccessUrl } from '@/lib/storage/access-tokens';
@@ -285,18 +286,30 @@ export class LocalProvider implements StorageProvider {
    * Unlike S3's presigned URLs this does not check that the object exists —
    * the route resolves the key when the URL is used, and a token for a
    * missing key simply 404s there.
+   *
+   * `options.orgId` becomes the token's `org` claim, and minting refuses a
+   * key outside that org, or an org-owned key with no org given (see
+   * `lib/storage/access-tokens.ts`).
    */
   // Signing is synchronous here — an HMAC, not a round trip like S3's
   // presigner. It stays `async` regardless so a rejected key comes back as a
   // rejected promise: the interface is `Promise<string>`, and a method that
   // throws synchronously would slip past every caller's `.catch()`.
   // eslint-disable-next-line @typescript-eslint/require-await
-  async getSignedUrl(key: string, expiresIn: number = 3600): Promise<string> {
+  async getSignedUrl(
+    key: string,
+    expiresIn: number = 3600,
+    options: SignedUrlOptions = {}
+  ): Promise<string> {
     validateStorageKey(key);
 
-    const { url } = buildStorageAccessUrl(key, expiresIn);
+    const { url } = buildStorageAccessUrl(key, expiresIn, undefined, options);
 
-    logger.debug('Generated signed URL for local storage', { key, expiresIn });
+    logger.debug('Generated signed URL for local storage', {
+      key,
+      expiresIn,
+      orgId: options.orgId,
+    });
 
     return url;
   }

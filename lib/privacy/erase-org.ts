@@ -27,8 +27,23 @@
  * memberships that go with it are exported to their subjects while they
  * exist, not after.
  *
- * Nothing here is best-effort. A throw rolls the whole erasure back — the
- * org either exists with everything, or is gone with everything.
+ * **The database part is all-or-nothing.** A throw inside the transaction
+ * rolls the whole erasure back: the org either exists with every row, or is
+ * gone with every row.
+ *
+ * **The storage sweep is not, and runs after the commit** (§109 t-736). The
+ * org's objects live under `orgs/{orgId}/` (`lib/storage/org-keys.ts`), and an
+ * object store cannot join a database transaction. Deleting first would leave
+ * a rolled-back org with its files gone; deleting after leaves, at worst, an
+ * erased org with files still on disk, which a re-run of the prefix delete
+ * clears. So the sweep is best-effort, like the avatar sweep in
+ * `eraseUser()`: a failure is logged and reported on the result as
+ * `storageSwept: false`, never thrown, because the org is already gone and a
+ * throw would tell the caller it was not.
+ *
+ * The sweep reaches only the prefix. Objects uploaded before org prefixes
+ * existed (`agent-uploads/{agentId}/…`) name no org, so nothing can say they
+ * were this org's, and they stay.
  *
  * @see lib/tenancy/lifecycle.ts — every other org mutation, and why this one is not there
  * @see lib/privacy/export-org.ts — the export that precedes this
@@ -40,6 +55,7 @@ import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { INVITATION_IDENTIFIER_PREFIX } from '@/lib/utils/invitation-token';
 import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
+import { orgKeyPrefix } from '@/lib/storage/org-keys';
 
 export interface EraseOrgParams {
   /** Id of the org to erase. */
@@ -56,6 +72,12 @@ export interface EraseOrgResult {
   pendingInvitations: number;
   /** Sessions that were acting in the org and had that pointer cleared. */
   sessionsCleared: number;
+  /**
+   * Whether the org's storage prefix was deleted after the commit: `true` when
+   * the provider reported success, `false` when it did not or threw, `null`
+   * when no storage is configured. See the module header.
+   */
+  storageSwept: boolean | null;
 }
 
 /**
@@ -107,7 +129,24 @@ export async function eraseOrg(params: EraseOrgParams): Promise<EraseOrgResult> 
   });
 
   const erasedAt = new Date();
-  logger.info('Org erased', { orgId, actorUserId, ...result });
+  const storageSwept = await sweepOrgStorage(orgId);
+  logger.info('Org erased', { orgId, actorUserId, ...result, storageSwept });
 
-  return { erasedAt, ...result };
+  return { erasedAt, ...result, storageSwept };
+}
+
+/**
+ * Delete the org's storage prefix. Best-effort: runs after the transaction
+ * has committed, so it reports failure instead of throwing (module header).
+ */
+async function sweepOrgStorage(orgId: string): Promise<boolean | null> {
+  const { deleteByPrefix, isStorageEnabled } = await import('@/lib/storage/upload');
+  if (!isStorageEnabled()) return null;
+  try {
+    const { success } = await deleteByPrefix(orgKeyPrefix(orgId));
+    return success;
+  } catch (err) {
+    logger.error('Org erased, but deleting its storage prefix failed', err, { orgId });
+    return false;
+  }
 }

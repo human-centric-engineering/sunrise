@@ -6,6 +6,9 @@
  * proven by `smoke:tenancy`; here the org delete is asserted and the user
  * table is asserted UNTOUCHED — that is ruling a, and a delete on it would
  * be the accident the docblock rules out.
+ *
+ * And the storage sweep (§109 t-736): the org's prefix is deleted only after
+ * the transaction commits, and a sweep failure is reported, never thrown.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -28,6 +31,12 @@ const mockLogger = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/logging', () => ({ logger: mockLogger }));
 
+const storage = vi.hoisted(() => ({
+  isStorageEnabled: vi.fn(),
+  deleteByPrefix: vi.fn(),
+}));
+vi.mock('@/lib/storage/upload', () => storage);
+
 import { eraseOrg } from '@/lib/privacy/erase-org';
 import { OrgLifecycleError } from '@/lib/tenancy/lifecycle';
 
@@ -41,6 +50,8 @@ beforeEach(() => {
   tx.verification.deleteMany.mockResolvedValue({ count: 2 });
   tx.session.updateMany.mockResolvedValue({ count: 4 });
   tx.org.delete.mockResolvedValue({ id: ORG });
+  storage.isStorageEnabled.mockReturnValue(true);
+  storage.deleteByPrefix.mockResolvedValue({ success: true, key: `orgs/${ORG}/` });
 });
 
 describe('eraseOrg', () => {
@@ -73,7 +84,59 @@ describe('eraseOrg', () => {
       members: 3,
       pendingInvitations: 2,
       sessionsCleared: 4,
+      storageSwept: true,
     });
+  });
+
+  it("deletes the org's storage prefix only after the transaction has committed", async () => {
+    let committed = false;
+    db.$transaction.mockImplementation(async (fn: (client: typeof tx) => Promise<unknown>) => {
+      const out = await fn(tx);
+      committed = true;
+      return out;
+    });
+    let committedAtSweep: boolean | undefined;
+    storage.deleteByPrefix.mockImplementation(() => {
+      committedAtSweep = committed;
+      return Promise.resolve({ success: true, key: `orgs/${ORG}/` });
+    });
+
+    await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
+
+    expect(storage.deleteByPrefix).toHaveBeenCalledTimes(1);
+    expect(storage.deleteByPrefix).toHaveBeenCalledWith(`orgs/${ORG}/`);
+    expect(committedAtSweep).toBe(true);
+  });
+
+  it('does not touch storage when the transaction fails', async () => {
+    tx.org.delete.mockRejectedValue(new Error('FK'));
+    await expect(eraseOrg({ orgId: ORG, actorUserId: ADMIN })).rejects.toThrow('FK');
+    expect(storage.deleteByPrefix).not.toHaveBeenCalled();
+  });
+
+  it('reports storageSwept false, and still resolves, when the provider reports failure', async () => {
+    storage.deleteByPrefix.mockResolvedValue({ success: false, key: `orgs/${ORG}/` });
+    const result = await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
+    expect(result.storageSwept).toBe(false);
+    expect(tx.org.delete).toHaveBeenCalled();
+  });
+
+  it('reports storageSwept false and logs, rather than throwing, when the sweep throws', async () => {
+    storage.deleteByPrefix.mockRejectedValue(new Error('bucket unreachable'));
+    const result = await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
+    expect(result.storageSwept).toBe(false);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      'Org erased, but deleting its storage prefix failed',
+      expect.any(Error),
+      { orgId: ORG }
+    );
+  });
+
+  it('reports storageSwept null and makes no storage call when storage is not configured', async () => {
+    storage.isStorageEnabled.mockReturnValue(false);
+    const result = await eraseOrg({ orgId: ORG, actorUserId: ADMIN });
+    expect(result.storageSwept).toBeNull();
+    expect(storage.deleteByPrefix).not.toHaveBeenCalled();
   });
 
   it('never deletes a user (ruling a)', async () => {
@@ -115,6 +178,7 @@ describe('eraseOrg', () => {
       members: 3,
       pendingInvitations: 2,
       sessionsCleared: 4,
+      storageSwept: true,
     });
   });
 });

@@ -409,7 +409,10 @@ DELETE /api/v1/admin/orgs/[id]
 
 Calls `eraseOrg()` — see [Org Erasure](../privacy/org-erasure.md). The org,
 its memberships, its credentials and its pending invitations go; its members'
-accounts stay.
+accounts stay. After the transaction commits, the org's storage prefix
+(`orgs/{id}/`) is deleted, best-effort: `storageSwept` is `true` when that
+worked, `false` when the provider failed (the org is still erased), and `null`
+when no storage is configured.
 
 **Response** (200 OK):
 
@@ -421,7 +424,8 @@ accounts stay.
     "erasedAt": "…",
     "members": 3,
     "pendingInvitations": 0,
-    "sessionsCleared": 2
+    "sessionsCleared": 2,
+    "storageSwept": true
   }
 }
 ```

@@ -34,6 +34,26 @@ export interface UploadResult {
 }
 
 /**
+ * Options for minting a signed URL
+ */
+export interface SignedUrlOptions {
+  /**
+   * The org the URL is minted for (§109 t-736). The org-bound client
+   * (`lib/storage/org-scoped.ts`) passes it after checking the key is inside
+   * that org.
+   *
+   * What a provider can do with it differs, and a provider that ignores it
+   * still compiles:
+   * - **local** writes it into the token as the `org` claim, and the read
+   *   route refuses a token whose claim does not match the key's prefix;
+   * - **S3** cannot: a presigned URL is AWS's format and carries no claim of
+   *   ours, so the org-bound client's check before signing is the only
+   *   control.
+   */
+  orgId?: string;
+}
+
+/**
  * Result of a delete operation
  */
 export interface DeleteResult {
@@ -170,9 +190,10 @@ export interface StorageProvider {
    *
    * @param key - Storage key of the file
    * @param expiresIn - URL expiration time in seconds
+   * @param options - Who the URL is minted for; see {@link SignedUrlOptions}
    * @returns Signed URL with temporary access
    */
-  getSignedUrl?(key: string, expiresIn: number): Promise<string>;
+  getSignedUrl?(key: string, expiresIn: number, options?: SignedUrlOptions): Promise<string>;
 
   /**
    * Read an object back as bytes (optional)

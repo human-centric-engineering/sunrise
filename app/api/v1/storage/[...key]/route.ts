@@ -9,12 +9,13 @@
  * any provider declaring the `download` capability.
  *
  * **Authentication is the signed token, and only the signed token.** There is
- * deliberately no session fallback. Storage keys carry no ownership —
- * `agent-uploads/{agentId}/{uuid}` names no user, and `avatars/{userId}/…`
- * only does so by convention — so `withAuth()` here would let *any* logged-in
- * user read *any* private object. That is worse than having no read path at
- * all, which is what this route replaced. The token is minted per key by
- * `getSignedUrl()` and is checked against the key actually requested.
+ * deliberately no session fallback. Storage keys name no user —
+ * `orgs/{orgId}/…` names an org, `avatars/{userId}/…` a user only by
+ * convention — so `withAuth()` here would let *any* logged-in user read *any*
+ * private object. That is worse than having no read path at all, which is
+ * what this route replaced. The token is minted per key by `getSignedUrl()`
+ * and is checked against the key actually requested, then its `org` claim
+ * against the org that key belongs to (§109 t-736).
  *
  * Rate limiting: inherited from the `/api/v1/**` catch-all in
  * `lib/security/rate-limit-policy.ts`. Anonymous callers key on IP.
@@ -30,6 +31,7 @@ import { getStorageClient } from '@/lib/storage/client';
 import { getStorageCapabilities } from '@/lib/storage/providers/types';
 import { verifyStorageAccessToken } from '@/lib/storage/access-tokens';
 import { validateStorageKey } from '@/lib/storage/providers/validate-key';
+import { orgOfKey } from '@/lib/storage/org-keys';
 
 export async function GET(
   request: NextRequest,
@@ -47,8 +49,11 @@ export async function GET(
   }
 
   let tokenKey: string;
+  let tokenOrg: string | null;
   try {
-    tokenKey = verifyStorageAccessToken(token).key;
+    const payload = verifyStorageAccessToken(token);
+    tokenKey = payload.key;
+    tokenOrg = payload.org ?? null;
   } catch (err) {
     // The message distinguishes expired from tampered, which is useful to a
     // legitimate caller holding a stale link and tells an attacker nothing
@@ -69,6 +74,23 @@ export async function GET(
     });
     return errorResponse('This token does not grant access to the requested object', {
       code: 'TOKEN_KEY_MISMATCH',
+      status: 403,
+    });
+  }
+
+  // The token's org claim must name the org the key belongs to — both null
+  // for a key no org owns. Minting already refuses a key outside the org, so
+  // this only refuses a token minted wrongly; it is here so a mistake in that
+  // one function cannot become a cross-org read (`access-tokens.ts` header).
+  const keyOrg = orgOfKey(key);
+  if (tokenOrg !== keyOrg) {
+    logger.warn('Storage token presented with an org claim that does not match the key', {
+      requestedKey: key,
+      keyOrg,
+      tokenOrg,
+    });
+    return errorResponse('This token does not grant access to the requested object', {
+      code: 'TOKEN_ORG_MISMATCH',
       status: 403,
     });
   }

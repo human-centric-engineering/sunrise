@@ -169,6 +169,16 @@ the subject bundle's version because the two bundles have different readers.
 No receipt is written and no `reason` is required: the org is not a data
 subject. The acting admin is logged.
 
+## Stored files are not in the bundle
+
+The bundle carries rows, not the bytes of files the org's agents uploaded. An
+upload's key and URL appear wherever a row recorded them (a conversation's tool
+result, for instance), but the file itself does not. `StorageProvider` has no
+list operation, so there is no way to enumerate an org's files to put them in;
+at `multi` they all sit under `orgs/{orgId}/`
+([Storage and Tenancy](../storage/tenancy.md)), so an operator with access to
+the bucket can copy that prefix by hand. Org erasure does delete that prefix.
+
 ## What is deliberately not here yet
 
 - **A fork seam.** A fork's own org-owned tables are §109's tenant-data
