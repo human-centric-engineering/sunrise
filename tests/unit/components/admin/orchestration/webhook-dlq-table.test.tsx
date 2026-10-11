@@ -655,7 +655,9 @@ describe('WebhookDlqTable', () => {
         }),
       ]);
 
-      const link = await screen.findByRole('link', { name: /reduced\.example\.com/ });
+      const link = await screen.findByRole('link', {
+        name: /^https:\/\/reduced\.example\.com\/hook\b/,
+      });
       expect(link).toHaveAttribute('href', '/admin/orchestration/event-subscriptions/sub-1');
       // Title and subtitle both read the destination.
       expect(screen.getAllByText('https://reduced.example.com/hook')).toHaveLength(2);
