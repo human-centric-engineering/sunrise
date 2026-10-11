@@ -77,7 +77,10 @@ release process.
   **neither `public` nor `signedUrlTtlSeconds`** now uploads privately and
   returns a signed URL valid for 24 hours; set `public: true` to keep a public
   link. On Vercel Blob, which cannot sign, such a binding is refused with
-  `signed_url_not_supported` until it opts into public. A dispatch with no org
+  `signed_url_not_supported` until it opts into public; **on S3, set
+  `S3_OBJECTS_PRIVATE_BY_DEFAULT=true`** (bucket blocks public access) or
+  `S3_USE_ACL=true`, or such a binding is refused with
+  `private_objects_not_supported`. A dispatch with no org
   in its tenant context is refused with `no_org_context`. `orgs/` is now a
   reserved root: at `single`, a binding whose `keyPrefix` starts with it is
   refused with `invalid_binding`. Local storage access
@@ -93,6 +96,17 @@ release process.
   the public default stays. Avatars and files uploaded before this stay where
   they are, and org erasure does not reach the older ones. See
   `.context/storage/tenancy.md`.
+
+### Fixed
+
+- **S3 and Vercel Blob `deletePrefix` now delete past the first page**
+  (§109 t-736). Both read only the first listing page (1,000 objects on S3),
+  so a prefix holding more kept the rest while reporting success; S3 also
+  reported success when `DeleteObjects` returned per-key `Errors`. Both now
+  follow the listing to the end, and an S3 per-key failure returns
+  `{ success: false }`. `eraseUser()`'s avatar sweep and `eraseOrg()`'s org
+  sweep both go through it.
+
 
 ## [0.14.0] — 2026-10-08
 
