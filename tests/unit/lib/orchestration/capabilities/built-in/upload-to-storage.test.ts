@@ -1167,4 +1167,30 @@ describe('UploadToStorageCapability.execute() at TENANCY_MODE=single (regression
     expect(result.data?.signed).toBe(false);
     expect(vi.mocked(getStorageClient)).toHaveBeenCalledWith({});
   });
+
+  it('refuses a binding keyPrefix under the reserved orgs/ root before uploading', async () => {
+    bindCustomConfig({ keyPrefix: 'orgs/acme/' });
+    const result = await new UploadToStorageCapability().execute(BASE_ARGS, BASE_CONTEXT);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.code).toBe('invalid_binding');
+    expect(result.error?.message).toContain('orgs/');
+    expect(mockUpload).not.toHaveBeenCalled();
+  });
+});
+
+describe('UploadToStorageCapability.execute() — orgs/ binding prefix at multi', () => {
+  it('accepts it, nested inside the org prefix, because the org root wraps it', async () => {
+    env.TENANCY_MODE = 'multi';
+    try {
+      bindCustomConfig({ keyPrefix: 'orgs/acme/' });
+      const result = await runAsOrg('org-acme', () =>
+        new UploadToStorageCapability().execute(BASE_ARGS, BASE_CONTEXT)
+      );
+      expect(result.success).toBe(true);
+      expect(mockUpload.mock.calls[0][1].key.startsWith('orgs/org-acme/orgs/acme/')).toBe(true);
+    } finally {
+      env.TENANCY_MODE = 'single';
+    }
+  });
 });

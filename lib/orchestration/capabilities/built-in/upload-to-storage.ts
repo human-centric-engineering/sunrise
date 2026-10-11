@@ -69,7 +69,7 @@ import type {
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
 import { getStorageClient } from '@/lib/storage/client';
-import { orgKeyPrefix } from '@/lib/storage/org-keys';
+import { ORG_KEY_ROOT, orgKeyPrefix } from '@/lib/storage/org-keys';
 import { isMultiTenant, requireOrgId } from '@/lib/tenancy/context';
 import { getStorageCapabilities } from '@/lib/storage/providers/types';
 import { validateStorageKey } from '@/lib/storage/providers/validate-key';
@@ -356,6 +356,20 @@ export class UploadToStorageCapability extends BaseCapability<Args, Data> {
     // own layout survives the move to `multi`.
     const bindingPrefix = customConfig?.keyPrefix ?? `agent-uploads/${context.agentId}/`;
     const prefix = orgId !== undefined ? `${orgKeyPrefix(orgId)}${bindingPrefix}` : bindingPrefix;
+    // `orgs/` is where org-owned keys live, and the signer refuses an `orgs/…`
+    // key not minted for its org. At `single` nothing names an org, so a
+    // binding prefix there would upload and then fail to sign. Refuse before
+    // the upload rather than after it.
+    if (orgId === undefined && bindingPrefix.startsWith(ORG_KEY_ROOT)) {
+      logger.error('upload_to_storage: keyPrefix uses the reserved orgs/ root', {
+        agentId: context.agentId,
+        keyPrefix: bindingPrefix,
+      });
+      return this.error(
+        `keyPrefix must not start with "${ORG_KEY_ROOT}" — that root is reserved for organisation-owned files`,
+        'invalid_binding'
+      );
+    }
     const extension = deriveExtension(args.filename, args.contentType);
     const key = `${prefix}${randomUUID()}${extension}`;
 
