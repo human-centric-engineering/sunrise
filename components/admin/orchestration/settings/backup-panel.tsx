@@ -36,6 +36,14 @@ interface ImportResult {
   warnings: string[];
 }
 
+/** The `error.message` of an API error envelope, when the body is one. */
+function apiErrorMessage(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null || !('error' in body)) return null;
+  const { error } = body;
+  if (typeof error !== 'object' || error === null || !('message' in error)) return null;
+  return typeof error.message === 'string' ? error.message : null;
+}
+
 export function BackupPanel() {
   // True only in a customer's org at `multi`, where the shared part cannot move.
   const readOnly = useSharedSettingsReadOnly();
@@ -58,7 +66,9 @@ export function BackupPanel() {
         method: 'POST',
       });
       if (!res.ok) {
-        throw new Error(`Export failed: ${res.status}`);
+        // The API's own message says why (a shared-part refusal names the fix).
+        const body: unknown = await res.json().catch(() => null);
+        throw new Error(apiErrorMessage(body) ?? `Export failed: ${res.status}`);
       }
       const blob = await res.blob();
       const disposition = res.headers.get('Content-Disposition');

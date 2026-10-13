@@ -25,7 +25,10 @@ import { successResponse, errorResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
-import { importOrchestrationConfig } from '@/lib/orchestration/backup/importer';
+import {
+  importOrchestrationConfig,
+  isWorkflowSlugConflict,
+} from '@/lib/orchestration/backup/importer';
 import { backupScopeQuerySchema, resolveBackupScope } from '@/lib/orchestration/backup/scope';
 import { validateQueryParams } from '@/lib/api/validation';
 import { ZodError } from 'zod';
@@ -88,10 +91,11 @@ export const POST = withAdminAuth(async (request, session) => {
       });
     }
     // A concurrent agent edit took a version number this restore was about
-    // to write. The transaction rolled back, so the restore can be run again.
-    // Any other unique violation is not retryable and goes to the shared API
-    // error handler.
-    if (isAgentVersionConflict(err)) {
+    // to write, or another org took a workflow slug it planned to use. The
+    // transaction rolled back, so the restore can be run again. Any other
+    // unique violation is not retryable and goes to the shared API error
+    // handler.
+    if (isAgentVersionConflict(err) || isWorkflowSlugConflict(err)) {
       throw new ConflictError('Backup import conflicted with a concurrent change. Please retry.');
     }
     throw err;

@@ -50,7 +50,10 @@ import { canAdminister, type AuthorizationPrincipal } from '@/lib/auth/authoriza
 import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
-import { SHARED_SETTINGS_REFUSAL_CODE } from '@/lib/tenancy/shared-settings';
+import {
+  canChangeSharedSettings,
+  SHARED_SETTINGS_REFUSAL_CODE,
+} from '@/lib/tenancy/shared-settings';
 import { orgIdSchema } from '@/lib/validations/tenancy';
 
 /** The query parameters both backup routes accept. */
@@ -140,7 +143,10 @@ export async function resolveBackupScope(
     }
   }
 
-  const sharedPermitted = !multi || unboundKey || active === INSTALL_ORG_ID;
+  // t-751's rule, asked of the org this call stack entered. It refuses an
+  // empty context, which is what an unbound admin key has — the guard admits
+  // that key as the install org, and so does this.
+  const sharedPermitted = unboundKey || canChangeSharedSettings();
   if (query.shared === 'true' && !sharedPermitted) {
     // The warning t-751's guard logs for the same refusal.
     logger.warn('tenancy: refused a backup’s shared part outside the install org', {

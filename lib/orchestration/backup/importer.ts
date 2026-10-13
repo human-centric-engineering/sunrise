@@ -74,13 +74,63 @@ export interface ImportResult {
  */
 export const IMPORTED_FROM_SLUG_KEY = 'importedFromSlug';
 
+const jsonObjectSchema = z.record(z.string(), z.unknown());
+
 /** The workflow metadata with the renamed-import marker set. */
 function withImportedFromSlug(metadata: unknown, slug: string): Prisma.InputJsonValue {
-  const base =
-    metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata)
-      ? (metadata as Record<string, unknown>)
-      : {};
-  return { ...base, [IMPORTED_FROM_SLUG_KEY]: slug };
+  // Bundle metadata is uploaded data the schema accepts as anything; only an
+  // object is merged, anything else is replaced.
+  const parsed = jsonObjectSchema.safeParse(metadata);
+  return {
+    ...(parsed.success ? parsed.data : {}),
+    [IMPORTED_FROM_SLUG_KEY]: slug,
+  };
+}
+
+/**
+ * Whether a failed import lost a race for a workflow slug: another org took
+ * the free slug this import planned between the plan and the create. The
+ * transaction rolled back, so the import can be run again (the route answers
+ * 409, as for an agent version conflict).
+ */
+export function isWorkflowSlugConflict(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === 'P2002' &&
+    // The driver adapter names the model, not the constraint's fields;
+    // `slug` is the only unique key a create here can collide on.
+    err.meta?.modelName === 'AiWorkflow'
+  );
+}
+
+/**
+ * The slug each bundle workflow will be created under when another org holds
+ * its own: asked once, before the transaction, so the probes — each its own
+ * system-scope read — never wait on a second pooled connection while the
+ * import holds the first (with a pool of one they would never get it).
+ *
+ * A slug held by THIS org is planned too; the transaction then finds that row
+ * and updates it, so the plan goes unused. Planned slugs avoid every slug the
+ * bundle carries and every slug already planned, so two workflows never land
+ * on one slug and a later workflow in the bundle is not mistaken for an
+ * earlier one's renamed copy. At `single` every row is the install org's and
+ * the transaction's own read sees it, so there is nothing to plan.
+ */
+async function planWorkflowSlugs(slugs: readonly string[]): Promise<Map<string, string>> {
+  const planned = new Map<string, string>();
+  if (!isMultiTenant()) return planned;
+  const bundleSlugs = new Set(slugs);
+  const reserved = new Set<string>();
+  for (const slug of bundleSlugs) {
+    if (!(await isWorkflowSlugTaken(slug))) continue;
+    const free = await findFreeWorkflowSlug(
+      slug,
+      (candidate) => bundleSlugs.has(candidate) || reserved.has(candidate)
+    );
+    reserved.add(free);
+    planned.set(slug, free);
+  }
+  return planned;
 }
 
 /** The warning for a system workflow the import refused, by slug or by row flag. */
@@ -150,6 +200,7 @@ async function importParsed(
   for (const unchecked of [agentProviders.unchecked, workflowProviders.unchecked]) {
     if (unchecked) result.warnings.push(unchecked);
   }
+  const plannedWorkflowSlugs = await planWorkflowSlugs(parsed.data.workflows.map((wf) => wf.slug));
 
   await prisma.$transaction(
     async (tx) => {
@@ -496,8 +547,6 @@ async function importParsed(
       // `workflowDefinition` per workflow — on import it becomes either a
       // new published version (update path: published draft promoted to vN+1)
       // or the initial v1 (create path).
-      const bundleWorkflowSlugs = new Set(parsed.data.workflows.map((wf) => wf.slug));
-      const createdWorkflowSlugs = new Set<string>();
       for (const wf of parsed.data.workflows) {
         // A system workflow is the seed's, as a platform agent is, so it is
         // recognised by slug before anything else: a bundle exported before
@@ -526,6 +575,8 @@ async function importParsed(
           (await tx.aiWorkflow.findUnique({ where: { slug: wf.slug } })) ??
           (await tx.aiWorkflow.findFirst({
             where: { metadata: { path: [IMPORTED_FROM_SLUG_KEY], equals: wf.slug } },
+            // The oldest, so a repeat import always picks the same row.
+            orderBy: { createdAt: 'asc' },
           }));
         // The row flag catches a system workflow the slug list does not know (a
         // fork's own seed). Versioning over one would republish whatever
@@ -584,21 +635,9 @@ async function importParsed(
           // yes/no only, and also covers another org's system workflow, which
           // the `isSystem` check above cannot see.
           //
-          // A new slug avoids the ones this import created (the probe reads
-          // committed rows, so it cannot see them) and every slug the bundle
-          // carries, so a later workflow in it is not mistaken for this one.
-          // At `single` the read above sees every row, so there is nothing
-          // another org could hold.
-          let slug = wf.slug;
-          const taken =
-            createdWorkflowSlugs.has(slug) ||
-            (isMultiTenant() && (await isWorkflowSlugTaken(slug)));
-          if (taken) {
-            slug = await findFreeWorkflowSlug(
-              wf.slug,
-              (candidate) =>
-                createdWorkflowSlugs.has(candidate) || bundleWorkflowSlugs.has(candidate)
-            );
+          // Planned before the transaction (see planWorkflowSlugs).
+          const slug = plannedWorkflowSlugs.get(wf.slug) ?? wf.slug;
+          if (slug !== wf.slug) {
             result.warnings.push(
               `Workflow '${wf.slug}' imported as '${slug}' — that slug is already used by another organisation`
             );
@@ -619,7 +658,6 @@ async function importParsed(
               createdBy: userId,
             },
           });
-          createdWorkflowSlugs.add(slug);
           await createInitialVersion({
             tx,
             workflowId: created.id,
