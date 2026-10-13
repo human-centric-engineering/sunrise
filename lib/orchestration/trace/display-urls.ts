@@ -6,17 +6,18 @@
  * full webhook or API URL, and many services (Slack, Discord, Telegram) put the
  * secret that lets anyone post to the channel inside that address. t-773 kept
  * those URLs out of the logs; this keeps them out of the admin trace view, the
- * Markdown report, the executions list, the run streams and the approver's
- * status page.
+ * Markdown report, the executions list and the run streams, and from the
+ * step configs on the approver's status page (whose outputs the chat
+ * approval cards use as the workflow's result).
  *
  * **Applied where the trace is served, never where it is persisted.** The
  * persisted trace has to keep the working URL: later steps read
  * `{{steps.<id>.output.url}}`, and a resumed run rebuilds its step outputs
  * from the persisted trace.
  *
- * **Matched by key, not by content.** A string under a key ending in `url`,
- * `urls` or `reference` (`url`, `webhookUrl`, `allowedUrls`, a source's
- * `reference`…) that parses as an http(s)
+ * **Matched by key, not by content.** A string under a key ending in `url`
+ * or `urls` (`url`, `webhookUrl`, `allowedUrls`…), or an `external_call`
+ * source's `reference`, that parses as an http(s)
  * URL becomes its `loggableUrl()` form: origin plus collapsed path, with no
  * query, fragment or userinfo. URLs inside free text, such as a model's answer
  * or a citation, are content the reader came to see and are left as written.
@@ -29,13 +30,22 @@ import { loggableUrl } from '@/lib/logging/redact-path';
 
 /**
  * A key whose value is an address (`url`, `webhookUrl`, `source_url`,
- * `callbackURL`), a list of them (`urls`, `allowedUrls`), or a provenance
- * source's `reference`, which the provenance contract defines as the URL for
- * `web_search` and `external_call` sources (`lib/orchestration/provenance/types.ts`).
- * Only a value that parses as http(s) is touched, so a `reference` naming a
- * document id or chunk stays as it is.
+ * `callbackURL`), or a list of them (`urls`, `allowedUrls`).
  */
-const URL_KEY = /(?:urls?|reference)$/i;
+const URL_KEY = /urls?$/i;
+
+/**
+ * Whether `key` of `record` holds an address to reduce. A provenance source's
+ * `reference` is one only for an `external_call` source, whose `reference` is
+ * the URL the step hit and can carry an API key
+ * (`lib/orchestration/provenance/types.ts`). A `web_search` source's
+ * `reference` is a public page the reader follows as a citation link, and is
+ * left as written, like any URL in content.
+ */
+function isUrlKey(record: object, key: string): boolean {
+  if (URL_KEY.test(key)) return true;
+  return key === 'reference' && Reflect.get(record, 'source') === 'external_call';
+}
 
 /**
  * How deep the walk follows nested objects and arrays. Past it an object is
@@ -68,7 +78,7 @@ function walk(value: unknown, depth: number, underUrlKey: boolean): unknown {
   }
   const out: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) {
-    out[key] = walk(item, depth + 1, URL_KEY.test(key));
+    out[key] = walk(item, depth + 1, isUrlKey(value, key));
   }
   return out;
 }

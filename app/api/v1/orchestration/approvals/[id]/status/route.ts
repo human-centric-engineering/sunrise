@@ -96,9 +96,13 @@ export async function GET(
     return withCors(errorResponse('Execution not found', { code: 'NOT_FOUND', status: 404 }));
   }
 
-  // URL-bearing values shortened (t-777): a token holder is shown the
-  // run's progress, not the workflow's webhook secrets.
-  const trace = withDisplayUrls(executionTraceSchema.parse(execution.executionTrace));
+  // Each step's config (`input`, where a webhook URL is configured) is shown
+  // reduced (t-777). Step outputs are not: the chat approval cards build the
+  // agent's "Workflow approved. Result: …" follow-up from the last output, so
+  // a reduced URL there would hand the user a dead link.
+  const trace = executionTraceSchema
+    .parse(execution.executionTrace)
+    .map((entry) => ({ ...entry, input: withDisplayUrls(entry.input) }));
 
   return withCors(
     successResponse({

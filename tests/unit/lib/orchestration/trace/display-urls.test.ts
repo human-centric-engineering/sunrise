@@ -90,16 +90,18 @@ describe('withDisplayUrls', () => {
     expect(JSON.stringify(withDisplayUrls(deep))).toContain('[depth limit]');
   });
 
-  it("reduces a provenance source's reference when it is a URL, and leaves an id alone", () => {
+  it("reduces an external_call source's reference, and leaves a citation or an id alone", () => {
     const shown = withDisplayUrls({
       sources: [
-        { kind: 'external_call', reference: `https://api.example.com/v1/data?api_key=${SECRET}` },
-        { kind: 'knowledge_chunk', reference: 'chunk_123' },
+        { source: 'external_call', reference: `https://api.example.com/v1/data?api_key=${SECRET}` },
+        { source: 'web_search', reference: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' },
+        { source: 'knowledge_base', reference: 'chunk_123' },
       ],
     });
 
     expect(shown.sources[0]?.reference).toBe('https://api.example.com/v1/data');
-    expect(shown.sources[1]?.reference).toBe('chunk_123');
+    expect(shown.sources[1]?.reference).toBe('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    expect(shown.sources[2]?.reference).toBe('chunk_123');
   });
 });
 

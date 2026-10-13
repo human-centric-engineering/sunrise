@@ -134,7 +134,7 @@ describe('GET /api/v1/admin/orchestration/executions/:id/report.md', () => {
     expect(body).toContain('### 1. first step');
   });
 
-  it('shortens webhook URLs in the rendered step input and output (t-777)', async () => {
+  it('shortens webhook URLs in the rendered steps, input data and output data (t-777)', async () => {
     const SECRET = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
     const SLACK = `https://hooks.slack.com/services/T0000/B0000/${SECRET}?token=qs-secret`;
     const notifyEntry = {
@@ -152,6 +152,8 @@ describe('GET /api/v1/admin/orchestration/executions/:id/report.md', () => {
     };
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
       ...happyExecution(),
+      inputData: { callbackUrl: SLACK },
+      outputData: { notify: { url: SLACK } },
       executionTrace: [notifyEntry],
     } as never);
 

@@ -167,7 +167,7 @@ describe('GET /api/v1/orchestration/approvals/:id/status', () => {
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
   });
 
-  it('shows a token holder shortened webhook URLs, not working ones (t-777)', async () => {
+  it("reduces each step's configured webhook URL but keeps outputs working for the chat cards (t-777)", async () => {
     const SECRET = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
     const SLACK = `https://hooks.slack.com/services/T0000/B0000/${SECRET}?token=qs-secret`;
     const notifyEntry = {
@@ -199,11 +199,16 @@ describe('GET /api/v1/orchestration/approvals/:id/status', () => {
     const res = await GET(makeRequest('valid-token'), {
       params: Promise.resolve({ id: VALID_ID }),
     });
-    const text = await res.text();
+    const body = (await res.json()) as {
+      data: { executionTrace: Array<{ input: { webhookUrl: string }; output: { url: string } }> };
+    };
 
     expect(res.status).toBe(200);
-    expect(text).toContain('https://hooks.slack.com/services/T0000/B0000/[param]');
-    expect(text).not.toContain(SECRET);
-    expect(text).not.toContain('qs-secret');
+    expect(body.data.executionTrace[0]?.input.webhookUrl).toBe(
+      'https://hooks.slack.com/services/T0000/B0000/[param]'
+    );
+    // The chat approval cards post the last output back to the agent as the
+    // workflow's result, so it keeps the working URL.
+    expect(body.data.executionTrace[0]?.output.url).toBe(SLACK);
   });
 });
