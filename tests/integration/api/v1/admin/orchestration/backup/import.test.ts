@@ -6,7 +6,7 @@
  * @see app/api/v1/admin/orchestration/backup/import/route.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/v1/admin/orchestration/backup/import/route';
 import {
@@ -18,6 +18,13 @@ import { ZodError, ZodIssueCode } from 'zod';
 import { Prisma } from '@prisma/client';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
+
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    org: { findUnique: vi.fn() },
+    orgMembership: { findUnique: vi.fn() },
+  },
+}));
 
 vi.mock('@/lib/auth/config', () => ({
   auth: { api: { getSession: vi.fn() } },
@@ -49,12 +56,40 @@ vi.mock('@/lib/api/context', () => ({
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
+import { prisma } from '@/lib/db/client';
+import { env } from '@/lib/env';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { SHARED_SETTINGS_REFUSAL_CODE } from '@/lib/tenancy/shared-settings';
+import { BACKUP_SHARED_REFUSAL } from '@/lib/orchestration/backup/scope';
 import { importOrchestrationConfig } from '@/lib/orchestration/backup/importer';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
+const CUSTOMER = 'cmorg00000000000customer';
+const OTHER_CUSTOMER = 'cmorg000000000000other01';
+const IMPORT_URL = 'http://localhost:3000/api/v1/admin/orchestration/backup/import';
+
+/** A platform admin whose session is switched into `orgId` (the guard reads `activeOrgId`). */
+function adminIn(orgId: string) {
+  const admin = mockAdminUser();
+  vi.mocked(auth.api.getSession).mockResolvedValue({
+    ...admin,
+    session: { ...admin.session, activeOrgId: orgId },
+  });
+  // The guard verifies the switch: the admin is a member of the org named.
+  vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+    role: ORG_OWNER_ROLE,
+    org: { status: 'ACTIVE' },
+  } as never);
+}
+
+const originalMode = env.TENANCY_MODE;
+afterAll(() => {
+  env.TENANCY_MODE = originalMode;
+});
 
 function makeImportResult() {
   return {
@@ -64,6 +99,7 @@ function makeImportResult() {
     webhooks: { created: 0, skipped: 0 },
     knowledgeTags: { created: 0, updated: 0 },
     settingsUpdated: true,
+    sharedSkipped: false,
     warnings: [] as string[],
   };
 }
@@ -82,11 +118,11 @@ function makeValidPayload() {
   };
 }
 
-function makePostRequest(body: unknown): NextRequest {
+function makePostRequest(body: unknown, query = ''): NextRequest {
   return {
     headers: new Headers({ 'Content-Type': 'application/json' }),
     json: () => Promise.resolve(body),
-    url: 'http://localhost:3000/api/v1/admin/orchestration/backup/import',
+    url: `${IMPORT_URL}${query}`,
   } as unknown as NextRequest;
 }
 
@@ -107,6 +143,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 describe('POST /api/v1/admin/orchestration/backup/import', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    env.TENANCY_MODE = 'single';
     vi.mocked(importOrchestrationConfig).mockResolvedValue(makeImportResult());
   });
 
@@ -223,7 +260,10 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
 
       await POST(makePostRequest(payload));
 
-      expect(vi.mocked(importOrchestrationConfig)).toHaveBeenCalledWith(payload, ADMIN_ID);
+      expect(vi.mocked(importOrchestrationConfig)).toHaveBeenCalledWith(payload, ADMIN_ID, {
+        orgId: INSTALL_ORG_ID,
+        includeShared: true,
+      });
     });
 
     it('calls logAdminAction with action "backup.import"', async () => {
@@ -236,6 +276,167 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
           userId: ADMIN_ID,
           action: 'backup.import',
           entityType: 'backup',
+        })
+      );
+    });
+  });
+
+  describe('Scope (§109 t-738)', () => {
+    it('at single, ?shared=false passes a scope without the shared part to the importer', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const payload = makeValidPayload();
+
+      await POST(makePostRequest(payload, '?shared=false'));
+
+      expect(vi.mocked(importOrchestrationConfig)).toHaveBeenCalledWith(payload, ADMIN_ID, {
+        orgId: INSTALL_ORG_ID,
+        includeShared: false,
+      });
+    });
+
+    it('returns 400 VALIDATION_ERROR for shared=yes and does not import', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(makePostRequest(makeValidPayload(), '?shared=yes'));
+
+      expect(response.status).toBe(400);
+      const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
+      expect(data).toMatchObject({ success: false, error: { code: 'VALIDATION_ERROR' } });
+      expect(vi.mocked(importOrchestrationConfig)).not.toHaveBeenCalled();
+    });
+
+    it('at multi, a customer org is NOT refused when it does not ask for the shared part', async () => {
+      // The behaviour change: the route used to declare writesSharedSettings,
+      // which refused the whole import from a customer org.
+      env.TENANCY_MODE = 'multi';
+      adminIn(CUSTOMER);
+      const payload = makeValidPayload();
+
+      const response = await POST(makePostRequest(payload));
+
+      expect(response.status).toBe(200);
+      expect(vi.mocked(importOrchestrationConfig)).toHaveBeenCalledWith(payload, ADMIN_ID, {
+        orgId: CUSTOMER,
+        includeShared: false,
+      });
+    });
+
+    it('at multi, a customer org is NOT refused with ?shared=false', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(CUSTOMER);
+
+      const response = await POST(makePostRequest(makeValidPayload(), '?shared=false'));
+
+      expect(response.status).toBe(200);
+      expect(vi.mocked(importOrchestrationConfig)).toHaveBeenCalledOnce();
+    });
+
+    it('at multi, refuses shared=true from a customer org with the install-org reason, before reading the body', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(CUSTOMER);
+      const json = vi.fn(() => Promise.resolve(makeValidPayload()));
+      const request = {
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+        json,
+        url: `${IMPORT_URL}?shared=true`,
+      } as unknown as NextRequest;
+
+      const response = await POST(request);
+
+      expect(response.status).toBe(403);
+      const data = await parseJson<{
+        error: { message: string; details: { reason: string } };
+      }>(response);
+      expect(data.error.message).toBe(BACKUP_SHARED_REFUSAL);
+      expect(data.error.details.reason).toBe(SHARED_SETTINGS_REFUSAL_CODE);
+      expect(json).not.toHaveBeenCalled();
+      expect(vi.mocked(importOrchestrationConfig)).not.toHaveBeenCalled();
+      expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+    });
+
+    it('at multi, the install org may import the shared part', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(INSTALL_ORG_ID);
+      const payload = makeValidPayload();
+
+      const response = await POST(makePostRequest(payload, '?shared=true'));
+
+      expect(response.status).toBe(200);
+      expect(vi.mocked(importOrchestrationConfig)).toHaveBeenCalledWith(payload, ADMIN_ID, {
+        orgId: INSTALL_ORG_ID,
+        includeShared: true,
+      });
+    });
+
+    it('at multi, ?orgId restores into another org after the policy is asked about it', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(INSTALL_ORG_ID);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ id: OTHER_CUSTOMER } as never);
+
+      const response = await POST(
+        makePostRequest(makeValidPayload(), `?orgId=${OTHER_CUSTOMER}&shared=false`)
+      );
+
+      expect(response.status).toBe(200);
+      expect(vi.mocked(prisma.org.findUnique)).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: OTHER_CUSTOMER } })
+      );
+      expect(vi.mocked(importOrchestrationConfig)).toHaveBeenCalledWith(
+        expect.anything(),
+        ADMIN_ID,
+        { orgId: OTHER_CUSTOMER, includeShared: false }
+      );
+    });
+
+    it('at multi, returns 404 for an org that does not exist and does not import', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(INSTALL_ORG_ID);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue(null);
+
+      const response = await POST(makePostRequest(makeValidPayload(), `?orgId=${OTHER_CUSTOMER}`));
+
+      expect(response.status).toBe(404);
+      expect(vi.mocked(importOrchestrationConfig)).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Audit metadata (§109 t-738)', () => {
+    it('records the org, includesShared and sharedSkipped from the importer result', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(importOrchestrationConfig).mockResolvedValue({
+        ...makeImportResult(),
+        settingsUpdated: false,
+        sharedSkipped: true,
+      });
+
+      await POST(makePostRequest(makeValidPayload(), '?shared=false'));
+
+      expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            orgId: INSTALL_ORG_ID,
+            includesShared: false,
+            sharedSkipped: true,
+            settingsUpdated: false,
+            warningCount: 0,
+          }),
+        })
+      );
+    });
+
+    it('records the customer org at multi', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(CUSTOMER);
+
+      await POST(makePostRequest(makeValidPayload()));
+
+      expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            orgId: CUSTOMER,
+            includesShared: false,
+            sharedSkipped: false,
+          }),
         })
       );
     });

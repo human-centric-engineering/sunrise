@@ -6,7 +6,7 @@
  * @see app/api/v1/admin/orchestration/backup/export/route.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST } from '@/app/api/v1/admin/orchestration/backup/export/route';
 import {
@@ -16,6 +16,13 @@ import {
 } from '@/tests/helpers/auth';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
+
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    org: { findUnique: vi.fn() },
+    orgMembership: { findUnique: vi.fn() },
+  },
+}));
 
 vi.mock('@/lib/auth/config', () => ({
   auth: { api: { getSession: vi.fn() } },
@@ -47,12 +54,39 @@ vi.mock('@/lib/api/context', () => ({
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
+import { prisma } from '@/lib/db/client';
+import { env } from '@/lib/env';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { SHARED_SETTINGS_REFUSAL_CODE } from '@/lib/tenancy/shared-settings';
+import { BACKUP_SHARED_REFUSAL } from '@/lib/orchestration/backup/scope';
 import { exportOrchestrationConfig } from '@/lib/orchestration/backup/exporter';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
+const CUSTOMER = 'cmorg00000000000customer';
+const OTHER_CUSTOMER = 'cmorg000000000000other01';
+
+/** A platform admin whose session is switched into `orgId` (the guard reads `activeOrgId`). */
+function adminIn(orgId: string) {
+  const admin = mockAdminUser();
+  vi.mocked(auth.api.getSession).mockResolvedValue({
+    ...admin,
+    session: { ...admin.session, activeOrgId: orgId },
+  });
+  // The guard verifies the switch: the admin is a member of the org named.
+  vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue({
+    role: ORG_OWNER_ROLE,
+    org: { status: 'ACTIVE' },
+  } as never);
+}
+
+const originalMode = env.TENANCY_MODE;
+afterAll(() => {
+  env.TENANCY_MODE = originalMode;
+});
 
 function makeBackupPayload() {
   return {
@@ -68,8 +102,8 @@ function makeBackupPayload() {
   };
 }
 
-function makePostRequest(): NextRequest {
-  return new NextRequest('http://localhost:3000/api/v1/admin/orchestration/backup/export', {
+function makePostRequest(query = ''): NextRequest {
+  return new NextRequest(`http://localhost:3000/api/v1/admin/orchestration/backup/export${query}`, {
     method: 'POST',
   });
 }
@@ -83,6 +117,7 @@ async function parseJson<T>(response: Response): Promise<T> {
 describe('POST /api/v1/admin/orchestration/backup/export', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    env.TENANCY_MODE = 'single';
     vi.mocked(exportOrchestrationConfig).mockResolvedValue(makeBackupPayload() as never);
   });
 
@@ -153,6 +188,153 @@ describe('POST /api/v1/admin/orchestration/backup/export', () => {
           userId: ADMIN_ID,
           action: 'backup.export',
           entityType: 'backup',
+        })
+      );
+    });
+  });
+
+  describe('Scope (§109 t-738)', () => {
+    it('at single, resolves to the install org with the shared part included when nothing is asked', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      await POST(makePostRequest());
+
+      expect(vi.mocked(exportOrchestrationConfig)).toHaveBeenCalledWith({
+        orgId: INSTALL_ORG_ID,
+        includeShared: true,
+      });
+    });
+
+    it('at single, ?shared=false drops the shared part from the scope', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      await POST(makePostRequest('?shared=false'));
+
+      expect(vi.mocked(exportOrchestrationConfig)).toHaveBeenCalledWith({
+        orgId: INSTALL_ORG_ID,
+        includeShared: false,
+      });
+    });
+
+    it('returns 400 VALIDATION_ERROR for shared=yes and does not export', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(makePostRequest('?shared=yes'));
+
+      expect(response.status).toBe(400);
+      const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
+      expect(data).toMatchObject({ success: false, error: { code: 'VALIDATION_ERROR' } });
+      expect(vi.mocked(exportOrchestrationConfig)).not.toHaveBeenCalled();
+    });
+
+    it('returns 400 VALIDATION_ERROR for a malformed orgId and does not export', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(makePostRequest('?orgId=not%20an%20org!'));
+
+      expect(response.status).toBe(400);
+      expect(vi.mocked(exportOrchestrationConfig)).not.toHaveBeenCalled();
+    });
+
+    it('at multi, a customer org gets its own part only: the shared part is left out by default', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(CUSTOMER);
+
+      const response = await POST(makePostRequest());
+
+      expect(response.status).toBe(200);
+      expect(vi.mocked(exportOrchestrationConfig)).toHaveBeenCalledWith({
+        orgId: CUSTOMER,
+        includeShared: false,
+      });
+    });
+
+    it('at multi, refuses shared=true from a customer org with the install-org reason and does not export', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(CUSTOMER);
+
+      const response = await POST(makePostRequest('?shared=true'));
+
+      expect(response.status).toBe(403);
+      const data = await parseJson<{
+        success: boolean;
+        error: { message: string; details: { reason: string } };
+      }>(response);
+      expect(data.error.message).toBe(BACKUP_SHARED_REFUSAL);
+      expect(data.error.details.reason).toBe(SHARED_SETTINGS_REFUSAL_CODE);
+      expect(vi.mocked(exportOrchestrationConfig)).not.toHaveBeenCalled();
+      expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+    });
+
+    it('at multi, the install org may ask for the shared part', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(INSTALL_ORG_ID);
+
+      const response = await POST(makePostRequest('?shared=true'));
+
+      expect(response.status).toBe(200);
+      expect(vi.mocked(exportOrchestrationConfig)).toHaveBeenCalledWith({
+        orgId: INSTALL_ORG_ID,
+        includeShared: true,
+      });
+    });
+
+    it('at multi, ?orgId names another org after the policy is asked about it', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(INSTALL_ORG_ID);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ id: OTHER_CUSTOMER } as never);
+
+      const response = await POST(makePostRequest(`?orgId=${OTHER_CUSTOMER}&shared=false`));
+
+      expect(response.status).toBe(200);
+      expect(vi.mocked(prisma.org.findUnique)).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: OTHER_CUSTOMER } })
+      );
+      expect(vi.mocked(exportOrchestrationConfig)).toHaveBeenCalledWith({
+        orgId: OTHER_CUSTOMER,
+        includeShared: false,
+      });
+    });
+
+    it('at multi, returns 404 for an org that does not exist and does not export', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(INSTALL_ORG_ID);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue(null);
+
+      const response = await POST(makePostRequest(`?orgId=${OTHER_CUSTOMER}`));
+
+      expect(response.status).toBe(404);
+      expect(vi.mocked(exportOrchestrationConfig)).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Audit metadata (§109 t-738)', () => {
+    it('records the org and whether the shared part was included, alongside the counts', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      await POST(makePostRequest('?shared=false'));
+
+      expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            orgId: INSTALL_ORG_ID,
+            includesShared: false,
+            agents: 1,
+            hasSettings: false,
+          }),
+        })
+      );
+    });
+
+    it('records the customer org at multi', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(CUSTOMER);
+
+      await POST(makePostRequest());
+
+      expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({ orgId: CUSTOMER, includesShared: false }),
         })
       );
     });

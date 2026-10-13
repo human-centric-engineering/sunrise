@@ -64,6 +64,11 @@
  *     rows and no one else's; one person erased from inside A and another
  *     from no org leave no conversation or memory in either org, and an
  *     erasure hook sees the person's rows in both;
+ *   - the orchestration backup (§109 t-738): A's own part, exported in A and
+ *     imported into B from inside A and from no org, changes only B's rows —
+ *     A's agent and workflows and every shared row are untouched, A's
+ *     workflow lands in B under a free slug, and a bundle's shared part
+ *     imported without asking is skipped;
  *   - the org export and erasure (§106 t-735, t-730): B's export, asked
  *     from inside A (an admin's session) and from no org (an admin API key),
  *     holds B's rows and none of A's; B, holding a knowledge base with
@@ -163,6 +168,8 @@ import {
   PATTERNS_TAG_SLUG,
 } from '@/lib/orchestration/knowledge/patterns-knowledge';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { exportOrchestrationConfig } from '@/lib/orchestration/backup/exporter';
+import { importOrchestrationConfig } from '@/lib/orchestration/backup/importer';
 import { DEFAULT_ORG_ROLE } from '@/lib/tenancy/roles';
 
 const PREFIX = 'smoke-iso';
@@ -2015,6 +2022,137 @@ async function main(): Promise<void> {
       );
       check(leaked.length === 0, `B’s export ${label} holds none of A’s`);
     }
+
+    // ── [19b] Orchestration backup: one org's own part, into another ──────
+    // A's backup, exported in A and imported into B, asked from inside A (an
+    // admin's session) and from no org (an admin API key) (§109 t-738). Only
+    // B's rows may change: A's agent and workflow, and the shared rows every
+    // org reads, must not.
+    console.log('\n[19b] backup: A’s own part, imported into B from inside A and from no org');
+    const globalState = () =>
+      runAsSystem('smoke: global config counts', async () => ({
+        capabilities: await prisma.aiCapability.count(),
+        tags: await prisma.knowledgeTag.count(),
+        settingsAt:
+          (
+            await prisma.aiOrchestrationSettings.findUnique({
+              where: { slug: 'global' },
+              select: { updatedAt: true },
+            })
+          )?.updatedAt.getTime() ?? null,
+      }));
+    const aState = () =>
+      runAsSystem('smoke: org A backup rows', async () => ({
+        agentAt: (
+          await prisma.aiAgent.findUniqueOrThrow({
+            where: { id: a.agentId },
+            select: { updatedAt: true },
+          })
+        ).updatedAt.getTime(),
+        workflows: await prisma.aiWorkflow.count({ where: { orgId: a.orgId } }),
+        agents: await prisma.aiAgent.count({ where: { orgId: a.orgId } }),
+      }));
+    for (const [label, run] of askers) {
+      const backup = await run(() =>
+        exportOrchestrationConfig({ orgId: a.orgId, includeShared: false })
+      );
+      check(
+        backup.data.agents.some((agent) => agent.name === 'Support a') &&
+          !backup.data.agents.some((agent) => agent.name === 'Support b'),
+        `A’s backup ${label} holds A’s agent and not B’s`
+      );
+      check(
+        backup.data.workflows.some((wf) => wf.slug === a.workflowSlug) &&
+          !backup.data.workflows.some((wf) => wf.slug === b.workflowSlug),
+        `A’s backup ${label} holds A’s workflow and not B’s`
+      );
+      check(
+        backup.data.capabilities.length === 0 &&
+          backup.data.knowledgeTags.length === 0 &&
+          backup.data.settings === null,
+        `A’s backup ${label}, not asked for the shared part, carries it empty`
+      );
+
+      const globalsBefore = await globalState();
+      const aBefore = await aState();
+      let result: Awaited<ReturnType<typeof importOrchestrationConfig>> | null = null;
+      try {
+        result = await run(() =>
+          importOrchestrationConfig(backup, b.ownerId, { orgId: b.orgId, includeShared: false })
+        );
+      } catch (err) {
+        check(
+          false,
+          `importing A’s backup into B ${label} — it threw: ${err instanceof Error ? err.message : String(err)}`
+        );
+        continue;
+      }
+      check(true, `importing A’s backup into B ${label} completed`);
+      // B's `support` already exists (t-708: the same slug in each org), so it
+      // is updated in B; A's copy of the slug must not be touched.
+      const bSupport = await runAsOrg(b.orgId, () =>
+        prisma.aiAgent.findFirst({
+          where: { slug: 'support' },
+          select: { name: true, orgId: true },
+        })
+      );
+      check(
+        bSupport?.name === 'Support a' && bSupport.orgId === b.orgId,
+        `B’s \`support\` now carries A’s config and is still B’s (${bSupport?.name})`
+      );
+      const aAfter = await aState();
+      check(
+        aAfter.agentAt === aBefore.agentAt &&
+          aAfter.workflows === aBefore.workflows &&
+          aAfter.agents === aBefore.agents,
+        `A’s agent and workflows are untouched ${label}`
+      );
+      // A's workflow slug is unique across every org, so B takes a free one.
+      const renamed = result.warnings.find((w) =>
+        w.startsWith(`Workflow '${a.workflowSlug}' imported as`)
+      );
+      const copyInB = await runAsOrg(b.orgId, () =>
+        prisma.aiWorkflow.findFirst({
+          where: { name: `${PREFIX} workflow a` },
+          orderBy: { createdAt: 'desc' },
+          select: { slug: true, orgId: true },
+        })
+      );
+      check(
+        renamed !== undefined &&
+          copyInB !== null &&
+          copyInB.slug !== a.workflowSlug &&
+          copyInB.orgId === b.orgId,
+        `A’s workflow lands in B under a free slug (${copyInB?.slug}), not a unique-index failure`
+      );
+      const globalsAfter = await globalState();
+      check(
+        JSON.stringify(globalsAfter) === JSON.stringify(globalsBefore),
+        `no shared row changed ${label}`
+      );
+    }
+
+    // A bundle that DOES carry a shared part, imported into B without asking:
+    // the shared part is skipped and said so, and no shared row changes.
+    const fullBackup = await exportOrchestrationConfig({ orgId: a.orgId, includeShared: true });
+    check(
+      fullBackup.data.capabilities.length > 0 || fullBackup.data.settings !== null,
+      'a backup asked for the shared part carries it'
+    );
+    const globalsBeforeShared = await globalState();
+    const sharedResult = await importOrchestrationConfig(fullBackup, b.ownerId, {
+      orgId: b.orgId,
+      includeShared: false,
+    });
+    check(
+      sharedResult.sharedSkipped &&
+        sharedResult.capabilities.created + sharedResult.capabilities.updated === 0,
+      'imported into B without asking, the shared part is skipped and reported'
+    );
+    check(
+      JSON.stringify(await globalState()) === JSON.stringify(globalsBeforeShared),
+      'and no shared row changed'
+    );
 
     // ── [20] Org erasure: from inside another org, with knowledge documents ─
     // `ai_knowledge_document.knowledgeBaseId` is ON DELETE RESTRICT, and both

@@ -43,7 +43,7 @@ const mockTx = {
   aiWorkflowVersion: { findFirst: vi.fn(), create: vi.fn() },
   aiWebhookSubscription: { findFirst: vi.fn(), create: vi.fn() },
   aiOrchestrationSettings: { upsert: vi.fn() },
-  knowledgeTag: { upsert: vi.fn() },
+  knowledgeTag: { upsert: vi.fn(), findMany: vi.fn() },
   aiAgentKnowledgeTag: { deleteMany: vi.fn(), createMany: vi.fn() },
   aiAgentKnowledgeDocument: { deleteMany: vi.fn(), createMany: vi.fn() },
   aiKnowledgeDocument: { findMany: vi.fn() },
@@ -76,9 +76,20 @@ vi.mock('@/lib/logging', () => ({
   },
 }));
 
+// The cross-org slug probes (§107 t-728), mocked at their boundary; the real
+// ones are proved in slug-availability's own tests.
+const mockIsWorkflowSlugTaken = vi.hoisted(() => vi.fn(async (_slug: string) => false));
+const mockFindFreeWorkflowSlug = vi.hoisted(() => vi.fn(async (slug: string) => `${slug}-1`));
+vi.mock('@/lib/orchestration/workflows/slug-availability', () => ({
+  isWorkflowSlugTaken: mockIsWorkflowSlugTaken,
+  findFreeWorkflowSlug: mockFindFreeWorkflowSlug,
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { importOrchestrationConfig } from '@/lib/orchestration/backup/importer';
+import { getTenantContext } from '@/lib/tenancy/context';
+import type { BackupScope } from '@/lib/orchestration/backup/scope';
 import {
   INITIAL_VERSION_SUMMARY,
   ensureBaselineVersion,
@@ -86,6 +97,11 @@ import {
 } from '@/lib/orchestration/agents/agent-versioning';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
+
+/** Install org, shared part included — what the behaviour tests below exercise. */
+const SHARED_SCOPE: BackupScope = { orgId: 'install', includeShared: true };
+/** A customer org's own part only. */
+const OWN_SCOPE: BackupScope = { orgId: 'org_customer', includeShared: false };
 
 const minPayload = {
   schemaVersion: 1,
@@ -216,6 +232,14 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiWebhookSubscription.create.mockReset();
     mockTx.aiOrchestrationSettings.upsert.mockReset();
     mockTx.aiAgentKnowledgeDocument.deleteMany.mockClear();
+    mockTx.knowledgeTag.findMany.mockReset();
+    mockTx.knowledgeTag.findMany.mockResolvedValue([]);
+    mockTx.knowledgeTag.upsert.mockReset();
+    mockTx.aiAgentKnowledgeTag.createMany.mockReset();
+    mockIsWorkflowSlugTaken.mockReset();
+    mockIsWorkflowSlugTaken.mockResolvedValue(false);
+    mockFindFreeWorkflowSlug.mockReset();
+    mockFindFreeWorkflowSlug.mockImplementation(async (slug: string) => `${slug}-1`);
     vi.mocked(ensureBaselineVersion).mockClear();
     vi.mocked(recordAgentVersion).mockClear();
   });
@@ -223,11 +247,13 @@ describe('importOrchestrationConfig', () => {
   it('throws ZodError when schema is invalid (wrong schemaVersion)', async () => {
     const invalidPayload = { ...minPayload, schemaVersion: 99 };
 
-    await expect(importOrchestrationConfig(invalidPayload, 'user-1')).rejects.toThrow();
+    await expect(
+      importOrchestrationConfig(invalidPayload, 'user-1', SHARED_SCOPE)
+    ).rejects.toThrow();
   });
 
   it('returns zero counts for an empty payload', async () => {
-    const result = await importOrchestrationConfig(minPayload, 'user-1');
+    const result = await importOrchestrationConfig(minPayload, 'user-1', SHARED_SCOPE);
 
     expect(result.agents).toEqual({ created: 0, updated: 0 });
     expect(result.capabilities).toEqual({ created: 0, updated: 0 });
@@ -242,7 +268,7 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiAgent.create.mockResolvedValue({});
 
     const payload = { ...minPayload, data: { ...minPayload.data, agents: [makeAgent()] } };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiAgent.create).toHaveBeenCalledOnce();
     expect(mockTx.aiAgent.update).not.toHaveBeenCalled();
@@ -267,7 +293,7 @@ describe('importOrchestrationConfig', () => {
     const payload = { ...minPayload, data: { ...minPayload.data, agents: [makeAgent()] } };
 
     // Before the fix this rejects with the unknown-arg error.
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(result.agents.created).toBe(1);
     expect(mockTx.aiAgent.create).toHaveBeenCalledOnce();
@@ -283,7 +309,7 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiAgent.create.mockResolvedValue({});
 
     const payload = { ...minPayload, data: { ...minPayload.data, agents: [makeAgent()] } };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(result.agents.created).toBe(1);
     expect(mockTx.aiAgent.create).toHaveBeenCalledOnce();
@@ -297,7 +323,7 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiAgent.update.mockResolvedValue({});
 
     const payload = { ...minPayload, data: { ...minPayload.data, agents: [makeAgent()] } };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiAgent.update).toHaveBeenCalledOnce();
     expect(mockTx.aiAgent.create).not.toHaveBeenCalled();
@@ -310,7 +336,7 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiAgent.update.mockResolvedValue({});
 
     const payload = { ...minPayload, data: { ...minPayload.data, agents: [makeAgent()] } };
-    await importOrchestrationConfig(payload, 'user-1');
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(ensureBaselineVersion).toHaveBeenCalledWith(mockTx, 'existing-id', 'user-1');
     expect(recordAgentVersion).toHaveBeenCalledWith(mockTx, 'existing-id', {
@@ -334,7 +360,7 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiAgent.create.mockResolvedValue({ id: 'new-id' });
 
     const payload = { ...minPayload, data: { ...minPayload.data, agents: [makeAgent()] } };
-    await importOrchestrationConfig(payload, 'user-1');
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(recordAgentVersion).toHaveBeenCalledWith(mockTx, 'new-id', {
       label: INITIAL_VERSION_SUMMARY,
@@ -351,7 +377,7 @@ describe('importOrchestrationConfig', () => {
       ...minPayload,
       data: { ...minPayload.data, capabilities: [makeCapability()] },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiCapability.create).toHaveBeenCalledOnce();
     expect(result.capabilities.created).toBe(1);
@@ -364,7 +390,7 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-1', version: 1 });
 
     const payload = { ...minPayload, data: { ...minPayload.data, workflows: [makeWorkflow()] } };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiWorkflow.create).toHaveBeenCalledOnce();
     expect(mockTx.aiWorkflowVersion.create).toHaveBeenCalledOnce();
@@ -386,7 +412,7 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-1', version: 1 });
 
     const payload = { ...minPayload, data: { ...minPayload.data, workflows: [makeWorkflow()] } };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(result.workflows.created).toBe(1);
     expect(result.warnings).toEqual([
@@ -410,7 +436,7 @@ describe('importOrchestrationConfig', () => {
       ...minPayload,
       data: { ...minPayload.data, agents: [makeAgent()], workflows: [makeWorkflow()] },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(result.agents.created).toBe(1);
     expect(result.workflows.created).toBe(1);
@@ -425,7 +451,7 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiWebhookSubscription.create.mockResolvedValue({});
 
     const payload = { ...minPayload, data: { ...minPayload.data, webhooks: [makeWebhook()] } };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiWebhookSubscription.create).toHaveBeenCalledOnce();
     expect(result.webhooks.created).toBe(1);
@@ -450,7 +476,7 @@ describe('importOrchestrationConfig', () => {
           ],
         },
       };
-      const result = await importOrchestrationConfig(payload, 'user-1');
+      const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
       expect(mockTx.aiWebhookSubscription.create).toHaveBeenCalledOnce();
       expect(result.warnings.some((w) => /private or internal/i.test(w))).toBe(true);
@@ -481,7 +507,7 @@ describe('importOrchestrationConfig', () => {
           ],
         },
       };
-      const result = await importOrchestrationConfig(payload, 'user-1');
+      const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
       expect(mockTx.aiWebhookSubscription.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ isActive: false }) })
@@ -500,7 +526,7 @@ describe('importOrchestrationConfig', () => {
           webhooks: [makeWebhook({ channel: 'email', url: null, emailAddress: 'not-an-address' })],
         },
       };
-      const result = await importOrchestrationConfig(payload, 'user-1');
+      const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
       expect(mockTx.aiWebhookSubscription.create).not.toHaveBeenCalled();
       expect(result.warnings.some((w) => /not a valid address/i.test(w))).toBe(true);
@@ -514,7 +540,7 @@ describe('importOrchestrationConfig', () => {
     });
 
     const payload = { ...minPayload, data: { ...minPayload.data, webhooks: [makeWebhook()] } };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiWebhookSubscription.create).not.toHaveBeenCalled();
     expect(result.webhooks.skipped).toBe(1);
@@ -528,7 +554,7 @@ describe('importOrchestrationConfig', () => {
       ...minPayload,
       data: { ...minPayload.data, settings: makeSettings() },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiOrchestrationSettings.upsert).toHaveBeenCalledOnce();
     // test-review:accept tobe_true — boolean field `settingsUpdated` on ImportResult; structural assertion on import outcome
@@ -537,7 +563,7 @@ describe('importOrchestrationConfig', () => {
 
   it('sets settingsUpdated: false when settings is null', async () => {
     const payload = { ...minPayload, data: { ...minPayload.data, settings: null } };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
     expect(result.settingsUpdated).toBe(false);
@@ -550,7 +576,7 @@ describe('importOrchestrationConfig', () => {
     // Webhook payload without secret (as exported — secret is never in export)
     const webhook = makeWebhook();
     const payload = { ...minPayload, data: { ...minPayload.data, webhooks: [webhook] } };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     // The importer adds a warning for every new webhook (secrets are never exported)
     expect(result.warnings).toHaveLength(1);
@@ -566,7 +592,7 @@ describe('importOrchestrationConfig', () => {
     // prevent empty-secret HMAC dispatches
     const webhook = makeWebhook({ isActive: true });
     const payload = { ...minPayload, data: { ...minPayload.data, webhooks: [webhook] } };
-    await importOrchestrationConfig(payload, 'user-1');
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiWebhookSubscription.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -586,7 +612,7 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiWorkflow.update.mockResolvedValue({ id: 'wf-existing' });
 
     const payload = { ...minPayload, data: { ...minPayload.data, workflows: [makeWorkflow()] } };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiWorkflow.create).not.toHaveBeenCalled();
     expect(mockTx.aiWorkflowVersion.create).toHaveBeenCalledWith({
@@ -614,7 +640,7 @@ describe('importOrchestrationConfig', () => {
     mockTx.aiWorkflow.update.mockResolvedValue({ id: 'wf-empty' });
 
     const payload = { ...minPayload, data: { ...minPayload.data, workflows: [makeWorkflow()] } };
-    await importOrchestrationConfig(payload, 'user-1');
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiWorkflowVersion.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ version: 1 }),
@@ -637,7 +663,7 @@ describe('importOrchestrationConfig', () => {
         ],
       },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiWorkflow.create).not.toHaveBeenCalled();
     expect(mockTx.aiWorkflowVersion.create).not.toHaveBeenCalled();
@@ -668,7 +694,7 @@ describe('importOrchestrationConfig', () => {
         ],
       },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     // Only the ordinary workflow is looked up and written; the built-in never
     // reaches the database.
@@ -699,7 +725,7 @@ describe('importOrchestrationConfig', () => {
         workflows: [makeWorkflow({ slug: 'tpl-scheduled-source-monitor', isTemplate: false })],
       },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiWorkflow.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ slug: 'tpl-scheduled-source-monitor', isTemplate: false }),
@@ -733,7 +759,7 @@ describe('importOrchestrationConfig', () => {
         ],
       },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     // The system slug never reaches the database; the ordinary one restores.
     expect(mockTx.aiWorkflow.findUnique).toHaveBeenCalledTimes(1);
@@ -775,7 +801,7 @@ describe('importOrchestrationConfig', () => {
         ],
       },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiWorkflow.update).not.toHaveBeenCalled();
     expect(mockTx.aiWorkflowVersion.findFirst).not.toHaveBeenCalled();
@@ -820,7 +846,7 @@ describe('importOrchestrationConfig — knowledgeTags', () => {
         knowledgeTags: [{ slug: 'support', name: 'Support', description: null }],
       },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.knowledgeTag.upsert).toHaveBeenCalledWith({
       where: { slug: 'support' },
@@ -848,7 +874,7 @@ describe('importOrchestrationConfig — knowledgeTags', () => {
         knowledgeTags: [{ slug: 'billing', name: 'Billing', description: 'billing topics' }],
       },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(result.knowledgeTags.updated).toBe(1);
     expect(result.knowledgeTags.created).toBe(0);
@@ -876,7 +902,7 @@ describe('importOrchestrationConfig — knowledgeTags', () => {
         ],
       },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(result.knowledgeTags.created).toBe(1);
     expect(result.knowledgeTags.updated).toBe(1);
@@ -909,7 +935,7 @@ describe('importOrchestrationConfig — system agent protection', () => {
       ...minPayload,
       data: { ...minPayload.data, agents: [makeAgent({ slug: 'system-bot' })] },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiAgent.update).not.toHaveBeenCalled();
     expect(mockTx.aiAgent.create).not.toHaveBeenCalled();
@@ -928,7 +954,7 @@ describe('importOrchestrationConfig — system agent protection', () => {
       ...minPayload,
       data: { ...minPayload.data, agents: [makeAgent({ slug: 'eval-judge-relevance' })] },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiAgent.create).not.toHaveBeenCalled();
     expect(mockTx.aiAgentKnowledgeTag.createMany).not.toHaveBeenCalled();
@@ -949,7 +975,7 @@ describe('importOrchestrationConfig — system agent protection', () => {
       ...minPayload,
       data: { ...minPayload.data, agents: [makeAgent({ slug: 'quiz-master' })] },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiAgent.update).not.toHaveBeenCalled();
     expect(result.agents.updated).toBe(0);
@@ -996,7 +1022,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
         agents: [makeAgent({ grantedTagSlugs: ['support'], grantedDocumentHashes: [] })],
       },
     };
-    await importOrchestrationConfig(payload, 'user-1');
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiAgentKnowledgeTag.deleteMany).toHaveBeenCalledWith({
       where: { agentId: 'agent-1' },
@@ -1020,7 +1046,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
         agents: [makeAgent({ grantedTagSlugs: ['missing-tag'], grantedDocumentHashes: [] })],
       },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     // No createMany for tags because resolution failed
     expect(mockTx.aiAgentKnowledgeTag.createMany).not.toHaveBeenCalled();
@@ -1044,7 +1070,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
         agents: [makeAgent({ grantedTagSlugs: [], grantedDocumentHashes: ['abc123hash'] })],
       },
     };
-    await importOrchestrationConfig(payload, 'user-1');
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiAgentKnowledgeDocument.deleteMany).toHaveBeenCalledWith({
       where: { agentId: 'agent-3' },
@@ -1070,7 +1096,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
         agents: [makeAgent({ grantedTagSlugs: [], grantedDocumentSlugs: ['handbook-abc12345'] })],
       },
     };
-    await importOrchestrationConfig(payload, 'user-1');
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     // Lookup is by slug, not fileHash.
     expect(mockTx.aiKnowledgeDocument.findMany).toHaveBeenCalledWith({
@@ -1104,7 +1130,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
         ],
       },
     };
-    await importOrchestrationConfig(payload, 'user-1');
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     // Only the slug lookup runs — the hash fallback is skipped when slugs exist.
     expect(mockTx.aiKnowledgeDocument.findMany).toHaveBeenCalledTimes(1);
@@ -1131,7 +1157,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
         agents: [makeAgent({ grantedTagSlugs: [], grantedDocumentSlugs: ['gone-deadbeef'] })],
       },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiAgentKnowledgeDocument.createMany).not.toHaveBeenCalled();
     expect(result.warnings).toEqual(
@@ -1154,7 +1180,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
         agents: [makeAgent({ grantedTagSlugs: [], grantedDocumentHashes: ['deadbeef1234'] })],
       },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiAgentKnowledgeDocument.createMany).not.toHaveBeenCalled();
     expect(result.warnings).toEqual(
@@ -1175,7 +1201,7 @@ describe('importOrchestrationConfig — knowledge grants', () => {
         agents: [makeAgent({ grantedTagSlugs: [], grantedDocumentHashes: [] })],
       },
     };
-    await importOrchestrationConfig(payload, 'user-1');
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     // deleteMany is still called to clear stale grants, but createMany is not
     expect(mockTx.aiAgentKnowledgeTag.deleteMany).toHaveBeenCalledWith({
@@ -1235,7 +1261,7 @@ describe('importOrchestrationConfig — v1 schemaVersion compatibility', () => {
         settings: null,
       },
     };
-    const result = await importOrchestrationConfig(v1Payload, 'user-1');
+    const result = await importOrchestrationConfig(v1Payload, 'user-1', SHARED_SCOPE);
 
     // The importer slugifies 'Billing Support' → 'billing-support' and upserts it
     expect(mockTx.knowledgeTag.upsert).toHaveBeenCalledWith(
@@ -1271,7 +1297,7 @@ describe('importOrchestrationConfig — v1 schemaVersion compatibility', () => {
         settings: null,
       },
     };
-    await importOrchestrationConfig(v1Payload, 'user-1');
+    await importOrchestrationConfig(v1Payload, 'user-1', SHARED_SCOPE);
 
     // No tag upsert should have been called (blank categories produce no slug)
     expect(mockTx.knowledgeTag.upsert).not.toHaveBeenCalled();
@@ -1295,7 +1321,7 @@ describe('importOrchestrationConfig — capability update', () => {
       ...minPayload,
       data: { ...minPayload.data, capabilities: [makeCapability()] },
     };
-    const result = await importOrchestrationConfig(payload, 'user-1');
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
 
     expect(mockTx.aiCapability.update).toHaveBeenCalledWith(
       expect.objectContaining({ where: { slug: 'web-search' } })
@@ -1363,7 +1389,8 @@ describe('importOrchestrationConfig — capability update', () => {
             executionHandler: 'https://attacker.example/run',
           })
         ),
-        'user-1'
+        'user-1',
+        SHARED_SCOPE
       );
 
       const data = mockTx.aiCapability.update.mock.calls[0][0].data;
@@ -1397,7 +1424,8 @@ describe('importOrchestrationConfig — capability update', () => {
 
       const result = await importOrchestrationConfig(
         bundleWith(makeCapability({ slug: 'search_kb', isActive: false })),
-        'user-1'
+        'user-1',
+        SHARED_SCOPE
       );
 
       const data = mockTx.aiCapability.update.mock.calls[0][0].data;
@@ -1415,7 +1443,8 @@ describe('importOrchestrationConfig — capability update', () => {
 
       await importOrchestrationConfig(
         bundleWith(makeCapability({ slug: 'search_kb', isActive: true })),
-        'user-1'
+        'user-1',
+        SHARED_SCOPE
       );
 
       expect(mockTx.aiCapability.update.mock.calls[0][0].data).toMatchObject({ isActive: true });
@@ -1429,7 +1458,8 @@ describe('importOrchestrationConfig — capability update', () => {
 
       await importOrchestrationConfig(
         bundleWith(makeCapability({ slug: 'search_kb', isActive: false })),
-        'user-1'
+        'user-1',
+        SHARED_SCOPE
       );
 
       expect(mockTx.aiCapability.update.mock.calls[0][0].data).toMatchObject({ isActive: false });
@@ -1448,7 +1478,8 @@ describe('importOrchestrationConfig — capability update', () => {
             executionHandler: 'https://example.com/run',
           })
         ),
-        'user-1'
+        'user-1',
+        SHARED_SCOPE
       );
 
       expect(result.warnings).toHaveLength(1);
@@ -1476,7 +1507,8 @@ describe('importOrchestrationConfig — capability update', () => {
             executionHandler: 'SearchKnowledgeCapability',
           })
         ),
-        'user-1'
+        'user-1',
+        SHARED_SCOPE
       );
 
       expect(result.warnings).toEqual([]);
@@ -1497,7 +1529,8 @@ describe('importOrchestrationConfig — capability update', () => {
             executionHandler: 'https://example.com/run',
           })
         ),
-        'user-1'
+        'user-1',
+        SHARED_SCOPE
       );
 
       const data = mockTx.aiCapability.update.mock.calls[0][0].data;
@@ -1505,6 +1538,289 @@ describe('importOrchestrationConfig — capability update', () => {
       expect(data.executionType).toBe('api');
       expect(data.executionHandler).toBe('https://example.com/run');
       expect(result.warnings).toEqual([]);
+    });
+  });
+});
+
+// ─── Org scope (§109 t-738) ───────────────────────────────────────────────────
+
+describe('importOrchestrationConfig — org scope', () => {
+  /** Records the tenant org each collaborator saw. */
+  const seen: { call: string; orgId: string | null | undefined }[] = [];
+
+  beforeEach(() => {
+    seen.length = 0;
+    mockTx.aiAgent.findFirst.mockReset();
+    mockTx.aiAgent.create.mockReset();
+    mockTx.aiAgent.update.mockReset();
+    mockTx.aiCapability.findUnique.mockReset();
+    mockTx.aiCapability.create.mockReset();
+    mockTx.aiCapability.update.mockReset();
+    mockTx.aiWorkflow.findUnique.mockReset();
+    mockTx.aiWorkflow.create.mockReset();
+    mockTx.aiWorkflowVersion.create.mockReset();
+    mockTx.aiOrchestrationSettings.upsert.mockReset();
+    mockTx.aiAgent.findFirst.mockResolvedValue(null);
+    mockTx.aiAgent.create.mockResolvedValue({ id: 'agent-new' });
+    mockTx.aiCapability.findUnique.mockResolvedValue(null);
+    mockTx.aiCapability.create.mockResolvedValue({});
+    mockTx.aiWorkflow.findUnique.mockResolvedValue(null);
+    mockTx.aiWorkflow.create.mockResolvedValue({ id: 'wf-new' });
+    mockTx.aiWorkflow.update.mockReset();
+    mockTx.aiWorkflow.update.mockResolvedValue({});
+    mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-1', version: 1 });
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+    mockTx.aiKnowledgeDocument.findMany.mockResolvedValue([]);
+  });
+
+  const bundle = (data: Record<string, unknown>) => ({
+    ...minPayload,
+    schemaVersion: 3,
+    data: { ...minPayload.data, knowledgeTags: [], ...data },
+  });
+
+  it('runs the provider-policy warnings and the transaction in the target org', async () => {
+    mockUnapprovedProviders.mockImplementationOnce(async () => {
+      seen.push({ call: 'unapprovedProviders', orgId: getTenantContext()?.orgId });
+      return [];
+    });
+    mockFindUnapprovedModelOverridesIn.mockImplementationOnce(async () => {
+      seen.push({ call: 'findUnapprovedModelOverridesIn', orgId: getTenantContext()?.orgId });
+      return new Map();
+    });
+    mockTx.aiAgent.create.mockImplementationOnce(async () => {
+      seen.push({ call: 'tx.aiAgent.create', orgId: getTenantContext()?.orgId });
+      return { id: 'agent-new' };
+    });
+
+    await importOrchestrationConfig(
+      bundle({ agents: [makeAgent()], workflows: [makeWorkflow()] }),
+      'user-1',
+      { orgId: 'org_customer', includeShared: false }
+    );
+
+    expect(seen).toEqual([
+      { call: 'unapprovedProviders', orgId: 'org_customer' },
+      { call: 'findUnapprovedModelOverridesIn', orgId: 'org_customer' },
+      { call: 'tx.aiAgent.create', orgId: 'org_customer' },
+    ]);
+    expect(getTenantContext()).toBeNull();
+  });
+
+  describe('includeShared: false', () => {
+    const sharedBundle = () =>
+      bundle({
+        capabilities: [makeCapability(), makeCapability({ slug: 'second', name: 'Second' })],
+        knowledgeTags: [{ slug: 'support', name: 'Support', description: null }],
+        settings: makeSettings(),
+      });
+
+    it('writes no tag, capability or settings row and reports sharedSkipped', async () => {
+      const result = await importOrchestrationConfig(sharedBundle(), 'user-1', OWN_SCOPE);
+
+      expect(mockTx.knowledgeTag.upsert).not.toHaveBeenCalled();
+      expect(mockTx.aiCapability.findUnique).not.toHaveBeenCalled();
+      expect(mockTx.aiCapability.create).not.toHaveBeenCalled();
+      expect(mockTx.aiCapability.update).not.toHaveBeenCalled();
+      expect(mockTx.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
+      expect(result.sharedSkipped).toBe(true);
+      expect(result.settingsUpdated).toBe(false);
+      expect(result.capabilities).toEqual({ created: 0, updated: 0 });
+      expect(result.knowledgeTags).toEqual({ created: 0, updated: 0 });
+    });
+
+    it('names what was skipped in a warning', async () => {
+      const result = await importOrchestrationConfig(sharedBundle(), 'user-1', OWN_SCOPE);
+
+      expect(result.warnings).toEqual([
+        'Shared settings not imported: 2 capabilities, 1 knowledge tags, the orchestration settings. ' +
+          'They apply to every organisation, so they are imported only into the install organisation, ' +
+          'and only when asked for (shared=true).',
+      ]);
+    });
+
+    it('names only the parts the bundle carries', async () => {
+      const result = await importOrchestrationConfig(
+        bundle({ settings: makeSettings() }),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(result.warnings[0]).toContain(
+        'Shared settings not imported: the orchestration settings.'
+      );
+    });
+
+    it('does not report an empty shared part as skipped', async () => {
+      const result = await importOrchestrationConfig(
+        bundle({ agents: [makeAgent()] }),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(result.sharedSkipped).toBe(false);
+      expect(result.warnings).toEqual([]);
+      expect(result.agents.created).toBe(1);
+    });
+
+    it('creates no tags from a v1 bundle’s knowledgeCategories', async () => {
+      const result = await importOrchestrationConfig(
+        {
+          ...minPayload,
+          data: { ...minPayload.data, agents: [makeAgent({ knowledgeCategories: ['Billing'] })] },
+        },
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockTx.knowledgeTag.upsert).not.toHaveBeenCalled();
+      expect(result.knowledgeTags).toEqual({ created: 0, updated: 0 });
+    });
+  });
+
+  describe('includeShared: true', () => {
+    it('writes the shared part and does not report it skipped', async () => {
+      mockTx.knowledgeTag.upsert.mockResolvedValue({
+        id: 'tag-1',
+        slug: 'support',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      const result = await importOrchestrationConfig(
+        bundle({
+          capabilities: [makeCapability()],
+          knowledgeTags: [{ slug: 'support', name: 'Support', description: null }],
+          settings: makeSettings(),
+        }),
+        'user-1',
+        SHARED_SCOPE
+      );
+
+      expect(mockTx.knowledgeTag.upsert).toHaveBeenCalledOnce();
+      expect(mockTx.aiCapability.create).toHaveBeenCalledOnce();
+      expect(mockTx.aiOrchestrationSettings.upsert).toHaveBeenCalledOnce();
+      expect(result.sharedSkipped).toBe(false);
+      expect(result.warnings).toEqual([]);
+    });
+  });
+
+  describe('tag grants the import did not write', () => {
+    it('grants a tag that exists in the database and warns for one that does not', async () => {
+      mockTx.aiAgent.findFirst.mockReset();
+      mockTx.aiAgent.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'agent-new' });
+      mockTx.knowledgeTag.findMany.mockResolvedValue([{ id: 'tag-db', slug: 'in-db' }]);
+
+      const result = await importOrchestrationConfig(
+        bundle({
+          agents: [makeAgent({ grantedTagSlugs: ['in-db', 'nowhere'], grantedDocumentHashes: [] })],
+        }),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockTx.knowledgeTag.findMany).toHaveBeenCalledWith({
+        where: { slug: { in: ['in-db', 'nowhere'] } },
+        select: { id: true, slug: true },
+      });
+      expect(mockTx.aiAgentKnowledgeTag.createMany).toHaveBeenCalledWith({
+        data: [{ agentId: 'agent-new', tagId: 'tag-db' }],
+        skipDuplicates: true,
+      });
+      expect(result.warnings).toEqual([
+        expect.stringMatching(/missing knowledge-tag slug 'nowhere'/),
+      ]);
+    });
+
+    it('does not look up a slug the import itself wrote', async () => {
+      mockTx.knowledgeTag.upsert.mockResolvedValue({
+        id: 'tag-1',
+        slug: 'support',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      await importOrchestrationConfig(
+        bundle({
+          knowledgeTags: [{ slug: 'support', name: 'Support', description: null }],
+          agents: [makeAgent({ grantedTagSlugs: ['support'], grantedDocumentHashes: [] })],
+        }),
+        'user-1',
+        SHARED_SCOPE
+      );
+
+      expect(mockTx.knowledgeTag.findMany).not.toHaveBeenCalled();
+    });
+
+    it('looks up the slugs a v1 agent’s categories would grant', async () => {
+      await importOrchestrationConfig(
+        {
+          ...minPayload,
+          data: {
+            ...minPayload.data,
+            agents: [makeAgent({ knowledgeCategories: ['Billing Docs'] })],
+          },
+        },
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockTx.knowledgeTag.findMany).toHaveBeenCalledWith({
+        where: { slug: { in: ['billing-docs'] } },
+        select: { id: true, slug: true },
+      });
+    });
+  });
+
+  describe('workflow slug held by another organisation', () => {
+    it('creates the workflow under a free slug and warns', async () => {
+      mockIsWorkflowSlugTaken.mockResolvedValue(true);
+      mockFindFreeWorkflowSlug.mockResolvedValue('x-1');
+
+      const result = await importOrchestrationConfig(
+        bundle({ workflows: [makeWorkflow({ slug: 'x' })] }),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockIsWorkflowSlugTaken).toHaveBeenCalledWith('x');
+      expect(mockFindFreeWorkflowSlug).toHaveBeenCalledWith('x');
+      expect(mockTx.aiWorkflow.create.mock.calls[0][0].data.slug).toBe('x-1');
+      expect(result.workflows.created).toBe(1);
+      expect(result.warnings).toEqual([
+        "Workflow 'x' imported as 'x-1' — that slug is already used by another organisation",
+      ]);
+    });
+
+    it('keeps the bundle’s slug when no org holds it, and asks for no free slug', async () => {
+      mockIsWorkflowSlugTaken.mockResolvedValue(false);
+
+      const result = await importOrchestrationConfig(
+        bundle({ workflows: [makeWorkflow({ slug: 'x' })] }),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockTx.aiWorkflow.create.mock.calls[0][0].data.slug).toBe('x');
+      expect(mockFindFreeWorkflowSlug).not.toHaveBeenCalled();
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('does not probe other orgs for a workflow the target org already has', async () => {
+      mockTx.aiWorkflow.findUnique.mockResolvedValue({ id: 'wf-own', isSystem: false });
+      mockTx.aiWorkflowVersion.findFirst.mockResolvedValue(null);
+
+      await importOrchestrationConfig(
+        bundle({ workflows: [makeWorkflow({ slug: 'x' })] }),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockIsWorkflowSlugTaken).not.toHaveBeenCalled();
+      expect(mockFindFreeWorkflowSlug).not.toHaveBeenCalled();
+      expect(mockTx.aiWorkflow.create).not.toHaveBeenCalled();
     });
   });
 });
