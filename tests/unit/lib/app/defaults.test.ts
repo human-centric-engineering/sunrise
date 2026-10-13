@@ -69,6 +69,12 @@ import {
   getAppExcludedSubjectSources,
   __resetAppSubjectSourceRegistryForTests,
 } from '@/lib/privacy/subject-source-registry';
+import {
+  getAppOrgSources,
+  getAppExcludedOrgSources,
+  appOrgDeclarationsFailed,
+  __resetAppOrgSourceRegistryForTests,
+} from '@/lib/privacy/org-source-registry';
 import { getAppJobs, __resetAppJobsForTests } from '@/lib/orchestration/maintenance/app-jobs';
 import { getEffectiveRateLimitPolicy, RATE_LIMIT_POLICY } from '@/lib/security/rate-limit-policy';
 import {
@@ -254,6 +260,17 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       __resetAppSubjectSourceRegistryForTests();
       expect(getAppSubjectSources()).toEqual([]);
       expect(getAppExcludedSubjectSources()).toEqual([]);
+    },
+  },
+  {
+    seam: 'lib/app/org-export.ts',
+    risk: 'a stray source would read a table into every install\u2019s org export \u2014 and pre-account for an orgId model nobody decided about, silencing the org-manifest coverage rule for it',
+    assert: () => {
+      __resetAppOrgSourceRegistryForTests();
+      // The reads trigger the lazy init, so this exercises the REAL file.
+      expect(getAppOrgSources()).toEqual([]);
+      expect(getAppExcludedOrgSources()).toEqual([]);
+      expect(appOrgDeclarationsFailed()).toBe(false);
     },
   },
   {

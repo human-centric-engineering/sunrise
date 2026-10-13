@@ -60,7 +60,10 @@ One transaction, in this order, and then a storage sweep:
    org — remain the way to another org, as they are for a suspended one.
 3. **The org row.** Memberships and the four credential kinds cascade from it
    (`onDelete: Cascade` on each) — nothing here enumerates them, and a model
-   that joins the org later joins the cascade by declaring the same policy.
+   that joins the org later joins the cascade by declaring the same policy —
+   a fork's org table included. `org-sources.test.ts` fails on any `orgId`
+   model whose `Org` relation is missing or declares neither `Cascade` nor
+   `SetNull` (§109 t-737).
 
    Two things about the cascade were measured, not assumed (§106 t-730),
    against Postgres as the restricted role with the policies on. First, an

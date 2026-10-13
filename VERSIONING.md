@@ -118,6 +118,7 @@ covered by the version contract.
   - `lib/app/knowledge-access-contributors.ts` → `initAppKnowledgeAccessContributors()` — knowledge document access
   - `lib/app/llm-providers.ts` → `registerAppProviderEligibility()` — provider-eligibility seam (primitive: `registerProviderEligibility()`, resolved through `lib/orchestration/llm/provider-eligibility.ts`)
   - `lib/app/mcp-resources.ts` → `initAppMcpResources()` — MCP resource-type registry
+  - `lib/app/org-export.ts` → `initAppOrgSources()` — a fork's own tables in the org export (primitive: `registerAppOrgSources()` in `lib/privacy/org-source-registry.ts`)
   - `lib/app/platform-agents.ts` → `initAppPlatformAgents()` — platform agents every org gets an instance of (primitive: `registerPlatformAgent()` in `lib/orchestration/agents/platform-agents.ts`)
   - `lib/app/provider-credentials.ts` → `initAppProviderCredentials()` — where a provider row's API key comes from, per org (primitive: `registerProviderCredentialResolver()` in `lib/orchestration/llm/provider-credentials.ts`)
   - `lib/app/protected-nav.ts` → `protectedNavItems` — authenticated-area nav

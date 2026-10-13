@@ -22,7 +22,14 @@
  * org's own owner (§111) must check the requester administers the org it was
  * asked for, not just their active one, or this becomes a cross-tenant read.
  *
+ * **A fork's own tables** (§109 t-737) come from
+ * `lib/privacy/org-source-registry.ts`, filled by the fork's
+ * `lib/app/org-export.ts`. They are read after core's, as the same org, and
+ * land under the bundle's `app` key with a summary in `meta.app` — both absent
+ * when nothing is registered, so a vanilla install's bundle is unchanged.
+ *
  * @see lib/privacy/org-sources.ts — the manifest and its coverage guard
+ * @see lib/privacy/org-source-registry.ts — the fork half of it
  * @see lib/privacy/erase-org.ts — the deletion this precedes
  * @see lib/privacy/export-user.ts — the per-person shape this mirrors
  * @see .context/privacy/org-export.md — the guide
@@ -37,6 +44,12 @@ import {
   type OrgExcludedSource,
   type OrgQuery,
 } from '@/lib/privacy/org-sources';
+import {
+  appOrgDeclarationsFailed,
+  getAppExcludedOrgSources,
+  getAppOrgSources,
+} from '@/lib/privacy/org-source-registry';
+import type { SourceDisposition } from '@/lib/privacy/export-sources';
 import type { ExportedSourceSummary } from '@/lib/privacy/export-user';
 
 /**
@@ -61,8 +74,18 @@ export interface OrgExportMeta {
   exported: ExportedSourceSummary[];
   /** Sources returned as id + label + date only. Sections of `attributions`. */
   attribution: ExportedSourceSummary[];
-  /** Tables deliberately left out, with the reason. */
+  /** Tables deliberately left out, with the reason — core's, then a fork's. */
   excluded: OrgExcludedSource[];
+  /**
+   * A fork's sources, with row counts and the disposition the fork declared.
+   * Sections of `app`. Present only when a fork registered a source.
+   */
+  app?: AppOrgSourceSummary[];
+}
+
+/** A fork source's summary: core's shape plus the fork's own disposition label. */
+export interface AppOrgSourceSummary extends ExportedSourceSummary {
+  disposition: SourceDisposition;
 }
 
 export interface OrgExport {
@@ -73,6 +96,8 @@ export interface OrgExport {
   data: Record<string, unknown[]>;
   /** Credentials the org holds — identity of each, never the material. */
   attributions: Record<string, unknown[]>;
+  /** A fork's org-owned records, keyed by section. Present only when a fork registered a source. */
+  app?: Record<string, unknown[]>;
 }
 
 /** Raised when no org row matches. */
@@ -84,10 +109,47 @@ export class OrgNotFoundError extends Error {
 }
 
 /**
+ * Raised when the fork's `initAppOrgSources()` threw, so which of its tables
+ * the org owns is unknown. Exporting anyway would hand over a bundle without
+ * the fork's tables and with nothing in it saying so.
+ */
+export class AppOrgDeclarationsUnavailableError extends Error {
+  constructor() {
+    super(
+      'initAppOrgSources() threw, so this app tier’s org-data declarations are unknown ' +
+        'and the org export cannot be certified complete. Fix the seam in ' +
+        'lib/app/org-export.ts — the failure was logged by ' +
+        'lib/privacy/org-source-registry.ts.'
+    );
+    this.name = 'AppOrgDeclarationsUnavailableError';
+  }
+}
+
+/**
+ * Raised when a fork source's `fetch` resolved to something other than an
+ * array. Its section would otherwise be missing or malformed in a bundle that
+ * reads as complete.
+ */
+export class AppOrgSourceInvalidError extends Error {
+  readonly model: string;
+
+  constructor(model: string, section: string) {
+    super(
+      `The org source for ${model} (section '${section}') did not resolve to an array. ` +
+        'Return [] when the org has no rows. See lib/app/org-export.ts.'
+    );
+    this.name = 'AppOrgSourceInvalidError';
+    this.model = model;
+  }
+}
+
+/**
  * Build one org's export bundle. Every source runs against the live
  * database; volume is unbounded by design, as with the subject export.
  *
  * @throws {OrgNotFoundError} if no org row matches `orgId`
+ * @throws {AppOrgDeclarationsUnavailableError} if the fork's org-source init threw
+ * @throws {AppOrgSourceInvalidError} if a fork source's `fetch` did not return an array
  */
 export async function exportOrgData(params: ExportOrgParams): Promise<OrgExport> {
   const { orgId, actorUserId } = params;
@@ -96,6 +158,13 @@ export async function exportOrgData(params: ExportOrgParams): Promise<OrgExport>
   if (!org) {
     throw new OrgNotFoundError(orgId);
   }
+
+  // Before any read: a fork whose declarations are unknown cannot be exported
+  // completely, and a half-built bundle must not be the thing that ships.
+  if (appOrgDeclarationsFailed()) {
+    throw new AppOrgDeclarationsUnavailableError();
+  }
+  const appSources = getAppOrgSources();
 
   const query: OrgQuery = { orgId };
 
@@ -116,12 +185,20 @@ export async function exportOrgData(params: ExportOrgParams): Promise<OrgExport>
   // all 42 together against a pool of 10 (1 on a serverless deploy) leaves
   // the rest waiting for a connection, where a large org's reads can time out
   // and fail the whole export.
-  const results = await runAsOrg(orgId, async () => {
+  //
+  // A fork's sources run after core's, in the same context and the same way.
+  const { results, appResults } = await runAsOrg(orgId, async () => {
     const fetched: Array<{ source: (typeof ORG_DATA_SOURCES)[number]; rows: unknown[] }> = [];
     for (const source of ORG_DATA_SOURCES) {
       fetched.push({ source, rows: await source.fetch(query) });
     }
-    return fetched;
+    const appFetched: Array<{ source: (typeof appSources)[number]; rows: unknown[] }> = [];
+    for (const source of appSources) {
+      const rows: unknown = await source.fetch(query);
+      if (!Array.isArray(rows)) throw new AppOrgSourceInvalidError(source.model, source.section);
+      appFetched.push({ source, rows });
+    }
+    return { results: fetched, appResults: appFetched };
   });
 
   const data: Record<string, unknown[]> = {};
@@ -145,13 +222,30 @@ export async function exportOrgData(params: ExportOrgParams): Promise<OrgExport>
     }
   }
 
+  const app: Record<string, unknown[]> = {};
+  const appSummaries: AppOrgSourceSummary[] = [];
+  for (const { source, rows } of appResults) {
+    app[source.section] = rows;
+    appSummaries.push({
+      model: source.model,
+      section: source.section,
+      description: source.description,
+      disposition: source.disposition,
+      rows: rows.length,
+    });
+  }
+
+  const everyResult = [...results, ...appResults];
   logger.info('Org data export generated', {
     orgId,
     actorUserId,
-    sources: results.length,
-    totalRows: results.reduce((sum, { rows }) => sum + rows.length, 0),
+    sources: everyResult.length,
+    totalRows: everyResult.reduce((sum, { rows }) => sum + rows.length, 0),
   });
 
+  // `app` and `meta.app` only when a fork registered a source, so a vanilla
+  // install's bundle keeps exactly the shape it had before the seam existed.
+  const hasApp = appSources.length > 0;
   return {
     meta: {
       formatVersion: ORG_EXPORT_FORMAT_VERSION,
@@ -159,10 +253,12 @@ export async function exportOrgData(params: ExportOrgParams): Promise<OrgExport>
       orgId,
       exported,
       attribution,
-      excluded: [...ORG_EXCLUDED_SOURCES],
+      excluded: [...ORG_EXCLUDED_SOURCES, ...getAppExcludedOrgSources()],
+      ...(hasApp ? { app: appSummaries } : {}),
     },
     org,
     data,
     attributions,
+    ...(hasApp ? { app } : {}),
   };
 }

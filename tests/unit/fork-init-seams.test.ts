@@ -1,8 +1,8 @@
 /**
  * Every fork init seam runs through the shared gate.
  *
- * `.context/architecture/fork-init-seams.md` carries a roster of the eleven
- * `lib/app/*` seams and states one guarantee for all of them: a throwing
+ * `.context/architecture/fork-init-seams.md` carries a roster of the
+ * `lib/app/*` init seams and states one guarantee for all of them: a throwing
  * `initApp*()` leaves the registry as it was. A roster written in prose is
  * exactly how #633 happened — the issue named four of the seven that were
  * broken, because the list was read rather than derived. So this derives it.
@@ -130,7 +130,7 @@ describe('fork init seams', () => {
     // below the real number lets exactly one seam drop out of the scan
     // undetected, which is the case that matters. Update it deliberately when
     // adding a seam.
-    expect(SEAMS.length).toBe(16);
+    expect(SEAMS.length).toBe(17);
     // Same exact-count discipline for the registrar family, and for the same
     // reason: a floor one below the real number lets exactly one scaffold drop
     // out of the scan undetected.

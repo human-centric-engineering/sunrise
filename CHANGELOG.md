@@ -31,6 +31,21 @@ release process.
   it; a fork policy's `canRead` `'unattributed'` arm is now also asked about
   webhook deliveries whose subscription was deleted, and decides who sees them
   in the dead-letter queue (`lib/orchestration/access/webhook-delivery-access.ts`).
+- **`lib/app/org-export.ts` → `initAppOrgSources()`, and
+  `registerAppOrgSources()` in `lib/privacy/org-source-registry.ts`** (§109
+  t-737). A fork's own `orgId` tables can now go into the org export. Each
+  source carries its own `fetch`, runs as the org after core's sources, and
+  lands under a new `app` key in `exportOrgData()`'s bundle, with a summary in
+  `meta.app`. Fork exclusions are appended to `meta.excluded`. With nothing
+  registered, the bundle is unchanged (no `app` key and no `meta.app`), so
+  `OrgExport.app` and `OrgExportMeta.app` are optional. If the fork's init
+  throws, `exportOrgData()` throws `AppOrgDeclarationsUnavailableError` for
+  every org; a `fetch` that does not resolve to an array throws
+  `AppOrgSourceInvalidError`. The org-manifest coverage test unions the
+  registry into its accounted set, so a fork's `orgId` model passes once
+  registered instead of failing. The same test now also fails on any `orgId`
+  model whose `Org` relation has no `onDelete: Cascade` or `SetNull`, a fork's
+  included, because org erasure relies on the cascade.
 
 ### Changed
 
