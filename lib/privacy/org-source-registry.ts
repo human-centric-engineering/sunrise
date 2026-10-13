@@ -23,9 +23,10 @@
  * what puts it there. The subject export needs a runtime "every declared
  * section is present" check; this one cannot get into that state.
  *
- * **A failed init is remembered.** If `initAppOrgSources()` throws, the gate
- * rolls back and logs, and {@link appOrgDeclarationsFailed} stays true for the
- * life of the process: `exportOrgData()` then refuses every org rather than
+ * **A failed init, or a rejected declaration, is remembered.** If
+ * `initAppOrgSources()` throws, the gate rolls back and logs; if a row is
+ * malformed, it is dropped and logged. Either way {@link appOrgDeclarationsFailed}
+ * stays true for the life of the process: `exportOrgData()` then refuses every org rather than
  * shipping a bundle without the fork's tables and with nothing saying so. Same
  * call, for the same reason, as `subject-source-registry.ts`.
  *
@@ -91,6 +92,13 @@ const owners = new Map<string, string>();
 
 /** Whether the app init threw, leaving this tier's declarations unknown. */
 let appInitFailed = false;
+/**
+ * Whether any declaration was rejected. A rejected source is not in the
+ * bundle, and the coverage guard only catches that for a model carrying an
+ * `orgId` column — a hand-listed child table (core's `Verification`
+ * precedent) would vanish from the export with nothing but a log line.
+ */
+let declarationRejected = false;
 
 /** The core manifest's own floor on a source description: longer than 20 (`org-sources.test.ts`). */
 const MIN_DESCRIPTION = 21;
@@ -102,8 +110,8 @@ const SECTION_SHAPE = /^[a-z][A-Za-z0-9]*$/;
 /**
  * Whether a section name is a built-in member of every object (`toString`,
  * `constructor`, `hasOwnProperty`…). It passes the shape, and as a key of the
- * bundle's `app` object it would shadow that member, and an `in` check would
- * report it present when it is not.
+ * bundle's `app` object it would replace that member with an array, so an
+ * in-process reader calling `bundle.app.hasOwnProperty(…)` would throw.
  */
 function isObjectBuiltin(section: string): boolean {
   return section in Object.prototype;
@@ -115,9 +123,21 @@ function text(value: unknown): string {
 }
 
 function reject(tier: string, model: string, why: string): void {
-  // A rejected row is not silently absorbed: the model stays undeclared, so the
-  // coverage guard fails naming it. This says why, which the guard cannot.
+  // A rejected row is not silently absorbed. The model stays undeclared, so the
+  // coverage guard fails naming it when it carries `orgId`; and the export
+  // refuses, because the guard cannot see a table without that column.
+  declarationRejected = true;
   logger.error('org-sources: declaration rejected', { tier, model, reason: why });
+}
+
+/** A loggable label for a non-object entry: `null`, or its type. */
+function describeNonEntry(value: unknown): string {
+  return value === null ? 'null' : typeof value;
+}
+
+/** Whether an entry is an object at all — `null` or a stray value from a fork's JS is not. */
+function isEntry(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 /**
@@ -127,12 +147,17 @@ function reject(tier: string, model: string, why: string): void {
  *
  * A malformed row is dropped with a log rather than throwing — a throw would
  * roll back the tier's valid rows too. The dropped model is then unaccounted
- * for, and the coverage guard fails naming it.
+ * for, so the coverage guard fails naming it, and `exportOrgData()` refuses
+ * until the row is fixed: a bundle short by a declared table is not shipped.
  */
 export function registerAppOrgSources(contribution: AppOrgSourceContribution): void {
   const { tier } = contribution;
 
   for (const source of contribution.sources ?? []) {
+    if (!isEntry(source)) {
+      reject(tier, describeNonEntry(source), 'source is not an object');
+      continue;
+    }
     const model = text(source.model);
     const section = text(source.section);
 
@@ -199,6 +224,10 @@ export function registerAppOrgSources(contribution: AppOrgSourceContribution): v
   }
 
   for (const entry of contribution.excluded ?? []) {
+    if (!isEntry(entry)) {
+      reject(tier, describeNonEntry(entry), 'exclusion is not an object');
+      continue;
+    }
     const model = text(entry.model);
 
     if (model === '') {
@@ -249,12 +278,12 @@ const appInit = createAppInitGate({
 });
 
 /**
- * Whether the tier's declarations are unknown because its init threw.
- * `exportOrgData()` refuses while this is true.
+ * Whether the tier's declarations are unknown or incomplete — its init threw,
+ * or a declaration was rejected. `exportOrgData()` refuses while this is true.
  */
 export function appOrgDeclarationsFailed(): boolean {
   appInit.ensure();
-  return appInitFailed;
+  return appInitFailed || declarationRejected;
 }
 
 /** Every declared app-owned org source, in registration order. */
@@ -282,4 +311,5 @@ export function __resetAppOrgSourceRegistryForTests(): void {
   owners.clear();
   appInit.reset();
   appInitFailed = false;
+  declarationRejected = false;
 }

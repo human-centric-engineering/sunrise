@@ -121,8 +121,9 @@ throw, so the bundle would still carry the tier's rows while `meta.app` describe
 none of them. `exportUserData()` refuses rather than shipping a bundle whose own
 manifest contradicts its contents. **`org-sources` remembers too**, for the
 org export: `exportOrgData()` refuses every org while the fork's
-`initAppOrgSources()` is known to have thrown, because a bundle without the
-fork's tables would read as complete.
+`initAppOrgSources()` is known to have thrown, or to have registered a row the
+registry rejected, because a bundle without the fork's tables would read as
+complete.
 
 **`authorization` closes the door.** Every other seam on this list rolls back to
 "Sunrise's own behaviour", and for every other seam that is the safe answer. It

@@ -152,6 +152,15 @@ function declaredModels(): Set<string> {
   ]);
 }
 
+/** Fork-registered models that are also in core's manifest — a fork must not claim one. */
+function shadowedCoreModels(): string[] {
+  const core = new Set([
+    ...ORG_DATA_SOURCES.map((source) => source.model),
+    ...ORG_EXCLUDED_SOURCES.map((source) => source.model),
+  ]);
+  return [...getAccountedAppOrgModels()].filter((model) => core.has(model)).sort();
+}
+
 /** `orgId` models whose `Org` relation is missing or declares no erasure-safe `onDelete`. */
 function unsafeOnErasure(
   orgLinked: Set<string>,
@@ -230,11 +239,7 @@ describe('org-data source manifest', () => {
       // The registry cannot check this itself without importing the core
       // manifest and its Prisma client, so the guard does — a fork claiming a
       // core model would export it twice or exclude a table core exports.
-      const core = new Set([
-        ...ORG_DATA_SOURCES.map((source) => source.model),
-        ...ORG_EXCLUDED_SOURCES.map((source) => source.model),
-      ]);
-      expect([...getAccountedAppOrgModels()].filter((model) => core.has(model))).toEqual([]);
+      expect(shadowedCoreModels()).toEqual([]);
     });
 
     it('gives every orgId model an Org relation that cascades or detaches on erasure', () => {
@@ -315,8 +320,18 @@ describe('org-data source manifest', () => {
     describe('a fork model registered through the app seam', () => {
       afterEach(() => __resetAppOrgSourceRegistryForTests());
 
-      it('is accepted once registered as a source', () => {
+      /**
+       * A clean registry with the seam's own init already run, so the test's
+       * rows land on top of whatever this checkout's `initAppOrgSources()`
+       * registers rather than having that init run after them, and collide.
+       */
+      const freshRegistry = (): void => {
         __resetAppOrgSourceRegistryForTests();
+        getAccountedAppOrgModels();
+      };
+
+      it('is accepted once registered as a source', () => {
+        freshRegistry();
         registerAppOrgSources({
           tier: 'app',
           sources: [
@@ -334,7 +349,7 @@ describe('org-data source manifest', () => {
       });
 
       it('is accepted once registered as an exclusion', () => {
-        __resetAppOrgSourceRegistryForTests();
+        freshRegistry();
         registerAppOrgSources({
           tier: 'app',
           excluded: [
@@ -346,7 +361,7 @@ describe('org-data source manifest', () => {
       });
 
       it('still fails when a different fork model is registered instead', () => {
-        __resetAppOrgSourceRegistryForTests();
+        freshRegistry();
         registerAppOrgSources({
           tier: 'app',
           excluded: [{ model: 'AppGadget', reason: 'Not the model the schema adds, on purpose.' }],
@@ -356,18 +371,14 @@ describe('org-data source manifest', () => {
       });
 
       it('is flagged when it shadows a core manifest model', () => {
-        __resetAppOrgSourceRegistryForTests();
+        freshRegistry();
         registerAppOrgSources({
           tier: 'app',
           excluded: [
             { model: 'AiAgent', reason: 'A fork claiming a core model, which it must not.' },
           ],
         });
-        expect(getAccountedAppOrgModels().has('AiAgent')).toBe(true);
-        const core = new Set(ORG_DATA_SOURCES.map((source) => source.model));
-        expect([...getAccountedAppOrgModels()].filter((model) => core.has(model))).toEqual([
-          'AiAgent',
-        ]);
+        expect(shadowedCoreModels()).toEqual(['AiAgent']);
       });
     });
 

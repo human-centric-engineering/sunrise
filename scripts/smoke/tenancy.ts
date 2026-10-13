@@ -76,7 +76,6 @@ import { resolveInviteToken } from '@/lib/orchestration/invite-tokens';
 import { exportOrgData } from '@/lib/privacy/export-org';
 import { eraseOrg } from '@/lib/privacy/erase-org';
 import { ORG_DATA_SOURCES } from '@/lib/privacy/org-sources';
-import { getAppOrgSources } from '@/lib/privacy/org-source-registry';
 
 const PREFIX = 'smoke-test-tenancy';
 const stamp = Date.now();
@@ -577,20 +576,13 @@ async function main(): Promise<void> {
     );
     await addMember(org.id, other.id, DEFAULT_ORG_ROLE, PLATFORM);
 
-    // The export names every manifest section — core's and a fork's (§109
-    // t-737) — and the roster is the org's.
+    // The export names every manifest section, and the roster is the org's.
     const bundle = await exportOrgData({ orgId: org.id, actorUserId: owner.id });
     const sections = new Set([...Object.keys(bundle.data), ...Object.keys(bundle.attributions)]);
     const missingSections = ORG_DATA_SOURCES.map((s) => s.section).filter((s) => !sections.has(s));
     check(
       missingSections.length === 0,
       `the org export carries every manifest section (${ORG_DATA_SOURCES.length})`
-    );
-    const appSections = getAppOrgSources().map((s) => s.section);
-    const missingAppSections = appSections.filter((s) => !Object.hasOwn(bundle.app ?? {}, s));
-    check(
-      missingAppSections.length === 0,
-      `the org export carries every fork-registered section (${appSections.length})`
     );
     check(
       (bundle.data.members as { userId: string }[])

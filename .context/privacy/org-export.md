@@ -110,9 +110,11 @@ export function initAppOrgSources(): void {
   `orgId` yourself: the `org_isolation` policy applies only at `multi`.
 - **It must resolve to an array** — `[]` for none — or the export fails with
   `AppOrgSourceInvalidError`.
-- **If `initAppOrgSources()` throws**, the registry rolls back and logs, and
-  `exportOrgData()` throws `AppOrgDeclarationsUnavailableError` for every org
-  until it is fixed. A bundle without the fork's tables would read as complete.
+- **If `initAppOrgSources()` throws, or registers a row the registry
+  rejects**, the registry logs, and `exportOrgData()` throws
+  `AppOrgDeclarationsUnavailableError` for every org until it is fixed. A
+  bundle without the fork's tables would read as complete, and the coverage
+  test catches a dropped row only when its model carries `orgId`.
 - **`disposition` is the fork's label.** Core cannot see what a fork's `fetch`
   returns, so `attribution` there is a statement of intent, not a guarantee.
 - **A framework tier** registers with `tier: 'framework'`, from a function the

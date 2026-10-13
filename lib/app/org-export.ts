@@ -55,7 +55,10 @@
  *  - **A throw anywhere fails the export.** In `fetch`, because a partial
  *    export is worse than none. In this function, because your declarations
  *    are then unknown: the registry rolls back what you registered, logs, and
- *    `exportOrgData()` refuses every org until it is fixed.
+ *    `exportOrgData()` refuses every org until it is fixed. A row the registry
+ *    rejects (a short description, a clashing section) is dropped and logged,
+ *    and the export refuses the same way — a dropped source is a missing
+ *    table.
  *  - **`disposition` is your label, not something core enforces.** Core's
  *    `attribution` sources return id + label + date only, because core owns
  *    their `fetch`. Here you own it, so `attribution` means what your `fetch`

@@ -109,17 +109,18 @@ export class OrgNotFoundError extends Error {
 }
 
 /**
- * Raised when the fork's `initAppOrgSources()` threw, so which of its tables
- * the org owns is unknown. Exporting anyway would hand over a bundle without
- * the fork's tables and with nothing in it saying so.
+ * Raised when the fork's `initAppOrgSources()` threw or registered a row the
+ * registry rejected, so which of its tables the org owns is unknown or short.
+ * Exporting anyway would hand over a bundle without some of the fork's tables
+ * and with nothing in it saying so.
  */
 export class AppOrgDeclarationsUnavailableError extends Error {
   constructor() {
     super(
-      'initAppOrgSources() threw, so this app tier’s org-data declarations are unknown ' +
-        'and the org export cannot be certified complete. Fix the seam in ' +
-        'lib/app/org-export.ts — the failure was logged by ' +
-        'lib/privacy/org-source-registry.ts.'
+      'initAppOrgSources() threw or registered a declaration that was rejected, so this ' +
+        'app tier’s org-data declarations are incomplete and the org export cannot be ' +
+        'certified complete. Fix the seam in lib/app/org-export.ts — the failure was ' +
+        'logged by lib/privacy/org-source-registry.ts.'
     );
     this.name = 'AppOrgDeclarationsUnavailableError';
   }
@@ -148,7 +149,7 @@ export class AppOrgSourceInvalidError extends Error {
  * database; volume is unbounded by design, as with the subject export.
  *
  * @throws {OrgNotFoundError} if no org row matches `orgId`
- * @throws {AppOrgDeclarationsUnavailableError} if the fork's org-source init threw
+ * @throws {AppOrgDeclarationsUnavailableError} if the fork's org-source init threw or a declaration was rejected
  * @throws {AppOrgSourceInvalidError} if a fork source's `fetch` did not return an array
  */
 export async function exportOrgData(params: ExportOrgParams): Promise<OrgExport> {

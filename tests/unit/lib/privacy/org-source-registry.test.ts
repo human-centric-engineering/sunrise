@@ -214,7 +214,47 @@ describe('registerAppOrgSources', () => {
       expect(getAppOrgSources()).toEqual([]);
       expect(getAccountedAppOrgModels().has('AppInvoice')).toBe(false);
       expectRejected('app', model, reason);
+      // A dropped source is a missing table: the export must refuse.
+      expect(appOrgDeclarationsFailed()).toBe(true);
     });
+
+    it('latches failure for a rejected exclusion too', () => {
+      seam(() =>
+        registerAppOrgSources({ tier: 'app', excluded: [{ model: 'AppCountry', reason: 'x' }] })
+      );
+
+      expect(appOrgDeclarationsFailed()).toBe(true);
+    });
+
+    it.each([
+      ['a null source', { sources: [null, VALID] }, 'null', 'source is not an object'],
+      [
+        'a non-object exclusion',
+        { excluded: ['AppCountry'] },
+        'string',
+        'exclusion is not an object',
+      ],
+    ])(
+      'drops %s with a log instead of throwing, keeping the valid rows',
+      (_label, rows, model, reason) => {
+        seam(() =>
+          registerAppOrgSources({
+            tier: 'app',
+            ...(rows as unknown as Parameters<typeof registerAppOrgSources>[0]),
+          })
+        );
+
+        // The read runs the lazy init; only then is there a log to check.
+        expect(appOrgDeclarationsFailed()).toBe(true);
+        expectRejected('app', model, reason);
+        // Not a throw: the gate did not roll the tier back.
+        expect(mockLogger.error).not.toHaveBeenCalledWith(
+          expect.stringContaining('rolled back'),
+          expect.anything()
+        );
+        if ('sources' in rows) expect(getAppOrgSources()).toEqual([VALID]);
+      }
+    );
 
     it('accepts a description of exactly 21 characters', () => {
       // The boundary, matching core's `> 20`: 20 is refused above, 21 must not be.
@@ -565,6 +605,16 @@ describe('__resetAppOrgSourceRegistryForTests', () => {
     expect(getAppOrgSources()).toEqual([VALID]);
     expect(mockInitAppOrgSources).toHaveBeenCalledTimes(2);
     expect(mockLogger.error).not.toHaveBeenCalled();
+  });
+
+  it('clears a latched rejection', () => {
+    seam(() => registerAppOrgSources({ tier: 'app', sources: [{ ...VALID, section: '' }] }));
+    expect(appOrgDeclarationsFailed()).toBe(true);
+
+    __resetAppOrgSourceRegistryForTests();
+    seam(() => registerAppOrgSources({ tier: 'app', sources: [VALID] }));
+
+    expect(appOrgDeclarationsFailed()).toBe(false);
   });
 
   it('clears a latched failure', () => {

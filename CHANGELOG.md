@@ -39,8 +39,8 @@ release process.
   `meta.app`. Fork exclusions are appended to `meta.excluded`. With nothing
   registered, the bundle is unchanged (no `app` key and no `meta.app`), so
   `OrgExport.app` and `OrgExportMeta.app` are optional. If the fork's init
-  throws, `exportOrgData()` throws `AppOrgDeclarationsUnavailableError` for
-  every org; a `fetch` that does not resolve to an array throws
+  throws, or registers a row the registry rejects, `exportOrgData()` throws
+  `AppOrgDeclarationsUnavailableError` for every org; a `fetch` that does not resolve to an array throws
   `AppOrgSourceInvalidError`. The org-manifest coverage test unions the
   registry into its accounted set, so a fork's `orgId` model passes once
   registered instead of failing. The same test now also fails on any `orgId`
