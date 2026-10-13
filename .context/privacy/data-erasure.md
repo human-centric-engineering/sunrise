@@ -274,10 +274,12 @@ transaction):
      erased by default. One still waiting to retry is stopped
      (`exhausted`, "not retried: subject erased"), decided against the row's
      status when it is rewritten, so one the retry worker has just delivered
-     stays delivered: what it would send is now about nobody. It stays
-     stopped: an in-process retry timer armed before the erasure re-reads the
-     row and skips it unless it is still `pending` or `failed`
-     (`isAwaitingRetry`).
+     stays delivered: what it would send is now about nobody. A retry timer
+     armed before the erasure re-reads the row and skips it unless it is
+     still `pending` or `failed` (`isAwaitingRetry`). Two ways it can still
+     go out, both open (t-793): an attempt already in flight when the erasure
+     commits writes its own outcome over the stop, and an admin's manual
+     retry or replay sends a stopped row again.
    - An event about a **change they made** (`ADMIN_ACTION_EVENTS`:
      `agent_updated`, `capability.*quarantined`, `execution.force_failed`) or
      a step they were asked to approve keeps its

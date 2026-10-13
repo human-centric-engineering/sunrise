@@ -352,6 +352,37 @@ describe('subjectViewOfPayload', () => {
     expect(result).toEqual({ executionId: 'e1', userId: SUBJECT });
   });
 
+  it('activity: the workflow.failed a force-fail also emits carries no admin note either', () => {
+    // Not an ADMIN_ACTION_EVENT, but `source: 'admin-force-fail'` marks its
+    // errorMessage as the admin's reason.
+    const result = subjectViewOfPayload(
+      {
+        data: {
+          executionId: 'e1',
+          workflowId: 'w1',
+          source: 'admin-force-fail',
+          errorMessage: 'Force-failed by admin: suspected abuse, see ticket 123',
+        },
+      },
+      'activity',
+      SUBJECT,
+      'workflow.failed'
+    );
+
+    expect(result).toEqual({ executionId: 'e1', workflowId: 'w1', source: 'admin-force-fail' });
+  });
+
+  it('activity: a workflow.failed from the run itself keeps its errorMessage', () => {
+    const result = subjectViewOfPayload(
+      { data: { executionId: 'e1', errorMessage: 'step 3 timed out' } },
+      'activity',
+      SUBJECT,
+      'workflow.failed'
+    );
+
+    expect(result).toEqual({ executionId: 'e1', errorMessage: 'step 3 timed out' });
+  });
+
   it('activity: an event that is not an admin action keeps the free text (conversation_escalated)', () => {
     const result = subjectViewOfPayload(
       { data: { conversationId: 'c1', reason: 'user asked for a human' } },
@@ -628,12 +659,18 @@ describe('eraseSubjectFromDeliveries', () => {
 
     await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
 
-    const { text } = renderCall(executeRaw);
-    const stop = "(w.activity AND d.status IN ('pending', 'failed'))";
+    const { text, values } = renderCall(executeRaw);
+    // The live condition, with the awaiting-retry statuses bound as one array
+    const stop = String.raw`\(w\.activity AND d\.status = ANY\(\$\d+::text\[\]\)\)`;
+    expect(values).toContainEqual(['pending', 'failed']);
     // Status, retry time and last error all hang off the same live condition
-    expect(text).toContain(`status = CASE WHEN ${stop} THEN 'exhausted' ELSE d.status END`);
-    expect(text).toContain(`"nextRetryAt" = CASE WHEN ${stop} THEN NULL ELSE d."nextRetryAt" END`);
-    expect(text).toContain(`"lastError" = CASE WHEN ${stop} THEN`);
+    expect(text).toMatch(
+      new RegExp(`status = CASE WHEN ${stop} THEN 'exhausted' ELSE d\\.status END`)
+    );
+    expect(text).toMatch(
+      new RegExp(`"nextRetryAt" = CASE WHEN ${stop} THEN NULL ELSE d\\."nextRetryAt" END`)
+    );
+    expect(text).toMatch(new RegExp(`"lastError" = CASE WHEN ${stop} THEN`));
     expect(text).toContain('ELSE d."lastError" END');
     // The not-retried wording is built in SQL from the row's own lastError
     expect(text).toContain("'Not retried: subject erased'");

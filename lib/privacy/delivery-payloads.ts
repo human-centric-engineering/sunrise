@@ -60,6 +60,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { AWAITING_RETRY_STATUSES } from '@/lib/orchestration/webhooks/not-retried';
 
 /** Which delivery table: webhook subscriptions', or event hooks'. */
 export type DeliveryTable = 'webhook' | 'hook';
@@ -242,14 +243,26 @@ export function byCreatedAtThenId(
   return a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1);
 }
 
+/**
+ * Whether an event's text was written by an admin acting on the run, though
+ * the event is not one of {@link ADMIN_ACTION_EVENTS}: a force-fail also emits
+ * `workflow.failed`, marked `source: 'admin-force-fail'`, whose `errorMessage`
+ * carries the admin's reason.
+ */
+function isAdminAuthored(payload: Prisma.JsonValue): boolean {
+  return dataOf(payload)?.source === 'admin-force-fail';
+}
+
 /** The payload's `data` object, or `null` when the payload has none. */
 function dataOf(payload: Prisma.JsonValue): Prisma.JsonObject | null {
-  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  const data = payload.data;
-  if (data === null || data === undefined || typeof data !== 'object' || Array.isArray(data)) {
-    return null;
-  }
-  return data;
+  return objectOf(objectOf(payload)?.data);
+}
+
+/** `value` when it is a JSON object (not null, not an array), else `null`. */
+function objectOf(value: Prisma.JsonValue | undefined): Prisma.JsonObject | null {
+  return value !== null && value !== undefined && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : null;
 }
 
 /** `data` with the subject's id nulled, their name dropped, and them out of the approvers. */
@@ -283,15 +296,14 @@ export function erasedPayload(
   basis: DeliveryBasis,
   userId: string
 ): Prisma.JsonValue {
-  const data = dataOf(payload);
-  if (!data || payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
-    return payload;
-  }
+  const envelope = objectOf(payload);
+  const data = objectOf(envelope?.data);
+  if (!envelope || !data) return payload;
   const kept =
     basis === 'activity'
       ? pick(data, (key) => EVENT_RECORD_KEYS.has(key) || isPersonKey(key))
       : data;
-  return { ...payload, data: withoutSubject(kept, userId) };
+  return { ...envelope, data: withoutSubject(kept, userId) };
 }
 
 function isPersonKey(key: string): boolean {
@@ -312,7 +324,8 @@ export function subjectViewOfPayload(
 ): Prisma.JsonObject {
   // On an admin's action the free text is the admin's — a force-fail's
   // `reason` is their note — even when the run it acted on is the subject's.
-  const ownText = basis === 'activity' && !ADMIN_ACTION_EVENTS.includes(eventType);
+  const ownText =
+    basis === 'activity' && !ADMIN_ACTION_EVENTS.includes(eventType) && !isAdminAuthored(payload);
   const data = dataOf(payload) ?? {};
   const isSubject = (key: string): boolean => {
     const person = PERSON_KEYS.find(({ id, name }) => key === id || key === name);
@@ -363,7 +376,7 @@ export async function eraseSubjectFromDeliveries(
     activity: row.basis === 'activity',
   }));
   const t = TABLES[table];
-  const stopNow = Prisma.sql`(w.activity AND d.status IN ('pending', 'failed'))`;
+  const stopNow = Prisma.sql`(w.activity AND d.status = ANY(${[...AWAITING_RETRY_STATUSES]}::text[]))`;
   for (let i = 0; i < writes.length; i += WRITE_CHUNK) {
     const chunk = writes.slice(i, i + WRITE_CHUNK);
     await client.$executeRaw`

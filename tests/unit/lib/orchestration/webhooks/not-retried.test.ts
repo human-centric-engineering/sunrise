@@ -3,7 +3,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { isAwaitingRetry, notRetried } from '@/lib/orchestration/webhooks/not-retried';
+import {
+  AWAITING_RETRY_STATUSES,
+  isAwaitingRetry,
+  notRetried,
+} from '@/lib/orchestration/webhooks/not-retried';
 
 describe('notRetried', () => {
   it('keeps the real failure first and appends why retries stopped', () => {
@@ -28,5 +32,11 @@ describe('isAwaitingRetry', () => {
 
   it.each(['exhausted', 'delivered', 'retrying', '', 'PENDING'])('is false for %s', (status) => {
     expect(isAwaitingRetry(status)).toBe(false);
+  });
+});
+
+describe('AWAITING_RETRY_STATUSES', () => {
+  it('is the two statuses that will still be sent: first attempt pending, retry failed', () => {
+    expect([...AWAITING_RETRY_STATUSES].sort()).toEqual(['failed', 'pending']);
   });
 });

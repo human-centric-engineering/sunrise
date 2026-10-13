@@ -286,7 +286,9 @@ Other people never appear: not the colleagues in an approval's
 `approverUserIds` (a subject named there sees `approverUserIds: [themselves]`),
 not an administrator who force-failed the subject's run, nor the note they
 gave — on an admin action (`ADMIN_ACTION_EVENTS`) the free text is the
-admin's, even when the run it acted on is the subject's.
+admin's, even when the run it acted on is the subject's, and so is the
+`errorMessage` on the `workflow.failed` a force-fail also emits
+(`source: 'admin-force-fail'`).
 See [What `eraseUser()` Does Beyond the Cascade](./data-erasure.md#what-eraseuser-does-beyond-the-cascade).
 
 **Neither net can reach `ContactSubmission`.** It holds no user id in any

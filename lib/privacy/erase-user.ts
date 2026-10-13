@@ -40,7 +40,7 @@ import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 import { contactSubmissionsOf, contactSubmissionsUnder } from '@/lib/privacy/contact-submissions';
 import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
 import { eraseSubjectFromDeliveries } from '@/lib/privacy/delivery-payloads';
-import { notRetried } from '@/lib/orchestration/webhooks/not-retried';
+import { AWAITING_RETRY_STATUSES, notRetried } from '@/lib/orchestration/webhooks/not-retried';
 import {
   ERASED_DESTINATION,
   normaliseAddress,
@@ -284,7 +284,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
         //    here — one by one, so each keeps its last real error. Retries are
         //    short-lived, so this is a handful of rows at most.
         const retrying = await tx.aiWebhookDelivery.findMany({
-          where: { AND: [addressed, { status: { in: ['pending', 'failed'] } }] },
+          where: { AND: [addressed, { status: { in: [...AWAITING_RETRY_STATUSES] } }] },
           select: { id: true, destination: true, previousDestinations: true, lastError: true },
         });
         for (const row of retrying) {

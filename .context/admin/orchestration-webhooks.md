@@ -125,7 +125,8 @@ its reasoning live in `lib/orchestration/webhooks/destination.ts`; in short:
   [data erasure](../privacy/data-erasure.md), steps 5–7). An email
   subscription whose recipient is erased has its address cleared and is
   deactivated, with a `webhook_subscription.recipient_erased` audit entry;
-  give it a new address to turn it back on. A retry of
+  give it a new address to turn it back on. Any edit to it needs that new address
+  in the same request, since an email subscription with no address is refused. A retry of
   an orphaned delivery is refused (`409`). With no creator left to scope by,
   an orphan is shown to the admins the authorization policy permits an
   unattributed read — platform admins by default — through the
