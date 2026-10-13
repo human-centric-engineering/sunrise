@@ -191,6 +191,39 @@ describe('BackupPanel', () => {
     });
   });
 
+  it('falls back to the status when the failure envelope carries no message', async () => {
+    const user = userEvent.setup();
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: false, error: { code: 'FORBIDDEN' } }), {
+        status: 403,
+      })
+    );
+
+    render(<BackupPanel />);
+    await user.click(screen.getByRole('button', { name: /download backup/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Export failed: 403')).toBeInTheDocument();
+    });
+  });
+
+  it('falls back to the status when a non-ok response carries a success envelope', async () => {
+    const user = userEvent.setup();
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: { message: 'not an error' } }), {
+        status: 502,
+      })
+    );
+
+    render(<BackupPanel />);
+    await user.click(screen.getByRole('button', { name: /download backup/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Export failed: 502')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('not an error')).not.toBeInTheDocument();
+  });
+
   // ── Import via file input ──────────────────────────────────────────────────
 
   it('imports a valid JSON file and shows result summary', async () => {
@@ -275,6 +308,38 @@ describe('BackupPanel', () => {
 
     await waitFor(() => screen.getByText('Import successful'));
     expect(screen.queryByText(/settings updated/i)).not.toBeInTheDocument();
+  });
+
+  it('lists the shared settings as not restored when the import skipped them', async () => {
+    mockPost.mockResolvedValue(
+      makeImportResult({
+        settingsUpdated: false,
+        sharedSkipped: true,
+        warnings: ['Shared settings not imported: 1 capabilities.'],
+      })
+    );
+
+    const { container } = render(<BackupPanel />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await userEvent.upload(input, makeFile(makeBackupJson()));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Shared settings not restored (see the warning below)')
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByText('Shared settings not imported: 1 capabilities.')).toBeInTheDocument();
+  });
+
+  it('does not mention shared settings when the import did not skip them', async () => {
+    mockPost.mockResolvedValue(makeImportResult({ sharedSkipped: false }));
+
+    const { container } = render(<BackupPanel />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await userEvent.upload(input, makeFile(makeBackupJson()));
+
+    await waitFor(() => screen.getByText('Import successful'));
+    expect(screen.queryByText(/shared settings not restored/i)).not.toBeInTheDocument();
   });
 
   // ── Drag and drop ──────────────────────────────────────────────────────────

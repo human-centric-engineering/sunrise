@@ -62,8 +62,14 @@ vi.mock('@/lib/orchestration/agents/agent-versioning', async (importOriginal) =>
   };
 });
 
+// The in-org read of which planned slugs this org holds (outside the transaction).
+const mockOrgWorkflowFindMany = vi.hoisted(() =>
+  vi.fn(async (_args: unknown): Promise<Array<{ slug: string }>> => [])
+);
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
+    aiWorkflow: { findMany: mockOrgWorkflowFindMany },
     $transaction: vi.fn((fn: (tx: typeof mockTx) => Promise<unknown>) => fn(mockTx)),
   },
 }));
@@ -78,12 +84,14 @@ vi.mock('@/lib/logging', () => ({
 
 // The cross-org slug probes (§107 t-728), mocked at their boundary; the real
 // ones are proved in slug-availability's own tests.
-const mockIsWorkflowSlugTaken = vi.hoisted(() => vi.fn(async (_slug: string) => false));
+const mockWorkflowSlugsHeldAnywhere = vi.hoisted(() =>
+  vi.fn(async (_slugs: readonly string[]) => new Set<string>())
+);
 const mockFindFreeWorkflowSlug = vi.hoisted(() =>
   vi.fn(async (slug: string, _alsoTaken?: (candidate: string) => boolean) => `${slug}-1`)
 );
 vi.mock('@/lib/orchestration/workflows/slug-availability', () => ({
-  isWorkflowSlugTaken: mockIsWorkflowSlugTaken,
+  workflowSlugsHeldAnywhere: mockWorkflowSlugsHeldAnywhere,
   findFreeWorkflowSlug: mockFindFreeWorkflowSlug,
 }));
 
@@ -114,6 +122,11 @@ import {
 } from '@/lib/orchestration/agents/agent-versioning';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
+
+/** A slug the importer's loop skips as a system workflow. */
+const SYSTEM_SLUG = 'tpl-provider-model-audit';
+/** A built-in template slug: skipped when carried as a template. */
+const BUILTIN_SLUG = 'tpl-customer-support';
 
 /** Install org, shared part included — what the behaviour tests below exercise. */
 const SHARED_SCOPE: BackupScope = { orgId: 'install', includeShared: true };
@@ -258,8 +271,10 @@ describe('importOrchestrationConfig', () => {
     mockTx.knowledgeTag.findMany.mockResolvedValue([]);
     mockTx.knowledgeTag.upsert.mockReset();
     mockTx.aiAgentKnowledgeTag.createMany.mockReset();
-    mockIsWorkflowSlugTaken.mockReset();
-    mockIsWorkflowSlugTaken.mockResolvedValue(false);
+    mockWorkflowSlugsHeldAnywhere.mockReset();
+    mockWorkflowSlugsHeldAnywhere.mockResolvedValue(new Set());
+    mockOrgWorkflowFindMany.mockReset();
+    mockOrgWorkflowFindMany.mockResolvedValue([]);
     mockFindFreeWorkflowSlug.mockReset();
     mockFindFreeWorkflowSlug.mockImplementation(async (slug: string) => `${slug}-1`);
     vi.mocked(ensureBaselineVersion).mockClear();
@@ -1711,6 +1726,84 @@ describe('importOrchestrationConfig — org scope', () => {
     });
   });
 
+  describe('includeShared: false, v1 bundle categories', () => {
+    const v1Bundle = (...agents: Array<Record<string, unknown>>) => ({
+      ...minPayload,
+      data: { ...minPayload.data, agents },
+    });
+
+    it('counts the distinct trimmed categories as skipped knowledge tags', async () => {
+      const result = await importOrchestrationConfig(
+        v1Bundle(
+          makeAgent({ knowledgeCategories: ['Billing', ' Billing ', 'Support'] }),
+          makeAgent({ slug: 'second', knowledgeCategories: ['Support', '   ', ''] })
+        ),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(result.sharedSkipped).toBe(true);
+      expect(result.warnings).toEqual([
+        'Shared settings not imported: 2 knowledge tags from v1 categories. ' +
+          'This import was asked to leave them out (shared=false).',
+      ]);
+    });
+
+    it('lists them after the bundle’s own tags and capabilities', async () => {
+      const result = await importOrchestrationConfig(
+        {
+          ...v1Bundle(makeAgent({ knowledgeCategories: ['Billing'] })),
+          data: {
+            ...minPayload.data,
+            agents: [makeAgent({ knowledgeCategories: ['Billing'] })],
+            capabilities: [makeCapability()],
+          },
+        },
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(result.warnings[0]).toContain(
+        'Shared settings not imported: 1 capabilities, 1 knowledge tags from v1 categories.'
+      );
+    });
+
+    it('reports nothing when a v1 bundle’s categories are all blank or absent', async () => {
+      const result = await importOrchestrationConfig(
+        v1Bundle(
+          makeAgent({ knowledgeCategories: ['  ', ''] }),
+          makeAgent({ slug: 'two', knowledgeCategories: [] })
+        ),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(result.sharedSkipped).toBe(false);
+      expect(result.warnings).toEqual([]);
+    });
+
+    it('adds no v1 entry for a v2 or v3 bundle, whose agents carry categories too', async () => {
+      for (const schemaVersion of [2, 3]) {
+        const result = await importOrchestrationConfig(
+          {
+            ...minPayload,
+            schemaVersion,
+            data: {
+              ...minPayload.data,
+              knowledgeTags: [],
+              agents: [makeAgent({ knowledgeCategories: ['Billing'] })],
+            },
+          },
+          'user-1',
+          OWN_SCOPE
+        );
+
+        expect(result.sharedSkipped).toBe(false);
+        expect(result.warnings).toEqual([]);
+      }
+    });
+  });
+
   describe('includeShared: true', () => {
     it('writes the shared part and does not report it skipped', async () => {
       mockTx.knowledgeTag.upsert.mockResolvedValue({
@@ -1810,10 +1903,18 @@ describe('importOrchestrationConfig — org scope', () => {
   describe('workflow slug held by another organisation', () => {
     beforeEach(() => {
       mockIsMultiTenant.mockReturnValue(true);
+      mockWorkflowSlugsHeldAnywhere.mockReset();
+      mockWorkflowSlugsHeldAnywhere.mockResolvedValue(new Set());
+      mockOrgWorkflowFindMany.mockReset();
+      mockOrgWorkflowFindMany.mockResolvedValue([]);
+      mockFindFreeWorkflowSlug.mockReset();
+      mockFindFreeWorkflowSlug.mockImplementation(async (slug: string) => `${slug}-1`);
+      mockTx.aiWorkflow.findFirst.mockReset();
+      mockTx.aiWorkflow.findFirst.mockResolvedValue(null);
     });
 
     it('creates the workflow under a free slug and warns', async () => {
-      mockIsWorkflowSlugTaken.mockResolvedValue(true);
+      mockWorkflowSlugsHeldAnywhere.mockResolvedValue(new Set(['x']));
       mockFindFreeWorkflowSlug.mockResolvedValue('x-1');
 
       const result = await importOrchestrationConfig(
@@ -1822,7 +1923,7 @@ describe('importOrchestrationConfig — org scope', () => {
         OWN_SCOPE
       );
 
-      expect(mockIsWorkflowSlugTaken).toHaveBeenCalledWith('x');
+      expect(mockWorkflowSlugsHeldAnywhere).toHaveBeenCalledWith(['x']);
       expect(mockFindFreeWorkflowSlug).toHaveBeenCalledWith('x', expect.any(Function));
       expect(mockTx.aiWorkflow.create.mock.calls[0][0].data.slug).toBe('x-1');
       expect(result.workflows.created).toBe(1);
@@ -1831,9 +1932,7 @@ describe('importOrchestrationConfig — org scope', () => {
       ]);
     });
 
-    it('keeps the bundle’s slug when no org holds it, and asks for no free slug', async () => {
-      mockIsWorkflowSlugTaken.mockResolvedValue(false);
-
+    it('keeps the bundle’s slug when no org holds it, and asks for no free slug or in-org read', async () => {
       const result = await importOrchestrationConfig(
         bundle({ workflows: [makeWorkflow({ slug: 'x' })] }),
         'user-1',
@@ -1842,12 +1941,13 @@ describe('importOrchestrationConfig — org scope', () => {
 
       expect(mockTx.aiWorkflow.create.mock.calls[0][0].data.slug).toBe('x');
       expect(mockFindFreeWorkflowSlug).not.toHaveBeenCalled();
+      expect(mockOrgWorkflowFindMany).not.toHaveBeenCalled();
       expect(result.warnings).toEqual([]);
     });
 
-    it('plans a slug for a workflow the target org already has, but updates the row and never renames', async () => {
-      mockIsWorkflowSlugTaken.mockResolvedValue(true);
-      mockFindFreeWorkflowSlug.mockResolvedValue('x-1');
+    it('plans nothing for a slug this org holds, and updates the row without renaming', async () => {
+      mockWorkflowSlugsHeldAnywhere.mockResolvedValue(new Set(['x']));
+      mockOrgWorkflowFindMany.mockResolvedValue([{ slug: 'x' }]);
       mockTx.aiWorkflow.findUnique.mockResolvedValue({ id: 'wf-own', isSystem: false });
       mockTx.aiWorkflowVersion.findFirst.mockResolvedValue(null);
 
@@ -1857,18 +1957,132 @@ describe('importOrchestrationConfig — org scope', () => {
         OWN_SCOPE
       );
 
-      // The plan cannot know which slugs this org holds, so it probes...
-      expect(mockIsWorkflowSlugTaken).toHaveBeenCalledWith('x');
-      // ...but the transaction finds the row and the planned slug goes unused.
+      // Held by an org, but this org's own: nothing is planned for it.
+      expect(mockOrgWorkflowFindMany).toHaveBeenCalledWith({
+        where: { slug: { in: ['x'] } },
+        select: { slug: true },
+      });
+      expect(mockFindFreeWorkflowSlug).not.toHaveBeenCalled();
       expect(mockTx.aiWorkflow.create).not.toHaveBeenCalled();
       expect(mockTx.aiWorkflow.update).toHaveBeenCalled();
       expect(result.workflows).toEqual({ created: 0, updated: 1 });
       expect(result.warnings).toEqual([]);
     });
+
+    it('plans only the slugs held elsewhere when the bundle mixes held-here and held-elsewhere', async () => {
+      mockWorkflowSlugsHeldAnywhere.mockResolvedValue(new Set(['mine', 'theirs']));
+      mockOrgWorkflowFindMany.mockResolvedValue([{ slug: 'mine' }]);
+
+      await importOrchestrationConfig(
+        bundle({
+          workflows: [
+            makeWorkflow({ slug: 'mine' }),
+            makeWorkflow({ slug: 'theirs' }),
+            makeWorkflow({ slug: 'free' }),
+          ],
+        }),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockFindFreeWorkflowSlug.mock.calls.map((c) => c[0])).toEqual(['theirs']);
+      expect(mockTx.aiWorkflow.create.mock.calls.map((c) => c[0].data.slug)).toEqual([
+        'mine',
+        'theirs-1',
+        'free',
+      ]);
+    });
+
+    it('asks the in-org read only about the slugs some org holds', async () => {
+      mockWorkflowSlugsHeldAnywhere.mockResolvedValue(new Set(['theirs']));
+
+      await importOrchestrationConfig(
+        bundle({ workflows: [makeWorkflow({ slug: 'theirs' }), makeWorkflow({ slug: 'free' })] }),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockWorkflowSlugsHeldAnywhere).toHaveBeenCalledWith(['theirs', 'free']);
+      expect(mockOrgWorkflowFindMany).toHaveBeenCalledWith({
+        where: { slug: { in: ['theirs'] } },
+        select: { slug: true },
+      });
+    });
+
+    it('runs the in-org read inside the target org', async () => {
+      mockWorkflowSlugsHeldAnywhere.mockResolvedValue(new Set(['x']));
+      let orgId: string | null | undefined;
+      mockOrgWorkflowFindMany.mockImplementationOnce(async () => {
+        orgId = getTenantContext()?.orgId;
+        return [];
+      });
+
+      await importOrchestrationConfig(
+        bundle({ workflows: [makeWorkflow({ slug: 'x' })] }),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(orgId).toBe('org_customer');
+    });
+
+    it('does not ask about a system workflow slug', async () => {
+      await importOrchestrationConfig(
+        bundle({
+          workflows: [makeWorkflow({ slug: SYSTEM_SLUG }), makeWorkflow({ slug: 'ordinary' })],
+        }),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockWorkflowSlugsHeldAnywhere).toHaveBeenCalledWith(['ordinary']);
+    });
+
+    it('does not ask about a built-in template slug carried as a template', async () => {
+      await importOrchestrationConfig(
+        bundle({
+          workflows: [
+            makeWorkflow({ slug: BUILTIN_SLUG, isTemplate: true }),
+            makeWorkflow({ slug: 'ordinary' }),
+          ],
+        }),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockWorkflowSlugsHeldAnywhere).toHaveBeenCalledWith(['ordinary']);
+    });
+
+    it('does still ask about a built-in slug carried by an ordinary workflow', async () => {
+      await importOrchestrationConfig(
+        bundle({ workflows: [makeWorkflow({ slug: BUILTIN_SLUG, isTemplate: false })] }),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockWorkflowSlugsHeldAnywhere).toHaveBeenCalledWith([BUILTIN_SLUG]);
+    });
+
+    it('asks nothing when the bundle holds only slugs the loop skips', async () => {
+      await importOrchestrationConfig(
+        bundle({ workflows: [makeWorkflow({ slug: SYSTEM_SLUG })] }),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockWorkflowSlugsHeldAnywhere).toHaveBeenCalledWith([]);
+      expect(mockOrgWorkflowFindMany).not.toHaveBeenCalled();
+    });
   });
 });
 
 describe('importOrchestrationConfig — workflows renamed on import', () => {
+  /** Another org holds these slugs, so the import plans a free slug for each. */
+  const heldElsewhere = (...slugs: string[]) =>
+    mockWorkflowSlugsHeldAnywhere.mockImplementation(
+      async (asked) => new Set(asked.filter((slug) => slugs.includes(slug)))
+    );
+
   const bundle = (workflows: unknown[]) => ({
     ...minPayload,
     schemaVersion: 3,
@@ -1888,8 +2102,10 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
     mockTx.aiWorkflowVersion.findFirst.mockResolvedValue({ version: 2 });
     mockTx.aiWorkflowVersion.create.mockReset();
     mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-new', version: 3 });
-    mockIsWorkflowSlugTaken.mockReset();
-    mockIsWorkflowSlugTaken.mockResolvedValue(false);
+    mockWorkflowSlugsHeldAnywhere.mockReset();
+    mockWorkflowSlugsHeldAnywhere.mockResolvedValue(new Set());
+    mockOrgWorkflowFindMany.mockReset();
+    mockOrgWorkflowFindMany.mockResolvedValue([]);
     mockFindFreeWorkflowSlug.mockReset();
     mockFindFreeWorkflowSlug.mockImplementation(async (slug: string) => `${slug}-1`);
     mockIsMultiTenant.mockReturnValue(true);
@@ -1897,6 +2113,7 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
 
   describe('finding an earlier renamed import', () => {
     it('falls back to the importedFromSlug marker on a slug miss and updates that row', async () => {
+      heldElsewhere('x');
       mockTx.aiWorkflow.findFirst.mockResolvedValue({
         id: 'wf-renamed',
         slug: 'x-1',
@@ -1923,6 +2140,7 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
     });
 
     it('keeps the marker in the updated row’s metadata, merged over the bundle’s', async () => {
+      heldElsewhere('x');
       mockTx.aiWorkflow.findFirst.mockResolvedValue({
         id: 'wf-renamed',
         slug: 'x-1',
@@ -1942,6 +2160,7 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
     });
 
     it('sets the marker even when the bundle carries no metadata', async () => {
+      heldElsewhere('x');
       mockTx.aiWorkflow.findFirst.mockResolvedValue({
         id: 'wf-renamed',
         slug: 'x-1',
@@ -1968,7 +2187,49 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
       expect(mockTx.aiWorkflow.update.mock.calls[0][0].data.metadata).toEqual({ owner: 'ops' });
     });
 
+    it('creates a workflow whose slug is free even when another row carries its name as a marker', async () => {
+      // Another row (this org's or one that travelled in) is marked as a copy of
+      // 'x'. The slug 'x' itself is free, so nothing is redirected.
+      mockTx.aiWorkflow.findFirst.mockResolvedValue({
+        id: 'wf-other',
+        slug: 'other-1',
+        isSystem: false,
+      });
+
+      const result = await importOrchestrationConfig(
+        bundle([makeWorkflow({ slug: 'x' })]),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockTx.aiWorkflow.findFirst).not.toHaveBeenCalled();
+      // The marked row is untouched (the only update is the new row's version pointer).
+      expect(mockTx.aiWorkflow.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'wf-other' } })
+      );
+      expect(mockTx.aiWorkflowVersion.create.mock.calls[0][0].data).not.toMatchObject({
+        workflowId: 'wf-other',
+      });
+      expect(mockTx.aiWorkflow.create.mock.calls[0][0].data.slug).toBe('x');
+      expect(result.workflows).toEqual({ created: 1, updated: 0 });
+    });
+
+    it('looks the marker up only for the slug another org holds, not its free neighbour', async () => {
+      heldElsewhere('held');
+
+      await importOrchestrationConfig(
+        bundle([makeWorkflow({ slug: 'held' }), makeWorkflow({ slug: 'free' })]),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockTx.aiWorkflow.findFirst.mock.calls.map((c) => c[0].where.metadata.equals)).toEqual(
+        ['held']
+      );
+    });
+
     it('skips a marker-found row that is a system workflow', async () => {
+      heldElsewhere('x');
       mockTx.aiWorkflow.findFirst.mockResolvedValue({ id: 'wf-sys', slug: 'x-1', isSystem: true });
 
       const result = await importOrchestrationConfig(
@@ -1984,7 +2245,7 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
 
   describe('creating under a free slug', () => {
     it('marks a renamed row with the slug the bundle carried, merged into its metadata', async () => {
-      mockIsWorkflowSlugTaken.mockResolvedValue(true);
+      heldElsewhere('x');
 
       await importOrchestrationConfig(
         bundle([makeWorkflow({ slug: 'x', metadata: { owner: 'ops' } })]),
@@ -1999,7 +2260,7 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
     });
 
     it('marks a renamed row whose bundle metadata is null', async () => {
-      mockIsWorkflowSlugTaken.mockResolvedValue(true);
+      heldElsewhere('x');
 
       await importOrchestrationConfig(bundle([makeWorkflow({ slug: 'x' })]), 'user-1', OWN_SCOPE);
 
@@ -2027,7 +2288,7 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
     ])(
       'replaces %s of bundle metadata on a renamed create with just the marker',
       async (_l, metadata) => {
-        mockIsWorkflowSlugTaken.mockResolvedValue(true);
+        heldElsewhere('x');
 
         await importOrchestrationConfig(
           bundle([makeWorkflow({ slug: 'x', metadata })]),
@@ -2047,26 +2308,28 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
 
     it('asks every probe before prisma.$transaction is entered', async () => {
       vi.mocked(prisma.$transaction).mockClear();
-      mockIsWorkflowSlugTaken.mockResolvedValue(true);
+      heldElsewhere('x');
 
       await importOrchestrationConfig(bundle([makeWorkflow({ slug: 'x' })]), 'user-1', OWN_SCOPE);
 
-      expect(mockIsWorkflowSlugTaken.mock.invocationCallOrder[0]).toBeLessThan(txOrder());
+      expect(mockWorkflowSlugsHeldAnywhere.mock.invocationCallOrder[0]).toBeLessThan(txOrder());
+      expect(mockOrgWorkflowFindMany.mock.invocationCallOrder[0]).toBeLessThan(txOrder());
       expect(mockFindFreeWorkflowSlug.mock.invocationCallOrder[0]).toBeLessThan(txOrder());
     });
 
-    it('probes a slug the bundle repeats only once', async () => {
+    it('asks about a slug the bundle repeats only once, in a single batch', async () => {
       await importOrchestrationConfig(
         bundle([makeWorkflow({ slug: 'x' }), makeWorkflow({ slug: 'x' })]),
         'user-1',
         OWN_SCOPE
       );
 
-      expect(mockIsWorkflowSlugTaken.mock.calls.map((c) => c[0])).toEqual(['x']);
+      expect(mockWorkflowSlugsHeldAnywhere).toHaveBeenCalledTimes(1);
+      expect(mockWorkflowSlugsHeldAnywhere).toHaveBeenCalledWith(['x']);
     });
 
     it('holds back every bundle slug and every slug already planned', async () => {
-      mockIsWorkflowSlugTaken.mockResolvedValue(true);
+      heldElsewhere('x', 'y');
       // Free candidates honour the predicate: 'x' and 'y' would both pick 'z'
       // if the second were not told 'z' is already planned.
       mockFindFreeWorkflowSlug.mockImplementation(async (_slug, alsoTaken = () => false) => {
@@ -2086,9 +2349,9 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
   });
 
   describe('at single tenancy', () => {
-    it('never probes other orgs, and creates under the bundle’s slug', async () => {
+    it('never asks which slugs other orgs hold, and creates under the bundle’s slug', async () => {
       mockIsMultiTenant.mockReturnValue(false);
-      mockIsWorkflowSlugTaken.mockResolvedValue(true);
+      heldElsewhere('x');
 
       const result = await importOrchestrationConfig(
         bundle([makeWorkflow({ slug: 'x' })]),
@@ -2096,7 +2359,8 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
         SHARED_SCOPE
       );
 
-      expect(mockIsWorkflowSlugTaken).not.toHaveBeenCalled();
+      expect(mockWorkflowSlugsHeldAnywhere).not.toHaveBeenCalled();
+      expect(mockOrgWorkflowFindMany).not.toHaveBeenCalled();
       expect(mockFindFreeWorkflowSlug).not.toHaveBeenCalled();
       expect(mockTx.aiWorkflow.create.mock.calls[0][0].data.slug).toBe('x');
       expect(result.warnings).toEqual([]);

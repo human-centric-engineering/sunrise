@@ -170,6 +170,28 @@ describe('POST /api/v1/admin/orchestration/backup/export', () => {
       expect(disposition).toContain('.json');
     });
 
+    it('names the install org in the filename at single, followed by the export time', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(makePostRequest());
+
+      expect(response.headers.get('Content-Disposition')).toBe(
+        `attachment; filename="orchestration-backup-${INSTALL_ORG_ID}-2025-01-01T00-00-00-000Z.json"`
+      );
+    });
+
+    it('names the org the backup is of in the filename, not the caller’s', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(INSTALL_ORG_ID);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ status: 'ACTIVE' } as never);
+
+      const response = await POST(makePostRequest(`?orgId=${OTHER_CUSTOMER}`));
+
+      expect(response.headers.get('Content-Disposition')).toBe(
+        `attachment; filename="orchestration-backup-${OTHER_CUSTOMER}-2025-01-01T00-00-00-000Z.json"`
+      );
+    });
+
     it('calls exportOrchestrationConfig', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 

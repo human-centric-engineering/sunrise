@@ -313,6 +313,58 @@ describe('exportOrchestrationConfig', () => {
     expect(payload.data.settings).not.toBeNull();
   });
 
+  describe('the renamed-copy marker', () => {
+    /** Export the given workflow rows and return the metadata of each exported workflow. */
+    async function exportedMetadata(...metadata: unknown[]) {
+      const rows = metadata.map((m, i) => ({ ...workflowRow, slug: `wf-${i}`, metadata: m }));
+      mockFindMany
+        .mockResolvedValueOnce([]) // agents
+        .mockResolvedValueOnce([]) // capabilities
+        .mockResolvedValueOnce(rows) // workflows
+        .mockResolvedValueOnce([]); // webhooks
+      mockFindMany.mockResolvedValueOnce([]); // knowledgeTags
+      mockFindUnique.mockResolvedValue(null);
+      const payload = await exportOrchestrationConfig(SHARED_SCOPE);
+      return payload.data.workflows.map((w) => w.metadata);
+    }
+
+    it('strips importedFromSlug and keeps the rest of the metadata', async () => {
+      const [meta] = await exportedMetadata({
+        owner: 'ops',
+        nested: { a: 1 },
+        importedFromSlug: 'other-org-slug',
+      });
+
+      expect(meta).toEqual({ owner: 'ops', nested: { a: 1 } });
+      expect(meta).not.toHaveProperty('importedFromSlug');
+    });
+
+    it('leaves metadata without the marker untouched', async () => {
+      const original = { owner: 'ops' };
+
+      const [meta] = await exportedMetadata(original);
+
+      expect(meta).toEqual({ owner: 'ops' });
+    });
+
+    it('exports metadata holding only the marker as an empty object', async () => {
+      const [meta] = await exportedMetadata({ importedFromSlug: 'x' });
+
+      expect(meta).toEqual({});
+    });
+
+    it.each([
+      ['null', null],
+      ['an array', ['importedFromSlug', 'x']],
+      ['a string', 'importedFromSlug'],
+      ['a number', 7],
+    ])('passes %s through unchanged', async (_label, value) => {
+      const [meta] = await exportedMetadata(value);
+
+      expect(meta).toEqual(value);
+    });
+  });
+
   it('skips workflows that have no published version (no exportable snapshot)', async () => {
     // Edge case: a workflow row with publishedVersion=null can't be exported
     // because the snapshot lives there in the new model. The exporter's

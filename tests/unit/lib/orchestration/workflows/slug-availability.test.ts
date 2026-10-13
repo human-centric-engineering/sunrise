@@ -9,7 +9,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-const db = vi.hoisted(() => ({ aiWorkflow: { findUnique: vi.fn() } }));
+const db = vi.hoisted(() => ({ aiWorkflow: { findUnique: vi.fn(), findMany: vi.fn() } }));
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -18,6 +18,7 @@ vi.mock('@/lib/logging', () => ({
 import {
   findFreeWorkflowSlug,
   isWorkflowSlugTaken,
+  workflowSlugsHeldAnywhere,
   WORKFLOW_SLUG_MAX_LENGTH,
 } from '@/lib/orchestration/workflows/slug-availability';
 import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
@@ -62,6 +63,58 @@ describe('isWorkflowSlugTaken', () => {
       where: { slug: 'x' },
       select: { id: true },
     });
+  });
+});
+
+describe('workflowSlugsHeldAnywhere', () => {
+  /** Rows some org holds for the slugs asked; records the scope of each query. */
+  function heldMany(...slugs: string[]) {
+    const scopes: Array<string | null | undefined> = [];
+    db.aiWorkflow.findMany.mockImplementation(
+      async (args: { where: { slug: { in: string[] } } }) => {
+        const ctx = getTenantContext();
+        scopes.push(ctx?.source === 'system' ? 'system' : ctx?.orgId);
+        return args.where.slug.in.filter((s) => slugs.includes(s)).map((slug) => ({ slug }));
+      }
+    );
+    return scopes;
+  }
+
+  it('returns only the asked slugs that some org holds, as a Set', async () => {
+    heldMany('a', 'c', 'not-asked');
+
+    const result = await workflowSlugsHeldAnywhere(['a', 'b', 'c']);
+
+    expect(result).toEqual(new Set(['a', 'c']));
+  });
+
+  it('asks once for all slugs, selecting nothing but the slug', async () => {
+    heldMany();
+
+    await workflowSlugsHeldAnywhere(['a', 'b', 'c']);
+
+    expect(db.aiWorkflow.findMany).toHaveBeenCalledTimes(1);
+    expect(db.aiWorkflow.findMany).toHaveBeenCalledWith({
+      where: { slug: { in: ['a', 'b', 'c'] } },
+      select: { slug: true },
+    });
+  });
+
+  it('asks under the system scope, even from inside an org', async () => {
+    const scopes = heldMany('a');
+
+    await runAsOrg('cmorg0000000000000000orgb', () => workflowSlugsHeldAnywhere(['a']));
+
+    expect(scopes).toEqual(['system']);
+  });
+
+  it('returns an empty set without a query for no slugs', async () => {
+    heldMany();
+
+    const result = await workflowSlugsHeldAnywhere([]);
+
+    expect(result.size).toBe(0);
+    expect(db.aiWorkflow.findMany).not.toHaveBeenCalled();
   });
 });
 

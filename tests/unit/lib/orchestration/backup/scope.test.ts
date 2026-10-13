@@ -191,14 +191,14 @@ describe('resolveBackupScope — multi tenancy, org resolution', () => {
     );
   });
 
-  it('throws NotFoundError, before asking the policy, when the org does not exist', async () => {
+  it('throws NotFoundError, after the policy allows it, when the org does not exist', async () => {
     inOrg('org_active');
     mockOrgFindUnique.mockResolvedValue(null);
 
     const error = await thrown(() => resolveBackupScope({ orgId: 'org_gone' }, SESSION, 'export'));
 
     expect(error).toBeInstanceOf(NotFoundError);
-    expect(mockCanAdminister).not.toHaveBeenCalled();
+    expect(mockCanAdminister).toHaveBeenCalledOnce();
   });
 
   it('throws ForbiddenError when the policy refuses the named org', async () => {
@@ -211,7 +211,30 @@ describe('resolveBackupScope — multi tenancy, org resolution', () => {
     expect(mockCanAdminister).toHaveBeenCalledOnce();
   });
 
-  it('refuses an import into a named suspended org, before asking the policy', async () => {
+  it('answers 403, not 404, and never reads the org, when a refused caller names an org that does not exist', async () => {
+    inOrg('org_active');
+    mockCanAdminister.mockResolvedValue(false);
+    mockOrgFindUnique.mockResolvedValue(null);
+
+    const error = await thrown(() => resolveBackupScope({ orgId: 'org_gone' }, SESSION, 'export'));
+
+    expect(error).toBeInstanceOf(ForbiddenError);
+    expect(error).not.toBeInstanceOf(NotFoundError);
+    expect(mockOrgFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('answers 403, not the suspended conflict, to a refused caller importing into a suspended org', async () => {
+    inOrg('org_active');
+    mockCanAdminister.mockResolvedValue(false);
+    mockOrgFindUnique.mockResolvedValue({ status: 'SUSPENDED' });
+
+    const error = await thrown(() => resolveBackupScope({ orgId: 'org_other' }, SESSION, 'import'));
+
+    expect(error).toBeInstanceOf(ForbiddenError);
+    expect(mockOrgFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('refuses an import into a named suspended org once the policy has allowed it', async () => {
     inOrg('org_active');
     mockOrgFindUnique.mockResolvedValue({ status: 'SUSPENDED' });
 
@@ -219,7 +242,7 @@ describe('resolveBackupScope — multi tenancy, org resolution', () => {
 
     expect(error).toBeInstanceOf(ConflictError);
     expect((error as ConflictError).message).toContain('suspended');
-    expect(mockCanAdminister).not.toHaveBeenCalled();
+    expect(mockCanAdminister).toHaveBeenCalledOnce();
   });
 
   it('still resolves an export of a named suspended org', async () => {
