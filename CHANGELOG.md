@@ -95,7 +95,7 @@ release process.
   policy permits an unattributed read (platform admins by default), and
   retention prunes it by age as before. A delivery emailed to a person is
   theirs to see and to have erased: the subject-access export gains a
-  `notificationsSentToYou` section (when, which event, the outcome, and their
+  `webhookDeliveries` section (when, which event, the outcome, and their
   own address — never another inbox a re-pointed row also names), and
   `eraseUser()` redacts the address on every such delivery to `[erased]` and
   stops any of them still retrying — both for a verified address only, matched
@@ -160,6 +160,24 @@ release process.
   follows the listing to the end, Vercel Blob re-lists until the prefix is
   empty, and an S3 per-key failure returns `{ success: false }`. `eraseUser()`'s avatar sweep and `eraseOrg()`'s org
   sweep both go through it.
+- **Erasure reaches what a delivery's event says about a person, and
+  colleagues' subscriptions that email them** (t-783, t-786). A webhook or
+  event-hook delivery whose payload names the erased person — their id as
+  `userId`, `actorUserId` or an approver, or a conversation or workflow run of
+  theirs — is redacted, not deleted: an event about their own activity keeps
+  only which event it was (agent, workflow, ids, costs) and loses its free
+  text and any field a fork added; one about a change they made keeps the
+  change and loses only them; one still retrying about their activity stops.
+  Another admin's email subscription to the person's verified address has the
+  address cleared and is deactivated, with a
+  `webhook_subscription.recipient_erased` audit entry that names the
+  subscription, never the address. Subject access returns the same deliveries:
+  `webhookDeliveries` rows gain `about` (what the event said about them, minus
+  other people) beside `sentTo`, and a new `eventHookDeliveries` section
+  carries event-hook deliveries. A migration adds a GIN index on each delivery
+  table's `payload` (not `CONCURRENTLY`; retention bounds both tables). A fork
+  whose own events name a person under another key clears it with a
+  `scrubInTransaction` hook; see `.context/privacy/data-erasure.md`.
 
 
 ## [0.14.0] — 2026-10-08

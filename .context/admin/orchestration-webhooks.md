@@ -121,7 +121,11 @@ its reasoning live in `lib/orchestration/webhooks/destination.ts`; in short:
   null). So does erasing the admin who created it: the subscription goes with
   them, but the deliveries are the org's record of where its customers' data
   went — minus the erased person's own address, which `eraseUser()` redacts
-  to `[erased]` (see [data erasure](../privacy/data-erasure.md)). A retry of
+  to `[erased]`, and minus what an event said about an erased person (see
+  [data erasure](../privacy/data-erasure.md), steps 5–7). An email
+  subscription whose recipient is erased has its address cleared and is
+  deactivated, with a `webhook_subscription.recipient_erased` audit entry;
+  give it a new address to turn it back on. A retry of
   an orphaned delivery is refused (`409`). With no creator left to scope by,
   an orphan is shown to the admins the authorization policy permits an
   unattributed read — platform admins by default — through the

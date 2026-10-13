@@ -211,6 +211,7 @@ Every `logAdminAction()` call site (as of grep at write time):
 | `hooks/[id]/rotate-secret/route.ts`                        | `hook.secret.rotated`, `hook.secret.cleared`                        | `hook`                 |
 | `webhooks/route.ts`                                        | `webhook_subscription.create`                                       | `webhook_subscription` |
 | `webhooks/[id]/route.ts`                                   | `webhook_subscription.update`, `webhook_subscription.delete`        | `webhook_subscription` |
+| `lib/privacy/erase-user.ts` (not a route)                  | `webhook_subscription.recipient_erased`                             | `webhook_subscription` |
 | `webhooks/deliveries/[id]/retry/route.ts`                  | `webhook_delivery.retry`                                            | `delivery`             |
 | `hooks/deliveries/[id]/retry/route.ts`                     | `hook_delivery.retry`                                               | `delivery`             |
 | `mcp/settings/route.ts`                                    | `mcp_settings.update`                                               | `mcp_settings`         |

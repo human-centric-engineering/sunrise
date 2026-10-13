@@ -74,10 +74,10 @@ too, since its next attempt would email the erased person again. It matches
 through the same rule as
 subject access (`webhookDeliveriesAddressedTo()`: exact on the normalised
 address, never `ILIKE`), so an unverified account's address, which may be a
-stranger's inbox, is left alone. What the
-payloads say about other people — an escalated customer's id, say — is not
-reached by any erasure today; that is t-783. Event-hook deliveries behave the
-same way (`SetNull` on the hook), and hooks already survive their creator.
+stranger's inbox, is left alone. What a payload says about a person — an
+escalated customer's id and the reason given, say — is redacted too (t-783;
+see step 6 below). Event-hook deliveries behave the same way (`SetNull` on the
+hook), and hooks already survive their creator.
 
 **Two of them are owner-scoped, and they need a third rule.** `AiExperiment`
 (`createdBy`) and `AiDataset` (`userId`) narrow every one of their routes to the
@@ -209,8 +209,8 @@ relations the merge introduced** — they reintroduce this bug unnoticed.
 
 ## What `eraseUser()` Does Beyond the Cascade
 
-The DB cascade can't reach everything. The service adds four steps; the scrub,
-contact delete, receipt, and delete run in **one transaction** (avatar cleanup
+The DB cascade can't reach everything. The service adds seven steps; all but
+the avatar cleanup run in **one transaction** with the delete (avatar cleanup
 is a best-effort side effect first, since object storage can't enlist in a DB
 transaction):
 
@@ -252,6 +252,54 @@ transaction):
    address only: messages sent from an address the person used before are not
    linked to them by anything. See the export doc's
    [Tables With No `User` FK](./data-export.md#tables-with-no-user-fk).
+5. **Redact their address from webhook deliveries** (§109 t-739) — described
+   [above](#erase-vs-retain-model): an email-channel delivery sent to the
+   subject's verified address keeps the row and loses the address.
+6. **Redact them from delivery payloads** (t-783) — a webhook or event-hook
+   delivery stores the event it sent, and many events name the person whose
+   activity caused them. `lib/privacy/delivery-payloads.ts` finds every
+   delivery whose payload `data` carries the subject's id (`userId`,
+   `actorUserId`, or in `approverUserIds`), or the `conversationId` or
+   `executionId` of one of their conversations or runs — read before the user
+   row goes, since those cascade with it. Matched by JSON containment, which a
+   GIN index on each table's `payload` serves, so the transaction never scans
+   the table. **Redacted, not deleted**: the row stays the org's record that
+   an event was sent and where, as t-739 ruled.
+   - An event about the subject's **own activity** (their conversation, their
+     run, their id as `userId`) keeps only the keys that record which event it
+     was — agent, workflow, ids, costs (`EVENT_RECORD_KEYS`). Free text
+     (`reason`, `metadata`, `prompt`, `error`, `body`), approval links, and any
+     key a fork's own event adds are dropped. An allowlist, so a new field is
+     erased by default. One still waiting to retry is stopped
+     (`exhausted`, "not retried: subject erased"): what it would send is now
+     about nobody.
+   - An event about a **change they made** (`agent_updated`,
+     `capability.quarantined`) or a step they were asked to approve keeps its
+     data — the change is the org's — and loses only them, as the admin audit
+     log does (`SetNull`).
+   - In both, their id becomes `null`, their display name goes, and they leave
+     `approverUserIds`. Other people's ids are untouched.
+
+   Written in bulk (500 rows a statement), so a person with years of chat
+   events costs a few statements, not a round trip each. **A fork that emits
+   its own events** (`emitHookEvent('app.…')`) and names a person under a key
+   other than these must clear it with a `scrubInTransaction` hook; an
+   `activity` row already loses every key it does not recognise, but an event
+   matched on nothing here is not found at all. An anonymous embed visitor is
+   not a `User`: their events carry `embedVisitorId` and go with the org's
+   export, erasure and retention.
+
+7. **Clear their address from colleagues' email subscriptions** (t-786; owner
+   ruling 2026-10-13) — the subject's own subscriptions cascade, but another
+   admin's email-channel subscription that notifies them would keep emailing
+   an erased person and writing the address onto every new delivery. Each one
+   whose address matches the subject's verified address — normalised in SQL,
+   since a subscription stores the address as typed, and exact, never
+   `ILIKE` — has the address cleared and is **deactivated**, not deleted: the
+   integration stays visible to its owner, who can point it at someone else.
+   Each gets an admin audit entry, `webhook_subscription.recipient_erased`,
+   naming the subscription, its owner and org, and never the address. An
+   unverified account's address matches nothing, as in steps 4 and 5.
 
 **At `multi`, a person's rows in every org go** (§107 t-748). The cascades are
 FK actions, which row-level security does not filter, so `user.delete` removes

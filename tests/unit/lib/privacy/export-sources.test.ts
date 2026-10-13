@@ -344,6 +344,17 @@ describe('subject-data source manifest', () => {
       expect(userLinked.has('ContactSubmission')).toBe(false);
     });
 
+    it('covers both delivery tables, which name a person only inside their payload', () => {
+      // A delivery has no user column and no User FK, so neither net finds it.
+      // They are in the manifest by hand (t-783) - this is what stops a tidy-up
+      // from dropping either, which would ship a silently short answer.
+      for (const model of ['AiWebhookDelivery', 'AiEventHookDelivery']) {
+        expect(declared.has(model), model).toBe(true);
+        expect(userLinked.has(model), model).toBe(false);
+        expect(scalarLinked.has(model), model).toBe(false);
+      }
+    });
+
     it('declares every model holding a user id with no relation behind it', () => {
       // The second net. A `createdBy String?` with no `@relation` is invisible
       // to the FK scan above, and has been missed twice — ContactSubmission and

@@ -229,13 +229,14 @@ erased — `smoke:erasure` is where that assertion belongs.
 
 A table can identify a person without declaring a Prisma relation to `User` —
 and then it is invisible to a relation-based scan, **and to the erasure
-cascade**. Sunrise has three, all in the manifest by hand:
+cascade**. Sunrise has four, all in the manifest by hand:
 
-| Table               | Identified by                                       | How it is matched                                                                              |
-| ------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `ContactSubmission` | `email` — no user id at all                         | `email`, exactly, normalised; verified accounts only                                           |
-| `FeatureFlag`       | `createdBy String?`, no relation                    | `createdBy`, as an attribution source                                                          |
-| `AiWebhookDelivery` | `destination` — an email-channel delivery's address | `destination` (or a `previousDestinations` entry), exactly, normalised; verified accounts only |
+| Table                 | Identified by                                                          | How it is matched                                                                                                                  |
+| --------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `ContactSubmission`   | `email` — no user id at all                                            | `email`, exactly, normalised; verified accounts only                                                                               |
+| `FeatureFlag`         | `createdBy String?`, no relation                                       | `createdBy`, as an attribution source                                                                                              |
+| `AiWebhookDelivery`   | `destination` — an email-channel delivery's address; and its `payload` | `destination` (or a `previousDestinations` entry), exactly, normalised, verified accounts only; or the payload naming them (below) |
+| `AiEventHookDelivery` | its `payload` — the subject's id, or a conversation or run of theirs   | JSON containment on `payload.data`, through `lib/privacy/delivery-payloads.ts`                                                     |
 
 The guard casts **two nets**, because the first one missed both of these:
 
@@ -256,11 +257,29 @@ manifest uses (`contactSubmissionsOf()`), and redacts the address on
 `AiWebhookDelivery` rows through `webhookDeliveriesAddressedTo()` — a
 delivery outlives its subscription (§109 t-739), so the address a
 notification was emailed to stays on the row after the exported subscription
-is gone. The export section (`notificationsSentToYou`) carries when, which
-event, whether it was delivered and the subject's own address (`sentTo`) — not
-the event payload, and never the row's `destination` or history, which after a
-re-pointed retry can name a second person's inbox; see
-[What `eraseUser()` Does Beyond the Cascade](./data-erasure.md#what-eraseuser-does-beyond-the-cascade).
+is gone. And it redacts the subject from every delivery whose payload names
+them (t-783) — by their id (`userId`, `actorUserId`, `approverUserIds`), or the
+`conversationId` or `executionId` of a conversation or run of theirs.
+
+The export carries the same rows, matched by the same rule
+(`deliveriesNamingSubject()`), in two sections:
+
+- **`webhookDeliveries`** — each row with when, which event and whether it was
+  delivered, plus `sentTo` (the subject's own address, when it was emailed to
+  them) and `about` (when its payload names them). A row can carry both.
+  `sentTo` is never the row's `destination` or history, which after a
+  re-pointed retry can name a second person's inbox.
+- **`eventHookDeliveries`** — the same, with `about` only: a hook's URL is the
+  org's.
+
+`about` is `{ basis, data }`. For an event about the subject's own activity
+(`basis: 'activity'`) `data` is what the event said, minus other people; for a
+change they made (`basis: 'actor'`) it is which change — the agent, workflow
+or capability, not the change itself, which is the org's configuration, as an
+`attribution` source hands back the fact of authorship rather than the config.
+Other people never appear: not the colleagues in an approval's
+`approverUserIds`, not an administrator who force-failed the subject's run.
+See [What `eraseUser()` Does Beyond the Cascade](./data-erasure.md#what-eraseuser-does-beyond-the-cascade).
 
 **Neither net can reach `ContactSubmission`.** It holds no user id in any
 column, only an email, so no mechanical scan finds it. That is the residual gap,

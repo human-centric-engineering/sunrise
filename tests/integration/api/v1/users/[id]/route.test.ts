@@ -62,6 +62,10 @@ vi.mock('@/lib/auth/config', () => ({
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     $transaction: vi.fn(),
+    // eraseUser's colleague-subscription clear (t-786) and the delivery-payload
+    // redaction (t-783) both go through raw SQL on the tx client.
+    $queryRaw: vi.fn(),
+    $executeRaw: vi.fn(),
     user: {
       findUnique: vi.fn(),
       update: vi.fn(),
@@ -70,6 +74,7 @@ vi.mock('@/lib/db/client', () => ({
     },
     aiAdminAuditLog: {
       updateMany: vi.fn(),
+      createMany: vi.fn(),
     },
     contactSubmission: {
       deleteMany: vi.fn(),
@@ -102,6 +107,21 @@ import { prisma } from '@/lib/db/client';
 // ---------------------------------------------------------------------------
 // Constants & fixture helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The `$queryRaw` calls that targeted the colleague-subscription table (t-786).
+ * `$queryRaw` is a tagged template: the SQL is the first argument's strings,
+ * the bound values the rest.
+ */
+function subscriptionClears(): Array<{ sql: string; values: unknown[] }> {
+  return vi
+    .mocked(prisma.$queryRaw)
+    .mock.calls.map(([strings, ...values]) => ({
+      sql: (strings as unknown as readonly string[]).join('?'),
+      values,
+    }))
+    .filter((call) => call.sql.includes('ai_webhook_subscription'));
+}
 
 /**
  * A valid CUID that passes the userIdSchema (z.cuid() / c[a-z0-9]{24}).
@@ -654,6 +674,10 @@ describe('DELETE /api/v1/users/:id', () => {
     vi.mocked(prisma.contactSubmission.deleteMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([]);
+    // No colleague subscription matches and no delivery payload names the user.
+    vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
+    vi.mocked(prisma.$executeRaw).mockResolvedValue(0);
+    vi.mocked(prisma.aiAdminAuditLog.createMany).mockResolvedValue({ count: 0 });
     // eraseUser reads the stored address for the contact delete. Deliberately
     // NOT the address the route passes in, so the assertion below can tell the
     // two apart: a stale session address must never be the one matched.
@@ -863,6 +887,28 @@ describe('DELETE /api/v1/users/:id', () => {
       expect(prisma.aiWebhookDelivery.findMany).not.toHaveBeenCalled();
       expect(prisma.aiWebhookDelivery.update).not.toHaveBeenCalled();
       expect(prisma.aiWebhookDelivery.updateMany).not.toHaveBeenCalled();
+      // ...nor any colleague's subscription: an unproven address may be a stranger's.
+      expect(subscriptionClears()).toHaveLength(0);
+      expect(prisma.aiAdminAuditLog.createMany).not.toHaveBeenCalled();
+    });
+
+    it('clears colleagues subscriptions on the STORED address, excluding the erased user, before deleting the user', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.user.findUnique).mockResolvedValue(makeUserFixture({ role: 'USER' }));
+
+      const response = await DELETE(makeDeleteRequest(TARGET_USER_ID), makeContext(TARGET_USER_ID));
+
+      expect(response.status).toBe(200);
+      const clears = subscriptionClears();
+      expect(clears).toHaveLength(1);
+      // Bound, not interpolated: the address (from the user row, not the session)
+      // and the excluded owner are values; neither is in the SQL text.
+      expect(clears[0].values).toEqual(['stored-target@example.com', TARGET_USER_ID]);
+      expect(clears[0].sql).not.toContain('stored-target@example.com');
+      expect(clears[0].sql).not.toContain(TARGET_USER_ID);
+      expect(vi.mocked(prisma.$queryRaw).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(prisma.user.delete).mock.invocationCallOrder[0]
+      );
     });
   });
 

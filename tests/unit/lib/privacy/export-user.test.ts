@@ -24,8 +24,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Mocks — vi.hoisted so the factories below can close over them
 // ---------------------------------------------------------------------------
 
-const { mockPrisma, delegateFor, resetDelegates, mockUserFindUnique, mockLogger } = vi.hoisted(
-  () => {
+const { mockPrisma, delegateFor, resetDelegates, mockUserFindUnique, mockQueryRaw, mockLogger } =
+  vi.hoisted(() => {
     interface Delegate {
       findMany: ReturnType<typeof vi.fn>;
     }
@@ -54,6 +54,8 @@ const { mockPrisma, delegateFor, resetDelegates, mockUserFindUnique, mockLogger 
     };
 
     const userFindUnique = vi.fn();
+    // Tagged-template raw query, used by the delivery sources (t-783).
+    const queryRaw = vi.fn().mockResolvedValue([]);
 
     const prisma = new Proxy(
       {},
@@ -61,6 +63,7 @@ const { mockPrisma, delegateFor, resetDelegates, mockUserFindUnique, mockLogger 
         get(_target, property) {
           if (typeof property !== 'string') return undefined;
           if (property === 'user') return { findUnique: userFindUnique };
+          if (property === '$queryRaw') return queryRaw;
           return delegateFor(property);
         },
       }
@@ -71,10 +74,10 @@ const { mockPrisma, delegateFor, resetDelegates, mockUserFindUnique, mockLogger 
       delegateFor,
       resetDelegates,
       mockUserFindUnique: userFindUnique,
+      mockQueryRaw: queryRaw,
       mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
     };
-  }
-);
+  });
 
 const mockInitAppSubjectSources = vi.fn();
 
@@ -142,6 +145,7 @@ function argsTo(delegate: string): Record<string, unknown> {
 beforeEach(() => {
   vi.clearAllMocks();
   resetDelegates();
+  mockQueryRaw.mockReset().mockResolvedValue([]);
   mockEnv.TENANCY_MODE = 'single';
   mockUserFindUnique.mockResolvedValue(SUBJECT);
   mockCollectAppSubjectData.mockResolvedValue({});
@@ -309,8 +313,75 @@ describe('exportUserData', () => {
     });
   });
 
-  describe('webhook deliveries sent to the subject (notificationsSentToYou)', () => {
+  describe('webhook deliveries concerning the subject (webhookDeliveries)', () => {
     const NORMALISED = 'subject@example.com';
+    const T1 = new Date('2026-01-10T00:00:00.000Z');
+    const T2 = new Date('2026-01-20T00:00:00.000Z');
+    const T3 = new Date('2026-01-30T00:00:00.000Z');
+
+    /** A row as `deliveriesNamingSubject` reads it: the table columns plus the `activity` flag. */
+    function namedRow(
+      overrides: Partial<{
+        id: string;
+        eventType: string;
+        status: string;
+        lastAttemptAt: Date | null;
+        createdAt: Date;
+        payload: Record<string, unknown>;
+        activity: boolean;
+      }> = {}
+    ) {
+      return {
+        id: 'n-1',
+        eventType: 'conversation_started',
+        status: 'delivered',
+        lastError: 'upstream said 500',
+        lastAttemptAt: T1,
+        createdAt: T1,
+        payload: {
+          event: 'conversation_started',
+          data: { conversationId: 'c-1', userId: 'user-1' },
+        },
+        activity: true,
+        ...overrides,
+      };
+    }
+
+    /** A row as the `findMany` for the subject's address selects it. */
+    function addressedRow(
+      overrides: Partial<{
+        id: string;
+        eventType: string;
+        status: string;
+        lastAttemptAt: Date | null;
+        createdAt: Date;
+      }> = {}
+    ) {
+      return {
+        id: 'a-1',
+        eventType: 'budget_exceeded',
+        status: 'delivered',
+        lastAttemptAt: T1,
+        createdAt: T1,
+        ...overrides,
+      };
+    }
+
+    /** Answer each `$queryRaw` by the delivery table its SQL names. */
+    function armRaw(rows: { webhook?: unknown[]; hook?: unknown[] }): void {
+      mockQueryRaw.mockImplementation(async (...args: unknown[]) => {
+        const text = JSON.stringify(args.slice(1));
+        return text.includes('ai_event_hook_delivery') ? (rows.hook ?? []) : (rows.webhook ?? []);
+      });
+    }
+
+    interface ExportedDelivery {
+      id: string;
+      sentTo: string | null;
+      about: { basis: string; data: Record<string, unknown> } | null;
+    }
+    const exported = (bundle: Awaited<ReturnType<typeof exportUserData>>) =>
+      bundle.personalData.webhookDeliveries as ExportedDelivery[];
 
     it('reads exactly the deliveries addressed to the normalised address, selecting no payload', async () => {
       // SUBJECT.email is 'Subject@Example.com': the where must carry the
@@ -332,7 +403,6 @@ describe('exportUserData', () => {
           lastAttemptAt: true,
           createdAt: true,
         },
-        orderBy: { createdAt: 'asc' },
       });
       const select = argsTo('aiWebhookDelivery').select as Record<string, unknown>;
       expect(Object.keys(select)).not.toContain('payload');
@@ -344,79 +414,351 @@ describe('exportUserData', () => {
       expect(JSON.stringify(argsTo('aiWebhookDelivery'))).not.toContain('insensitive');
     });
 
-    it('adds the subject’s own normalised address to every row as sentTo, keeping the selected fields', async () => {
-      const lastAttemptAt = new Date('2026-02-01T00:00:00.000Z');
-      const createdAt = new Date('2026-01-31T00:00:00.000Z');
+    it('asks for the payload-named rows of the webhook table, by the subject’s id', async () => {
+      await exportUserData(PARAMS);
+
+      const webhookCalls = mockQueryRaw.mock.calls.filter((call) =>
+        JSON.stringify(call.slice(1)).includes('ai_webhook_delivery')
+      );
+      expect(webhookCalls).toHaveLength(1);
+      // The subject's id is bound as a parameter of the statement.
+      expect(webhookCalls[0].slice(1)).toContain(SUBJECT.id);
+    });
+
+    it('adds the subject’s own normalised address to addressed rows as sentTo, with about null', async () => {
       delegateFor('aiWebhookDelivery').findMany.mockResolvedValue([
-        { id: 'd-1', eventType: 'budget_exceeded', status: 'delivered', lastAttemptAt, createdAt },
-        {
+        addressedRow({ id: 'd-1', createdAt: T1, lastAttemptAt: T1 }),
+        addressedRow({
           id: 'd-2',
           eventType: 'workflow_failed',
           status: 'failed',
           lastAttemptAt: null,
-          createdAt,
-        },
+          createdAt: T2,
+        }),
       ]);
 
       const bundle = await exportUserData(PARAMS);
 
-      expect(bundle.personalData.notificationsSentToYou).toEqual([
+      expect(bundle.personalData.webhookDeliveries).toEqual([
         {
           id: 'd-1',
           eventType: 'budget_exceeded',
           status: 'delivered',
-          lastAttemptAt,
-          createdAt,
+          lastAttemptAt: T1,
+          createdAt: T1,
           sentTo: NORMALISED,
+          about: null,
         },
         {
           id: 'd-2',
           eventType: 'workflow_failed',
           status: 'failed',
           lastAttemptAt: null,
-          createdAt,
+          createdAt: T2,
           sentTo: NORMALISED,
+          about: null,
         },
       ]);
     });
 
-    it('never exports a second person’s address, even if a row in the read carries one', async () => {
-      // Probe: the select excludes these columns, so a real DB never returns
-      // them; but if a row did arrive carrying a colleague's address (a wider
-      // select, a mock), the export must still state only the subject's own
-      // address as sentTo and must not invent it from the row.
-      delegateFor('aiWebhookDelivery').findMany.mockResolvedValue([
+    it('exports a row that only names the subject with sentTo null and its basis and data', async () => {
+      armRaw({
+        webhook: [
+          namedRow({
+            id: 'n-1',
+            payload: {
+              event: 'conversation_started',
+              data: { conversationId: 'c-1', userId: 'user-1', agentSlug: 'support' },
+            },
+          }),
+        ],
+      });
+
+      const bundle = await exportUserData(PARAMS);
+
+      expect(bundle.personalData.webhookDeliveries).toEqual([
         {
-          id: 'd-x',
-          eventType: 'budget_exceeded',
+          id: 'n-1',
+          eventType: 'conversation_started',
           status: 'delivered',
-          destination: 'colleague@example.com',
-          previousDestinations: [{ destination: NORMALISED }],
+          lastAttemptAt: T1,
+          createdAt: T1,
+          sentTo: null,
+          about: {
+            basis: 'activity',
+            data: { conversationId: 'c-1', userId: 'user-1', agentSlug: 'support' },
+          },
         },
       ]);
-
-      const bundle = await exportUserData(PARAMS);
-
-      const rows = bundle.personalData.notificationsSentToYou as Array<{ sentTo: string }>;
-      expect(rows).toHaveLength(1);
-      expect(rows[0].sentTo).toBe(NORMALISED);
-      expect(rows[0].sentTo).not.toContain('colleague');
-      // Even a row that carries its address columns (a widened select) does not
-      // reach the subject: the source builds each row field by field.
-      expect(rows[0]).not.toHaveProperty('destination');
-      expect(rows[0]).not.toHaveProperty('previousDestinations');
-      expect(JSON.stringify(bundle.personalData.notificationsSentToYou)).not.toContain('colleague');
     });
 
-    it('exports none, without reading the table, for an unverified address', async () => {
-      mockUserFindUnique.mockResolvedValue({ ...SUBJECT, emailVerified: false });
-      // Population: were the read made, this row would be exported.
-      delegateFor('aiWebhookDelivery').findMany.mockResolvedValue([{ id: 'd-stranger' }]);
+    it('exports a row both addressed to and naming the subject once, with sentTo and about', async () => {
+      delegateFor('aiWebhookDelivery').findMany.mockResolvedValue([
+        addressedRow({ id: 'both', eventType: 'workflow_failed', createdAt: T1 }),
+      ]);
+      armRaw({
+        webhook: [
+          namedRow({
+            id: 'both',
+            eventType: 'workflow_failed',
+            payload: { event: 'workflow_failed', data: { executionId: 'e-1', userId: 'user-1' } },
+          }),
+        ],
+      });
 
-      const bundle = await exportUserData(PARAMS);
+      const rows = exported(await exportUserData(PARAMS));
+
+      expect(rows).toHaveLength(1);
+      expect(rows[0].id).toBe('both');
+      expect(rows[0].sentTo).toBe(NORMALISED);
+      expect(rows[0].about).toEqual({
+        basis: 'activity',
+        data: { executionId: 'e-1', userId: 'user-1' },
+      });
+    });
+
+    it('still exports payload-named rows, without reading the address table, for an unverified address', async () => {
+      mockUserFindUnique.mockResolvedValue({ ...SUBJECT, emailVerified: false });
+      // Population: were the address read made, this row would be exported.
+      delegateFor('aiWebhookDelivery').findMany.mockResolvedValue([
+        addressedRow({ id: 'stranger' }),
+      ]);
+      armRaw({ webhook: [namedRow({ id: 'n-1' })] });
+
+      const rows = exported(await exportUserData(PARAMS));
 
       expect(callsTo('aiWebhookDelivery')).toHaveLength(0);
-      expect(bundle.personalData.notificationsSentToYou).toEqual([]);
+      // The payload match is keyed on the account id, not an unproven address.
+      expect(rows.map((row) => row.id)).toEqual(['n-1']);
+      expect(rows[0].sentTo).toBeNull();
+    });
+
+    it('exports none for an unverified address with nothing naming the subject', async () => {
+      mockUserFindUnique.mockResolvedValue({ ...SUBJECT, emailVerified: false });
+      delegateFor('aiWebhookDelivery').findMany.mockResolvedValue([
+        addressedRow({ id: 'stranger' }),
+      ]);
+
+      const bundle = await exportUserData(PARAMS);
+
+      expect(bundle.personalData.webhookDeliveries).toEqual([]);
+    });
+
+    it('orders rows from both kinds by createdAt, then id', async () => {
+      delegateFor('aiWebhookDelivery').findMany.mockResolvedValue([
+        addressedRow({ id: 'a-late', createdAt: T3 }),
+        addressedRow({ id: 'tie-b', createdAt: T2 }),
+      ]);
+      armRaw({
+        webhook: [
+          namedRow({ id: 'tie-a', createdAt: T2 }),
+          namedRow({ id: 'n-early', createdAt: T1 }),
+        ],
+      });
+
+      const rows = exported(await exportUserData(PARAMS));
+
+      expect(rows.map((row) => row.id)).toEqual(['n-early', 'tie-a', 'tie-b', 'a-late']);
+    });
+
+    it('shows the subject their own view of the payload, without a colleague’s ids or names', async () => {
+      armRaw({
+        webhook: [
+          namedRow({
+            id: 'n-1',
+            eventType: 'workflow_failed',
+            payload: {
+              event: 'workflow_failed',
+              data: {
+                executionId: 'e-1',
+                userId: 'user-1',
+                actorUserId: 'user-admin',
+                actorUserName: 'Admin Person',
+                approverUserIds: ['user-2', 'user-1'],
+              },
+            },
+          }),
+        ],
+      });
+
+      const bundle = await exportUserData(PARAMS);
+      const rows = exported(bundle);
+
+      expect(rows[0].about?.data).toEqual({ executionId: 'e-1', userId: 'user-1' });
+      const text = JSON.stringify(bundle.personalData.webhookDeliveries);
+      expect(text).not.toContain('user-admin');
+      expect(text).not.toContain('Admin Person');
+      expect(text).not.toContain('user-2');
+    });
+
+    it('reduces an actor row to the fact of the action, dropping what was changed', async () => {
+      armRaw({
+        webhook: [
+          namedRow({
+            id: 'n-1',
+            eventType: 'agent_updated',
+            activity: false,
+            payload: {
+              event: 'agent_updated',
+              data: {
+                agentId: 'ag-1',
+                actorUserId: 'user-1',
+                changes: { systemInstructions: 'secret prompt' },
+              },
+            },
+          }),
+        ],
+      });
+
+      const rows = exported(await exportUserData(PARAMS));
+
+      expect(rows[0].about).toEqual({
+        basis: 'actor',
+        data: { agentId: 'ag-1', actorUserId: 'user-1' },
+      });
+    });
+
+    it('never puts a payload or an address column on a row, even when the read carries them', async () => {
+      delegateFor('aiWebhookDelivery').findMany.mockResolvedValue([
+        {
+          ...addressedRow({ id: 'both' }),
+          destination: 'colleague@example.com',
+          previousDestinations: [{ destination: NORMALISED }],
+          payload: { data: { userId: 'colleague-id' } },
+        },
+        {
+          ...addressedRow({ id: 'addressed-only', createdAt: T2 }),
+          destination: 'colleague@example.com',
+        },
+      ]);
+      armRaw({
+        webhook: [namedRow({ id: 'both' }), namedRow({ id: 'named-only', createdAt: T3 })],
+      });
+
+      const bundle = await exportUserData(PARAMS);
+      const rows = bundle.personalData.webhookDeliveries as Array<Record<string, unknown>>;
+
+      expect(rows).toHaveLength(3);
+      for (const row of rows) {
+        expect(Object.keys(row).sort()).toEqual([
+          'about',
+          'createdAt',
+          'eventType',
+          'id',
+          'lastAttemptAt',
+          'sentTo',
+          'status',
+        ]);
+      }
+      const text = JSON.stringify(rows);
+      expect(text).not.toContain('colleague');
+      // lastError is on the raw row but is not the subject's data.
+      expect(text).not.toContain('upstream said 500');
+    });
+  });
+
+  describe('event-hook deliveries concerning the subject (eventHookDeliveries)', () => {
+    const T1 = new Date('2026-01-10T00:00:00.000Z');
+    const T2 = new Date('2026-01-20T00:00:00.000Z');
+
+    it('reads the hook table, not the webhook table, by the subject’s id', async () => {
+      await exportUserData(PARAMS);
+
+      const hookCalls = mockQueryRaw.mock.calls.filter((call) =>
+        JSON.stringify(call.slice(1)).includes('ai_event_hook_delivery')
+      );
+      expect(hookCalls).toHaveLength(1);
+      expect(hookCalls[0].slice(1)).toContain(SUBJECT.id);
+    });
+
+    it('exports each row with its basis and the subject’s view of the payload, nothing else', async () => {
+      mockQueryRaw.mockImplementation(async (...args: unknown[]) =>
+        JSON.stringify(args.slice(1)).includes('ai_event_hook_delivery')
+          ? [
+              {
+                id: 'h-2',
+                eventType: 'agent_updated',
+                status: 'delivered',
+                lastError: 'hook said no',
+                lastAttemptAt: T2,
+                createdAt: T2,
+                payload: {
+                  event: 'agent_updated',
+                  data: {
+                    agentId: 'ag-1',
+                    actorUserId: 'user-1',
+                    changes: { systemInstructions: 'secret prompt' },
+                  },
+                  url: 'https://hooks.example.com/org-secret',
+                },
+                activity: false,
+              },
+              {
+                id: 'h-1',
+                eventType: 'conversation_started',
+                status: 'failed',
+                lastError: null,
+                lastAttemptAt: null,
+                createdAt: T1,
+                payload: {
+                  event: 'conversation_started',
+                  data: { conversationId: 'c-1', userId: 'user-1', actorUserId: 'user-admin' },
+                },
+                activity: true,
+              },
+            ]
+          : []
+      );
+
+      const bundle = await exportUserData(PARAMS);
+
+      // The query returned h-2 first: the order is the reader's, by createdAt.
+      expect(bundle.personalData.eventHookDeliveries).toEqual([
+        {
+          id: 'h-1',
+          eventType: 'conversation_started',
+          status: 'failed',
+          lastAttemptAt: null,
+          createdAt: T1,
+          about: { basis: 'activity', data: { conversationId: 'c-1', userId: 'user-1' } },
+        },
+        {
+          id: 'h-2',
+          eventType: 'agent_updated',
+          status: 'delivered',
+          lastAttemptAt: T2,
+          createdAt: T2,
+          about: { basis: 'actor', data: { agentId: 'ag-1', actorUserId: 'user-1' } },
+        },
+      ]);
+      const text = JSON.stringify(bundle.personalData.eventHookDeliveries);
+      expect(text).not.toContain('hooks.example.com');
+      expect(text).not.toContain('user-admin');
+      expect(text).not.toContain('hook said no');
+    });
+
+    it('does not mix the two tables’ rows', async () => {
+      mockQueryRaw.mockImplementation(async (...args: unknown[]) => {
+        const hook = JSON.stringify(args.slice(1)).includes('ai_event_hook_delivery');
+        return [
+          {
+            id: hook ? 'h-1' : 'w-1',
+            eventType: 'conversation_started',
+            status: 'delivered',
+            lastError: null,
+            lastAttemptAt: T1,
+            createdAt: T1,
+            payload: { data: { userId: 'user-1' } },
+            activity: true,
+          },
+        ];
+      });
+
+      const bundle = await exportUserData(PARAMS);
+
+      const ids = (rows: unknown) => (rows as Array<{ id: string }>).map((row) => row.id);
+      expect(ids(bundle.personalData.eventHookDeliveries)).toEqual(['h-1']);
+      expect(ids(bundle.personalData.webhookDeliveries)).toEqual(['w-1']);
     });
   });
 
@@ -518,6 +860,9 @@ describe('exportUserData', () => {
       return [...fromInclude, ...fromSelect].sort();
     }
 
+    /** Models read by raw SQL on the subject's id (t-783), with no `findMany` to inspect. */
+    const RAW_READ_MODELS = new Set(['AiEventHookDelivery']);
+
     const delegateOf = (model: string) => model.charAt(0).toLowerCase() + model.slice(1);
 
     /** The tenant context each read saw, recorded from one source and the app seam. */
@@ -565,20 +910,31 @@ describe('exportUserData', () => {
     it('pins every source on the subject, so the bypass widens it to their rows alone', async () => {
       await exportUserData(PARAMS);
 
-      const unpinned = SUBJECT_DATA_SOURCES.map((source) => source.model).filter(
-        (model) => !pinsSubject(model, argsTo(delegateOf(model)).where)
-      );
+      const unpinned = SUBJECT_DATA_SOURCES.map((source) => source.model)
+        .filter((model) => !RAW_READ_MODELS.has(model))
+        .filter((model) => !pinsSubject(model, argsTo(delegateOf(model)).where));
       expect(unpinned).toEqual([]);
+    });
+
+    it('pins the raw-SQL readers on the subject’s id as a bound parameter', async () => {
+      await exportUserData(PARAMS);
+
+      // One statement per delivery table, each carrying the subject's id as a
+      // parameter; nothing else identifies whose rows it returns.
+      const hookCalls = mockQueryRaw.mock.calls.filter((call) =>
+        JSON.stringify(call.slice(1)).includes('ai_event_hook_delivery')
+      );
+      expect(hookCalls).toHaveLength(RAW_READ_MODELS.size);
+      for (const call of hookCalls) expect(call.slice(1)).toContain(SUBJECT.id);
     });
 
     it('reads related rows only through relations named as the subject’s', async () => {
       await exportUserData(PARAMS);
 
       const reads = Object.fromEntries(
-        SUBJECT_DATA_SOURCES.map((source) => [
-          source.model,
-          relationReads(argsTo(delegateOf(source.model))),
-        ]).filter(([, relations]) => relations.length > 0)
+        SUBJECT_DATA_SOURCES.filter((source) => !RAW_READ_MODELS.has(source.model))
+          .map((source) => [source.model, relationReads(argsTo(delegateOf(source.model)))])
+          .filter(([, relations]) => relations.length > 0)
       );
       expect(reads).toEqual(RELATION_READS);
     });
