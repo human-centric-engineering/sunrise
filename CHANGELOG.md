@@ -199,10 +199,13 @@ release process.
   segment containing `:` part by part, so a Telegram-style
   `bot<id>:<secret>` segment collapses to `[param]`.
 - **Admin trace surfaces show webhook and API URLs reduced** (t-777). The
-  execution detail and live routes (`trace`, and `outputData` on detail),
-  `report.md`, the approver's `GET /orchestration/approvals/:id/status` and
-  the supervisor review apply `withDisplayUrls()` to values under keys
-  ending in `url`/`urls`. The persisted trace keeps working URLs, so
+  executions list, the execution detail and live routes (and `inputData` /
+  `outputData`), `report.md`, the approver's
+  `GET /orchestration/approvals/:id/status` and the run streams (execute,
+  execute-stream, rerun) apply `withDisplayUrls()` to values under keys
+  ending in `url`, `urls` or `reference`; `runSupervisorAssessment` does the
+  same before prompting the model, for the supervisor step and the review
+  route. The persisted trace keeps working URLs, so
   `{{steps.<id>.output.url}}` and resume are unchanged.
 - **The `workflow_notification` webhook payload's `webhookUrl` is the
   reduced URL**, not a working one (t-777).

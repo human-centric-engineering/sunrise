@@ -101,8 +101,9 @@ context is built to hold nothing a value-blind redactor would miss:
   `loggablePath()` at the call site as above. `describeFetchFailure()`
   reduces any URL quoted in a fetch error the same way. A step's persisted
   `output` keeps the working URL, because later steps and resumed runs read
-  it; the admin execution detail, live view, Markdown report, approver status
-  page and supervisor review show it reduced (`withDisplayUrls()`, t-777).
+  it; the executions list, execution detail, live view, run streams,
+  Markdown report and approver status page show it reduced, and the
+  supervisor model is given it reduced (`withDisplayUrls()`, t-777).
 
 A segment containing `:` is judged part by part (t-778), so a Telegram bot
 path (`/bot123456789:AAH…/sendMessage`) collapses. The heuristic cannot see a
