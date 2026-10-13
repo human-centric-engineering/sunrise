@@ -95,6 +95,10 @@ model AiWebhookDelivery {
   // transaction least of all.
   @@index([destination])
   @@index([previousDestinations(ops: JsonbPathOps)], type: Gin)
+  // Subject access and erasure also find the deliveries whose payload names a
+  // person — their id, or one of their conversations or runs — by JSON
+  // containment (`lib/privacy/delivery-payloads.ts`, t-783).
+  @@index([payload(ops: JsonbPathOps)], type: Gin)
   @@map("ai_webhook_delivery")
 }
 

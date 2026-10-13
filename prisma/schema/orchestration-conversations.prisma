@@ -294,6 +294,9 @@ model AiEventHookDelivery {
   @@index([hookId])
   @@index([status])
   @@index([nextRetryAt])
+  // Subject access and erasure find the deliveries whose payload names a
+  // person by JSON containment (`lib/privacy/delivery-payloads.ts`, t-783).
+  @@index([payload(ops: JsonbPathOps)], type: Gin)
   @@map("ai_event_hook_delivery")
 }
 

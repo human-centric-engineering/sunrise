@@ -577,6 +577,11 @@ jobs:
       # survives its subscription's deletion — the FK's ON DELETE SET NULL,
       # which the unit suite's mocked Prisma never exercises (§109 t-739).
       - run: npx tsx scripts/smoke/delivery-destination.ts
+      # Proves erasure redacts a person from delivery payloads (found by JSON
+      # containment, through their conversations and runs) and clears
+      # colleagues' email subscriptions to them — raw SQL the unit suite's
+      # mocked Prisma never runs (t-783, t-786).
+      - run: npx tsx scripts/smoke/erasure-deliveries.ts
       # Proves the org-identity invariant on a FRESH database — migrate then
       # seed, the order a new install runs — which is the case the unit tests
       # cannot reach and the one the 001 seed exists to keep true

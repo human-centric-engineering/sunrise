@@ -218,8 +218,8 @@ async function main(): Promise<void> {
       selfNotified.destination === user.email.toLowerCase(),
       'an email-channel delivery records the address, normalised'
     );
-    const subjectSource = SUBJECT_DATA_SOURCES.find((s) => s.section === 'notificationsSentToYou');
-    if (!subjectSource) throw new Error('no subject source for notificationsSentToYou');
+    const subjectSource = SUBJECT_DATA_SOURCES.find((s) => s.section === 'webhookDeliveries');
+    if (!subjectSource) throw new Error('no subject source for webhookDeliveries');
     const theirs = await subjectSource.fetch({
       userId: user.id,
       email: user.email,

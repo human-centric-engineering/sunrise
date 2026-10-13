@@ -45,6 +45,7 @@ import {
   normaliseAddress,
   webhookDeliveriesAddressedTo,
 } from '@/lib/orchestration/webhooks/destination';
+import { deliveriesNamingSubject, subjectViewOfPayload } from '@/lib/privacy/delivery-payloads';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 
 /** How a `User`-linked model is represented in a subject export. */
@@ -102,6 +103,11 @@ function toAttribution(rows: { id: string; name: string; createdAt: Date }[]): A
 }
 
 const byCreatedAt = { createdAt: 'asc' } as const;
+
+/** Plain code-unit order, so ties sort the same on every locale. */
+function cmp(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
 const namedSelect = { id: true, name: true, createdAt: true } as const;
 
 /**
@@ -292,16 +298,21 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
   },
   {
     model: 'AiWebhookDelivery',
-    section: 'notificationsSentToYou',
+    section: 'webhookDeliveries',
     disposition: 'export',
     description:
-      'Event notifications the organisation emailed to the subject’s address: when, which event, and whether it was delivered — not the event itself, which describes the organisation’s activity rather than the subject. These records outlive the subscription that sent them. Included only once the account has verified that address.',
-    // ⚠️ Keyed by address, like `ContactSubmission` above, and for the same
-    // reason no net finds it: a delivery has no user column, and since §109
-    // t-739 it outlives its subscription, so the address it was emailed to
-    // can stay on the row after the subscription (which this manifest exports
-    // under `notificationSubscriptions`) is gone. Matched through the rule
-    // erasure redacts with — exact on the normalised address, verified only.
+      'Event notifications the organisation sent that concern the subject: those emailed to their address (when, which event, and whether it was delivered), and those whose event was about their own conversations or workflow runs, or about a change they made. For an event about their own activity, what it said; for a change they made, which change. These records outlive the subscription that sent them. Notifications emailed to an address are included only once the account has verified it. Other people named in an event — colleagues asked to approve a step, an administrator who acted on the subject’s run — are left out.',
+    // Two ways a delivery concerns the subject, merged by row: `sentTo` when it
+    // was emailed to their address, `about` when its payload names them
+    // (t-783). A row can be both.
+    //
+    // ⚠️ `sentTo` is keyed by address, like `ContactSubmission` above, and for
+    // the same reason no net finds it: a delivery has no user column, and
+    // since §109 t-739 it outlives its subscription, so the address it was
+    // emailed to can stay on the row after the subscription (which this
+    // manifest exports under `notificationSubscriptions`) is gone. Matched
+    // through the rule erasure redacts with — exact on the normalised address,
+    // verified only.
     //
     // ⚠️ Never the row's own `destination` or `previousDestinations`. A retry
     // after the subscription was re-pointed leaves one row naming two inboxes —
@@ -309,24 +320,75 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     // and either column would hand the subject someone else's address. The
     // match already proves the row went to the subject's address, so that,
     // and only that, is what the export says.
+    //
+    // `about` is matched and shaped by `lib/privacy/delivery-payloads.ts`, the
+    // same rule erasure redacts with.
     fetch: async (subject: SubjectQuery): Promise<unknown[]> => {
       const where = webhookDeliveriesAddressedTo(subject);
-      if (!where) return [];
-      const rows = await prisma.aiWebhookDelivery.findMany({
-        where,
-        select: { id: true, eventType: true, status: true, lastAttemptAt: true, createdAt: true },
-        orderBy: byCreatedAt,
-      });
+      const [addressed, named] = await Promise.all([
+        where
+          ? prisma.aiWebhookDelivery.findMany({
+              where,
+              select: {
+                id: true,
+                eventType: true,
+                status: true,
+                lastAttemptAt: true,
+                createdAt: true,
+              },
+            })
+          : [],
+        deliveriesNamingSubject(prisma, 'webhook', subject.userId),
+      ]);
       const sentTo = normaliseAddress(subject.email);
-      // Field by field, not a spread: widening the select above must not be
-      // enough to put a row's own address columns in front of the subject.
+      const sentToIds = new Set(addressed.map((row) => row.id));
+      const aboutById = new Map(named.map((row) => [row.id, row]));
+      const rows = [...addressed, ...named.filter((row) => !sentToIds.has(row.id))];
+      rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || cmp(a.id, b.id));
+      // Field by field, not a spread: widening a select must not be enough to
+      // put a row's own address columns, or its raw payload, in front of the
+      // subject.
+      return rows.map((row) => {
+        const about = aboutById.get(row.id);
+        return {
+          id: row.id,
+          eventType: row.eventType,
+          status: row.status,
+          lastAttemptAt: row.lastAttemptAt,
+          createdAt: row.createdAt,
+          sentTo: sentToIds.has(row.id) ? sentTo : null,
+          about: about
+            ? {
+                basis: about.basis,
+                data: subjectViewOfPayload(about.payload, about.basis, subject.userId),
+              }
+            : null,
+        };
+      });
+    },
+  },
+  {
+    model: 'AiEventHookDelivery',
+    section: 'eventHookDeliveries',
+    disposition: 'export',
+    description:
+      'Events the organisation sent to its own integrations that concern the subject: those about their own conversations or workflow runs (what the event said), and those about a change they made (which change). These records outlive the hook that sent them. Other people named in an event — colleagues asked to approve a step, an administrator who acted on the subject’s run — are left out.',
+    // ⚠️ No FK to `User` and no user column: listed by hand, like
+    // `ContactSubmission`. The payload names the subject; matched and shaped by
+    // `lib/privacy/delivery-payloads.ts` (t-783), the rule erasure redacts with.
+    // Never the row's destination: a hook's URL is the org's, not the subject's.
+    fetch: async (subject: SubjectQuery): Promise<unknown[]> => {
+      const rows = await deliveriesNamingSubject(prisma, 'hook', subject.userId);
       return rows.map((row) => ({
         id: row.id,
         eventType: row.eventType,
         status: row.status,
         lastAttemptAt: row.lastAttemptAt,
         createdAt: row.createdAt,
-        sentTo,
+        about: {
+          basis: row.basis,
+          data: subjectViewOfPayload(row.payload, row.basis, subject.userId),
+        },
       }));
     },
   },

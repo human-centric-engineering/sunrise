@@ -20,6 +20,13 @@
  *      sent to it. Deliveries outlive their subscription (`SetNull`, §109
  *      t-739) as the org's record of where its events went, so a notification
  *      emailed to this person would otherwise keep their address for ever.
+ *   6. Redact the user from every webhook and event-hook delivery whose payload
+ *      names them — an event about their conversations or workflow runs, or a
+ *      change they made (t-783). No FK reaches a payload.
+ *   7. Clear the user's (verified) address from other admins' email
+ *      subscriptions, and deactivate them, with an audit entry for each
+ *      (t-786). Their own subscriptions cascade away; a colleague's that
+ *      emails them would otherwise keep notifying an erased person.
  *
  * The scrub, contact delete, receipt, and user delete run in one transaction
  * so they commit or roll back together. Avatar cleanup runs first as a
@@ -32,6 +39,7 @@ import { logger } from '@/lib/logging';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 import { contactSubmissionsOf, contactSubmissionsUnder } from '@/lib/privacy/contact-submissions';
 import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
+import { eraseSubjectFromDeliveries } from '@/lib/privacy/delivery-payloads';
 import { notRetried } from '@/lib/orchestration/webhooks/not-retried';
 import {
   ERASED_DESTINATION,
@@ -96,9 +104,9 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
       )
     : await eraseRows(params);
 
-  // Contact messages and webhook deliveries are the things erased by address
-  // rather than by FK, so they are what the receipt cannot vouch for: log what
-  // was taken.
+  // Contact messages, deliveries and colleagues' subscriptions are the things
+  // erased by address or payload rather than by FK, so they are what the
+  // receipt cannot vouch for: log what was taken.
   logger.info('User erased', {
     userId,
     actorUserId,
@@ -106,6 +114,9 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
     receiptId: receipt.id,
     contactSubmissionsDeleted: receipt.contactSubmissionsDeleted,
     webhookDeliveriesRedacted: receipt.webhookDeliveriesRedacted,
+    webhookPayloadsRedacted: receipt.webhookPayloadsRedacted,
+    eventHookPayloadsRedacted: receipt.eventHookPayloadsRedacted,
+    subscriptionsDeactivated: receipt.subscriptionsDeactivated,
   });
   // An unverified address matched nothing, so contact messages sent under it
   // are still there, and only a person can decide whether they were this
@@ -131,6 +142,12 @@ async function eraseRows(params: EraseUserParams): Promise<{
   contactSubmissionsLeft: number;
   /** Rows touched by the delivery redaction; a row can count in two passes. */
   webhookDeliveriesRedacted: number;
+  /** Webhook deliveries whose payload named the user. */
+  webhookPayloadsRedacted: number;
+  /** Event-hook deliveries whose payload named the user. */
+  eventHookPayloadsRedacted: number;
+  /** Other admins' email subscriptions cleared and deactivated. */
+  subscriptionsDeactivated: number;
 }> {
   const { userId, userEmail, actorUserId, reason } = params;
 
@@ -246,6 +263,69 @@ async function eraseRows(params: EraseUserParams): Promise<{
       webhookDeliveriesRedacted = retrying.length + current.count + movedOn.length;
     }
 
+    // A colleague's email subscription that notifies this person (t-786;
+    // owner ruling 2026-10-13). Their own subscriptions cascade with the user
+    // row; another admin's would keep emailing the erased person and writing
+    // the address onto every new delivery. Cleared and deactivated rather
+    // than deleted: the integration stays visible to its owner, who can point
+    // it somewhere else, and nothing addressed to this person is sent again.
+    // Matched on the same rule as above. A subscription stores the address as
+    // typed, so it is normalised here, in SQL — never `mode: 'insensitive'`,
+    // whose `ILIKE` would match `_` and `%` as wildcards. Normalised as
+    // `normaliseAddress` does; an address that passed the routes' email
+    // validation carries no whitespace a `btrim` would miss.
+    let subscriptionsDeactivated = 0;
+    if (addressed) {
+      const address = normaliseAddress(account.email);
+      const cleared = await tx.$queryRaw<
+        Array<{ id: string; orgId: string | null; createdBy: string; wasActive: boolean }>
+      >`
+        WITH target AS (
+          SELECT id, "isActive"
+            FROM ai_webhook_subscription
+           WHERE channel = 'email'
+             AND lower(btrim("emailAddress")) = ${address}
+             AND "createdBy" <> ${userId}
+             FOR UPDATE
+        )
+        UPDATE ai_webhook_subscription AS s
+           SET "emailAddress" = NULL, "isActive" = false, "updatedAt" = now()
+          FROM target
+         WHERE s.id = target.id
+        RETURNING s.id, s."orgId", s."createdBy", target."isActive" AS "wasActive"
+      `;
+      if (cleared.length > 0) {
+        // The audit row names the subscription and its owner, never the
+        // address: the log is kept through erasure, and the address is what
+        // is being erased.
+        await tx.aiAdminAuditLog.createMany({
+          data: cleared.map((sub) => ({
+            userId: actorUserId,
+            action: 'webhook_subscription.recipient_erased',
+            entityType: 'webhook_subscription',
+            entityId: sub.id,
+            entityName: sub.id,
+            changes: {
+              emailAddress: { from: ERASED_DESTINATION, to: null },
+              isActive: { from: sub.wasActive, to: false },
+            },
+            metadata: {
+              reason: 'The person this subscription emailed was erased.',
+              ownerUserId: sub.createdBy,
+              orgId: sub.orgId,
+            },
+          })),
+        });
+      }
+      subscriptionsDeactivated = cleared.length;
+    }
+
+    // Deliveries whose payload names this person (t-783): redacted, not
+    // deleted, for the reason above. Matched on their conversations and runs
+    // too, which cascade with the user row, so this must run before it goes.
+    const webhookPayloadsRedacted = await eraseSubjectFromDeliveries(tx, 'webhook', userId);
+    const eventHookPayloadsRedacted = await eraseSubjectFromDeliveries(tx, 'hook', userId);
+
     // App-registered in-transaction scrub. Runs before `tx.user.delete()` so
     // hooks can still match retained rows on `userId`, and atomically with the
     // delete — a throw here rolls the entire erasure back.
@@ -271,6 +351,9 @@ async function eraseRows(params: EraseUserParams): Promise<{
       contactSubmissionsDeleted: contacts.count,
       contactSubmissionsLeft: left,
       webhookDeliveriesRedacted,
+      webhookPayloadsRedacted,
+      eventHookPayloadsRedacted,
+      subscriptionsDeactivated,
     };
   });
 }
