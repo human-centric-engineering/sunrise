@@ -14,6 +14,7 @@ import { successResponse, paginatedResponse } from '@/lib/api/responses';
 import { validateRequestBody, validateQueryParams } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { loggableUrl } from '@/lib/logging/redact-path';
+import { auditableSubscriptionName } from '@/lib/orchestration/webhooks/destination';
 import { getClientIP } from '@/lib/security/ip';
 import { createWebhookSchema, listWebhooksQuerySchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -108,7 +109,8 @@ export const POST = withAdminAuth(async (request, session) => {
   log.info('Webhook created', {
     webhookId: webhook.id,
     channel: webhook.channel,
-    destination: webhook.channel === 'webhook' ? loggableUrl(webhook.url) : webhook.emailAddress,
+    // A webhook's reduced URL; never an email subscriber's address (t-785).
+    ...(webhook.channel === 'webhook' && { destination: loggableUrl(webhook.url) }),
     events: webhook.events,
     adminId: session.user.id,
   });
@@ -118,7 +120,7 @@ export const POST = withAdminAuth(async (request, session) => {
     action: 'webhook_subscription.create',
     entityType: 'webhook_subscription',
     entityId: webhook.id,
-    entityName: (webhook.channel === 'webhook' ? webhook.url : webhook.emailAddress) ?? webhook.id,
+    entityName: auditableSubscriptionName(webhook),
     metadata: { channel: webhook.channel, events: webhook.events },
     clientIp: clientIP,
   });

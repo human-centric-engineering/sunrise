@@ -199,6 +199,52 @@ describe('GET /api/v1/admin/orchestration/executions/:id', () => {
     expect(data.data.costEntries).toEqual([]);
   });
 
+  it('shortens webhook URLs in the trace and outputData without touching the stored row (t-777)', async () => {
+    const SECRET = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+    const SLACK = `https://hooks.slack.com/services/T0000/B0000/${SECRET}?token=qs-secret`;
+    const REDUCED = 'https://hooks.slack.com/services/T0000/B0000/[param]';
+    const row = makeExecution({
+      status: 'completed',
+      outputData: { sent: true, channel: 'webhook', url: SLACK },
+      executionTrace: [
+        {
+          stepId: 'notify',
+          stepType: 'send_notification',
+          label: 'Notify',
+          status: 'completed',
+          input: { channel: 'webhook', webhookUrl: SLACK, bodyTemplate: 'Done' },
+          output: { sent: true, channel: 'webhook', url: SLACK },
+          tokensUsed: 0,
+          costUsd: 0,
+          startedAt: '2025-01-01T00:00:00Z',
+          completedAt: '2025-01-01T00:00:01Z',
+          durationMs: 1000,
+        },
+      ],
+    });
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(row as never);
+
+    const response = await GET(makeGetRequest(), makeParams(EXECUTION_ID));
+    const text = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(text).not.toContain(SECRET);
+    expect(text).not.toContain('qs-secret');
+    const body = JSON.parse(text) as {
+      data: {
+        execution: { outputData: { url: string } };
+        trace: Array<{ input: { webhookUrl: string }; output: { url: string } }>;
+      };
+    };
+    expect(body.data.trace[0]?.input.webhookUrl).toBe(REDUCED);
+    expect(body.data.trace[0]?.output.url).toBe(REDUCED);
+    expect(body.data.execution.outputData.url).toBe(REDUCED);
+    // The stored trace still holds the working URL that later steps and
+    // resume read (`{{steps.notify.output.url}}`).
+    expect(JSON.stringify(row.executionTrace)).toContain(SECRET);
+  });
+
   it('returns the conversation the run replies on, for the re-run dialog (t-770)', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(

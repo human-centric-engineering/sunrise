@@ -30,6 +30,7 @@ import { runAsExecutionOrg } from '@/lib/orchestration/approval-route-helpers';
 import { prisma } from '@/lib/db/client';
 import { cuidSchema } from '@/lib/validations/common';
 import { executionTraceSchema } from '@/lib/validations/orchestration';
+import { withDisplayUrls } from '@/lib/orchestration/trace/display-urls';
 
 const CORS_HEADERS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
@@ -95,7 +96,9 @@ export async function GET(
     return withCors(errorResponse('Execution not found', { code: 'NOT_FOUND', status: 404 }));
   }
 
-  const trace = executionTraceSchema.parse(execution.executionTrace);
+  // URL-bearing values shortened (t-777): a token holder is shown the
+  // run's progress, not the workflow's webhook secrets.
+  const trace = withDisplayUrls(executionTraceSchema.parse(execution.executionTrace));
 
   return withCors(
     successResponse({

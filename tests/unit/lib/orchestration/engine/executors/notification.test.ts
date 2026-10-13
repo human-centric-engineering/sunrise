@@ -352,7 +352,7 @@ describe('executeNotification', () => {
   // ── Webhook channel ────────────────────────────────────────────────────────
 
   describe('webhook channel', () => {
-    it('keeps a credential in the webhook URL out of the log line, but not out of the step output (#953)', async () => {
+    it('keeps a credential in the webhook URL out of the log line and event payload, but not out of the step output (#953, t-777)', async () => {
       const secret = 'AbCdEfGhIjKlMnOpQrStUvWx';
       const step = makeWebhookStep({
         webhookUrl: `https://hooks.slack.com/services/T0000/B0000/${secret}?token=qs-secret`,
@@ -360,11 +360,17 @@ describe('executeNotification', () => {
 
       const result = await executor(step, makeCtx());
 
-      // The dispatcher still receives the full URL — only what is recorded is reduced.
+      // The event goes to every subscription and is stored on each delivery
+      // row, so it carries only the reduced URL (t-777).
       expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledWith(
         'workflow_notification',
-        expect.objectContaining({ webhookUrl: step.config.webhookUrl })
+        expect.objectContaining({
+          webhookUrl: 'https://hooks.slack.com/services/T0000/B0000/[param]',
+        })
       );
+      const dispatched = JSON.stringify(vi.mocked(dispatchWebhookEvent).mock.calls);
+      expect(dispatched).not.toContain(secret);
+      expect(dispatched).not.toContain('qs-secret');
       // `output` is merged into the context (`{{steps.<id>.output.url}}`) and
       // rehydrated from the trace on resume, so it keeps the working URL.
       expect(result.output).toEqual({

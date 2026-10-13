@@ -62,6 +62,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 // ─── Imports ────────────────────────────────────────────────────────────────
 
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { GET, POST } from '@/app/api/v1/admin/orchestration/webhooks/route';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
@@ -268,6 +269,54 @@ describe('Webhook Subscription API', () => {
       const logged = JSON.stringify(mockLogInfo.mock.calls);
       expect(logged).not.toContain(SECRET);
       expect(logged).not.toContain('qs-secret');
+    });
+
+    it('records only the URL origin in the audit entry (t-777, t-785)', async () => {
+      const SECRET = 'AbCdEfGhIjKlMnOpQrStUvWx';
+      const url = `https://hooks.slack.com/services/T0000/B0000/${SECRET}?token=qs-secret`;
+      vi.mocked(prisma.aiWebhookSubscription.create).mockResolvedValue({
+        ...mockWebhook,
+        channel: 'webhook',
+        url,
+      } as never);
+
+      const res = await POST(makePostRequest({ ...validPayload, url }));
+
+      expect(res.status).toBe(201);
+      expect(logAdminAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entityId: 'wh-001',
+          entityName: 'https://hooks.slack.com',
+        })
+      );
+      const audited = JSON.stringify(vi.mocked(logAdminAction).mock.calls);
+      expect(audited).not.toContain(SECRET);
+      expect(audited).not.toContain('qs-secret');
+    });
+
+    it('writes no email address into the audit entry or the log line (t-785)', async () => {
+      const ADDRESS = 'alerts@example.com';
+      vi.mocked(prisma.aiWebhookSubscription.create).mockResolvedValue({
+        ...mockWebhook,
+        channel: 'email',
+        url: null,
+        emailAddress: ADDRESS,
+      } as never);
+
+      const res = await POST(
+        makePostRequest({
+          channel: 'email',
+          emailAddress: ADDRESS,
+          events: ['execution_completed'],
+        })
+      );
+
+      expect(res.status).toBe(201);
+      expect(logAdminAction).toHaveBeenCalledWith(
+        expect.objectContaining({ entityId: 'wh-001', entityName: 'wh-001' })
+      );
+      expect(JSON.stringify(vi.mocked(logAdminAction).mock.calls)).not.toContain(ADDRESS);
+      expect(JSON.stringify(mockLogInfo.mock.calls)).not.toContain(ADDRESS);
     });
 
     it('defaults isActive to true when not specified', async () => {

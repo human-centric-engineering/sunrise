@@ -192,6 +192,37 @@ describe('GET /api/v1/admin/orchestration/executions/:id/live', () => {
     ]);
   });
 
+  it('shortens webhook URLs in the trace it serves (t-777)', async () => {
+    const SECRET = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+    const SLACK = `https://hooks.slack.com/services/T0000/B0000/${SECRET}?token=qs-secret`;
+    const notifyEntry = {
+      stepId: 'notify',
+      stepType: 'send_notification',
+      label: 'Notify',
+      status: 'completed',
+      input: { channel: 'webhook', webhookUrl: SLACK, bodyTemplate: 'Done' },
+      output: { sent: true, channel: 'webhook', url: SLACK },
+      tokensUsed: 0,
+      costUsd: 0,
+      startedAt: '2026-05-17T10:00:00.000Z',
+      completedAt: '2026-05-17T10:00:01.000Z',
+      durationMs: 1000,
+    };
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecutionRow({ executionTrace: [notifyEntry] }) as never
+    );
+    vi.mocked(prisma.aiWorkflowRunningStep.findMany).mockResolvedValue([] as never);
+
+    const response = await GET(makeRequest(), makeParams(EXECUTION_ID));
+    const text = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(text).toContain('https://hooks.slack.com/services/T0000/B0000/[param]');
+    expect(text).not.toContain(SECRET);
+    expect(text).not.toContain('qs-secret');
+  });
+
   it('exposes turnCount from running-step `turns` length so long agent_calls show forward progress', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(makeExecutionRow() as never);

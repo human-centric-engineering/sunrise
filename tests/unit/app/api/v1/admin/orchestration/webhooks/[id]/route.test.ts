@@ -547,9 +547,12 @@ describe('PATCH /webhooks/:id', () => {
   // ── Audit entityName uses channel-appropriate destination ───────────────
 
   describe('audit entityName', () => {
-    it('uses url as entityName for webhook channel', async () => {
-      const existing = makeWebhook({ channel: 'webhook' });
-      const updated = makeWebhook({ channel: 'webhook', url: 'https://example.com/webhook' });
+    const SECRET = 'AbCdEfGhIjKlMnOpQrStUvWx';
+    const SLACK = `https://hooks.slack.com/services/T0000/B0000/${SECRET}?token=qs-secret`;
+
+    it('records only the URL origin for a webhook channel (t-777, t-785)', async () => {
+      const existing = makeWebhook({ channel: 'webhook', url: SLACK });
+      const updated = makeWebhook({ channel: 'webhook', url: SLACK, isActive: false });
       vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(existing as never);
       vi.mocked(prisma.aiWebhookSubscription.update).mockResolvedValue(updated as never);
       vi.mocked(validateRequestBody).mockResolvedValue({ isActive: false });
@@ -557,31 +560,69 @@ describe('PATCH /webhooks/:id', () => {
       await PATCH(makePatchRequest({ isActive: false }), makeParams(WEBHOOK_ID));
 
       expect(logAdminAction).toHaveBeenCalledWith(
-        expect.objectContaining({ entityName: 'https://example.com/webhook' })
+        expect.objectContaining({ entityId: WEBHOOK_ID, entityName: 'https://hooks.slack.com' })
       );
+      const audited = JSON.stringify(vi.mocked(logAdminAction).mock.calls);
+      expect(audited).not.toContain(SECRET);
+      expect(audited).not.toContain('qs-secret');
     });
 
-    it('uses emailAddress as entityName for email channel', async () => {
+    it('reduces a changed URL to its origins in the changes diff (t-785)', async () => {
+      const OLD_SECRET = 'Zz9yXw8vUt7sRq6pOn5mLk4j';
+      const existing = makeWebhook({
+        channel: 'webhook',
+        url: `https://old.example.com/h/${OLD_SECRET}`,
+      });
+      const updated = makeWebhook({ channel: 'webhook', url: SLACK });
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(existing as never);
+      vi.mocked(prisma.aiWebhookSubscription.update).mockResolvedValue(updated as never);
+      vi.mocked(validateRequestBody).mockResolvedValue({ url: SLACK });
+      // The raw diff `computeChanges` produces; the route must reduce it.
+      vi.mocked(computeChanges).mockReturnValueOnce({
+        url: { from: `https://old.example.com/h/${OLD_SECRET}`, to: SLACK },
+      });
+
+      await PATCH(makePatchRequest({ url: SLACK }), makeParams(WEBHOOK_ID));
+
+      expect(logAdminAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          changes: { url: { from: 'https://old.example.com', to: 'https://hooks.slack.com' } },
+        })
+      );
+      const audited = JSON.stringify(vi.mocked(logAdminAction).mock.calls);
+      expect(audited).not.toContain(SECRET);
+      expect(audited).not.toContain(OLD_SECRET);
+    });
+
+    it('writes no email address for an email channel, in the name or the diff (t-785)', async () => {
       const existing = makeWebhook({
         channel: 'email',
         url: null,
-        emailAddress: 'alerts@example.com',
+        emailAddress: 'old@example.com',
       });
       const updated = makeWebhook({
         channel: 'email',
         url: null,
         emailAddress: 'alerts@example.com',
-        isActive: false,
       });
       vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(existing as never);
       vi.mocked(prisma.aiWebhookSubscription.update).mockResolvedValue(updated as never);
-      vi.mocked(validateRequestBody).mockResolvedValue({ isActive: false });
+      vi.mocked(validateRequestBody).mockResolvedValue({ emailAddress: 'alerts@example.com' });
+      vi.mocked(computeChanges).mockReturnValueOnce({
+        emailAddress: { from: 'old@example.com', to: 'alerts@example.com' },
+      });
 
-      await PATCH(makePatchRequest({ isActive: false }), makeParams(WEBHOOK_ID));
+      await PATCH(makePatchRequest({ emailAddress: 'alerts@example.com' }), makeParams(WEBHOOK_ID));
 
       expect(logAdminAction).toHaveBeenCalledWith(
-        expect.objectContaining({ entityName: 'alerts@example.com' })
+        expect.objectContaining({
+          entityName: WEBHOOK_ID,
+          changes: { emailAddress: { from: '[address]', to: '[address]' } },
+        })
       );
+      const audited = JSON.stringify(vi.mocked(logAdminAction).mock.calls);
+      expect(audited).not.toContain('old@example.com');
+      expect(audited).not.toContain('alerts@example.com');
     });
   });
 });
@@ -646,6 +687,39 @@ describe('DELETE /webhooks/:id', () => {
     // Assert: delete called with the correct id
     expect(prisma.aiWebhookSubscription.delete).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: WEBHOOK_ID } })
+    );
+  });
+
+  it('records only the URL origin when deleting a tokened webhook (t-777, t-785)', async () => {
+    const SECRET = 'AbCdEfGhIjKlMnOpQrStUvWx';
+    const webhook = makeWebhook({ url: `https://hooks.slack.com/services/T0/B0/${SECRET}` });
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(webhook as never);
+    vi.mocked(prisma.aiWebhookSubscription.delete).mockResolvedValue(webhook as never);
+
+    await DELETE(makeDeleteRequest(), makeParams(WEBHOOK_ID));
+
+    expect(logAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({ entityId: WEBHOOK_ID, entityName: 'https://hooks.slack.com' })
+    );
+    expect(JSON.stringify(vi.mocked(logAdminAction).mock.calls)).not.toContain(SECRET);
+  });
+
+  it('writes no email address when deleting an email subscription (t-785)', async () => {
+    const webhook = makeWebhook({
+      channel: 'email',
+      url: null,
+      emailAddress: 'alerts@example.com',
+    });
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(webhook as never);
+    vi.mocked(prisma.aiWebhookSubscription.delete).mockResolvedValue(webhook as never);
+
+    await DELETE(makeDeleteRequest(), makeParams(WEBHOOK_ID));
+
+    expect(logAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({ entityName: WEBHOOK_ID })
+    );
+    expect(JSON.stringify(vi.mocked(logAdminAction).mock.calls)).not.toContain(
+      'alerts@example.com'
     );
   });
 

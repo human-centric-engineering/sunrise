@@ -30,6 +30,7 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { cuidSchema } from '@/lib/validations/common';
 import { adminCanViewExecution } from '@/lib/orchestration/access/execution-access';
 import { executionTraceSchema } from '@/lib/validations/orchestration';
+import { withDisplayUrls } from '@/lib/orchestration/trace/display-urls';
 import { overlayStepDescriptions } from '@/lib/orchestration/trace/overlay-descriptions';
 import {
   collectAgentSlugsFromSnapshot,
@@ -90,7 +91,9 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
     throw new NotFoundError(`Execution ${id} not found`);
   }
 
-  const parsedTrace = executionTraceSchema.parse(execution.executionTrace);
+  // URL-bearing values are shortened for display (t-777); the persisted
+  // trace keeps the working URLs later steps and resume read.
+  const parsedTrace = withDisplayUrls(executionTraceSchema.parse(execution.executionTrace));
   // For each trace entry that lacks a `description`, fill it from the
   // pinned version's snapshot. Old executions ran before descriptions
   // were a thing — without this overlay their expanded rows would
@@ -204,7 +207,7 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
       budgetLimitUsd: execution.budgetLimitUsd,
       currentStep: execution.currentStep,
       inputData: execution.inputData,
-      outputData: execution.outputData,
+      outputData: withDisplayUrls(execution.outputData),
       errorMessage: execution.errorMessage,
       startedAt: execution.startedAt,
       completedAt: execution.completedAt,

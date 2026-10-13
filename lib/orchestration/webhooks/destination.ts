@@ -207,6 +207,51 @@ export function auditableDestination(destination: string | null): string | null 
     : null;
 }
 
+/** What an email address reads as in the admin audit log (t-785). */
+export const AUDIT_ADDRESS = '[address]';
+
+/**
+ * How the admin audit log names a webhook subscription (t-785): the URL's
+ * origin for a webhook, the subscription's id for an email subscription. A
+ * subscription URL often carries the receiver's credential (a Slack path
+ * token, a `?token=` query), and an address is a person's, while the audit
+ * log is readable by every admin and kept through erasure — so neither is
+ * ever written there in full. Same rule as {@link auditableDestination}.
+ */
+export function auditableSubscriptionName(sub: {
+  id: string;
+  channel: string;
+  url: string | null;
+}): string {
+  return sub.channel === 'webhook' && sub.url ? originOf(sub.url) : sub.id;
+}
+
+/**
+ * A subscription's audit `changes` diff with its destination reduced (t-785):
+ * a `url` change records each side's origin, an `emailAddress` change records
+ * {@link AUDIT_ADDRESS} for each side that held one (so set, cleared and
+ * changed stay distinguishable). `secret` is redacted by the audit logger
+ * itself. Every other field passes through.
+ */
+export function auditableSubscriptionChanges(
+  changes: Record<string, { from: unknown; to: unknown }> | null
+): Record<string, { from: unknown; to: unknown }> | null {
+  if (!changes) return null;
+  const out = { ...changes };
+  const reduce = (value: unknown, by: (raw: string) => string): unknown =>
+    typeof value === 'string' && value !== '' ? by(value) : value;
+  if (out.url) {
+    out.url = { from: reduce(out.url.from, originOf), to: reduce(out.url.to, originOf) };
+  }
+  if (out.emailAddress) {
+    out.emailAddress = {
+      from: reduce(out.emailAddress.from, () => AUDIT_ADDRESS),
+      to: reduce(out.emailAddress.to, () => AUDIT_ADDRESS),
+    };
+  }
+  return out;
+}
+
 /**
  * What an erased email destination reads as. The delivery row stays — it is
  * the org's record that an event was sent — but the address was the erased

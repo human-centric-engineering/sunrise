@@ -134,6 +134,36 @@ describe('GET /api/v1/admin/orchestration/executions/:id/report.md', () => {
     expect(body).toContain('### 1. first step');
   });
 
+  it('shortens webhook URLs in the rendered step input and output (t-777)', async () => {
+    const SECRET = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+    const SLACK = `https://hooks.slack.com/services/T0000/B0000/${SECRET}?token=qs-secret`;
+    const notifyEntry = {
+      stepId: 'notify',
+      stepType: 'send_notification',
+      label: 'Notify',
+      status: 'completed',
+      input: { channel: 'webhook', webhookUrl: SLACK, bodyTemplate: 'Done' },
+      output: { sent: true, channel: 'webhook', url: SLACK },
+      tokensUsed: 0,
+      costUsd: 0,
+      startedAt: '2026-05-17T10:00:00.000Z',
+      completedAt: '2026-05-17T10:00:01.000Z',
+      durationMs: 1000,
+    };
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
+      ...happyExecution(),
+      executionTrace: [notifyEntry],
+    } as never);
+
+    const res = await GET(makeRequest(), makeContext());
+    const body = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(body).toContain('https://hooks.slack.com/services/T0000/B0000/[param]');
+    expect(body).not.toContain(SECRET);
+    expect(body).not.toContain('qs-secret');
+  });
+
   it('sets Content-Type to text/markdown and Content-Disposition to attachment', async () => {
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(happyExecution() as never);
     const res = await GET(makeRequest(), makeContext());

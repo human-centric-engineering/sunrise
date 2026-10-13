@@ -27,6 +27,8 @@ import {
   redactAddressInHistory,
   subscriptionDestination,
   webhookDeliveriesAddressedTo,
+  auditableSubscriptionChanges,
+  auditableSubscriptionName,
 } from '@/lib/orchestration/webhooks/destination';
 
 const TOKEN = 'Ab3dEf6hIj9kLm2nOp5qRs8t';
@@ -397,5 +399,42 @@ describe('destinationUpdate with an erased pair', () => {
 
     expect(result).toEqual({ ...target });
     expect(result).not.toHaveProperty('previousDestinations');
+  });
+});
+
+describe('auditableSubscriptionName (t-785)', () => {
+  it('names a webhook subscription by its URL origin only', () => {
+    expect(
+      auditableSubscriptionName({
+        id: 'sub-1',
+        channel: 'webhook',
+        url: 'https://user:pw@hooks.slack.com/services/T0/B0/Xk9fQ2mZp4LrT7vB1nWc8sYd?token=x',
+      })
+    ).toBe('https://hooks.slack.com');
+  });
+
+  it('names an email subscription, or a webhook with no URL, by its id', () => {
+    expect(auditableSubscriptionName({ id: 'sub-1', channel: 'email', url: null })).toBe('sub-1');
+    expect(auditableSubscriptionName({ id: 'sub-2', channel: 'webhook', url: null })).toBe('sub-2');
+  });
+});
+
+describe('auditableSubscriptionChanges (t-785)', () => {
+  it('passes null through', () => {
+    expect(auditableSubscriptionChanges(null)).toBeNull();
+  });
+
+  it('keeps set, cleared and changed distinguishable without writing an address or a path', () => {
+    expect(
+      auditableSubscriptionChanges({
+        url: { from: null, to: 'https://hooks.slack.com/services/T0/B0/Xk9fQ2mZp4LrT7vB1nWc8sYd' },
+        emailAddress: { from: 'a@example.com', to: null },
+        isActive: { from: true, to: false },
+      })
+    ).toEqual({
+      url: { from: null, to: 'https://hooks.slack.com' },
+      emailAddress: { from: '[address]', to: null },
+      isActive: { from: true, to: false },
+    });
   });
 });

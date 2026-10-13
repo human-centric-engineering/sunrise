@@ -166,4 +166,44 @@ describe('GET /api/v1/orchestration/approvals/:id/status', () => {
     expect(body.data.executionTrace).toHaveLength(1);
     expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*');
   });
+
+  it('shows a token holder shortened webhook URLs, not working ones (t-777)', async () => {
+    const SECRET = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+    const SLACK = `https://hooks.slack.com/services/T0000/B0000/${SECRET}?token=qs-secret`;
+    const notifyEntry = {
+      stepId: 'notify',
+      stepType: 'send_notification',
+      label: 'Notify',
+      status: 'completed',
+      input: { channel: 'webhook', webhookUrl: SLACK, bodyTemplate: 'Done' },
+      output: { sent: true, channel: 'webhook', url: SLACK },
+      tokensUsed: 0,
+      costUsd: 0,
+      startedAt: '2026-05-06T00:00:00.000Z',
+      completedAt: '2026-05-17T10:00:01.000Z',
+      durationMs: 1000,
+    };
+    mockVerify.mockReturnValue({
+      executionId: VALID_ID,
+      action: 'approve',
+      expiresAt: new Date('2030-01-01').toISOString(),
+    });
+    findUnique.mockResolvedValue({
+      id: VALID_ID,
+      status: 'completed',
+      errorMessage: null,
+      executionTrace: [notifyEntry],
+      completedAt: new Date('2026-05-06T01:00:00Z'),
+    });
+
+    const res = await GET(makeRequest('valid-token'), {
+      params: Promise.resolve({ id: VALID_ID }),
+    });
+    const text = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(text).toContain('https://hooks.slack.com/services/T0000/B0000/[param]');
+    expect(text).not.toContain(SECRET);
+    expect(text).not.toContain('qs-secret');
+  });
 });

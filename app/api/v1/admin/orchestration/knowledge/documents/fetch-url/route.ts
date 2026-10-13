@@ -89,7 +89,8 @@ export const POST = withAdminAuth(async (request, session) => {
     entityType: 'knowledge_document',
     entityId: document.id,
     entityName: document.name,
-    metadata: { sourceUrl: body.url, fileName: fetched.fileName, tagsApplied },
+    // The fetched URL may carry a token in its path or query (t-777).
+    metadata: { sourceUrl: loggableUrl(body.url), fileName: fetched.fileName, tagsApplied },
     clientIp: clientIP,
   });
 

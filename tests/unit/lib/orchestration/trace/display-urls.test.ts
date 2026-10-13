@@ -1,0 +1,74 @@
+/**
+ * Tests: shortening URL-bearing values in a trace for display (t-777).
+ *
+ * @see lib/orchestration/trace/display-urls.ts
+ */
+
+import { describe, it, expect } from 'vitest';
+import { withDisplayUrls } from '@/lib/orchestration/trace/display-urls';
+
+const SECRET = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+const SLACK = `https://hooks.slack.com/services/T0000/B0000/${SECRET}?token=qs-secret`;
+const REDUCED = 'https://hooks.slack.com/services/T0000/B0000/[param]';
+
+describe('withDisplayUrls', () => {
+  it('shortens a send_notification entry in both its input and its output', () => {
+    const entry = {
+      stepId: 'notify',
+      stepType: 'send_notification',
+      input: { channel: 'webhook', webhookUrl: SLACK, bodyTemplate: 'Done' },
+      output: { sent: true, channel: 'webhook', url: SLACK },
+    };
+
+    const shown = withDisplayUrls([entry]);
+
+    expect(shown[0]?.input).toEqual({
+      channel: 'webhook',
+      webhookUrl: REDUCED,
+      bodyTemplate: 'Done',
+    });
+    expect(shown[0]?.output).toEqual({ sent: true, channel: 'webhook', url: REDUCED });
+    expect(JSON.stringify(shown)).not.toContain(SECRET);
+    expect(JSON.stringify(shown)).not.toContain('qs-secret');
+  });
+
+  it('never changes the value it was given, so the persisted trace keeps the working URL', () => {
+    const entry = { input: { webhookUrl: SLACK }, output: { url: SLACK } };
+
+    withDisplayUrls([entry]);
+
+    expect(entry.input.webhookUrl).toBe(SLACK);
+    expect(entry.output.url).toBe(SLACK);
+  });
+
+  it('matches any key ending in url or urls, whatever its case or nesting', () => {
+    const shown = withDisplayUrls({
+      config: { callbackURL: SLACK, source_url: SLACK, allowedUrls: [SLACK, SLACK] },
+      turns: [{ toolCall: { args: { url: SLACK } } }],
+    });
+
+    expect(JSON.stringify(shown)).not.toContain(SECRET);
+    expect(shown.config.allowedUrls).toEqual([REDUCED, REDUCED]);
+    expect(shown.turns[0]?.toolCall.args.url).toBe(REDUCED);
+  });
+
+  it('leaves URLs in free text, templates and non-http values as written', () => {
+    const value = {
+      answer: `See ${SLACK}`,
+      webhookUrl: '{{steps.lookup.output.url}}',
+      url: 'mailto:someone@example.com',
+      count: 3,
+      nothing: null,
+    };
+
+    expect(withDisplayUrls(value)).toEqual(value);
+  });
+
+  it('replaces an object nested past the depth cap rather than passing it on unread', () => {
+    let deep: Record<string, unknown> = { url: SLACK };
+    for (let i = 0; i < 40; i++) deep = { next: deep };
+
+    expect(JSON.stringify(withDisplayUrls(deep))).not.toContain(SECRET);
+    expect(JSON.stringify(withDisplayUrls(deep))).toContain('[depth limit]');
+  });
+});

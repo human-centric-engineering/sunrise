@@ -39,6 +39,7 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { cuidSchema } from '@/lib/validations/common';
 import { adminCanViewExecution } from '@/lib/orchestration/access/execution-access';
 import { executionTraceSchema } from '@/lib/validations/orchestration';
+import { withDisplayUrls } from '@/lib/orchestration/trace/display-urls';
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 
@@ -89,7 +90,8 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
     throw new NotFoundError(`Execution ${id} not found`);
   }
 
-  const trace = executionTraceSchema.parse(execution.executionTrace);
+  // URL-bearing values shortened for display (t-777), as on the detail route.
+  const trace = withDisplayUrls(executionTraceSchema.parse(execution.executionTrace));
 
   const costLogs = await prisma.aiCostLog.findMany({
     where: { workflowExecutionId: id },

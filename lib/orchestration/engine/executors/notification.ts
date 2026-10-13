@@ -203,8 +203,12 @@ async function executeNotification(
   } else {
     // Webhook channel
     try {
+      // The event goes to every matching webhook subscription and is stored
+      // on each delivery row, so it carries the step's URL in its reduced
+      // form only: a subscriber learns which hook the step names without
+      // receiving the secret in its path or query (t-777).
       await dispatchWebhookEvent('workflow_notification', {
-        webhookUrl: config.webhookUrl,
+        webhookUrl: loggableUrl(config.webhookUrl),
         body,
         workflowId: ctx.workflowId,
         workflowName,

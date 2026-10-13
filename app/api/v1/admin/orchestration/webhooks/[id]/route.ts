@@ -20,6 +20,10 @@ import { cuidSchema } from '@/lib/validations/common';
 import { updateWebhookSchema } from '@/lib/validations/orchestration';
 import { ValidationError } from '@/lib/api/errors';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
+import {
+  auditableSubscriptionChanges,
+  auditableSubscriptionName,
+} from '@/lib/orchestration/webhooks/destination';
 
 const SAFE_SELECT = {
   id: true,
@@ -110,8 +114,10 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     action: 'webhook_subscription.update',
     entityType: 'webhook_subscription',
     entityId: parsed.data,
-    entityName: (webhook.channel === 'webhook' ? webhook.url : webhook.emailAddress) ?? webhook.id,
-    changes: computeChanges(existing, webhook, { ignoreKeys: ['updatedAt', 'createdAt'] }),
+    entityName: auditableSubscriptionName(webhook),
+    changes: auditableSubscriptionChanges(
+      computeChanges(existing, webhook, { ignoreKeys: ['updatedAt', 'createdAt'] })
+    ),
     clientIp: getClientIP(request),
   });
 
@@ -142,8 +148,7 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     action: 'webhook_subscription.delete',
     entityType: 'webhook_subscription',
     entityId: parsed.data,
-    entityName:
-      (existing.channel === 'webhook' ? existing.url : existing.emailAddress) ?? parsed.data,
+    entityName: auditableSubscriptionName(existing),
     clientIp: getClientIP(request),
   });
 
