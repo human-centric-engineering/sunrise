@@ -764,6 +764,49 @@ describe('scheduleRetry (in-process timer-based retry)', () => {
     );
   });
 
+  it.each(['exhausted', 'delivered'])(
+    'does not send or write when the delivery was settled as %s while the timer waited',
+    async (settled) => {
+      // Arrange: first attempt fails and arms the timer; the subscription is still active
+      let status = 'pending';
+      vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+      vi.mocked(prisma.aiWebhookSubscription.findUnique).mockResolvedValue(makeSub());
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockImplementation((async () =>
+        makeDelivery({ attempts: 0, status })) as never);
+      mockFetch.mockResolvedValue({ ok: false, status: 503 });
+
+      await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+      const fetchesBefore = mockFetch.mock.calls.length;
+      const updatesBefore = vi.mocked(prisma.aiWebhookDelivery.update).mock.calls.length;
+      expect(fetchesBefore).toBe(1);
+
+      // Act: an erasure (or a manual retry) settles the row, then the timer fires
+      status = settled;
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      // Assert: the timer re-read the row and stopped
+      expect(prisma.aiWebhookSubscription.findUnique).toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(fetchesBefore);
+      expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledTimes(updatesBefore);
+    }
+  );
+
+  it('still retries when the delivery is marked failed at timer time', async () => {
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+    vi.mocked(prisma.aiWebhookSubscription.findUnique).mockResolvedValue(makeSub());
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+      makeDelivery({ attempts: 0, status: 'failed' })
+    );
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+
+    await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
   it('logs error and does not throw when scheduled retry throws unexpectedly', async () => {
     // Arrange: first attempt fails, then subscription lookup throws
     vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);

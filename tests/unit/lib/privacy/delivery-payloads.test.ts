@@ -23,6 +23,7 @@ import {
 
 const SUBJECT = 'user-subject';
 const OTHER = 'user-other';
+const EVENT = 'conversation.started';
 
 /** Render a tagged-template call as the SQL text Prisma would send plus its bound values. */
 function render(
@@ -235,7 +236,8 @@ describe('subjectViewOfPayload', () => {
         },
       },
       'activity',
-      SUBJECT
+      SUBJECT,
+      EVENT
     );
 
     expect(result).toEqual({
@@ -262,7 +264,8 @@ describe('subjectViewOfPayload', () => {
         },
       },
       'activity',
-      SUBJECT
+      SUBJECT,
+      EVENT
     );
 
     expect(result).toEqual({
@@ -289,7 +292,8 @@ describe('subjectViewOfPayload', () => {
         },
       },
       'activity',
-      SUBJECT
+      SUBJECT,
+      EVENT
     );
 
     expect(result).toEqual({ conversationId: 'c1' });
@@ -299,7 +303,8 @@ describe('subjectViewOfPayload', () => {
     const result = subjectViewOfPayload(
       { data: { actorUserId: SUBJECT, actorUserName: 'Sam Subject', agentId: 'a' } },
       'activity',
-      SUBJECT
+      SUBJECT,
+      EVENT
     );
 
     expect(result).toEqual({ actorUserId: SUBJECT, actorUserName: 'Sam Subject', agentId: 'a' });
@@ -316,12 +321,46 @@ describe('subjectViewOfPayload', () => {
         },
       },
       'activity',
-      SUBJECT
+      SUBJECT,
+      EVENT
     );
 
     expect(result).toEqual({ executionId: 'e1', userId: SUBJECT });
     expect(result).not.toHaveProperty('actorUserId');
     expect(result).not.toHaveProperty('actorUserName');
+  });
+
+  it('activity: an admin’s force-fail of the subject’s run carries no free text, but keeps the record keys', () => {
+    const result = subjectViewOfPayload(
+      {
+        data: {
+          executionId: 'e1',
+          userId: SUBJECT,
+          actorUserId: 'admin-1',
+          reason: 'admin note: suspected abuse',
+          metadata: { note: 'admin’s' },
+          prompt: 'admin prompt',
+          error: 'admin error',
+          errorMessage: 'admin error message',
+        },
+      },
+      'activity',
+      SUBJECT,
+      'execution.force_failed'
+    );
+
+    expect(result).toEqual({ executionId: 'e1', userId: SUBJECT });
+  });
+
+  it('activity: an event that is not an admin action keeps the free text (conversation_escalated)', () => {
+    const result = subjectViewOfPayload(
+      { data: { conversationId: 'c1', reason: 'user asked for a human' } },
+      'activity',
+      SUBJECT,
+      'conversation_escalated'
+    );
+
+    expect(result).toEqual({ conversationId: 'c1', reason: 'user asked for a human' });
   });
 
   it('actor: returns only EVENT_RECORD_KEYS plus the subject’s own person keys', () => {
@@ -337,7 +376,8 @@ describe('subjectViewOfPayload', () => {
         },
       },
       'actor',
-      SUBJECT
+      SUBJECT,
+      EVENT
     );
 
     expect(result).toEqual({ actorUserId: SUBJECT, actorUserName: 'Sam Subject', agentId: 'a1' });
@@ -349,7 +389,8 @@ describe('subjectViewOfPayload', () => {
       const result = subjectViewOfPayload(
         { data: { approverUserIds: [OTHER, SUBJECT, 'user-third'], workflowId: 'w1' } },
         basis,
-        SUBJECT
+        SUBJECT,
+        EVENT
       );
 
       expect(result).toEqual({ workflowId: 'w1', approverUserIds: [SUBJECT] });
@@ -362,12 +403,14 @@ describe('subjectViewOfPayload', () => {
       const colleaguesOnly = subjectViewOfPayload(
         { data: { approverUserIds: [OTHER, 'user-third'], workflowId: 'w1' } },
         basis,
-        SUBJECT
+        SUBJECT,
+        EVENT
       );
       const notAList = subjectViewOfPayload(
         { data: { approverUserIds: SUBJECT, workflowId: 'w1' } },
         basis,
-        SUBJECT
+        SUBJECT,
+        EVENT
       );
 
       expect(colleaguesOnly).toEqual({ workflowId: 'w1' });
@@ -379,7 +422,8 @@ describe('subjectViewOfPayload', () => {
     const result = subjectViewOfPayload(
       { data: { actorUserId: OTHER, actorUserName: 'Olive Other', agentId: 'a1' } },
       'actor',
-      SUBJECT
+      SUBJECT,
+      EVENT
     );
 
     expect(result).toEqual({ agentId: 'a1' });
@@ -391,8 +435,8 @@ describe('subjectViewOfPayload', () => {
     ['array data', { data: [1] }],
     ['string data', { data: 'x' }],
   ])('returns {} for %s', (_label, payload) => {
-    expect(subjectViewOfPayload(payload, 'activity', SUBJECT)).toEqual({});
-    expect(subjectViewOfPayload(payload, 'actor', SUBJECT)).toEqual({});
+    expect(subjectViewOfPayload(payload, 'activity', SUBJECT, EVENT)).toEqual({});
+    expect(subjectViewOfPayload(payload, 'actor', SUBJECT, EVENT)).toEqual({});
   });
 });
 
@@ -420,18 +464,44 @@ describe('deliveriesNamingSubject', () => {
     expect(result[0]).not.toHaveProperty('activity');
   });
 
-  it('sorts by createdAt, then id', async () => {
-    const early = new Date('2026-01-01T00:00:00Z');
-    const late = new Date('2026-03-01T00:00:00Z');
+  it('returns rows in the order the query gave them, without re-sorting in JS', async () => {
+    // The ordering lives in the SQL; a JS re-sort here would hide a missing ORDER BY.
     const { client } = makeClient([
-      row({ id: 'z-late', createdAt: late }),
-      row({ id: 'b-early', createdAt: early }),
-      row({ id: 'a-early', createdAt: early }),
+      row({ id: 'z-late', createdAt: new Date('2026-03-01T00:00:00Z') }),
+      row({ id: 'b-early', createdAt: new Date('2026-01-01T00:00:00Z') }),
+      row({ id: 'a-early', createdAt: new Date('2026-01-01T00:00:00Z') }),
     ]);
 
     const result = await deliveriesNamingSubject(client, 'webhook', SUBJECT);
 
-    expect(result.map((r) => r.id)).toEqual(['a-early', 'b-early', 'z-late']);
+    expect(result.map((r) => r.id)).toEqual(['z-late', 'b-early', 'a-early']);
+  });
+
+  it('orders in SQL by createdAt then id in code-unit order, around the DISTINCT ON', async () => {
+    const { client, queryRaw } = makeClient([]);
+
+    await deliveriesNamingSubject(client, 'webhook', SUBJECT);
+
+    const { text } = renderCall(queryRaw);
+    expect(text).toMatch(/ORDER BY "createdAt", id COLLATE "C"/);
+    // The outer ORDER BY comes after the DISTINCT ON subquery, which has its own.
+    expect(text.indexOf('ORDER BY "createdAt"')).toBeGreaterThan(text.indexOf('DISTINCT ON (id)'));
+    expect(text).toContain('ORDER BY id, activity DESC');
+  });
+
+  it('selects only the needed columns in every arm: never d.*, SELECT *, or an address column', async () => {
+    const { client, queryRaw } = makeClient([]);
+
+    await deliveriesNamingSubject(client, 'webhook', SUBJECT);
+
+    const { text } = renderCall(queryRaw);
+    const columns =
+      'd.id, d."eventType", d.status, d."lastError", d."lastAttemptAt", d."createdAt", d.payload';
+    // One arm per match: conversation, execution, userId, actorUserId, approvers.
+    expect(text.split(`SELECT ${columns}, `)).toHaveLength(6);
+    expect(text).not.toContain('d.*');
+    expect(text).not.toContain('SELECT *,');
+    expect(text).not.toMatch(/destination|previousDestinations/i);
   });
 
   it('exports the admin-action events as a fixed list', () => {
@@ -454,12 +524,12 @@ describe('deliveriesNamingSubject', () => {
     const { text, values } = renderCall(queryRaw);
     // Activity unless the event is an admin action — the list is a bound
     // array, not interpolated text.
-    expect(text).toContain('NOT ("eventType" = ANY(');
+    expect(text).toContain('NOT (d."eventType" = ANY(');
     expect(text).toContain('::text[]');
     expect(values).toContainEqual([...ADMIN_ACTION_EVENTS]);
     for (const event of ADMIN_ACTION_EVENTS) expect(text).not.toContain(event);
     // The approver arm stays unconditionally `actor`.
-    expect(text).toMatch(/SELECT \*, false FROM [\w.]+ WHERE payload @>/);
+    expect(text).toMatch(/\bd\.payload, false FROM [\w.]+ d WHERE d\.payload @>/);
   });
 
   it('queries the webhook delivery table for "webhook"', async () => {

@@ -414,6 +414,59 @@ describe('exportUserData', () => {
       expect(JSON.stringify(argsTo('aiWebhookDelivery'))).not.toContain('insensitive');
     });
 
+    it('does not export the admin’s reason on a force-failed run of the subject’s', async () => {
+      armRaw({
+        webhook: [
+          namedRow({
+            id: 'w-ff',
+            eventType: 'execution.force_failed',
+            payload: {
+              event: 'execution.force_failed',
+              data: {
+                executionId: 'e-1',
+                userId: 'user-1',
+                actorUserId: 'user-admin',
+                reason: 'admin note: suspected abuse',
+              },
+            },
+          }),
+        ],
+      });
+
+      const rows = exported(await exportUserData(PARAMS));
+
+      expect(rows[0].about).toEqual({
+        basis: 'activity',
+        data: { executionId: 'e-1', userId: 'user-1' },
+      });
+      expect(JSON.stringify(rows)).not.toContain('suspected abuse');
+    });
+
+    it('reads the payload-named rows only after the address read has resolved', async () => {
+      // At `multi` each read is its own transaction; the source must not hold two.
+      let release: (rows: unknown[]) => void = () => undefined;
+      delegateFor('aiWebhookDelivery').findMany.mockReturnValue(
+        new Promise<unknown[]>((resolve) => {
+          release = resolve;
+        })
+      );
+      const webhookRawCalls = () =>
+        mockQueryRaw.mock.calls.filter((call) =>
+          JSON.stringify(call.slice(1)).includes('ai_webhook_delivery')
+        ).length;
+
+      const pending = exportUserData(PARAMS);
+      // Let every read that is not waiting on the deferred one run.
+      await vi.waitFor(() => expect(callsTo('aiWebhookDelivery')).toHaveLength(1));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(webhookRawCalls()).toBe(0);
+
+      release([]);
+      await pending;
+
+      expect(webhookRawCalls()).toBe(1);
+    });
+
     it('asks for the payload-named rows of the webhook table, by the subject’s id', async () => {
       await exportUserData(PARAMS);
 
@@ -713,6 +766,19 @@ describe('exportUserData', () => {
         JSON.stringify(args.slice(1)).includes('ai_event_hook_delivery')
           ? [
               {
+                id: 'h-1',
+                eventType: 'conversation_started',
+                status: 'failed',
+                lastError: null,
+                lastAttemptAt: null,
+                createdAt: T1,
+                payload: {
+                  event: 'conversation_started',
+                  data: { conversationId: 'c-1', userId: 'user-1', actorUserId: 'user-admin' },
+                },
+                activity: true,
+              },
+              {
                 id: 'h-2',
                 eventType: 'agent_updated',
                 status: 'delivered',
@@ -730,26 +796,13 @@ describe('exportUserData', () => {
                 },
                 activity: false,
               },
-              {
-                id: 'h-1',
-                eventType: 'conversation_started',
-                status: 'failed',
-                lastError: null,
-                lastAttemptAt: null,
-                createdAt: T1,
-                payload: {
-                  event: 'conversation_started',
-                  data: { conversationId: 'c-1', userId: 'user-1', actorUserId: 'user-admin' },
-                },
-                activity: true,
-              },
             ]
           : []
       );
 
       const bundle = await exportUserData(PARAMS);
 
-      // The query returned h-2 first: the order is the reader's, by createdAt.
+      // The SQL orders by createdAt, id; the source keeps the order it was given.
       expect(bundle.personalData.eventHookDeliveries).toEqual([
         {
           id: 'h-1',
@@ -772,6 +825,44 @@ describe('exportUserData', () => {
       expect(text).not.toContain('hooks.example.com');
       expect(text).not.toContain('user-admin');
       expect(text).not.toContain('hook said no');
+    });
+
+    it('does not export the admin’s reason on a force-failed run of the subject’s', async () => {
+      mockQueryRaw.mockImplementation(async (...args: unknown[]) =>
+        JSON.stringify(args.slice(1)).includes('ai_event_hook_delivery')
+          ? [
+              {
+                id: 'h-ff',
+                eventType: 'execution.force_failed',
+                status: 'delivered',
+                lastError: null,
+                lastAttemptAt: T1,
+                createdAt: T1,
+                payload: {
+                  event: 'execution.force_failed',
+                  data: {
+                    executionId: 'e-1',
+                    userId: 'user-1',
+                    actorUserId: 'user-admin',
+                    reason: 'admin note: suspected abuse',
+                  },
+                },
+                activity: true,
+              },
+            ]
+          : []
+      );
+
+      const bundle = await exportUserData(PARAMS);
+
+      const rows = bundle.personalData.eventHookDeliveries as Array<{
+        about: { basis: string; data: Record<string, unknown> };
+      }>;
+      expect(rows[0].about).toEqual({
+        basis: 'activity',
+        data: { executionId: 'e-1', userId: 'user-1' },
+      });
+      expect(JSON.stringify(rows)).not.toContain('suspected abuse');
     });
 
     it('does not mix the two tables’ rows', async () => {

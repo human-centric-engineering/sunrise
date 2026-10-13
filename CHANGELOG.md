@@ -167,7 +167,11 @@ release process.
   theirs — is redacted, not deleted: an event about their own activity keeps
   only which event it was (agent, workflow, ids, costs) and loses its free
   text and any field a fork added; one about a change they made keeps the
-  change and loses only them; one still retrying about their activity stops.
+  change and loses only them; one still retrying about their activity stops
+  — and stays stopped: the in-process retry timers for webhook and event-hook
+  deliveries now skip a row that is no longer `pending` or `failed` when they
+  fire, which also makes the stop §109 t-739 applies to a delivery emailed to
+  an erased person hold.
   Another admin's email subscription to the person's verified address has the
   address cleared and is deactivated, with a
   `webhook_subscription.recipient_erased` audit entry that names the
