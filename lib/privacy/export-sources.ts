@@ -45,7 +45,11 @@ import {
   normaliseAddress,
   webhookDeliveriesAddressedTo,
 } from '@/lib/orchestration/webhooks/destination';
-import { deliveriesNamingSubject, subjectViewOfPayload } from '@/lib/privacy/delivery-payloads';
+import {
+  byCreatedAtThenId,
+  deliveriesNamingSubject,
+  subjectViewOfPayload,
+} from '@/lib/privacy/delivery-payloads';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 
 /** How a `User`-linked model is represented in a subject export. */
@@ -339,9 +343,7 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
       const sentToIds = new Set(addressed.map((row) => row.id));
       const aboutById = new Map(named.map((row) => [row.id, row]));
       const rows = [...addressed, ...named.filter((row) => !sentToIds.has(row.id))];
-      // Ids are unique, so a tie on time always resolves; code-unit order, not
-      // locale order, so it sorts the same everywhere.
-      rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1));
+      rows.sort(byCreatedAtThenId);
       // Field by field, not a spread: widening a select must not be enough to
       // put a row's own address columns, or its raw payload, in front of the
       // subject.

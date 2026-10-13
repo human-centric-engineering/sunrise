@@ -266,22 +266,33 @@ transaction):
    the table. **Redacted, not deleted**: the row stays the org's record that
    an event was sent and where, as t-739 ruled.
    - An event about the subject's **own activity** (their conversation, their
-     run, their id as `userId`) keeps only the keys that record which event it
+     run, their id as `userId`, or as `actorUserId` on any event that is not
+     an admin action) keeps only the keys that record which event it
      was — agent, workflow, ids, costs (`EVENT_RECORD_KEYS`). Free text
      (`reason`, `metadata`, `prompt`, `error`, `body`), approval links, and any
      key a fork's own event adds are dropped. An allowlist, so a new field is
      erased by default. One still waiting to retry is stopped
-     (`exhausted`, "not retried: subject erased"): what it would send is now
-     about nobody.
-   - An event about a **change they made** (`agent_updated`,
-     `capability.quarantined`) or a step they were asked to approve keeps its
+     (`exhausted`, "not retried: subject erased"), decided against the row's
+     status when it is rewritten, so one the retry worker has just delivered
+     stays delivered: what it would send is now about nobody.
+   - An event about a **change they made** (`ADMIN_ACTION_EVENTS`:
+     `agent_updated`, `capability.*quarantined`, `execution.force_failed`) or
+     a step they were asked to approve keeps its
      data — the change is the org's — and loses only them, as the admin audit
      log does (`SetNull`).
    - In both, their id becomes `null`, their display name goes, and they leave
      `approverUserIds`. Other people's ids are untouched.
 
    Written in bulk (500 rows a statement), so a person with years of chat
-   events costs a few statements, not a round trip each. **A fork that emits
+   events costs a few statements, not a round trip each, and the transaction
+   is given 60 s (`ERASURE_TRANSACTION_TIMEOUT_MS`) rather than Prisma's 5 s
+   default. **Known limit:** an event that names the subject only by
+   `conversationId` or `executionId` — `chat_budget_exceeded_per_turn`,
+   `workflow_notification`, `workflow_budget_exceeded`, the force-fail hooks —
+   is found only while that conversation or run still exists. One the person
+   deleted, or that retention pruned before the delivery, no longer links the
+   event to anyone, and erasure and subject access both miss it until
+   retention prunes the delivery too (t-792). **A fork that emits
    its own events** (`emitHookEvent('app.…')`) and names a person under a key
    other than these must clear it with a `scrubInTransaction` hook; an
    `activity` row already loses every key it does not recognise, but an event

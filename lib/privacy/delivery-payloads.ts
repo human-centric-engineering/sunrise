@@ -17,9 +17,13 @@
  *   • `conversationId` of one of the subject's conversations, `executionId`
  *     of one of their workflow runs, or `userId` = the subject — the event is
  *     about the subject's own activity (basis `activity`);
- *   • otherwise `actorUserId` = the subject, or the subject in
- *     `approverUserIds` — the subject acted on the org's configuration, or was
- *     asked to (basis `actor`).
+ *   • `actorUserId` = the subject on one of {@link ADMIN_ACTION_EVENTS}, or the
+ *     subject in `approverUserIds` — the subject acted on the org's
+ *     configuration, or was asked to (basis `actor`). On any other event
+ *     `actorUserId` names the person whose run or conversation it was
+ *     (`workflow_failed`, `budget_exceeded`), so it is `activity` — which
+ *     matters once that run or conversation has been pruned and no longer
+ *     says so itself.
  *
  * Matched by JSON containment on the payload (`@>`), which the GIN index on
  * each table's `payload` serves, so neither the erasure transaction nor the
@@ -56,7 +60,6 @@
  */
 
 import { Prisma } from '@prisma/client';
-import { notRetried } from '@/lib/orchestration/webhooks/not-retried';
 
 /** Which delivery table: webhook subscriptions', or event hooks'. */
 export type DeliveryTable = 'webhook' | 'hook';
@@ -144,6 +147,20 @@ export const SUBJECT_TEXT_KEYS: ReadonlySet<string> = new Set([
   'errorMessage',
 ]);
 
+/**
+ * The events whose `actorUserId` is an admin changing the org's configuration
+ * or acting on someone else's run, rather than the owner of the activity the
+ * event reports. An event not listed here — a fork's included — is read as
+ * the actor's own activity, the reading that erases more.
+ */
+export const ADMIN_ACTION_EVENTS: readonly string[] = [
+  'agent_updated',
+  'agent.updated',
+  'capability.quarantined',
+  'capability.unquarantined',
+  'execution.force_failed',
+];
+
 /** Keys that hold a person's id, each with the display-name key that goes with it. */
 const PERSON_KEYS: ReadonlyArray<{ id: string; name: string | null }> = [
   { id: 'userId', name: null },
@@ -190,7 +207,8 @@ export async function deliveriesNamingSubject(
       UNION ALL
       SELECT *, true FROM ${t} WHERE payload @> ${dataContains('userId', userId)}
       UNION ALL
-      SELECT *, false FROM ${t} WHERE payload @> ${dataContains('actorUserId', userId)}
+      SELECT *, NOT ("eventType" = ANY(${[...ADMIN_ACTION_EVENTS]}::text[]))
+        FROM ${t} WHERE payload @> ${dataContains('actorUserId', userId)}
       UNION ALL
       SELECT *, false FROM ${t} WHERE payload @> ${dataContains(APPROVERS_KEY, [userId])}
     )
@@ -199,11 +217,23 @@ export async function deliveriesNamingSubject(
       FROM matched
      ORDER BY id, activity DESC
   `;
-  rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1));
+  rows.sort(byCreatedAtThenId);
   return rows.map(({ activity, ...row }) => ({
     ...row,
     basis: activity ? 'activity' : 'actor',
   }));
+}
+
+/**
+ * Oldest first; ids are unique, so a tie on time always resolves, in
+ * code-unit order rather than locale order so it sorts the same everywhere.
+ * The order both delivery export sections present their rows in.
+ */
+export function byCreatedAtThenId(
+  a: { createdAt: Date; id: string },
+  b: { createdAt: Date; id: string }
+): number {
+  return a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1);
 }
 
 /** The payload's `data` object, or `null` when the payload has none. */
@@ -279,21 +309,37 @@ export function subjectViewOfPayload(
     if (!person) return false;
     return data[person.id] === userId;
   };
-  return pick(data, (key) => {
+  const view = pick(data, (key) => {
     if (key === APPROVERS_KEY) return false;
     if (isPersonKey(key)) return isSubject(key);
     return EVENT_RECORD_KEYS.has(key) || (basis === 'activity' && SUBJECT_TEXT_KEYS.has(key));
   });
+  // Named as an approver: say so, without naming the colleagues beside them.
+  const approvers = data[APPROVERS_KEY];
+  if (Array.isArray(approvers) && approvers.includes(userId)) view[APPROVERS_KEY] = [userId];
+  return view;
 }
 
 /** Rows written per statement, so one person's history never becomes one huge parameter. */
 const WRITE_CHUNK = 500;
 
 /**
+ * The `lastError` a stopped row gets: `notRetried`'s wording (`lib/orchestration/webhooks/not-retried.ts`), in SQL, so
+ * it is built from the row as the `UPDATE` finds it rather than as it was read.
+ */
+const STOPPED_LAST_ERROR = Prisma.sql`CASE WHEN d."lastError" IS NULL OR d."lastError" = ''
+  THEN 'Not retried: subject erased'
+  ELSE d."lastError" || ' (not retried: subject erased)' END`;
+
+/**
  * Redact the subject from every delivery in `table` that names them, and stop
  * the `activity` rows still waiting to retry. One statement per
  * {@link WRITE_CHUNK} rows, so the transaction's cost tracks the rows
  * rather than a round trip each. Returns the number of rows rewritten.
+ *
+ * Whether a row stops is decided by the `UPDATE`, against its status at that
+ * moment, not as the read found it: the retry worker can deliver a row in
+ * between, and a delivered row must not be rewritten as exhausted.
  */
 export async function eraseSubjectFromDeliveries(
   client: RawClient,
@@ -301,26 +347,23 @@ export async function eraseSubjectFromDeliveries(
   userId: string
 ): Promise<number> {
   const rows = await deliveriesNamingSubject(client, table, userId);
-  const writes = rows.map((row) => {
-    const stop = row.basis === 'activity' && (row.status === 'pending' || row.status === 'failed');
-    return {
-      id: row.id,
-      payload: erasedPayload(row.payload, row.basis, userId),
-      stop,
-      lastError: stop ? notRetried(row.lastError, 'subject erased') : row.lastError,
-    };
-  });
+  const writes = rows.map((row) => ({
+    id: row.id,
+    payload: erasedPayload(row.payload, row.basis, userId),
+    activity: row.basis === 'activity',
+  }));
   const t = TABLES[table];
+  const stopNow = Prisma.sql`(w.activity AND d.status IN ('pending', 'failed'))`;
   for (let i = 0; i < writes.length; i += WRITE_CHUNK) {
     const chunk = writes.slice(i, i + WRITE_CHUNK);
     await client.$executeRaw`
       UPDATE ${t} AS d
          SET payload = w.payload,
-             status = CASE WHEN w.stop THEN 'exhausted' ELSE d.status END,
-             "nextRetryAt" = CASE WHEN w.stop THEN NULL ELSE d."nextRetryAt" END,
-             "lastError" = w."lastError"
+             status = CASE WHEN ${stopNow} THEN 'exhausted' ELSE d.status END,
+             "nextRetryAt" = CASE WHEN ${stopNow} THEN NULL ELSE d."nextRetryAt" END,
+             "lastError" = CASE WHEN ${stopNow} THEN ${STOPPED_LAST_ERROR} ELSE d."lastError" END
         FROM jsonb_to_recordset(${JSON.stringify(chunk)}::jsonb)
-             AS w(id text, payload jsonb, stop boolean, "lastError" text)
+             AS w(id text, payload jsonb, activity boolean)
        WHERE d.id = w.id
     `;
   }
