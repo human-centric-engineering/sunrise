@@ -77,6 +77,8 @@ describe('lib/analytics/providers/ga4', () => {
         expect(mockGtag).toHaveBeenCalledWith('js', expect.any(Date));
         expect(mockGtag).toHaveBeenCalledWith('config', 'G-TEST123', {
           send_page_view: false,
+          page_location: 'http://localhost:3000/',
+          page_referrer: undefined,
           debug_mode: false,
         });
       });
@@ -88,6 +90,8 @@ describe('lib/analytics/providers/ga4', () => {
 
         expect(mockGtag).toHaveBeenCalledWith('config', 'G-TEST123', {
           send_page_view: false,
+          page_location: 'http://localhost:3000/',
+          page_referrer: undefined,
           debug_mode: true,
         });
       });
@@ -531,6 +535,56 @@ describe('lib/analytics/providers/ga4', () => {
 
       expect(provider).toBeInstanceOf(GA4Provider);
       expect(provider.getMeasurementId()).toBe('G-TEST123');
+    });
+  });
+
+  describe('page address (t-780)', () => {
+    const TOKEN = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+    const EMAIL_QS = 'email=jane%40example.com';
+    const TOKENED = `https://app.example.com/s/${TOKEN}?${EMAIL_QS}&utm_source=news#top`;
+    const REDUCED = 'https://app.example.com/s/[param]?utm_source=news';
+
+    afterEach(() => {
+      window.history.pushState({}, '', '/');
+    });
+
+    it('sends a page view, and sets later events, with no path token or query email', async () => {
+      const provider = new GA4Provider({ measurementId: 'G-TEST123' });
+      await provider.init();
+      mockGtag.mockClear();
+
+      await provider.page('Shared', {
+        url: TOKENED,
+        path: `/s/${TOKEN}`,
+        search: `${EMAIL_QS}&utm_source=news`,
+        referrer: TOKENED,
+      });
+
+      const sent = JSON.stringify(mockGtag.mock.calls);
+      expect(sent).not.toContain(TOKEN);
+      expect(sent).not.toContain('jane');
+      expect(mockGtag).toHaveBeenCalledWith('set', {
+        page_location: REDUCED,
+        page_referrer: REDUCED,
+      });
+      expect(mockGtag).toHaveBeenCalledWith(
+        'event',
+        'page_view',
+        expect.objectContaining({ page_location: REDUCED, page_path: '/s/[param]' })
+      );
+    });
+
+    it('falls back to the reduced current address, at init and on a page view', async () => {
+      window.history.pushState({}, '', `/s/${TOKEN}?${EMAIL_QS}`);
+      const provider = new GA4Provider({ measurementId: 'G-TEST123' });
+
+      await provider.init();
+      await provider.page();
+
+      const sent = JSON.stringify(mockGtag.mock.calls);
+      expect(sent).not.toContain(TOKEN);
+      expect(sent).not.toContain('jane');
+      expect(sent).toContain('/s/[param]');
     });
   });
 });

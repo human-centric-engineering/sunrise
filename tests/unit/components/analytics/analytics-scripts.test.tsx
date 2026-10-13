@@ -363,7 +363,7 @@ describe('components/analytics/analytics-scripts', () => {
       // Act
       const { container } = render(<AnalyticsScripts />);
 
-      // Assert — contract: exactly 2 scripts (script.js loader + plausible-init).
+      // Assert — contract: exactly 2 scripts (script.manual.js loader + plausible-init).
       // The mock renders inline scripts with their id as data-testid and external
       // scripts without id as data-testid="script"; query by the shared
       // data-component attribute to count all rendered Next.js Script elements.
@@ -413,11 +413,11 @@ describe('components/analytics/analytics-scripts', () => {
       // code path would be caught here (complements the plausible.io host test above).
       const allScripts = screen.getAllByTestId('script');
       const plausibleScript = allScripts.find((el) =>
-        el.getAttribute('data-src')?.includes('/js/script.js')
+        el.getAttribute('data-src')?.includes('/js/script.manual.js')
       );
 
       expect(plausibleScript?.getAttribute('data-src')).toBe(
-        'https://analytics.example.com/js/script.js'
+        'https://analytics.example.com/js/script.manual.js'
       );
       expect(plausibleScript?.getAttribute('data-domain')).toBe('example.com');
     });
@@ -434,13 +434,13 @@ describe('components/analytics/analytics-scripts', () => {
       // Act
       render(<AnalyticsScripts />);
 
-      // Assert — trailing slash on host must not produce `//js/script.js`
+      // Assert — trailing slash on host must not produce `//js/script.manual.js`
       const plausibleScript = screen
         .getAllByTestId('script')
-        .find((el) => el.getAttribute('data-src')?.includes('/js/script.js'));
+        .find((el) => el.getAttribute('data-src')?.includes('/js/script.manual.js'));
 
       expect(plausibleScript?.getAttribute('data-src')).toBe(
-        'https://plausible.example.com/js/script.js'
+        'https://plausible.example.com/js/script.manual.js'
       );
     });
 
@@ -474,7 +474,7 @@ describe('components/analytics/analytics-scripts', () => {
       // Act
       render(<AnalyticsScripts />);
 
-      // Assert — both the external script.js script AND the inline plausible-init script
+      // Assert — both the external script.manual.js script AND the inline plausible-init script
       // must use afterInteractive. getAllByTestId('script') only returns external scripts
       // (no id); the inline plausible-init script has a different testId so must be checked separately.
       const externalScripts = screen.getAllByTestId('script');
@@ -666,7 +666,7 @@ describe('components/analytics/analytics-scripts', () => {
         expect(initScript.getAttribute('nonce')).toBe('test-nonce-pla');
       });
 
-      it('should NOT pass nonce to Plausible external script.js script', () => {
+      it('should NOT pass nonce to Plausible external script.manual.js script', () => {
         // Arrange
         mockUseHasOptionalConsent.mockReturnValue(true);
         mockDetectProvider.mockReturnValue('plausible');

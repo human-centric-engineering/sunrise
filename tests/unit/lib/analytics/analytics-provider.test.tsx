@@ -447,6 +447,37 @@ describe('lib/analytics/analytics-provider', () => {
       expect(result).toEqual(successResult);
     });
 
+    it('hands every provider a reduced page address, whoever called page (t-780)', async () => {
+      const TOKEN = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+      mockPage.mockResolvedValue({ success: true });
+      mockGetAnalyticsClient.mockReturnValue(createMockClient(true));
+      mockUseHasOptionalConsent.mockReturnValue(true);
+
+      let pageFn: AnalyticsContextValue['page'] | null = null;
+      const TestComponent = () => {
+        const value = useContext(AnalyticsContext);
+        if (value) pageFn = value.page;
+        return null;
+      };
+      render(
+        <AnalyticsProvider>
+          <TestComponent />
+        </AnalyticsProvider>
+      );
+
+      await pageFn!('Shared', {
+        path: `/s/${TOKEN}`,
+        url: `https://app.example.com/s/${TOKEN}?email=jane%40example.com&utm_source=x`,
+        search: 'email=jane%40example.com&utm_source=x',
+      });
+
+      expect(mockPage).toHaveBeenCalledWith('Shared', {
+        path: '/s/[param]',
+        url: 'https://app.example.com/s/[param]?utm_source=x',
+        search: 'utm_source=x',
+      });
+    });
+
     it('should call client.reset when resetting', async () => {
       // Arrange
       const mockClient = createMockClient(true);

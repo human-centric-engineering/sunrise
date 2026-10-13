@@ -408,4 +408,29 @@ describe('lib/analytics/providers/console', () => {
       expect(provider.name).toBe('Console');
     });
   });
+
+  describe('page address (t-780)', () => {
+    const TOKEN = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+    const EMAIL_QS = 'email=jane%40example.com';
+    const TOKENED = `https://app.example.com/s/${TOKEN}?${EMAIL_QS}&utm_source=news#top`;
+    const REDUCED = 'https://app.example.com/s/[param]?utm_source=news';
+
+    afterEach(() => {
+      window.history.pushState({}, '', '/');
+    });
+
+    it('logs the same reduced address a real provider would receive', async () => {
+      window.history.pushState({}, '', `/s/${TOKEN}?${EMAIL_QS}`);
+      const provider = new ConsoleProvider();
+      await provider.init();
+
+      await provider.page();
+      await provider.page('Shared', { url: TOKENED });
+
+      const logged = JSON.stringify(mockConsoleLog.mock.calls);
+      expect(logged).not.toContain(TOKEN);
+      expect(logged).not.toContain('jane');
+      expect(logged).toContain(REDUCED);
+    });
+  });
 });

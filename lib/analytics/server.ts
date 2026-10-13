@@ -17,6 +17,7 @@ import {
   getPlausibleConfig,
   GA4_ENV,
 } from '@/lib/analytics/config';
+import { analyticsPath, analyticsUrl } from '@/lib/analytics/page-location';
 import type { ServerTrackOptions, ServerTrackContext, TrackResult } from '@/lib/analytics/types';
 import { APP_VERSION } from '@/lib/app-version';
 import { logger } from '@/lib/logging';
@@ -69,7 +70,7 @@ export async function serverTrack(options: ServerTrackOptions): Promise<TrackRes
 
   try {
     // Get request context from headers
-    const context = await getRequestContext(options.context);
+    const context = withReducedPage(await getRequestContext(options.context));
 
     switch (provider) {
       case 'ga4':
@@ -88,6 +89,24 @@ export async function serverTrack(options: ServerTrackOptions): Promise<TrackRes
     logger.error('Server track failed', error, { event: options.event });
     return { success: false, error: String(error) };
   }
+}
+
+/**
+ * The context with its page address, path and referrer reduced to what a page
+ * view may record (t-780, `page-location.ts`). The `Referer` header a server
+ * event falls back to is the page the browser was on, query string and all.
+ */
+function withReducedPage(context: ServerTrackContext): ServerTrackContext {
+  if (!context.page) return context;
+  const { url, path, referrer } = context.page;
+  return {
+    ...context,
+    page: {
+      ...(url !== undefined && { url: analyticsUrl(url) }),
+      ...(path !== undefined && { path: analyticsPath(path) }),
+      ...(referrer !== undefined && { referrer: analyticsUrl(referrer) }),
+    },
+  };
 }
 
 /**
@@ -321,7 +340,7 @@ export async function serverPageView(
     userId,
     properties: {
       page_name: pageName,
-      url,
+      url: analyticsUrl(url),
     },
     context: {
       page: { url },

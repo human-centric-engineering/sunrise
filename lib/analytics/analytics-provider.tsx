@@ -26,6 +26,7 @@ import {
   resetAnalyticsClient,
 } from '@/lib/analytics/client';
 import { useHasOptionalConsent } from '@/lib/consent';
+import { analyticsPageProperties } from '@/lib/analytics/page-location';
 import { logger } from '@/lib/logging';
 
 /**
@@ -163,7 +164,9 @@ export function AnalyticsProvider({ children }: AnalyticsProviderProps) {
       }
 
       try {
-        return await client.page(name, properties);
+        // Every page view, from any caller, keeps only what `page-location.ts`
+        // allows of the address (t-780).
+        return await client.page(name, analyticsPageProperties(properties));
       } catch (error) {
         logger.error('Analytics page error', error, { pageName: name });
         return { success: false, error: String(error) };

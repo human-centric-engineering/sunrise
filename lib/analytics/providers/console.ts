@@ -17,6 +17,12 @@ import type {
   ProviderFeatures,
 } from '@/lib/analytics/types';
 import type { AnalyticsProvider, ConsoleProviderConfig } from '@/lib/analytics/providers/types';
+import {
+  analyticsPageProperties,
+  currentPagePath,
+  currentPageUrl,
+  currentReferrer,
+} from '@/lib/analytics/page-location';
 
 /**
  * Console Analytics Provider
@@ -78,12 +84,13 @@ export class ConsoleProvider implements AnalyticsProvider {
 
   page(name?: string, properties?: PageProperties): Promise<TrackResult> {
     const pageName = name ?? (typeof document !== 'undefined' ? document.title : 'Unknown');
+    // The same reduced address a real provider would receive (t-780).
     const pageProperties: PageProperties = {
       title: typeof document !== 'undefined' ? document.title : undefined,
-      path: typeof window !== 'undefined' ? window.location.pathname : undefined,
-      url: typeof window !== 'undefined' ? window.location.href : undefined,
-      referrer: typeof document !== 'undefined' ? document.referrer : undefined,
-      ...properties,
+      path: currentPagePath(),
+      url: currentPageUrl(),
+      referrer: currentReferrer(),
+      ...analyticsPageProperties(properties),
     };
 
     this.log('page', pageName, {

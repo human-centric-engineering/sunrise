@@ -132,9 +132,11 @@ function PlausibleScripts({ nonce }: { nonce?: string }) {
 
   const { domain, host } = config;
 
-  // Determine script URL based on features
-  // Using the standard script - for hash mode or outbound links, use different scripts
-  const scriptUrl = `${host.replace(/\/$/, '')}/js/script.js`;
+  // The manual script records no page view by itself: the standard one sends
+  // `location.href` whole, token-shaped path segments and all, on every
+  // navigation. PlausibleProvider.page() sends each page view instead, with
+  // the address reduced (t-780).
+  const scriptUrl = `${host.replace(/\/$/, '')}/js/script.manual.js`;
 
   return (
     <>

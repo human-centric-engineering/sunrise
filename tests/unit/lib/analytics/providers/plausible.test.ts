@@ -179,6 +179,7 @@ describe('lib/analytics/providers/plausible', () => {
         expect(result).toEqual({ success: true });
         expect(mockPlausible).toHaveBeenCalledWith('button_clicked', {
           callback: expect.any(Function),
+          u: 'http://localhost:3000/',
         });
       });
 
@@ -202,6 +203,7 @@ describe('lib/analytics/providers/plausible', () => {
             value: 5,
           },
           callback: expect.any(Function),
+          u: 'http://localhost:3000/',
         });
       });
 
@@ -229,6 +231,7 @@ describe('lib/analytics/providers/plausible', () => {
             booleanProp: true,
           },
           callback: expect.any(Function),
+          u: 'http://localhost:3000/',
         });
       });
 
@@ -254,6 +257,7 @@ describe('lib/analytics/providers/plausible', () => {
             amount: 99.99,
           },
           callback: expect.any(Function),
+          u: 'http://localhost:3000/',
         });
       });
 
@@ -277,6 +281,7 @@ describe('lib/analytics/providers/plausible', () => {
             amount: 49.99,
           },
           callback: expect.any(Function),
+          u: 'http://localhost:3000/',
         });
       });
 
@@ -309,6 +314,7 @@ describe('lib/analytics/providers/plausible', () => {
         expect(result).toEqual({ success: true });
         expect(mockPlausible).toHaveBeenCalledWith('pageview', {
           callback: expect.any(Function),
+          u: 'http://localhost:3000/',
         });
       });
 
@@ -322,6 +328,7 @@ describe('lib/analytics/providers/plausible', () => {
         expect(result).toEqual({ success: true });
         expect(mockPlausible).toHaveBeenCalledWith('pageview', {
           callback: expect.any(Function),
+          u: 'http://localhost:3000/',
         });
       });
 
@@ -383,6 +390,7 @@ describe('lib/analytics/providers/plausible', () => {
             title: 'My Dashboard',
           },
           callback: expect.any(Function),
+          u: 'http://localhost:3000/',
         });
       });
 
@@ -436,6 +444,7 @@ describe('lib/analytics/providers/plausible', () => {
             booleanProp: true,
           },
           callback: expect.any(Function),
+          u: 'http://localhost:3000/',
         });
       });
 
@@ -574,6 +583,44 @@ describe('lib/analytics/providers/plausible', () => {
       expect(provider.getDomain()).toBe('example.com');
       expect(provider.getHost()).toBe('https://analytics.example.com');
       expect(provider.isHashMode()).toBe(true); // test-review:accept tobe_true — structural boolean/predicate assertion;
+    });
+  });
+
+  describe('page address (t-780)', () => {
+    const TOKEN = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+    const EMAIL_QS = 'email=jane%40example.com';
+    const TOKENED = `https://app.example.com/s/${TOKEN}?${EMAIL_QS}&utm_source=news#top`;
+    const REDUCED = 'https://app.example.com/s/[param]?utm_source=news';
+
+    afterEach(() => {
+      window.history.pushState({}, '', '/');
+    });
+
+    it('sends a page view with no path token or query email', async () => {
+      const provider = new PlausibleProvider({ domain: 'example.com' });
+      await provider.init();
+
+      await provider.page('Shared', { url: TOKENED });
+
+      expect(mockPlausible).toHaveBeenCalledWith(
+        'pageview',
+        expect.objectContaining({ u: REDUCED })
+      );
+      expect(JSON.stringify(mockPlausible.mock.calls)).not.toContain(TOKEN);
+    });
+
+    it('gives a custom event, and a page view with no url, the reduced current address', async () => {
+      window.history.pushState({}, '', `/s/${TOKEN}?${EMAIL_QS}`);
+      const provider = new PlausibleProvider({ domain: 'example.com' });
+      await provider.init();
+
+      await provider.track('signup');
+      await provider.page();
+
+      const sent = JSON.stringify(mockPlausible.mock.calls);
+      expect(sent).not.toContain(TOKEN);
+      expect(sent).not.toContain('jane');
+      expect(sent).toContain('/s/[param]');
     });
   });
 });

@@ -18,6 +18,14 @@ import type {
   ProviderFeatures,
 } from '@/lib/analytics/types';
 import type { AnalyticsProvider, PostHogProviderConfig } from '@/lib/analytics/providers/types';
+import {
+  analyticsPageProperties,
+  analyticsPath,
+  analyticsUrl,
+  currentPagePath,
+  currentPageUrl,
+  currentReferrer,
+} from '@/lib/analytics/page-location';
 import { logger } from '@/lib/logging';
 
 // PostHog type definitions
@@ -36,10 +44,53 @@ interface PostHogOptions {
   capture_pageview?: boolean;
   capture_pageleave?: boolean;
   disable_session_recording?: boolean;
+  before_send?: (event: PostHogCaptureResult | null) => PostHogCaptureResult | null;
   loaded?: (posthog: PostHogInstance) => void;
   bootstrap?: {
     distinctID?: string;
     featureFlags?: Record<string, string | boolean>;
+  };
+}
+
+/** The event `before_send` receives (only the parts read here). */
+interface PostHogCaptureResult {
+  event: string;
+  properties?: Record<string, unknown>;
+  $set?: Record<string, unknown>;
+  $set_once?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/** PostHog's own address-bearing property names: `$current_url`, `$initial_referrer`, `$pathname`… */
+const POSTHOG_URL_KEY = /(?:url|referrer)$/i;
+const POSTHOG_PATH_KEY = /pathname$/i;
+
+function reduceLocationProperties(
+  properties: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!properties) return properties;
+  const out: Record<string, unknown> = { ...properties };
+  for (const [key, value] of Object.entries(properties)) {
+    if (typeof value !== 'string' || !key.startsWith('$')) continue;
+    if (POSTHOG_URL_KEY.test(key)) out[key] = analyticsUrl(value);
+    else if (POSTHOG_PATH_KEY.test(key)) out[key] = analyticsPath(value);
+  }
+  return out;
+}
+
+/**
+ * PostHog `before_send`: reduce every address PostHog attached to an event,
+ * and to the person properties it sets with it (t-780). Exported for tests.
+ */
+export function reducePostHogLocation(
+  event: PostHogCaptureResult | null
+): PostHogCaptureResult | null {
+  if (!event) return event;
+  return {
+    ...event,
+    properties: reduceLocationProperties(event.properties),
+    ...(event.$set && { $set: reduceLocationProperties(event.$set) }),
+    ...(event.$set_once && { $set_once: reduceLocationProperties(event.$set_once) }),
   };
 }
 
@@ -106,6 +157,10 @@ export class PostHogProvider implements AnalyticsProvider {
       capture_pageview: !this.disableAutoPageViews,
       capture_pageleave: true,
       disable_session_recording: !this.enableSessionRecording,
+      // Every event PostHog builds by itself (autocapture, page leave, the
+      // `$initial_*` person properties) reads the page's address; reduce it
+      // before anything is sent (t-780).
+      before_send: reducePostHogLocation,
       loaded: () => {
         this.log('init', 'PostHog loaded and initialized');
       },
@@ -177,16 +232,15 @@ export class PostHogProvider implements AnalyticsProvider {
     }
 
     const pageName = name ?? (typeof document !== 'undefined' ? document.title : undefined);
+    // Address, path and referrer reduced (t-780): see `page-location.ts`.
+    const page = analyticsPageProperties(properties);
 
     const pageProperties: Record<string, unknown> = {
-      $current_url:
-        properties?.url ?? (typeof window !== 'undefined' ? window.location.href : undefined),
-      $pathname:
-        properties?.path ?? (typeof window !== 'undefined' ? window.location.pathname : undefined),
-      $referrer:
-        properties?.referrer ?? (typeof document !== 'undefined' ? document.referrer : undefined),
+      $current_url: page?.url ?? currentPageUrl(),
+      $pathname: page?.path ?? currentPagePath(),
+      $referrer: page?.referrer ?? currentReferrer(),
       $title: pageName,
-      ...properties,
+      ...page,
     };
 
     window.posthog.capture('$pageview', pageProperties);

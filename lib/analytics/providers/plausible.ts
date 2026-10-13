@@ -18,6 +18,7 @@ import type {
   ProviderFeatures,
 } from '@/lib/analytics/types';
 import type { AnalyticsProvider, PlausibleProviderConfig } from '@/lib/analytics/providers/types';
+import { analyticsPageProperties, currentPageUrl } from '@/lib/analytics/page-location';
 import { logger } from '@/lib/logging';
 
 // Plausible type definitions
@@ -111,7 +112,8 @@ export class PlausibleProvider implements AnalyticsProvider {
       return { success: false, error: 'Plausible not initialized' };
     }
 
-    const options: PlausibleEventOptions = {};
+    // Plausible's script otherwise sends `location.href` with every event (t-780).
+    const options: PlausibleEventOptions = { u: currentPageUrl() };
 
     // Convert properties to Plausible props (strings, numbers, booleans only)
     if (properties) {
@@ -154,14 +156,17 @@ export class PlausibleProvider implements AnalyticsProvider {
       return { success: false, error: 'Plausible not initialized' };
     }
 
-    // Plausible automatically tracks page views, but we can track custom ones
+    // The manual script (`analytics-scripts.tsx`) records no page view by
+    // itself, so this is the only one, and its address is reduced (t-780).
+    const page = analyticsPageProperties(properties);
     const options: PlausibleEventOptions = {};
 
-    // Set custom URL if provided
-    if (properties?.url) {
-      options.u = properties.url;
-    } else if (properties?.path && typeof window !== 'undefined') {
-      options.u = window.location.origin + properties.path;
+    if (page?.url) {
+      options.u = page.url;
+    } else if (page?.path && typeof window !== 'undefined') {
+      options.u = window.location.origin + page.path;
+    } else {
+      options.u = currentPageUrl();
     }
 
     // Add any custom props

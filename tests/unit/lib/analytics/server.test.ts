@@ -59,7 +59,7 @@ import {
 import { headers } from 'next/headers';
 import { logger } from '@/lib/logging';
 import { APP_VERSION } from '@/lib/app-version';
-import { serverTrack } from '@/lib/analytics/server';
+import { serverPageView, serverTrack } from '@/lib/analytics/server';
 
 describe('lib/analytics/server - serverTrack', () => {
   // Store the original global fetch
@@ -335,6 +335,36 @@ describe('lib/analytics/server - serverTrack', () => {
       expect(body.properties.$user_agent).toBe('PostHogTestAgent/2.0');
       expect(body.properties.$current_url).toBe('https://example.com/signup');
       expect(body.properties.$referrer).toBe('https://google.com');
+    });
+
+    it('reduces a Referer-derived page address before sending it (t-780)', async () => {
+      const TOKEN = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+      vi.mocked(headers).mockResolvedValue(
+        new Map([
+          ['referer', `https://app.example.com/s/${TOKEN}?email=jane%40example.com&utm_source=x`],
+        ]) as any
+      );
+
+      await serverTrack({ event: 'share_opened', userId: 'user-ph' });
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.properties.$current_url).toBe('https://app.example.com/s/[param]?utm_source=x');
+      expect(JSON.stringify(body)).not.toContain(TOKEN);
+      expect(JSON.stringify(body)).not.toContain('jane');
+    });
+
+    it('reduces a provided page context and a server page view URL (t-780)', async () => {
+      const TOKEN = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+
+      await serverPageView(
+        'Reset',
+        `https://app.example.com/reset/${TOKEN}?email=jane%40example.com`
+      );
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.properties.$current_url).toBe('https://app.example.com/reset/[param]');
+      expect(JSON.stringify(body)).not.toContain(TOKEN);
+      expect(JSON.stringify(body)).not.toContain('jane');
     });
 
     it('should use anonymousId as distinct_id when userId is absent', async () => {

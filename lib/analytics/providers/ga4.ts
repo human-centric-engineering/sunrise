@@ -18,6 +18,12 @@ import type {
   ProviderFeatures,
 } from '@/lib/analytics/types';
 import type { AnalyticsProvider, GA4ProviderConfig } from '@/lib/analytics/providers/types';
+import {
+  analyticsPageProperties,
+  currentPagePath,
+  currentPageUrl,
+  currentReferrer,
+} from '@/lib/analytics/page-location';
 import { logger } from '@/lib/logging';
 
 // Extend Window interface for gtag
@@ -66,6 +72,10 @@ export class GA4Provider implements AnalyticsProvider {
     this.gtag('config', this.measurementId, {
       send_page_view: false, // We'll track page views manually
       debug_mode: this.debug,
+      // gtag attaches the page's location to every event by itself; give it
+      // the reduced address instead of `document.location` (t-780).
+      page_location: currentPageUrl(),
+      page_referrer: currentReferrer(),
     });
 
     this.ready = true;
@@ -137,18 +147,22 @@ export class GA4Provider implements AnalyticsProvider {
     }
 
     const pageName = name ?? (typeof document !== 'undefined' ? document.title : undefined);
+    // Address, path and referrer reduced (t-780): see `page-location.ts`.
+    const page = analyticsPageProperties(properties);
+    const location = page?.url ?? currentPageUrl();
+    const referrer = page?.referrer ?? currentReferrer();
 
     const params: Record<string, unknown> = {
       page_title: pageName,
-      page_location:
-        properties?.url ?? (typeof window !== 'undefined' ? window.location.href : undefined),
-      page_path:
-        properties?.path ?? (typeof window !== 'undefined' ? window.location.pathname : undefined),
-      page_referrer:
-        properties?.referrer ?? (typeof document !== 'undefined' ? document.referrer : undefined),
-      ...properties,
+      page_location: location,
+      page_path: page?.path ?? currentPagePath(),
+      page_referrer: referrer,
+      ...page,
     };
 
+    // Later events (track(), enhanced measurement) inherit these instead of
+    // reading `document.location` themselves.
+    this.gtag('set', { page_location: location, page_referrer: referrer });
     this.gtag('event', 'page_view', params);
 
     this.log('page', pageName, params);
