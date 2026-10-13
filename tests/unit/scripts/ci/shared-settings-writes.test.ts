@@ -69,7 +69,9 @@ describe('the tree', () => {
     for (const name of ['createFlag', 'updateFlag', 'deleteFlag', 'seedChunks']) {
       expect(WRITERS).toContain(name);
     }
-    expect(ROUTE_HANDLERS.filter((h) => h.declares).length).toBeGreaterThanOrEqual(34);
+    // 33 since §109 t-738: the backup import stopped declaring and enforces the
+    // rule itself, and is listed in UNDECLARED_ROUTE_EXCEPTIONS with that reason.
+    expect(ROUTE_HANDLERS.filter((h) => h.declares).length).toBeGreaterThanOrEqual(33);
     expect(CAPABILITIES.length).toBeGreaterThan(20);
     expect(CAPABILITIES.filter((c) => c.writes).map((c) => c.name.split('#')[1])).toEqual(
       expect.arrayContaining([

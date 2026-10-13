@@ -111,10 +111,16 @@ export const NON_CHANGING_WRITERS: Readonly<Record<string, string>> = {
 
 /**
  * Route handlers that change a shared setting without declaring it, each with
- * the reason. Keyed `path#METHOD`. Empty in Sunrise: the backup import was the
- * one candidate, and it declares instead (§109 t-738 will split it).
+ * the reason. Keyed `path#METHOD`.
  */
-export const UNDECLARED_ROUTE_EXCEPTIONS: Readonly<Record<string, string>> = {};
+export const UNDECLARED_ROUTE_EXCEPTIONS: Readonly<Record<string, string>> = {
+  'app/api/v1/admin/orchestration/backup/import/route.ts#POST':
+    'a backup carries the shared part beside the org’s own agents and workflows, and declaring ' +
+    'refused the whole import from a customer’s org (§109 t-738). The route enforces the rule ' +
+    'itself: resolveBackupScope() refuses shared=true for any org but the install org (an ' +
+    'unbound admin key acts as it), and the importer writes the shared part only when the ' +
+    'resolved scope includes it.',
+};
 
 export interface SourceFile {
   path: string;

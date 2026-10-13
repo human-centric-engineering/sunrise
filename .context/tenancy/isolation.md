@@ -63,9 +63,9 @@ CREATE POLICY "org_isolation" ON "ai_agent"
   ([`lib/orchestration/workflows/slug-availability.ts`](../../lib/orchestration/workflows/slug-availability.ts),
   §107 t-728). Each probe runs under the system scope and returns only a
   yes/no answer or a free slug, never the other org's row. Save-as-template
-  uses it. The backup importer still reads the slug the plain way, so
-  importing a slug another org holds fails until §109 t-738 moves it onto
-  `isWorkflowSlugTaken`.
+  uses it, and so does the backup importer (§109 t-738): a workflow whose
+  slug another org holds is imported under the first free slug, with a
+  warning, rather than failing the whole import.
 - **Global config is used from every org, so count its users in every org.**
   A provider, provider model, knowledge tag or agent profile is one row
   serving every org, but the agents, workflows, grants and cost rows that
@@ -102,9 +102,10 @@ CREATE POLICY "org_isolation" ON "ai_agent"
     says to switch to the install org. An unbound admin API key enters no org
     and the guard admits it, as the install org. The same admin keeps read
     access from a customer's org: only the write handlers declare it. The
-    backup import declares it too, so at `multi` it runs from the install org
-    only until §109 t-738 splits a backup's shared settings from the
-    importing org's own agents and workflows.
+    backup import is the one write route that does not (§109 t-738): any org
+    may restore its own agents and workflows, and the route enforces the rule
+    for the shared part itself — `resolveBackupScope()` refuses `shared=true`
+    outside the install org — so it is listed in `UNDECLARED_ROUTE_EXCEPTIONS`.
   - **Capabilities.** A capability class that writes one sets
     `writesSharedSettings = true` (on `BaseCapability`, beside
     `processesPii`), and the dispatcher refuses it with

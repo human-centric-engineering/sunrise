@@ -52,6 +52,27 @@ release process.
 
 ### Changed
 
+- **Backup export and import run in one named org, and the shared part moves
+  only for the install org** (§109 t-738). Both
+  `POST /api/v1/admin/orchestration/backup/export` and `…/import` take
+  `?orgId=` (defaulting to the active org; an unbound admin API key must name
+  one at `multi`) and `?shared=true|false`. The shared part is capabilities,
+  knowledge tags and the `global` orchestration settings. It is exported or
+  written only for the install org or an unbound admin key. A customer org
+  that asks is refused with 403, `details.reason:
+  shared_settings_install_org_only`. Left unset, `shared` defaults to included
+  at `single`, so single-tenant backups are unchanged, and to left out at
+  `multi`. On import, a skipped shared part is reported in a warning and in a
+  new `ImportResult.sharedSkipped`. The import route no longer declares
+  `writesSharedSettings`, so a customer org can now restore its own agents and
+  workflows; it was refused outright under t-751. A workflow whose slug
+  another org holds is imported under a free slug with a warning, instead of
+  failing the whole import. Tag grants also resolve against existing tags.
+  `exportOrchestrationConfig(scope)` and `importOrchestrationConfig(raw,
+  userId, scope)` now take a `BackupScope` from the new `resolveBackupScope()`
+  in `lib/orchestration/backup/scope.ts`. The bundle format is unchanged
+  (`schemaVersion: 3`); a bundle without the shared part carries those fields
+  empty.
 - **A webhook or event-hook delivery records where it was sent, and outlives
   the subscription or hook that sent it** (§109 t-739). `AiWebhookDelivery` and
   `AiEventHookDelivery` gain `destination` (the URL's origin only, so it holds

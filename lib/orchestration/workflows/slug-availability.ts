@@ -15,9 +15,10 @@
  * already, one slug at a time: the unique index refuses a create on any of
  * them (the create route answers 409).
  *
- * `isWorkflowSlugTaken` is for the backup importer, which reads a slug in the
- * caller's org to decide between versioning and creating, and still has this
- * bug until §109 t-738 moves it onto this module.
+ * `isWorkflowSlugTaken` is for the backup importer (§109 t-738), which reads
+ * a slug in the target org to decide between versioning and creating, and
+ * asks this only when that read comes back empty — then takes
+ * `findFreeWorkflowSlug` rather than failing the whole import on the index.
  *
  * Platform-agnostic: no Next.js imports.
  */

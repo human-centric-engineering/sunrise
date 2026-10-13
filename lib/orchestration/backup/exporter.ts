@@ -4,16 +4,34 @@
  * Exports agents, capabilities, workflows, webhook subscriptions, and
  * settings as a versioned JSON payload. Excludes secrets, embeddings,
  * and user-specific data.
+ *
+ * **Scoped to one org** (§109 t-738). The org's own part — agents, workflows,
+ * webhook subscriptions — is read inside `runAsOrg(scope.orgId)`, so at
+ * `multi` the `org_isolation` policy returns that org's rows whoever asks. The
+ * shared part — capabilities, knowledge tags, the `global` settings — is read
+ * only when `scope.includeShared`; otherwise the bundle carries it empty
+ * (`[]`, `[]`, `null`), which every importer reads as "nothing to write".
+ * `resolveBackupScope()` decides both; this function trusts what it is given.
  */
 
 import { prisma } from '@/lib/db/client';
+import { runAsOrg } from '@/lib/tenancy/context';
 import type { BackupPayload } from '@/lib/orchestration/backup/schema';
+import type { BackupScope } from '@/lib/orchestration/backup/scope';
 import {
   BUILTIN_TEMPLATE_SLUGS,
   SYSTEM_WORKFLOW_SLUGS,
 } from '@/lib/orchestration/workflows/template-catalogue';
 
-export async function exportOrchestrationConfig(): Promise<BackupPayload> {
+export function exportOrchestrationConfig(scope: BackupScope): Promise<BackupPayload> {
+  return runAsOrg(scope.orgId, () => readConfig(scope.includeShared));
+}
+
+async function readConfig(includeShared: boolean): Promise<BackupPayload> {
+  /** The shared-part query when it is included, else its empty value without a read. */
+  const sharedOr = <T>(empty: T, read: () => Promise<T>): Promise<T> =>
+    includeShared ? read() : Promise.resolve(empty);
+
   const [agents, capabilities, workflows, webhooks, knowledgeTags, settings] = await Promise.all([
     prisma.aiAgent.findMany({
       where: { isSystem: false },
@@ -66,22 +84,24 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         grantedDocuments: { select: { document: { select: { slug: true } } } },
       },
     }),
-    prisma.aiCapability.findMany({
-      where: { isSystem: false },
-      select: {
-        name: true,
-        slug: true,
-        description: true,
-        category: true,
-        functionDefinition: true,
-        executionType: true,
-        executionHandler: true,
-        executionConfig: true,
-        requiresApproval: true,
-        rateLimit: true,
-        isActive: true,
-      },
-    }),
+    sharedOr([], () =>
+      prisma.aiCapability.findMany({
+        where: { isSystem: false },
+        select: {
+          name: true,
+          slug: true,
+          description: true,
+          category: true,
+          functionDefinition: true,
+          executionType: true,
+          executionHandler: true,
+          executionConfig: true,
+          requiresApproval: true,
+          rateLimit: true,
+          isActive: true,
+        },
+      })
+    ),
     // The built-in templates are served from code, not backed up (§116
     // t-727): a TEMPLATE row holding a built-in slug is a seed-era copy of
     // one. A row with that slug that is an ordinary workflow (a retired row
@@ -119,34 +139,38 @@ export async function exportOrchestrationConfig(): Promise<BackupPayload> {
         isActive: true,
       },
     }),
-    prisma.knowledgeTag.findMany({
-      select: {
-        slug: true,
-        name: true,
-        description: true,
-      },
-    }),
-    prisma.aiOrchestrationSettings.findUnique({
-      where: { slug: 'global' },
-      select: {
-        defaultModels: true,
-        globalMonthlyBudgetUsd: true,
-        searchConfig: true,
-        defaultApprovalTimeoutMs: true,
-        approvalDefaultAction: true,
-        inputGuardMode: true,
-        outputGuardMode: true,
-        citationGuardMode: true,
-        webhookRetentionDays: true,
-        costLogRetentionDays: true,
-        auditLogRetentionDays: true,
-        executionRetentionDays: true,
-        evaluationRetentionDays: true,
-        maxConversationsPerUser: true,
-        maxMessagesPerConversation: true,
-        escalationConfig: true,
-      },
-    }),
+    sharedOr([], () =>
+      prisma.knowledgeTag.findMany({
+        select: {
+          slug: true,
+          name: true,
+          description: true,
+        },
+      })
+    ),
+    sharedOr(null, () =>
+      prisma.aiOrchestrationSettings.findUnique({
+        where: { slug: 'global' },
+        select: {
+          defaultModels: true,
+          globalMonthlyBudgetUsd: true,
+          searchConfig: true,
+          defaultApprovalTimeoutMs: true,
+          approvalDefaultAction: true,
+          inputGuardMode: true,
+          outputGuardMode: true,
+          citationGuardMode: true,
+          webhookRetentionDays: true,
+          costLogRetentionDays: true,
+          auditLogRetentionDays: true,
+          executionRetentionDays: true,
+          evaluationRetentionDays: true,
+          maxConversationsPerUser: true,
+          maxMessagesPerConversation: true,
+          escalationConfig: true,
+        },
+      })
+    ),
   ]);
 
   // Flatten the published version snapshot back to the wire shape that the

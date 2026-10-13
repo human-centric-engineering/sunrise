@@ -5,6 +5,13 @@
  *
  * Export/import orchestration configuration. Export downloads a JSON file;
  * import accepts a JSON file via drop zone or file picker.
+ *
+ * Both act on the admin's active org (§109 t-738). The shared part —
+ * capabilities, knowledge tags, orchestration settings — is offered only where
+ * it may move (the install org, or any org at `single`), behind a checkbox
+ * that starts ticked so a full backup stays the default there. From a
+ * customer's org at `multi` the panel backs up and restores that org's own
+ * part only.
  */
 
 import * as React from 'react';
@@ -12,6 +19,8 @@ import { useState, useCallback, useRef } from 'react';
 import { Download, Upload, Loader2, AlertTriangle, CheckCircle2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
@@ -23,11 +32,17 @@ interface ImportResult {
   workflows: { created: number; updated: number };
   webhooks: { created: number; skipped: number };
   settingsUpdated: boolean;
+  sharedSkipped: boolean;
   warnings: string[];
 }
 
 export function BackupPanel() {
+  // True only in a customer's org at `multi`, where the shared part cannot move.
   const readOnly = useSharedSettingsReadOnly();
+  const [includeShared, setIncludeShared] = useState(true);
+  // Asked for explicitly where it is offered, so `single` and the install org
+  // keep a full backup; left out elsewhere, where the API leaves it out too.
+  const scopeQuery = readOnly ? '' : `?shared=${includeShared ? 'true' : 'false'}`;
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -39,7 +54,7 @@ export function BackupPanel() {
     setExporting(true);
     setError(null);
     try {
-      const res = await fetch('/api/v1/admin/orchestration/backup/export', {
+      const res = await fetch(`/api/v1/admin/orchestration/backup/export${scopeQuery}`, {
         method: 'POST',
       });
       if (!res.ok) {
@@ -61,39 +76,42 @@ export function BackupPanel() {
     } finally {
       setExporting(false);
     }
-  }, []);
+  }, [scopeQuery]);
 
-  const handleImportFile = useCallback(async (file: File) => {
-    setImporting(true);
-    setError(null);
-    setImportResult(null);
+  const handleImportFile = useCallback(
+    async (file: File) => {
+      setImporting(true);
+      setError(null);
+      setImportResult(null);
 
-    try {
-      const text = await file.text();
-      let json: unknown;
       try {
-        json = JSON.parse(text);
-      } catch {
-        setError('File is not valid JSON');
-        setImporting(false);
-        return;
-      }
+        const text = await file.text();
+        let json: unknown;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          setError('File is not valid JSON');
+          setImporting(false);
+          return;
+        }
 
-      const result = await apiClient.post<ImportResult>(
-        '/api/v1/admin/orchestration/backup/import',
-        { body: json }
-      );
-      setImportResult(result);
-    } catch (err) {
-      if (err instanceof APIClientError) {
-        setError(err.message);
-      } else {
-        setError(err instanceof Error ? err.message : 'Import failed');
+        const result = await apiClient.post<ImportResult>(
+          `/api/v1/admin/orchestration/backup/import${scopeQuery}`,
+          { body: json }
+        );
+        setImportResult(result);
+      } catch (err) {
+        if (err instanceof APIClientError) {
+          setError(err.message);
+        } else {
+          setError(err instanceof Error ? err.message : 'Import failed');
+        }
+      } finally {
+        setImporting(false);
       }
-    } finally {
-      setImporting(false);
-    }
-  }, []);
+    },
+    [scopeQuery]
+  );
 
   const onFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -133,6 +151,36 @@ export function BackupPanel() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Shared part — only where it may move (§109 t-738). */}
+        {readOnly ? (
+          <p className="text-muted-foreground text-sm">
+            Backups from this organisation cover its own agents, workflows and webhooks. Shared
+            settings apply to every organisation and are backed up from the install organisation.
+          </p>
+        ) : (
+          <div className="flex items-center gap-2">
+            <Checkbox
+              id="backup-include-shared"
+              checked={includeShared}
+              onCheckedChange={setIncludeShared}
+            />
+            <Label htmlFor="backup-include-shared" className="text-sm font-normal">
+              Include shared settings
+            </Label>
+            <FieldHelp title="Shared settings">
+              <p>
+                Capabilities, knowledge tags and the orchestration settings. One copy serves every
+                organisation, so exporting or importing them affects all of them.
+              </p>
+              <p className="mt-2 text-xs">
+                Untick to back up or restore only this organisation&apos;s own agents, workflows and
+                webhooks. On import, a backup&apos;s shared settings are then skipped with a
+                warning.
+              </p>
+            </FieldHelp>
+          </div>
+        )}
+
         {/* Export */}
         <div>
           <h4 className="mb-2 text-sm font-medium">Export Configuration</h4>
@@ -151,52 +199,46 @@ export function BackupPanel() {
           </Button>
         </div>
 
-        {/* Import — install org only at `multi` until t-738 splits it into
-            shared and per-org parts (§107 t-751). */}
-        {readOnly ? (
-          <p className="text-muted-foreground text-sm">
-            Importing replaces shared settings too, so it runs from the install organisation.
-          </p>
-        ) : (
-          <div>
-            <h4 className="mb-2 text-sm font-medium">Import Configuration</h4>
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={onDrop}
-              className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-6 transition-colors ${
-                dragOver
-                  ? 'border-primary bg-primary/5'
-                  : 'border-muted-foreground/25 hover:border-muted-foreground/50'
-              }`}
-              onClick={() => fileInputRef.current?.click()}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click();
-              }}
-            >
-              {importing ? (
-                <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
-              ) : (
-                <Upload className="text-muted-foreground h-8 w-8" />
-              )}
-              <p className="text-muted-foreground mt-2 text-sm">
-                {importing ? 'Importing…' : 'Drop a backup JSON file here, or click to browse'}
-              </p>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".json,application/json"
-                className="hidden"
-                onChange={onFileChange}
-              />
-            </div>
+        {/* Import — every org restores its own part; the shared part only where
+            it may move (§109 t-738). */}
+        <div>
+          <h4 className="mb-2 text-sm font-medium">Import Configuration</h4>
+          <div
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={onDrop}
+            className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-6 transition-colors ${
+              dragOver
+                ? 'border-primary bg-primary/5'
+                : 'border-muted-foreground/25 hover:border-muted-foreground/50'
+            }`}
+            onClick={() => fileInputRef.current?.click()}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') fileInputRef.current?.click();
+            }}
+          >
+            {importing ? (
+              <Loader2 className="text-muted-foreground h-8 w-8 animate-spin" />
+            ) : (
+              <Upload className="text-muted-foreground h-8 w-8" />
+            )}
+            <p className="text-muted-foreground mt-2 text-sm">
+              {importing ? 'Importing…' : 'Drop a backup JSON file here, or click to browse'}
+            </p>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={onFileChange}
+            />
           </div>
-        )}
+        </div>
 
         {/* Error */}
         {error && (
