@@ -172,8 +172,9 @@ release process.
   address cleared and is deactivated, with a
   `webhook_subscription.recipient_erased` audit entry that names the
   subscription, never the address. Subject access returns the same deliveries:
-  `webhookDeliveries` rows gain `about` (what the event said about them, minus
-  other people) beside `sentTo`, and a new `eventHookDeliveries` section
+  `webhookDeliveries` rows gain `about` (which event, and what it said about
+  them — never other people, nor org configuration such as a notification
+  step's `webhookUrl`) beside `sentTo`, and a new `eventHookDeliveries` section
   carries event-hook deliveries. A migration adds a GIN index on each delivery
   table's `payload` (not `CONCURRENTLY`; retention bounds both tables). A fork
   whose own events name a person under another key clears it with a

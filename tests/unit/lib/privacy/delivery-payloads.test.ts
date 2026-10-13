@@ -212,6 +212,39 @@ describe('erasedPayload', () => {
 });
 
 describe('subjectViewOfPayload', () => {
+  it('activity: never hands the subject the org’s configuration carried on an event about their run', () => {
+    // A webhook-channel notification step puts its target URL — which often
+    // holds the credential in its path or query — and the body an admin's
+    // template rendered into the payload. The run is the subject's; the URL,
+    // the approval links and the body are not.
+    const result = subjectViewOfPayload(
+      {
+        data: {
+          executionId: 'e1',
+          workflowId: 'w1',
+          stepId: 's1',
+          webhookUrl: 'https://hooks.example/services/T000/B000/secret-token',
+          body: 'rendered by an admin template',
+          approveUrl: 'https://app.example/approve?token=abc',
+          rejectUrl: 'https://app.example/reject?token=abc',
+          tokenExpiresAt: '2026-10-14T00:00:00Z',
+          prompt: 'Approve your request?',
+          errorMessage: 'the run failed',
+        },
+      },
+      'activity',
+      SUBJECT
+    );
+
+    expect(result).toEqual({
+      executionId: 'e1',
+      workflowId: 'w1',
+      stepId: 's1',
+      prompt: 'Approve your request?',
+      errorMessage: 'the run failed',
+    });
+  });
+
   it('activity: returns everything except other people and approverUserIds', () => {
     const result = subjectViewOfPayload(
       {

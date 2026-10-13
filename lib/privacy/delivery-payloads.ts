@@ -39,9 +39,13 @@
  * it would send is now about nobody.
  *
  * **What subject access returns.** The same rows, each with the parts of its
- * `data` that are the subject's to see: an `activity` row in full, minus other
- * people's ids; an `actor` row as the fact of the action
- * ({@link EVENT_RECORD_KEYS} and the subject's own id).
+ * `data` that are the subject's to see: an `activity` row's record keys and
+ * what it said about them ({@link SUBJECT_TEXT_KEYS}); an `actor` row as the
+ * fact of the action ({@link EVENT_RECORD_KEYS}); and in both the subject's
+ * own id. An allowlist here too: an event about the subject's run can also
+ * carry the org's own configuration — a notification step's `webhookUrl`,
+ * which often holds its credential, approval links, the rendered `body` an
+ * admin's template produced — and none of that is the subject's.
  *
  * An anonymous embed visitor is not a `User` (#705, t-765): their events carry
  * `embedVisitorId` and go with the org's export, erasure and retention, as
@@ -124,6 +128,20 @@ export const EVENT_RECORD_KEYS: ReadonlySet<string> = new Set([
   'totalTokensUsed',
   'agentVersion',
   'at',
+]);
+
+/**
+ * The free-text keys of an `activity` row that say something about the
+ * subject's own conversation or run, which subject access hands them on top of
+ * {@link EVENT_RECORD_KEYS}: an escalation's `reason` and `metadata`, an
+ * approval's `prompt`, a failure's message. Erasure drops them.
+ */
+export const SUBJECT_TEXT_KEYS: ReadonlySet<string> = new Set([
+  'reason',
+  'metadata',
+  'prompt',
+  'error',
+  'errorMessage',
 ]);
 
 /** Keys that hold a person's id, each with the display-name key that goes with it. */
@@ -264,7 +282,7 @@ export function subjectViewOfPayload(
   return pick(data, (key) => {
     if (key === APPROVERS_KEY) return false;
     if (isPersonKey(key)) return isSubject(key);
-    return basis === 'activity' || EVENT_RECORD_KEYS.has(key);
+    return EVENT_RECORD_KEYS.has(key) || (basis === 'activity' && SUBJECT_TEXT_KEYS.has(key));
   });
 }
 

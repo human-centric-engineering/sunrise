@@ -103,11 +103,6 @@ function toAttribution(rows: { id: string; name: string; createdAt: Date }[]): A
 }
 
 const byCreatedAt = { createdAt: 'asc' } as const;
-
-/** Plain code-unit order, so ties sort the same on every locale. */
-function cmp(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
 const namedSelect = { id: true, name: true, createdAt: true } as const;
 
 /**
@@ -301,7 +296,7 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     section: 'webhookDeliveries',
     disposition: 'export',
     description:
-      'Event notifications the organisation sent that concern the subject: those emailed to their address (when, which event, and whether it was delivered), and those whose event was about their own conversations or workflow runs, or about a change they made. For an event about their own activity, what it said; for a change they made, which change. These records outlive the subscription that sent them. Notifications emailed to an address are included only once the account has verified it. Other people named in an event — colleagues asked to approve a step, an administrator who acted on the subject’s run — are left out.',
+      'Event notifications the organisation sent that concern the subject: those emailed to their address (when, which event, and whether it was delivered), and those whose event was about their own conversations or workflow runs, or about a change they made. For an event about their own activity, which event it was and what it said about them; for a change they made, which change. These records outlive the subscription that sent them. Notifications emailed to an address are included only once the account has verified it. Other people named in an event — colleagues asked to approve a step, an administrator who acted on the subject’s run — are left out.',
     // Two ways a delivery concerns the subject, merged by row: `sentTo` when it
     // was emailed to their address, `about` when its payload names them
     // (t-783). A row can be both.
@@ -344,7 +339,9 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
       const sentToIds = new Set(addressed.map((row) => row.id));
       const aboutById = new Map(named.map((row) => [row.id, row]));
       const rows = [...addressed, ...named.filter((row) => !sentToIds.has(row.id))];
-      rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || cmp(a.id, b.id));
+      // Ids are unique, so a tie on time always resolves; code-unit order, not
+      // locale order, so it sorts the same everywhere.
+      rows.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1));
       // Field by field, not a spread: widening a select must not be enough to
       // put a row's own address columns, or its raw payload, in front of the
       // subject.

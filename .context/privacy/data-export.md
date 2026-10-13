@@ -273,7 +273,12 @@ The export carries the same rows, matched by the same rule
   org's.
 
 `about` is `{ basis, data }`. For an event about the subject's own activity
-(`basis: 'activity'`) `data` is what the event said, minus other people; for a
+(`basis: 'activity'`) `data` is which event it was (`EVENT_RECORD_KEYS`) and
+what it said about them — an escalation's `reason` and `metadata`, an
+approval's `prompt`, a failure's message (`SUBJECT_TEXT_KEYS`). Nothing else:
+an event about their run can also carry the org's own configuration — a
+notification step's `webhookUrl`, which often holds a credential, approval
+links, the `body` an admin's template rendered — and that is not theirs. For a
 change they made (`basis: 'actor'`) it is which change — the agent, workflow
 or capability, not the change itself, which is the org's configuration, as an
 `attribution` source hands back the fact of authorship rather than the config.
