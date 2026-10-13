@@ -187,6 +187,40 @@ release process.
   `scrubInTransaction` hook; see `.context/privacy/data-erasure.md`.
 
 
+### Security
+
+- **The logger reduces every outbound URL it writes, whatever the key**
+  (t-778). `Logger`'s sanitiser now passes each string in a log entry (the
+  message, an error's message and stack, any field) through the new
+  `loggableUrlsInText()` in `lib/logging/redact-path.ts`: an absolute
+  http(s) URL keeps its origin and collapsed path and loses its query,
+  fragment and userinfo. Log lines that carried a full outbound URL on
+  purpose now show the reduced form. `collapseDynamicSegments` also judges a
+  segment containing `:` part by part, so a Telegram-style
+  `bot<id>:<secret>` segment collapses to `[param]`.
+- **Admin trace surfaces show webhook and API URLs reduced** (t-777). The
+  execution detail and live routes (`trace`, and `outputData` on detail),
+  `report.md`, the approver's `GET /orchestration/approvals/:id/status` and
+  the supervisor review apply `withDisplayUrls()` to values under keys
+  ending in `url`/`urls`. The persisted trace keeps working URLs, so
+  `{{steps.<id>.output.url}}` and resume are unchanged.
+- **The `workflow_notification` webhook payload's `webhookUrl` is the
+  reduced URL**, not a working one (t-777).
+- **Webhook subscription audit entries record the URL origin, never the
+  full URL or an email address** (t-785), including the update's `changes`
+  diff; the knowledge fetch-url entry records the reduced `sourceUrl`
+  (t-777). Existing audit rows are not rewritten.
+- **Analytics page views keep only origin, collapsed path and attribution
+  query parameters** (t-780). `url`, `path`, `search` and `referrer` on a
+  page view, the providers' `window.location` fallbacks, GA4's
+  `page_location`/`page_referrer`, PostHog's own `$current_url`-style
+  properties (via `before_send`) and server-side tracking's page context
+  are reduced by `lib/analytics/page-location.ts`; the query keeps only
+  `ATTRIBUTION_QUERY_PARAMS` (`utm_*`, `gclid`, `fbclid`). Plausible now
+  loads `script.manual.js`, so it records page views only through
+  `PlausibleProvider.page()`: a fork relying on Plausible's automatic page
+  views or its script extensions must check its setup.
+
 ## [0.14.0] — 2026-10-08
 
 > **Alpha release.** Twentieth tagged Sunrise release. **MINOR bump**. It

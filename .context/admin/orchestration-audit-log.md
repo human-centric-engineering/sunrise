@@ -137,6 +137,19 @@ interface AdminAuditEntry {
 
 Fields whose name matches `/password|secret|credential|(?:key|token)(?:s?$)/i` have their `from`/`to` values replaced with `"[REDACTED]"` before the insert. The pattern matches `password`, `secret`, and `credential` anywhere in the field name, but `key` and `token` only when they end the field name — so `apiKey` and `refreshToken` are redacted but `apiKeyCount` and `tokenizeInput` are not. Applied to both `changes` (field-level redaction) and `metadata` (recursive key-matching via `sanitizeMetadata()`). Safe to include metadata in audit entries without leaking secrets.
 
+### Destinations and URLs
+
+An audit entry never holds a full outbound URL or a person's email address:
+the log is readable by every admin and kept through erasure (its actor is
+`SetNull`). A webhook subscription's entries (create, update, delete) name it
+by its **URL origin**, or by its id for an email subscription; the update's
+`changes` diff records each side's origin for `url` and `[address]` for each
+side of `emailAddress` that held one (`auditableSubscriptionName` and
+`auditableSubscriptionChanges` in `lib/orchestration/webhooks/destination.ts`,
+t-785). A knowledge fetch-url entry records `metadata.sourceUrl` as
+`loggableUrl()` form (t-777). Entries written before these changes keep what
+they recorded; nothing rewrites them.
+
 ### Fire-and-forget semantics
 
 `logAdminAction()` kicks off `prisma.aiAdminAuditLog.create(...)` with `void` — no `await`. Failures are swallowed and logged via `logger.error('Failed to write admin audit log', …)`. Callers must not depend on the insert having landed by the time they return a response. A dropped write is preferable to a failed admin action.

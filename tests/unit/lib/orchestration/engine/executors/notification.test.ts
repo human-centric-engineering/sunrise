@@ -360,7 +360,7 @@ describe('executeNotification', () => {
 
       const result = await executor(step, makeCtx());
 
-      // The event goes to every subscription and is stored on each delivery
+      // The event would be stored on every matching subscription's delivery
       // row, so it carries only the reduced URL (t-777).
       expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledWith(
         'workflow_notification',

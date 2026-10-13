@@ -86,6 +86,35 @@ To enable PostHog session recording:
 new PostHogProvider({ enableSessionRecording: true });
 ```
 
+## What a page view records of the address
+
+A page's address can carry live credentials (a `/s/<token>` share page, a
+reset link) or an email address, and a provider keeps what it receives under
+its own retention, outside Sunrise's erasure and export. So every page view
+and every address a provider attaches by itself keeps only (t-780, owner
+ruling 2026-10-13):
+
+- the origin;
+- the path, with id- and secret-shaped segments collapsed to `[param]`
+  (`collapseDynamicSegments`, the same scrubber logs and error reports use);
+- the query parameters in `ATTRIBUTION_QUERY_PARAMS`: `utm_source`,
+  `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`, `gclid`, `fbclid`.
+  Every other parameter and the fragment are dropped.
+
+The rule lives in `lib/analytics/page-location.ts`. It is applied in the
+`page()` the React context exposes (so a fork's provider gets it too), in
+each built-in provider's `page()` and its `window.location` fallbacks, and to
+server-side tracking's page context (the `Referer` header). A fork that needs
+another parameter adds it to `ATTRIBUTION_QUERY_PARAMS`.
+
+What each provider's own script records, and how it is handled:
+
+| Provider  | Recorded by the script itself                                              | Handled                                                                                                                                                                                                |
+| --------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GA4       | `page_location` / `page_referrer` on every event                           | Set to the reduced address at init and on every page view (`gtag('set', …)`). **Out of reach:** enhanced measurement's own page views on history changes; turn that option off in the GA4 data stream. |
+| PostHog   | `$current_url`, `$pathname`, `$referrer`, `$initial_*`, `$session_entry_*` | Reduced on every event by `before_send`. **Out of reach:** autocapture's element attributes (a clicked link's `href`) and session recordings (off by default), which record the page as rendered.      |
+| Plausible | `u` (the page) on every event, and `r` (the referrer)                      | Sunrise loads `script.manual.js`, so the script sends no page view of its own, and every event passes a reduced `u`. **Out of reach:** `r`, which the script reads from `document.referrer` itself.    |
+
 ## Consent Integration
 
 The analytics system integrates with Sunrise's cookie consent system. Analytics only track when the user has consented to optional cookies.

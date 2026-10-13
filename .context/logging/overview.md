@@ -248,7 +248,12 @@ logger.info('API request', {
 
 ## Automatic Sanitization
 
-The logger has two-tier sanitization for security and privacy compliance.
+The logger has two-tier sanitization for security and privacy compliance,
+plus one rule that looks inside values: **every absolute http(s) URL in any
+string it writes is reduced to origin plus collapsed path**, with query,
+fragment and userinfo dropped (t-778). A webhook or signed URL carries its
+credential in those parts, and the key-name tiers below cannot see inside a
+value. See [`request-context.md`](./request-context.md) for the path rules.
 
 ### Tier 1: Secrets (ALWAYS Redacted)
 

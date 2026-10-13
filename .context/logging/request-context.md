@@ -91,13 +91,24 @@ context is built to hold nothing a value-blind redactor would miss:
   often carry their credential in one of those parts. Hook and
   webhook-subscription deliveries, the escalation webhook, the webhook create
   and test routes, the `send_notification` webhook step's log line and
-  knowledge-base URL fetches use it; a new log line that names a URL Sunrise
-  calls out to should too. `describeFetchFailure()` reduces any URL quoted in
-  a fetch error the same way. Only log lines and error text are reduced: a
-  step's `output` keeps the working URL, because later steps and resumed runs
-  read it, so the execution trace still shows the configured URL.
+  knowledge-base URL fetches use it. **Since t-778 the logger also does it
+  itself**: its sanitiser passes every string it writes (the message, an
+  error's message and stack, any field under any key) through
+  `loggableUrlsInText()`, so an absolute http(s) URL a call site forgot to
+  reduce is reduced anyway. Calling `loggableUrl()` at the call site is still
+  right, because it names the field honestly. Relative paths are not touched
+  by the logger: they are the request's own route, and go through
+  `loggablePath()` at the call site as above. `describeFetchFailure()`
+  reduces any URL quoted in a fetch error the same way. A step's persisted
+  `output` keeps the working URL, because later steps and resumed runs read
+  it; the admin execution detail, live view, Markdown report, approver status
+  page and supervisor review show it reduced (`withDisplayUrls()`, t-777).
 
-The heuristic cannot see a secret under 20 characters, one with other
+A segment containing `:` is judged part by part (t-778), so a Telegram bot
+path (`/bot123456789:AAH…/sendMessage`) collapses. The heuristic cannot see a
+secret under 20 characters (deliberately: below that a token cannot be told
+from a route word or short id, and the webhook secrets this exists for are
+longer), one with other
 characters (dots outside a JWT), a
 20+ character secret that reads as a slug or is one case with no digits, or a
 secret split across short catch-all segments. A route with a dynamic segment
