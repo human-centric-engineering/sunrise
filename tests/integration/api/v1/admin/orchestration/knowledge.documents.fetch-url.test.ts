@@ -248,6 +248,26 @@ describe('POST /api/v1/admin/orchestration/knowledge/documents/fetch-url', () =>
         })
       );
     });
+
+    it('records only the reduced source URL in the audit entry (t-777)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const SECRET = 'AbCdEfGhIjKlMnOpQrStUvWx';
+
+      await POST(
+        makePostRequest({ url: `https://example.com/d/${SECRET}/guide.md?sig=qs-secret` })
+      );
+
+      expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            sourceUrl: 'https://example.com/d/[param]/guide.md',
+          }),
+        })
+      );
+      const audited = JSON.stringify(vi.mocked(logAdminAction).mock.calls);
+      expect(audited).not.toContain(SECRET);
+      expect(audited).not.toContain('qs-secret');
+    });
   });
 
   describe('PDF file (requiresPreview path)', () => {
