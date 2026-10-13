@@ -444,9 +444,18 @@ describe('loggableUrlsInText (t-778)', () => {
     ).toBe('tried https://hooks.slack.com/services/T0/B0/[param], then http://h.example.com/a.');
   });
 
-  it('drops userinfo even when the password contains a quote', () => {
-    expect(loggableUrlsInText(`at https://user:p"w@api.example.com/x`)).toBe(
+  it('drops userinfo even when the password contains a single quote', () => {
+    expect(loggableUrlsInText(`at https://user:p'w@api.example.com/x`)).toBe(
       'at https://api.example.com/x'
+    );
+  });
+
+  it('does not read across a JSON field to a later @ as userinfo', () => {
+    expect(loggableUrlsInText('{"a":"https://example.com/hook","email":"x@y.com"}')).toBe(
+      '{"a":"https://example.com/hook","email":"x@y.com"}'
+    );
+    expect(loggableUrlsInText('{"a":"https://example.com","email":"x@y.com"}')).toBe(
+      '{"a":"https://example.com/","email":"x@y.com"}'
     );
   });
 

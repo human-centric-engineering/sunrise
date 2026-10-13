@@ -207,6 +207,9 @@ export function auditableDestination(destination: string | null): string | null 
     : null;
 }
 
+/** Appended to a URL change's `to` when only the path or query changed (t-785). */
+export const PATH_CHANGED = '(path changed)';
+
 /** What an email address reads as in the admin audit log (t-785). */
 export const AUDIT_ADDRESS = '[address]';
 
@@ -228,7 +231,8 @@ export function auditableSubscriptionName(sub: {
 
 /**
  * A subscription's audit `changes` diff with its destination reduced (t-785):
- * a `url` change records each side's origin, an `emailAddress` change records
+ * a `url` change records each side's origin (marked {@link PATH_CHANGED} when
+ * both share it), an `emailAddress` change records
  * {@link AUDIT_ADDRESS} for each side that held one (so set, cleared and
  * changed stay distinguishable). `secret` is redacted by the audit logger
  * itself. Every other field passes through.
@@ -241,7 +245,12 @@ export function auditableSubscriptionChanges(
   const reduce = (value: unknown, by: (raw: string) => string): unknown =>
     typeof value === 'string' && value !== '' ? by(value) : value;
   if (out.url) {
-    out.url = { from: reduce(out.url.from, originOf), to: reduce(out.url.to, originOf) };
+    const from = reduce(out.url.from, originOf);
+    const to = reduce(out.url.to, originOf);
+    // A new secret path on the same host reduces to the same origin on both
+    // sides; mark it, or the entry reads as a change that changed nothing.
+    out.url =
+      from === to && typeof to === 'string' ? { from, to: `${to} ${PATH_CHANGED}` } : { from, to };
   }
   if (out.emailAddress) {
     out.emailAddress = {

@@ -152,6 +152,30 @@ describe('GET /api/v1/admin/orchestration/executions', () => {
       expect(data.meta.total).toBe(1);
     });
 
+    it("reduces webhook URLs in each row's trace, input and output (t-777)", async () => {
+      const SECRET = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+      const SLACK = `https://hooks.slack.com/services/T0/B0/${SECRET}?token=qs-secret`;
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflowExecution.findMany).mockResolvedValue([
+        makeExecution({
+          inputData: { callbackUrl: SLACK },
+          outputData: { url: SLACK },
+          executionTrace: [
+            { stepId: 'notify', input: { webhookUrl: SLACK }, output: { url: SLACK } },
+          ],
+        }),
+      ] as never);
+      vi.mocked(prisma.aiWorkflowExecution.count).mockResolvedValue(1);
+
+      const response = await GET(makeRequest());
+      const text = await response.text();
+
+      expect(response.status).toBe(200);
+      expect(text).not.toContain(SECRET);
+      expect(text).not.toContain('qs-secret');
+      expect(text).toContain('https://hooks.slack.com/services/T0/B0/[param]');
+    });
+
     it('includes workflow info in each execution', async () => {
       const mockExecutions = [makeExecution()];
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());

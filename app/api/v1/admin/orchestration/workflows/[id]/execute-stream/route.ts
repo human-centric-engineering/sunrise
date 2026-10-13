@@ -16,6 +16,7 @@ import { withAdminAuth } from '@/lib/auth/guards';
 import { ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { sseResponse } from '@/lib/api/sse';
+import { withDisplayUrlsStream } from '@/lib/orchestration/trace/display-urls';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import {
   prepareWorkflowExecution,
@@ -115,5 +116,6 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
     signal: request.signal,
   });
 
-  return sseResponse(events, { signal: request.signal });
+  // Step outputs shown with their webhook and API URLs reduced (t-777).
+  return sseResponse(withDisplayUrlsStream(events), { signal: request.signal });
 });

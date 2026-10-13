@@ -48,6 +48,7 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { sseResponse } from '@/lib/api/sse';
+import { withDisplayUrlsStream } from '@/lib/orchestration/trace/display-urls';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import { WorkflowStatus } from '@/types/orchestration';
 
@@ -207,5 +208,6 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
     ...(replyConversationId ? { replyConversationId } : {}),
   });
 
-  return sseResponse(events, { signal: request.signal });
+  // Step outputs shown with their webhook and API URLs reduced (t-777).
+  return sseResponse(withDisplayUrlsStream(events), { signal: request.signal });
 });

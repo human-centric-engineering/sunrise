@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { withDisplayUrls } from '@/lib/orchestration/trace/display-urls';
+import { withDisplayUrls, withDisplayUrlsStream } from '@/lib/orchestration/trace/display-urls';
 
 const SECRET = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
 const SLACK = `https://hooks.slack.com/services/T0000/B0000/${SECRET}?token=qs-secret`;
@@ -70,5 +70,40 @@ describe('withDisplayUrls', () => {
 
     expect(JSON.stringify(withDisplayUrls(deep))).not.toContain(SECRET);
     expect(JSON.stringify(withDisplayUrls(deep))).toContain('[depth limit]');
+  });
+
+  it("reduces a provenance source's reference when it is a URL, and leaves an id alone", () => {
+    const shown = withDisplayUrls({
+      sources: [
+        { kind: 'external_call', reference: `https://api.example.com/v1/data?api_key=${SECRET}` },
+        { kind: 'knowledge_chunk', reference: 'chunk_123' },
+      ],
+    });
+
+    expect(shown.sources[0]?.reference).toBe('https://api.example.com/v1/data');
+    expect(shown.sources[1]?.reference).toBe('chunk_123');
+  });
+});
+
+describe('withDisplayUrlsStream', () => {
+  it('reduces every event and closes the source when the reader stops', async () => {
+    let closed = false;
+    async function* source() {
+      try {
+        yield { type: 'step_completed', output: { url: SLACK } };
+        yield { type: 'step_completed', output: { url: SLACK } };
+      } finally {
+        closed = true;
+      }
+    }
+
+    const seen: unknown[] = [];
+    for await (const event of withDisplayUrlsStream(source())) {
+      seen.push(event);
+      break;
+    }
+
+    expect(seen).toEqual([{ type: 'step_completed', output: { url: REDUCED } }]);
+    expect(closed).toBe(true);
   });
 });

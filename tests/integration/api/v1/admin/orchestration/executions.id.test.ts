@@ -205,6 +205,7 @@ describe('GET /api/v1/admin/orchestration/executions/:id', () => {
     const REDUCED = 'https://hooks.slack.com/services/T0000/B0000/[param]';
     const row = makeExecution({
       status: 'completed',
+      inputData: { callbackUrl: SLACK },
       outputData: { sent: true, channel: 'webhook', url: SLACK },
       executionTrace: [
         {

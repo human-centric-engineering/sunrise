@@ -296,6 +296,29 @@ describe('GET /workflows/:id/execute-stream', () => {
     expect(sseResponse).toHaveBeenCalledOnce();
   });
 
+  it('streams step outputs with webhook URLs reduced (t-777)', async () => {
+    const SECRET = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+    mockExecute.mockReturnValueOnce(
+      (async function* () {
+        yield {
+          type: 'step_completed',
+          stepId: 'notify',
+          output: { sent: true, url: `https://hooks.slack.com/services/T0/B0/${SECRET}` },
+        };
+      })() as never
+    );
+
+    await ExecuteStream(makeRequest(WORKFLOW_ID), makeParams(WORKFLOW_ID));
+
+    const streamed: unknown[] = [];
+    const events = vi.mocked(sseResponse).mock.calls[0]?.[0] as AsyncIterable<unknown>;
+    for await (const event of events) streamed.push(event);
+    expect(JSON.stringify(streamed)).not.toContain(SECRET);
+    expect(JSON.stringify(streamed)).toContain('https://hooks.slack.com/services/T0/B0/[param]');
+  });
+
   it('passes inputData to the engine when provided', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);

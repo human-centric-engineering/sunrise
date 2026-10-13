@@ -20,6 +20,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { executionVisibilityWhere } from '@/lib/orchestration/access/execution-access';
 import { listExecutionsQuerySchema } from '@/lib/validations/orchestration';
 import { WorkflowStatus } from '@/types/orchestration';
+import { withDisplayUrls } from '@/lib/orchestration/trace/display-urls';
 
 export const GET = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
@@ -83,7 +84,14 @@ export const GET = withAdminAuth(async (request, session) => {
   const items = executions.map((execution) => {
     const oldestStart = oldestStartByExecution.get(execution.id);
     const timeInCurrentStepMs = oldestStart ? now - oldestStart.getTime() : null;
-    return { ...execution, timeInCurrentStepMs };
+    // URL-bearing values shortened for display, as on the detail route (t-777).
+    return {
+      ...execution,
+      inputData: withDisplayUrls(execution.inputData),
+      outputData: withDisplayUrls(execution.outputData),
+      executionTrace: withDisplayUrls(execution.executionTrace),
+      timeInCurrentStepMs,
+    };
   });
 
   log.info('Executions listed', { count: items.length, total });

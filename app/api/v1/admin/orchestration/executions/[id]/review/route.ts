@@ -238,7 +238,8 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   try {
     assessment = await runSupervisorAssessment({
       stepOutputs,
-      inputData: execution.inputData,
+      // Reduced for the same reason as stepOutputs above (t-777).
+      inputData: withDisplayUrls(execution.inputData),
       outputData: execution.outputData,
       workflowId: execution.workflowId,
       executionId: id,

@@ -65,22 +65,47 @@ interface PostHogCaptureResult {
 const POSTHOG_URL_KEY = /(?:url|referrer)$/i;
 const POSTHOG_PATH_KEY = /pathname$/i;
 
+/** An `href="…"` in autocapture's `$elements_chain` (quotes inside are `\\"`-escaped). */
+const CHAIN_HREF = /href="((?:[^"\\]|\\.)*)"/g;
+
+/** A link target as autocapture records it: reduced, or dropped if not http(s). */
+function reduceHref(href: string): string {
+  return analyticsUrl(href) ?? '';
+}
+
+function reduceElements(elements: unknown): unknown {
+  if (!Array.isArray(elements)) return elements;
+  return elements.map((element: unknown) => {
+    if (typeof element !== 'object' || element === null) return element;
+    const out: Record<string, unknown> = { ...element };
+    if (typeof out.attr__href === 'string') out.attr__href = reduceHref(out.attr__href);
+    return out;
+  });
+}
+
 function reduceLocationProperties(
   properties: Record<string, unknown> | undefined
 ): Record<string, unknown> | undefined {
   if (!properties) return properties;
   const out: Record<string, unknown> = { ...properties };
   for (const [key, value] of Object.entries(properties)) {
-    if (typeof value !== 'string' || !key.startsWith('$')) continue;
-    if (POSTHOG_URL_KEY.test(key)) out[key] = analyticsUrl(value);
+    if (!key.startsWith('$')) continue;
+    // Autocapture records each clicked element, and a link's target, which
+    // on a share page carries the same token as the page itself.
+    if (key === '$elements') out[key] = reduceElements(value);
+    else if (typeof value !== 'string') continue;
+    else if (key === '$elements_chain')
+      out[key] = value.replace(CHAIN_HREF, (_match, href: string) => `href="${reduceHref(href)}"`);
+    else if (POSTHOG_URL_KEY.test(key)) out[key] = analyticsUrl(value);
     else if (POSTHOG_PATH_KEY.test(key)) out[key] = analyticsPath(value);
   }
   return out;
 }
 
 /**
- * PostHog `before_send`: reduce every address PostHog attached to an event,
- * and to the person properties it sets with it (t-780). Exported for tests.
+ * PostHog `before_send`: reduce every address PostHog attached to an event
+ * (the page, the referrer, autocapture's link targets) and to the person
+ * properties it sets with it (t-780). Exported for tests.
  */
 export function reducePostHogLocation(
   event: PostHogCaptureResult | null

@@ -206,7 +206,7 @@ export const GET = withAdminAuth<{ id: string }>(async (_request, session, { par
       totalCostUsd: execution.totalCostUsd,
       budgetLimitUsd: execution.budgetLimitUsd,
       currentStep: execution.currentStep,
-      inputData: execution.inputData,
+      inputData: withDisplayUrls(execution.inputData),
       outputData: withDisplayUrls(execution.outputData),
       errorMessage: execution.errorMessage,
       startedAt: execution.startedAt,

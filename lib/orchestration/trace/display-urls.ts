@@ -6,15 +6,17 @@
  * full webhook or API URL, and many services (Slack, Discord, Telegram) put the
  * secret that lets anyone post to the channel inside that address. t-773 kept
  * those URLs out of the logs; this keeps them out of the admin trace view, the
- * Markdown report and the approver's status page.
+ * Markdown report, the executions list, the run streams and the approver's
+ * status page.
  *
  * **Applied where the trace is served, never where it is persisted.** The
  * persisted trace has to keep the working URL: later steps read
  * `{{steps.<id>.output.url}}`, and a resumed run rebuilds its step outputs
  * from the persisted trace.
  *
- * **Matched by key, not by content.** A string under a key ending in `url`
- * or `urls` (`url`, `webhookUrl`, `sourceUrl`, `allowedUrls`…) that parses as an http(s)
+ * **Matched by key, not by content.** A string under a key ending in `url`,
+ * `urls` or `reference` (`url`, `webhookUrl`, `allowedUrls`, a source's
+ * `reference`…) that parses as an http(s)
  * URL becomes its `loggableUrl()` form: origin plus collapsed path, with no
  * query, fragment or userinfo. URLs inside free text, such as a model's answer
  * or a citation, are content the reader came to see and are left as written.
@@ -27,9 +29,13 @@ import { loggableUrl } from '@/lib/logging/redact-path';
 
 /**
  * A key whose value is an address (`url`, `webhookUrl`, `source_url`,
- * `callbackURL`), or a list of them (`urls`, `allowedUrls`).
+ * `callbackURL`), a list of them (`urls`, `allowedUrls`), or a provenance
+ * source's `reference`, which the provenance contract defines as the URL for
+ * `web_search` and `external_call` sources (`lib/orchestration/provenance/types.ts`).
+ * Only a value that parses as http(s) is touched, so a `reference` naming a
+ * document id or chunk stays as it is.
  */
-const URL_KEY = /urls?$/i;
+const URL_KEY = /(?:urls?|reference)$/i;
 
 /**
  * How deep the walk follows nested objects and arrays. Past it an object is
@@ -72,4 +78,14 @@ export function withDisplayUrls<T>(value: T): T {
   // The walk replaces strings with strings and copies everything else, so
   // the result has the shape of its input (bar the depth cap above).
   return walk(value, 0, false) as T;
+}
+
+/**
+ * {@link withDisplayUrls} applied to every event of an engine run streamed to
+ * the browser (`step_completed.output`, `workflow_completed.output`…), so the
+ * builder's live view hides what the trace view hides. Closing the returned
+ * stream closes the source, as `for await` does.
+ */
+export async function* withDisplayUrlsStream<T>(events: AsyncIterable<T>): AsyncIterable<T> {
+  for await (const event of events) yield withDisplayUrls(event);
 }

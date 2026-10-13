@@ -263,6 +263,7 @@ describe('POST /api/v1/admin/orchestration/executions/:id/review', () => {
     };
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
       ...happyExecution(),
+      inputData: { callbackUrl: SLACK },
       executionTrace: [notifyEntry],
     } as never);
     vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);

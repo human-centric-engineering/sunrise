@@ -437,4 +437,17 @@ describe('auditableSubscriptionChanges (t-785)', () => {
       isActive: { from: true, to: false },
     });
   });
+
+  it('marks a URL change that keeps its origin, so a rotated secret is not a no-op', () => {
+    expect(
+      auditableSubscriptionChanges({
+        url: {
+          from: 'https://hooks.slack.com/services/T0/B0/OldSecretAbCdEfGhIjKlMnOp',
+          to: 'https://hooks.slack.com/services/T0/B0/NewSecretAbCdEfGhIjKlMnOp',
+        },
+      })
+    ).toEqual({
+      url: { from: 'https://hooks.slack.com', to: 'https://hooks.slack.com (path changed)' },
+    });
+  });
 });

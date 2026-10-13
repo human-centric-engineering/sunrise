@@ -371,6 +371,15 @@ describe('Logger — outbound URLs in any string value (t-778)', () => {
     expect(lastProdOutput()).toContain(REDUCED);
   });
 
+  it('keeps a serialised non-Error object intact around a URL (code-review round 1)', () => {
+    const log = new Logger(LogLevel.INFO);
+
+    log.error('x', { a: 'https://example.com/hook', email: 'x@y.com' });
+
+    const parsed = JSON.parse(consoleErrorSpy.mock.calls.at(-1)?.[0] as string) as ParsedLogOutput;
+    expect(parsed.error?.message).toBe('{"a":"https://example.com/hook","email":"x@y.com"}');
+  });
+
   it('leaves relative paths and plain strings alone', () => {
     const log = new Logger(LogLevel.INFO);
 

@@ -745,6 +745,29 @@ describe('lib/analytics/providers/posthog', () => {
       expect(reducePostHogLocation(null)).toBeNull();
     });
 
+    it("reduces autocapture's link targets in $elements and $elements_chain", () => {
+      const event = reducePostHogLocation({
+        event: '$autocapture',
+        properties: {
+          $elements: [
+            { tag_name: 'a', attr__href: `/s/${TOKEN}/download?${EMAIL_QS}` },
+            { tag_name: 'a', attr__href: 'mailto:jane@example.com' },
+            { tag_name: 'div' },
+          ],
+          $elements_chain: `a:href="/s/${TOKEN}/download?${EMAIL_QS}"nth-child="1";div:nth-child="2"`,
+        },
+      });
+
+      expect(event?.properties?.$elements).toEqual([
+        { tag_name: 'a', attr__href: '/s/[param]/download' },
+        { tag_name: 'a', attr__href: '' },
+        { tag_name: 'div' },
+      ]);
+      expect(event?.properties?.$elements_chain).toBe(
+        'a:href="/s/[param]/download"nth-child="1";div:nth-child="2"'
+      );
+    });
+
     it('wires before_send into init', async () => {
       const provider = new PostHogProvider({ apiKey: 'phc_test123' });
       await provider.init();
