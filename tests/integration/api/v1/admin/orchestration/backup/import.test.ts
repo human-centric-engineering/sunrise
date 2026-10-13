@@ -43,7 +43,10 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   computeChanges: vi.fn(),
 }));
 
-vi.mock('@/lib/orchestration/backup/importer', () => ({
+// Only the import itself is stubbed; the conflict predicates are the real ones,
+// since the route's mapping of a thrown error depends on them.
+vi.mock('@/lib/orchestration/backup/importer', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/backup/importer')>()),
   importOrchestrationConfig: vi.fn(),
 }));
 
@@ -235,6 +238,47 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
       // about to write; the transaction rolled back, so a retry is safe.
       expect(res.status).toBe(409);
       expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+    });
+
+    it('returns the retry 409 when another org took a workflow slug the import planned', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(importOrchestrationConfig).mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+          meta: { modelName: 'AiWorkflow' },
+        })
+      );
+
+      const res = await POST(makePostRequest(makeValidPayload()));
+      const body = await parseJson<{
+        success: boolean;
+        error: { code: string; message: string };
+      }>(res);
+
+      expect(res.status).toBe(409);
+      expect(body.error.message).toBe(
+        'Backup import conflicted with a concurrent change. Please retry.'
+      );
+      expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
+    });
+
+    it('does not map a unique violation on another model to the retry 409', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(importOrchestrationConfig).mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+          meta: { modelName: 'AiCapability' },
+        })
+      );
+
+      const res = await POST(makePostRequest(makeValidPayload())).catch(() => null);
+      const body = res ? await parseJson<{ error?: { message?: string } }>(res) : null;
+
+      expect(body?.error?.message).not.toBe(
+        'Backup import conflicted with a concurrent change. Please retry.'
+      );
     });
   });
 

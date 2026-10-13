@@ -142,6 +142,55 @@ describe('BackupPanel', () => {
     });
   });
 
+  it('shows the API’s own message when the export is refused', async () => {
+    const user = userEvent.setup();
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: 'FORBIDDEN', message: 'The shared part moves only in the install org' },
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      )
+    );
+
+    render(<BackupPanel />);
+    await user.click(screen.getByRole('button', { name: /download backup/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('The shared part moves only in the install org')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/export failed/i)).not.toBeInTheDocument();
+  });
+
+  it('falls back to the status when a refused export has a non-JSON body', async () => {
+    const user = userEvent.setup();
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response('<html>Forbidden</html>', { status: 403 }));
+
+    render(<BackupPanel />);
+    await user.click(screen.getByRole('button', { name: /download backup/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Export failed: 403')).toBeInTheDocument();
+    });
+  });
+
+  it('falls back to the status when the JSON body is not an API error envelope', async () => {
+    const user = userEvent.setup();
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ error: 'nope' }), { status: 403 }));
+
+    render(<BackupPanel />);
+    await user.click(screen.getByRole('button', { name: /download backup/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Export failed: 403')).toBeInTheDocument();
+    });
+  });
+
   // ── Import via file input ──────────────────────────────────────────────────
 
   it('imports a valid JSON file and shows result summary', async () => {

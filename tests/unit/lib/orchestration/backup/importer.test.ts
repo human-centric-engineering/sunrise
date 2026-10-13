@@ -79,7 +79,9 @@ vi.mock('@/lib/logging', () => ({
 // The cross-org slug probes (§107 t-728), mocked at their boundary; the real
 // ones are proved in slug-availability's own tests.
 const mockIsWorkflowSlugTaken = vi.hoisted(() => vi.fn(async (_slug: string) => false));
-const mockFindFreeWorkflowSlug = vi.hoisted(() => vi.fn(async (slug: string) => `${slug}-1`));
+const mockFindFreeWorkflowSlug = vi.hoisted(() =>
+  vi.fn(async (slug: string, _alsoTaken?: (candidate: string) => boolean) => `${slug}-1`)
+);
 vi.mock('@/lib/orchestration/workflows/slug-availability', () => ({
   isWorkflowSlugTaken: mockIsWorkflowSlugTaken,
   findFreeWorkflowSlug: mockFindFreeWorkflowSlug,
@@ -99,7 +101,10 @@ vi.mock('@/lib/tenancy/context', async (importOriginal) => ({
 import {
   IMPORTED_FROM_SLUG_KEY,
   importOrchestrationConfig,
+  isWorkflowSlugConflict,
 } from '@/lib/orchestration/backup/importer';
+import { Prisma } from '@prisma/client';
+import { prisma } from '@/lib/db/client';
 import { getTenantContext } from '@/lib/tenancy/context';
 import type { BackupScope } from '@/lib/orchestration/backup/scope';
 import {
@@ -1840,19 +1845,25 @@ describe('importOrchestrationConfig — org scope', () => {
       expect(result.warnings).toEqual([]);
     });
 
-    it('does not probe other orgs for a workflow the target org already has', async () => {
+    it('plans a slug for a workflow the target org already has, but updates the row and never renames', async () => {
+      mockIsWorkflowSlugTaken.mockResolvedValue(true);
+      mockFindFreeWorkflowSlug.mockResolvedValue('x-1');
       mockTx.aiWorkflow.findUnique.mockResolvedValue({ id: 'wf-own', isSystem: false });
       mockTx.aiWorkflowVersion.findFirst.mockResolvedValue(null);
 
-      await importOrchestrationConfig(
+      const result = await importOrchestrationConfig(
         bundle({ workflows: [makeWorkflow({ slug: 'x' })] }),
         'user-1',
         OWN_SCOPE
       );
 
-      expect(mockIsWorkflowSlugTaken).not.toHaveBeenCalled();
-      expect(mockFindFreeWorkflowSlug).not.toHaveBeenCalled();
+      // The plan cannot know which slugs this org holds, so it probes...
+      expect(mockIsWorkflowSlugTaken).toHaveBeenCalledWith('x');
+      // ...but the transaction finds the row and the planned slug goes unused.
       expect(mockTx.aiWorkflow.create).not.toHaveBeenCalled();
+      expect(mockTx.aiWorkflow.update).toHaveBeenCalled();
+      expect(result.workflows).toEqual({ created: 0, updated: 1 });
+      expect(result.warnings).toEqual([]);
     });
   });
 });
@@ -1901,6 +1912,7 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
       expect(mockTx.aiWorkflow.findUnique).toHaveBeenCalledWith({ where: { slug: 'x' } });
       expect(mockTx.aiWorkflow.findFirst).toHaveBeenCalledWith({
         where: { metadata: { path: [IMPORTED_FROM_SLUG_KEY], equals: 'x' } },
+        orderBy: { createdAt: 'asc' },
       });
       expect(mockTx.aiWorkflow.create).not.toHaveBeenCalled();
       expect(mockTx.aiWorkflowVersion.create.mock.calls[0][0].data).toMatchObject({
@@ -2009,8 +2021,58 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
       });
     });
 
-    it('passes a predicate that holds back every bundle slug and every slug already created', async () => {
-      mockIsWorkflowSlugTaken.mockImplementation(async (slug: string) => slug === 'x');
+    it.each([
+      ['an array', ['a', 'b']],
+      ['a string', 'plain text'],
+    ])(
+      'replaces %s of bundle metadata on a renamed create with just the marker',
+      async (_l, metadata) => {
+        mockIsWorkflowSlugTaken.mockResolvedValue(true);
+
+        await importOrchestrationConfig(
+          bundle([makeWorkflow({ slug: 'x', metadata })]),
+          'user-1',
+          OWN_SCOPE
+        );
+
+        expect(mockTx.aiWorkflow.create.mock.calls[0][0].data.metadata).toEqual({
+          importedFromSlug: 'x',
+        });
+      }
+    );
+  });
+
+  describe('planning renamed slugs before the transaction', () => {
+    const txOrder = () => vi.mocked(prisma.$transaction).mock.invocationCallOrder[0];
+
+    it('asks every probe before prisma.$transaction is entered', async () => {
+      vi.mocked(prisma.$transaction).mockClear();
+      mockIsWorkflowSlugTaken.mockResolvedValue(true);
+
+      await importOrchestrationConfig(bundle([makeWorkflow({ slug: 'x' })]), 'user-1', OWN_SCOPE);
+
+      expect(mockIsWorkflowSlugTaken.mock.invocationCallOrder[0]).toBeLessThan(txOrder());
+      expect(mockFindFreeWorkflowSlug.mock.invocationCallOrder[0]).toBeLessThan(txOrder());
+    });
+
+    it('probes a slug the bundle repeats only once', async () => {
+      await importOrchestrationConfig(
+        bundle([makeWorkflow({ slug: 'x' }), makeWorkflow({ slug: 'x' })]),
+        'user-1',
+        OWN_SCOPE
+      );
+
+      expect(mockIsWorkflowSlugTaken.mock.calls.map((c) => c[0])).toEqual(['x']);
+    });
+
+    it('holds back every bundle slug and every slug already planned', async () => {
+      mockIsWorkflowSlugTaken.mockResolvedValue(true);
+      // Free candidates honour the predicate: 'x' and 'y' would both pick 'z'
+      // if the second were not told 'z' is already planned.
+      mockFindFreeWorkflowSlug.mockImplementation(async (_slug, alsoTaken = () => false) => {
+        for (const c of ['y', 'z', 'z2']) if (!alsoTaken(c)) return c;
+        throw new Error('no candidate');
+      });
 
       await importOrchestrationConfig(
         bundle([makeWorkflow({ slug: 'x' }), makeWorkflow({ slug: 'y' })]),
@@ -2018,40 +2080,8 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
         OWN_SCOPE
       );
 
-      const [base, alsoTaken] = mockFindFreeWorkflowSlug.mock.calls[0] as unknown as [
-        string,
-        (slug: string) => boolean,
-      ];
-      expect(base).toBe('x');
-      // A slug the bundle carries: a later workflow in it must not be mistaken for this one.
-      expect(alsoTaken('y')).toBe(true);
-      expect(alsoTaken('x')).toBe(true);
-      // A slug this import created: the committed-rows probe cannot see it. The
-      // predicate closes over the live set, so by now it holds 'x-1'.
-      expect(alsoTaken('x-1')).toBe(true);
-      expect(alsoTaken('unrelated')).toBe(false);
-    });
-
-    it('records each created slug, so a later workflow landing on it is renamed too', async () => {
-      // The first is renamed to 'x-1'; the second workflow carries 'x-1' itself.
-      // The probe reads committed rows and says it is free; only the import's own
-      // record of what it created says otherwise.
-      mockIsWorkflowSlugTaken.mockImplementation(async (slug: string) => slug === 'x');
-      mockFindFreeWorkflowSlug.mockResolvedValueOnce('x-1').mockResolvedValueOnce('x-1-1');
-
-      await importOrchestrationConfig(
-        bundle([makeWorkflow({ slug: 'x' }), makeWorkflow({ slug: 'x-1' })]),
-        'user-1',
-        OWN_SCOPE
-      );
-
-      expect(mockTx.aiWorkflow.create.mock.calls.map((c) => c[0].data.slug)).toEqual([
-        'x-1',
-        'x-1-1',
-      ]);
-      expect(mockFindFreeWorkflowSlug.mock.calls.map((c) => c[0])).toEqual(['x', 'x-1']);
-      // The second was judged taken from the import's own record, without a probe.
-      expect(mockIsWorkflowSlugTaken.mock.calls.map((c) => c[0])).toEqual(['x']);
+      // 'y' is a bundle slug so is skipped; 'x' takes 'z'; 'y' must skip 'z' (planned).
+      expect(mockTx.aiWorkflow.create.mock.calls.map((c) => c[0].data.slug)).toEqual(['z', 'z2']);
     });
   });
 
@@ -2071,5 +2101,34 @@ describe('importOrchestrationConfig — workflows renamed on import', () => {
       expect(mockTx.aiWorkflow.create.mock.calls[0][0].data.slug).toBe('x');
       expect(result.warnings).toEqual([]);
     });
+  });
+});
+
+describe('isWorkflowSlugConflict', () => {
+  const known = (code: string, meta?: Record<string, unknown>) =>
+    new Prisma.PrismaClientKnownRequestError('failed', {
+      code,
+      clientVersion: '7.0.0',
+      meta,
+    });
+
+  it('is true for a unique violation on AiWorkflow', () => {
+    expect(isWorkflowSlugConflict(known('P2002', { modelName: 'AiWorkflow' }))).toBe(true);
+  });
+
+  it('is false for a unique violation on another model', () => {
+    expect(isWorkflowSlugConflict(known('P2002', { modelName: 'AiAgentVersion' }))).toBe(false);
+  });
+
+  it('is false for a unique violation with no model name', () => {
+    expect(isWorkflowSlugConflict(known('P2002'))).toBe(false);
+  });
+
+  it('is false for another error code on AiWorkflow', () => {
+    expect(isWorkflowSlugConflict(known('P2025', { modelName: 'AiWorkflow' }))).toBe(false);
+  });
+
+  it('is false for a plain Error', () => {
+    expect(isWorkflowSlugConflict(new Error('boom'))).toBe(false);
   });
 });
