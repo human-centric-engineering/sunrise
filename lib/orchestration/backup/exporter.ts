@@ -18,10 +18,24 @@ import { prisma } from '@/lib/db/client';
 import { runAsOrg } from '@/lib/tenancy/context';
 import type { BackupPayload } from '@/lib/orchestration/backup/schema';
 import type { BackupScope } from '@/lib/orchestration/backup/scope';
+import { IMPORTED_FROM_SLUG_KEY } from '@/lib/orchestration/backup/schema';
+import { z } from 'zod';
 import {
   BUILTIN_TEMPLATE_SLUGS,
   SYSTEM_WORKFLOW_SLUGS,
 } from '@/lib/orchestration/workflows/template-catalogue';
+
+/**
+ * Workflow metadata without the importer's renamed-copy marker: it names a
+ * slug held by another org on THIS install, and carried into a bundle it could
+ * redirect a later import somewhere the marker means nothing.
+ */
+function withoutImportMarker(metadata: unknown): unknown {
+  const parsed = z.record(z.string(), z.unknown()).safeParse(metadata);
+  if (!parsed.success || !(IMPORTED_FROM_SLUG_KEY in parsed.data)) return metadata;
+  const { [IMPORTED_FROM_SLUG_KEY]: _marker, ...rest } = parsed.data;
+  return rest;
+}
 
 export function exportOrchestrationConfig(scope: BackupScope): Promise<BackupPayload> {
   return runAsOrg(scope.orgId, () => readConfig(scope.includeShared));
@@ -190,7 +204,7 @@ async function readConfig(includeShared: boolean): Promise<BackupPayload> {
             patternsUsed: w.patternsUsed,
             isActive: w.isActive,
             isTemplate: w.isTemplate,
-            metadata: w.metadata,
+            metadata: withoutImportMarker(w.metadata),
           },
         ]
       : []

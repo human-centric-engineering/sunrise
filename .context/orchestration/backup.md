@@ -74,7 +74,9 @@ rule itself, and is listed in `UNDECLARED_ROUTE_EXCEPTIONS`
   read. The new slug also avoids every slug the bundle carries and every one
   this import already created. The renamed row is marked with
   `metadata.importedFromSlug`, so importing the same bundle into the same org
-  again finds it and updates it rather than adding another copy. The free
+  again finds it and updates it rather than adding another copy. The marker is
+  looked up only when another org holds the slug, and the exporter strips it,
+  so it never travels to another install where it would mean nothing. The free
   slugs are worked out before the import's transaction opens, so its probes
   never wait on a second database connection while the transaction holds one.
   If another org takes a planned slug in between, the import rolls back and
@@ -130,7 +132,7 @@ Rate limit: adminLimiter
 
 Response 200:
   Content-Type: application/json
-  Content-Disposition: attachment; filename="orchestration-backup-{timestamp}.json"
+  Content-Disposition: attachment; filename="orchestration-backup-{orgId}-{timestamp}.json"
   Body: BackupPayload JSON
 ```
 

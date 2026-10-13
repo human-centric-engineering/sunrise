@@ -58,7 +58,7 @@ export const POST = withAdminAuth(async (request, session) => {
     status: 200,
     headers: {
       'Content-Type': 'application/json',
-      'Content-Disposition': `attachment; filename="orchestration-backup-${payload.exportedAt.replace(/[:.]/g, '-')}.json"`,
+      'Content-Disposition': `attachment; filename="orchestration-backup-${scope.orgId}-${payload.exportedAt.replace(/[:.]/g, '-')}.json"`,
     },
   });
 });

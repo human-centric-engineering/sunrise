@@ -176,6 +176,14 @@ const settingsBackupSchema = z.object({
   escalationConfig: z.unknown().nullable(),
 });
 
+/**
+ * The metadata key a workflow carries when a backup import created it under a
+ * different slug than the bundle's, because another org held that one. A
+ * later import of the same bundle into the same org finds the row by it and
+ * updates it, rather than creating another copy under yet another slug.
+ */
+export const IMPORTED_FROM_SLUG_KEY = 'importedFromSlug';
+
 // Schema version history:
 //   v1 — original.
 //   v2 — adds AiAgent.knowledgeAccessMode + grantedTagSlugs/grantedDocumentHashes,

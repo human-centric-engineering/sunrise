@@ -127,6 +127,13 @@ export async function resolveBackupScope(
     }
     orgId = named;
     if (orgId !== active) {
+      // The policy first: answering "no such org" or "suspended" before it
+      // would tell a caller who may not administer the org whether it exists,
+      // which the guard's own org entry refuses to do (`refuseOrgEntry`).
+      const resource = { kind: 'org', id: orgId, orgId };
+      if (!(await canAdminister(principal, resource, active ? { org: active } : {}))) {
+        throw new ForbiddenError('You cannot administer that organisation');
+      }
       // Org is a system model, so this read needs no tenant context.
       const org = await prisma.org.findUnique({ where: { id: orgId }, select: { status: true } });
       if (!org) throw new NotFoundError('Organisation not found');
@@ -135,10 +142,6 @@ export async function resolveBackupScope(
         throw new ConflictError(
           'That organisation is suspended; a backup cannot be imported into it.'
         );
-      }
-      const resource = { kind: 'org', id: orgId, orgId };
-      if (!(await canAdminister(principal, resource, active ? { org: active } : {}))) {
-        throw new ForbiddenError('You cannot administer that organisation');
       }
     }
   }

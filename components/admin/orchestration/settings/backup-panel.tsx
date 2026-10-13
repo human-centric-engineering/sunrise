@@ -24,6 +24,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
+import { parseApiResponse } from '@/lib/api/parse-response';
 import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 
 interface ImportResult {
@@ -34,14 +35,6 @@ interface ImportResult {
   settingsUpdated: boolean;
   sharedSkipped: boolean;
   warnings: string[];
-}
-
-/** The `error.message` of an API error envelope, when the body is one. */
-function apiErrorMessage(body: unknown): string | null {
-  if (typeof body !== 'object' || body === null || !('error' in body)) return null;
-  const { error } = body;
-  if (typeof error !== 'object' || error === null || !('message' in error)) return null;
-  return typeof error.message === 'string' ? error.message : null;
 }
 
 export function BackupPanel() {
@@ -67,8 +60,12 @@ export function BackupPanel() {
       });
       if (!res.ok) {
         // The API's own message says why (a shared-part refusal names the fix).
-        const body: unknown = await res.json().catch(() => null);
-        throw new Error(apiErrorMessage(body) ?? `Export failed: ${res.status}`);
+        const body = await parseApiResponse<unknown>(res).catch(() => null);
+        throw new Error(
+          body && !body.success && body.error.message
+            ? body.error.message
+            : `Export failed: ${res.status}`
+        );
       }
       const blob = await res.blob();
       const disposition = res.headers.get('Content-Disposition');
@@ -282,6 +279,9 @@ export function BackupPanel() {
                 skipped (duplicates)
               </li>
               {importResult.settingsUpdated && <li>Settings updated</li>}
+              {importResult.sharedSkipped && (
+                <li>Shared settings not restored (see the warning below)</li>
+              )}
             </ul>
             {importResult.warnings.length > 0 && (
               <div className="mt-2 space-y-1">

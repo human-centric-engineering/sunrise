@@ -15,10 +15,10 @@
  * already, one slug at a time: the unique index refuses a create on any of
  * them (the create route answers 409).
  *
- * `isWorkflowSlugTaken` is for the backup importer (§109 t-738), which reads
- * a slug in the target org to decide between versioning and creating, and
- * asks this only when that read comes back empty — then takes
- * `findFreeWorkflowSlug` rather than failing the whole import on the index.
+ * `workflowSlugsHeldAnywhere` is for the backup importer (§109 t-738): before
+ * its transaction it asks which of a bundle's slugs any org holds, subtracts
+ * the ones its own org holds, and takes `findFreeWorkflowSlug` for the rest
+ * rather than failing the whole import on the index.
  *
  * Platform-agnostic: no Next.js imports.
  */
@@ -44,6 +44,22 @@ export function isWorkflowSlugTaken(slug: string): Promise<boolean> {
 }
 
 /**
+ * Which of `slugs` a workflow in ANY org holds — one query, for a caller with
+ * many slugs to ask about. Like {@link isWorkflowSlugTaken} it returns only
+ * the slugs asked about, never another org's row.
+ */
+export function workflowSlugsHeldAnywhere(slugs: readonly string[]): Promise<Set<string>> {
+  if (slugs.length === 0) return Promise.resolve(new Set());
+  return runAsSystem('workflow slug availability (global unique index)', async () => {
+    const rows = await prisma.aiWorkflow.findMany({
+      where: { slug: { in: [...slugs] } },
+      select: { slug: true },
+    });
+    return new Set(rows.map((row) => row.slug));
+  });
+}
+
+/**
  * The longest workflow slug the API accepts: `createWorkflowSchema` and
  * `updateWorkflowSchema` both cap it at 100. A generated slug past it saves,
  * but the builder sends the slug back on every save and that PATCH fails.
@@ -60,10 +76,10 @@ function fit(base: string, suffix: string): string {
  * each cut to {@link WORKFLOW_SLUG_MAX_LENGTH} (the base is shortened, never
  * the suffix).
  *
- * `alsoTaken` names slugs the caller holds back for itself: ones it created
- * in an open transaction (which this probe, reading committed rows, cannot
- * see) or means to create next. The backup importer passes the slugs its
- * bundle carries and the ones it has already created.
+ * `alsoTaken` names slugs the caller holds back for itself: ones it means to
+ * create, or created in an open transaction this probe (reading committed
+ * rows) cannot see. The backup importer passes the slugs its bundle carries
+ * and the free slugs it has already planned.
  *
  * A slug can still be taken between this answer and the caller's create, so
  * the caller keeps its P2002 handling.
