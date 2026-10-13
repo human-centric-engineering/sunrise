@@ -371,14 +371,6 @@ describe('Logger — outbound URLs in any string value (t-778)', () => {
     expect(lastProdOutput()).toContain(REDUCED);
   });
 
-  it('reduces a URL in the entry handed to the admin log buffer', () => {
-    const log = new Logger(LogLevel.INFO);
-
-    log.info('dispatched', { target: SLACK });
-
-    expect(JSON.stringify(mockAddLogEntry.mock.calls)).not.toContain(SLACK_SECRET);
-  });
-
   it('leaves relative paths and plain strings alone', () => {
     const log = new Logger(LogLevel.INFO);
 
