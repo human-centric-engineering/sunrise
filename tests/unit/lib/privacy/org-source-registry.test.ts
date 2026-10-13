@@ -182,10 +182,23 @@ describe('registerAppOrgSources', () => {
         reason: `disposition must be 'export' or 'attribution'`,
       },
       {
-        why: 'a description under 20 characters',
-        source: { description: 'x'.repeat(19) },
+        why: 'a description of 20 characters (core requires more than 20)',
+        source: { description: 'x'.repeat(20) },
         model: 'AppInvoice',
-        reason: 'description must be at least 20 characters',
+        reason: 'description must be at least 21 characters',
+      },
+      {
+        why: 'a section that is a built-in object member',
+        source: { section: 'toString' },
+        model: 'AppInvoice',
+        reason: "section 'toString' is a built-in object member",
+      },
+      {
+        why: 'a description that is not a string',
+        // A fork's JS can pass anything; it must be dropped, not thrown.
+        source: { description: 42 as unknown as string },
+        model: 'AppInvoice',
+        reason: 'description must be at least 21 characters',
       },
       {
         why: 'a fetch that is not a function',
@@ -203,12 +216,12 @@ describe('registerAppOrgSources', () => {
       expectRejected('app', model, reason);
     });
 
-    it('accepts a description of exactly 20 characters', () => {
-      // The boundary: 19 is refused above, 20 must not be.
+    it('accepts a description of exactly 21 characters', () => {
+      // The boundary, matching core's `> 20`: 20 is refused above, 21 must not be.
       seam(() =>
         registerAppOrgSources({
           tier: 'app',
-          sources: [{ ...VALID, description: 'x'.repeat(20) }],
+          sources: [{ ...VALID, description: 'x'.repeat(21) }],
         })
       );
 

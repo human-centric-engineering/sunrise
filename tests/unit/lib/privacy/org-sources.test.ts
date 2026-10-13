@@ -74,11 +74,19 @@ const ORG_ID_FIELD = /^\s*orgId\s+String/;
 
 /**
  * The relation that ties a model's `orgId` to `Org`, with its `onDelete`
- * captured when present. Relation lines name the `Org` type and `[orgId]`.
+ * captured when present. Relation lines name the `Org` type and list `orgId`
+ * among their `fields` — alone, or in a composite key. `prisma format` keeps
+ * an attribute on one line, so a line scan sees the whole relation.
  */
-const ORG_RELATION = /^\s*\w+\s+Org\??\s+@relation\(.*fields:\s*\[\s*orgId\s*\]/;
+const ORG_RELATION = /^\s*\w+\s+Org\??\s+@relation\(.*fields:\s*\[[^\]]*\borgId\b[^\]]*\]/;
 const ON_DELETE = /onDelete:\s*(\w+)/;
-/** The two policies org erasure can rely on: delete with the org, or detach from it. */
+/**
+ * The two policies under which org erasure neither fails nor leaves a row
+ * pointing at a deleted org: delete with the org, or detach from it. SetNull
+ * KEEPS the rows — right for a record that must outlive the org (`AiCostLog`,
+ * a billing record), wrong for the org's own data. This rule cannot tell the
+ * two apart; choosing SetNull is a retention decision its author owns.
+ */
 const ERASURE_SAFE = new Set(['Cascade', 'SetNull']);
 
 interface SchemaFile {
@@ -389,6 +397,10 @@ describe('org-data source manifest', () => {
         [
           'a required relation',
           '  org   Org    @relation(fields: [orgId], references: [id], onDelete: Cascade)',
+        ],
+        [
+          'a composite key',
+          '  org   Org    @relation(fields: [orgId, key], references: [id, key], onDelete: Cascade)',
         ],
       ])('accepts %s', (_label, relation) => {
         const scan = scanSchemaFiles(relationFixture(relation));

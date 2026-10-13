@@ -587,7 +587,7 @@ async function main(): Promise<void> {
       `the org export carries every manifest section (${ORG_DATA_SOURCES.length})`
     );
     const appSections = getAppOrgSources().map((s) => s.section);
-    const missingAppSections = appSections.filter((s) => !(s in (bundle.app ?? {})));
+    const missingAppSections = appSections.filter((s) => !Object.hasOwn(bundle.app ?? {}, s));
     check(
       missingAppSections.length === 0,
       `the org export carries every fork-registered section (${appSections.length})`

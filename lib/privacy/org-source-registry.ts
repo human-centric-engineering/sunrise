@@ -92,12 +92,27 @@ const owners = new Map<string, string>();
 /** Whether the app init threw, leaving this tier's declarations unknown. */
 let appInitFailed = false;
 
-/** The core manifest's own floor on a source description (`org-sources.test.ts`). */
-const MIN_DESCRIPTION = 20;
+/** The core manifest's own floor on a source description: longer than 20 (`org-sources.test.ts`). */
+const MIN_DESCRIPTION = 21;
 /** Matches the subject registry: the reason is what the org reads in place of the table. */
 const MIN_REASON = 20;
 /** Core's section shape, so a fork section reads like one. */
 const SECTION_SHAPE = /^[a-z][A-Za-z0-9]*$/;
+
+/**
+ * Whether a section name is a built-in member of every object (`toString`,
+ * `constructor`, `hasOwnProperty`…). It passes the shape, and as a key of the
+ * bundle's `app` object it would shadow that member, and an `in` check would
+ * report it present when it is not.
+ */
+function isObjectBuiltin(section: string): boolean {
+  return section in Object.prototype;
+}
+
+/** A field's trimmed text, or `''` when it is not a string — a fork's JS can pass anything. */
+function text(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
 
 function reject(tier: string, model: string, why: string): void {
   // A rejected row is not silently absorbed: the model stays undeclared, so the
@@ -118,8 +133,8 @@ export function registerAppOrgSources(contribution: AppOrgSourceContribution): v
   const { tier } = contribution;
 
   for (const source of contribution.sources ?? []) {
-    const model = source.model?.trim() ?? '';
-    const section = source.section?.trim() ?? '';
+    const model = text(source.model);
+    const section = text(source.section);
 
     if (model === '') {
       reject(tier, String(source.model), 'model is empty');
@@ -129,11 +144,15 @@ export function registerAppOrgSources(contribution: AppOrgSourceContribution): v
       reject(tier, model, `section must match ${String(SECTION_SHAPE)}`);
       continue;
     }
+    if (isObjectBuiltin(section)) {
+      reject(tier, model, `section '${section}' is a built-in object member`);
+      continue;
+    }
     if (source.disposition !== 'export' && source.disposition !== 'attribution') {
       reject(tier, model, `disposition must be 'export' or 'attribution'`);
       continue;
     }
-    if ((source.description ?? '').trim().length < MIN_DESCRIPTION) {
+    if (text(source.description).length < MIN_DESCRIPTION) {
       reject(tier, model, `description must be at least ${MIN_DESCRIPTION} characters`);
       continue;
     }
@@ -180,13 +199,13 @@ export function registerAppOrgSources(contribution: AppOrgSourceContribution): v
   }
 
   for (const entry of contribution.excluded ?? []) {
-    const model = entry.model?.trim() ?? '';
+    const model = text(entry.model);
 
     if (model === '') {
       reject(tier, String(entry.model), 'model is empty');
       continue;
     }
-    if ((entry.reason ?? '').trim().length < MIN_REASON) {
+    if (text(entry.reason).length < MIN_REASON) {
       reject(tier, model, `reason must be at least ${MIN_REASON} characters`);
       continue;
     }

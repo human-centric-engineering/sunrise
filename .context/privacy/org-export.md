@@ -61,7 +61,10 @@ The same test holds every `orgId` model to an `Org` relation with
 `onDelete: Cascade` or `SetNull`. [Org erasure](./org-erasure.md) deletes the
 `Org` row and lets the database cascade; it does not walk this manifest. A
 model with no relation outlives the org's erasure with an id nothing resolves,
-and one with the default `Restrict` makes erasure fail.
+and one with the default `Restrict` makes erasure fail. The rule cannot judge
+retention: `SetNull` keeps the rows, which is right for a record that must
+outlive the org (the `AiCostLog` billing precedent) and wrong for the org's own
+data. That choice belongs to the model's author.
 
 ## Fork tables
 
@@ -222,7 +225,7 @@ offboarded is exactly the reader who cannot check.
         "section": "contracts",
         "description": "…",
         "disposition": "export",
-        "rows": 3
+        "rows": 0
       }
     ]
   },
