@@ -13,6 +13,7 @@ import {
   collapseDynamicSegments,
   loggablePath,
   loggableUrl,
+  loggableUrlsInText,
   scrubUrl,
   scrubUrlsDeep,
   scrubUrlsInError,
@@ -405,15 +406,60 @@ describe('loggableUrl (#953)', () => {
     expect(loggableUrl(url)).toBe('[non-http-url]');
   });
 
-  // Documented limit, recorded so a change to it is deliberate: a path segment
-  // containing `:` is outside LONG_TOKEN, so it is kept.
-  it('keeps a token-shaped path segment that contains a colon (documented limit)', () => {
-    expect(loggableUrl('https://api.example.com/bot123456789:AbCdEfGhIjKlMnOpQrStUvWx/send')).toBe(
-      'https://api.example.com/bot123456789:AbCdEfGhIjKlMnOpQrStUvWx/send'
+  // Was a documented limit until t-778: a segment containing `:` fell outside
+  // LONG_TOKEN and was kept, so a Telegram bot URL logged its secret.
+  it('collapses a Telegram-shaped `bot<id>:<secret>` segment', () => {
+    expect(
+      loggableUrl(
+        'https://api.telegram.org/bot123456789:AAHfiqksKZ8WmR2zSjiQ7_v4TMAKdiHm9T0/sendMessage'
+      )
+    ).toBe('https://api.telegram.org/[param]/sendMessage');
+  });
+
+  it('keeps a colon segment whose parts are all short words', () => {
+    expect(loggableUrl('https://api.example.com/v1/projects/demo:batchGet')).toBe(
+      'https://api.example.com/v1/projects/demo:batchGet'
+    );
+  });
+
+  // Documented limit (t-778 decision): under 20 characters a token cannot be
+  // told from a route word, so it is kept.
+  it('keeps a token under 20 characters (documented limit)', () => {
+    expect(loggableUrl('https://api.example.com/hooks/Ab3dEf6hIj9kLm')).toBe(
+      'https://api.example.com/hooks/Ab3dEf6hIj9kLm'
     );
   });
 
   it('never echoes a value it cannot parse', () => {
     expect(loggableUrl('not a url ?api_key=abc')).toBe('[unparseable-url]');
+  });
+});
+
+describe('loggableUrlsInText (t-778)', () => {
+  it('reduces every http(s) URL in text and keeps the words around it', () => {
+    expect(
+      loggableUrlsInText(
+        'tried https://hooks.slack.com/services/T0/B0/Xk9fQ2mZp4LrT7vB1nWc8sYd?x=1, then http://h.example.com/a#frag.'
+      )
+    ).toBe('tried https://hooks.slack.com/services/T0/B0/[param], then http://h.example.com/a.');
+  });
+
+  it('drops userinfo even when the password contains a quote', () => {
+    expect(loggableUrlsInText(`at https://user:p"w@api.example.com/x`)).toBe(
+      'at https://api.example.com/x'
+    );
+  });
+
+  it('collapses a Telegram bot secret inside text', () => {
+    expect(
+      loggableUrlsInText(
+        'GET https://api.telegram.org/bot123456789:AAHfiqksKZ8WmR2zSjiQ7_v4TMAKdiHm9T0/getMe returned 401'
+      )
+    ).toBe('GET https://api.telegram.org/[param]/getMe returned 401');
+  });
+
+  it('returns text with no scheme unchanged, including relative paths', () => {
+    const text = 'GET /s/Xk9fQ2mZp4LrT7vB1nWc8sYd took 4ms';
+    expect(loggableUrlsInText(text)).toBe(text);
   });
 });

@@ -10,6 +10,8 @@
  * - Request context propagation (requestId, userId, sessionId)
  * - Child loggers with inherited context
  * - Automatic secret sanitization (always redacted)
+ * - Outbound URLs reduced to origin + collapsed path in every string value,
+ *   whatever the key (t-778) — see `loggableUrlsInText`
  * - Environment-aware PII sanitization (GDPR compliant)
  * - TypeScript type safety
  *
@@ -40,6 +42,8 @@
  * // Production:  { email: '[PII REDACTED]' }
  * ```
  */
+
+import { loggableUrlsInText } from '@/lib/logging/redact-path';
 
 /**
  * Log levels in order of severity
@@ -270,10 +274,20 @@ export class Logger {
    * Sanitize sensitive data from an object
    * - Secrets are ALWAYS replaced with '[REDACTED]'
    * - PII is replaced with '[PII REDACTED]' based on environment/config
+   * - Every absolute http(s) URL in a string — the message, an error's message
+   *   and stack, any field under any key — is reduced to its `loggableUrl()`
+   *   form. Done here rather than at each log line because a webhook or signed
+   *   URL carries its credential in the path, query or userinfo, the key-name
+   *   rules above cannot see inside a value, and a call site that forgets
+   *   `loggableUrl` leaks with no test failing (t-778).
    */
   private sanitize(obj: unknown, sanitizePII: boolean): unknown {
     if (obj === null || obj === undefined) {
       return obj;
+    }
+
+    if (typeof obj === 'string') {
+      return loggableUrlsInText(obj);
     }
 
     if (typeof obj !== 'object') {
@@ -301,12 +315,7 @@ export class Logger {
         continue;
       }
 
-      // Recursively sanitize nested objects
-      if (typeof value === 'object' && value !== null) {
-        sanitized[key] = this.sanitize(value, sanitizePII);
-      } else {
-        sanitized[key] = value;
-      }
+      sanitized[key] = this.sanitize(value, sanitizePII);
     }
 
     return sanitized;

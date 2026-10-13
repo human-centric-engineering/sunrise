@@ -323,6 +323,74 @@ describe('Logger — recursive sanitization', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 5b. Outbound URLs — reduced centrally, whatever the key (t-778)
+// ---------------------------------------------------------------------------
+
+describe('Logger — outbound URLs in any string value (t-778)', () => {
+  const SLACK = 'https://hooks.slack.com/services/T0AAAA/B0BBBB/Xk9fQ2mZp4LrT7vB1nWc8sYd';
+  const SLACK_SECRET = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+  const REDUCED = 'https://hooks.slack.com/services/T0AAAA/B0BBBB/[param]';
+
+  function lastProdOutput(): string {
+    return consoleLogSpy.mock.calls.at(-1)?.[0] as string;
+  }
+
+  it('reduces a tokened URL under a key no rule names', () => {
+    const log = new Logger(LogLevel.INFO);
+
+    log.info('dispatched', { target: SLACK, nested: { endpoints: [`${SLACK}?sig=abc`] } });
+
+    const output = lastProdOutput();
+    expect(output).not.toContain(SLACK_SECRET);
+    expect(output).not.toContain('sig=abc');
+    const meta = (JSON.parse(output) as ParsedLogOutput).meta as Record<string, unknown>;
+    expect(meta.target).toBe(REDUCED);
+    expect((meta.nested as { endpoints: string[] }).endpoints[0]).toBe(REDUCED);
+  });
+
+  it('reduces a URL in the message and in an error message and stack', () => {
+    const log = new Logger(LogLevel.INFO);
+    const error = new Error(`POST ${SLACK} failed`);
+
+    log.error(`could not reach ${SLACK}`, error);
+
+    const output = consoleErrorSpy.mock.calls.at(-1)?.[0] as string;
+    expect(output).not.toContain(SLACK_SECRET);
+    const parsed = JSON.parse(output) as ParsedLogOutput;
+    expect(parsed.message).toBe(`could not reach ${REDUCED}`);
+    expect(parsed.error?.message).toBe(`POST ${REDUCED} failed`);
+  });
+
+  it('reduces a URL in the human-readable development format too', () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    const log = new Logger(LogLevel.INFO);
+
+    log.info('dispatched', { target: SLACK });
+
+    expect(lastProdOutput()).not.toContain(SLACK_SECRET);
+    expect(lastProdOutput()).toContain(REDUCED);
+  });
+
+  it('reduces a URL in the entry handed to the admin log buffer', () => {
+    const log = new Logger(LogLevel.INFO);
+
+    log.info('dispatched', { target: SLACK });
+
+    expect(JSON.stringify(mockAddLogEntry.mock.calls)).not.toContain(SLACK_SECRET);
+  });
+
+  it('leaves relative paths and plain strings alone', () => {
+    const log = new Logger(LogLevel.INFO);
+
+    log.info('request', { route: '/api/v1/admin/orchestration/webhooks', note: 'no url here' });
+
+    const meta = (JSON.parse(lastProdOutput()) as ParsedLogOutput).meta as Record<string, unknown>;
+    expect(meta.route).toBe('/api/v1/admin/orchestration/webhooks');
+    expect(meta.note).toBe('no url here');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 6. matchesSensitiveField — word-boundary matching precision
 // ---------------------------------------------------------------------------
 

@@ -14,6 +14,8 @@
  * - hex of 20 or more characters;
  * - anything containing `@` or `%40` — an email address, raw or encoded;
  * - a JWT (`eyJ…` header, three dot-separated parts);
+ * - a segment containing `:` any of whose colon-separated parts is one of
+ *   these shapes (`bot123456789:AAHfiqksKZ8WmR2zSjiQ7_v4TMAKdiHm9T0`);
  * - 20 or more characters of `[A-Za-z0-9_-+=~%]` (base64url or standard base64,
  *   cuid2, nanoid, a percent-encoded token…) that contain a digit or mix upper
  *   and lower case — unless the segment is a
@@ -26,7 +28,10 @@
  *
  * What it cannot catch — pin the route pattern with
  * `getRouteLogger(request, { endpoint })` for these:
- * - a secret under 20 characters;
+ * - a secret under 20 characters. Deliberate: below that length a token cannot
+ *   be told from a route word or a short id (`gpt-4o-mini`, `v1beta`), and the
+ *   webhook secrets this exists for are longer (Slack 24, Telegram 35,
+ *   Discord 68);
  * - a secret containing other characters (dots outside a JWT, `/` inside a
  *   catch-all segment);
  * - a 20+ character secret that happens to be one case with no digits, or to
@@ -47,6 +52,10 @@ const JWT = /^eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
 const READABLE_SLUG = /^(?:[a-z]+|\d+)(?:-(?:[a-z]+|\d+))+$/;
 
 function isSensitiveSegment(segment: string): boolean {
+  // `prefix<id>:<secret>` (a Telegram bot path, `bot123456:AAH…`): each
+  // colon-separated part is judged on its own, so a secret part collapses the
+  // whole segment while `projects/x:batchGet` keeps its short verb.
+  if (segment.includes(':')) return segment.split(':').some(isSensitiveSegment);
   if (UUID.test(segment) || CUID.test(segment) || LONG_HEX.test(segment)) return true;
   if (segment.includes('@') || segment.toLowerCase().includes('%40')) return true;
   if (JWT.test(segment)) return true;
@@ -307,4 +316,37 @@ export function loggableUrl(url: string | null | undefined): string | null | und
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '[non-http-url]';
   return `${parsed.origin}${collapseDynamicSegments(parsed.pathname)}`;
+}
+
+/**
+ * An absolute http(s) URL in free text. It ends at whitespace, a quote or
+ * `<>`, and never on trailing punctuation: a `,` or `)` left on the last
+ * segment would stop `collapseDynamicSegments` recognising a token there.
+ */
+const HTTP_URL_IN_TEXT = /\bhttps?:\/\/[^\s'"`<>]*[^\s'"`<>.,;:!?)\]}]/gi;
+
+/**
+ * An http(s) URL's userinfo, up to its `@`. Stripped before the URL is
+ * matched, so a quote or other character inside a password cannot end the
+ * match before the password does. It stops at `/`, `?` and `#` as URL parsing
+ * does: an `@` after one of them is in the path, query or fragment, and taking
+ * it for userinfo would delete the real host.
+ */
+const USERINFO_IN_TEXT = /\b(https?:\/\/)[^\s/?#@]*@/gi;
+
+/**
+ * Every absolute http(s) URL in `text` replaced with its `loggableUrl()` form
+ * (t-778). The logger applies this to every string it writes, whatever the
+ * key, so an outbound URL passed to a log line, an error message or a stack
+ * trace has its credential dropped without each call site having to remember
+ * `loggableUrl`. Relative paths are left to `loggablePath` at the call site
+ * (#950): they are the request's own route, not a third party's address.
+ *
+ * @example
+ * loggableUrlsInText('POST https://hooks.slack.com/services/T0/B0/Xk9fQ2mZp4LrT7vB1nWc8sYd failed');
+ * // 'POST https://hooks.slack.com/services/T0/B0/[param] failed'
+ */
+export function loggableUrlsInText(text: string): string {
+  if (!text.includes('://')) return text;
+  return text.replace(USERINFO_IN_TEXT, '$1').replace(HTTP_URL_IN_TEXT, (url) => loggableUrl(url));
 }
