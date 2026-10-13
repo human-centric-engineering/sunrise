@@ -29,7 +29,7 @@ import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/c
 import EventNotification from '@/emails/event-notification';
 import { matchesEntityScope } from '@/lib/orchestration/webhooks/event-entity-keys';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
-import { notRetried } from '@/lib/orchestration/webhooks/not-retried';
+import { isAwaitingRetry, notRetried } from '@/lib/orchestration/webhooks/not-retried';
 import {
   destinationUpdate,
   subscriptionDestination,
@@ -624,6 +624,9 @@ function scheduleRetry(deliveryId: string, subscriptionId: string, delayMs: numb
             prisma.aiWebhookDelivery.findUnique({ where: { id: deliveryId } }),
             prisma.aiWebhookSubscription.findUnique({ where: { id: subscriptionId } }),
           ]);
+          // Settled since this timer was armed — stopped by an erasure, or
+          // retried by hand: the row's own status is the answer, not the timer.
+          if (delivery && !isAwaitingRetry(delivery.status)) return;
           if (!delivery || !sub || !sub.isActive) {
             if (delivery) {
               await prisma.aiWebhookDelivery.update({

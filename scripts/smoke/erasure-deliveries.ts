@@ -5,7 +5,8 @@
  * Proves, against a real Postgres, what mocked tests cannot: the raw SQL in
  * `lib/privacy/delivery-payloads.ts` (JSON containment, the joins through the
  * subject's conversations and runs, the bulk rewrite) and the subscription
- * clear in `eraseUser()` (an address normalised in SQL). In order:
+ * clear in `eraseUser()` against real rows (an address stored as typed, in
+ * another case and with stray whitespace). In order:
  *
  *   1. Before erasure, the subject-access export finds every delivery whose
  *      payload names the subject — by their id, a conversation of theirs, a

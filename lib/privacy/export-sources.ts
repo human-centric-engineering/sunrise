@@ -324,21 +324,22 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     // same rule erasure redacts with.
     fetch: async (subject: SubjectQuery): Promise<unknown[]> => {
       const where = webhookDeliveriesAddressedTo(subject);
-      const [addressed, named] = await Promise.all([
-        where
-          ? prisma.aiWebhookDelivery.findMany({
-              where,
-              select: {
-                id: true,
-                eventType: true,
-                status: true,
-                lastAttemptAt: true,
-                createdAt: true,
-              },
-            })
-          : [],
-        deliveriesNamingSubject(prisma, 'webhook', subject.userId),
-      ]);
+      // One read, then the other: at `multi` each is its own transaction on a
+      // pooled connection, and `exportUserData` reads one at a time so that an
+      // export never holds more than one (see export-user.ts).
+      const addressed = where
+        ? await prisma.aiWebhookDelivery.findMany({
+            where,
+            select: {
+              id: true,
+              eventType: true,
+              status: true,
+              lastAttemptAt: true,
+              createdAt: true,
+            },
+          })
+        : [];
+      const named = await deliveriesNamingSubject(prisma, 'webhook', subject.userId);
       const sentTo = normaliseAddress(subject.email);
       const sentToIds = new Set(addressed.map((row) => row.id));
       const aboutById = new Map(named.map((row) => [row.id, row]));
@@ -359,7 +360,12 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
           about: about
             ? {
                 basis: about.basis,
-                data: subjectViewOfPayload(about.payload, about.basis, subject.userId),
+                data: subjectViewOfPayload(
+                  about.payload,
+                  about.basis,
+                  subject.userId,
+                  about.eventType
+                ),
               }
             : null,
         };
@@ -386,7 +392,7 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
         createdAt: row.createdAt,
         about: {
           basis: row.basis,
-          data: subjectViewOfPayload(row.payload, row.basis, subject.userId),
+          data: subjectViewOfPayload(row.payload, row.basis, subject.userId, row.eventType),
         },
       }));
     },

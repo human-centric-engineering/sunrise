@@ -292,7 +292,10 @@ transaction):
    is found only while that conversation or run still exists. One the person
    deleted, or that retention pruned before the delivery, no longer links the
    event to anyone, and erasure and subject access both miss it until
-   retention prunes the delivery too (t-792). **A fork that emits
+   retention prunes the delivery too (t-792)
+   The same goes for a delivery written while the erasure is in flight — a
+   chat turn or run still emitting events as the person is erased — which
+   the match has already passed by. **A fork that emits
    its own events** (`emitHookEvent('app.…')`) and names a person under a key
    other than these must clear it with a `scrubInTransaction` hook; an
    `activity` row already loses every key it does not recognise, but an event
@@ -304,13 +307,17 @@ transaction):
    ruling 2026-10-13) — the subject's own subscriptions cascade, but another
    admin's email-channel subscription that notifies them would keep emailing
    an erased person and writing the address onto every new delivery. Each one
-   whose address matches the subject's verified address — normalised in SQL,
-   since a subscription stores the address as typed, and exact, never
-   `ILIKE` — has the address cleared and is **deactivated**, not deleted: the
+   whose address matches the subject's verified address — each normalised
+   by `normaliseAddress()`, the function the deliveries are recorded with,
+   since a subscription stores the address as typed; compared in code, not
+   re-implemented in SQL, whose `btrim`/`lower` differ on tabs and non-ASCII
+   case; exact, never `ILIKE` — has the address cleared and is **deactivated**, not deleted: the
    integration stays visible to its owner, who can point it at someone else.
    Each gets an admin audit entry, `webhook_subscription.recipient_erased`,
    naming the subscription, its owner and org, and never the address. An
-   unverified account's address matches nothing, as in steps 4 and 5.
+   unverified account's address matches nothing, as in steps 4 and 5. This
+   runs before step 5, so the window in which a dispatch still reads the
+   subscription as active is as short as it can be.
 
 **At `multi`, a person's rows in every org go** (§107 t-748). The cascades are
 FK actions, which row-level security does not filter, so `user.delete` removes

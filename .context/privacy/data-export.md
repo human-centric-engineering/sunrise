@@ -283,7 +283,10 @@ change they made (`basis: 'actor'`) it is which change — the agent, workflow
 or capability, not the change itself, which is the org's configuration, as an
 `attribution` source hands back the fact of authorship rather than the config.
 Other people never appear: not the colleagues in an approval's
-`approverUserIds`, not an administrator who force-failed the subject's run.
+`approverUserIds` (a subject named there sees `approverUserIds: [themselves]`),
+not an administrator who force-failed the subject's run, nor the note they
+gave — on an admin action (`ADMIN_ACTION_EVENTS`) the free text is the
+admin's, even when the run it acted on is the subject's.
 See [What `eraseUser()` Does Beyond the Cascade](./data-erasure.md#what-eraseuser-does-beyond-the-cascade).
 
 **Neither net can reach `ContactSubmission`.** It holds no user id in any

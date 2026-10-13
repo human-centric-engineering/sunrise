@@ -169,6 +169,9 @@ const PERSON_KEYS: ReadonlyArray<{ id: string; name: string | null }> = [
 
 const APPROVERS_KEY = 'approverUserIds';
 
+/** The columns a match reads: never a row's destination or its history. */
+const COLUMNS = Prisma.sql`d.id, d."eventType", d.status, d."lastError", d."lastAttemptAt", d."createdAt", d.payload`;
+
 /** `{ data: { [key]: value } }` as a jsonb parameter, for an `@>` match. */
 function dataContains(key: string, value: unknown): Prisma.Sql {
   return Prisma.sql`${JSON.stringify({ data: { [key]: value } })}::jsonb`;
@@ -186,38 +189,41 @@ export async function deliveriesNamingSubject(
 ): Promise<SubjectDelivery[]> {
   const t = TABLES[table];
   // Each arm is one containment the GIN index answers; the two joins drive
-  // the index once per conversation or run. Every arm returns the whole row,
-  // so nothing joins back to the table, and `DISTINCT ON` keeps one copy of a
-  // row matched twice — the `activity` one, the stronger basis.
+  // the index once per conversation or run. Every arm returns the columns
+  // this needs, so nothing joins back to the table, and `DISTINCT ON` keeps
+  // one copy of a row matched twice — the `activity` one, the stronger basis.
+  // Ordered as {@link byCreatedAtThenId} orders: `COLLATE "C"` is code-unit
+  // order, whatever the database's collation.
   const rows = await client.$queryRaw<
     Array<Omit<SubjectDelivery, 'basis'> & { activity: boolean }>
   >`
     WITH matched AS (
-      SELECT d.*, true AS activity
+      SELECT ${COLUMNS}, true AS activity
         FROM ai_conversation c
         JOIN ${t} d
           ON d.payload @> jsonb_build_object('data', jsonb_build_object('conversationId', c.id))
        WHERE c."userId" = ${userId}
       UNION ALL
-      SELECT d.*, true
+      SELECT ${COLUMNS}, true
         FROM ai_workflow_execution e
         JOIN ${t} d
           ON d.payload @> jsonb_build_object('data', jsonb_build_object('executionId', e.id))
        WHERE e."userId" = ${userId}
       UNION ALL
-      SELECT *, true FROM ${t} WHERE payload @> ${dataContains('userId', userId)}
+      SELECT ${COLUMNS}, true FROM ${t} d WHERE d.payload @> ${dataContains('userId', userId)}
       UNION ALL
-      SELECT *, NOT ("eventType" = ANY(${[...ADMIN_ACTION_EVENTS]}::text[]))
-        FROM ${t} WHERE payload @> ${dataContains('actorUserId', userId)}
+      SELECT ${COLUMNS}, NOT (d."eventType" = ANY(${[...ADMIN_ACTION_EVENTS]}::text[]))
+        FROM ${t} d WHERE d.payload @> ${dataContains('actorUserId', userId)}
       UNION ALL
-      SELECT *, false FROM ${t} WHERE payload @> ${dataContains(APPROVERS_KEY, [userId])}
+      SELECT ${COLUMNS}, false FROM ${t} d WHERE d.payload @> ${dataContains(APPROVERS_KEY, [userId])}
     )
-    SELECT DISTINCT ON (id)
-           id, "eventType", status, "lastError", "lastAttemptAt", "createdAt", payload, activity
-      FROM matched
-     ORDER BY id, activity DESC
+    SELECT * FROM (
+      SELECT DISTINCT ON (id) *
+        FROM matched
+       ORDER BY id, activity DESC
+    ) one_each
+    ORDER BY "createdAt", id COLLATE "C"
   `;
-  rows.sort(byCreatedAtThenId);
   return rows.map(({ activity, ...row }) => ({
     ...row,
     basis: activity ? 'activity' : 'actor',
@@ -301,8 +307,12 @@ function isPersonKey(key: string): boolean {
 export function subjectViewOfPayload(
   payload: Prisma.JsonValue,
   basis: DeliveryBasis,
-  userId: string
+  userId: string,
+  eventType: string
 ): Prisma.JsonObject {
+  // On an admin's action the free text is the admin's — a force-fail's
+  // `reason` is their note — even when the run it acted on is the subject's.
+  const ownText = basis === 'activity' && !ADMIN_ACTION_EVENTS.includes(eventType);
   const data = dataOf(payload) ?? {};
   const isSubject = (key: string): boolean => {
     const person = PERSON_KEYS.find(({ id, name }) => key === id || key === name);
@@ -312,7 +322,7 @@ export function subjectViewOfPayload(
   const view = pick(data, (key) => {
     if (key === APPROVERS_KEY) return false;
     if (isPersonKey(key)) return isSubject(key);
-    return EVENT_RECORD_KEYS.has(key) || (basis === 'activity' && SUBJECT_TEXT_KEYS.has(key));
+    return EVENT_RECORD_KEYS.has(key) || (ownText && SUBJECT_TEXT_KEYS.has(key));
   });
   // Named as an approver: say so, without naming the colleagues beside them.
   const approvers = data[APPROVERS_KEY];
