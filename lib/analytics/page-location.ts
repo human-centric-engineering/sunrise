@@ -17,6 +17,11 @@
  * - the fragment and any `user:password@` are dropped.
  *
  * A fork that needs another parameter adds it to the list.
+ *
+ * This covers what Sunrise passes to a provider. What a provider's own script
+ * reads by itself is handled per provider, and what is out of reach (such as
+ * the referrer Plausible's script sends) is listed in
+ * `.context/analytics/providers.md`.
  */
 
 import { collapseDynamicSegments } from '@/lib/logging/redact-path';

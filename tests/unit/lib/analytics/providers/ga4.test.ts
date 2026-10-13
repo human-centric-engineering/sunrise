@@ -77,8 +77,6 @@ describe('lib/analytics/providers/ga4', () => {
         expect(mockGtag).toHaveBeenCalledWith('js', expect.any(Date));
         expect(mockGtag).toHaveBeenCalledWith('config', 'G-TEST123', {
           send_page_view: false,
-          page_location: 'http://localhost:3000/',
-          page_referrer: undefined,
           debug_mode: false,
         });
       });
@@ -90,8 +88,6 @@ describe('lib/analytics/providers/ga4', () => {
 
         expect(mockGtag).toHaveBeenCalledWith('config', 'G-TEST123', {
           send_page_view: false,
-          page_location: 'http://localhost:3000/',
-          page_referrer: undefined,
           debug_mode: true,
         });
       });
@@ -572,6 +568,20 @@ describe('lib/analytics/providers/ga4', () => {
         'page_view',
         expect.objectContaining({ page_location: REDUCED, page_path: '/s/[param]' })
       );
+    });
+
+    it('sets the reduced address globally at init, never on the config', async () => {
+      window.history.pushState({}, '', `/s/${TOKEN}?${EMAIL_QS}`);
+      const provider = new GA4Provider({ measurementId: 'G-TEST123' });
+
+      await provider.init();
+
+      expect(mockGtag).toHaveBeenCalledWith('set', {
+        page_location: `${window.location.origin}/s/[param]`,
+        page_referrer: undefined,
+      });
+      const configCall = mockGtag.mock.calls.find((call) => call[0] === 'config');
+      expect(configCall?.[2]).not.toHaveProperty('page_location');
     });
 
     it('falls back to the reduced current address, at init and on a page view', async () => {

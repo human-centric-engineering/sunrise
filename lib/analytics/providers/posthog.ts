@@ -68,6 +68,11 @@ const POSTHOG_PATH_KEY = /pathname$/i;
 /** An `href="…"` in autocapture's `$elements_chain` (quotes inside are `\\"`-escaped). */
 const CHAIN_HREF = /href="((?:[^"\\]|\\.)*)"/g;
 
+/** Whether a PostHog property value is an address rather than a sentinel such as `$direct`. */
+function isAddress(value: string): boolean {
+  return /^https?:\/\//i.test(value) || value.startsWith('/');
+}
+
 /** A link target as autocapture records it: reduced, or dropped if not http(s). */
 function reduceHref(href: string): string {
   return analyticsUrl(href) ?? '';
@@ -96,7 +101,9 @@ function reduceLocationProperties(
     else if (typeof value !== 'string') continue;
     else if (key === '$elements_chain')
       out[key] = value.replace(CHAIN_HREF, (_match, href: string) => `href="${reduceHref(href)}"`);
-    else if (POSTHOG_URL_KEY.test(key)) out[key] = analyticsUrl(value);
+    // `$direct` and other sentinels are not addresses: only a URL or a path
+    // is reduced.
+    else if (POSTHOG_URL_KEY.test(key)) out[key] = isAddress(value) ? analyticsUrl(value) : value;
     else if (POSTHOG_PATH_KEY.test(key)) out[key] = analyticsPath(value);
   }
   return out;

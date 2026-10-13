@@ -768,6 +768,17 @@ describe('lib/analytics/providers/posthog', () => {
       );
     });
 
+    it("leaves PostHog's $direct referrer sentinel as it is", () => {
+      const event = reducePostHogLocation({
+        event: '$pageview',
+        properties: { $referrer: '$direct', $referring_domain: '$direct' },
+        $set_once: { $initial_referrer: '$direct' },
+      });
+
+      expect(event?.properties).toEqual({ $referrer: '$direct', $referring_domain: '$direct' });
+      expect(event?.$set_once).toEqual({ $initial_referrer: '$direct' });
+    });
+
     it('wires before_send into init', async () => {
       const provider = new PostHogProvider({ apiKey: 'phc_test123' });
       await provider.init();

@@ -42,7 +42,6 @@ import { logger } from '@/lib/logging';
 import { cuidSchema } from '@/lib/validations/common';
 import { adminCanViewExecution } from '@/lib/orchestration/access/execution-access';
 import { executionTraceSchema, priorSupervisorReportSchema } from '@/lib/validations/orchestration';
-import { withDisplayUrls } from '@/lib/orchestration/trace/display-urls';
 import {
   CostOperation,
   WorkflowStatus,
@@ -139,9 +138,8 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   // Parse the persisted trace through the validator — drops noise.
   const trace = executionTraceSchema.parse(execution.executionTrace);
-  // The supervisor model reads outputs, not working URLs: shortened so a
-  // webhook secret is not sent to the model provider (t-777).
-  const stepOutputs = withDisplayUrls(stepOutputsFromTrace(trace));
+  // Webhook and API URLs are reduced inside runSupervisorAssessment (t-777).
+  const stepOutputs = stepOutputsFromTrace(trace);
 
   if (Object.keys(stepOutputs).length === 0) {
     throw new ConflictError(
@@ -238,8 +236,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   try {
     assessment = await runSupervisorAssessment({
       stepOutputs,
-      // Reduced for the same reason as stepOutputs above (t-777).
-      inputData: withDisplayUrls(execution.inputData),
+      inputData: execution.inputData,
       outputData: execution.outputData,
       workflowId: execution.workflowId,
       executionId: id,

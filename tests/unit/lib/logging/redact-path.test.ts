@@ -450,6 +450,18 @@ describe('loggableUrlsInText (t-778)', () => {
     );
   });
 
+  it('drops userinfo whose password contains a double quote (code-review round 2)', () => {
+    expect(loggableUrlsInText('creds: https://bot:pa"ssw0rdSecretXYZ@host.example.com/hook')).toBe(
+      'creds: https://host.example.com/hook'
+    );
+  });
+
+  it('does not read across a quoted list item to a later @ as userinfo', () => {
+    expect(loggableUrlsInText("['https://h.com/x','a@b.com']")).toBe(
+      "['https://h.com/x','a@b.com']"
+    );
+  });
+
   it('does not read across a JSON field to a later @ as userinfo', () => {
     expect(loggableUrlsInText('{"a":"https://example.com/hook","email":"x@y.com"}')).toBe(
       '{"a":"https://example.com/hook","email":"x@y.com"}'

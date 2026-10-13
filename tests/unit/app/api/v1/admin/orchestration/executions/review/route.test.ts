@@ -245,38 +245,6 @@ describe('POST /api/v1/admin/orchestration/executions/:id/review', () => {
     );
   });
 
-  it('hands the supervisor shortened webhook URLs, not working ones (t-777)', async () => {
-    const SECRET = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
-    const SLACK = `https://hooks.slack.com/services/T0000/B0000/${SECRET}?token=qs-secret`;
-    const notifyEntry = {
-      stepId: 'notify',
-      stepType: 'send_notification',
-      label: 'Notify',
-      status: 'completed',
-      input: { channel: 'webhook', webhookUrl: SLACK, bodyTemplate: 'Done' },
-      output: { sent: true, channel: 'webhook', url: SLACK },
-      tokensUsed: 0,
-      costUsd: 0,
-      startedAt: '2026-05-17T10:00:00.000Z',
-      completedAt: '2026-05-17T10:00:01.000Z',
-      durationMs: 1000,
-    };
-    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
-      ...happyExecution(),
-      inputData: { callbackUrl: SLACK },
-      executionTrace: [notifyEntry],
-    } as never);
-    vi.mocked(prisma.aiWorkflowExecution.update).mockResolvedValue({} as never);
-
-    const res = await POST(makeRequest(), makeContext());
-
-    expect(res.status).toBe(200);
-    const handed = JSON.stringify(vi.mocked(runSupervisorAssessment).mock.calls);
-    expect(handed).toContain('https://hooks.slack.com/services/T0000/B0000/[param]');
-    expect(handed).not.toContain(SECRET);
-    expect(handed).not.toContain('qs-secret');
-  });
-
   it('archives prior verdict into previousVerdicts[] on re-entry', async () => {
     vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue({
       ...happyExecution(),

@@ -49,11 +49,19 @@ function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value.trim());
 }
 
+function isPlainObject(value: object): boolean {
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 function walk(value: unknown, depth: number, underUrlKey: boolean): unknown {
   if (typeof value === 'string') {
     return underUrlKey && isHttpUrl(value) ? loggableUrl(value.trim()) : value;
   }
   if (typeof value !== 'object' || value === null) return value;
+  // A Date, a Prisma Decimal or another class instance in a live step output
+  // keeps its own `toJSON`; copying its entries would turn it into `{}`.
+  if (!Array.isArray(value) && !isPlainObject(value)) return value;
   if (depth >= MAX_DEPTH) return DEPTH_LIMIT;
   if (Array.isArray(value)) {
     return value.map((item: unknown) => walk(item, depth + 1, underUrlKey));

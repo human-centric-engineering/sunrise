@@ -327,15 +327,16 @@ const HTTP_URL_IN_TEXT = /\bhttps?:\/\/[^\s'"`<>]*[^\s'"`<>.,;:!?)\]}]/gi;
 
 /**
  * An http(s) URL's userinfo, up to its `@`. Stripped before the URL is
- * matched. It stops at `/`, `?` and `#` as URL parsing does: an `@` after one
- * of them is in the path, query or fragment, and taking it for userinfo would
- * delete the real host. It also stops at whitespace, `"`, a backtick and `<>`,
- * which cannot appear raw in userinfo (a `'` can, so it does not): the logger
- * runs this over serialised JSON, where `"https://h.com","email":"a@b.com"`
- * would otherwise read as userinfo up to the email's `@`, deleting the field
- * and naming the wrong host.
+ * matched, so a quote inside a password cannot end the match before the
+ * password does. It stops at `/`, `?` and `#` as URL parsing does: an `@` after
+ * one of them is in the path, query or fragment, and taking it for userinfo
+ * would delete the real host. It also stops at whitespace and `<>`, and at a
+ * quote beside a separator (`","`, `':`, `']`): the logger runs this over
+ * serialised JSON and lists, where `"https://h.com","email":"a@b.com"` would
+ * otherwise read as userinfo up to the email's `@`, deleting the field and
+ * naming the wrong host. A bare `,` is kept — it is legal in userinfo.
  */
-const USERINFO_IN_TEXT = /\b(https?:\/\/)[^\s/?#@"`<>]*@/gi;
+const USERINFO_IN_TEXT = /\b(https?:\/\/)(?:(?!["'`]\s*[,:\]})]|[,[{(]\s*["'`])[^\s/?#@<>])*@/gi;
 
 /**
  * Every absolute http(s) URL in `text` replaced with its `loggableUrl()` form

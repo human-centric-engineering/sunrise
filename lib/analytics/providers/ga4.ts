@@ -69,13 +69,14 @@ export class GA4Provider implements AnalyticsProvider {
 
     // Configure GA4
     this.gtag('js', new Date());
+    // gtag attaches the page's location to every event by itself; give it the
+    // reduced address instead of `document.location` (t-780). Set globally,
+    // not on the config: a config-level value would outrank the `set` each
+    // page() makes, pinning every later event to the landing page.
+    this.gtag('set', { page_location: currentPageUrl(), page_referrer: currentReferrer() });
     this.gtag('config', this.measurementId, {
       send_page_view: false, // We'll track page views manually
       debug_mode: this.debug,
-      // gtag attaches the page's location to every event by itself; give it
-      // the reduced address instead of `document.location` (t-780).
-      page_location: currentPageUrl(),
-      page_referrer: currentReferrer(),
     });
 
     this.ready = true;

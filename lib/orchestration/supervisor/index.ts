@@ -23,6 +23,7 @@
 import { z } from 'zod';
 
 import type { SupervisorReport, SupervisorVerdict } from '@/types/orchestration';
+import { withDisplayUrls } from '@/lib/orchestration/trace/display-urls';
 import {
   DEFAULT_PER_STEP_CAP_BYTES,
   TERMINAL_HEAD_CAP_BYTES,
@@ -489,14 +490,20 @@ export interface RunSupervisorResult {
 export async function runSupervisorAssessment(
   params: RunSupervisorParams
 ): Promise<RunSupervisorResult> {
-  const { projection } = buildProjection(params.stepOutputs, params.includeStepOutputs);
+  // The model reads outputs, not working URLs: webhook and API URLs are
+  // reduced before anything reaches the provider, for every caller (the
+  // in-workflow supervisor step and the retroactive review route, t-777).
+  const { projection } = buildProjection(
+    withDisplayUrls(params.stepOutputs),
+    params.includeStepOutputs
+  );
   const prompt = buildPrompt({
     assessmentCriteria: params.assessmentCriteria,
     redTeamPrompts: params.redTeamPrompts ?? DEFAULT_RED_TEAM_PROMPTS,
     minWeaknesses: params.minWeaknesses,
     projection,
-    inputData: params.inputData,
-    outputData: params.outputData,
+    inputData: withDisplayUrls(params.inputData),
+    outputData: withDisplayUrls(params.outputData),
     workflowId: params.workflowId,
     executionId: params.executionId,
   });

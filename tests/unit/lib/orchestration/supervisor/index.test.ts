@@ -500,6 +500,26 @@ describe('runSupervisorAssessment', () => {
     expect(result.report.invalidCitations).toHaveLength(1);
   });
 
+  it('sends the model reduced webhook URLs from step outputs, input and output (t-777)', async () => {
+    const SECRET = 'Xk9fQ2mZp4LrT7vB1nWc8sYd';
+    const SLACK = `https://hooks.slack.com/services/T0/B0/${SECRET}?token=qs-secret`;
+    const { shim, calls } = makeLlm([{ content: validReportJson() }]);
+
+    await runSupervisorAssessment({
+      ...baseParams,
+      stepOutputs: { notify: { sent: true, url: SLACK } },
+      inputData: { callbackUrl: SLACK },
+      outputData: { notify: { url: SLACK } },
+      includeStepOutputs: 'all' as const,
+      llmCall: shim,
+    });
+
+    const prompt = calls[0]?.prompt ?? '';
+    expect(prompt).toContain('https://hooks.slack.com/services/T0/B0/[param]');
+    expect(prompt).not.toContain(SECRET);
+    expect(prompt).not.toContain('qs-secret');
+  });
+
   it('propagates llmCall errors instead of catching them', async () => {
     const shim: LlmCallShim = vi.fn().mockRejectedValue(new Error('upstream timeout'));
     await expect(runSupervisorAssessment({ ...baseParams, llmCall: shim })).rejects.toThrow(

@@ -64,6 +64,24 @@ describe('withDisplayUrls', () => {
     expect(withDisplayUrls(value)).toEqual(value);
   });
 
+  it('passes a Date or other class instance through, so its toJSON still applies', () => {
+    const createdAt = new Date('2026-10-13T00:00:00Z');
+    class Decimalish {
+      toJSON() {
+        return '12.50';
+      }
+    }
+    const amount = new Decimalish();
+
+    const shown = withDisplayUrls({ createdAt, amount, url: SLACK });
+
+    expect(shown.createdAt).toBe(createdAt);
+    expect(shown.amount).toBe(amount);
+    expect(JSON.stringify(shown)).toBe(
+      `{"createdAt":"2026-10-13T00:00:00.000Z","amount":"12.50","url":"${REDUCED}"}`
+    );
+  });
+
   it('replaces an object nested past the depth cap rather than passing it on unread', () => {
     let deep: Record<string, unknown> = { url: SLACK };
     for (let i = 0; i < 40; i++) deep = { next: deep };
