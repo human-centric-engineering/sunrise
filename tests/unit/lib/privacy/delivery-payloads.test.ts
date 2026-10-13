@@ -11,7 +11,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
 import {
+  ADMIN_ACTION_EVENTS,
   EVENT_RECORD_KEYS,
+  byCreatedAtThenId,
   deliveriesNamingSubject,
   eraseSubjectFromDeliveries,
   erasedPayload,
@@ -245,7 +247,7 @@ describe('subjectViewOfPayload', () => {
     });
   });
 
-  it('activity: returns everything except other people and approverUserIds', () => {
+  it('activity: returns the event record, the subject’s text and own ids, and only the subject among the approvers', () => {
     const result = subjectViewOfPayload(
       {
         data: {
@@ -253,6 +255,7 @@ describe('subjectViewOfPayload', () => {
           conversationId: 'c1',
           reason: 'free text is the subject’s to see',
           metadata: { n: 1 },
+          error: 'boom',
           actorUserId: OTHER,
           actorUserName: 'Olive Other',
           approverUserIds: [SUBJECT, OTHER],
@@ -267,7 +270,29 @@ describe('subjectViewOfPayload', () => {
       conversationId: 'c1',
       reason: 'free text is the subject’s to see',
       metadata: { n: 1 },
+      error: 'boom',
+      approverUserIds: [SUBJECT],
     });
+    expect(JSON.stringify(result)).not.toContain(OTHER);
+    expect(JSON.stringify(result)).not.toContain('Olive');
+  });
+
+  it('activity: drops keys that are neither the event record nor the subject’s text', () => {
+    const result = subjectViewOfPayload(
+      {
+        data: {
+          conversationId: 'c1',
+          forkOwnKey: 'a fork’s own payload field',
+          body: 'rendered by an admin template',
+          changes: { a: 1 },
+          webhookUrl: 'https://hooks.example/secret',
+        },
+      },
+      'activity',
+      SUBJECT
+    );
+
+    expect(result).toEqual({ conversationId: 'c1' });
   });
 
   it('activity: keeps the subject as actor, with their name', () => {
@@ -309,7 +334,6 @@ describe('subjectViewOfPayload', () => {
           changes: { name: 'secret-config' },
           reason: 'x',
           forkOwnKey: 'y',
-          approverUserIds: [SUBJECT, OTHER],
         },
       },
       'actor',
@@ -319,15 +343,37 @@ describe('subjectViewOfPayload', () => {
     expect(result).toEqual({ actorUserId: SUBJECT, actorUserName: 'Sam Subject', agentId: 'a1' });
   });
 
-  it('actor: never returns approverUserIds even when the subject is an approver', () => {
-    const result = subjectViewOfPayload(
-      { data: { approverUserIds: [SUBJECT, OTHER], workflowId: 'w1' } },
-      'actor',
-      SUBJECT
-    );
+  it.each<'actor' | 'activity'>(['actor', 'activity'])(
+    '%s: an approver is told they were one, and never who the other approvers were',
+    (basis) => {
+      const result = subjectViewOfPayload(
+        { data: { approverUserIds: [OTHER, SUBJECT, 'user-third'], workflowId: 'w1' } },
+        basis,
+        SUBJECT
+      );
 
-    expect(result).toEqual({ workflowId: 'w1' });
-  });
+      expect(result).toEqual({ workflowId: 'w1', approverUserIds: [SUBJECT] });
+    }
+  );
+
+  it.each<'actor' | 'activity'>(['actor', 'activity'])(
+    '%s: no approverUserIds when the subject is not among them, or the field is not a list',
+    (basis) => {
+      const colleaguesOnly = subjectViewOfPayload(
+        { data: { approverUserIds: [OTHER, 'user-third'], workflowId: 'w1' } },
+        basis,
+        SUBJECT
+      );
+      const notAList = subjectViewOfPayload(
+        { data: { approverUserIds: SUBJECT, workflowId: 'w1' } },
+        basis,
+        SUBJECT
+      );
+
+      expect(colleaguesOnly).toEqual({ workflowId: 'w1' });
+      expect(notAList).toEqual({ workflowId: 'w1' });
+    }
+  );
 
   it('actor: omits another person’s actor id and name', () => {
     const result = subjectViewOfPayload(
@@ -388,6 +434,34 @@ describe('deliveriesNamingSubject', () => {
     expect(result.map((r) => r.id)).toEqual(['a-early', 'b-early', 'z-late']);
   });
 
+  it('exports the admin-action events as a fixed list', () => {
+    expect([...ADMIN_ACTION_EVENTS].sort()).toEqual(
+      [
+        'agent.updated',
+        'agent_updated',
+        'capability.quarantined',
+        'capability.unquarantined',
+        'execution.force_failed',
+      ].sort()
+    );
+  });
+
+  it('decides the actorUserId arm by event type: binds ADMIN_ACTION_EVENTS as one text[] parameter', async () => {
+    const { client, queryRaw } = makeClient([]);
+
+    await deliveriesNamingSubject(client, 'webhook', SUBJECT);
+
+    const { text, values } = renderCall(queryRaw);
+    // Activity unless the event is an admin action — the list is a bound
+    // array, not interpolated text.
+    expect(text).toContain('NOT ("eventType" = ANY(');
+    expect(text).toContain('::text[]');
+    expect(values).toContainEqual([...ADMIN_ACTION_EVENTS]);
+    for (const event of ADMIN_ACTION_EVENTS) expect(text).not.toContain(event);
+    // The approver arm stays unconditionally `actor`.
+    expect(text).toMatch(/SELECT \*, false FROM [\w.]+ WHERE payload @>/);
+  });
+
   it('queries the webhook delivery table for "webhook"', async () => {
     const { client, queryRaw } = makeClient([]);
 
@@ -441,65 +515,60 @@ describe('eraseSubjectFromDeliveries', () => {
       const parsed: Array<{
         id: string;
         payload: Prisma.JsonValue;
-        stop: boolean;
-        lastError: string | null;
+        activity: boolean;
       }> = JSON.parse(json);
       return parsed;
     });
   }
 
-  it('stops only activity rows that are pending or failed, with a not-retried lastError', async () => {
+  it('hands the UPDATE each row’s basis as `activity`, and computes no stop or lastError itself', async () => {
     rows = [
       row({ id: 'pend', status: 'pending', lastError: null, createdAt: new Date(1) }),
       row({ id: 'fail', status: 'failed', lastError: 'HTTP 500', createdAt: new Date(2) }),
       row({ id: 'done', status: 'delivered', lastError: null, createdAt: new Date(3) }),
-      row({ id: 'exh', status: 'exhausted', lastError: 'gave up', createdAt: new Date(4) }),
-    ];
-    const { client, executeRaw } = makeClient(rows);
-
-    await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
-
-    const byId = new Map(writtenRows(executeRaw).map((w) => [w.id, w]));
-    expect(byId.get('pend')).toMatchObject({
-      stop: true,
-      lastError: 'Not retried: subject erased',
-    });
-    expect(byId.get('fail')).toMatchObject({
-      stop: true,
-      lastError: 'HTTP 500 (not retried: subject erased)',
-    });
-    expect(byId.get('done')).toMatchObject({ stop: false, lastError: null });
-    expect(byId.get('exh')).toMatchObject({ stop: false, lastError: 'gave up' });
-  });
-
-  it('leaves actor rows’ status and lastError alone even when pending/failed', async () => {
-    rows = [
       row({
         id: 'actor-pending',
         activity: false,
         status: 'pending',
         lastError: 'earlier error',
         payload: { data: { actorUserId: SUBJECT, changes: { a: 1 } } },
-        createdAt: new Date(1),
-      }),
-      row({
-        id: 'actor-failed',
-        activity: false,
-        status: 'failed',
-        lastError: null,
-        payload: { data: { actorUserId: SUBJECT } },
-        createdAt: new Date(2),
+        createdAt: new Date(4),
       }),
     ];
     const { client, executeRaw } = makeClient(rows);
 
-    await eraseSubjectFromDeliveries(client, 'hook', SUBJECT);
+    await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
 
+    // Exactly {id, payload, activity}: the status the read saw is not sent,
+    // so the UPDATE can only decide against the row as it finds it.
     const written = writtenRows(executeRaw);
-    expect(written).toEqual([
-      expect.objectContaining({ id: 'actor-pending', stop: false, lastError: 'earlier error' }),
-      expect.objectContaining({ id: 'actor-failed', stop: false, lastError: null }),
+    expect(written.map((w) => [w.id, w.activity])).toEqual([
+      ['pend', true],
+      ['fail', true],
+      ['done', true],
+      ['actor-pending', false],
     ]);
+    for (const w of written) {
+      expect(Object.keys(w).sort()).toEqual(['activity', 'id', 'payload']);
+    }
+  });
+
+  it('decides the stop in SQL against the row’s live status, for activity rows only', async () => {
+    const { client, executeRaw } = makeClient([row({ id: 'one' })]);
+
+    await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
+
+    const { text } = renderCall(executeRaw);
+    const stop = "(w.activity AND d.status IN ('pending', 'failed'))";
+    // Status, retry time and last error all hang off the same live condition
+    expect(text).toContain(`status = CASE WHEN ${stop} THEN 'exhausted' ELSE d.status END`);
+    expect(text).toContain(`"nextRetryAt" = CASE WHEN ${stop} THEN NULL ELSE d."nextRetryAt" END`);
+    expect(text).toContain(`"lastError" = CASE WHEN ${stop} THEN`);
+    expect(text).toContain('ELSE d."lastError" END');
+    // The not-retried wording is built in SQL from the row's own lastError
+    expect(text).toContain("'Not retried: subject erased'");
+    expect(text).toContain(`d."lastError" || ' (not retried: subject erased)'`);
+    expect(text).toContain('AS w(id text, payload jsonb, activity boolean)');
   });
 
   it('writes the redacted payload for each basis', async () => {
@@ -566,5 +635,35 @@ describe('eraseSubjectFromDeliveries', () => {
 
     expect(renderCall(hook.executeRaw).text).toContain('UPDATE ai_event_hook_delivery');
     expect(renderCall(webhook.executeRaw).text).toContain('UPDATE ai_webhook_delivery');
+  });
+});
+
+describe('byCreatedAtThenId', () => {
+  const at = (ms: number, id: string) => ({ createdAt: new Date(ms), id });
+
+  it('orders oldest first', () => {
+    const sorted = [at(300, 'a'), at(100, 'z'), at(200, 'm')].sort(byCreatedAtThenId);
+
+    expect(sorted.map((r) => r.id)).toEqual(['z', 'm', 'a']);
+  });
+
+  it('breaks a tie on time by id', () => {
+    const sorted = [at(100, 'b'), at(100, 'c'), at(100, 'a')].sort(byCreatedAtThenId);
+
+    expect(sorted.map((r) => r.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('breaks a tie in code-unit order, not locale order', () => {
+    // Locale order puts 'a' before 'B'; code-unit order puts 'B' (66) before 'a' (97).
+    const sorted = [at(100, 'a'), at(100, 'B')].sort(byCreatedAtThenId);
+
+    expect(sorted.map((r) => r.id)).toEqual(['B', 'a']);
+  });
+
+  it('is negative, positive and — for the same row — zero', () => {
+    expect(byCreatedAtThenId(at(1, 'a'), at(2, 'a'))).toBeLessThan(0);
+    expect(byCreatedAtThenId(at(2, 'a'), at(1, 'a'))).toBeGreaterThan(0);
+    expect(byCreatedAtThenId(at(1, 'a'), at(1, 'b'))).toBeLessThan(0);
+    expect(byCreatedAtThenId(at(1, 'b'), at(1, 'a'))).toBeGreaterThan(0);
   });
 });

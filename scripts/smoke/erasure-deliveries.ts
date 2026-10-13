@@ -234,6 +234,20 @@ async function main(): Promise<void> {
       approverUserIds: [subject.id, colleague.id],
       prompt: 'Approve the colleague’s run',
     });
+    // The subject's own failed run, already pruned by retention: only
+    // `actorUserId` still names them, and on a non-admin event that is the
+    // run's owner, so the row is their activity — free text and all.
+    const prunedRun = await webhook(
+      'workflow_failed',
+      {
+        executionId: `${PREFIX}-pruned-run-${stamp}`,
+        workflowId: workflow.id,
+        actorUserId: subject.id,
+        actorUserName: subject.name,
+        error: SECRET_TEXT,
+      },
+      'failed'
+    );
     // Nothing to do with the subject.
     const unrelated = await webhook('conversation_escalated', {
       agentId: agent.id,
@@ -282,6 +296,9 @@ async function main(): Promise<void> {
       return sub;
     };
     const toSubject = await subscribe(subject.email.toUpperCase());
+    // Stored as typed, stray whitespace included: matched by the same
+    // normalisation the deliveries are recorded with, not a SQL lookalike.
+    const toSubjectPadded = await subscribe(` ${subject.email}\t`);
     const toOther = await subscribe(`${PREFIX}-someone-else-${stamp}@example.com`);
     const toUnverified = await subscribe(unverified.email);
 
@@ -297,7 +314,7 @@ async function main(): Promise<void> {
     const hookRows = await source('eventHookDeliveries').fetch(query);
     const webhookIds = idsOf(webhookRows);
     check(
-      [escalated, perTurn, notified, agentUpdated, approval].every((r) =>
+      [escalated, perTurn, notified, agentUpdated, approval, prunedRun].every((r) =>
         webhookIds.includes(r.id)
       ),
       'every webhook delivery naming the subject is exported (id, conversation, run, actor, approver)'
@@ -378,6 +395,15 @@ async function main(): Promise<void> {
       'a change they made keeps the change and loses only them'
     );
     check(agentUpdatedAfter?.status === 'failed', 'and keeps retrying: the event is the org’s');
+    const prunedRunAfter = webhookAfter.find((r) => r.id === prunedRun.id);
+    const prunedRunData = dataOf(row(prunedRun.id).payload);
+    check(
+      prunedRunData.actorUserId === null &&
+        !('actorUserName' in prunedRunData) &&
+        !('error' in prunedRunData) &&
+        prunedRunAfter?.status === 'exhausted',
+      'a failed run of theirs that retention already pruned is still their activity: free text gone, retry stopped'
+    );
     const approvalData = dataOf(row(approval.id).payload);
     check(
       isDeepStrictEqual(approvalData.approverUserIds, [colleague.id]) &&
@@ -413,6 +439,13 @@ async function main(): Promise<void> {
     });
     auditIds.push(...audit.map((a) => a.id));
     check(audit.length === 1, 'with one audit entry');
+    const paddedAfter = await prisma.aiWebhookSubscription.findUniqueOrThrow({
+      where: { id: toSubjectPadded.id },
+    });
+    check(
+      paddedAfter.emailAddress === null && !paddedAfter.isActive,
+      'so is one stored with surrounding spaces and a tab'
+    );
     check(
       !JSON.stringify(audit).toLowerCase().includes(subject.email.toLowerCase()),
       'that does not hold the address'

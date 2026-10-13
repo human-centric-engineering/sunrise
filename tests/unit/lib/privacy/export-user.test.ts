@@ -584,11 +584,48 @@ describe('exportUserData', () => {
       const bundle = await exportUserData(PARAMS);
       const rows = exported(bundle);
 
-      expect(rows[0].about?.data).toEqual({ executionId: 'e-1', userId: 'user-1' });
+      // The subject is told they were an approver, never who else was.
+      expect(rows[0].about?.data).toEqual({
+        executionId: 'e-1',
+        userId: 'user-1',
+        approverUserIds: ['user-1'],
+      });
       const text = JSON.stringify(bundle.personalData.webhookDeliveries);
       expect(text).not.toContain('user-admin');
       expect(text).not.toContain('Admin Person');
       expect(text).not.toContain('user-2');
+    });
+
+    it('tells an approver-only row’s subject they were an approver, and names no colleague', async () => {
+      armRaw({
+        webhook: [
+          namedRow({
+            id: 'n-1',
+            eventType: 'approval_required',
+            activity: false,
+            payload: {
+              event: 'approval_required',
+              data: {
+                workflowId: 'w-1',
+                approveUrl: 'https://app.example/approve?token=abc',
+                approverUserIds: ['user-2', 'user-1', 'user-3'],
+              },
+            },
+          }),
+        ],
+      });
+
+      const bundle = await exportUserData(PARAMS);
+      const rows = exported(bundle);
+
+      expect(rows[0].about).toEqual({
+        basis: 'actor',
+        data: { workflowId: 'w-1', approverUserIds: ['user-1'] },
+      });
+      const text = JSON.stringify(bundle.personalData.webhookDeliveries);
+      expect(text).not.toContain('user-2');
+      expect(text).not.toContain('user-3');
+      expect(text).not.toContain('token=abc');
     });
 
     it('reduces an actor row to the fact of the action, dropping what was changed', async () => {
