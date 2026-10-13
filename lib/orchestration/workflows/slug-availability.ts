@@ -60,13 +60,21 @@ function fit(base: string, suffix: string): string {
  * each cut to {@link WORKFLOW_SLUG_MAX_LENGTH} (the base is shortened, never
  * the suffix).
  *
+ * `alsoTaken` names slugs the caller holds back for itself: ones it created
+ * in an open transaction (which this probe, reading committed rows, cannot
+ * see) or means to create next. The backup importer passes the slugs its
+ * bundle carries and the ones it has already created.
+ *
  * A slug can still be taken between this answer and the caller's create, so
  * the caller keeps its P2002 handling.
  */
-export function findFreeWorkflowSlug(base: string): Promise<string> {
+export function findFreeWorkflowSlug(
+  base: string,
+  alsoTaken: (slug: string) => boolean = () => false
+): Promise<string> {
   return runAsSystem('workflow slug availability (global unique index)', async () => {
     let slug = fit(base, '');
-    for (let suffix = 1; await heldAnywhere(slug); suffix++) {
+    for (let suffix = 1; alsoTaken(slug) || (await heldAnywhere(slug)); suffix++) {
       slug = fit(base, `-${suffix}`);
     }
     return slug;

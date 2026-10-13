@@ -35,15 +35,19 @@ Both routes take two query parameters, resolved by `resolveBackupScope()`:
   writes that org's rows only. An unbound admin API key enters no org, so at
   `multi` it **must** name one (400 otherwise). Naming an org other than the
   active one asks the authorization policy again, about that org (403 if it
-  says no; 404 if the org does not exist). At `single` only the install org
-  may be named.
+  says no; 404 if the org does not exist; 409 for an import into a
+  **suspended** org, which every other path treats as closed — its backup can
+  still be exported). At `single` only the install org may be named.
 - **`shared`** — `true` or `false`: whether the shared part moves. Owner
   ruling, 2026-10-08, extending t-751's install-org rule to the export:
-  - It moves only for the **install org**, or for an **unbound admin API
-    key**, which acts as the install org.
-  - A customer org that asks (`shared=true`) is **refused** (403,
-    `details.reason: shared_settings_install_org_only`), not silently
-    skipped.
+  - It moves only when the **caller** is in the install org — the org its
+    session entered, as t-751's guard reads it, not the org named in
+    `?orgId=` — or is an **unbound admin API key**, which acts as the install
+    org. Naming the install org as the target from a customer's org does not
+    count: switch to the install org, as for any other shared setting.
+  - A caller in a customer org that asks (`shared=true`) is **refused** (403,
+    `details.reason: shared_settings_install_org_only`) and the refusal is
+    logged, not silently skipped.
   - Left unset, it is **included at `single`** — one org, nothing to protect,
     so single-tenant backups are unchanged — and **left out at `multi`**.
 
@@ -67,7 +71,10 @@ rule itself, and is listed in `UNDECLARED_ROUTE_EXCEPTIONS`
   org holds is created under the first free slug (`findFreeWorkflowSlug`,
   §107 t-728), with a warning naming the new slug, instead of failing the whole
   import on the index. The probe answers yes/no only; no other org's row is
-  read.
+  read. The new slug also avoids every slug the bundle carries and every one
+  this import already created. The renamed row is marked with
+  `metadata.importedFromSlug`, so importing the same bundle into the same org
+  again finds it and updates it rather than adding another copy.
 
 The settings page's Backup panel acts on the active org. Where the shared part
 may move it shows an **Include shared settings** checkbox, ticked by default;
@@ -123,7 +130,7 @@ Response 200:
   Body: BackupPayload JSON
 ```
 
-Audit log: `backup.export` action recorded with the target `orgId`, whether the shared part was included, and entity/capability/workflow counts.
+Audit log: `backup.export` action recorded with `entityId` = the target org, whether the shared part was included, and entity/capability/workflow counts.
 
 ## Import
 

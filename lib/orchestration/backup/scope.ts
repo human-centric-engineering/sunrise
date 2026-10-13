@@ -19,11 +19,18 @@
  *
  * **Shared part** (owner ruling 2026-10-08, extending t-751's rule to export
  * as well as import). At `multi` it moves only when the caller asks for it
- * (`?shared=true`) and the target is the install org, or the caller is an
- * unbound admin API key, which acts as the install org. A customer org that
- * does not ask gets its own part; one that asks is refused. Left unasked, it
- * is included at `single` — where there is one org and nothing to protect, so
- * a single-tenant install's backups are unchanged — and left out at `multi`.
+ * (`?shared=true`) and the CALLER is in the install org — the org its session
+ * entered, as t-751's guard reads it, not the org named in `?orgId=` — or is
+ * an unbound admin API key, which acts as the install org. Naming the install
+ * org as the target does not count: an admin in a customer's org switches to
+ * the install org to move the shared part, exactly as for any other shared
+ * setting. A caller in a customer org that does not ask gets the target's own
+ * part; one that asks is refused, and logged. Left unasked, the shared part is
+ * included at `single` — one org, nothing to protect, so a single-tenant
+ * install's backups are unchanged — and left out at `multi`.
+ *
+ * **A suspended org is not restored into.** Every other path treats it as
+ * closed; an import naming one is refused. Its backup can still be exported.
  *
  * @see lib/tenancy/shared-settings.ts — the same rule for routes and capabilities
  * @see .context/orchestration/backup.md — the guide
@@ -33,12 +40,14 @@ import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import {
   APIError,
+  ConflictError,
   ErrorCodes,
   ForbiddenError,
   NotFoundError,
   ValidationError,
 } from '@/lib/api/errors';
 import { canAdminister, type AuthorizationPrincipal } from '@/lib/auth/authorization';
+import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 import { SHARED_SETTINGS_REFUSAL_CODE } from '@/lib/tenancy/shared-settings';
@@ -65,8 +74,12 @@ export interface BackupScope {
 /** The words on the refusal when a customer org asks for the shared part. */
 export const BACKUP_SHARED_REFUSAL =
   'The shared part of a backup — capabilities, knowledge tags and the orchestration settings — ' +
-  'applies to every organisation, so it can be exported or imported only for the install ' +
-  'organisation. Leave out shared=true to back up this organisation’s own part.';
+  'applies to every organisation, so it can be exported or imported only from the install ' +
+  'organisation. Switch to the install organisation, or leave out shared=true to back up ' +
+  'only this organisation’s own part.';
+
+/** What the backup does with the org, which decides whether a suspended org may be named. */
+export type BackupPurpose = 'export' | 'import';
 
 /**
  * Resolve the org and shared-part choice for a backup request.
@@ -78,14 +91,18 @@ export const BACKUP_SHARED_REFUSAL =
  *   `single` install was asked for an org other than the install org
  * @throws {NotFoundError} the named org does not exist
  * @throws {ForbiddenError} the policy does not let the caller administer the named org
+ * @throws {ConflictError} an import named a suspended org
  * @throws {APIError} 403 `shared_settings_install_org_only` — the shared part was asked
- *   for an org other than the install org
+ *   for by a caller outside the install org
  */
 export async function resolveBackupScope(
   query: BackupScopeQuery,
-  principal: AuthorizationPrincipal
+  principal: AuthorizationPrincipal,
+  purpose: BackupPurpose
 ): Promise<BackupScope> {
   const multi = isMultiTenant();
+  // The org the guard entered for this caller; none for an unbound admin key.
+  const active = getTenantContext()?.orgId ?? null;
   // An admin API key is always unbound — the guard refuses a bound one — so
   // the credential alone says this caller entered no org.
   const unboundKey = principal.credential === 'api-key';
@@ -99,7 +116,6 @@ export async function resolveBackupScope(
     }
     orgId = INSTALL_ORG_ID;
   } else {
-    const active = getTenantContext()?.orgId ?? null;
     const named = query.orgId ?? active;
     if (named === null) {
       throw new ValidationError(
@@ -109,8 +125,14 @@ export async function resolveBackupScope(
     orgId = named;
     if (orgId !== active) {
       // Org is a system model, so this read needs no tenant context.
-      const org = await prisma.org.findUnique({ where: { id: orgId }, select: { id: true } });
+      const org = await prisma.org.findUnique({ where: { id: orgId }, select: { status: true } });
       if (!org) throw new NotFoundError('Organisation not found');
+      // A session can only be in an active org, so only a named one is checked.
+      if (purpose === 'import' && org.status !== 'ACTIVE') {
+        throw new ConflictError(
+          'That organisation is suspended; a backup cannot be imported into it.'
+        );
+      }
       const resource = { kind: 'org', id: orgId, orgId };
       if (!(await canAdminister(principal, resource, active ? { org: active } : {}))) {
         throw new ForbiddenError('You cannot administer that organisation');
@@ -118,8 +140,15 @@ export async function resolveBackupScope(
     }
   }
 
-  const sharedPermitted = !multi || unboundKey || orgId === INSTALL_ORG_ID;
+  const sharedPermitted = !multi || unboundKey || active === INSTALL_ORG_ID;
   if (query.shared === 'true' && !sharedPermitted) {
+    // The warning t-751's guard logs for the same refusal.
+    logger.warn('tenancy: refused a backup’s shared part outside the install org', {
+      purpose,
+      userId: principal.userId,
+      activeOrgId: active,
+      targetOrgId: orgId,
+    });
     throw new APIError(BACKUP_SHARED_REFUSAL, ErrorCodes.FORBIDDEN, 403, {
       reason: SHARED_SETTINGS_REFUSAL_CODE,
     });

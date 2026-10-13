@@ -21,7 +21,7 @@ import { Prisma } from '@prisma/client';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
-import { runAsOrg } from '@/lib/tenancy/context';
+import { isMultiTenant, runAsOrg } from '@/lib/tenancy/context';
 import { backupSchema, type BackupPayload } from '@/lib/orchestration/backup/schema';
 import type { BackupScope } from '@/lib/orchestration/backup/scope';
 import {
@@ -64,6 +64,23 @@ export interface ImportResult {
   /** The bundle carried a shared part and it was not written (§109 t-738). */
   sharedSkipped: boolean;
   warnings: string[];
+}
+
+/**
+ * The metadata key a workflow carries when a backup import created it under a
+ * different slug than the bundle's, because another org held that one. A
+ * later import of the same bundle into the same org finds the row by it and
+ * updates it, rather than creating another copy under yet another slug.
+ */
+export const IMPORTED_FROM_SLUG_KEY = 'importedFromSlug';
+
+/** The workflow metadata with the renamed-import marker set. */
+function withImportedFromSlug(metadata: unknown, slug: string): Prisma.InputJsonValue {
+  const base =
+    metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>)
+      : {};
+  return { ...base, [IMPORTED_FROM_SLUG_KEY]: slug };
 }
 
 /** The warning for a system workflow the import refused, by slug or by row flag. */
@@ -114,8 +131,11 @@ async function importParsed(
   if (!includeShared && sharedContent !== null) {
     result.sharedSkipped = true;
     result.warnings.push(
-      `Shared settings not imported: ${sharedContent}. They apply to every organisation, ` +
-        'so they are imported only into the install organisation, and only when asked for (shared=true).'
+      `Shared settings not imported: ${sharedContent}. ` +
+        (isMultiTenant()
+          ? 'They apply to every organisation, so they are imported only from the install ' +
+            'organisation, and only when asked for (shared=true).'
+          : 'This import was asked to leave them out (shared=false).')
     );
   }
 
@@ -476,6 +496,8 @@ async function importParsed(
       // `workflowDefinition` per workflow — on import it becomes either a
       // new published version (update path: published draft promoted to vN+1)
       // or the initial v1 (create path).
+      const bundleWorkflowSlugs = new Set(parsed.data.workflows.map((wf) => wf.slug));
+      const createdWorkflowSlugs = new Set<string>();
       for (const wf of parsed.data.workflows) {
         // A system workflow is the seed's, as a platform agent is, so it is
         // recognised by slug before anything else: a bundle exported before
@@ -498,7 +520,13 @@ async function importParsed(
           continue;
         }
         // Read in this org: at `multi` the policy hides every other org's rows.
-        const existing = await tx.aiWorkflow.findUnique({ where: { slug: wf.slug } });
+        // A miss may still be this org's own earlier import of the workflow,
+        // created under another slug because another org held this one.
+        const existing =
+          (await tx.aiWorkflow.findUnique({ where: { slug: wf.slug } })) ??
+          (await tx.aiWorkflow.findFirst({
+            where: { metadata: { path: [IMPORTED_FROM_SLUG_KEY], equals: wf.slug } },
+          }));
         // The row flag catches a system workflow the slug list does not know (a
         // fork's own seed). Versioning over one would republish whatever
         // definition the bundle carried, and the update below could deactivate
@@ -540,7 +568,11 @@ async function importParsed(
               patternsUsed: wf.patternsUsed,
               isActive: wf.isActive,
               isTemplate: wf.isTemplate,
-              metadata: (wf.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+              // A row found by the marker keeps it, or the next import misses it.
+              metadata:
+                existing.slug !== wf.slug
+                  ? withImportedFromSlug(wf.metadata, wf.slug)
+                  : ((wf.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull),
               publishedVersionId: newVersion.id,
             },
           });
@@ -551,9 +583,22 @@ async function importParsed(
           // Take the first free one instead and say so. The probe answers
           // yes/no only, and also covers another org's system workflow, which
           // the `isSystem` check above cannot see.
+          //
+          // A new slug avoids the ones this import created (the probe reads
+          // committed rows, so it cannot see them) and every slug the bundle
+          // carries, so a later workflow in it is not mistaken for this one.
+          // At `single` the read above sees every row, so there is nothing
+          // another org could hold.
           let slug = wf.slug;
-          if (await isWorkflowSlugTaken(wf.slug)) {
-            slug = await findFreeWorkflowSlug(wf.slug);
+          const taken =
+            createdWorkflowSlugs.has(slug) ||
+            (isMultiTenant() && (await isWorkflowSlugTaken(slug)));
+          if (taken) {
+            slug = await findFreeWorkflowSlug(
+              wf.slug,
+              (candidate) =>
+                createdWorkflowSlugs.has(candidate) || bundleWorkflowSlugs.has(candidate)
+            );
             result.warnings.push(
               `Workflow '${wf.slug}' imported as '${slug}' — that slug is already used by another organisation`
             );
@@ -566,10 +611,15 @@ async function importParsed(
               patternsUsed: wf.patternsUsed,
               isActive: wf.isActive,
               isTemplate: wf.isTemplate,
-              metadata: (wf.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+              // Renamed: mark it, so importing this bundle again updates it.
+              metadata:
+                slug !== wf.slug
+                  ? withImportedFromSlug(wf.metadata, wf.slug)
+                  : ((wf.metadata as Prisma.InputJsonValue) ?? Prisma.JsonNull),
               createdBy: userId,
             },
           });
+          createdWorkflowSlugs.add(slug);
           await createInitialVersion({
             tx,
             workflowId: created.id,

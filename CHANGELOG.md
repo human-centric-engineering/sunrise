@@ -56,10 +56,11 @@ release process.
   only for the install org** (§109 t-738). Both
   `POST /api/v1/admin/orchestration/backup/export` and `…/import` take
   `?orgId=` (defaulting to the active org; an unbound admin API key must name
-  one at `multi`) and `?shared=true|false`. The shared part is capabilities,
-  knowledge tags and the `global` orchestration settings. It is exported or
-  written only for the install org or an unbound admin key. A customer org
-  that asks is refused with 403, `details.reason:
+  one at `multi`; an import naming a suspended org gets 409) and
+  `?shared=true|false`. The shared part is capabilities, knowledge tags and
+  the `global` orchestration settings. It is exported or written only when the
+  caller is in the install org, or is an unbound admin key. A caller in a
+  customer org that asks is refused with 403, `details.reason:
   shared_settings_install_org_only`. Left unset, `shared` defaults to included
   at `single`, so single-tenant backups are unchanged, and to left out at
   `multi`. On import, a skipped shared part is reported in a warning and in a
@@ -67,7 +68,10 @@ release process.
   `writesSharedSettings`, so a customer org can now restore its own agents and
   workflows; it was refused outright under t-751. A workflow whose slug
   another org holds is imported under a free slug with a warning, instead of
-  failing the whole import. Tag grants also resolve against existing tags.
+  failing the whole import. The renamed row is marked
+  `metadata.importedFromSlug`, so a repeat import updates it rather than
+  adding a copy. The audit entries' `entityId` is now the target org instead
+  of `'full'`. Tag grants also resolve against existing tags.
   `exportOrchestrationConfig(scope)` and `importOrchestrationConfig(raw,
   userId, scope)` now take a `BackupScope` from the new `resolveBackupScope()`
   in `lib/orchestration/backup/scope.ts`. The bundle format is unchanged

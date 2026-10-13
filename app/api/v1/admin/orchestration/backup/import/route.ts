@@ -38,7 +38,7 @@ export const POST = withAdminAuth(async (request, session) => {
   const log = await getRouteLogger(request);
   // Resolved before the body is read, so a refused scope costs no parse.
   const query = validateQueryParams(new URL(request.url).searchParams, backupScopeQuerySchema);
-  const scope = await resolveBackupScope(query, session.principal);
+  const scope = await resolveBackupScope(query, session.principal, 'import');
 
   let raw: unknown;
   try {
@@ -57,7 +57,8 @@ export const POST = withAdminAuth(async (request, session) => {
       userId: session.user.id,
       action: 'backup.import',
       entityType: 'backup',
-      entityId: 'full',
+      // The org the backup is of; `includesShared` says whether the shared part moved too.
+      entityId: scope.orgId,
       metadata: {
         orgId: scope.orgId,
         includesShared: scope.includeShared,
