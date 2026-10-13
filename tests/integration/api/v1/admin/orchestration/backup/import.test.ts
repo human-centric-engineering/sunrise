@@ -279,6 +279,16 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
         })
       );
     });
+
+    it('audits the org the backup went into as the entity, not a fixed label', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      await POST(makePostRequest(makeValidPayload()));
+
+      expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+        expect.objectContaining({ entityId: INSTALL_ORG_ID })
+      );
+    });
   });
 
   describe('Scope (§109 t-738)', () => {
@@ -371,7 +381,7 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
     it('at multi, ?orgId restores into another org after the policy is asked about it', async () => {
       env.TENANCY_MODE = 'multi';
       adminIn(INSTALL_ORG_ID);
-      vi.mocked(prisma.org.findUnique).mockResolvedValue({ id: OTHER_CUSTOMER } as never);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ status: 'ACTIVE' } as never);
 
       const response = await POST(
         makePostRequest(makeValidPayload(), `?orgId=${OTHER_CUSTOMER}&shared=false`)
@@ -386,6 +396,58 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
         ADMIN_ID,
         { orgId: OTHER_CUSTOMER, includeShared: false }
       );
+    });
+
+    it('at multi, refuses shared=true from a customer org naming the install org as the target', async () => {
+      // The shared part follows the CALLER's org, not the one named in ?orgId=.
+      env.TENANCY_MODE = 'multi';
+      adminIn(CUSTOMER);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ status: 'ACTIVE' } as never);
+
+      const response = await POST(
+        makePostRequest(makeValidPayload(), `?orgId=${INSTALL_ORG_ID}&shared=true`)
+      );
+
+      expect(response.status).toBe(403);
+      const data = await parseJson<{ error: { details: { reason: string } } }>(response);
+      expect(data.error.details.reason).toBe(SHARED_SETTINGS_REFUSAL_CODE);
+      expect(vi.mocked(importOrchestrationConfig)).not.toHaveBeenCalled();
+    });
+
+    it('at multi, the install org may import the shared part of a customer org it names', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(INSTALL_ORG_ID);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ status: 'ACTIVE' } as never);
+
+      const response = await POST(
+        makePostRequest(makeValidPayload(), `?orgId=${OTHER_CUSTOMER}&shared=true`)
+      );
+
+      expect(response.status).toBe(200);
+      expect(vi.mocked(importOrchestrationConfig)).toHaveBeenCalledWith(
+        expect.anything(),
+        ADMIN_ID,
+        { orgId: OTHER_CUSTOMER, includeShared: true }
+      );
+    });
+
+    it('at multi, returns 409 for an import into a suspended org it names, before reading the body', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(INSTALL_ORG_ID);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ status: 'SUSPENDED' } as never);
+      const json = vi.fn(() => Promise.resolve(makeValidPayload()));
+      const request = {
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+        json,
+        url: `${IMPORT_URL}?orgId=${OTHER_CUSTOMER}`,
+      } as unknown as NextRequest;
+
+      const response = await POST(request);
+
+      expect(response.status).toBe(409);
+      expect(json).not.toHaveBeenCalled();
+      expect(vi.mocked(importOrchestrationConfig)).not.toHaveBeenCalled();
+      expect(vi.mocked(logAdminAction)).not.toHaveBeenCalled();
     });
 
     it('at multi, returns 404 for an org that does not exist and does not import', async () => {
@@ -424,7 +486,7 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
       );
     });
 
-    it('records the customer org at multi', async () => {
+    it('records the customer org at multi, as both the entity and the metadata org', async () => {
       env.TENANCY_MODE = 'multi';
       adminIn(CUSTOMER);
 
@@ -432,6 +494,7 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
 
       expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
         expect.objectContaining({
+          entityId: CUSTOMER,
           metadata: expect.objectContaining({
             orgId: CUSTOMER,
             includesShared: false,

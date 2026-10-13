@@ -191,6 +191,16 @@ describe('POST /api/v1/admin/orchestration/backup/export', () => {
         })
       );
     });
+
+    it('audits the org the backup is of as the entity, not a fixed label', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      await POST(makePostRequest());
+
+      expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
+        expect.objectContaining({ entityId: INSTALL_ORG_ID })
+      );
+    });
   });
 
   describe('Scope (§109 t-738)', () => {
@@ -282,7 +292,7 @@ describe('POST /api/v1/admin/orchestration/backup/export', () => {
     it('at multi, ?orgId names another org after the policy is asked about it', async () => {
       env.TENANCY_MODE = 'multi';
       adminIn(INSTALL_ORG_ID);
-      vi.mocked(prisma.org.findUnique).mockResolvedValue({ id: OTHER_CUSTOMER } as never);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ status: 'ACTIVE' } as never);
 
       const response = await POST(makePostRequest(`?orgId=${OTHER_CUSTOMER}&shared=false`));
 
@@ -290,6 +300,48 @@ describe('POST /api/v1/admin/orchestration/backup/export', () => {
       expect(vi.mocked(prisma.org.findUnique)).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: OTHER_CUSTOMER } })
       );
+      expect(vi.mocked(exportOrchestrationConfig)).toHaveBeenCalledWith({
+        orgId: OTHER_CUSTOMER,
+        includeShared: false,
+      });
+    });
+
+    it('at multi, refuses shared=true from a customer org naming the install org as the target', async () => {
+      // The shared part follows the CALLER's org, not the one named in ?orgId=.
+      env.TENANCY_MODE = 'multi';
+      adminIn(CUSTOMER);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ status: 'ACTIVE' } as never);
+
+      const response = await POST(makePostRequest(`?orgId=${INSTALL_ORG_ID}&shared=true`));
+
+      expect(response.status).toBe(403);
+      const data = await parseJson<{ error: { details: { reason: string } } }>(response);
+      expect(data.error.details.reason).toBe(SHARED_SETTINGS_REFUSAL_CODE);
+      expect(vi.mocked(exportOrchestrationConfig)).not.toHaveBeenCalled();
+    });
+
+    it('at multi, the install org may export the shared part with a customer org it names', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(INSTALL_ORG_ID);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ status: 'ACTIVE' } as never);
+
+      const response = await POST(makePostRequest(`?orgId=${OTHER_CUSTOMER}&shared=true`));
+
+      expect(response.status).toBe(200);
+      expect(vi.mocked(exportOrchestrationConfig)).toHaveBeenCalledWith({
+        orgId: OTHER_CUSTOMER,
+        includeShared: true,
+      });
+    });
+
+    it('at multi, still exports a suspended org it names', async () => {
+      env.TENANCY_MODE = 'multi';
+      adminIn(INSTALL_ORG_ID);
+      vi.mocked(prisma.org.findUnique).mockResolvedValue({ status: 'SUSPENDED' } as never);
+
+      const response = await POST(makePostRequest(`?orgId=${OTHER_CUSTOMER}`));
+
+      expect(response.status).toBe(200);
       expect(vi.mocked(exportOrchestrationConfig)).toHaveBeenCalledWith({
         orgId: OTHER_CUSTOMER,
         includeShared: false,
@@ -326,7 +378,7 @@ describe('POST /api/v1/admin/orchestration/backup/export', () => {
       );
     });
 
-    it('records the customer org at multi', async () => {
+    it('records the customer org at multi, as both the entity and the metadata org', async () => {
       env.TENANCY_MODE = 'multi';
       adminIn(CUSTOMER);
 
@@ -334,6 +386,7 @@ describe('POST /api/v1/admin/orchestration/backup/export', () => {
 
       expect(vi.mocked(logAdminAction)).toHaveBeenCalledWith(
         expect.objectContaining({
+          entityId: CUSTOMER,
           metadata: expect.objectContaining({ orgId: CUSTOMER, includesShared: false }),
         })
       );

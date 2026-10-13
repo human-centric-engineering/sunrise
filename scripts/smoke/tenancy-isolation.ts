@@ -2107,23 +2107,25 @@ async function main(): Promise<void> {
           aAfter.agents === aBefore.agents,
         `A’s agent and workflows are untouched ${label}`
       );
-      // A's workflow slug is unique across every org, so B takes a free one.
-      const renamed = result.warnings.find((w) =>
+      // A's workflow slug is unique across every org, so B takes a free one —
+      // and the second asker imports the SAME bundle into B again, which must
+      // update that copy (found by its `importedFromSlug` marker), not add one.
+      const renamed = result.warnings.some((w) =>
         w.startsWith(`Workflow '${a.workflowSlug}' imported as`)
       );
-      const copyInB = await runAsOrg(b.orgId, () =>
-        prisma.aiWorkflow.findFirst({
+      const copiesInB = await runAsOrg(b.orgId, () =>
+        prisma.aiWorkflow.findMany({
           where: { name: `${PREFIX} workflow a` },
-          orderBy: { createdAt: 'desc' },
           select: { slug: true, orgId: true },
         })
       );
+      const [copyInB] = copiesInB;
       check(
-        renamed !== undefined &&
-          copyInB !== null &&
+        copiesInB.length === 1 &&
           copyInB.slug !== a.workflowSlug &&
-          copyInB.orgId === b.orgId,
-        `A’s workflow lands in B under a free slug (${copyInB?.slug}), not a unique-index failure`
+          copyInB.orgId === b.orgId &&
+          (renamed || result.workflows.updated > 0),
+        `A’s workflow is in B once, under a free slug (${copiesInB.map((c) => c.slug).join(', ')}), ${renamed ? 'created' : 'updated on the repeat import'}`
       );
       const globalsAfter = await globalState();
       check(

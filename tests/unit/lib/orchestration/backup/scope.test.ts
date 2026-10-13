@@ -26,13 +26,23 @@ vi.mock('@/lib/db/client', () => ({
   prisma: { org: { findUnique: mockOrgFindUnique } },
 }));
 vi.mock('@/lib/auth/authorization', () => ({ canAdminister: mockCanAdminister }));
+vi.mock('@/lib/logging', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
 
 import {
   BACKUP_SHARED_REFUSAL,
   backupScopeQuerySchema,
   resolveBackupScope,
 } from '@/lib/orchestration/backup/scope';
-import { APIError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
+import {
+  APIError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from '@/lib/api/errors';
+import { logger } from '@/lib/logging';
 import type { AuthorizationPrincipal } from '@/lib/auth/authorization';
 
 const SESSION: AuthorizationPrincipal = { userId: 'user-1', role: 'ADMIN', credential: 'session' };
@@ -63,7 +73,8 @@ beforeEach(() => {
   mockGetTenantContext.mockReset();
   mockGetTenantContext.mockReturnValue(null);
   mockOrgFindUnique.mockReset();
-  mockOrgFindUnique.mockResolvedValue({ id: 'org_other' });
+  mockOrgFindUnique.mockResolvedValue({ status: 'ACTIVE' });
+  vi.mocked(logger.warn).mockClear();
   mockCanAdminister.mockReset();
   mockCanAdminister.mockResolvedValue(true);
 });
@@ -95,19 +106,19 @@ describe('backupScopeQuerySchema', () => {
 
 describe('resolveBackupScope — single tenancy', () => {
   it('targets the install org when no orgId is given', async () => {
-    const scope = await resolveBackupScope({}, SESSION);
+    const scope = await resolveBackupScope({}, SESSION, 'export');
 
     expect(scope.orgId).toBe('install');
   });
 
   it('accepts the install org named explicitly', async () => {
-    const scope = await resolveBackupScope({ orgId: 'install' }, SESSION);
+    const scope = await resolveBackupScope({ orgId: 'install' }, SESSION, 'export');
 
     expect(scope.orgId).toBe('install');
   });
 
   it('refuses any other org with a ValidationError', async () => {
-    const error = await thrown(() => resolveBackupScope({ orgId: 'org_other' }, SESSION));
+    const error = await thrown(() => resolveBackupScope({ orgId: 'org_other' }, SESSION, 'export'));
 
     expect(error).toBeInstanceOf(ValidationError);
     expect((error as ValidationError).message).toContain('one organisation');
@@ -115,19 +126,23 @@ describe('resolveBackupScope — single tenancy', () => {
   });
 
   it('includes the shared part by default', async () => {
-    expect((await resolveBackupScope({}, SESSION)).includeShared).toBe(true);
+    expect((await resolveBackupScope({}, SESSION, 'export')).includeShared).toBe(true);
   });
 
   it('honours shared=false', async () => {
-    expect((await resolveBackupScope({ shared: 'false' }, SESSION)).includeShared).toBe(false);
+    expect((await resolveBackupScope({ shared: 'false' }, SESSION, 'export')).includeShared).toBe(
+      false
+    );
   });
 
   it('honours shared=true', async () => {
-    expect((await resolveBackupScope({ shared: 'true' }, SESSION)).includeShared).toBe(true);
+    expect((await resolveBackupScope({ shared: 'true' }, SESSION, 'export')).includeShared).toBe(
+      true
+    );
   });
 
   it('does no org lookup or policy check', async () => {
-    await resolveBackupScope({}, SESSION);
+    await resolveBackupScope({}, SESSION, 'export');
 
     expect(mockOrgFindUnique).not.toHaveBeenCalled();
     expect(mockCanAdminister).not.toHaveBeenCalled();
@@ -142,7 +157,7 @@ describe('resolveBackupScope — multi tenancy, org resolution', () => {
   it('defaults to the active org with no database read or policy check', async () => {
     inOrg('org_active');
 
-    const scope = await resolveBackupScope({}, SESSION);
+    const scope = await resolveBackupScope({}, SESSION, 'export');
 
     expect(scope.orgId).toBe('org_active');
     expect(mockOrgFindUnique).not.toHaveBeenCalled();
@@ -152,7 +167,7 @@ describe('resolveBackupScope — multi tenancy, org resolution', () => {
   it('needs no extra checks when orgId names the active org', async () => {
     inOrg('org_active');
 
-    const scope = await resolveBackupScope({ orgId: 'org_active' }, SESSION);
+    const scope = await resolveBackupScope({ orgId: 'org_active' }, SESSION, 'export');
 
     expect(scope.orgId).toBe('org_active');
     expect(mockOrgFindUnique).not.toHaveBeenCalled();
@@ -162,12 +177,12 @@ describe('resolveBackupScope — multi tenancy, org resolution', () => {
   it('checks existence and the policy for an org other than the active one', async () => {
     inOrg('org_active');
 
-    const scope = await resolveBackupScope({ orgId: 'org_other' }, SESSION);
+    const scope = await resolveBackupScope({ orgId: 'org_other' }, SESSION, 'export');
 
     expect(scope.orgId).toBe('org_other');
     expect(mockOrgFindUnique).toHaveBeenCalledWith({
       where: { id: 'org_other' },
-      select: { id: true },
+      select: { status: true },
     });
     expect(mockCanAdminister).toHaveBeenCalledWith(
       SESSION,
@@ -180,7 +195,7 @@ describe('resolveBackupScope — multi tenancy, org resolution', () => {
     inOrg('org_active');
     mockOrgFindUnique.mockResolvedValue(null);
 
-    const error = await thrown(() => resolveBackupScope({ orgId: 'org_gone' }, SESSION));
+    const error = await thrown(() => resolveBackupScope({ orgId: 'org_gone' }, SESSION, 'export'));
 
     expect(error).toBeInstanceOf(NotFoundError);
     expect(mockCanAdminister).not.toHaveBeenCalled();
@@ -190,14 +205,51 @@ describe('resolveBackupScope — multi tenancy, org resolution', () => {
     inOrg('org_active');
     mockCanAdminister.mockResolvedValue(false);
 
-    const error = await thrown(() => resolveBackupScope({ orgId: 'org_other' }, SESSION));
+    const error = await thrown(() => resolveBackupScope({ orgId: 'org_other' }, SESSION, 'export'));
 
     expect(error).toBeInstanceOf(ForbiddenError);
     expect(mockCanAdminister).toHaveBeenCalledOnce();
   });
 
+  it('refuses an import into a named suspended org, before asking the policy', async () => {
+    inOrg('org_active');
+    mockOrgFindUnique.mockResolvedValue({ status: 'SUSPENDED' });
+
+    const error = await thrown(() => resolveBackupScope({ orgId: 'org_other' }, SESSION, 'import'));
+
+    expect(error).toBeInstanceOf(ConflictError);
+    expect((error as ConflictError).message).toContain('suspended');
+    expect(mockCanAdminister).not.toHaveBeenCalled();
+  });
+
+  it('still resolves an export of a named suspended org', async () => {
+    inOrg('org_active');
+    mockOrgFindUnique.mockResolvedValue({ status: 'SUSPENDED' });
+
+    const scope = await resolveBackupScope({ orgId: 'org_other' }, SESSION, 'export');
+
+    expect(scope.orgId).toBe('org_other');
+    expect(mockCanAdminister).toHaveBeenCalledOnce();
+  });
+
+  it('refuses an unbound API key’s import into a suspended org it names', async () => {
+    mockOrgFindUnique.mockResolvedValue({ status: 'SUSPENDED' });
+
+    const error = await thrown(() => resolveBackupScope({ orgId: 'org_other' }, API_KEY, 'import'));
+
+    expect(error).toBeInstanceOf(ConflictError);
+  });
+
+  it('does not read the status of the active org, which a session can only be in while active', async () => {
+    inOrg('org_active');
+
+    await resolveBackupScope({ orgId: 'org_active' }, SESSION, 'import');
+
+    expect(mockOrgFindUnique).not.toHaveBeenCalled();
+  });
+
   it('refuses an unbound API key that names no org', async () => {
-    const error = await thrown(() => resolveBackupScope({}, API_KEY));
+    const error = await thrown(() => resolveBackupScope({}, API_KEY, 'export'));
 
     expect(error).toBeInstanceOf(ValidationError);
     expect((error as ValidationError).message).toContain('?orgId=');
@@ -205,7 +257,7 @@ describe('resolveBackupScope — multi tenancy, org resolution', () => {
   });
 
   it('resolves the org an unbound API key names, asking the policy with an empty scope', async () => {
-    const scope = await resolveBackupScope({ orgId: 'org_other' }, API_KEY);
+    const scope = await resolveBackupScope({ orgId: 'org_other' }, API_KEY, 'export');
 
     expect(scope.orgId).toBe('org_other');
     expect(mockCanAdminister).toHaveBeenCalledWith(
@@ -224,21 +276,13 @@ describe('resolveBackupScope — multi tenancy, shared part', () => {
   it('leaves the shared part out by default, even for the install org', async () => {
     inOrg('install');
 
-    expect((await resolveBackupScope({}, SESSION)).includeShared).toBe(false);
+    expect((await resolveBackupScope({}, SESSION, 'export')).includeShared).toBe(false);
   });
 
   it('includes it for the install org when asked for', async () => {
     inOrg('install');
 
-    const scope = await resolveBackupScope({ shared: 'true' }, SESSION);
-
-    expect(scope).toEqual({ orgId: 'install', includeShared: true });
-  });
-
-  it('includes it when the install org is named from another org the caller administers', async () => {
-    inOrg('org_active');
-
-    const scope = await resolveBackupScope({ orgId: 'install', shared: 'true' }, SESSION);
+    const scope = await resolveBackupScope({ shared: 'true' }, SESSION, 'export');
 
     expect(scope).toEqual({ orgId: 'install', includeShared: true });
   });
@@ -246,7 +290,7 @@ describe('resolveBackupScope — multi tenancy, shared part', () => {
   it('refuses a customer org that asks for it, with the install-org-only reason', async () => {
     inOrg('org_active');
 
-    const error = await thrown(() => resolveBackupScope({ shared: 'true' }, SESSION));
+    const error = await thrown(() => resolveBackupScope({ shared: 'true' }, SESSION, 'export'));
 
     expect(error).toBeInstanceOf(APIError);
     expect(error).not.toBeInstanceOf(ForbiddenError);
@@ -256,26 +300,72 @@ describe('resolveBackupScope — multi tenancy, shared part', () => {
     expect(apiError.details).toEqual({ reason: 'shared_settings_install_org_only' });
   });
 
-  it('refuses a customer org named from the install org that asks for it', async () => {
-    inOrg('install');
+  it('refuses a caller in a customer org that names the install org as the target', async () => {
+    // The case the caller-based rule is for: naming the install org does not make
+    // the caller part of it.
+    inOrg('org_active');
 
     const error = await thrown(() =>
-      resolveBackupScope({ orgId: 'org_other', shared: 'true' }, SESSION)
+      resolveBackupScope({ orgId: 'install', shared: 'true' }, SESSION, 'import')
     );
 
+    expect(error).toBeInstanceOf(APIError);
+    expect((error as APIError).status).toBe(403);
     expect((error as APIError).details).toEqual({ reason: 'shared_settings_install_org_only' });
   });
 
-  it('allows an unbound API key to ask for it for a customer org', async () => {
-    const scope = await resolveBackupScope({ orgId: 'org_other', shared: 'true' }, API_KEY);
+  it('lets a caller in the install org ask for it even when targeting a customer org', async () => {
+    inOrg('install');
+
+    const scope = await resolveBackupScope(
+      { orgId: 'org_other', shared: 'true' },
+      SESSION,
+      'export'
+    );
 
     expect(scope).toEqual({ orgId: 'org_other', includeShared: true });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('logs the refusal with the purpose, the caller, the caller’s org and the target', async () => {
+    inOrg('org_active');
+
+    await thrown(() => resolveBackupScope({ orgId: 'install', shared: 'true' }, SESSION, 'import'));
+
+    expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+      'tenancy: refused a backup’s shared part outside the install org',
+      {
+        purpose: 'import',
+        userId: 'user-1',
+        activeOrgId: 'org_active',
+        targetOrgId: 'install',
+      }
+    );
+  });
+
+  it('logs nothing when the shared part is not asked for', async () => {
+    inOrg('org_active');
+
+    await resolveBackupScope({}, SESSION, 'export');
+
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('allows an unbound API key to ask for it for a customer org', async () => {
+    const scope = await resolveBackupScope(
+      { orgId: 'org_other', shared: 'true' },
+      API_KEY,
+      'export'
+    );
+
+    expect(scope).toEqual({ orgId: 'org_other', includeShared: true });
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it('never refuses shared=false', async () => {
     inOrg('org_active');
 
-    const scope = await resolveBackupScope({ shared: 'false' }, SESSION);
+    const scope = await resolveBackupScope({ shared: 'false' }, SESSION, 'export');
 
     expect(scope).toEqual({ orgId: 'org_active', includeShared: false });
   });

@@ -105,4 +105,41 @@ describe('findFreeWorkflowSlug', () => {
 
     expect(await findFreeWorkflowSlug('short-template')).toBe('short-template-1');
   });
+
+  it('skips a candidate the caller holds back, without probing it', async () => {
+    held();
+
+    const slug = await findFreeWorkflowSlug('wf', (candidate) => candidate === 'wf');
+
+    // 'wf' is refused by the predicate alone, so only 'wf-1' reaches the database.
+    expect(slug).toBe('wf-1');
+    expect(db.aiWorkflow.findUnique).toHaveBeenCalledTimes(1);
+    expect(db.aiWorkflow.findUnique).toHaveBeenCalledWith({
+      where: { slug: 'wf-1' },
+      select: { id: true },
+    });
+  });
+
+  it('suffixes past a mix of held-back and database-held candidates', async () => {
+    held('wf', 'wf-1');
+
+    const slug = await findFreeWorkflowSlug(
+      'wf',
+      (candidate) => candidate === 'wf-2' || candidate === 'wf-3'
+    );
+
+    expect(slug).toBe('wf-4');
+  });
+
+  it('consults the predicate with each candidate in order', async () => {
+    held('wf');
+    const seen: string[] = [];
+
+    await findFreeWorkflowSlug('wf', (candidate) => {
+      seen.push(candidate);
+      return false;
+    });
+
+    expect(seen).toEqual(['wf', 'wf-1']);
+  });
 });
