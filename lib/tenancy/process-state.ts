@@ -676,7 +676,16 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/privacy/org-source-registry.ts',
-    holders: ['sources', 'excluded', 'owners', 'appInitFailed', 'declarationRejected', 'appInit'],
+    holders: [
+      'sources',
+      'excluded',
+      'owners',
+      'appInitFailed',
+      'rejectedSources',
+      'rejectedExclusions',
+      'unidentifiedRejection',
+      'appInit',
+    ],
     posture: 'no-tenant-data',
     why: "A fork's org-export sources: which MODELS an org's export reads and the function that reads them, registered from code; the rows are read per export as the org being exported.",
   },

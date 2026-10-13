@@ -93,12 +93,17 @@ const owners = new Map<string, string>();
 /** Whether the app init threw, leaving this tier's declarations unknown. */
 let appInitFailed = false;
 /**
- * Whether any declaration was rejected. A rejected source is not in the
- * bundle, and the coverage guard only catches that for a model carrying an
- * `orgId` column — a hand-listed child table (core's `Verification`
- * precedent) would vanish from the export with nothing but a log line.
+ * Rejected rows, kept so a read can tell whether one left a table uncovered.
+ * A rejected source is not in the bundle, and the coverage guard catches that
+ * only for a model carrying an `orgId` column — a hand-listed child table
+ * (core's `Verification` precedent) would vanish with nothing but a log line.
+ * A rejection that loses nothing (another tier already exports the model)
+ * does not count; see {@link declarationsIncomplete}.
  */
-let declarationRejected = false;
+const rejectedSources = new Set<string>();
+const rejectedExclusions = new Set<string>();
+/** A row rejected before it named a model, so what it covered is unknowable. */
+let unidentifiedRejection = false;
 
 /** The core manifest's own floor on a source description: longer than 20 (`org-sources.test.ts`). */
 const MIN_DESCRIPTION = 21;
@@ -122,12 +127,42 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function reject(tier: string, model: string, why: string): void {
-  // A rejected row is not silently absorbed. The model stays undeclared, so the
-  // coverage guard fails naming it when it carries `orgId`; and the export
-  // refuses, because the guard cannot see a table without that column.
-  declarationRejected = true;
-  logger.error('org-sources: declaration rejected', { tier, model, reason: why });
+type RowKind = 'source' | 'exclusion';
+
+/**
+ * Drop a row with a log, and remember it. `model` is `null` when the row named
+ * none. The export refuses if the rejection left a table uncovered, because
+ * the coverage guard cannot see a table without an `orgId` column.
+ */
+function reject(
+  tier: string,
+  kind: RowKind,
+  model: string | null,
+  label: string,
+  why: string
+): void {
+  if (model === null) unidentifiedRejection = true;
+  else (kind === 'source' ? rejectedSources : rejectedExclusions).add(model);
+  logger.error('org-sources: declaration rejected', { tier, model: label, reason: why });
+}
+
+/**
+ * Whether a rejected row left something the fork declared out of the export:
+ * a rejected source whose model no tier exports, a rejected exclusion whose
+ * model nobody accounted for, or a row that named no model at all.
+ */
+function declarationsIncomplete(): boolean {
+  if (unidentifiedRejection) return true;
+  for (const model of rejectedSources) if (!sources.has(model)) return true;
+  for (const model of rejectedExclusions) {
+    if (!sources.has(model) && !excluded.has(model)) return true;
+  }
+  return false;
+}
+
+/** A loggable label for any field value — never throws, whatever a fork's JS passed. */
+function labelOf(value: unknown): string {
+  return typeof value === 'string' ? value : describeNonEntry(value);
 }
 
 /** A loggable label for a non-object entry: `null`, or its type. */
@@ -155,34 +190,40 @@ export function registerAppOrgSources(contribution: AppOrgSourceContribution): v
 
   for (const source of contribution.sources ?? []) {
     if (!isEntry(source)) {
-      reject(tier, describeNonEntry(source), 'source is not an object');
+      reject(tier, 'source', null, describeNonEntry(source), 'source is not an object');
       continue;
     }
     const model = text(source.model);
     const section = text(source.section);
 
     if (model === '') {
-      reject(tier, String(source.model), 'model is empty');
+      reject(tier, 'source', null, labelOf(source.model), 'model is empty');
       continue;
     }
     if (!SECTION_SHAPE.test(section)) {
-      reject(tier, model, `section must match ${String(SECTION_SHAPE)}`);
+      reject(tier, 'source', model, model, `section must match ${String(SECTION_SHAPE)}`);
       continue;
     }
     if (isObjectBuiltin(section)) {
-      reject(tier, model, `section '${section}' is a built-in object member`);
+      reject(tier, 'source', model, model, `section '${section}' is a built-in object member`);
       continue;
     }
     if (source.disposition !== 'export' && source.disposition !== 'attribution') {
-      reject(tier, model, `disposition must be 'export' or 'attribution'`);
+      reject(tier, 'source', model, model, `disposition must be 'export' or 'attribution'`);
       continue;
     }
     if (text(source.description).length < MIN_DESCRIPTION) {
-      reject(tier, model, `description must be at least ${MIN_DESCRIPTION} characters`);
+      reject(
+        tier,
+        'source',
+        model,
+        model,
+        `description must be at least ${MIN_DESCRIPTION} characters`
+      );
       continue;
     }
     if (typeof source.fetch !== 'function') {
-      reject(tier, model, 'fetch must be a function');
+      reject(tier, 'source', model, model, 'fetch must be a function');
       continue;
     }
 
@@ -193,7 +234,7 @@ export function registerAppOrgSources(contribution: AppOrgSourceContribution): v
 
     const owner = owners.get(model);
     if (owner !== undefined && owner !== tier && supersededExclusion === undefined) {
-      reject(tier, model, `already declared by tier '${owner}'`);
+      reject(tier, 'source', model, model, `already declared by tier '${owner}'`);
       continue;
     }
 
@@ -203,7 +244,13 @@ export function registerAppOrgSources(contribution: AppOrgSourceContribution): v
       (existing) => existing.section === section && existing.model !== model
     );
     if (collision) {
-      reject(tier, model, `section '${section}' is already used by ${collision.model}`);
+      reject(
+        tier,
+        'source',
+        model,
+        model,
+        `section '${section}' is already used by ${collision.model}`
+      );
       continue;
     }
 
@@ -225,31 +272,39 @@ export function registerAppOrgSources(contribution: AppOrgSourceContribution): v
 
   for (const entry of contribution.excluded ?? []) {
     if (!isEntry(entry)) {
-      reject(tier, describeNonEntry(entry), 'exclusion is not an object');
+      reject(tier, 'exclusion', null, describeNonEntry(entry), 'exclusion is not an object');
       continue;
     }
     const model = text(entry.model);
 
     if (model === '') {
-      reject(tier, String(entry.model), 'model is empty');
+      reject(tier, 'exclusion', null, labelOf(entry.model), 'model is empty');
       continue;
     }
     if (text(entry.reason).length < MIN_REASON) {
-      reject(tier, model, `reason must be at least ${MIN_REASON} characters`);
+      reject(tier, 'exclusion', model, model, `reason must be at least ${MIN_REASON} characters`);
       continue;
     }
     if (sources.has(model)) {
-      reject(tier, model, 'already declared as a source — a model is one or the other');
+      reject(
+        tier,
+        'exclusion',
+        model,
+        model,
+        'already declared as a source — a model is one or the other'
+      );
       continue;
     }
 
     const owner = owners.get(model);
     if (owner !== undefined && owner !== tier) {
-      reject(tier, model, `already declared by tier '${owner}'`);
+      reject(tier, 'exclusion', model, model, `already declared by tier '${owner}'`);
       continue;
     }
 
-    excluded.set(model, { ...entry, model });
+    // Exactly the two fields, trimmed: this object is what the org's bundle
+    // shows in `meta.excluded`, so nothing else a fork passed may ride along.
+    excluded.set(model, { model, reason: text(entry.reason) });
     owners.set(model, tier);
   }
 }
@@ -283,7 +338,7 @@ const appInit = createAppInitGate({
  */
 export function appOrgDeclarationsFailed(): boolean {
   appInit.ensure();
-  return appInitFailed || declarationRejected;
+  return appInitFailed || declarationsIncomplete();
 }
 
 /** Every declared app-owned org source, in registration order. */
@@ -295,7 +350,7 @@ export function getAppOrgSources(): AppOrgDataSource[] {
 /** Every app-owned `orgId` model declared as deliberately excluded, with its reason. */
 export function getAppExcludedOrgSources(): AppExcludedOrgSource[] {
   appInit.ensure();
-  return [...excluded.values()];
+  return [...excluded.values()].map((entry) => ({ ...entry }));
 }
 
 /** Every app-owned model some tier accounted for — what the coverage guard unions in. */
@@ -311,5 +366,7 @@ export function __resetAppOrgSourceRegistryForTests(): void {
   owners.clear();
   appInit.reset();
   appInitFailed = false;
-  declarationRejected = false;
+  rejectedSources.clear();
+  rejectedExclusions.clear();
+  unidentifiedRejection = false;
 }

@@ -60,8 +60,12 @@ vi.mock('@/lib/tenancy/context', () => ({ isMultiTenant: vi.fn(() => false) }));
 const { isMultiTenant } = await import('@/lib/tenancy/context');
 
 const { ORG_DATA_SOURCES, ORG_EXCLUDED_SOURCES } = await import('@/lib/privacy/org-sources');
-const { getAccountedAppOrgModels, registerAppOrgSources, __resetAppOrgSourceRegistryForTests } =
-  await import('@/lib/privacy/org-source-registry');
+const {
+  getAccountedAppOrgModels,
+  registerAppOrgSources,
+  appOrgDeclarationsFailed,
+  __resetAppOrgSourceRegistryForTests,
+} = await import('@/lib/privacy/org-source-registry');
 
 const SCHEMA_DIR = path.join(process.cwd(), 'prisma', 'schema');
 const MODEL_OPEN = /^model\s+(\w+)\s*\{/;
@@ -122,7 +126,17 @@ function scanSchemaFiles(files: SchemaFile[]): {
       }
       if (!currentModel) continue;
       if (ORG_ID_FIELD.test(line)) orgLinked.add(currentModel);
-      if (ORG_RELATION.test(line)) orgOnDelete.set(currentModel, ON_DELETE.exec(line)?.[1] ?? null);
+      // Read the code, not a trailing comment: `// TODO onDelete: Cascade` on a
+      // relation Prisma applies as Restrict must not pass.
+      const code = line.replace(/\/\/.*$/, '');
+      if (ORG_RELATION.test(code)) {
+        const policy = ON_DELETE.exec(code)?.[1] ?? null;
+        const previous = orgOnDelete.get(currentModel);
+        // Two Org relations over orgId: keep the unsafe one, so neither hides the other.
+        const previousSafe =
+          previous !== undefined && previous !== null && ERASURE_SAFE.has(previous);
+        if (previous === undefined || previousSafe) orgOnDelete.set(currentModel, policy);
+      }
     }
   }
   return { orgLinked, allModels, orgOnDelete };
@@ -233,6 +247,16 @@ describe('org-data source manifest', () => {
         ...ORG_EXCLUDED_SOURCES.map((source) => source.model),
       ];
       expect(new Set(models).size).toBe(models.length);
+    });
+
+    it('accepts every declaration this checkout’s seam makes', () => {
+      // A rejected fork row is dropped with a log, and the export then refuses
+      // every org — in production, at the first export. This is where it turns
+      // red at build time instead: vanilla registers nothing, so it passes; a
+      // fork with a malformed or clashing row fails here, and the log above the
+      // failure says which row and why.
+      __resetAppOrgSourceRegistryForTests();
+      expect(appOrgDeclarationsFailed()).toBe(false);
     });
 
     it('has no fork registration shadowing a core manifest model', () => {
@@ -432,6 +456,20 @@ describe('org-data source manifest', () => {
           '  org   Org?   @relation(fields: [orgId], references: [id], onDelete: NoAction)',
         ],
         ['no relation at all', '  note  String?'],
+        [
+          'an onDelete only in a trailing comment',
+          '  org   Org?   @relation(fields: [orgId], references: [id]) // TODO onDelete: Cascade',
+        ],
+        [
+          'a second Org relation that is unsafe',
+          '  org   Org?   @relation("a", fields: [orgId], references: [id], onDelete: Cascade)\n' +
+            '  org2  Org?   @relation("b", fields: [orgId], references: [id])',
+        ],
+        [
+          'an unsafe Org relation before a safe one',
+          '  org   Org?   @relation("a", fields: [orgId], references: [id])\n' +
+            '  org2  Org?   @relation("b", fields: [orgId], references: [id], onDelete: Cascade)',
+        ],
       ])('names a model with %s', (_label, relation) => {
         const scan = scanSchemaFiles(relationFixture(relation));
         expect(unsafeOnErasure(scan.orgLinked, scan.orgOnDelete)).toEqual(['AppWidget']);

@@ -240,7 +240,7 @@ describe('registerAppOrgSources', () => {
         seam(() =>
           registerAppOrgSources({
             tier: 'app',
-            ...(rows as unknown as Parameters<typeof registerAppOrgSources>[0]),
+            ...(rows as unknown as Omit<Parameters<typeof registerAppOrgSources>[0], 'tier'>),
           })
         );
 
@@ -447,6 +447,103 @@ describe('registerAppOrgSources', () => {
       expect(mockLogger.warn).not.toHaveBeenCalled();
       expectRejected('app', 'AppCountry', "section 'invoices' is already used by AppInvoice");
     });
+  });
+});
+
+describe('which rejections make the export refuse', () => {
+  it('does NOT refuse when a rejected exclusion’s model is exported by another tier', () => {
+    // Leaf declares the source, then the framework tier it calls excludes the
+    // same model: the exclusion is rejected, but nothing is missing.
+    seam(() => {
+      registerAppOrgSources({ tier: 'app', sources: [VALID] });
+      registerAppOrgSources({
+        tier: 'framework',
+        excluded: [{ model: 'AppInvoice', reason: REASON }],
+      });
+    });
+
+    expect(appOrgDeclarationsFailed()).toBe(false);
+    expectRejected('framework', 'AppInvoice', /already declared as a source/);
+    expect(getAppOrgSources()).toEqual([VALID]);
+  });
+
+  it('does NOT refuse when a rejected cross-tier duplicate source is already exported', () => {
+    seam(() => {
+      registerAppOrgSources({ tier: 'framework', sources: [VALID] });
+      registerAppOrgSources({ tier: 'app', sources: [VALID] });
+    });
+
+    expect(appOrgDeclarationsFailed()).toBe(false);
+    expectRejected('app', 'AppInvoice', "already declared by tier 'framework'");
+  });
+
+  it('does NOT refuse once a rejected source is re-registered correctly', () => {
+    seam(() => {
+      registerAppOrgSources({ tier: 'app', sources: [{ ...VALID, description: 'short' }] });
+      registerAppOrgSources({ tier: 'app', sources: [VALID] });
+    });
+
+    expect(appOrgDeclarationsFailed()).toBe(false);
+  });
+
+  it('refuses when a rejected source’s model is only EXCLUDED elsewhere — its rows are missing', () => {
+    seam(() => {
+      registerAppOrgSources({
+        tier: 'framework',
+        excluded: [{ model: 'AppInvoice', reason: REASON }],
+      });
+      // Supersede would apply, but this source is malformed, so it is rejected
+      // and the table the fork meant to export is not in the bundle.
+      registerAppOrgSources({ tier: 'app', sources: [{ ...VALID, fetch: undefined as never }] });
+    });
+
+    expect(appOrgDeclarationsFailed()).toBe(true);
+  });
+
+  it('refuses for a row that named no model, whatever else is registered', () => {
+    seam(() => registerAppOrgSources({ tier: 'app', sources: [VALID, { ...VALID, model: '' }] }));
+
+    expect(appOrgDeclarationsFailed()).toBe(true);
+  });
+
+  it('labels a non-string model safely, even one with no prototype', () => {
+    seam(() =>
+      registerAppOrgSources({
+        tier: 'app',
+        sources: [{ ...VALID, model: Object.create(null) as string }],
+      })
+    );
+
+    expect(appOrgDeclarationsFailed()).toBe(true);
+    expectRejected('app', 'object', 'model is empty');
+  });
+});
+
+describe('what an exclusion carries into the bundle', () => {
+  it('keeps exactly model and a trimmed reason, whatever else the fork passed', () => {
+    seam(() =>
+      registerAppOrgSources({
+        tier: 'app',
+        excluded: [
+          {
+            model: 'AppCountry',
+            reason: `  ${REASON}  `,
+            internalNote: 'not for the customer',
+          } as unknown as { model: string; reason: string },
+        ],
+      })
+    );
+
+    expect(getAppExcludedOrgSources()).toEqual([{ model: 'AppCountry', reason: REASON }]);
+  });
+
+  it('hands out copies, so a reader mutating one cannot change the registry', () => {
+    seam(() =>
+      registerAppOrgSources({ tier: 'app', excluded: [{ model: 'AppCountry', reason: REASON }] })
+    );
+
+    getAppExcludedOrgSources()[0].reason = 'tampered';
+    expect(getAppExcludedOrgSources()[0].reason).toBe(REASON);
   });
 });
 

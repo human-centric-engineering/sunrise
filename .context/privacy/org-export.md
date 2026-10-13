@@ -74,6 +74,7 @@ after release:
 
 ```typescript
 import { prisma } from '@/lib/db/client';
+import { ownedBy } from '@/lib/privacy/org-sources';
 import { registerAppOrgSources } from '@/lib/privacy/org-source-registry';
 
 export function initAppOrgSources(): void {
@@ -86,7 +87,7 @@ export function initAppOrgSources(): void {
         disposition: 'export',
         description: 'Contracts the organisation holds with its clients.',
         fetch: ({ orgId }) =>
-          prisma.appContract.findMany({ where: { orgId }, orderBy: { createdAt: 'asc' } }),
+          prisma.appContract.findMany({ where: ownedBy(orgId), orderBy: { createdAt: 'asc' } }),
       },
     ],
     excluded: [
@@ -107,11 +108,14 @@ export function initAppOrgSources(): void {
   `meta.app`, never beside core's sections, so a section core adds later cannot
   overwrite one of yours. Fork exclusions are appended to `meta.excluded`.
 - **`fetch` runs as the org**, after core's sources and one at a time. Filter by
-  `orgId` yourself: the `org_isolation` policy applies only at `multi`.
+  the org yourself — the `org_isolation` policy applies only at `multi` — with
+  `ownedBy(orgId)`, as core does. At `single` it also returns the install org's
+  rows whose `orgId` is `NULL` (written under `runAsSystem`, which stamps
+  nothing), which `where: { orgId }` would leave out.
 - **It must resolve to an array** — `[]` for none — or the export fails with
   `AppOrgSourceInvalidError`.
 - **If `initAppOrgSources()` throws, or registers a row the registry
-  rejects**, the registry logs, and `exportOrgData()` throws
+  rejects and no other declaration covers that model**, the registry logs, and `exportOrgData()` throws
   `AppOrgDeclarationsUnavailableError` for every org until it is fixed. A
   bundle without the fork's tables would read as complete, and the coverage
   test catches a dropped row only when its model carries `orgId`.

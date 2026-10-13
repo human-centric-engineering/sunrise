@@ -38,8 +38,11 @@ release process.
   lands under a new `app` key in `exportOrgData()`'s bundle, with a summary in
   `meta.app`. Fork exclusions are appended to `meta.excluded`. With nothing
   registered, the bundle is unchanged (no `app` key and no `meta.app`), so
-  `OrgExport.app` and `OrgExportMeta.app` are optional. If the fork's init
-  throws, or registers a row the registry rejects, `exportOrgData()` throws
+  `OrgExport.app` and `OrgExportMeta.app` are optional. A fork source reads with `ownedBy(orgId)`, now exported from
+  `lib/privacy/org-sources.ts`, to match core's handling of `NULL`-org rows.
+  If the fork's init
+  throws, or registers a row the registry rejects that leaves its model
+  uncovered, `exportOrgData()` throws
   `AppOrgDeclarationsUnavailableError` for every org; a `fetch` that does not resolve to an array throws
   `AppOrgSourceInvalidError`. The org-manifest coverage test unions the
   registry into its accounted set, so a fork's `orgId` model passes once

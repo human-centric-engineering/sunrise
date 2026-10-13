@@ -84,8 +84,15 @@ const byCreatedAt = { createdAt: 'asc' } as const;
  * at `multi` is an orphan, not the install org's. The credential attributions
  * below deliberately do NOT use this — a `NULL`-org API key is a platform
  * credential, not the org's.
+ *
+ * Exported for a fork's own org sources (`lib/app/org-export.ts`, §109
+ * t-737): a fork table is stamped like core's, so its `NULL`-org rows — those
+ * written under `runAsSystem`, which stamps nothing — are the install org's at
+ * `single` too, and a plain `where: { orgId }` would leave them out.
  */
-function ownedBy(orgId: string): { orgId: string } | { OR: [{ orgId: string }, { orgId: null }] } {
+export function ownedBy(
+  orgId: string
+): { orgId: string } | { OR: [{ orgId: string }, { orgId: null }] } {
   if (orgId === INSTALL_ORG_ID && !isMultiTenant()) return { OR: [{ orgId }, { orgId: null }] };
   return { orgId };
 }

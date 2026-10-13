@@ -17,6 +17,7 @@
  * file, yours included, and fails naming any `orgId` model nobody declared:
  *
  *   import { prisma } from '@/lib/db/client';
+ *   import { ownedBy } from '@/lib/privacy/org-sources';
  *   import { registerAppOrgSources } from '@/lib/privacy/org-source-registry';
  *
  *   export function initAppOrgSources(): void {
@@ -31,7 +32,7 @@
  *           // Prisma `omit` for a secret column, never `select`: a column
  *           // added tomorrow is then exported by default.
  *           fetch: ({ orgId }) =>
- *             prisma.appContract.findMany({ where: { orgId }, orderBy: { createdAt: 'asc' } }),
+ *             prisma.appContract.findMany({ where: ownedBy(orgId), orderBy: { createdAt: 'asc' } }),
  *         },
  *       ],
  *       excluded: [
@@ -47,8 +48,11 @@
  *    so a section core adds in a later release cannot overwrite yours.
  *  - **`fetch` runs as the org being exported** (`runAsOrg`), one source at a
  *    time, after core's. Row isolation applies if your table has the
- *    `org_isolation` policy — but filter by `orgId` yourself as well: the policy
- *    is enforced only at `TENANCY_MODE=multi`.
+ *    `org_isolation` policy — but filter by the org yourself as well: the
+ *    policy is enforced only at `TENANCY_MODE=multi`. Use `ownedBy(orgId)` from
+ *    `@/lib/privacy/org-sources`, as core does: at `single` it also returns the
+ *    install org's rows whose `orgId` is `NULL` (written under `runAsSystem`,
+ *    which stamps nothing), which `where: { orgId }` would leave out.
  *  - **`fetch` must resolve to an array.** Return `[]` when the org has no
  *    rows. Anything else fails the whole export, because a bundle short by a
  *    section reads exactly like a complete answer.
@@ -57,8 +61,8 @@
  *    are then unknown: the registry rolls back what you registered, logs, and
  *    `exportOrgData()` refuses every org until it is fixed. A row the registry
  *    rejects (a short description, a clashing section) is dropped and logged,
- *    and the export refuses the same way — a dropped source is a missing
- *    table.
+ *    and unless another declaration still covers that model the export refuses
+ *    the same way — a dropped source is a missing table.
  *  - **`disposition` is your label, not something core enforces.** Core's
  *    `attribution` sources return id + label + date only, because core owns
  *    their `fetch`. Here you own it, so `attribution` means what your `fetch`

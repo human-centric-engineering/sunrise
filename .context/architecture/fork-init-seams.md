@@ -122,7 +122,7 @@ none of them. `exportUserData()` refuses rather than shipping a bundle whose own
 manifest contradicts its contents. **`org-sources` remembers too**, for the
 org export: `exportOrgData()` refuses every org while the fork's
 `initAppOrgSources()` is known to have thrown, or to have registered a row the
-registry rejected, because a bundle without the fork's tables would read as
+registry rejected that no other declaration covers, because a bundle without the fork's tables would read as
 complete.
 
 **`authorization` closes the door.** Every other seam on this list rolls back to
