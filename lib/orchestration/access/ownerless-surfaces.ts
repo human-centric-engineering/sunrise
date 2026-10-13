@@ -293,6 +293,14 @@ export const OWNERLESS_SURFACE_EXCEPTIONS: readonly OwnerlessSurfaceException[] 
       'an ownerless row has no subject to be exported to.',
   },
   {
+    path: 'lib/privacy/delivery-payloads.ts',
+    disposition: 'by-design',
+    reason:
+      'Art. 15 and Art. 17 on delivery payloads (t-783): reads only the conversations and runs ' +
+      'whose `userId` is the data subject, to find the deliveries that name them; an ownerless ' +
+      'row has no subject, and there is no caller to scope to.',
+  },
+  {
     path: 'lib/privacy/org-sources.ts',
     disposition: 'by-design',
     reason:

@@ -150,6 +150,16 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     calls: 2,
     why: 'cost aggregation windows',
   },
+  {
+    file: 'lib/privacy/delivery-payloads.ts',
+    calls: 2,
+    why: 'deliveries whose payload names a person (JSON containment via the GIN index) and their bulk redaction (t-783); system-scoped at multi, like every erasure and subject-access read',
+  },
+  {
+    file: 'lib/privacy/erase-user.ts',
+    calls: 1,
+    why: 'clear and deactivate colleagues’ email subscriptions to an erased address, normalised in SQL (t-786); inside the system-scoped erasure transaction',
+  },
 ];
 
 function countRawSqlCalls(source: string): number {
