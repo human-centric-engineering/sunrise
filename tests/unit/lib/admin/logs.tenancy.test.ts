@@ -208,14 +208,35 @@ describe('the buffer stays out of the browser bundle', () => {
     expect(runtimeImports, 'tenancy reaches this module by registration, not import').toEqual([]);
   });
 
-  it('lib/logging/index.ts has no static imports either', () => {
+  // Modules the logger may import statically: each one reaches no other
+  // module at runtime itself (asserted below), so nothing behind it can drag a
+  // Node builtin into the browser bundle. `redact-path` is the URL scrubber the
+  // sanitiser applies to every string (t-778); it is already in the browser
+  // bundle through `lib/errors/sentry.ts`.
+  const LOGGER_IMPORTABLE = ['@/lib/logging/redact-path'];
+
+  it('lib/logging/index.ts statically imports only import-free modules', () => {
     // The other half of the same invariant: the logger is what the client
     // components import, so anything it pulls in statically is in their
     // bundle too. It is why the buffer is reached by `require` at call time.
     const source = readFileSync(resolve(process.cwd(), 'lib/logging/index.ts'), 'utf8');
-    const staticImports = source.split('\n').filter((line) => /^import\s/.test(line.trim()));
+    const staticImports = source
+      .split('\n')
+      .filter((line) => /^import\s/.test(line.trim()))
+      .filter((line) => !LOGGER_IMPORTABLE.some((spec) => line.includes(`'${spec}'`)));
 
     expect(staticImports).toEqual([]);
+  });
+
+  it.each(LOGGER_IMPORTABLE)('%s, which the logger imports, reaches no other module', (spec) => {
+    const file = `${spec.replace('@/', '')}.ts`;
+    const source = readFileSync(resolve(process.cwd(), file), 'utf8');
+    const runtimeImports = source
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('*') && !line.trim().startsWith('//'))
+      .filter((line) => RUNTIME_IMPORT.test(line.trim()));
+
+    expect(runtimeImports).toEqual([]);
   });
 
   it.each([
