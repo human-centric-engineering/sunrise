@@ -86,11 +86,9 @@ vi.mock('@/lib/db/client', () => ({
     },
     // eraseUser's config-recipient clear (t-791).
     aiOrchestrationSettings: {
-      findMany: vi.fn(),
       update: vi.fn(),
     },
     aiWorkflow: {
-      findMany: vi.fn(),
       update: vi.fn(),
     },
     aiWorkflowVersion: {
@@ -214,9 +212,6 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
     vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([]);
     // No colleague subscription matches and no delivery payload names the user.
     vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([]);
-    // No settings row or workflow names the user (t-791).
-    vi.mocked(prisma.aiOrchestrationSettings.findMany).mockResolvedValue([]);
-    vi.mocked(prisma.aiWorkflow.findMany).mockResolvedValue([]);
     vi.mocked(prisma.aiWebhookSubscription.updateMany).mockResolvedValue({ count: 0 });
     vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
     vi.mocked(prisma.$executeRaw).mockResolvedValue(0);
@@ -357,9 +352,17 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
         where: { id: SESSION_USER_ID },
       });
       // The config-recipient clear (t-791) ran on the real chain: the escalation
-      // list (verified address) and the workflows were both asked.
-      expect(prisma.aiOrchestrationSettings.findMany).toHaveBeenCalledTimes(1);
-      expect(prisma.aiWorkflow.findMany).toHaveBeenCalledTimes(1);
+      // list (verified address), the drafts and the versions were all asked.
+      const rawSql = vi
+        .mocked(prisma.$queryRaw)
+        .mock.calls.map((call) => (call[0] as unknown as TemplateStringsArray).join('?'));
+      for (const table of [
+        /FROM ai_orchestration_settings\s/,
+        /FROM ai_workflow\s/,
+        /FROM ai_workflow_version\s/,
+      ]) {
+        expect(rawSql.some((sql) => table.test(sql))).toBe(true);
+      }
 
       // Cookies are cleared after a successful erase
       expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.session_token');

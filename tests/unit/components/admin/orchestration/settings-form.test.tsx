@@ -827,6 +827,10 @@ describe('SettingsForm', () => {
           )
         ).toBeInTheDocument();
         expect(apiClient.patch).not.toHaveBeenCalled();
+        // Focused, so on a long page the refusal is not a save that did nothing
+        expect(
+          screen.getByRole('checkbox', { name: /enable escalation notifications/i })
+        ).toHaveFocus();
       });
 
       it('clears the error when an address is added, and then saves it with the kept webhook', async () => {

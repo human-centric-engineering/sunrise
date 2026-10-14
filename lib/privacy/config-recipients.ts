@@ -2,14 +2,16 @@
  * Configuration that names a person as a recipient or an approver, for erasure
  * (Art. 17) (t-791).
  *
- * Three places in other admins' configuration name a person, and none has a
+ * Four places in other admins' configuration name a person, and none has a
  * foreign key the erasure cascade could follow:
  *
  *   • the escalation email list on the orchestration settings row
  *     (`escalationConfig.emailAddresses`), which every escalation emails;
  *   • a workflow `send_notification` step's `to`, a literal address or a list
  *     of them;
- *   • a `human_approval` step's `approverUserIds`.
+ *   • a `human_approval` step's `approverUserIds`;
+ *   • a `human_approval` step's `notificationChannel.target`, which can hold an
+ *     address and is sent on in every `approval_required` event.
  *
  * A step lives in a workflow's draft and in every published version's
  * snapshot. **All of them are rewritten** (owner ruling 2026-10-14): the
@@ -18,14 +20,15 @@
  * data. That makes erasure the one writer allowed to change a published
  * version, which `.context/orchestration/workflow-versioning.md` records.
  *
- * **When the list empties** (same ruling) it stays empty and fails loudly
- * rather than being dropped or guessed at: a notification step whose only
- * recipient was the person has no recipients, so the step fails until an
- * admin adds one, and the builder will not save or publish it without one; an
- * escalation list keeps its webhook and priority with no addresses, so
- * nothing is emailed, and the settings form asks for an address on its next
- * save. An approval step with no named approvers is valid as it is: the run's
- * owner and admins can still answer it.
+ * **When the list empties** (same ruling) it stays empty rather than being
+ * dropped or guessed at: a notification step whose only recipient was the
+ * person has no recipients, so it fails when it runs — and its error strategy
+ * decides what follows, so a step set to `skip` is skipped — and the builder
+ * will not save, publish or run the workflow until an admin adds one; an
+ * escalation list keeps its webhook and priority with no addresses, so nothing
+ * is emailed, and the settings form asks for an address on its next save. An
+ * approval step with no named approvers is valid as it is: the run's owner and
+ * admins can still answer it.
  *
  * **Matching.** An address is matched on the rule the rest of erasure uses:
  * exact on `normaliseAddress()`, compared in code, and only for a verified
@@ -33,6 +36,16 @@
  * and no address is touched. A template recipient (`{{input.email}}`) is never
  * an address and is left alone. Approvers are matched on the user id, which
  * names exactly one account whether or not its address was verified.
+ *
+ * **Reading.** Every row is read `FOR UPDATE`, so an admin's save that lands
+ * while the erasure runs waits for it instead of being overwritten by the copy
+ * read before it. Workflows are narrowed in SQL by a plain substring test on
+ * the definition's text — the user id, or the address with ASCII letters
+ * folded by `translate()` (never `lower()`, whose result depends on the
+ * database's collation) — so a row that cannot name the person is never
+ * loaded; the exact match is then made in code. An address that is not plain
+ * ASCII, or holds a character JSON escapes, cannot be found that way, and
+ * every workflow with an email notification step is read instead.
  *
  * Every change is audit-logged, naming what changed and never the address,
  * because the log outlives the erasure.
@@ -64,7 +77,7 @@ export interface ConfigRecipientsResult {
 
 type ConfigClient = Pick<
   Prisma.TransactionClient,
-  'aiOrchestrationSettings' | 'aiWorkflow' | 'aiWorkflowVersion' | 'aiAdminAuditLog'
+  '$queryRaw' | 'aiOrchestrationSettings' | 'aiWorkflow' | 'aiWorkflowVersion' | 'aiAdminAuditLog'
 >;
 
 /** What {@link removeFromDefinition} took out of one definition. */
@@ -72,7 +85,7 @@ export interface DefinitionChange {
   definition: Prisma.JsonObject;
   /** Notification steps that lost the address. */
   notificationStepIds: string[];
-  /** Approval steps that lost the approver. */
+  /** Approval steps that lost the approver or the notification target. */
   approvalStepIds: string[];
   /** Notification steps left with no recipient at all. */
   emptiedStepIds: string[];
@@ -82,8 +95,33 @@ function matchesAddress(value: Prisma.JsonValue | undefined, address: string): b
   return typeof value === 'string' && normaliseAddress(value) === address;
 }
 
+/**
+ * A JSON object, typed as one. `isRecord` (`@/lib/utils`) answers the same
+ * question for `unknown`, but narrows to `Record<string, unknown>`, and the
+ * rewritten definition must stay JSON to be written back without a cast.
+ */
 function isJsonObject(value: Prisma.JsonValue | undefined): value is Prisma.JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** An approval step's config without the person, or null when it does not name them. */
+function approvalWithout(
+  config: Prisma.JsonObject,
+  userId: string,
+  address: string | null
+): Prisma.JsonObject | null {
+  let next = config;
+  const approvers = config.approverUserIds;
+  if (Array.isArray(approvers) && approvers.includes(userId)) {
+    next = { ...next, approverUserIds: approvers.filter((id) => id !== userId) };
+  }
+  const channel = config.notificationChannel;
+  if (address !== null && isJsonObject(channel) && matchesAddress(channel.target, address)) {
+    // The channel and its type stay; only where it pointed goes.
+    const { target: _erased, ...rest } = channel;
+    next = { ...next, notificationChannel: rest };
+  }
+  return next === config ? null : next;
 }
 
 /**
@@ -122,20 +160,12 @@ export function removeFromDefinition(
       }
     }
 
-    if (
-      step.type === 'human_approval' &&
-      Array.isArray(config.approverUserIds) &&
-      config.approverUserIds.includes(userId)
-    ) {
-      const approvers = config.approverUserIds;
-      approvalStepIds.push(stepId);
-      return {
-        ...step,
-        config: {
-          ...config,
-          approverUserIds: approvers.filter((id) => id !== userId),
-        },
-      };
+    if (step.type === 'human_approval') {
+      const next = approvalWithout(config, userId, address);
+      if (next) {
+        approvalStepIds.push(stepId);
+        return { ...step, config: next };
+      }
     }
 
     return step;
@@ -148,6 +178,15 @@ export function removeFromDefinition(
     approvalStepIds,
     emptiedStepIds,
   };
+}
+
+/**
+ * The address as the SQL narrowing searches for it, or null when that search
+ * could miss it: anything outside printable ASCII (folded by neither side the
+ * same way), and `"` or `\`, which a definition's JSON text escapes.
+ */
+export function asciiSearchTerm(address: string): string | null {
+  return /^[\x20-\x7e]+$/.test(address) && !/["\\]/.test(address) ? address : null;
 }
 
 /**
@@ -170,11 +209,11 @@ async function eraseFromEscalationLists(
   address: string,
   actorUserId: string
 ): Promise<number> {
-  // The settings row is a singleton (`slug: 'global'`), read whole: there is
-  // no index to serve and nothing to gain from one.
-  const rows = await tx.aiOrchestrationSettings.findMany({
-    select: { id: true, slug: true, escalationConfig: true },
-  });
+  // The settings row is a singleton (`slug: 'global'`), read whole and locked.
+  const rows = await tx.$queryRaw<
+    Array<{ id: string; slug: string; escalationConfig: Prisma.JsonValue }>
+  >`SELECT id, slug, "escalationConfig" FROM ai_orchestration_settings
+     WHERE "escalationConfig" IS NOT NULL FOR UPDATE`;
   let changed = 0;
   for (const row of rows) {
     const config = row.escalationConfig;
@@ -204,42 +243,80 @@ async function eraseFromEscalationLists(
   return changed;
 }
 
+/** Any email notification step: the fallback narrowing for an address SQL cannot search. */
+const EMAIL_STEP = JSON.stringify({
+  steps: [{ type: 'send_notification', config: { channel: 'email' } }],
+});
+
 async function eraseFromWorkflows(
   tx: ConfigClient,
   subject: ConfigRecipientsSubject
 ): Promise<number> {
-  // JSON containment narrows the rows read to workflows that could name the
-  // person: an approval step listing their id (exact, so this is the match),
-  // or any email notification step (whose `to` is stored as typed, so the
-  // address is compared in code, after normalising, by `removeFromDefinition`).
-  const containing: Prisma.InputJsonValue[] = [
-    { type: 'human_approval', config: { approverUserIds: [subject.userId] } },
-  ];
-  if (subject.address) containing.push({ type: 'send_notification', config: { channel: 'email' } });
-  const draftFilters = containing.map((step) => ({
-    draftDefinition: { path: ['steps'], array_contains: [step] },
-  }));
-  const snapshotFilters = containing.map((step) => ({
-    snapshot: { path: ['steps'], array_contains: [step] },
-  }));
+  const { userId, address } = subject;
+  const term = address ? asciiSearchTerm(address) : null;
+  const scanEmailSteps = address !== null && term === null;
 
-  const workflows = await tx.aiWorkflow.findMany({
-    where: { OR: [...draftFilters, { versions: { some: { OR: snapshotFilters } } }] },
-    select: {
-      id: true,
-      name: true,
-      orgId: true,
-      draftDefinition: true,
-      versions: {
-        where: { OR: snapshotFilters },
-        select: { id: true, version: true, snapshot: true },
-        orderBy: { version: 'asc' },
-      },
-    },
-  });
+  // A superset of the rows that name the person; `removeFromDefinition` decides.
+  const drafts = await tx.$queryRaw<
+    Array<{ id: string; name: string; orgId: string | null; draftDefinition: Prisma.JsonValue }>
+  >`SELECT id, name, "orgId", "draftDefinition" FROM ai_workflow
+     WHERE "draftDefinition" IS NOT NULL AND (
+       strpos("draftDefinition"::text, ${userId}) > 0
+       OR (${term}::text IS NOT NULL AND strpos(
+         translate("draftDefinition"::text, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'),
+         ${term}::text) > 0)
+       OR (${scanEmailSteps} AND "draftDefinition" @> ${EMAIL_STEP}::jsonb)
+     )
+     ORDER BY id FOR UPDATE`;
+  const versions = await tx.$queryRaw<
+    Array<{
+      id: string;
+      workflowId: string;
+      version: number;
+      snapshot: Prisma.JsonValue;
+      name: string;
+      orgId: string | null;
+    }>
+  >`SELECT v.id, v."workflowId", v.version, v.snapshot, w.name, w."orgId"
+     FROM ai_workflow_version v JOIN ai_workflow w ON w.id = v."workflowId"
+     WHERE strpos(v.snapshot::text, ${userId}) > 0
+       OR (${term}::text IS NOT NULL AND strpos(
+         translate(v.snapshot::text, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'),
+         ${term}::text) > 0)
+       OR (${scanEmailSteps} AND v.snapshot @> ${EMAIL_STEP}::jsonb)
+     ORDER BY v."workflowId", v.version FOR UPDATE OF v`;
+
+  // One entry per workflow, whether its draft, its versions or both matched.
+  const workflows = new Map<
+    string,
+    {
+      name: string;
+      orgId: string | null;
+      draft: Prisma.JsonValue;
+      versions: Array<{ id: string; version: number; snapshot: Prisma.JsonValue }>;
+    }
+  >();
+  for (const row of drafts) {
+    workflows.set(row.id, {
+      name: row.name,
+      orgId: row.orgId,
+      draft: row.draftDefinition,
+      versions: [],
+    });
+  }
+  for (const row of versions) {
+    const entry = workflows.get(row.workflowId) ?? {
+      name: row.name,
+      orgId: row.orgId,
+      draft: null,
+      versions: [],
+    };
+    entry.versions.push({ id: row.id, version: row.version, snapshot: row.snapshot });
+    workflows.set(row.workflowId, entry);
+  }
 
   let changed = 0;
-  for (const workflow of workflows) {
+  for (const [workflowId, workflow] of workflows) {
     const notificationStepIds = new Set<string>();
     const approvalStepIds = new Set<string>();
     const emptiedStepIds = new Set<string>();
@@ -249,16 +326,16 @@ async function eraseFromWorkflows(
       change.emptiedStepIds.forEach((id) => emptiedStepIds.add(id));
     };
 
-    const draft = removeFromDefinition(workflow.draftDefinition, subject);
+    const draft = removeFromDefinition(workflow.draft, subject);
     if (draft) {
       await tx.aiWorkflow.update({
-        where: { id: workflow.id },
+        where: { id: workflowId },
         data: { draftDefinition: draft.definition },
       });
       record(draft);
     }
 
-    const versions: number[] = [];
+    const changedVersions: number[] = [];
     for (const version of workflow.versions) {
       const change = removeFromDefinition(version.snapshot, subject);
       if (!change) continue;
@@ -267,24 +344,24 @@ async function eraseFromWorkflows(
         data: { snapshot: change.definition },
       });
       record(change);
-      versions.push(version.version);
+      changedVersions.push(version.version);
     }
 
-    // An email step that never named this person matched the narrowing above
-    // but changes nothing: no write, no audit row.
-    if (!draft && versions.length === 0) continue;
+    // A row the narrowing matched that names someone else changes nothing: no
+    // write, no audit row.
+    if (!draft && changedVersions.length === 0) continue;
     await tx.aiAdminAuditLog.create({
       data: {
         userId: subject.actorUserId,
         action: 'workflow.recipient_erased',
         entityType: 'workflow',
-        entityId: workflow.id,
+        entityId: workflowId,
         entityName: workflow.name,
         metadata: {
           reason: ERASURE_REASON,
           orgId: workflow.orgId,
           draft: draft !== null,
-          versions,
+          versions: changedVersions,
           notificationStepIds: [...notificationStepIds],
           approvalStepIds: [...approvalStepIds],
           stepsLeftWithoutRecipients: [...emptiedStepIds],

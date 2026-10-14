@@ -67,7 +67,7 @@ Agents can override both guard modes in their own configuration. "None" maps to 
 
 Escalation emails are managed via an inline tag-style list (add/remove) outside of react-hook-form. The form tracks email changes separately for dirty-state detection.
 
-With notifications enabled, the form will not save until the list has at least one address: add one, or untick **Enable notifications** to turn escalation off (which saves `escalationConfig: null`, webhook included). A stored list can be empty: erasing a person removes their address, and when they were the only recipient the list is left empty with its webhook and priority kept (t-791). The webhook still fires; no email is sent until an admin adds an address. See [Data erasure, step 8](../privacy/data-erasure.md#what-eraseuser-does-beyond-the-cascade).
+With notifications enabled, the form will not save until the list has at least one address: add one, or untick **Enable escalation notifications** to turn escalation off (which saves `escalationConfig: null`, webhook included). A stored list can be empty: erasing a person removes their address, and when they were the only recipient the list is left empty with its webhook and priority kept (t-791). The webhook still fires; no email is sent until an admin adds an address. See [Data erasure, step 8](../privacy/data-erasure.md#what-eraseuser-does-beyond-the-cascade).
 
 #### Knowledge search
 

@@ -1006,6 +1006,9 @@ export function SettingsForm({
               render={({ field }) => (
                 <label className="flex items-center gap-2 text-sm">
                   <input
+                    // The ref lets a refused save focus and scroll to this box
+                    // when escalation is on with no address (t-791).
+                    ref={field.ref}
                     type="checkbox"
                     checked={field.value}
                     onChange={(e) => field.onChange(e.target.checked)}

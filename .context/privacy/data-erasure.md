@@ -324,13 +324,16 @@ transaction):
    subscription as active is as short as it can be.
 
 8. **Remove them from configuration that names them** (t-791; owner rulings
-   2026-10-14), through `lib/privacy/config-recipients.ts`. Three places name a
+   2026-10-14), through `lib/privacy/config-recipients.ts`. Four places name a
    person, and no foreign key reaches any of them:
    - the **escalation email list** (`AiOrchestrationSettings.escalationConfig.emailAddresses`),
      which every escalation emails;
    - a workflow **`send_notification` step's `to`**, a literal address or a
      list of them;
-   - a **`human_approval` step's `approverUserIds`**.
+   - a **`human_approval` step's `approverUserIds`**;
+   - a **`human_approval` step's `notificationChannel.target`**, which can hold
+     an address and is sent on in every `approval_required` event (the target
+     goes; the channel and its type stay).
 
    An address is matched as in step 7 (verified only; `normaliseAddress()`,
    exact, compared in code), so an unverified account's address is left
@@ -343,14 +346,21 @@ transaction):
    and old snapshots would keep their personal data. Erasure is the one writer
    allowed to change a published version — see
    [Workflow Versioning](../orchestration/workflow-versioning.md). Workflows are
-   narrowed by JSON containment on `steps` (any approval step naming the id,
-   any email notification step), with no index to serve it: workflow
-   definitions are configuration, not a growing table.
+   narrowed in SQL by a substring test on the definition's text — the user
+   id, or the address with ASCII letters folded by `translate()`, never
+   `lower()`, which depends on the collation — so a workflow that cannot name
+   the person is never loaded; the exact match is made in code. An address
+   that is not plain ASCII, or holds a character JSON escapes, falls back to
+   reading every workflow with an email notification step. The settings row,
+   drafts and versions are read `FOR UPDATE`, so an admin's save that lands
+   during the erasure waits for it rather than being overwritten.
 
    **A list the person leaves empty stays empty, and fails loudly.** A
    notification step whose only recipient was the person has none (`''`, or
-   `[]` for a list): the step fails when it runs, and the builder will not
-   save, publish or run the workflow until an admin adds one. The escalation list keeps its
+   `[]` for a list): the step fails when it runs — its error strategy decides
+   what follows, so a step set to `skip` is skipped, with nothing sent — and
+   the builder will not save, publish or run the workflow until an admin adds
+   one. The audit entry lists those steps (`stepsLeftWithoutRecipients`). The escalation list keeps its
    webhook and priority with no addresses, so the webhook still fires and
    nothing is emailed; the settings form refuses to save escalation as
    enabled with no address, so an admin adds one or turns escalation off — it
@@ -364,7 +374,11 @@ transaction):
    already paused at an approval keeps the person's id in its trace
    (`approverUserIds`), where it now names no account; a workflow inside a
    backup bundle already downloaded is outside the database. A saved template
-   is an ordinary workflow row, so it is rewritten like any other.
+   is an ordinary workflow row, so it is rewritten like any other. Two gaps are
+   open: a literal address in a schedule's `inputTemplate`, which a template
+   recipient such as `{{input.userEmail}}` resolves to, is not reached (t-804);
+   and a settings form or workflow builder opened before the erasure writes the
+   whole value it loaded back on its next save, address included (t-805).
 
 **At `multi`, a person's rows in every org go** (§107 t-748). The cascades are
 FK actions, which row-level security does not filter, so `user.delete` removes

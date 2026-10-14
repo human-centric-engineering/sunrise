@@ -69,8 +69,8 @@ export interface EraseUserParams {
    * stored on the user row, read inside the erasure transaction: a caller's
    * copy can be stale (a cached session that predates an email change), and
    * the receipt would then name an address the account no longer held (t-797).
-   * Still accepted so existing callers compile; it will be removed in a later
-   * release.
+   * Still accepted so existing callers compile; it will be removed at the next
+   * MAJOR.
    */
   userEmail?: string;
   /** Who initiated the erasure (the user themselves, or an admin). */

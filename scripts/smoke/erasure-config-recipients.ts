@@ -63,12 +63,16 @@ function notify(id: string, to: string | string[]) {
   };
 }
 
-function approval(id: string, approverUserIds: string[]) {
+function approval(id: string, approverUserIds: string[], target?: string) {
   return {
     id,
     name: id,
     type: 'human_approval',
-    config: { prompt: 'OK?', approverUserIds },
+    config: {
+      prompt: 'OK?',
+      approverUserIds,
+      ...(target ? { notificationChannel: { type: 'email', target } } : {}),
+    },
     nextSteps: [],
   };
 }
@@ -146,7 +150,7 @@ async function main(): Promise<void> {
         orgId: INSTALL_ORG_ID,
         draftDefinition: definition(
           notify('n', [typed, COLLEAGUE, unverified.email]),
-          approval('ap', [subject.id, other.id, unverified.id])
+          approval('ap', [subject.id, other.id, unverified.id], typed)
         ),
       },
     });
@@ -218,6 +222,12 @@ async function main(): Promise<void> {
         JSON.stringify([other.id, unverified.id]),
       'draft approval step lost the subject as approver'
     );
+    check(
+      jsonEquals(config(after.draftDefinition, 'ap')?.notificationChannel ?? null, {
+        type: 'email',
+      }),
+      'draft approval step lost the subject as its notification target, keeping the channel'
+    );
     const v1After = await prisma.aiWorkflowVersion.findUniqueOrThrow({ where: { id: v1.id } });
     check(
       config(v1After.snapshot, 'n')?.to === '',
@@ -286,6 +296,41 @@ async function main(): Promise<void> {
       JSON.stringify(config(afterUnverified.draftDefinition, 'ap')?.approverUserIds) ===
         JSON.stringify([other.id]),
       'an unverified account is still removed as an approver'
+    );
+
+    // ── An address SQL cannot fold: every email step is read instead ──────
+    console.log('non-ASCII address');
+    const accented = await prisma.user.create({
+      data: {
+        name: `${PREFIX} accented`,
+        email: `${PREFIX}-zoë-${stamp}@example.com`,
+        emailVerified: true,
+      },
+    });
+    userIds.push(accented.id);
+    const accentedFlow = await prisma.aiWorkflow.create({
+      data: {
+        name: `${PREFIX} accented`,
+        slug: `${PREFIX}-accented-${stamp}`,
+        description: 'smoke',
+        orgId: INSTALL_ORG_ID,
+        draftDefinition: definition(notify('n', [accented.email.toUpperCase(), COLLEAGUE])),
+      },
+    });
+    workflowIds.push(accentedFlow.id);
+    const accentedResult = await eraseUser({
+      userId: accented.id,
+      actorUserId: other.id,
+      reason: 'admin_action',
+    });
+    receiptIds.push(accentedResult.receiptId);
+    userIds.splice(userIds.indexOf(accented.id), 1);
+    const accentedAfter = await prisma.aiWorkflow.findUniqueOrThrow({
+      where: { id: accentedFlow.id },
+    });
+    check(
+      jsonEquals(config(accentedAfter.draftDefinition, 'n')?.to ?? null, [COLLEAGUE]),
+      'a non-ASCII address typed in upper case is still found and removed'
     );
 
     // ── The only escalation recipient ─────────────────────────────────────
