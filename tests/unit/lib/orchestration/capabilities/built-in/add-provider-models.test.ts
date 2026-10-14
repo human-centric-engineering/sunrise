@@ -566,8 +566,9 @@ describe('AddProviderModelsCapability', () => {
       ['above 10000', 10001],
       ['negative', -1],
       ['not a number', '1e'],
+      ['hex', '0x10'],
     ])(
-      'marks a model with a price %s invalid without failing the rest of the batch',
+      'creates a model with a price %s, without prices, and says why',
       async (_label, badPrice) => {
         const cap = new AddProviderModelsCapability();
         const args = cap.validate({
@@ -584,14 +585,18 @@ describe('AddProviderModelsCapability', () => {
         const result = await cap.execute(args, context);
 
         const bad = result.data?.models.find((m) => m.slug === 'acme-bad');
-        expect(bad?.status).toBe('invalid');
+        expect(bad?.status).toBe('created');
         expect(bad?.reason).toContain('Input price must be a number from 0 to 10000');
-        expect(mockCreate).toHaveBeenCalledTimes(1);
-        expect(mockCreate.mock.calls[0][0].data).toMatchObject({ slug: 'acme-good' });
+        expect(mockCreate).toHaveBeenCalledTimes(2);
+        const badData = mockCreate.mock.calls.find((c) => c[0].data.slug === 'acme-bad')?.[0]
+          .data as Record<string, unknown>;
+        expect(badData.inputCostPerMillionTokens).toBeNull();
+        expect(badData.outputCostPerMillionTokens).toBeNull();
       }
     );
 
-    it('marks a model with only one price invalid, creates nothing for it, and still creates the others', async () => {
+    it('creates a model with only one price, without prices, and says why', async () => {
+      // The admin approved the model; a half-set price must not cost them it.
       const cap = new AddProviderModelsCapability();
       const args = cap.validate({
         newModels: [
@@ -602,13 +607,17 @@ describe('AddProviderModelsCapability', () => {
 
       const result = await cap.execute(args, context);
 
-      expect(result.data?.created).toBe(1);
-      expect(result.data?.invalid).toBe(1);
+      expect(result.data?.created).toBe(2);
+      expect(result.data?.invalid).toBe(0);
       const half = result.data?.models.find((r) => r.slug === 'half-priced');
-      expect(half?.status).toBe('invalid');
-      expect(half?.reason).toContain('Set the input and output prices together, or neither');
-      expect(mockCreate).toHaveBeenCalledTimes(1);
-      expect(mockCreate.mock.calls[0][0].data.slug).toBe('unpriced');
+      expect(half?.status).toBe('created');
+      expect(half?.reason).toBe(
+        'Created without prices: Set the input and output prices together, or neither'
+      );
+      const halfData = mockCreate.mock.calls.find((c) => c[0].data.slug === 'half-priced')?.[0]
+        .data as Record<string, unknown>;
+      expect(halfData.inputCostPerMillionTokens).toBeNull();
+      expect(halfData.outputCostPerMillionTokens).toBeNull();
     });
   });
 });

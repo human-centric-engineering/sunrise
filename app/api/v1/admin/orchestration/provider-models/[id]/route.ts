@@ -23,15 +23,20 @@ import {
   type ProviderModelUsage,
 } from '@/lib/orchestration/admin/global-config-usage';
 import { updateProviderModelSchema } from '@/lib/validations/orchestration';
-import { isHalfPrice, PRICE_PAIR_MESSAGE } from '@/lib/validations/model-pricing';
+import {
+  isHalfPrice,
+  missingPriceField,
+  PRICE_PAIR_MESSAGE,
+} from '@/lib/validations/model-pricing';
 import { cuidSchema } from '@/lib/validations/common';
 
 /** The database CHECK that holds the price pair (A10, t-774). */
 const PRICE_PAIR_CONSTRAINT = 'ai_provider_model_price_pair';
 
 function pricePairError(input: number | null | undefined): ValidationError {
-  const field = input == null ? 'inputCostPerMillionTokens' : 'outputCostPerMillionTokens';
-  return new ValidationError(PRICE_PAIR_MESSAGE, { [field]: [PRICE_PAIR_MESSAGE] });
+  return new ValidationError(PRICE_PAIR_MESSAGE, {
+    [missingPriceField(input)]: [PRICE_PAIR_MESSAGE],
+  });
 }
 
 export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {

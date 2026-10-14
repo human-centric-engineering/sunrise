@@ -801,7 +801,8 @@ describe('audit-proposals schema', () => {
     });
 
     it.each([
-      ['a string', '3'],
+      ['a non-decimal string', '0x10'],
+      ['a word', 'three'],
       ['negative', -1],
       ['above 10000', 10001],
       ['null', null],
@@ -810,6 +811,13 @@ describe('audit-proposals schema', () => {
         chatInput([priceChange(IN, value), priceChange(OUT, 15)])
       );
       expect(result.success).toBe(false);
+    });
+
+    it('accepts a decimal string price, as the apply side reads it', () => {
+      const result = auditProposalsSchema.safeParse(
+        chatInput([priceChange(IN, '3'), priceChange(OUT, '15.5')])
+      );
+      expect(result.success).toBe(true);
     });
 
     it('rejects a model proposal that changes only one price field', () => {

@@ -32,16 +32,19 @@ export const splitPriceSchema = z.number().nonnegative().max(MAX_PRICE_PER_MILLI
  */
 export const splitPriceInputSchema = z.preprocess(numericStringToNumber, splitPriceSchema);
 
+/** A plain decimal, as the form accepts: no sign, hex, binary or exponent. */
+const DECIMAL = /^\d+(\.\d+)?$/;
+
 /**
- * A numeric string read as the number it spells (`"3.5"` → `3.5`,
- * `" 16 "` → `16`); anything else is returned as given, for the schema to
- * judge. The approval screen edits proposed values as text.
+ * A decimal string read as the number it spells (`"3.5"` → `3.5`,
+ * `" 16 "` → `16`); anything else — `"0x10"`, `"1e3"`, `"-1"` — is
+ * returned as given, for the schema to judge. The approval screen edits
+ * proposed values as text, and a model may write a number as a string.
  */
 export function numericStringToNumber(value: unknown): unknown {
   if (typeof value !== 'string') return value;
   const trimmed = value.trim();
-  const num = Number(trimmed);
-  return trimmed !== '' && Number.isFinite(num) ? num : value;
+  return DECIMAL.test(trimmed) ? Number(trimmed) : value;
 }
 
 /**
@@ -67,4 +70,27 @@ export const PRICE_PAIR_MESSAGE = 'Set the input and output prices together, or 
  */
 export function isHalfPrice(input: unknown, output: unknown): boolean {
   return (input == null) !== (output == null);
+}
+
+/** The field a half-price error is reported on: the one left unset. */
+export function missingPriceField(
+  input: unknown
+): 'inputCostPerMillionTokens' | 'outputCostPerMillionTokens' {
+  return input == null ? 'inputCostPerMillionTokens' : 'outputCostPerMillionTokens';
+}
+
+/** The two price fields, by name. */
+export const PRICE_FIELDS: ReadonlySet<string> = new Set([
+  'inputCostPerMillionTokens',
+  'outputCostPerMillionTokens',
+]);
+
+/**
+ * Whether a list of changed field names touches the prices as a whole pair:
+ * none of them, or each exactly once. A proposal or approved change set that
+ * names one price, or one twice, is half a price.
+ */
+export function touchesPricesAsPair(fields: readonly string[]): boolean {
+  const prices = fields.filter((f) => PRICE_FIELDS.has(f));
+  return prices.length === 0 || (prices.length === 2 && new Set(prices).size === 2);
 }

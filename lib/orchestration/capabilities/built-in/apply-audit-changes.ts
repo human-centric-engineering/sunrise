@@ -19,7 +19,9 @@ import { updateProviderModelSchema } from '@/lib/validations/orchestration';
 import {
   isHalfPrice,
   numericStringToNumber,
+  PRICE_FIELDS,
   PRICE_PAIR_MESSAGE,
+  touchesPricesAsPair,
 } from '@/lib/validations/model-pricing';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import { unwrapApprovalPayload } from '@/lib/orchestration/capabilities/approval-payload-unwrap';
@@ -54,12 +56,6 @@ export const AUDITABLE_FIELDS = [
   'outputCostPerMillionTokens',
 ] as const;
 
-/** The audited price fields, which apply together or not at all. */
-export const PRICE_FIELDS: ReadonlySet<string> = new Set([
-  'inputCostPerMillionTokens',
-  'outputCostPerMillionTokens',
-]);
-
 /**
  * Auditable fields whose values are numbers. The approval screen edits a
  * proposed value as text, so an admin's modified `"3.5"` arrives as a
@@ -69,11 +65,6 @@ const NUMERIC_AUDIT_FIELDS: ReadonlySet<string> = new Set([...PRICE_FIELDS, 'dim
 
 function coerceNumeric(field: string, value: unknown): unknown {
   return NUMERIC_AUDIT_FIELDS.has(field) ? numericStringToNumber(value) : value;
-}
-
-/** The per-change results of applying one unit of changes. */
-interface UnitOutcome {
-  results: AppliedChange[];
 }
 
 /**
@@ -302,9 +293,9 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
     let capturedName: string | undefined = undefined;
     let capturedMetadata: unknown = undefined;
 
-    const record = (outcome: UnitOutcome): void => {
-      results.push(...outcome.results);
-      for (const r of outcome.results) {
+    const record = (outcome: AppliedChange[]): void => {
+      results.push(...outcome);
+      for (const r of outcome) {
         if (r.status === 'applied') applied++;
         else if (r.status === 'skipped') skipped++;
         else invalid++;
@@ -320,20 +311,19 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
       .filter((c) => !PRICE_FIELDS.has(c.field))
       .map((c) => [c]);
     if (priceChanges.length > 0) {
-      const fields = new Set(priceChanges.map((c) => c.field));
-      if (priceChanges.length === 2 && fields.size === 2) {
+      if (touchesPricesAsPair(priceChanges.map((c) => c.field))) {
         units.push(priceChanges);
       } else {
-        record({
-          results: priceChanges.map((c) => ({
+        record(
+          priceChanges.map((c) => ({
             field: c.field,
             previousValue: c.currentValue,
             newValue: c.proposedValue,
             status: 'invalid' as const,
             reason:
               'Input and output prices apply as a pair: accept both, or neither, exactly once each',
-          })),
-        });
+          }))
+        );
       }
     }
 
@@ -414,7 +404,7 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
     modelId: string,
     unit: z.infer<typeof singleModelSchema>['changes'],
     onFound: (fresh: { name: string; metadata: unknown }) => void
-  ): Promise<UnitOutcome> {
+  ): Promise<AppliedChange[]> {
     // Validate every proposed value against the update schema first.
     const validated: Array<{ change: (typeof unit)[number]; value: unknown }> = [];
     const invalidResults: AppliedChange[] = [];
@@ -439,18 +429,16 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
     }
     if (invalidResults.length > 0) {
       // One invalid value sinks the unit; its partners are reported too.
-      return {
-        results: [
-          ...invalidResults,
-          ...validated.map(({ change }) => ({
-            field: change.field,
-            previousValue: change.currentValue,
-            newValue: change.proposedValue,
-            status: 'invalid' as const,
-            reason: 'Not applied: its paired change is invalid',
-          })),
-        ],
-      };
+      return [
+        ...invalidResults,
+        ...validated.map(({ change }) => ({
+          field: change.field,
+          previousValue: change.currentValue,
+          newValue: change.proposedValue,
+          status: 'invalid' as const,
+          reason: 'Not applied: its paired change is invalid',
+        })),
+      ];
     }
 
     // A price pair must leave both set or both cleared: one number beside a
@@ -458,15 +446,13 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
     // and the database refuses (`ai_provider_model_price_pair`).
     const prices = validated.filter(({ change }) => PRICE_FIELDS.has(change.field));
     if (prices.length === 2 && isHalfPrice(prices[0].value, prices[1].value)) {
-      return {
-        results: prices.map(({ change }) => ({
-          field: change.field,
-          previousValue: change.currentValue,
-          newValue: change.proposedValue,
-          status: 'invalid' as const,
-          reason: PRICE_PAIR_MESSAGE,
-        })),
-      };
+      return prices.map(({ change }) => ({
+        field: change.field,
+        previousValue: change.currentValue,
+        newValue: change.proposedValue,
+        status: 'invalid' as const,
+        reason: PRICE_PAIR_MESSAGE,
+      }));
     }
 
     let outcome: 'applied' | 'drift' | 'missing' | 'error';
@@ -480,7 +466,11 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
           onFound(fresh);
           for (const { change } of validated) {
             const current = (fresh as Record<string, unknown>)[change.field];
-            if (!valuesEqual(current, change.currentValue)) drift[change.field] = current;
+            // A model may write a numeric currentValue as a string ("3");
+            // read it the way the proposed value is read, so a match is not
+            // mistaken for drift.
+            const expected = coerceNumeric(change.field, change.currentValue);
+            if (!valuesEqual(current, expected)) drift[change.field] = current;
           }
           if (Object.keys(drift).length > 0) return 'drift' as const;
           await tx.aiProviderModel.update({
@@ -496,50 +486,48 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
       outcome = 'error';
     }
 
-    return {
-      results: validated.map(({ change, value }): AppliedChange => {
-        switch (outcome) {
-          case 'applied':
-            return {
-              field: change.field,
-              previousValue: change.currentValue,
-              newValue: value,
-              status: 'applied',
-            };
-          case 'drift':
-            return change.field in drift
-              ? {
-                  field: change.field,
-                  previousValue: drift[change.field],
-                  newValue: change.proposedValue,
-                  status: 'skipped',
-                  reason: `Field value changed since audit (expected ${JSON.stringify(change.currentValue)}, found ${JSON.stringify(drift[change.field])})`,
-                }
-              : {
-                  field: change.field,
-                  previousValue: change.currentValue,
-                  newValue: change.proposedValue,
-                  status: 'skipped',
-                  reason: 'Not applied: its paired field changed since audit',
-                };
-          case 'missing':
-            return {
-              field: change.field,
-              previousValue: change.currentValue,
-              newValue: change.proposedValue,
-              status: 'invalid',
-              reason: `Provider model ${modelId} no longer exists`,
-            };
-          case 'error':
-            return {
-              field: change.field,
-              previousValue: change.currentValue,
-              newValue: change.proposedValue,
-              status: 'invalid',
-              reason: `Database update failed: ${updateError ?? 'unknown'}`,
-            };
-        }
-      }),
-    };
+    return validated.map(({ change, value }): AppliedChange => {
+      switch (outcome) {
+        case 'applied':
+          return {
+            field: change.field,
+            previousValue: change.currentValue,
+            newValue: value,
+            status: 'applied',
+          };
+        case 'drift':
+          return change.field in drift
+            ? {
+                field: change.field,
+                previousValue: drift[change.field],
+                newValue: change.proposedValue,
+                status: 'skipped',
+                reason: `Field value changed since audit (expected ${JSON.stringify(change.currentValue)}, found ${JSON.stringify(drift[change.field])})`,
+              }
+            : {
+                field: change.field,
+                previousValue: change.currentValue,
+                newValue: change.proposedValue,
+                status: 'skipped',
+                reason: 'Not applied: its paired field changed since audit',
+              };
+        case 'missing':
+          return {
+            field: change.field,
+            previousValue: change.currentValue,
+            newValue: change.proposedValue,
+            status: 'invalid',
+            reason: `Provider model ${modelId} no longer exists`,
+          };
+        case 'error':
+          return {
+            field: change.field,
+            previousValue: change.currentValue,
+            newValue: change.proposedValue,
+            status: 'invalid',
+            reason: `Database update failed: ${updateError ?? 'unknown'}`,
+          };
+      }
+    });
   }
 }

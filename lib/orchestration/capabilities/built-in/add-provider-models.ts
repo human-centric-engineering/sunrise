@@ -261,18 +261,11 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
     let invalid = 0;
 
     for (const model of args.newModels) {
-      const prices = readPrices(model.inputCostPerMillionTokens, model.outputCostPerMillionTokens);
-      if (!prices.ok) {
-        results.push({
-          name: model.name,
-          slug: model.slug,
-          providerSlug: model.providerSlug,
-          status: 'invalid',
-          reason: prices.reason,
-        });
-        invalid++;
-        continue;
-      }
+      // A price the admin left half-set or mistyped doesn't cost them the
+      // model they approved: it is created without prices, and the result
+      // says why. Unpriced turns are recorded as such, never at a wrong rate.
+      const read = readPrices(model.inputCostPerMillionTokens, model.outputCostPerMillionTokens);
+      const prices = read.ok ? read : { input: null, output: null };
       try {
         await prisma.aiProviderModel.create({
           data: {
@@ -318,6 +311,7 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
           slug: model.slug,
           providerSlug: model.providerSlug,
           status: 'created',
+          ...(!read.ok && { reason: `Created without prices: ${read.reason}` }),
         });
         created++;
       } catch (err) {

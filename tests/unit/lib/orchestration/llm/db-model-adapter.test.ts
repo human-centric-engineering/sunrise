@@ -176,6 +176,33 @@ describe('dbModelToModelInfo', () => {
       expect(info.pricingUnknown).toBe(true);
     });
 
+    it('ignores split prices on an embedding-only row, keeping its embedding rate', () => {
+      // Embedding cost reads the input rate; a split left over from when the
+      // row had chat must not replace the embedding price.
+      const info = dbModelToModelInfo(
+        makeRow({
+          capabilities: ['embedding'],
+          costPerMillionTokens: 0.02,
+          inputCostPerMillionTokens: 3,
+          outputCostPerMillionTokens: 15,
+        })
+      );
+      expect(info.inputCostPerMillion).toBe(0.02);
+      expect(info.outputCostPerMillion).toBe(0.02);
+    });
+
+    it('uses split prices on a reasoning-only row', () => {
+      const info = dbModelToModelInfo(
+        makeRow({
+          capabilities: ['reasoning'],
+          inputCostPerMillionTokens: 1.1,
+          outputCostPerMillionTokens: 4.4,
+        })
+      );
+      expect(info.inputCostPerMillion).toBe(1.1);
+      expect(info.outputCostPerMillion).toBe(4.4);
+    });
+
     it('keeps explicit zero split prices as a free model', () => {
       const info = dbModelToModelInfo(
         makeRow({

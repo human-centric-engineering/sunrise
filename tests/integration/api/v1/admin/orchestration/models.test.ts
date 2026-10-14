@@ -260,6 +260,7 @@ describe('GET /api/v1/admin/orchestration/models', () => {
           providerSlug: 'openai',
           modelId: 'gpt-6',
           name: 'GPT-6',
+          capabilities: ['chat'],
           tierRole: 'thinking',
           contextLength: 'very_high',
           toolUse: 'strong',

@@ -7,7 +7,12 @@
  */
 
 import { z } from 'zod';
-import { isHalfPrice, PRICE_PAIR_MESSAGE, splitPriceSchema } from '@/lib/validations/model-pricing';
+import {
+  isHalfPrice,
+  missingPriceField,
+  PRICE_PAIR_MESSAGE,
+  splitPriceSchema,
+} from '@/lib/validations/model-pricing';
 import {
   paginationQuerySchema,
   cuidSchema,
@@ -2022,11 +2027,7 @@ function requirePricePair(
   if (!isHalfPrice(data.inputCostPerMillionTokens, data.outputCostPerMillionTokens)) return;
   ctx.addIssue({
     code: 'custom',
-    path: [
-      data.inputCostPerMillionTokens != null
-        ? 'outputCostPerMillionTokens'
-        : 'inputCostPerMillionTokens',
-    ],
+    path: [missingPriceField(data.inputCostPerMillionTokens)],
     message: PRICE_PAIR_MESSAGE,
   });
 }

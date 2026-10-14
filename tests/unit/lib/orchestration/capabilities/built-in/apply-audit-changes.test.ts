@@ -1057,6 +1057,22 @@ describe('ApplyAuditChangesCapability', () => {
       }
     );
 
+    it('treats a numeric-string currentValue as matching the stored number, not drift', async () => {
+      // A model may write `"currentValue": "2.5"`; the row holds 2.5.
+      mockFindUnique.mockResolvedValue(modelWithPrices());
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute(
+        { model_id: 'model-1', changes: priceChanges(3, 15, '2.5', '10') },
+        context
+      );
+
+      expect(result.data?.applied).toBe(2);
+      expect(priceWrites()).toEqual([
+        { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 },
+      ]);
+    });
+
     it('clears both prices together', async () => {
       mockFindUnique.mockResolvedValue(modelWithPrices());
       const cap = new ApplyAuditChangesCapability();

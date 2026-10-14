@@ -40,6 +40,7 @@ import {
   hasSplitPricing,
   isHalfPrice,
   MAX_PRICE_PER_MILLION_TOKENS,
+  missingPriceField,
   PRICE_PAIR_MESSAGE,
 } from '@/lib/validations/model-pricing';
 import {
@@ -185,7 +186,7 @@ const modelFormSchema = z
     if (!isHalfPrice(input, output)) return;
     ctx.addIssue({
       code: 'custom',
-      path: [input !== null ? 'outputCostPerMillionTokens' : 'inputCostPerMillionTokens'],
+      path: [missingPriceField(input)],
       message: PRICE_PAIR_MESSAGE,
     });
   });
@@ -367,7 +368,8 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
 
     // Prices: sent as a pair, or cleared as a pair on edit — but only while
     // the pricing section is shown. A model without chat or reasoning keeps
-    // whatever prices it has: they price nothing, and wiping them when the
+    // whatever prices it has (the adapter ignores them for such a row), and
+    // wiping them when the
     // section is hidden lost a reasoning row's seeded prices.
     if (hasPricing && data.inputCostPerMillionTokens !== '') {
       payload.inputCostPerMillionTokens = parseFloat(data.inputCostPerMillionTokens);
@@ -853,9 +855,10 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
                     </p>
                     <p className="mt-2">
                       Used to record the cost of each chat turn, and by budgets and cost caps. A
-                      model in the built-in price list keeps its built-in price; this sets the price
-                      for models only the matrix knows, such as dated snapshots and new releases.
-                      Set it together with the output price.
+                      model with a published price in the built-in list or OpenRouter&apos;s
+                      catalogue keeps that price, whatever is set here; this sets the price for
+                      models only the matrix knows, such as dated snapshots and new releases. Set it
+                      together with the output price.
                     </p>
                   </FieldHelp>
                 </Label>
@@ -898,8 +901,10 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
               model.inputCostPerMillionTokens == null &&
               model.outputCostPerMillionTokens == null && (
                 <p className="text-muted-foreground text-xs">
-                  Until these are set, this model is charged its single blended rate of $
-                  {model.costPerMillionTokens} per million tokens for input and output alike.
+                  Until these are set, this row&apos;s single blended rate of $
+                  {model.costPerMillionTokens} per million tokens is used for input and output alike
+                  — unless the built-in price list or OpenRouter publishes a price for this model,
+                  which is used instead.
                 </p>
               )}
           </div>

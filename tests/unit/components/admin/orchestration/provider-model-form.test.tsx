@@ -970,7 +970,7 @@ describe('ProviderModelForm — chat pricing (t-774)', () => {
   it('shows the blended-rate note when only a blended price is set', () => {
     render(<ProviderModelForm model={makeModel({ costPerMillionTokens: 9 })} />);
     expect(
-      screen.getByText(/charged its single blended rate of \$9 per million/i)
+      screen.getByText(/single blended rate of \$9 per million tokens is used/i)
     ).toBeInTheDocument();
   });
 

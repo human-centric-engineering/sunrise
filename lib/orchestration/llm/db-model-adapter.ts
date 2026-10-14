@@ -21,6 +21,7 @@
 import type { AiProviderModel } from '@/types/prisma';
 import type { ModelInfo, ModelTier, ParamProfile } from '@/lib/orchestration/llm/types';
 import { isMatrixOwnedFigure } from '@/lib/orchestration/llm/model-registry';
+import { hasSplitPricing } from '@/lib/validations/model-pricing';
 
 /**
  * Map the DB row's `tierRole` (admin matrix vocabulary) and
@@ -94,7 +95,8 @@ export function narrowParamProfile(raw: string | null | undefined): ParamProfile
 
 /**
  * A row's input and output rates per 1M tokens (t-774). The split columns
- * are read as a pair: when both are set they win, otherwise both rates are
+ * are read as a pair: when both are set on a chat or reasoning row
+ * (`hasSplitPricing`) they win, otherwise both rates are
  * the blended `costPerMillionTokens`, which an embedding model and a row
  * written before the split carry. The row's own rates never mix one split
  * rate with the blended one. The database holds the pair
@@ -110,12 +112,20 @@ export function narrowParamProfile(raw: string | null | undefined): ParamProfile
 function rowRates(
   row: Pick<
     AiProviderModel,
-    'costPerMillionTokens' | 'inputCostPerMillionTokens' | 'outputCostPerMillionTokens'
+    | 'capabilities'
+    | 'costPerMillionTokens'
+    | 'inputCostPerMillionTokens'
+    | 'outputCostPerMillionTokens'
   >
 ): { input: number | null; output: number | null } {
   const input = row.inputCostPerMillionTokens;
   const output = row.outputCostPerMillionTokens;
-  if (input != null && output != null) return { input, output };
+  // Only a chat or reasoning row is priced by its split: embedding cost reads
+  // the input rate, so a split left on an embedding row (one whose chat
+  // capability was removed) would otherwise replace its embedding price.
+  if (input != null && output != null && hasSplitPricing(row.capabilities ?? [])) {
+    return { input, output };
+  }
   const blended = row.costPerMillionTokens ?? null;
   return { input: blended, output: blended };
 }

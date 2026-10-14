@@ -72,6 +72,10 @@ describe('numericStringToNumber / splitPriceInputSchema', () => {
   it('returns anything else as given, for the schema to judge', () => {
     expect(numericStringToNumber('')).toBe('');
     expect(numericStringToNumber('1e')).toBe('1e');
+    expect(numericStringToNumber('1e3')).toBe('1e3');
+    expect(numericStringToNumber('0x10')).toBe('0x10');
+    expect(numericStringToNumber('0b11')).toBe('0b11');
+    expect(numericStringToNumber('-1')).toBe('-1');
     expect(numericStringToNumber(null)).toBeNull();
     expect(numericStringToNumber(4)).toBe(4);
     expect(splitPriceInputSchema.safeParse('1e').success).toBe(false);

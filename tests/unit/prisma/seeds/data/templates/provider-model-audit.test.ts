@@ -90,6 +90,14 @@ describe('provider-model-audit template — pricing (t-774)', () => {
     // The schema rejects a lone price change, so the prompt must say to
     // restate an unchanged price rather than leave it out.
     expect(prompt).toContain('If only one of them changed, still propose both');
+    expect(prompt).toContain('written as JSON numbers');
+  });
+
+  it('validate_rationale passes a restated, unchanged price paired with a changed one', () => {
+    // The pricing prompt asks for an unchanged partner; the rationale guard
+    // must not fail it for not explaining why its current value is wrong.
+    const rules = (byId['validate_rationale'].config as { rules: string }).rules;
+    expect(rules).toContain('restated as the pair of the other price');
   });
 
   it('discover_new_models message carries the pricing rules', () => {

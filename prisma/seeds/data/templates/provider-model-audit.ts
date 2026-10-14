@@ -105,8 +105,8 @@ const PRICING_INSTRUCTIONS = `
 **Pricing (chat models).** \`inputCostPerMillionTokens\` and \`outputCostPerMillionTokens\` are the provider's published USD price per 1M input and per 1M output tokens.
 
 - Propose them **only from a source you can cite with a URL**: a \`web_search\` result (the provider's pricing page is best), or a \`knowledge_base\` / \`external_call\` source with a reference. Training knowledge alone is NOT enough for a price — prices change, and a wrong one mis-records every turn. If you can't cite one, leave the price out.
-- Always propose **both, together**: input and output as a pair, never one alone. If only one of them changed, still propose both — give the unchanged one its current value as the proposed value — or the whole proposal set is rejected.
-- Use dollars per **1M** tokens (e.g. 3 and 15), not per token or per 1K. Values must be between 0 and 10000.
+- Always propose **both, together**: input and output as a pair, never one alone. If only one of them changed, still propose both — give the unchanged one its current value as the proposed value, with a reason saying it is restated as the pair of the other (e.g. "Input stays at 3; restated as the pair of the output change from 15 to 12") — or the whole proposal set is rejected.
+- Use dollars per **1M** tokens (e.g. 3 and 15), not per token or per 1K, written as JSON numbers (\`3\`, not \`"3"\`). Values must be between 0 and 10000.
 - \`costPerMillionTokens\` is a legacy single blended rate; never propose it — the split pair replaces it.
 - If the model's current input and output prices already match the source, propose no change.
 `.trim();
@@ -601,6 +601,7 @@ For every change in \`models[*].changes[*]\` across both streams:
 
   - PASS if \`reason\` literally contains the JSON-stringified \`currentValue\` (e.g. when \`currentValue\` is "worker", the reason mentions "worker"), OR
   - PASS if \`reason\` explains why the field-at-its-current-value is wrong for this model.
+  - PASS if the change is a price (\`inputCostPerMillionTokens\` / \`outputCostPerMillionTokens\`) whose \`proposedValue\` equals its \`currentValue\` and whose \`reason\` says it is restated as the pair of the other price's change. Prices must be proposed in pairs, so an unchanged partner is expected, not a defect.
   - FAIL if \`reason\` is generic, references unrelated framings, or doesn't engage with what's actually changing.
 
 Worked examples:

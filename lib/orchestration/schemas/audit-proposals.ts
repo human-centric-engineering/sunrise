@@ -35,7 +35,10 @@ import { registerSchema } from '@/lib/orchestration/schemas/registry';
 import {
   isHalfPrice,
   MAX_PRICE_PER_MILLION_TOKENS,
-  splitPriceSchema,
+  missingPriceField,
+  PRICE_FIELDS,
+  splitPriceInputSchema,
+  touchesPricesAsPair,
 } from '@/lib/validations/model-pricing';
 import {
   CAPABILITIES,
@@ -49,10 +52,7 @@ import {
   TIER_ROLES,
   TOOL_USE,
 } from '@/lib/orchestration/model-audit/enums';
-import {
-  AUDITABLE_FIELDS,
-  PRICE_FIELDS,
-} from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
+import { AUDITABLE_FIELDS } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -92,8 +92,14 @@ function hasPriceSource(sources: ReadonlyArray<{ source: string; reference?: str
   );
 }
 
+/**
+ * Whether a proposed price is one the apply side will accept: a number in
+ * range, or a decimal string the model wrote for one (`"3"`). The same
+ * reading `apply_audit_changes` uses, so a proposal that passes here is not
+ * refused there, and the reverse.
+ */
 function isValidPrice(value: unknown): boolean {
-  return splitPriceSchema.safeParse(value).success;
+  return splitPriceInputSchema.safeParse(value).success;
 }
 
 // ─── Sub-schemas ───────────────────────────────────────────────────────────
@@ -249,8 +255,7 @@ const modelProposalSchema = z
   })
   .superRefine((proposal, ctx) => {
     // The two prices are proposed together, once each (t-774).
-    const priceFields = proposal.changes.map((c) => c.field).filter((f) => PRICE_FIELDS.has(f));
-    if (priceFields.length > 0 && (priceFields.length !== 2 || new Set(priceFields).size !== 2)) {
+    if (!touchesPricesAsPair(proposal.changes.map((c) => c.field))) {
       ctx.addIssue({
         code: 'custom',
         message:
@@ -305,8 +310,9 @@ const newModelSchema = z
     schemaCompatible: z.boolean().optional(),
     // Chat pricing (t-774): optional, as a pair, backed by a checkable source.
     // `null` is the model saying it found no price — the same as leaving it out.
-    inputCostPerMillionTokens: z.number().nullish(),
-    outputCostPerMillionTokens: z.number().nullish(),
+    // A decimal string is accepted as the number it spells; range is checked below.
+    inputCostPerMillionTokens: z.union([z.number(), z.string()]).nullish(),
+    outputCostPerMillionTokens: z.union([z.number(), z.string()]).nullish(),
   })
   .superRefine((model, ctx) => {
     const hasInput = model.inputCostPerMillionTokens != null;
@@ -316,7 +322,7 @@ const newModelSchema = z
         code: 'custom',
         message:
           'propose inputCostPerMillionTokens and outputCostPerMillionTokens together, or neither',
-        path: [hasInput ? 'outputCostPerMillionTokens' : 'inputCostPerMillionTokens'],
+        path: [missingPriceField(model.inputCostPerMillionTokens)],
       });
     }
     for (const field of ['inputCostPerMillionTokens', 'outputCostPerMillionTokens'] as const) {
