@@ -145,11 +145,11 @@ model AiProviderModel {
   // (`dbModelToModelInfo`).
   inputCostPerMillionTokens  Float?
   outputCostPerMillionTokens Float?
-  hasFreeTier          Boolean?
-  local                Boolean  @default(false)
-  quality              String? // 'high' | 'medium' | 'budget'
-  strengths            String?  @db.Text
-  setup                String?  @db.Text
+  hasFreeTier                Boolean?
+  local                      Boolean  @default(false)
+  quality                    String? // 'high' | 'medium' | 'budget'
+  strengths                  String?  @db.Text
+  setup                      String?  @db.Text
 
   // Lifecycle
   isDefault Boolean  @default(false) // true = seed-managed, re-seedable
