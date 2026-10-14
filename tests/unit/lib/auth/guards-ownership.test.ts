@@ -45,6 +45,7 @@ import { auth } from '@/lib/auth/config';
 import { resolveApiKey } from '@/lib/auth/api-keys';
 import { logger } from '@/lib/logging';
 import { withAuth, withAdminAuth, type AuthenticatedSession } from '@/lib/auth/guards';
+import { noteConfinedRead, noteUncheckedRead } from '@/lib/auth/subject-context';
 import {
   DEFAULT_AUTHORIZATION_POLICY,
   registerAuthorizationPolicy,
@@ -287,6 +288,38 @@ describe('the four ways to satisfy the obligation', () => {
     // The filter is the policy's answer for THIS caller, not a constant: a
     // member is narrowed to themselves.
     expect(seen).toEqual({ userId: 'user_1' });
+  });
+
+  it("accepts 'policy' when the data layer narrowed a personal read for the handler", async () => {
+    // §115 t-801: a route that relies on the owner layer, never touching
+    // session.subjectFilter, was reported as an ownership gap on every
+    // successful response — an outage where the gap action refuses. A read the
+    // layer checked and passed is the policy's answer being used.
+    const response = await withAuth(
+      () => {
+        noteConfinedRead();
+        return ok();
+      },
+      { ownership: { decidedBy: 'policy' } }
+    )(request());
+
+    expect(response.status).toBe(200);
+    expect(ownershipReports()).toHaveLength(0);
+  });
+
+  it("still reports 'policy' when the handler also read a personal model the data layer does not check", async () => {
+    // One confined memory read does not vouch for an unnarrowed conversation
+    // list in the same handler: nothing checked that one.
+    await withAuth(
+      () => {
+        noteConfinedRead();
+        noteUncheckedRead();
+        return ok();
+      },
+      { ownership: { decidedBy: 'policy' } }
+    )(request());
+
+    expect(ownershipReports()).toHaveLength(1);
   });
 
   it("rejects 'policy' when the handler never reads the filter — claiming is not enough", async () => {

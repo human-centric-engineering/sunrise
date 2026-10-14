@@ -641,7 +641,9 @@ export class OwnershipDecisionMissingError extends Error {
  * Four ways to satisfy it:
  *
  * 1. `ownership: { decidedBy: 'policy' }` **and** the handler read
- *    `session.subjectFilter`. Declaring without reading is reported separately,
+ *    `session.subjectFilter`, or a personal read the owner layer checked for
+ *    this caller passed and the route read no personal model the layer does
+ *    not check yet (`lib/db/owner-extension.ts`). Declaring without reading is reported separately,
  *    with its own message, because it is a different mistake: the author knew
  *    the rule and the query still went out unnarrowed.
  * 2. `ownership: { decidedBy: 'resource', … }` — the policy decided about the
@@ -673,6 +675,18 @@ function reportOwnershipGap(options: {
   responseCarriedRows: boolean;
   filter: SubjectFilter;
   filterRead: boolean;
+  /**
+   * The data layer checked a personal read for this caller and it passed
+   * (§115 t-801): the owner layer narrowed for the route, so a `'policy'`
+   * route that relied on it has used the policy's answer.
+   */
+  dataLayerConfined: boolean;
+  /**
+   * The route read a personal model the owner layer does not check yet. That
+   * read was narrowed by nothing but the route, so {@link dataLayerConfined}
+   * says nothing about it and does not excuse the route.
+   */
+  dataLayerUnchecked: boolean;
   principal: AuthorizationPrincipal;
   state: OwnershipReportState;
 }): void {
@@ -699,10 +713,15 @@ function reportOwnershipGap(options: {
       // return successResponse({ items: [] })` — lands here honestly, having
       // answered nobody's query. There is no way to tell it apart from a route
       // that forgot, so it is reported and the remedy is one line: read the
-      // filter before the early return.
-      complaint = options.filterRead
-        ? null
-        : `${options.guard}: this route declares ownership { decidedBy: 'policy' } but never read session.subjectFilter, so the policy did not narrow anything it did. If the handler returned early without building its query, read the filter before that return.`;
+      // filter before the early return. A read the owner layer checked and
+      // passed counts too (§115 t-801): the data layer narrowed it for the
+      // route, which is the answer the declaration promised — unless the
+      // route also read a personal model the layer does not check yet, which
+      // nothing narrowed.
+      complaint =
+        options.filterRead || (options.dataLayerConfined && !options.dataLayerUnchecked)
+          ? null
+          : `${options.guard}: this route declares ownership { decidedBy: 'policy' } but never read session.subjectFilter, so the policy did not narrow anything it did. If the handler returned early without building its query, read the filter before that return.`;
       break;
     case 'resource':
       // The arm whose entire meaning is "the resolver decided". With no
@@ -1075,6 +1094,8 @@ async function runHandler(args: {
   // it without reaching into an object this module does not own.
   const filter: SubjectFilter = filterIsUsable ? { ...(await subjectScope(args.principal)) } : {};
   let filterRead = false;
+  let dataLayerConfined = false;
+  let dataLayerUnchecked = false;
 
   // One principal, built by the guard and handed on — never rebuilt by the
   // handler. See {@link AuthenticatedSession} for what reconstruction cost.
@@ -1141,6 +1162,12 @@ async function runHandler(args: {
       filter: filterIsUsable ? filter : undefined,
       resolveFilter: () => subjectScope(args.principal),
       unattributedReads,
+      onConfinedRead: () => {
+        dataLayerConfined = true;
+      },
+      onUncheckedRead: () => {
+        dataLayerUnchecked = true;
+      },
     },
     async () =>
       args.context !== undefined
@@ -1165,6 +1192,8 @@ async function runHandler(args: {
     responseCarriedRows: response.ok,
     filter,
     filterRead,
+    dataLayerConfined,
+    dataLayerUnchecked,
     principal: args.principal,
   });
 

@@ -17,6 +17,8 @@ vi.mock('@/lib/logging', () => ({
 import { logger } from '@/lib/logging';
 import {
   getSubjectReadScope,
+  noteConfinedRead,
+  noteUncheckedRead,
   runAcrossOwners,
   runAsSubject,
   type SubjectEntry,
@@ -152,6 +154,64 @@ describe('runAcrossOwners', () => {
       reason: 'org-wide count for the dashboard',
       userId: 'member-1',
     });
+  });
+});
+
+describe('runAcrossOwners logging', () => {
+  it('logs each reason once per request, however many times it is entered', async () => {
+    await runAsSubject(entryFor('member-1'), async () => {
+      for (let i = 0; i < 3; i += 1) {
+        await runAcrossOwners('a per-row helper', () => getSubjectReadScope());
+      }
+      await runAcrossOwners('another reason', () => getSubjectReadScope());
+    });
+    expect(vi.mocked(logger.info).mock.calls.map((c) => c[1])).toEqual([
+      { reason: 'a per-row helper', userId: 'member-1' },
+      { reason: 'another reason', userId: 'member-1' },
+    ]);
+
+    // A second request logs the same reason again: the dedupe is per request.
+    await runAsSubject(entryFor('member-2'), () =>
+      runAcrossOwners('a per-row helper', () => getSubjectReadScope())
+    );
+    expect(logger.info).toHaveBeenCalledTimes(3);
+  });
+
+  it('logs nothing when nothing was crossed', async () => {
+    // A caller the policy does not narrow (a platform admin) had no check to cross.
+    await runAsSubject(
+      entryFor('admin-1', { resolveFilter: vi.fn(() => Promise.resolve({})) }),
+      () => runAcrossOwners('an admin export', () => getSubjectReadScope())
+    );
+    // A narrowed caller whose crossing made no read the owner layer checks.
+    await runAsSubject(entryFor('member-1'), () =>
+      runAcrossOwners('a crossing that read nothing personal', () => Promise.resolve())
+    );
+    expect(logger.info).not.toHaveBeenCalled();
+  });
+});
+
+describe('noteConfinedRead', () => {
+  it("calls the entering guard's callback, and is a no-op outside a subject", async () => {
+    const onConfinedRead = vi.fn();
+    noteConfinedRead();
+    await runAsSubject({ ...entryFor('member-1'), onConfinedRead }, () => {
+      noteConfinedRead();
+      return Promise.resolve();
+    });
+    expect(onConfinedRead).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('noteUncheckedRead', () => {
+  it("calls the entering guard's callback, and is a no-op outside a subject", async () => {
+    const onUncheckedRead = vi.fn();
+    noteUncheckedRead();
+    await runAsSubject({ ...entryFor('member-1'), onUncheckedRead }, () => {
+      noteUncheckedRead();
+      return Promise.resolve();
+    });
+    expect(onUncheckedRead).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -38,6 +38,7 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { runAsOrg } from '@/lib/tenancy/context';
+import { runAcrossOwners } from '@/lib/auth/subject-context';
 import {
   ORG_DATA_SOURCES,
   ORG_EXCLUDED_SOURCES,
@@ -188,19 +189,29 @@ export async function exportOrgData(params: ExportOrgParams): Promise<OrgExport>
   // and fail the whole export.
   //
   // A fork's sources run after core's, in the same context and the same way.
-  const { results, appResults } = await runAsOrg(orgId, async () => {
-    const fetched: Array<{ source: (typeof ORG_DATA_SOURCES)[number]; rows: unknown[] }> = [];
-    for (const source of ORG_DATA_SOURCES) {
-      fetched.push({ source, rows: await source.fetch(query) });
-    }
-    const appFetched: Array<{ source: (typeof appSources)[number]; rows: unknown[] }> = [];
-    for (const source of appSources) {
-      const rows: unknown = await source.fetch(query);
-      if (!Array.isArray(rows)) throw new AppOrgSourceInvalidError(source.model, source.section);
-      appFetched.push({ source, rows });
-    }
-    return { results: fetched, appResults: appFetched };
-  });
+  //
+  // Every member's personal rows are in an org export by design, so for the
+  // owner layer (§115) it is a declared crossing: the route decided who may
+  // export the org, and an exporter narrowed to one member would be refused
+  // the first member's rows that were not the asker's.
+  const { results, appResults } = await runAcrossOwners(
+    "org data export: every member's rows, for whoever the route admitted",
+    () =>
+      runAsOrg(orgId, async () => {
+        const fetched: Array<{ source: (typeof ORG_DATA_SOURCES)[number]; rows: unknown[] }> = [];
+        for (const source of ORG_DATA_SOURCES) {
+          fetched.push({ source, rows: await source.fetch(query) });
+        }
+        const appFetched: Array<{ source: (typeof appSources)[number]; rows: unknown[] }> = [];
+        for (const source of appSources) {
+          const rows: unknown = await source.fetch(query);
+          if (!Array.isArray(rows))
+            throw new AppOrgSourceInvalidError(source.model, source.section);
+          appFetched.push({ source, rows });
+        }
+        return { results: fetched, appResults: appFetched };
+      })
+  );
 
   const data: Record<string, unknown[]> = {};
   const attributions: Record<string, unknown[]> = {};

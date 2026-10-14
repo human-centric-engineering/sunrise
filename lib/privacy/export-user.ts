@@ -29,6 +29,7 @@
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
+import { runAcrossOwners } from '@/lib/auth/subject-context';
 import { collectAppSubjectData, type AppSubjectData } from '@/lib/app/data-export';
 import {
   SUBJECT_DATA_SOURCES,
@@ -262,15 +263,25 @@ export async function exportUserData(params: ExportUserParams): Promise<SubjectE
     // the fork-owned scaffold, so a field it does not declare stays out.
     return { results, app: await collectAppSubjectData({ userId, email: account.email }) };
   };
+  // Inside one org, too, the rows are the subject's and the reader may be
+  // someone else: an admin answering an Art. 15 request. The route decided
+  // who may export whom (`withAdminAuth`, or the caller's own id), so the
+  // owner layer (§115) is told this is a deliberate crossing rather than left
+  // to refuse an admin the policy narrows. A self-service export crosses
+  // nothing and says nothing.
+  const readForActor =
+    actorUserId === userId
+      ? readAll
+      : () => runAcrossOwners("subject data export: an admin reads the subject's rows", readAll);
   // The reason names whose rows and who asked: it is the audit line for a
   // read across every org, and it is logged before the work, so it survives
   // an export that fails.
   const { results, app } = multi
     ? await runAsSystem(
         `subject data export: user ${userId}'s rows in every org, for ${actorUserId}`,
-        readAll
+        readForActor
       )
-    : await readAll();
+    : await readForActor();
 
   const personalData: Record<string, unknown[]> = {};
   const attributions: Record<string, unknown[]> = {};

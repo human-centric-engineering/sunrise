@@ -333,7 +333,8 @@ and its row in [`fork-init-seams.md`](../architecture/fork-init-seams.md).
 
 The client every importer receives from `lib/db/client.ts` is the base
 `PrismaClient` through `withTenancy()`, a Prisma `$extends` that reads this
-context below the handler. No route, job or script learns about `orgId`.
+context below the handler (and, over it, the owner layer of §115 —
+[Authorization → The owner chokepoint](../auth/authorization.md#the-owner-chokepoint)). No route, job or script learns about `orgId`.
 Two behaviours, and only these:
 
 - **Every create of a tenant-owned row is stamped** with the context's org

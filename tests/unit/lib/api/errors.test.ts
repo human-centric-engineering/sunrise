@@ -17,6 +17,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
+import { OwnerReadRefusedError } from '@/lib/db/owner-extension';
 import {
   APIError,
   ValidationError,
@@ -286,6 +287,18 @@ describe('handleAPIError', () => {
   async function parseResponse(response: Response): Promise<ErrorResponse> {
     return (await response.json()) as ErrorResponse;
   }
+
+  describe('OwnerReadRefusedError handling (§115 t-801)', () => {
+    it('answers a narrowed read of another member’s row as the 404 a missing row gets', async () => {
+      const response = handleAPIError(
+        new OwnerReadRefusedError('AiUserMemory', 'findUnique', 'foreign-row', 'detail.')
+      );
+      expect(response.status).toBe(404);
+      const body = await parseResponse(response);
+      // The same body as a row that does not exist: nothing confirms the row is there.
+      expect(body.error).toEqual({ message: 'Resource not found', code: 'NOT_FOUND' });
+    });
+  });
 
   describe('APIError handling', () => {
     it('should handle APIError with all properties', async () => {

@@ -141,9 +141,13 @@ covered by the version contract.
     — `getTenantContext` / `requireTenantContext` / `requireOrgId` /
     `runAsOrg` / `runAsSystem` / `runAsCredentialLookup` / `forEachOrg` —
     the subject context `lib/auth/subject-context.ts` —
-    `runAsSubject` / `getSubjectReadScope` / `runAcrossOwners` — and the owner
+    `runAsSubject` / `getSubjectReadScope` / `runAcrossOwners` — the owner
     classification `lib/db/owner-classification.ts`
-    (`OWNER_CLASSIFICATION` / `ownerClassificationOf` / `personalModels`) —
+    (`OWNER_CLASSIFICATION` / `ownerClassificationOf` / `personalModels` /
+    `enforcedModels`, and an entry's `enforced` flag) — and the owner
+    chokepoint `lib/db/owner-extension.ts` over the tenancy client
+    (`withOwnerChecks()`, and `OwnerReadRefusedError`, the error a refused
+    read throws and `handleAPIError` answers as a 404) —
     plus the `x-sunrise-org` request-header contract between `proxy.ts` and
     the guards; and the operator surface that turns the capability on —
     `MIGRATE_DATABASE_URL`, `db:tenancy:enable|disable|role`,

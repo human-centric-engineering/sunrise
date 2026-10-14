@@ -11,6 +11,11 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  getSubjectReadScope,
+  runAsSubject,
+  type SubjectReadScope,
+} from '@/lib/auth/subject-context';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -1038,6 +1043,34 @@ describe('resumeApprovedExecution', () => {
       data: VALID_DEFINITION,
     } as never);
     mockExecute.mockReturnValue((async function* () {})());
+  });
+
+  it('reads the execution as a crossing, not narrowed to whoever approved it (§115 t-801)', async () => {
+    // Called fire-and-forget from inside an approving admin's request, the
+    // resume would otherwise inherit that admin's subject.
+    let scopeSeen: SubjectReadScope | null = null;
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockImplementation((async () => {
+      scopeSeen = await getSubjectReadScope();
+      return null;
+    }) as never);
+
+    await runAsSubject(
+      {
+        principal: { userId: 'approver', credential: 'session' },
+        filter: { userId: 'approver' },
+        resolveFilter: () => Promise.resolve({ userId: 'approver' }),
+        unattributedReads: {
+          conversation: false,
+          dataset: false,
+          execution: false,
+          experiment: false,
+          webhookDelivery: false,
+        },
+      },
+      () => resumeApprovedExecution('exec_1')
+    );
+
+    expect(scopeSeen).toMatchObject({ kind: 'admitted' });
   });
 
   it('returns silently when the execution row is missing', async () => {

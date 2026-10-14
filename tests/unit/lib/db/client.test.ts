@@ -15,6 +15,7 @@
  * - Development: caches pool on globalForPrisma (hot-reload reuse)
  * - Development: PrismaClient created with ['query', 'error', 'warn'] log config
  * - Production: PrismaClient created with ['error'] only log config
+ * - Owner seam: the tenancy client is wrapped by `withOwnerChecks` (§115 t-801)
  * - Tenancy seam: the exported client is the base client through `withTenancy`
  *   in both modes (the extension itself is tested in tenancy-extension.test.ts)
  *
@@ -91,6 +92,14 @@ async function importClientWithEnv(opts: {
     __type: 'TenancyClient',
     base,
   }));
+  // The owner layer (§115 t-801) sits over the tenancy client; a pass-through
+  // here too, recording what it was handed.
+  const mockOwnerSchema = { __type: 'OwnerSchema' };
+  const mockReadOwnerSchema = vi.fn((_client: unknown, _enforced: unknown) => mockOwnerSchema);
+  const mockWithOwnerChecks = vi.fn((inner: unknown, _options: unknown) => ({
+    __type: 'OwnerClient',
+    inner,
+  }));
   const mockContext = {
     getTenantContext: vi.fn(),
     isMultiTenant: vi.fn(() => false),
@@ -120,6 +129,10 @@ async function importClientWithEnv(opts: {
   vi.doMock('@prisma/client', () => ({ PrismaClient: MockPrismaClient }));
   vi.doMock('@/lib/env', () => ({ env: mockEnvValue }));
   vi.doMock('@/lib/db/tenancy-extension', () => ({ withTenancy: mockWithTenancy }));
+  vi.doMock('@/lib/db/owner-extension', () => ({
+    readOwnerSchema: mockReadOwnerSchema,
+    withOwnerChecks: mockWithOwnerChecks,
+  }));
   vi.doMock('@/lib/tenancy/context', () => mockContext);
 
   const clientMod = await import('@/lib/db/client');
@@ -131,6 +144,8 @@ async function importClientWithEnv(opts: {
     MockPrismaPg,
     MockPrismaClient,
     mockWithTenancy,
+    mockReadOwnerSchema,
+    mockWithOwnerChecks,
     mockContext,
   };
 }
@@ -316,10 +331,11 @@ describe('lib/db/client', () => {
   describe('Tenancy seam (the chokepoint)', () => {
     it('exports the client withTenancy returns, wrapped around the constructed PrismaClient', async () => {
       // Arrange + Act
-      const { prisma, MockPrismaClient, mockWithTenancy, mockContext } = await importClientWithEnv({
-        NODE_ENV: 'development',
-        TENANCY_MODE: 'single',
-      });
+      const { prisma, MockPrismaClient, mockWithTenancy, mockWithOwnerChecks, mockContext } =
+        await importClientWithEnv({
+          NODE_ENV: 'development',
+          TENANCY_MODE: 'single',
+        });
 
       // Assert — the base client goes in, the extended client comes out, and
       // the extension reads the real context and mode, with the install org
@@ -331,7 +347,29 @@ describe('lib/db/client', () => {
         getTenantContext: mockContext.getTenantContext,
         installOrgId: 'install',
       });
-      expect(prisma).toBe(mockWithTenancy.mock.results[0].value);
+      expect(mockWithOwnerChecks.mock.calls[0][0]).toBe(mockWithTenancy.mock.results[0].value);
+      expect(prisma).toBe(mockWithOwnerChecks.mock.results[0].value);
+    });
+
+    it('wraps the tenancy client in the owner layer, schema read off the base client', async () => {
+      const { MockPrismaClient, mockReadOwnerSchema, mockWithOwnerChecks } =
+        await importClientWithEnv({ NODE_ENV: 'development' });
+      const { getSubjectReadScope, noteConfinedRead, noteUncheckedRead } =
+        await import('@/lib/auth/subject-context');
+      const { enforcedModels } = await import('@/lib/db/owner-classification');
+
+      // The schema comes from the base client (the extended one is a Proxy),
+      // and the enforced set is the classification's, not a second list.
+      expect(mockReadOwnerSchema).toHaveBeenCalledWith(
+        MockPrismaClient.mock.instances[0],
+        enforcedModels()
+      );
+      expect(mockWithOwnerChecks).toHaveBeenCalledWith(expect.anything(), {
+        schema: mockReadOwnerSchema.mock.results[0].value,
+        getSubjectReadScope,
+        onConfinedRead: noteConfinedRead,
+        onUncheckedRead: noteUncheckedRead,
+      });
     });
 
     it('no longer throws at import when TENANCY_MODE is multi — the extension scopes instead', async () => {
@@ -365,10 +403,11 @@ describe('lib/db/client', () => {
       const cachedBase = { __type: 'CachedPrismaClient' };
 
       // Act
-      const { prisma, MockPrismaClient, mockWithTenancy } = await importClientWithEnv({
-        NODE_ENV: 'development',
-        preSeededGlobal: { prisma: cachedBase, pool: { __type: 'CachedPool' } },
-      });
+      const { prisma, MockPrismaClient, mockWithTenancy, mockWithOwnerChecks } =
+        await importClientWithEnv({
+          NODE_ENV: 'development',
+          preSeededGlobal: { prisma: cachedBase, pool: { __type: 'CachedPool' } },
+        });
 
       // Assert — no new base client, but a fresh extension over the cached
       // one: a retained extended client would close over the previous
@@ -376,7 +415,7 @@ describe('lib/db/client', () => {
       expect(MockPrismaClient).not.toHaveBeenCalled();
       expect(mockWithTenancy).toHaveBeenCalledTimes(1);
       expect(mockWithTenancy.mock.calls[0][0]).toBe(cachedBase);
-      expect(prisma).toBe(mockWithTenancy.mock.results[0].value);
+      expect(prisma).toBe(mockWithOwnerChecks.mock.results[0].value);
       const g = globalThis as unknown as { prisma?: unknown };
       expect(g.prisma).toBe(cachedBase);
     });

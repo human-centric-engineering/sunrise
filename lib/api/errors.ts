@@ -13,6 +13,7 @@ import { Prisma } from '@prisma/client';
 import { errorResponse } from '@/lib/api/responses';
 import { env } from '@/lib/env';
 import { logger } from '@/lib/logging';
+import { OwnerReadRefusedError } from '@/lib/db/owner-extension';
 
 /**
  * Error code constants for consistent error handling across the API
@@ -197,6 +198,16 @@ export function handleAPIError(error: unknown): Response {
       code: error.code,
       status: error.status,
       details: error.details,
+    });
+  }
+
+  // A narrowed caller's read of another member's rows (§115). Answered as the
+  // 404 a missing row gets, so the refusal does not confirm the row exists;
+  // the log line above carries the model and operation for whoever debugs it.
+  if (error instanceof OwnerReadRefusedError) {
+    return errorResponse('Resource not found', {
+      code: ErrorCodes.NOT_FOUND,
+      status: 404,
     });
   }
 

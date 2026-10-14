@@ -60,6 +60,13 @@
  *     org entered at all; from the install org and a system scope they
  *     write; and the guard's option, called with an unbound admin API key,
  *     lets a write through from no org;
+ *   - two members of one org (§115 t-801): the owner layer, under a real
+ *     narrowed principal built as the guards build one and answered by the
+ *     real policy. A member reads their own memories through the
+ *     `read_user_memory` capability and is refused the other member's —
+ *     through the capability, an unnarrowed list, a count and a lookup by id;
+ *     the org's OWNER, narrowed too, is refused the list; a platform admin
+ *     and a declared crossing see both;
  *   - a person's export and erasure (§107 t-748): a member of A and B, with
  *     a conversation and a memory in each, exports from inside A (a session)
  *     and from no org (an admin API key), and the bundle holds both orgs'
@@ -179,7 +186,12 @@ import {
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { exportOrchestrationConfig } from '@/lib/orchestration/backup/exporter';
 import { importOrchestrationConfig } from '@/lib/orchestration/backup/importer';
-import { DEFAULT_ORG_ROLE } from '@/lib/tenancy/roles';
+import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { DEFAULT_USER_ROLE, PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
+import { subjectScope, type AuthorizationPrincipal } from '@/lib/auth/authorization';
+import { resolveUnattributedReads } from '@/lib/auth/orphan-reads';
+import { runAcrossOwners, runAsSubject } from '@/lib/auth/subject-context';
+import { ReadUserMemoryCapability } from '@/lib/orchestration/capabilities/built-in/user-memory';
 
 const PREFIX = 'smoke-iso';
 const stamp = Date.now();
@@ -564,6 +576,22 @@ async function visible(who: string, a: OrgFixture, b: OrgFixture) {
     ).map((r) => r.id),
     supportAgents: (await prisma.aiAgent.findMany({ where: { slug: 'support' } })).map((r) => r.id),
   }));
+}
+
+/**
+ * Run `fn` as `principal`, the way `withAuth` / `withAdminAuth` do: the real
+ * policy answers the filter and the ownerless reads, and the owner layer reads
+ * them from the subject context.
+ */
+async function asPrincipal<T>(principal: AuthorizationPrincipal, fn: () => Promise<T>): Promise<T> {
+  return runAsSubject(
+    {
+      principal,
+      resolveFilter: () => subjectScope(principal),
+      unattributedReads: await resolveUnattributedReads(principal),
+    },
+    fn
+  );
 }
 
 async function main(): Promise<void> {
@@ -1887,6 +1915,112 @@ async function main(): Promise<void> {
     // A person belongs to A and B, with a conversation and a memory in each.
     // The self-service route runs in their session's active org, and an admin
     // API key enters none; either way the bundle must hold both orgs' rows.
+    // ── [16b] Two members of A: neither reads the other's memory (§115 t-801)
+    // Same org, same agent, different owners. RLS lets both rows through for
+    // anyone in A; the owner layer is what has to say no.
+    console.log('\n[16b] two members of A: each reads their own memory and none of the other’s');
+    const member = async (label: string) => {
+      const user = await prisma.user.create({
+        data: {
+          name: `${PREFIX} member ${label}`,
+          email: `${PREFIX}-member-${label}-${stamp}@example.com`,
+        },
+      });
+      await prisma.orgMembership.create({
+        data: { orgId: a.orgId, userId: user.id, role: DEFAULT_ORG_ROLE },
+      });
+      const memory = await runAsOrg(a.orgId, () =>
+        prisma.aiUserMemory.create({
+          data: { userId: user.id, agentId: a.agentId, key: `${PREFIX}-fact`, value: label },
+        })
+      );
+      const principal: AuthorizationPrincipal = {
+        userId: user.id,
+        role: DEFAULT_USER_ROLE,
+        credential: 'session',
+        orgId: a.orgId,
+        orgRole: DEFAULT_ORG_ROLE,
+      };
+      return { userId: user.id, memoryId: memory.id, principal };
+    };
+    const m1 = await member('one');
+    const m2 = await member('two');
+    const readMemory = new ReadUserMemoryCapability();
+    const inOrgA = <T>(fn: () => Promise<T>) => runAsOrg(a.orgId, fn);
+    const refusedRead = /Refused AiUserMemory\.(findMany|count|findUnique)/;
+
+    // The population is non-empty, and both rows are in A (fp6).
+    const bothSeen = await asPrincipal(
+      { userId: a.ownerId, role: PLATFORM_ADMIN_ROLE, credential: 'session' },
+      () => inOrgA(() => prisma.aiUserMemory.findMany({ where: { agentId: a.agentId } }))
+    );
+    check(
+      [m1.memoryId, m2.memoryId].every((id) => bothSeen.some((r) => r.id === id)),
+      'a platform admin in A sees both members’ memories'
+    );
+
+    const own = await asPrincipal(m1.principal, () =>
+      inOrgA(() => readMemory.execute({}, { userId: m1.userId, agentId: a.agentId }))
+    );
+    check(
+      own.success && own.data?.memories.length === 1 && own.data.memories[0].value === 'one',
+      'member one reads their own memory through read_user_memory'
+    );
+    await rejects(
+      () =>
+        asPrincipal(m1.principal, () =>
+          inOrgA(() => readMemory.execute({}, { userId: m2.userId, agentId: a.agentId }))
+        ),
+      refusedRead,
+      'member one is refused member two’s memory through read_user_memory'
+    );
+    await rejects(
+      () =>
+        asPrincipal(m1.principal, () =>
+          inOrgA(() => prisma.aiUserMemory.findMany({ where: { agentId: a.agentId } }))
+        ),
+      refusedRead,
+      'member one is refused an unnarrowed list of the agent’s memories'
+    );
+    await rejects(
+      () => asPrincipal(m1.principal, () => inOrgA(() => prisma.aiUserMemory.count())),
+      refusedRead,
+      'member one is refused an unnarrowed count'
+    );
+    await rejects(
+      () =>
+        asPrincipal(m1.principal, () =>
+          inOrgA(() => prisma.aiUserMemory.findUnique({ where: { id: m2.memoryId } }))
+        ),
+      refusedRead,
+      'member one is refused member two’s memory looked up by id'
+    );
+    const ownCount = await asPrincipal(m1.principal, () =>
+      inOrgA(() => prisma.aiUserMemory.count({ where: { userId: m1.userId } }))
+    );
+    check(ownCount === 1, `member one counts their own memory (${ownCount})`);
+    await rejects(
+      () =>
+        asPrincipal(
+          {
+            userId: a.ownerId,
+            role: DEFAULT_USER_ROLE,
+            credential: 'session',
+            orgId: a.orgId,
+            orgRole: ORG_OWNER_ROLE,
+          },
+          () => inOrgA(() => prisma.aiUserMemory.findMany({ where: { agentId: a.agentId } }))
+        ),
+      refusedRead,
+      'A’s OWNER, narrowed like any member, is refused the members’ memories'
+    );
+    const crossed = await asPrincipal(m1.principal, () =>
+      runAcrossOwners('smoke: an org-wide memory count', () =>
+        inOrgA(() => prisma.aiUserMemory.count({ where: { agentId: a.agentId } }))
+      )
+    );
+    check(crossed >= 2, `a declared crossing counts both members’ memories (${crossed})`);
+
     console.log(
       '\n[17] a person in A and B: their export holds both orgs’ rows, and no one else’s'
     );

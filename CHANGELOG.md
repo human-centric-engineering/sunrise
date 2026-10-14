@@ -18,6 +18,22 @@ release process.
 
 ### Added
 
+- **The owner chokepoint** (§115 t-801): `lib/db/owner-extension.ts`
+  (`withOwnerChecks()`), a second `$extends` layer over the tenancy client.
+  For a caller the policy narrowed to their own rows, a list, count or
+  aggregate of an enforced personal model must carry a `where` that confines
+  it to rows the caller may read, a `findUnique` is checked on the row it
+  returns, an unconfined `findFirst` is narrowed to the caller's own rows, a
+  write that returns its row (`update`, `upsert`, `delete`,
+  `updateManyAndReturn`) must be confined, and an `include` of one from any
+  root must be confined too. A
+  refusal throws the new `OwnerReadRefusedError`, which `handleAPIError`
+  answers as a 404. A classification entry's `enforced: true` (and
+  `enforcedModels()`) says which models it checks: `AiUserMemory` in this
+  release. A platform admin, a job, and any install with no narrowed caller
+  get byte-identical queries. See
+  [Authorization → The owner chokepoint](./.context/auth/authorization.md#the-owner-chokepoint).
+
 - **The subject context and the owner classification** (§115 t-800), the two
   inputs of the within-org owner check. `lib/auth/subject-context.ts`:
   `withAuth` / `withAdminAuth` now run every handler inside `runAsSubject()`,
@@ -27,8 +43,7 @@ release process.
   and logs its reason. `lib/db/owner-classification.ts` (`OWNER_CLASSIFICATION`,
   `ownerClassificationOf()`, `personalModels()`) says which models are private
   to one person and how each row's owner is reached, enforced against the core
-  schema by test. Nothing is enforced yet, and no query changes; the check is
-  §115 t-801. See
+  schema by test. The check that reads them is the owner chokepoint, below. See
   [Authorization → The subject context](./.context/auth/authorization.md#the-subject-context-and-the-owner-classification-115).
 - **`GET /admin/orchestration/hooks/deliveries`** and **`GET
   /admin/orchestration/webhooks/deliveries`** (§109 t-739). Deliveries across
@@ -167,7 +182,16 @@ release process.
   rather than saving `null`, which would have dropped the webhook; untick
   **Enable escalation notifications** to turn it off. A fork reading
   `parseEscalationConfig()` may now see `emailAddresses: []`.
-
+- **`runAcrossOwners` logs once per reason per request, and only when it
+  crossed something** (§115 t-801) — the first read inside it the owner layer
+  would have checked, for a narrowed caller — not on every entry; and core declares its own crossings with it: the subject-data
+  export when an admin exports someone else (`exportUserData`), the org export
+  (`exportOrgData`), and `resumeApprovedExecution`, which runs the execution's
+  owner's workflow rather than reading narrowed to whoever approved it. A
+  `decidedBy: 'policy'` route whose personal reads the owner layer checked is
+  no longer reported as an ownership gap for not reading
+  `session.subjectFilter`, unless it also read a personal model the layer does
+  not check yet.
 - **The org and global monthly budget caps hold every paid AI call, not only
   chat** (§110 t-788). Only the streaming chat handler checked them, so
   workflow steps, the orchestrator, evaluations, judges, knowledge ingestion
@@ -418,6 +442,16 @@ release process.
 
 ### Security
 
+- **A narrowed caller's read of another member's memory is now refused at the
+  query** (§115 t-801). Inside one org, an org OWNER, ADMIN or MEMBER (anyone
+  but a platform admin or an `admin` API key) could read another member's
+  `AiUserMemory` rows through any library function that forgot to filter by
+  owner; nothing below the route checked. Now the data layer refuses it, in
+  every environment, with a 404. **Upgrading:** fork code that reads
+  `AiUserMemory` for a narrowed caller without filtering on the owner will
+  throw. Confine the query with `session.subjectFilter`, or wrap a deliberate
+  read across owners in `runAcrossOwners(reason, fn)`. Conversations,
+  executions, evaluations and datasets follow in later releases.
 - **The `provider-model-auditor` agent no longer has write tools bound**
   (t-774). It held `apply_audit_changes`, `add_provider_models` and
   `deactivate_provider_models`, so the audit's `discover_new_models` turn,

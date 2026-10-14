@@ -151,6 +151,9 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { env } from '@/lib/env';
 import { withTenancy, type TenancyClient } from '@/lib/db/tenancy-extension';
+import { readOwnerSchema, withOwnerChecks } from '@/lib/db/owner-extension';
+import { enforcedModels } from '@/lib/db/owner-classification';
+import { getSubjectReadScope, noteConfinedRead } from '@/lib/auth/subject-context';
 import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
@@ -182,11 +185,22 @@ if (env.NODE_ENV !== 'production') globalForPrisma.prisma = baseClient;
 // scopes every operation to the org the request entered. It closes over the
 // tenant context module, which a dev reload re-creates — so never retain the
 // extended client. See .context/tenancy/context.md#the-data-layer--libdbtenancy-extensionts
-export const prisma: TenancyClient = withTenancy(baseClient, {
-  isMultiTenant,
-  getTenantContext,
-  installOrgId: INSTALL_ORG_ID,
-});
+//
+// Over it, the owner chokepoint (§115): a caller the policy narrowed to their
+// own rows is refused a read of another member's rows of an enforced personal
+// model. See .context/auth/authorization.md#the-owner-chokepoint
+export const prisma: TenancyClient = withOwnerChecks(
+  withTenancy(baseClient, {
+    isMultiTenant,
+    getTenantContext,
+    installOrgId: INSTALL_ORG_ID,
+  }),
+  {
+    schema: readOwnerSchema(baseClient, enforcedModels()),
+    getSubjectReadScope,
+    onConfinedRead: noteConfinedRead,
+  }
+);
 ```
 
 **Key differences from Prisma 6:**

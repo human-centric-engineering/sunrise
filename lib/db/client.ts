@@ -3,6 +3,13 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { env } from '@/lib/env';
 import { withTenancy, type TenancyClient } from '@/lib/db/tenancy-extension';
+import { readOwnerSchema, withOwnerChecks } from '@/lib/db/owner-extension';
+import { enforcedModels } from '@/lib/db/owner-classification';
+import {
+  getSubjectReadScope,
+  noteConfinedRead,
+  noteUncheckedRead,
+} from '@/lib/auth/subject-context';
 import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
@@ -39,8 +46,12 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
  * `.context/architecture/multi-tenancy-design.md` and
  * `.context/tenancy/context.md`.
  *
- * The read-side owner predicate is §115 `f-mt-owner-predicate`, a later
- * `$extends` layer over this one; nothing here builds toward it.
+ * **Owner seam (§115).** Over the tenancy layer sits `withOwnerChecks`
+ * (`lib/db/owner-extension.ts`): inside one org, a caller the policy narrowed
+ * to their own rows is refused a read of another member's rows of an enforced
+ * personal model (`lib/db/owner-classification.ts`). With no narrowed caller —
+ * a platform admin, a job, any `single` install's background work — it sends
+ * exactly the query it was handed.
  */
 
 const globalForPrisma = globalThis as unknown as {
@@ -107,10 +118,18 @@ if (env.NODE_ENV !== 'production') globalForPrisma.prisma = baseClient;
  * from `context.ts`, and that side reads `prisma` only inside `forEachOrg`,
  * never at evaluation.
  */
-export const prisma: TenancyClient = withTenancy(baseClient, {
-  isMultiTenant,
-  getTenantContext,
-  installOrgId: INSTALL_ORG_ID,
-});
+export const prisma: TenancyClient = withOwnerChecks(
+  withTenancy(baseClient, {
+    isMultiTenant,
+    getTenantContext,
+    installOrgId: INSTALL_ORG_ID,
+  }),
+  {
+    schema: readOwnerSchema(baseClient, enforcedModels()),
+    getSubjectReadScope,
+    onConfinedRead: noteConfinedRead,
+    onUncheckedRead: noteUncheckedRead,
+  }
+);
 
 export default prisma;

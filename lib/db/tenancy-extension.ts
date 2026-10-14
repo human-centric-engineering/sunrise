@@ -66,8 +66,8 @@
  * SQL injection through a raw site, which `tests/unit/db-raw-sql-allowlist.test.ts`
  * keeps deliberate: every `*Unsafe` site today passes values as parameters.
  *
- * The read-side owner predicate is **§115 `f-mt-owner-predicate`**, a later
- * `$extends` layer; nothing here prepares for it beyond delegating
+ * The read-side owner check is **§115**, the later `$extends` layer in
+ * `lib/db/owner-extension.ts`; nothing here prepares for it beyond delegating
  * `$transaction` correctly.
  *
  * @see .context/tenancy/context.md — the data-layer section

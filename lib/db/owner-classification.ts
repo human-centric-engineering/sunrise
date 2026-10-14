@@ -37,7 +37,13 @@
  * on config models, none of which is personal; the test asserts no personal
  * model carries those columns, so the owner check never has to admit them.
  *
- * Read-only data: nothing enforces it until t-801.
+ * **Enforcement switches on per model** (§115 ruling 3): `enforced: true` is
+ * what makes `lib/db/owner-extension.ts` refuse a narrowed caller's read of
+ * another member's rows. A model is marked once every call site reading it
+ * complies — `AiUserMemory` in t-801, conversations and messages in t-802,
+ * executions, evaluations and datasets in t-803 — so `main` is never broken
+ * between sweeps. A personal model not yet enforced is classified, guarded by
+ * the routes as before, and not checked by the data layer.
  *
  * @see lib/auth/subject-context.ts — whose rows the current caller may read
  * @see .context/auth/authorization.md — "Owner classification"
@@ -51,6 +57,14 @@ export type OwnerPath =
   /**
    * A required-or-optional relation to a personal parent; the row is the
    * parent's owner's. `field` is the relation field on this model.
+   *
+   * **The child inherits the parent's visibility.** A row is readable through
+   * its parent exactly when the parent is: the parent's own `ownerless` and
+   * `alsoVisible` arms admit its children too, so the messages of a shared or
+   * an inbound conversation are readable by whoever may read that
+   * conversation. The child's own `ownerless` covers only a null relation —
+   * a child with no parent at all. `lib/db/owner-extension.ts` analyses a
+   * `through` predicate as the parent's predicate under the relation field.
    */
   | { through: { field: string; parent: string } };
 
@@ -71,6 +85,12 @@ export type OwnerClassification =
        * share is live (`conversationVisibilityWhere`'s third arm).
        */
       alsoVisible?: readonly 'active-share'[];
+      /**
+       * The data layer refuses a narrowed caller's read of another member's
+       * rows of this model (`lib/db/owner-extension.ts`). Absent: classified,
+       * not yet checked there.
+       */
+      enforced?: true;
     }
   | { kind: 'not-personal'; because: string };
 
@@ -137,6 +157,7 @@ export const OWNER_CLASSIFICATION = {
   AiUserMemory: {
     kind: 'personal',
     owner: { column: 'userId' },
+    enforced: true,
   },
   AiEventHook: {
     kind: 'not-personal',
@@ -307,5 +328,12 @@ export function ownerClassificationOf(model: string): OwnerClassification | null
 export function personalModels(): string[] {
   return Object.entries(OWNER_CLASSIFICATION as Record<string, OwnerClassification>)
     .filter(([, c]) => c.kind === 'personal')
+    .map(([model]) => model);
+}
+
+/** Every personal model the data layer enforces, by name. */
+export function enforcedModels(): string[] {
+  return Object.entries(OWNER_CLASSIFICATION as Record<string, OwnerClassification>)
+    .filter(([, c]) => c.kind === 'personal' && c.enforced === true)
     .map(([model]) => model);
 }

@@ -15,8 +15,11 @@
  *
  * And every classification must match the schema: a `column` owner is a user
  * column on the model, a `through` owner is a foreign-key relation to a
- * personal parent, an `ownerless` arm sits on an owner that can be missing,
- * and no personal model carries the platform-row columns of §116.
+ * personal parent, an `ownerless` arm sits on an owner that can be missing —
+ * and an owner that can be missing declares one (t-801: otherwise its
+ * ownerless rows are readable by no narrowed caller, silently) — and no
+ * personal model carries the platform-row columns of §116. A `through` child
+ * whose relation is required inherits its parent's arms, so it needs none.
  *
  * If this test names a model you just added, decide whether its rows are
  * private to one person (routes scope reads to the owner) or record who did
@@ -193,6 +196,11 @@ function auditOwnerClassification(
     if (c.ownerless && !ownerOptional) {
       problems.push(`${name} declares an ownerless arm but its owner can never be missing`);
     }
+    if (!c.ownerless && ownerOptional) {
+      problems.push(
+        `${name}'s owner can be missing but it declares no ownerless arm, so its ownerless rows are readable by no narrowed caller`
+      );
+    }
     for (const col of ['isSystem', 'isTemplate']) {
       if (model.scalars.has(col))
         problems.push(`${name} is personal but carries platform-row column ${col}`);
@@ -302,6 +310,18 @@ model Post {
       expect(problems).toContain(
         'Post declares an ownerless arm but its owner can never be missing'
       );
+    });
+
+    it('rejects an owner that can be missing with no ownerless arm', () => {
+      const problems = auditOwnerClassification(fixture, {
+        Thread: { kind: 'personal', owner: { column: 'userId' } },
+        Post: { kind: 'personal', owner: { through: { field: 'thread', parent: 'Thread' } } },
+      });
+      expect(problems).toContain(
+        "Thread's owner can be missing but it declares no ownerless arm, so its ownerless rows are readable by no narrowed caller"
+      );
+      // Post's relation is required: it inherits Thread's arms and needs none.
+      expect(problems.some((p) => p.startsWith("Post's owner"))).toBe(false);
     });
 
     it('rejects a stale row and a through-path to a parent that is not personal', () => {

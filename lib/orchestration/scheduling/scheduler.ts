@@ -16,6 +16,7 @@
 import { CronExpressionParser } from 'cron-parser';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { runAcrossOwners } from '@/lib/auth/subject-context';
 import { WorkflowStatus, type WorkflowDefinition } from '@/types/orchestration';
 import { OrchestrationEngine } from '@/lib/orchestration/engine/orchestration-engine';
 import { resolvePersistedScope } from '@/lib/orchestration/scope';
@@ -449,8 +450,22 @@ export interface PendingExecutionResult {
  * `initRun`), and the maintenance tick's `where: { status: PENDING }`
  * filter excludes the row. If this drain crashes mid-run, the
  * `reapZombieExecutions` task remains the safety net.
+ *
+ * **It acts for the execution's owner, not for whoever approved it** (§115
+ * t-801). Called fire-and-forget from inside an approving admin's request, it
+ * would otherwise inherit that admin's subject, and the owner layer would read
+ * the owner's rows narrowed to the admin; through the approval-token route the
+ * same resume has no subject at all. Declared here, once, so every caller gets
+ * the token route's answer — see `lib/auth/subject-context.ts`.
  */
-export async function resumeApprovedExecution(executionId: string): Promise<void> {
+export function resumeApprovedExecution(executionId: string): Promise<void> {
+  return runAcrossOwners(
+    "resuming an approved execution runs its owner's workflow, not the approver's",
+    () => resumeApproved(executionId)
+  );
+}
+
+async function resumeApproved(executionId: string): Promise<void> {
   const execution = await prisma.aiWorkflowExecution.findUnique({
     where: { id: executionId },
     include: {

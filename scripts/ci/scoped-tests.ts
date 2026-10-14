@@ -105,6 +105,14 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'is the class of query only RLS covers under TENANCY_MODE=multi.',
   },
   {
+    path: 'tests/unit/lib/db/owner-raw-sql-manifest.test.ts',
+    reason:
+      'greps lib/** and app/** for raw SQL naming a table the owner layer ' +
+      'enforces. No where reaches a raw read, so a new one in a far-off module ' +
+      'would read every member’s rows for a narrowed caller — and no import ' +
+      'chain connects that module to this test.',
+  },
+  {
     path: 'tests/unit/lib/privacy/export-sources.test.ts',
     reason:
       'parses `prisma/schema/*.prisma` and fails until every model with a ' +

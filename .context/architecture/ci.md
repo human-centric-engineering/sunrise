@@ -872,7 +872,9 @@ NOBYPASSRLS` app role, with `TENANCY_APP_ROLE_PASSWORD` set to a value
    asserting the population is non-empty; `forEachOrg`, the no-context
    throw, the nested create, `runAsSystem`; the three credential resolvers
    and the inbound route called as nobody learn B's org from B's row; the
-   t-708 namespaces. Measured: it fails 5 checks when one policy is widened
+   t-708 namespaces; and two members of one org (§115 t-801), driven as a
+   narrowed principal the real policy answers, each refused the other's
+   memory by the owner layer. Measured: it fails 5 checks when one policy is widened
    to `USING (true)`, and at the first create when one is dropped
    (default-deny under `FORCE`).
 6. The switch round-trips — `--enable` (no change) → `--disable` →
