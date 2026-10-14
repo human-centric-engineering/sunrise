@@ -42,6 +42,8 @@ function makeRow(overrides: Partial<AiProviderModel> = {}): AiProviderModel {
     dimensions: null,
     schemaCompatible: null,
     costPerMillionTokens: 10,
+    inputCostPerMillionTokens: null,
+    outputCostPerMillionTokens: null,
     hasFreeTier: null,
     local: false,
     quality: null,
@@ -125,6 +127,65 @@ describe('dbModelToModelInfo', () => {
     const info = dbModelToModelInfo(makeRow({ costPerMillionTokens: 0 }));
     expect(info.inputCostPerMillion).toBe(0);
     expect(info).not.toHaveProperty('pricingUnknown');
+  });
+
+  describe('split input/output prices (t-774)', () => {
+    it('uses the split columns over the blended rate when both are set', () => {
+      const info = dbModelToModelInfo(
+        makeRow({
+          costPerMillionTokens: 9,
+          inputCostPerMillionTokens: 3,
+          outputCostPerMillionTokens: 15,
+        })
+      );
+      expect(info.inputCostPerMillion).toBe(3);
+      expect(info.outputCostPerMillion).toBe(15);
+      expect(info.pricingUnknown).toBeUndefined();
+    });
+
+    it('prices a row with split columns and no blended rate', () => {
+      const info = dbModelToModelInfo(
+        makeRow({
+          costPerMillionTokens: null,
+          inputCostPerMillionTokens: 0.15,
+          outputCostPerMillionTokens: 0.6,
+        })
+      );
+      expect(info.inputCostPerMillion).toBe(0.15);
+      expect(info.outputCostPerMillion).toBe(0.6);
+      expect(info.pricingUnknown).toBeUndefined();
+    });
+
+    it('falls back to the blended rate for each side the split leaves unset', () => {
+      const info = dbModelToModelInfo(
+        makeRow({ costPerMillionTokens: 9, inputCostPerMillionTokens: 3 })
+      );
+      expect(info.inputCostPerMillion).toBe(3);
+      expect(info.outputCostPerMillion).toBe(9);
+      expect(info.pricingUnknown).toBeUndefined();
+    });
+
+    it('marks a row unpriced when one side has neither a split nor a blended rate', () => {
+      const info = dbModelToModelInfo(
+        makeRow({ costPerMillionTokens: null, inputCostPerMillionTokens: 3 })
+      );
+      expect(info.inputCostPerMillion).toBe(3);
+      expect(info.outputCostPerMillion).toBe(0);
+      expect(info.pricingUnknown).toBe(true);
+    });
+
+    it('keeps explicit zero split prices as a free model', () => {
+      const info = dbModelToModelInfo(
+        makeRow({
+          costPerMillionTokens: null,
+          inputCostPerMillionTokens: 0,
+          outputCostPerMillionTokens: 0,
+        })
+      );
+      expect(info.inputCostPerMillion).toBe(0);
+      expect(info.outputCostPerMillion).toBe(0);
+      expect(info.pricingUnknown).toBeUndefined();
+    });
   });
 
   it('maps context length buckets to representative token ceilings', () => {
@@ -256,6 +317,35 @@ describe('mergeDbModelsWithRegistry', () => {
     )[0];
     expect(listed.inputCostPerMillion).toBe(4);
     resetRegistry();
+  });
+
+  it("shows a matrix-only model's split prices, not its blended rate (t-774)", () => {
+    const merged = mergeDbModelsWithRegistry(registry, [
+      makeRow({
+        modelId: 'claude-sonnet-4-6-20260901',
+        providerSlug: 'anthropic',
+        costPerMillionTokens: 9,
+        inputCostPerMillionTokens: 3,
+        outputCostPerMillionTokens: 15,
+      }),
+    ]);
+    const snapshot = merged.find((m) => m.id === 'claude-sonnet-4-6-20260901');
+    expect(snapshot?.inputCostPerMillion).toBe(3);
+    expect(snapshot?.outputCostPerMillion).toBe(15);
+  });
+
+  it('keeps a positive registry price over a split matrix row for the same provider (t-769)', () => {
+    const merged = mergeDbModelsWithRegistry(registry, [
+      makeRow({
+        modelId: 'gpt-4o',
+        providerSlug: 'openai',
+        inputCostPerMillionTokens: 1,
+        outputCostPerMillionTokens: 2,
+      }),
+    ]);
+    const gpt4o = merged.find((m) => m.id === 'gpt-4o');
+    expect(gpt4o?.inputCostPerMillion).toBe(5);
+    expect(gpt4o?.outputCostPerMillion).toBe(15);
   });
 
   it('returns the registry untouched when no DB rows are passed', () => {
