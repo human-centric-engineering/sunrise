@@ -120,6 +120,18 @@ export const UNDECLARED_ROUTE_EXCEPTIONS: Readonly<Record<string, string>> = {
     'itself: resolveBackupScope() refuses shared=true for any org but the install org (an ' +
     'unbound admin key acts as it), and the importer writes the shared part only when the ' +
     'resolved scope includes it.',
+  'app/api/v1/users/me/route.ts#DELETE':
+    'erasure (eraseUser) removes the erased person’s address from the install-wide escalation ' +
+    'list (t-791). It must reach them whichever org asks — a person’s right to erasure is not ' +
+    'the install admin’s to grant — and declaring would refuse it from a customer’s org. It only ' +
+    'removes that one person, runs in the audited system scope, and is audited ' +
+    '(settings.escalation_recipient_erased).',
+  'app/api/v1/users/[id]/route.ts#DELETE':
+    'erasure (eraseUser) removes the erased person’s address from the install-wide escalation ' +
+    'list (t-791). It must reach them whichever org asks — a person’s right to erasure is not ' +
+    'the install admin’s to grant — and declaring would refuse it from a customer’s org. It only ' +
+    'removes that one person, runs in the audited system scope, and is audited ' +
+    '(settings.escalation_recipient_erased).',
 };
 
 export interface SourceFile {
