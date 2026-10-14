@@ -108,6 +108,7 @@ describe('route-layer and data-layer parity on AiUserMemory', () => {
           principal: testCase.viewer,
           filter,
           unattributedReads: NO_UNATTRIBUTED,
+          readsShared: false,
         });
         if (reader !== null) narrowedSomeone = true;
         for (const subject of testCase.subjects) {

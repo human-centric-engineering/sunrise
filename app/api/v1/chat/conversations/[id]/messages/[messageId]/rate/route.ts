@@ -52,13 +52,14 @@ export const POST = withAuth<Params>(
       where: {
         id: msgId.data,
         conversationId: convId.data,
+        conversation: { userId: session.user.id },
         role: 'assistant',
       },
     });
     if (!message) throw new NotFoundError('Message not found');
 
     const updated = await prisma.aiMessage.update({
-      where: { id: message.id },
+      where: { id: message.id, conversation: { userId: session.user.id } },
       data: {
         rating: body.rating,
         ratedAt: new Date(),

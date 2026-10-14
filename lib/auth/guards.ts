@@ -1162,6 +1162,9 @@ async function runHandler(args: {
       filter: filterIsUsable ? filter : undefined,
       resolveFilter: () => subjectScope(args.principal),
       unattributedReads,
+      // A share is consent to the admin surface, where each shared read is
+      // audit-logged — so only there does the owner layer honour one.
+      readsShared: args.guard === 'withAdminAuth',
       onConfinedRead: () => {
         dataLayerConfined = true;
       },

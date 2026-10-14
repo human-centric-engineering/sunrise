@@ -39,7 +39,9 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logConversationAccess: vi.fn(),
 }));
 
-vi.mock('@/lib/orchestration/access/conversation-access', () => ({
+// The real `where` fragments (pure), with only the per-row check mocked.
+vi.mock('@/lib/orchestration/access/conversation-access', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/access/conversation-access')>()),
   adminCanViewConversation: vi.fn(),
 }));
 

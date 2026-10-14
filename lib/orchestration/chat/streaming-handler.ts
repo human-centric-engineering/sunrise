@@ -701,7 +701,7 @@ export class StreamingChatHandler {
       );
       conversationId = conversation.id;
       setSpanAttributes(chatSpan, { [SUNRISE_CONVERSATION_ID]: conversation.id });
-      const history = await this.loadHistory(conversation.id);
+      const history = await this.loadHistory(conversation.id, request.userId);
 
       // Enforce message-per-conversation cap using actual DB count
       // (loadHistory returns at most 200 rows, so history.length can't
@@ -709,7 +709,10 @@ export class StreamingChatHandler {
       const maxMessages = capSettings?.maxMessagesPerConversation ?? null;
       if (maxMessages !== null) {
         const messageCount = await prisma.aiMessage.count({
-          where: { conversationId: conversation.id },
+          where: {
+            conversationId: conversation.id,
+            conversation: conversationOwner(request.userId),
+          },
         });
         if (messageCount >= maxMessages) {
           throw new ChatError(
@@ -1074,7 +1077,7 @@ export class StreamingChatHandler {
             // Persist for future turns, pinned to the newest message the
             // summary now covers.
             await prisma.aiConversation.update({
-              where: { id: conversation.id },
+              where: { id: conversation.id, ...conversationOwner(request.userId) },
               data: {
                 summary: conversationSummary,
                 summaryUpToMessageId: history[targetIdx].id,
@@ -2930,14 +2933,19 @@ export class StreamingChatHandler {
     return conversation;
   }
 
-  private async loadHistory(conversationId: string): Promise<AiMessage[]> {
+  /**
+   * `userId` is the caller the conversation was loaded for, and its owner
+   * (`loadOrCreateConversation` matched it): naming it here is what confines
+   * the read for the owner layer (`lib/db/owner-extension.ts`).
+   */
+  private async loadHistory(conversationId: string, userId: string): Promise<AiMessage[]> {
     // Fetch the 200 most recent messages (desc) then reverse to
     // chronological order. Previous `asc + take: 200` loaded the
     // oldest 200 — wrong for conversations with >200 messages.
     // Secondary sort on `id` ensures deterministic ordering for
     // messages persisted in the same millisecond.
     const messages = await prisma.aiMessage.findMany({
-      where: { conversationId },
+      where: { conversationId, conversation: conversationOwner(userId) },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: 200,
     });

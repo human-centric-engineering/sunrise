@@ -149,6 +149,16 @@ describe('who is narrowed', () => {
     const scope = await readThrough('withAdminAuth');
     expect(scope.kind === 'subject' && scope.unattributedReads.conversation).toBe(true);
   });
+
+  it('honours shares on the admin surface only, whoever the caller is', async () => {
+    // A share is consent to the admin surface, where its reads are audited —
+    // so a platform admin on a `withAuth` route reads no share either.
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('ADMIN'));
+    expect(await readThrough('withAdminAuth')).toMatchObject({ readsShared: true });
+    expect(await readThrough('withAuth')).toMatchObject({ readsShared: false });
+    vi.mocked(auth.api.getSession).mockResolvedValue(session('USER'));
+    expect(await readThrough('withAuth')).toMatchObject({ readsShared: false });
+  });
 });
 
 describe('one answer per request', () => {

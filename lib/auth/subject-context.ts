@@ -80,6 +80,12 @@ export interface SubjectEntry {
   /** The ownerless kinds this caller may read — the guard's resolved record. */
   unattributedReads: UnattributedReads;
   /**
+   * Whether a share admits rows for this caller — `true` only from
+   * `withAdminAuth`, the surface a share consents to. Absent means `false`, the
+   * narrower answer. See `OwnerReader.readsShared` in `lib/db/owner-extension.ts`.
+   */
+  readsShared?: boolean;
+  /**
    * Called when the data layer checked a personal read for this caller and it
    * passed (§115 t-801) — the guard counts it as the route having used the
    * policy's answer. See {@link noteConfinedRead}.
@@ -110,6 +116,7 @@ export type SubjectReadScope =
       principal: AuthorizationPrincipal;
       filter: SubjectFilter;
       unattributedReads: UnattributedReads;
+      readsShared: boolean;
     };
 
 interface SubjectStore {
@@ -206,6 +213,7 @@ export async function getSubjectReadScope(): Promise<SubjectReadScope> {
     principal: entry.principal,
     filter,
     unattributedReads: entry.unattributedReads,
+    readsShared: entry.readsShared === true,
   };
 }
 

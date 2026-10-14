@@ -917,16 +917,17 @@ anyone else (a platform admin, an `admin` API key, a job, a guard-less route, a
 read inside `runAcrossOwners`) it sends the query it was handed, unchanged;
 `tests/unit/lib/db/owner-extension.test.ts` compares the SQL with and without it.
 
-**Enforced today: `AiUserMemory`.** Conversations and messages follow in t-802,
-executions, evaluations and datasets in t-803, each when its call sites comply.
+**Enforced today: `AiUserMemory`, `AiConversation`, `AiMessage`** (memory in
+t-801, conversations and messages in t-802). Executions, evaluations and
+datasets follow in t-803, each when its call sites comply.
 
-| Operation                                                              | Rule                                                                                                                                                       |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `findMany`, `count`, `aggregate`, `groupBy`                            | The `where` must **confine** the read: every row it can match is one the caller may read. Otherwise refused before any SQL.                                |
-| `findUnique` (and `OrThrow`)                                           | Runs whatever the filter. The row returned is refused if it is someone else's, or ownerless and the caller may not read that kind.                         |
-| `findFirst` (and `OrThrow`)                                            | An unconfined `where` has the caller's own predicate added, so it returns the caller's first match or none — never whichever row the database found first. |
-| `update`, `upsert`, `delete`, `updateManyAndReturn`                    | They return the row they write, so the `where` must confine them. Otherwise refused before any SQL: checking the row afterwards would be after the write.  |
-| An `include` / `select` / `_count` of an enforced model, from any root | That relation must carry its own confining `where`. `user.findUnique({ include: { aiUserMemories: true } })` is refused.                                   |
+| Operation                                                              | Rule                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `findMany`, `count`, `aggregate`, `groupBy`                            | The `where` must **confine** the read: every row it can match is one the caller may read. Otherwise refused before any SQL.                                                                                                                                                                                                 |
+| `findUnique` (and `OrThrow`)                                           | Runs whatever the filter. The row returned is refused if it is someone else's, or ownerless and the caller may not read that kind. For a model whose row cannot decide alone — owned `through` a parent, or with a share arm — the read runs narrowed instead, and a miss asks whether a foreign row matched, to refuse it. |
+| `findFirst` (and `OrThrow`)                                            | An unconfined `where` has the caller's readable predicate added, so it returns the caller's first match or none — never whichever row the database found first.                                                                                                                                                             |
+| `update`, `upsert`, `delete`, `updateManyAndReturn`                    | They return the row they write, so the `where` must confine them. Otherwise refused before any SQL: checking the row afterwards would be after the write.                                                                                                                                                                   |
+| An `include` / `select` / `_count` of an enforced model, from any root | That relation must carry its own confining `where`. `user.findUnique({ include: { aiUserMemories: true } })` is refused. The exception is the ownership relation followed out of a checked read: a conversation's `messages`, a message's `conversation`.                                                                   |
 
 **Confines**, as a tree: every key of a `where` is a conjunct, so one confining
 conjunct (at any depth under `AND`) confines the whole; an `OR` confines only
@@ -936,7 +937,27 @@ owner relation, `user: { id: me }` / `user: { is: { id: me } }`), or to null for
 model with an `ownerless` kind the caller may read
 (`session.unattributedReads`). A compound unique key (`userId_agentId_key`) is
 read as its fields. A child owned `through` a parent is analysed as the parent's
-predicate under the relation, so it inherits the parent's arms.
+predicate under the relation, so it inherits the parent's arms. A
+conversation's share arm confines when it selects only live shares
+(`share: { revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] }`),
+the shape `conversationVisibilityWhere` emits — so a list built from that
+fragment passes as it is, and a message read through it
+(`conversation: conversationVisibilityWhere(session)`) does too.
+
+**A share counts only on a `withAdminAuth` request.** A share is its owner's
+consent for an admin to view the thread, and every such read is audit-logged
+([conversation access](../security/conversation-access.md)) — it is not consent
+to other members. So the guard enters the subject with `readsShared` set only
+for `withAdminAuth`; on a `withAuth` route, for any caller, the share arm
+neither confines a filter nor joins the narrowed predicate, and another
+member's shared thread read by id is refused. A fork that adds a surface a
+share should reach (a compliance-officer route, say) enters it with
+`readsShared: true` and audits the read there.
+
+The expiry bound is checked against the clock with 60 seconds of slack, so
+**build the visibility fragment for each query** rather than once per request
+and reused across slow awaits: a fragment older than that is refused as
+`unconfined-filter`.
 
 ```ts
 // Confined — passes
@@ -959,7 +980,7 @@ the layer checked and passed for this caller counts as the route having used the
 policy's answer, so a handler that never touches `session.subjectFilter` but
 whose personal reads are confined is not reported. That holds only while every
 personal read in the route was one the layer checks: a read of a personal model
-not enforced yet (a conversation, until t-802) was narrowed by nothing but the
+not enforced yet (an execution, until t-803) was narrowed by nothing but the
 route, so the route is reported as before.
 
 **Not checked:** whether a write is allowed (changing another member's row is
@@ -974,8 +995,17 @@ which fails on an unlisted one.
 **Proving it agrees with the routes.** `tests/unit/lib/db/owner-parity.test.ts`
 runs every principal through the default policy, safe mode and a delegating fork
 policy, and asserts `canRead` on a subject, a list filtered to that subject and
-a row that subject owns all get the same answer. The two-member scenario in
-`scripts/smoke/tenancy-isolation.ts` ([16b]) proves it against real Postgres.
+a row that subject owns all get the same answer. The two-member scenarios in
+`scripts/smoke/tenancy-isolation.ts` ([16b] memory, [16c] conversations and
+messages) prove it against real Postgres, as the restricted role.
+
+**Core's own crossings.** Per-agent conversation counts (the agents list and
+compare) and the analytics figures run under `runAcrossOwners`: they return
+numbers, never a row. The analytics reads that quote message text — popular
+topics, unanswered questions, content gaps, recent negative feedback — do not
+cross: for a narrowed caller they read through `conversationVisibilityWhere`,
+so an org admin sees words only from threads they could open. A fork that wants
+its org admins to read members' words widens the policy for them.
 
 **Cost:** 0.3–3 µs per read, measured (design doc, Spike register item 8).
 

@@ -87,22 +87,30 @@ vi.mock('@/lib/db/client', () => {
     prisma: {
       aiConversation: {
         findUnique: vi.fn(
-          async ({ where }: { where: { id: string } }) =>
-            conversationStore.find((c) => c.id === where.id) ?? null
-        ),
-      },
-      aiAgent,
-      aiMessage: {
-        findMany: vi.fn(
-          async ({ where, take }: { where: { conversationId: string }; take?: number }) => {
+          async ({
+            where,
+            select,
+          }: {
+            where: { id: string };
+            select?: { messages?: { take?: number } };
+          }) => {
+            const conversation = conversationStore.find((c) => c.id === where.id);
+            if (!conversation) return null;
+            // The executor reads its history with the conversation (§115 t-802).
+            if (!select?.messages) return conversation;
             // Sort DESC by createdAt (newest first), as the real query does, then `take`.
             const all = messageStore
-              .filter((m) => m.conversationId === where.conversationId)
+              .filter((m) => m.conversationId === where.id)
               .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
-            return typeof take === 'number' ? all.slice(0, take) : all;
+            const take = select.messages.take;
+            return {
+              ...conversation,
+              messages: typeof take === 'number' ? all.slice(0, take) : all,
+            };
           }
         ),
       },
+      aiAgent,
       // Typed loosely-as-`unknown` then cast at the boundary so the vi.fn
       // signature satisfies Prisma's strict `$transaction` overload set
       // without us re-importing all of the Prisma type plumbing into a

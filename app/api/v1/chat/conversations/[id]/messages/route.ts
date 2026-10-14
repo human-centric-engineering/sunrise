@@ -37,7 +37,7 @@ export const GET = withAuth<{ id: string }>(
     if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
 
     const messages = await prisma.aiMessage.findMany({
-      where: { conversationId: id },
+      where: { conversationId: id, conversation: { userId: session.user.id } },
       orderBy: { createdAt: 'asc' },
       select: {
         id: true,

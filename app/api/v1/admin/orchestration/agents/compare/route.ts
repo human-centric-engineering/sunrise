@@ -44,6 +44,7 @@
 import { z } from 'zod';
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { runAcrossOwners } from '@/lib/auth/subject-context';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
@@ -76,7 +77,10 @@ async function getAgentStats(agentId: string) {
         _sum: { totalCostUsd: true, inputTokens: true, outputTokens: true },
         _count: true,
       }),
-      prisma.aiConversation.count({ where: { agentId } }),
+      // Install-wide by decision (header, t-682), so it crosses owners on purpose.
+      runAcrossOwners('agent comparison: an install-wide conversation count per agent', () =>
+        prisma.aiConversation.count({ where: { agentId } })
+      ),
       prisma.aiAgentCapability.count({ where: { agentId } }),
       prisma.aiEvaluationSession.count({ where: { agentId } }),
       prisma.aiEvaluationSession.count({ where: { agentId, status: 'completed' } }),

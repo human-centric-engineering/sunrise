@@ -28,7 +28,10 @@ import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { messageProvenanceSchema } from '@/lib/validations/orchestration';
 import { logConversationAccess } from '@/lib/orchestration/audit/admin-audit-logger';
-import { adminCanViewConversation } from '@/lib/orchestration/access/conversation-access';
+import {
+  adminCanViewConversation,
+  conversationVisibilityWhere,
+} from '@/lib/orchestration/access/conversation-access';
 
 export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const log = await getRouteLogger(request);
@@ -45,7 +48,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   if (!access.ok) throw new NotFoundError(`Conversation ${id} not found`);
 
   const conversation = await prisma.aiConversation.findUnique({
-    where: { id },
+    where: { id, AND: [conversationVisibilityWhere(session)] },
     include: {
       agent: { select: { id: true, slug: true, name: true } },
       messages: {

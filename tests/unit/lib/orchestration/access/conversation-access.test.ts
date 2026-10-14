@@ -190,12 +190,23 @@ describe('adminCanViewConversation', () => {
     expect(result).toEqual({ ok: false, basis: null, ownerId: null });
   });
 
-  it('passes the conversation id through to findUnique unchanged', async () => {
-    findUnique.mockResolvedValue({ userId: ADMIN_ID, share: null });
+  it('reads the row through the set face, so both faces are one query', async () => {
+    vi.useFakeTimers({ now: new Date('2026-10-14T00:00:00.000Z') });
+    try {
+      findUnique.mockResolvedValue({ userId: ADMIN_ID, share: null });
 
-    await adminCanViewConversation(CONV_ID, admin);
+      await adminCanViewConversation(CONV_ID, admin);
 
-    expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: CONV_ID } }));
+      // The owner layer (§115 t-802) sees a confined read: a conversation this
+      // caller may not see comes back as no row rather than a refusal.
+      expect(findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: CONV_ID, AND: [conversationVisibilityWhere(admin)] },
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('owner check takes precedence over a share record (defense in depth)', async () => {

@@ -24,6 +24,21 @@
  * "every read carries it" is a property a test can assert without a carve-out
  * that the next edit to the first query would silently invalidate.
  *
+ * **Numbers cross owners; words do not (§115 t-802).** Under the owner layer
+ * (`lib/db/owner-extension.ts`) an org ADMIN is narrowed to their own rows like
+ * any member. A count, a rate or a per-day trend says how an agent is used and
+ * carries nothing a member wrote, so those reads run inside
+ * {@link acrossOwners} and every figure stays deployment-wide. The reads that
+ * hand back message text — popular topics, unanswered questions, content gaps,
+ * recent negative feedback — quote what a member typed in a private
+ * conversation, which is exactly what the layer exists to keep inside the
+ * conversation. For a narrowed caller they read through {@link textScope}: the
+ * conversations that caller may open (their own, shared with them, ownerless
+ * where the policy admits it), so a quote never shows a thread its detail route
+ * would 404. A caller the policy does not narrow — a platform admin — reads
+ * every thread, as before. A fork that wants its org admins to read members'
+ * words widens the policy for them; it does not need to touch this file.
+ *
  * Platform-agnostic: no Next.js imports (the session is a type). Requires Prisma.
  */
 
@@ -31,7 +46,12 @@ import type { Prisma } from '@prisma/client';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import type { AnalyticsQuery } from '@/lib/validations/orchestration';
-import { deploymentWideConversationWhere } from '@/lib/orchestration/access/conversation-access';
+import { getSubjectReadScope, runAcrossOwners } from '@/lib/auth/subject-context';
+import { readerFor } from '@/lib/db/owner-extension';
+import {
+  conversationVisibilityWhere,
+  deploymentWideConversationWhere,
+} from '@/lib/orchestration/access/conversation-access';
 import { resolveAnalyticsDateRange } from '@/lib/orchestration/analytics/date-range';
 
 // ─── Shared Helpers ──────────────────────────────────────────────────────────
@@ -57,6 +77,38 @@ function conversationScope(
   };
 }
 
+/**
+ * Run an aggregate that returns only numbers across every member's
+ * conversations, for a caller the owner layer would otherwise narrow. See the
+ * module header ("Numbers cross owners").
+ */
+function acrossOwners<T>(fn: () => Promise<T>): Promise<T> {
+  return runAcrossOwners(
+    'analytics: a figure aggregated over every member, with no message text',
+    fn
+  );
+}
+
+/**
+ * The conversation clause for a read that returns message text: every
+ * thread for a caller the policy does not narrow, and the threads this caller
+ * may open for one it does. Asked of the same answer the owner layer reads, so
+ * the two cannot disagree about who is narrowed.
+ *
+ * Built for each query, never once and reused across awaits: the share arm
+ * carries `expiresAt > now`, and the owner layer refuses a bound more than a
+ * minute old as `unconfined-filter`. A slow first query would otherwise fail
+ * the second.
+ */
+async function textScope(
+  session: AuthenticatedSession,
+  agentId?: string
+): Promise<Prisma.AiConversationWhereInput> {
+  if (readerFor(await getSubjectReadScope()) === null) return conversationScope(session, agentId);
+  const visible = conversationVisibilityWhere(session);
+  return agentId ? { AND: [visible, { agentId }] } : visible;
+}
+
 // ─── Popular Topics ──────────────────────────────────────────────────────────
 
 export interface TopicEntry {
@@ -80,7 +132,7 @@ export async function getPopularTopics(
     where: {
       role: 'user',
       createdAt: { gte: from, lte: to },
-      conversation: conversationScope(session, query.agentId),
+      conversation: await textScope(session, query.agentId),
     },
     select: { content: true, createdAt: true },
     orderBy: { createdAt: 'desc' },
@@ -157,7 +209,7 @@ export async function getUnansweredQuestions(
     where: {
       role: 'assistant',
       createdAt: { gte: from, lte: to },
-      conversation: conversationScope(session, query.agentId),
+      conversation: await textScope(session, query.agentId),
       OR: HEDGING_PHRASES.map((phrase) => ({ content: { contains: phrase } })),
     },
     select: {
@@ -182,7 +234,7 @@ export async function getUnansweredQuestions(
     where: {
       conversationId: { in: conversationIds },
       role: 'user',
-      conversation: conversationScope(session, query.agentId),
+      conversation: await textScope(session, query.agentId),
     },
     select: { conversationId: true, content: true, createdAt: true },
     orderBy: { createdAt: 'desc' },
@@ -240,46 +292,48 @@ export async function getEngagementMetrics(
   const scope = conversationScope(session, query.agentId);
 
   const [totalConversations, totalMessages, uniqueUsersResult, userConvCounts, conversations] =
-    await Promise.all([
-      // Total conversations in range
-      prisma.aiConversation.count({
-        where: { createdAt: { gte: from, lte: to }, ...scope },
-      }),
+    await acrossOwners(() =>
+      Promise.all([
+        // Total conversations in range
+        prisma.aiConversation.count({
+          where: { createdAt: { gte: from, lte: to }, ...scope },
+        }),
 
-      // Total messages in range (user + assistant)
-      prisma.aiMessage.count({
-        where: {
-          createdAt: { gte: from, lte: to },
-          conversation: scope,
-        },
-      }),
+        // Total messages in range (user + assistant)
+        prisma.aiMessage.count({
+          where: {
+            createdAt: { gte: from, lte: to },
+            conversation: scope,
+          },
+        }),
 
-      // Unique users. A participant is a user or an embed widget visitor
-      // (#705, t-765): a visitor's conversation has no `userId` and is owned
-      // through `embedVisitorId`, so keying on `userId` alone would count every
-      // widget visitor as one person. The two never share a row (CHECK
-      // `ai_conversation_owner_exclusive`), so the pair names one participant.
-      prisma.aiConversation.findMany({
-        where: { createdAt: { gte: from, lte: to }, ...scope },
-        select: { userId: true, embedVisitorId: true },
-        distinct: ['userId', 'embedVisitorId'],
-      }),
+        // Unique users. A participant is a user or an embed widget visitor
+        // (#705, t-765): a visitor's conversation has no `userId` and is owned
+        // through `embedVisitorId`, so keying on `userId` alone would count every
+        // widget visitor as one person. The two never share a row (CHECK
+        // `ai_conversation_owner_exclusive`), so the pair names one participant.
+        prisma.aiConversation.findMany({
+          where: { createdAt: { gte: from, lte: to }, ...scope },
+          select: { userId: true, embedVisitorId: true },
+          distinct: ['userId', 'embedVisitorId'],
+        }),
 
-      // Returning users (participants with >1 conversation in the period)
-      prisma.aiConversation.groupBy({
-        by: ['userId', 'embedVisitorId'],
-        where: { createdAt: { gte: from, lte: to }, ...scope },
-        _count: { id: true },
-        having: { id: { _count: { gt: 1 } } },
-      }),
+        // Returning users (participants with >1 conversation in the period)
+        prisma.aiConversation.groupBy({
+          by: ['userId', 'embedVisitorId'],
+          where: { createdAt: { gte: from, lte: to }, ...scope },
+          _count: { id: true },
+          having: { id: { _count: { gt: 1 } } },
+        }),
 
-      // Daily conversation counts
-      prisma.aiConversation.findMany({
-        where: { createdAt: { gte: from, lte: to }, ...scope },
-        select: { createdAt: true },
-        orderBy: { createdAt: 'asc' },
-      }),
-    ]);
+        // Daily conversation counts
+        prisma.aiConversation.findMany({
+          where: { createdAt: { gte: from, lte: to }, ...scope },
+          select: { createdAt: true },
+          orderBy: { createdAt: 'asc' },
+        }),
+      ])
+    );
 
   const uniqueUsers = uniqueUsersResult.length;
 
@@ -334,7 +388,8 @@ export async function getContentGaps(
 ): Promise<ContentGap[]> {
   const { from, to } = resolveDateRange(query);
   const limit = query.limit ?? 20;
-  const scope = conversationScope(session, query.agentId);
+  // A gap is named by a conversation's title or its first user message.
+  const scope = await textScope(session, query.agentId);
 
   // Get conversations with user activity in the date range
   const conversations = await prisma.aiConversation.findMany({
@@ -436,44 +491,48 @@ export async function getFeedbackSummary(
   const limit = query.limit ?? 20;
 
   // Count ratings overall
-  const [thumbsUp, thumbsDown] = await Promise.all([
-    prisma.aiMessage.count({
-      where: {
-        rating: 1,
-        ratedAt: { gte: from, lte: to },
-        conversation: scope,
-      },
-    }),
-    prisma.aiMessage.count({
-      where: {
-        rating: -1,
-        ratedAt: { gte: from, lte: to },
-        conversation: scope,
-      },
-    }),
-  ]);
+  const [thumbsUp, thumbsDown] = await acrossOwners(() =>
+    Promise.all([
+      prisma.aiMessage.count({
+        where: {
+          rating: 1,
+          ratedAt: { gte: from, lte: to },
+          conversation: scope,
+        },
+      }),
+      prisma.aiMessage.count({
+        where: {
+          rating: -1,
+          ratedAt: { gte: from, lte: to },
+          conversation: scope,
+        },
+      }),
+    ])
+  );
 
   const total = thumbsUp + thumbsDown;
   const satisfactionRate = total > 0 ? Math.round((thumbsUp / total) * 1000) / 1000 : null;
 
-  // Per-agent breakdown
-  const ratedMessages = await prisma.aiMessage.findMany({
-    where: {
-      rating: { not: null },
-      ratedAt: { gte: from, lte: to },
-      conversation: scope,
-    },
-    select: {
-      rating: true,
-      conversation: {
-        select: {
-          agentId: true,
-          agent: { select: { name: true } },
+  // Per-agent breakdown — ratings and agent names, no text.
+  const ratedMessages = await acrossOwners(() =>
+    prisma.aiMessage.findMany({
+      where: {
+        rating: { not: null },
+        ratedAt: { gte: from, lte: to },
+        conversation: scope,
+      },
+      select: {
+        rating: true,
+        conversation: {
+          select: {
+            agentId: true,
+            agent: { select: { name: true } },
+          },
         },
       },
-    },
-    take: 5_000,
-  });
+      take: 5_000,
+    })
+  );
 
   const agentMap = new Map<string, { name: string; up: number; down: number }>();
   for (const msg of ratedMessages) {
@@ -497,12 +556,12 @@ export async function getFeedbackSummary(
   });
   byAgent.sort((a, b) => b.total - a.total);
 
-  // Recent negatively-rated messages
+  // Recent negatively-rated messages — quoted, so read through the text scope.
   const recentNegative = await prisma.aiMessage.findMany({
     where: {
       rating: -1,
       ratedAt: { gte: from, lte: to },
-      conversation: scope,
+      conversation: await textScope(session, query.agentId),
     },
     select: {
       id: true,
@@ -524,7 +583,7 @@ export async function getFeedbackSummary(
           where: {
             conversationId: { in: negConversationIds },
             role: 'user',
-            conversation: scope,
+            conversation: await textScope(session, query.agentId),
           },
           select: { conversationId: true, content: true, createdAt: true },
           orderBy: { createdAt: 'desc' },

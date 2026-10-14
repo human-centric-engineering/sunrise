@@ -65,7 +65,15 @@ describe('inside a subject', () => {
       principal: entry.principal,
       filter: { userId: 'member-1' },
       unattributedReads: NO_UNATTRIBUTED_READS,
+      // Absent from the entry: the narrower answer.
+      readsShared: false,
     });
+  });
+
+  it('carries whether a share admits rows, as the guard entered it', async () => {
+    const entry = entryFor('member-1', { readsShared: true });
+    const scope = await runAsSubject(entry, () => getSubjectReadScope());
+    expect(scope).toMatchObject({ kind: 'subject', readsShared: true });
   });
 
   it('reuses the filter the guard already computed, and never asks again', async () => {

@@ -310,9 +310,13 @@ describe('writes over an inbound thread, targeted and bulk', () => {
     // No policy registered — the outer `afterEach` has reset it, so this is
     // the built-in rule, which admits platform staff to ownerless rows.
     it('deletes the inbound thread on the targeted route', async () => {
-      vi.mocked(prisma.aiConversation.findUnique)
-        .mockResolvedValueOnce({ userId: null, share: null } as never)
-        .mockResolvedValueOnce({ title: 'Inbound from +44…' } as never);
+      vi.mocked(prisma.aiConversation.findUnique).mockResolvedValueOnce({
+        userId: null,
+        share: null,
+      } as never);
+      vi.mocked(prisma.aiConversation.delete).mockResolvedValueOnce({
+        title: 'Inbound from +44…',
+      } as never);
 
       const response = await deleteConversation(
         makeMutatingRequest('DELETE', `/conversations/${CONV_ID}`),
@@ -320,10 +324,19 @@ describe('writes over an inbound thread, targeted and bulk', () => {
       );
 
       expect(response.status).toBe(200);
-      expect(prisma.aiConversation.delete).toHaveBeenCalledWith({ where: { id: CONV_ID } });
+      // The write names the bases it admits, so the ownerless arm is in it.
+      // One write, which also returns the title the audit row names.
+      expect(prisma.aiConversation.delete).toHaveBeenCalledWith({
+        where: { id: CONV_ID, AND: [{ OR: [{ userId: ADMIN_ID }, { userId: null }] }] },
+        select: { title: true },
+      });
       // Destroying a third party's messages is never routine self-service.
       expect(logConversationAccess).toHaveBeenCalledWith(
-        expect.objectContaining({ action: 'conversation.deleted', accessBasis: 'system' })
+        expect.objectContaining({
+          action: 'conversation.deleted',
+          accessBasis: 'system',
+          conversationTitle: 'Inbound from +44…',
+        })
       );
     });
 

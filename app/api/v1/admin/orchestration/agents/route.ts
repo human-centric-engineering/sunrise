@@ -9,6 +9,7 @@
 
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { runAcrossOwners } from '@/lib/auth/subject-context';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse, successResponse } from '@/lib/api/responses';
 import { ConflictError } from '@/lib/api/errors';
@@ -75,30 +76,34 @@ export const GET = withAdminAuth(async (request, _session) => {
   }
 
   const [rawAgents, total] = await Promise.all([
-    prisma.aiAgent.findMany({
-      where,
-      // Default "natural importance" sort:
-      //   1. Bespoke before system — `false < true` in Postgres asc,
-      //      so `isSystem: 'asc'` puts user-created rows on top.
-      //   2. Most recently active first — `lastActiveAt desc` with nulls
-      //      last so never-used agents settle at the bottom of each
-      //      bucket. Bumped by `touchAgentLastActive` on conversation
-      //      create/update and cost-log writes.
-      //   3. Recently created as the final tiebreaker (covers never-
-      //      used agents).
-      orderBy: [
-        { isSystem: 'asc' },
-        { lastActiveAt: { sort: 'desc', nulls: 'last' } },
-        { createdAt: 'desc' },
-      ],
-      skip,
-      take: limit,
-      include: {
-        _count: { select: { capabilities: true, conversations: true } },
-        creator: { select: { name: true } },
-        profile: { select: { id: true, name: true, slug: true, isSystem: true } },
-      },
-    }),
+    // `_count.conversations` is how much the agent has been used, across every
+    // member — a number per agent, no conversation row (as agents/compare, t-682).
+    runAcrossOwners('agent list: a conversation count per agent', () =>
+      prisma.aiAgent.findMany({
+        where,
+        // Default "natural importance" sort:
+        //   1. Bespoke before system — `false < true` in Postgres asc,
+        //      so `isSystem: 'asc'` puts user-created rows on top.
+        //   2. Most recently active first — `lastActiveAt desc` with nulls
+        //      last so never-used agents settle at the bottom of each
+        //      bucket. Bumped by `touchAgentLastActive` on conversation
+        //      create/update and cost-log writes.
+        //   3. Recently created as the final tiebreaker (covers never-
+        //      used agents).
+        orderBy: [
+          { isSystem: 'asc' },
+          { lastActiveAt: { sort: 'desc', nulls: 'last' } },
+          { createdAt: 'desc' },
+        ],
+        skip,
+        take: limit,
+        include: {
+          _count: { select: { capabilities: true, conversations: true } },
+          creator: { select: { name: true } },
+          profile: { select: { id: true, name: true, slug: true, isSystem: true } },
+        },
+      })
+    ),
     prisma.aiAgent.count({ where }),
   ]);
 

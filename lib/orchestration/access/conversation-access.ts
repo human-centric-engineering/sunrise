@@ -167,8 +167,12 @@ export async function adminCanViewConversation(
   conversationId: string,
   session: AuthenticatedSession
 ): Promise<AdminCanViewResult> {
+  // Narrowed by the set face, so the owner layer (`lib/db/owner-extension.ts`)
+  // sees a confined read and a conversation this caller may not see comes back
+  // as no row rather than a refusal — the classification below still decides
+  // the basis, and agrees with the filter by the pinned tests.
   const conversation = await prisma.aiConversation.findUnique({
-    where: { id: conversationId },
+    where: { id: conversationId, AND: [conversationVisibilityWhere(session)] },
     select: {
       userId: true,
       share: {
@@ -224,6 +228,11 @@ export async function adminCanViewConversation(
  * const where = { AND: [conversationVisibilityWhere(session), ...filters] };
  * ```
  *
+ * **Build it for each query; do not hold one across awaits.** The share arm
+ * stamps `expiresAt > now` when it is built, and the owner layer
+ * (`lib/db/owner-extension.ts`) refuses a bound more than a minute old as
+ * unconfined — so a fragment reused after a slow query fails the next one.
+ *
  * **The share arm repeats `isShareActive`'s predicate inline, and has to.**
  * Prisma's query builder takes data, not a function, so the rule exists twice
  * by construction: once as TypeScript for a row already fetched, once as a
@@ -238,7 +247,13 @@ export async function adminCanViewConversation(
  * way the policy arm is not.
  */
 export function conversationVisibilityWhere(
-  session: AuthenticatedSession,
+  // Only what it reads — who is asking, and the policy's answer about ownerless
+  // threads — so the leakage harness can call it without a whole session.
+  // Spelled inline: `scripts/ci/ownerless-surfaces.ts` recognises a helper by
+  // `AuthenticatedSession` appearing in its parameter's type.
+  session: Pick<AuthenticatedSession, 'unattributedReads'> & {
+    user: Pick<AuthenticatedSession['user'], 'id'>;
+  },
   options: { excludeShared?: boolean } = {}
 ): Prisma.AiConversationWhereInput {
   const arms: Prisma.AiConversationWhereInput[] = [{ userId: session.user.id }];

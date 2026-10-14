@@ -9,7 +9,7 @@
  *   - getFeedbackSummary: overall counts, per-agent breakdown, recent negative
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
@@ -40,6 +40,7 @@ import {
 } from '@/lib/orchestration/analytics/analytics-service';
 import { prisma } from '@/lib/db/client';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
+import { runAsSubject } from '@/lib/auth/subject-context';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -666,5 +667,65 @@ describe('the ownerless arm, on every read', () => {
       conversationId: { in: ['cmjbv4i3x00003wsloputgwu9'] },
       conversation: { userId: { not: null } },
     });
+  });
+});
+
+// ─── The text scope is built per query ──────────────────────────────────────
+
+describe('the text scope, for a narrowed caller', () => {
+  /** The `expiresAt > t` bound on a message read's share arm. */
+  function shareBound(call: number): number {
+    const where = vi.mocked(prisma.aiMessage.findMany).mock.calls[call]?.[0]?.where;
+    const conversation = JSON.stringify(where?.conversation ?? {});
+    const match = /"expiresAt":\{"gt":"([^"]+)"\}/.exec(conversation);
+    if (!match) throw new Error(`no share bound on read ${call}: ${conversation}`);
+    return Date.parse(match[1]);
+  }
+
+  /** As a `withAdminAuth` request narrowed to `ADMIN_ID`, where shares count. */
+  const asNarrowed = <T>(fn: () => Promise<T>) =>
+    runAsSubject(
+      {
+        principal: { userId: ADMIN_ID, role: 'ADMIN', credential: 'session' },
+        filter: { userId: ADMIN_ID },
+        resolveFilter: () => Promise.resolve({ userId: ADMIN_ID }),
+        unattributedReads: narrowedAdmin.unattributedReads,
+        readsShared: true,
+      },
+      fn
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-04-20T12:00:00Z'));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('builds a fresh share bound for the second read after a slow first one', async () => {
+    // The owner layer refuses an `expiresAt > t` more than a minute old, so a
+    // scope built once and reused after a slow scan would refuse the follow-up.
+    const row = {
+      id: 'msg-1',
+      content: "I don't know",
+      rating: -1,
+      createdAt: new Date('2026-04-10'),
+      ratedAt: new Date('2026-04-10'),
+      conversationId: 'cmjbv4i3x00003wsloputgwu9',
+      conversation: { agentId: 'agent-1', agent: { name: 'Agent' } },
+    };
+    vi.mocked(prisma.aiMessage.findMany).mockImplementation((() => {
+      vi.setSystemTime(Date.now() + 120_000);
+      return Promise.resolve([row]);
+    }) as never);
+    vi.mocked(prisma.aiMessage.count).mockResolvedValue(1);
+
+    await asNarrowed(() => getUnansweredQuestions(baseQuery, narrowedAdmin));
+    expect(shareBound(1) - shareBound(0)).toBe(120_000);
+
+    vi.mocked(prisma.aiMessage.findMany).mockClear();
+    await asNarrowed(() => getFeedbackSummary(baseQuery, narrowedAdmin));
+    const reads = vi.mocked(prisma.aiMessage.findMany).mock.calls.length;
+    expect(shareBound(reads - 1) - shareBound(reads - 2)).toBe(120_000);
   });
 });

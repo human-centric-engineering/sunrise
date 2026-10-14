@@ -37,7 +37,28 @@ const RAW_SQL = /[\w$)\]]\.\$(queryRaw|executeRaw)(Unsafe|Typed)?\s*[(`<]|\bPris
  * Every file that reads an enforced table in raw SQL, the table, and why it
  * cannot hand a narrowed caller another member's rows. Sorted by file.
  */
-const MANIFEST: ReadonlyArray<{ file: string; table: string; why: string }> = [];
+const MANIFEST: ReadonlyArray<{ file: string; table: string; why: string }> = [
+  {
+    file: 'lib/orchestration/chat/conversation-semantic-search.ts',
+    table: 'ai_conversation',
+    why: "Predicated on the three arms of conversationVisibilityWhere, keyed on the caller's id: own, ownerless only when the policy admits it, and live shares. Pinned against the fragment in conversation-access.test.ts.",
+  },
+  {
+    file: 'lib/orchestration/chat/conversation-semantic-search.ts',
+    table: 'ai_message',
+    why: 'Joined to ai_conversation and returned only through the same visibility predicate on the conversation, so a message comes back only when its conversation may.',
+  },
+  {
+    file: 'lib/orchestration/chat/message-embedder.ts',
+    table: 'ai_message',
+    why: 'The backfill runs from the maintenance tick, where no person is narrowed, and returns nothing to a caller; the insert reads only the orgId of the message it is embedding.',
+  },
+  {
+    file: 'lib/privacy/delivery-payloads.ts',
+    table: 'ai_conversation',
+    why: 'Keyed on the data subject (c."userId" = the subject) to find deliveries naming their conversations; it returns delivery rows, never a conversation, and runs for the subject\'s own export or under the export\'s declared crossing.',
+  },
+];
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const SCHEMA_DIR = path.join(REPO_ROOT, 'prisma', 'schema');

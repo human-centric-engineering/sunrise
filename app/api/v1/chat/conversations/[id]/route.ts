@@ -73,7 +73,7 @@ export const DELETE = withAuth<{ id: string }>(
     });
     if (!existing) throw new NotFoundError(`Conversation ${id} not found`);
 
-    await prisma.aiConversation.delete({ where: { id } });
+    await prisma.aiConversation.delete({ where: { id, userId: session.user.id } });
 
     log.info('Consumer conversation deleted', { conversationId: id, userId: session.user.id });
     return successResponse({ deleted: true });

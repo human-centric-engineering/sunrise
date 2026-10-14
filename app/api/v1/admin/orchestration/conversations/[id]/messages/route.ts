@@ -27,7 +27,10 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
-import { adminCanViewConversation } from '@/lib/orchestration/access/conversation-access';
+import {
+  adminCanViewConversation,
+  conversationVisibilityWhere,
+} from '@/lib/orchestration/access/conversation-access';
 import { logConversationAccess } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
@@ -45,7 +48,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   // We still need the agentId + title for the response payload + audit
   // entry. Fetch them now that authorization has passed.
   const conversation = await prisma.aiConversation.findUnique({
-    where: { id },
+    where: { id, AND: [conversationVisibilityWhere(session)] },
     select: { id: true, userId: true, agentId: true, title: true },
   });
   // `access.ok` guaranteed it exists; the cast keeps TS happy without
@@ -53,7 +56,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
 
   const messages = await prisma.aiMessage.findMany({
-    where: { conversationId: id },
+    where: { conversationId: id, conversation: conversationVisibilityWhere(session) },
     orderBy: { createdAt: 'asc' },
   });
 

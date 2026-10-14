@@ -82,7 +82,8 @@ export type OwnerClassification =
       /**
        * Other people's rows a narrowed caller may still read, by the product's
        * own rule. `'active-share'`: a conversation its owner shared, while the
-       * share is live (`conversationVisibilityWhere`'s third arm).
+       * share is live (`conversationVisibilityWhere`'s third arm) — and only
+       * on the admin surface the share consents to (`OwnerReader.readsShared`).
        */
       alsoVisible?: readonly 'active-share'[];
       /**
@@ -135,10 +136,12 @@ export const OWNER_CLASSIFICATION = {
     owner: { column: 'userId' },
     ownerless: 'conversation',
     alsoVisible: ['active-share'],
+    enforced: true,
   },
   AiMessage: {
     kind: 'personal',
     owner: { through: { field: 'conversation', parent: 'AiConversation' } },
+    enforced: true,
   },
   AiMessageEmbedding: {
     kind: 'personal',

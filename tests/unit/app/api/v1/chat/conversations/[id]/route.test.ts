@@ -338,7 +338,10 @@ describe('DELETE /api/v1/chat/conversations/:id', () => {
       expect(body.data.deleted).toBe(true);
 
       // Assert: delete was called with the correct id
-      expect(prisma.aiConversation.delete).toHaveBeenCalledWith({ where: { id: VALID_CUID } });
+      // Confined to the caller's own row, so the owner layer passes the returned row.
+      expect(prisma.aiConversation.delete).toHaveBeenCalledWith({
+        where: { id: VALID_CUID, userId: 'user_test123' },
+      });
     });
 
     it('should scope the ownership check to the authenticated user', async () => {

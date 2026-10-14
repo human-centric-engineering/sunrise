@@ -88,11 +88,29 @@ export async function executeChatTurn(
     );
   }
 
-  // 2. Load conversation + agent in parallel.
+  // 2. Load conversation + agent in parallel. The conversation read carries
+  //    the prior messages too: user/assistant only — system rows are
+  //    auto-composed from agent settings, and tool rows belong to agent_call
+  //    paths that chat_turn deliberately doesn't replay — newest first to
+  //    honour `take`. Read through the conversation rather than by
+  //    `conversationId`: this executor has no session to narrow by, and the
+  //    owner layer (`lib/db/owner-extension.ts`) lets messages inherit the
+  //    check their conversation's read passed. One read, so the row that is
+  //    checked is the row whose history is replayed.
+  const historyLimit = config.historyLimit ?? DEFAULT_HISTORY_LIMIT;
   const [conversation, agent] = await Promise.all([
     prisma.aiConversation.findUnique({
       where: { id: conversationId },
-      select: { id: true, agentId: true },
+      select: {
+        id: true,
+        agentId: true,
+        messages: {
+          where: { role: { in: [...ROLES_TO_LOAD] } },
+          orderBy: { createdAt: 'desc' },
+          take: historyLimit,
+          select: { role: true, content: true },
+        },
+      },
     }),
     // One snapshot for the row and its newest version, so the pin names the
     // config this turn runs even if an edit commits mid-read.
@@ -187,25 +205,9 @@ export async function executeChatTurn(
   );
   const systemPrompt = composeSystemPromptString(resolvedPrompt);
 
-  // 5. Load prior messages. Order ASC so the array reads chronologically.
-  //    Restrict to user/assistant roles — system rows are auto-composed
-  //    from agent settings, and tool rows belong to agent_call paths
-  //    that chat_turn deliberately doesn't replay.
-  const historyLimit = config.historyLimit ?? DEFAULT_HISTORY_LIMIT;
-  const priorMessages =
-    historyLimit > 0
-      ? await prisma.aiMessage.findMany({
-          where: {
-            conversationId,
-            role: { in: [...ROLES_TO_LOAD] },
-          },
-          orderBy: { createdAt: 'desc' },
-          take: historyLimit,
-          select: { role: true, content: true },
-        })
-      : [];
-  // findMany returned newest-first to honour `take`; flip to chronological.
-  const priorMessagesAsc = priorMessages.reverse();
+  // 5. Prior messages, read with the conversation in step 2.
+  //    Newest-first to honour `take`; flip to chronological.
+  const priorMessagesAsc = [...conversation.messages].reverse();
 
   // 6. Build the messages array.
   const messages: LlmMessage[] = [];

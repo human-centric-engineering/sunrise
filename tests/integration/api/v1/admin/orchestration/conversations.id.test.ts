@@ -20,6 +20,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { DELETE } from '@/app/api/v1/admin/orchestration/conversations/[id]/route';
 import {
   mockAdminUser,
@@ -148,8 +149,12 @@ describe('DELETE /api/v1/admin/orchestration/conversations/:id', () => {
 
       await DELETE(makeRequest(), makeParams(CONV_ID));
 
+      // Narrowed to the bases a delete admits (own, or nobody's), so the
+      // owner layer sees the returned row confined.
       expect(vi.mocked(prisma.aiConversation.delete)).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: CONV_ID } })
+        expect.objectContaining({
+          where: { id: CONV_ID, AND: [{ OR: [{ userId: ADMIN_ID }, { userId: null }] }] },
+        })
       );
     });
 
@@ -207,6 +212,27 @@ describe('DELETE /api/v1/admin/orchestration/conversations/:id', () => {
       expect(response.status).toBe(404);
       expect(vi.mocked(prisma.aiConversation.delete)).not.toHaveBeenCalled();
     });
+
+    it('returns 404 and logs nothing when the row goes between the check and the delete', async () => {
+      // The access check passes on an inbound thread; by the delete, another
+      // request has removed it. The narrowed delete misses (P2025), which the
+      // shared handler answers as 404 — and no audit row claims a deletion.
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiConversation.findUnique).mockResolvedValue(
+        makeConversation({ userId: null }) as never
+      );
+      vi.mocked(prisma.aiConversation.delete).mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record not found', {
+          code: 'P2025',
+          clientVersion: '7.0.0',
+        })
+      );
+
+      const response = await DELETE(makeRequest(), makeParams(CONV_ID));
+
+      expect(response.status).toBe(404);
+      expect(vi.mocked(prisma.aiAdminAuditLog.create)).not.toHaveBeenCalled();
+    });
   });
 
   describe('System-owned inbound threads (#502)', () => {
@@ -225,8 +251,12 @@ describe('DELETE /api/v1/admin/orchestration/conversations/:id', () => {
       const response = await DELETE(makeRequest(), makeParams(CONV_ID));
 
       expect(response.status).toBe(200);
+      // Narrowed to the bases a delete admits (own, or nobody's), so the
+      // owner layer sees the returned row confined.
       expect(vi.mocked(prisma.aiConversation.delete)).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { id: CONV_ID } })
+        expect.objectContaining({
+          where: { id: CONV_ID, AND: [{ OR: [{ userId: ADMIN_ID }, { userId: null }] }] },
+        })
       );
       // Destroying a third party's correspondence is never routine
       // self-service: it leaves an audit row naming the admin and the basis.

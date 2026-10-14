@@ -37,7 +37,10 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { updateConversationSchema } from '@/lib/validations/orchestration';
-import { adminCanViewConversation } from '@/lib/orchestration/access/conversation-access';
+import {
+  adminCanViewConversation,
+  conversationVisibilityWhere,
+} from '@/lib/orchestration/access/conversation-access';
 import { logConversationAccess } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
@@ -53,7 +56,7 @@ export const GET = withAdminAuth<{ id: string }>(async (request, session, { para
   if (!access.ok) throw new NotFoundError(`Conversation ${id} not found`);
 
   const conversation = await prisma.aiConversation.findUnique({
-    where: { id },
+    where: { id, AND: [conversationVisibilityWhere(session)] },
     include: {
       agent: { select: { id: true, name: true, slug: true } },
       _count: { select: { messages: true } },
@@ -95,8 +98,10 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     throw new NotFoundError(`Conversation ${id} not found`);
   }
 
+  // Narrowed to the same two bases the check above admits, so the write's
+  // returned row is confined for the owner layer too.
   const updated = await prisma.aiConversation.update({
-    where: { id },
+    where: { id, AND: [conversationVisibilityWhere(session, { excludeShared: true })] },
     data,
     include: {
       agent: { select: { id: true, name: true, slug: true } },
@@ -143,13 +148,13 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     throw new NotFoundError(`Conversation ${id} not found`);
   }
 
-  const existing = await prisma.aiConversation.findUnique({
-    where: { id },
+  // Narrowed to the rows this admin may destroy, and returning the title the
+  // audit row needs. A row deleted or reassigned since the check above misses
+  // and throws P2025, which the shared handler renders as 404.
+  const existing = await prisma.aiConversation.delete({
+    where: { id, AND: [conversationVisibilityWhere(session, { excludeShared: true })] },
     select: { title: true },
   });
-  if (!existing) throw new NotFoundError(`Conversation ${id} not found`);
-
-  await prisma.aiConversation.delete({ where: { id } });
 
   // Destroying an inbound thread destroys a third party's messages. That is
   // often the correct answer to their erasure request, but it is never

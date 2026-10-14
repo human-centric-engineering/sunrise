@@ -26,14 +26,23 @@
  *     — or names no owner and the caller may read ownerless rows of that kind
  *     (`session.unattributedReads`). So `{ OR: [{ userId: me }, { userId: null }] }`
  *     passes for a caller admitted to ownerless rows, and `{ agentId }` alone
- *     does not.
+ *     does not. A model's `alsoVisible` arm confines too, for a caller that
+ *     reads shares (`OwnerReader.readsShared`, a `withAdminAuth` request): a
+ *     conversation's `share` filtered to live shares (`revokedAt: null`, no
+ *     expiry or one in the future). A child owned `through` a parent (a message, through its
+ *     conversation) confines when its filter on that relation would confine
+ *     the parent.
  *   • `findUnique` (and `findUniqueOrThrow`) runs whatever its filter, and the
  *     row that comes back is checked: someone else's, or an ownerless one the
  *     caller may not read, is refused. A route that fetches by id and checks
  *     the owner afterwards keeps working, and gains a backstop for the day it
- *     forgets.
+ *     forgets. Where the row's own owner column cannot decide — a `through`
+ *     owner, or a model with an `alsoVisible` arm — the read runs narrowed to
+ *     {@link readablePredicate} instead, and only a miss asks (on the tenancy
+ *     layer, by the same unique key) whether a row matched that this caller
+ *     may not read, to refuse it rather than report it absent.
  *   • `findFirst` (and `findFirstOrThrow`) with a filter that does not confine
- *     it has the caller's own predicate added to that filter. Checking its row
+ *     it has {@link readablePredicate} added to that filter. Checking its row
  *     afterwards would refuse or pass depending on which matching row the
  *     database returned first; narrowed, it returns the caller's first match,
  *     or none.
@@ -45,7 +54,10 @@
  *   • An `include` / `select` reaching an enforced model from any root (a
  *     `user.findUnique({ include: { aiUserMemories: true } })`) must confine
  *     that relation with its own `where`, or it is refused. A `_count` of
- *     one is held to the same rule.
+ *     one is held to the same rule. The exception is the ownership relation
+ *     itself, followed out of a node that is checked — a conversation's
+ *     `messages`, a message's `conversation`: the far side is readable exactly
+ *     when the near side is, so it inherits the check.
  *
  * A refusal throws {@link OwnerReadRefusedError} in every environment. There
  * is no log-only mode: that records a leak rather than stopping it.
@@ -104,7 +116,11 @@ const FILTER_CHECKED_OPS: ReadonlySet<string> = new Set([
   'groupBy',
 ]);
 
-/** Reads of one row by a unique key: run, then the row is checked. */
+/**
+ * Reads of one row by a unique key: run, then the row is checked — except on
+ * `through` and `alsoVisible` models, where the read is narrowed to the
+ * caller's predicate and a miss is resolved with `existsOutside`.
+ */
 const RESULT_CHECKED_OPS: ReadonlySet<string> = new Set(['findUnique', 'findUniqueOrThrow']);
 
 /** Reads of the first match: the caller's own predicate is added to the filter. */
@@ -159,10 +175,17 @@ export class OwnerReadRefusedError extends Error {
   }
 }
 
-/** The caller a read is checked for: whose rows, and which ownerless kinds. */
+/** The caller a read is checked for: whose rows, which ownerless kinds, and whether shares count. */
 export interface OwnerReader {
   userId: string;
   unattributedReads: UnattributedReads;
+  /**
+   * Whether a model's `alsoVisible` arms admit rows for this caller. A share is
+   * its owner's consent to the admin surface, where every shared read is
+   * audit-logged (`.context/security/conversation-access.md`) — not to other
+   * members — so only a `withAdminAuth` request reads through one.
+   */
+  readsShared: boolean;
 }
 
 /**
@@ -171,7 +194,11 @@ export interface OwnerReader {
  */
 export function readerFor(scope: SubjectReadScope): OwnerReader | null {
   if (scope.kind !== 'subject' || scope.filter.userId === undefined) return null;
-  return { userId: scope.filter.userId, unattributedReads: scope.unattributedReads };
+  return {
+    userId: scope.filter.userId,
+    unattributedReads: scope.unattributedReads,
+    readsShared: scope.readsShared,
+  };
 }
 
 /** One model's fields, indexed once so the analysis never scans them. */
@@ -180,6 +207,8 @@ interface ModelIndex {
   fields: ReadonlySet<string>;
   /** Each relation field's target model. */
   relations: ReadonlyMap<string, string>;
+  /** Each relation field's relation name, which the two ends of a relation share. */
+  relationNames: ReadonlyMap<string, string>;
 }
 
 /** What the analysis reads about the schema and the classification. */
@@ -207,16 +236,20 @@ export function readOwnerSchema(
   classify: (model: string) => OwnerClassification | null = ownerClassificationOf
 ): OwnerSchema {
   const rdm = readRuntimeDataModel(client);
-  for (const model of enforced) assertEnforceable(model, classify(model), rdm);
-
   const enforcedSet = new Set(enforced);
+  for (const model of enforced) assertEnforceable(model, classify(model), rdm, enforcedSet);
+
   const models = new Map<string, ModelIndex>();
   const unchecked = new Set<string>();
   for (const [name, model] of Object.entries(rdm.models)) {
+    const relationFields = model.fields.filter((f) => f.kind === 'object');
     models.set(name, {
       fields: new Set(model.fields.map((f) => f.name)),
-      relations: new Map(
-        model.fields.filter((f) => f.kind === 'object').map((f) => [f.name, f.type])
+      relations: new Map(relationFields.map((f) => [f.name, f.type])),
+      relationNames: new Map(
+        relationFields.flatMap((f) =>
+          f.relationName === undefined ? [] : [[f.name, f.relationName] as const]
+        )
       ),
     });
     if (!enforcedSet.has(name) && classify(name)?.kind === 'personal') unchecked.add(name);
@@ -262,36 +295,69 @@ function ownerRelationIn(schemaText: string, model: string, column: string): str
 }
 
 /**
+ * How each `alsoVisible` arm is reached: the to-one relation on the personal
+ * model whose state admits the row. `'active-share'` is a conversation's
+ * share while it is live — `conversationVisibilityWhere`'s third arm.
+ */
+const ALSO_VISIBLE_RELATION = { 'active-share': 'share' } as const;
+
+/**
  * Refuse, at construction, to enforce a model this layer cannot fully check.
  *
- * A `through` owner needs the parent's owner on every returned row, and an
- * `alsoVisible` arm needs the share's state; neither is read yet. t-802 adds
- * both before it enforces conversations and messages. Failing here rather
- * than at the first query is what keeps a half-supported model from being
- * switched on by a one-line classification change.
+ * A `through` owner is checked as its parent's predicate, so the parent must
+ * be enforced too — otherwise a child would be held to a rule its parent is
+ * not. A single-row read of a model whose readability is not on the row
+ * itself (a `through` owner, or an `alsoVisible` arm) that misses asks
+ * whether the row exists by selecting its `id`, so the model needs one. Failing here rather than at the first query
+ * is what keeps a half-supported model from being switched on by a one-line
+ * classification change.
  */
 function assertEnforceable(
   model: string,
   c: OwnerClassification | null,
-  rdm: RuntimeDataModel
+  rdm: RuntimeDataModel,
+  enforced: ReadonlySet<string>
 ): void {
   if (!c || c.kind !== 'personal') {
     throw new Error(`Owner layer: ${model} is enforced but not classified personal`);
   }
-  if (!('column' in c.owner)) {
-    throw new Error(
-      `Owner layer: ${model} is owned through a relation, which the result check cannot read yet (§115 t-802)`
-    );
+  const fields = rdm.models[model]?.fields ?? [];
+  const scalar = (name: string) => fields.some((f) => f.kind === 'scalar' && f.name === name);
+  if ('column' in c.owner) {
+    if (!scalar(c.owner.column)) {
+      throw new Error(`Owner layer: ${model}.${c.owner.column} is not a scalar column of ${model}`);
+    }
+  } else {
+    const { field, parent } = c.owner.through;
+    if (!fields.some((f) => f.kind === 'object' && f.name === field && f.type === parent)) {
+      throw new Error(`Owner layer: ${model}.${field} is not a relation to ${parent}`);
+    }
+    if (!enforced.has(parent)) {
+      throw new Error(
+        `Owner layer: ${model} is owned through ${parent}, which is not enforced — enforce the parent first`
+      );
+    }
   }
-  if (c.alsoVisible && c.alsoVisible.length > 0) {
-    throw new Error(
-      `Owner layer: ${model} declares alsoVisible arms, which the analysis cannot recognise yet (§115 t-802)`
-    );
+  for (const arm of c.alsoVisible ?? []) {
+    const relation = ALSO_VISIBLE_RELATION[arm];
+    if (!fields.some((f) => f.kind === 'object' && f.name === relation)) {
+      throw new Error(`Owner layer: ${model} declares ${arm} but has no ${relation} relation`);
+    }
   }
-  const column = c.owner.column;
-  if (!rdm.models[model]?.fields.some((f) => f.kind === 'scalar' && f.name === column)) {
-    throw new Error(`Owner layer: ${model}.${column} is not a scalar column of ${model}`);
+  if (!confirmsByOwnerColumn(c) && !scalar('id')) {
+    throw new Error(`Owner layer: ${model} has no id to confirm a single-row read by`);
   }
+}
+
+/**
+ * Whether a returned row's own owner column decides if it is readable. Not so
+ * for a `through` owner (the owner is on the parent) or an `alsoVisible` arm
+ * (the share's state is on another row): those reads are narrowed instead.
+ */
+function confirmsByOwnerColumn(
+  c: Extract<OwnerClassification, { kind: 'personal' }>
+): c is Extract<OwnerClassification, { kind: 'personal' }> & { owner: { column: string } } {
+  return 'column' in c.owner && (c.alsoVisible ?? []).length === 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -371,6 +437,13 @@ export function whereConfines(
     if (key === 'NOT') continue;
     if (ownerLeafConfines(schema, c.owner, c.ownerless, key, value, reader)) return true;
     if (key === ownerRelation && ownerRelationConfines(c.ownerless, value, reader)) return true;
+    if (
+      reader.readsShared &&
+      (c.alsoVisible ?? []).some((arm) => ALSO_VISIBLE_RELATION[arm] === key) &&
+      activeShareConfines(value)
+    ) {
+      return true;
+    }
     // A compound unique key: not a field, and its value names fields.
     if (!fields?.has(key) && isRecord(value)) {
       if (whereConfines(schema, model, value, reader)) return true;
@@ -421,7 +494,87 @@ function ownerRelationConfines(
   return isRecord(inner) && pinsTo(inner.id, reader.userId);
 }
 
-/** May `reader` read a row of `model` whose owner column holds `owner`? */
+/**
+ * How far in the past an active-share filter's `expiresAt > t` may put `t`
+ * and still count as "not expired": the `where` is built a moment before it
+ * is checked. Anything older would admit shares that have already expired.
+ */
+const SHARE_CLOCK_SKEW_MS = 60_000;
+
+/** An `expiresAt` conjunct that leaves out every expired share. */
+function excludesExpired(value: unknown): boolean {
+  if (value === null) return true;
+  if (!isRecord(value)) return false;
+  const bound = value.gt ?? value.gte;
+  const at =
+    bound instanceof Date ? bound.getTime() : typeof bound === 'string' ? Date.parse(bound) : NaN;
+  return Number.isFinite(at) && at >= Date.now() - SHARE_CLOCK_SKEW_MS;
+}
+
+/**
+ * Does a filter on the share relation select only live shares —
+ * `revokedAt: null` and an expiry in the future or none? The shape
+ * `conversationVisibilityWhere` emits, and the one
+ * {@link readablePredicate} builds.
+ */
+function activeShareConfines(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const inner = toOneInner(value);
+  if (!isRecord(inner) || !pinsToNull(inner.revokedAt)) return false;
+  if ('expiresAt' in inner) return excludesExpired(inner.expiresAt);
+  const { OR } = inner;
+  return (
+    Array.isArray(OR) &&
+    OR.length > 0 &&
+    OR.every(
+      (arm: unknown) => isRecord(arm) && 'expiresAt' in arm && excludesExpired(arm.expiresAt)
+    )
+  );
+}
+
+/**
+ * The `where` selecting exactly the rows of `model` that `reader` may read:
+ * its own, ownerless ones where the policy admits them, and each
+ * `alsoVisible` arm — through the parent for a `through` owner. Used to narrow
+ * a `findFirst` and to confirm a single-row read; {@link whereConfines} holds
+ * for it by construction (pinned in the tests).
+ */
+export function readablePredicate(
+  schema: OwnerSchema,
+  model: string,
+  reader: OwnerReader
+): Record<string, unknown> {
+  const c = personal(schema, model);
+  if (!c) throw new Error(`Owner layer: ${model} is not personal`);
+  const arms: Record<string, unknown>[] = [];
+  if ('column' in c.owner) {
+    const column = c.owner.column;
+    arms.push({ [column]: reader.userId });
+    if (readsOwnerless(reader, c.ownerless)) arms.push({ [column]: null });
+  } else {
+    const { field, parent } = c.owner.through;
+    arms.push({ [field]: { is: readablePredicate(schema, parent, reader) } });
+    if (readsOwnerless(reader, c.ownerless)) arms.push({ [field]: null });
+  }
+  for (const arm of reader.readsShared ? (c.alsoVisible ?? []) : []) {
+    arms.push({
+      // An owned row only, as `conversationVisibilityWhere`'s share arm: a
+      // share is the owner's consent, and a row nobody owns has no owner to
+      // give it — so the two faces agree about an ownerless, shared row.
+      ...('column' in c.owner ? { [c.owner.column]: { not: null } } : {}),
+      [ALSO_VISIBLE_RELATION[arm]]: {
+        is: { revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }] },
+      },
+    });
+  }
+  return arms.length === 1 ? arms[0] : { OR: arms };
+}
+
+/**
+ * May `reader` read a row of `model` whose owner column holds `owner`? Decides
+ * only for a model whose owner column is the whole answer; a read of one
+ * owned `through` a parent, or with an `alsoVisible` arm, is narrowed instead.
+ */
 export function rowReadable(
   schema: OwnerSchema,
   model: string,
@@ -455,10 +608,38 @@ export interface SelectionScan {
  * subject: the reader is looked up only when the walk found an enforced
  * relation, and then each one is checked against it.
  */
-export function scanSelection(schema: OwnerSchema, model: string, args: unknown): SelectionScan {
+export function scanSelection(
+  schema: OwnerSchema,
+  model: string,
+  args: unknown,
+  rootChecked = false
+): SelectionScan {
   const scan: SelectionScan = { enforced: [], touchesUnchecked: false };
-  scanArgs(schema, model, args, model, scan);
+  scanArgs(schema, model, args, model, rootChecked, scan);
   return scan;
+}
+
+/**
+ * Does the relation `key` on `model` join a personal child to its parent
+ * along the child's ownership relation, in either direction? A conversation's
+ * `messages`, and a message's `conversation`, both do.
+ *
+ * Along such an edge the rows on the far side are readable exactly when the
+ * near side's are (`OwnerPath`: the child inherits the parent's visibility),
+ * so an edge leaving a node that is itself checked needs no `where` of its
+ * own. Leaving a node nothing checks — a `create`'s returned row, or a model
+ * that is not enforced — it does.
+ */
+function inheritsAlong(schema: OwnerSchema, model: string, key: string, target: string): boolean {
+  const here = personal(schema, model);
+  if (here && !('column' in here.owner) && here.owner.through.field === key) return true;
+  const there = personal(schema, target);
+  if (!there || 'column' in there.owner || there.owner.through.parent !== model) return false;
+  const name = schema.models.get(model)?.relationNames.get(key);
+  return (
+    name !== undefined &&
+    schema.models.get(target)?.relationNames.get(there.owner.through.field) === name
+  );
 }
 
 function scanArgs(
@@ -466,11 +647,12 @@ function scanArgs(
   model: string,
   args: unknown,
   path: string,
+  checked: boolean,
   scan: SelectionScan
 ): void {
   if (!isRecord(args)) return;
-  scanNode(schema, model, args.include, path, scan);
-  scanNode(schema, model, args.select, path, scan);
+  scanNode(schema, model, args.include, path, checked, scan);
+  scanNode(schema, model, args.select, path, checked, scan);
 }
 
 function scanNode(
@@ -478,6 +660,7 @@ function scanNode(
   model: string,
   node: unknown,
   path: string,
+  checked: boolean,
   scan: SelectionScan
 ): void {
   if (!isRecord(node)) return;
@@ -496,6 +679,7 @@ function scanNode(
       for (const [rel, sel] of counted) {
         const target = relations.get(rel);
         if (target === undefined || !schema.enforced.has(target) || sel === false) continue;
+        if (checked && inheritsAlong(schema, model, rel, target)) continue;
         scan.enforced.push({
           path: `${path}._count.${rel}`,
           model: target,
@@ -508,19 +692,23 @@ function scanNode(
     if (target === undefined) continue;
     const here = `${path}.${key}`;
     // Every include of an enforced relation must carry a `where` that confines
-    // it. A to-one relation cannot take one, so reading up to an enforced
-    // parent is refused too; nothing does that to `AiUserMemory`, and t-802
-    // decides it for messages reading their conversation.
+    // it — unless it follows the ownership relation out of a checked node,
+    // where the far side is readable exactly when this side is. A to-one
+    // relation cannot take a `where`, so reading up to an enforced parent
+    // from anywhere else is refused.
     if (schema.enforced.has(target)) {
-      scan.enforced.push({
-        path: here,
-        model: target,
-        where: isRecord(value) ? value.where : undefined,
-      });
-    } else if (schema.unchecked.has(target)) {
-      scan.touchesUnchecked = true;
+      if (!(checked && inheritsAlong(schema, model, key, target))) {
+        scan.enforced.push({
+          path: here,
+          model: target,
+          where: isRecord(value) ? value.where : undefined,
+        });
+      }
+      scanArgs(schema, target, value, here, true, scan);
+      continue;
     }
-    scanArgs(schema, target, value, here, scan);
+    if (schema.unchecked.has(target)) scan.touchesUnchecked = true;
+    scanArgs(schema, target, value, here, false, scan);
   }
 }
 
@@ -599,6 +787,44 @@ function withOwnerColumn(args: unknown, column: string): { args: unknown; strip:
   return { args, strip: false };
 }
 
+/** Prisma's not-found error, which a `findUniqueOrThrow` raises on a miss. */
+function isNotFound(err: unknown): boolean {
+  return isRecord(err) && err.code === 'P2025';
+}
+
+/** `where` with `predicate` added as one more conjunct, keeping any `AND` it carries. */
+function andWith(where: unknown, predicate: Record<string, unknown>): Record<string, unknown> {
+  const base = isRecord(where) ? where : {};
+  const existing: unknown[] =
+    base.AND === undefined ? [] : Array.isArray(base.AND) ? base.AND : [base.AND];
+  return { ...base, AND: [...existing, predicate] };
+}
+
+/**
+ * Does a row match this unique `where` at all? Asked on `client` — the tenancy
+ * layer, below this one — so the org's scope is set and the owner check is
+ * not. Not on the operation's own `query`: a second call to it runs with no
+ * tenancy scope, where the policies hide every row (§115 t-802, found by the
+ * two-member harness). Outside any interactive transaction the caller is in,
+ * so a row that transaction created and has not committed is not seen: the
+ * read then answers "none" — which never discloses a row, and only loses the
+ * loud refusal for that one case.
+ */
+async function existsOutside(
+  client: TenancyClient,
+  model: string,
+  where: unknown
+): Promise<boolean> {
+  const delegate: unknown = (client as unknown as Record<string, unknown>)[
+    model.charAt(0).toLowerCase() + model.slice(1)
+  ];
+  if (!isRecord(delegate) || typeof delegate.findUnique !== 'function') {
+    throw new Error(`Owner layer: no client delegate for ${model}`);
+  }
+  const findUnique = delegate.findUnique as (args: unknown) => Promise<unknown>;
+  return isRecord(await findUnique.call(delegate, { where, select: { id: true } }));
+}
+
 /** Apply the owner chokepoint to an already tenancy-extended client. */
 export function withOwnerChecks(
   client: TenancyClient,
@@ -611,12 +837,12 @@ export function withOwnerChecks(
     if (model === undefined || schema.enforced.size === 0) return query(params.args);
 
     const isRead = isReadOp(operation);
-    const scan = scanSelection(schema, model, params.args);
+    const isChecked = schema.enforced.has(model) && (isRead || RETURNING_WRITE_OPS.has(operation));
+    const scan = scanSelection(schema, model, params.args, isChecked);
     if (scan.touchesUnchecked || (isRead && schema.unchecked.has(model))) {
       options.onUncheckedRead();
     }
 
-    const isChecked = schema.enforced.has(model) && (isRead || RETURNING_WRITE_OPS.has(operation));
     if (!isChecked && scan.enforced.length === 0) return query(params.args);
 
     const reader = readerFor(await options.getSubjectReadScope());
@@ -656,16 +882,13 @@ export function withOwnerChecks(
     }
 
     const c = personal(schema, model);
-    const column = c && 'column' in c.owner ? c.owner.column : null;
-    if (c === null || column === null) throw new Error(`Owner layer: ${model} has no owner column`);
+    if (c === null) throw new Error(`Owner layer: ${model} is not personal`);
 
     // The first match of a filter that does not confine it: narrowed to the
-    // caller's own rows, so the answer does not depend on which match the
-    // database happens to return first.
+    // rows this caller may read, so the answer does not depend on which match
+    // the database happens to return first.
     if (NARROWED_OPS.has(operation)) {
-      const own: Record<string, unknown> = readsOwnerless(reader, c.ownerless)
-        ? { OR: [{ [column]: reader.userId }, { [column]: null }] }
-        : { [column]: reader.userId };
+      const own = readablePredicate(schema, model, reader);
       options.onConfinedRead();
       return query({
         ...(isRecord(params.args) ? params.args : {}),
@@ -673,23 +896,51 @@ export function withOwnerChecks(
       });
     }
 
-    // A read by unique key whose filter does not confine it: run it, then
-    // check the row that came back.
-    const sent = withOwnerColumn(params.args, column);
-    const row = await query(sent.args);
-    if (!isRecord(row)) return row;
-    if (!rowReadable(schema, model, row[column], reader)) {
-      throw new OwnerReadRefusedError(
+    const foreignRow = () =>
+      new OwnerReadRefusedError(
         model,
         operation,
         'foreign-row',
         'the row it returned belongs to someone else.'
       );
+
+    // A read by unique key whose filter does not confine it, where the row's
+    // own owner column decides: run it, then check the row that came back.
+    if (confirmsByOwnerColumn(c)) {
+      const column = c.owner.column;
+      const sent = withOwnerColumn(params.args, column);
+      const row = await query(sent.args);
+      if (!isRecord(row)) return row;
+      if (!rowReadable(schema, model, row[column], reader)) throw foreignRow();
+      options.onConfinedRead();
+      if (!sent.strip) return row;
+      const { [column]: _owner, ...rest } = row;
+      return rest;
     }
-    options.onConfinedRead();
-    if (!sent.strip) return row;
-    const { [column]: _owner, ...rest } = row;
-    return rest;
+
+    // Where it does not — a `through` owner, or an `alsoVisible` arm — the
+    // read runs narrowed to what this caller may read, in the caller's own
+    // transaction: a readable row costs nothing extra. Only a miss asks
+    // whether some row matched that this caller may not read, to refuse it
+    // rather than report it absent.
+    let row: unknown;
+    let miss: Error | null = null;
+    try {
+      row = await query({
+        ...(isRecord(params.args) ? params.args : {}),
+        where: andWith(where, readablePredicate(schema, model, reader)),
+      });
+    } catch (err) {
+      if (!(err instanceof Error) || !isNotFound(err)) throw err;
+      miss = err;
+    }
+    if (isRecord(row)) {
+      options.onConfinedRead();
+      return row;
+    }
+    if (await existsOutside(client, model, where)) throw foreignRow();
+    if (miss !== null) throw miss;
+    return row;
   }
 
   // Applied over the tenancy layer, so its `$transaction` override hands this

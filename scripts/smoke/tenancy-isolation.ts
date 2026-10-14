@@ -66,7 +66,11 @@
  *     `read_user_memory` capability and is refused the other member's —
  *     through the capability, an unnarrowed list, a count and a lookup by id;
  *     the org's OWNER, narrowed too, is refused the list; a platform admin
- *     and a declared crossing see both;
+ *     and a declared crossing see both. Conversations and messages (t-802):
+ *     a narrowed org ADMIN lists and reads by id neither member's thread or
+ *     message, keeps a thread shared with them, keeps an inbound thread
+ *     exactly when the policy admits ownerless reads, and is refused an
+ *     unnarrowed list or count;
  *   - a person's export and erasure (§107 t-748): a member of A and B, with
  *     a conversation and a memory in each, exports from inside A (a session)
  *     and from no org (an admin API key), and the bundle holds both orgs'
@@ -186,7 +190,8 @@ import {
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { exportOrchestrationConfig } from '@/lib/orchestration/backup/exporter';
 import { importOrchestrationConfig } from '@/lib/orchestration/backup/importer';
-import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { conversationVisibilityWhere } from '@/lib/orchestration/access/conversation-access';
 import { DEFAULT_USER_ROLE, PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { subjectScope, type AuthorizationPrincipal } from '@/lib/auth/authorization';
 import { resolveUnattributedReads } from '@/lib/auth/orphan-reads';
@@ -581,14 +586,20 @@ async function visible(who: string, a: OrgFixture, b: OrgFixture) {
 /**
  * Run `fn` as `principal`, the way `withAuth` / `withAdminAuth` do: the real
  * policy answers the filter and the ownerless reads, and the owner layer reads
- * them from the subject context.
+ * them from the subject context. `readsShared` defaults to `withAdminAuth`'s
+ * answer; pass `false` for a `withAuth` route.
  */
-async function asPrincipal<T>(principal: AuthorizationPrincipal, fn: () => Promise<T>): Promise<T> {
+async function asPrincipal<T>(
+  principal: AuthorizationPrincipal,
+  fn: () => Promise<T>,
+  { readsShared = true }: { readsShared?: boolean } = {}
+): Promise<T> {
   return runAsSubject(
     {
       principal,
       resolveFilter: () => subjectScope(principal),
       unattributedReads: await resolveUnattributedReads(principal),
+      readsShared,
     },
     fn
   );
@@ -2020,6 +2031,238 @@ async function main(): Promise<void> {
       )
     );
     check(crossed >= 2, `a declared crossing counts both members’ memories (${crossed})`);
+
+    // ── [16c] …and neither reads the other's conversations (§115 t-802) ───
+    // Each member has a thread with a message in it; member two has also
+    // shared one, and an inbound thread belongs to nobody. A narrowed org
+    // ADMIN sees the shared and (where the policy admits it) the inbound
+    // thread, and nothing of either member's own.
+    console.log(
+      '\n[16c] two members of A: an org ADMIN reads no member’s conversation or message, and keeps shared and ownerless ones'
+    );
+    const thread = (userId: string | null, label: string, extra: { fromAddress?: string } = {}) =>
+      inOrgA(() =>
+        prisma.aiConversation.create({
+          data: {
+            userId,
+            agentId: a.agentId,
+            title: `${PREFIX} ${label}`,
+            ...(extra.fromAddress ? { channel: 'sms', fromAddress: extra.fromAddress } : {}),
+            messages: { create: { role: 'user', content: `${PREFIX} ${label} says hi` } },
+          },
+          include: { messages: { select: { id: true } } },
+        })
+      );
+    const t1 = await thread(m1.userId, 'm1-private');
+    const t2 = await thread(m2.userId, 'm2-private');
+    const tShared = await thread(m2.userId, 'm2-shared');
+    await inOrgA(() =>
+      prisma.aiConversationShare.create({
+        data: { conversationId: tShared.id, expiresAt: new Date(Date.now() + 86_400_000) },
+      })
+    );
+    const tInbound = await thread(null, 'inbound', { fromAddress: `+44${stamp}`.slice(0, 15) });
+    const threadIds = [t1.id, t2.id, tShared.id, tInbound.id];
+    const messageOf = (t: { messages: Array<{ id: string }> }) => t.messages[0].id;
+
+    const orgAdminUser = await prisma.user.create({
+      data: {
+        name: `${PREFIX} org admin`,
+        email: `${PREFIX}-orgadmin-${stamp}@example.com`,
+      },
+    });
+    await prisma.orgMembership.create({
+      data: { orgId: a.orgId, userId: orgAdminUser.id, role: ORG_ADMIN_ROLE },
+    });
+    const orgAdmin: AuthorizationPrincipal = {
+      userId: orgAdminUser.id,
+      role: DEFAULT_USER_ROLE,
+      credential: 'session',
+      orgId: a.orgId,
+      orgRole: ORG_ADMIN_ROLE,
+    };
+    const orgAdminViewer = {
+      user: { id: orgAdminUser.id },
+      unattributedReads: await resolveUnattributedReads(orgAdmin),
+    };
+    const ownerlessAdmitted = orgAdminViewer.unattributedReads.conversation;
+    const refusedConversation = /Refused Ai(Conversation|Message)\.(findMany|count|findUnique)/;
+
+    // The population is non-empty, and every thread and message is in A (fp6).
+    const allThreads = await asPrincipal(
+      { userId: a.ownerId, role: PLATFORM_ADMIN_ROLE, credential: 'session' },
+      () =>
+        inOrgA(() =>
+          prisma.aiConversation.findMany({
+            where: { id: { in: threadIds } },
+            include: { _count: { select: { messages: true } } },
+          })
+        )
+    );
+    check(
+      allThreads.length === 4 && allThreads.every((t) => t._count.messages === 1),
+      'a platform admin in A sees all four threads and their messages'
+    );
+
+    const listed = await asPrincipal(orgAdmin, () =>
+      inOrgA(() =>
+        prisma.aiConversation.findMany({
+          where: { AND: [conversationVisibilityWhere(orgAdminViewer), { id: { in: threadIds } }] },
+          select: { id: true },
+        })
+      )
+    );
+    const visibleIds = new Set(listed.map((t) => t.id));
+    check(
+      !visibleIds.has(t1.id) && !visibleIds.has(t2.id),
+      'the org ADMIN’s conversation list holds neither member’s private thread'
+    );
+    check(visibleIds.has(tShared.id), 'the org ADMIN’s list keeps the thread shared with them');
+    check(
+      visibleIds.has(tInbound.id) === ownerlessAdmitted,
+      `the org ADMIN’s list ${ownerlessAdmitted ? 'keeps' : 'drops'} the ownerless thread, as the policy answers`
+    );
+    const visibleMessages = await asPrincipal(orgAdmin, () =>
+      inOrgA(() =>
+        prisma.aiMessage.findMany({
+          where: {
+            conversationId: { in: threadIds },
+            conversation: conversationVisibilityWhere(orgAdminViewer),
+          },
+          select: { id: true },
+        })
+      )
+    );
+    const visibleMessageIds = new Set(visibleMessages.map((m) => m.id));
+    check(
+      !visibleMessageIds.has(messageOf(t1)) &&
+        !visibleMessageIds.has(messageOf(t2)) &&
+        visibleMessageIds.has(messageOf(tShared)),
+      'the org ADMIN reads the shared thread’s message and neither member’s'
+    );
+    await rejects(
+      () =>
+        asPrincipal(orgAdmin, () =>
+          inOrgA(() => prisma.aiConversation.findMany({ where: { agentId: a.agentId } }))
+        ),
+      refusedConversation,
+      'the org ADMIN is refused an unnarrowed list of the agent’s conversations'
+    );
+    await rejects(
+      () => asPrincipal(orgAdmin, () => inOrgA(() => prisma.aiMessage.count())),
+      refusedConversation,
+      'the org ADMIN is refused an unnarrowed count of messages'
+    );
+    for (const [t, label] of [
+      [t1, 'member one’s'],
+      [t2, 'member two’s'],
+    ] as const) {
+      await rejects(
+        () =>
+          asPrincipal(orgAdmin, () =>
+            inOrgA(() => prisma.aiConversation.findUnique({ where: { id: t.id } }))
+          ),
+        refusedConversation,
+        `the org ADMIN is refused ${label} thread looked up by id`
+      );
+      await rejects(
+        () =>
+          asPrincipal(orgAdmin, () =>
+            inOrgA(() => prisma.aiMessage.findUnique({ where: { id: messageOf(t) } }))
+          ),
+        refusedConversation,
+        `the org ADMIN is refused ${label} message looked up by id`
+      );
+    }
+    const sharedById = await asPrincipal(orgAdmin, () =>
+      inOrgA(async () => ({
+        thread: await prisma.aiConversation.findUnique({
+          where: { id: tShared.id },
+          include: { messages: true },
+        }),
+        message: await prisma.aiMessage.findUnique({ where: { id: messageOf(tShared) } }),
+      }))
+    );
+    check(
+      sharedById.thread?.messages.length === 1 && sharedById.message !== null,
+      'the org ADMIN opens the shared thread and its message by id'
+    );
+    // A share consents to the admin surface only: the same caller on a
+    // `withAuth` route is refused the thread, as any member would be.
+    await rejects(
+      () =>
+        asPrincipal(
+          orgAdmin,
+          () => inOrgA(() => prisma.aiConversation.findUnique({ where: { id: tShared.id } })),
+          { readsShared: false }
+        ),
+      refusedConversation,
+      'the shared thread is refused by id off the admin surface'
+    );
+
+    // Sunrise's default admits only platform staff to ownerless rows, and they
+    // are not narrowed. A fork's policy may admit its org admins too: the same
+    // narrowed admin, answered that way, keeps the inbound thread — and still
+    // reads neither member's.
+    const ownerlessViewer = {
+      user: orgAdminViewer.user,
+      unattributedReads: { ...orgAdminViewer.unattributedReads, conversation: true },
+    };
+    const asAdmittedAdmin = <T>(fn: () => Promise<T>) =>
+      runAsSubject(
+        {
+          principal: orgAdmin,
+          resolveFilter: () => subjectScope(orgAdmin),
+          unattributedReads: ownerlessViewer.unattributedReads,
+          readsShared: true,
+        },
+        fn
+      );
+    const admittedList = await asAdmittedAdmin(() =>
+      inOrgA(() =>
+        prisma.aiConversation.findMany({
+          where: { AND: [conversationVisibilityWhere(ownerlessViewer), { id: { in: threadIds } }] },
+          select: { id: true },
+        })
+      )
+    );
+    const admittedIds = new Set(admittedList.map((t) => t.id));
+    check(
+      admittedIds.has(tInbound.id) &&
+        admittedIds.has(tShared.id) &&
+        !admittedIds.has(t1.id) &&
+        !admittedIds.has(t2.id),
+      'an org ADMIN a policy admits to ownerless threads lists the inbound and shared ones, and no member’s'
+    );
+    const inboundById = await asAdmittedAdmin(() =>
+      inOrgA(() => prisma.aiMessage.findUnique({ where: { id: messageOf(tInbound) } }))
+    );
+    check(inboundById !== null, 'that admin opens the inbound thread’s message by id');
+    await rejects(
+      () =>
+        asAdmittedAdmin(() =>
+          inOrgA(() => prisma.aiConversation.findUnique({ where: { id: t1.id } }))
+        ),
+      refusedConversation,
+      'that admin is still refused member one’s thread by id'
+    );
+
+    const ownMessages = await asPrincipal(m1.principal, () =>
+      inOrgA(() =>
+        prisma.aiMessage.findMany({
+          where: { conversationId: t1.id, conversation: { userId: m1.userId } },
+        })
+      )
+    );
+    check(ownMessages.length === 1, 'member one reads their own thread’s messages');
+    await rejects(
+      () =>
+        asPrincipal(m1.principal, () =>
+          inOrgA(() => prisma.aiMessage.findUnique({ where: { id: messageOf(t2) } }))
+        ),
+      refusedConversation,
+      'member one is refused member two’s message looked up by id'
+    );
 
     console.log(
       '\n[17] a person in A and B: their export holds both orgs’ rows, and no one else’s'

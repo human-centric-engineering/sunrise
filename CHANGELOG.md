@@ -29,9 +29,14 @@ release process.
   root must be confined too. A
   refusal throws the new `OwnerReadRefusedError`, which `handleAPIError`
   answers as a 404. A classification entry's `enforced: true` (and
-  `enforcedModels()`) says which models it checks: `AiUserMemory` in this
-  release. A platform admin, a job, and any install with no narrowed caller
-  get byte-identical queries. See
+  `enforcedModels()`) says which models it checks: `AiUserMemory`,
+  `AiConversation` and `AiMessage` in this release (t-802 adds the second two:
+  a message is checked through its conversation, a live share admits another
+  member's conversation on a `withAdminAuth` request only — the surface a share
+  consents to, where the read is audit-logged — and a checked read may follow the ownership relation
+  without a `where` of its own). A platform admin, a job, and any install with no narrowed caller
+  get byte-identical queries. `SubjectEntry.readsShared` (absent means `false`)
+  and `OwnerReader.readsShared` carry the surface. See
   [Authorization → The owner chokepoint](./.context/auth/authorization.md#the-owner-chokepoint).
 
 - **The subject context and the owner classification** (§115 t-800), the two
@@ -471,8 +476,20 @@ release process.
   every environment, with a 404. **Upgrading:** fork code that reads
   `AiUserMemory` for a narrowed caller without filtering on the owner will
   throw. Confine the query with `session.subjectFilter`, or wrap a deliberate
-  read across owners in `runAcrossOwners(reason, fn)`. Conversations,
-  executions, evaluations and datasets follow in later releases.
+  read across owners in `runAcrossOwners(reason, fn)`. Executions,
+  evaluations and datasets follow in later releases.
+- **…and of another member's conversation or message** (§115 t-802).
+  `AiConversation` and `AiMessage` are enforced: a narrowed caller (an org
+  OWNER or ADMIN included) reads only their own threads, ones shared with them
+  while the share is live, and ownerless ones where the policy admits it. Core's
+  reads are narrowed to match. **Upgrading:** fork code listing or counting
+  conversations or messages for a narrowed caller without
+  `conversationVisibilityWhere` (or an owner filter) will throw; a message read
+  by `conversationId` alone needs `conversation: …` beside it. **Behaviour
+  change:** for a narrowed caller, the analytics that quote message text
+  (topics, unanswered questions, content gaps, recent negative feedback) now
+  draw only on threads that caller could open; the figures stay
+  deployment-wide. A platform admin sees what they saw before.
 - **The `provider-model-auditor` agent no longer has write tools bound**
   (t-774). It held `apply_audit_changes`, `add_provider_models` and
   `deactivate_provider_models`, so the audit's `discover_new_models` turn,
