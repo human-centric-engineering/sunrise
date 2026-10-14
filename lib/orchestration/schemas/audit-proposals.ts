@@ -44,7 +44,10 @@ import {
   TIER_ROLES,
   TOOL_USE,
 } from '@/lib/orchestration/model-audit/enums';
-import { AUDITABLE_FIELDS } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
+import {
+  AUDITABLE_FIELDS,
+  PRICE_FIELDS,
+} from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -68,6 +71,33 @@ const KINDS_REQUIRING_REFERENCE = new Set([
   'external_call',
   'prior_step',
 ]);
+
+/**
+ * Sources that can back a price (t-774): ones that point at something an
+ * admin can open and check. A price goes straight into recorded costs and
+ * budget caps, so a model's own recollection (`training_knowledge`), an
+ * unreferenced user claim, or the registry's existing value (`prior_step`,
+ * which can't support a *change*) is not enough on its own.
+ */
+const PRICE_SOURCE_KINDS = new Set(['web_search', 'knowledge_base', 'external_call']);
+
+/** The most a price per 1M tokens may be: catches a per-token or per-1K figure. */
+const MAX_PRICE_PER_MILLION = 10_000;
+
+function hasPriceSource(sources: ReadonlyArray<{ source: string; reference?: string }>): boolean {
+  return sources.some(
+    (s) => PRICE_SOURCE_KINDS.has(s.source) && typeof s.reference === 'string' && s.reference !== ''
+  );
+}
+
+function isValidPrice(value: unknown): boolean {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= MAX_PRICE_PER_MILLION
+  );
+}
 
 // ─── Sub-schemas ───────────────────────────────────────────────────────────
 
@@ -192,16 +222,46 @@ const changeSchema = z
         }
       }
     }
+    // Prices (t-774): a number in range, backed by a checkable source.
+    if (PRICE_FIELDS.has(change.field)) {
+      if (!isValidPrice(change.proposedValue)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `field "${change.field}": proposedValue must be a number from 0 to ${MAX_PRICE_PER_MILLION} (USD per 1M tokens)`,
+          path: ['proposedValue'],
+        });
+      }
+      if (!hasPriceSource(change.sources)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `field "${change.field}": a price needs a web_search, knowledge_base or external_call source with a reference — training knowledge alone is not enough`,
+          path: ['sources'],
+        });
+      }
+    }
   });
 
-const modelProposalSchema = z.object({
-  model_id: z.string().min(1),
-  modelName: z.string().min(1),
-  providerSlug: z.string().min(1),
-  changes: z.array(changeSchema),
-  overallConfidence: z.enum(asEnum(CONFIDENCE)),
-  reasoning: z.string(),
-});
+const modelProposalSchema = z
+  .object({
+    model_id: z.string().min(1),
+    modelName: z.string().min(1),
+    providerSlug: z.string().min(1),
+    changes: z.array(changeSchema),
+    overallConfidence: z.enum(asEnum(CONFIDENCE)),
+    reasoning: z.string(),
+  })
+  .superRefine((proposal, ctx) => {
+    // The two prices are proposed together, once each (t-774).
+    const priceFields = proposal.changes.map((c) => c.field).filter((f) => PRICE_FIELDS.has(f));
+    if (priceFields.length > 0 && (priceFields.length !== 2 || new Set(priceFields).size !== 2)) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'propose inputCostPerMillionTokens and outputCostPerMillionTokens together, once each, or neither',
+        path: ['changes'],
+      });
+    }
+  });
 
 const deactivationSchema = z.object({
   modelId: z.string().min(1),
@@ -214,38 +274,73 @@ const analysisBranchSchema = z.object({
   deactivateModels: z.array(deactivationSchema),
 });
 
-const newModelSchema = z.object({
-  name: z.string().min(1),
-  // Rule 6: slug must match the slug regex (lowercase, hyphenated).
-  slug: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/),
-  providerSlug: z.string().min(1),
-  // modelId must use the provider's canonical short form: lowercase
-  // alphanumeric runs joined by `.` / `-` / `/`, with no leading or
-  // trailing separator. Catches the common drift modes — uppercase
-  // (`Claude-Opus-4`), spaces, dated suffixes leaving a trailing
-  // hyphen, etc. The "no date suffix" rule itself is semantic and
-  // belongs in the prompt; this regex is the structural floor.
-  modelId: z.string().regex(/^[a-z0-9]+([./-][a-z0-9]+)*$/),
-  description: z.string().min(1),
-  // Per-element enum check (Rule 3): each capability is in the
-  // CAPABILITIES spec.
-  capabilities: z.array(z.enum(asEnum(CAPABILITIES))),
-  tierRole: z.enum(asEnum(TIER_ROLES)),
-  // Rule 4: each profile in DEPLOYMENT_PROFILES; non-empty.
-  deploymentProfiles: z.array(z.enum(asEnum(DEPLOYMENT_PROFILES))).min(1),
-  reasoningDepth: z.enum(asEnum(REASONING_DEPTH)).optional(),
-  latency: z.enum(asEnum(LATENCY)).optional(),
-  costEfficiency: z.enum(asEnum(COST_EFFICIENCY)).optional(),
-  contextLength: z.enum(asEnum(CONTEXT_LENGTH)).optional(),
-  toolUse: z.enum(asEnum(TOOL_USE)).optional(),
-  bestRole: z.string().min(1),
-  sources: z.array(sourceAttributionSchema).min(1),
-  // Embedding-only enrichment fields. Optional so the chat / agent
-  // new-model proposals don't have to carry them.
-  dimensions: z.number().int().positive().optional(),
-  quality: z.enum(asEnum(QUALITY)).optional(),
-  schemaCompatible: z.boolean().optional(),
-});
+const newModelSchema = z
+  .object({
+    name: z.string().min(1),
+    // Rule 6: slug must match the slug regex (lowercase, hyphenated).
+    slug: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/),
+    providerSlug: z.string().min(1),
+    // modelId must use the provider's canonical short form: lowercase
+    // alphanumeric runs joined by `.` / `-` / `/`, with no leading or
+    // trailing separator. Catches the common drift modes — uppercase
+    // (`Claude-Opus-4`), spaces, dated suffixes leaving a trailing
+    // hyphen, etc. The "no date suffix" rule itself is semantic and
+    // belongs in the prompt; this regex is the structural floor.
+    modelId: z.string().regex(/^[a-z0-9]+([./-][a-z0-9]+)*$/),
+    description: z.string().min(1),
+    // Per-element enum check (Rule 3): each capability is in the
+    // CAPABILITIES spec.
+    capabilities: z.array(z.enum(asEnum(CAPABILITIES))),
+    tierRole: z.enum(asEnum(TIER_ROLES)),
+    // Rule 4: each profile in DEPLOYMENT_PROFILES; non-empty.
+    deploymentProfiles: z.array(z.enum(asEnum(DEPLOYMENT_PROFILES))).min(1),
+    reasoningDepth: z.enum(asEnum(REASONING_DEPTH)).optional(),
+    latency: z.enum(asEnum(LATENCY)).optional(),
+    costEfficiency: z.enum(asEnum(COST_EFFICIENCY)).optional(),
+    contextLength: z.enum(asEnum(CONTEXT_LENGTH)).optional(),
+    toolUse: z.enum(asEnum(TOOL_USE)).optional(),
+    bestRole: z.string().min(1),
+    sources: z.array(sourceAttributionSchema).min(1),
+    // Embedding-only enrichment fields. Optional so the chat / agent
+    // new-model proposals don't have to carry them.
+    dimensions: z.number().int().positive().optional(),
+    quality: z.enum(asEnum(QUALITY)).optional(),
+    schemaCompatible: z.boolean().optional(),
+    // Chat pricing (t-774): optional, as a pair, backed by a checkable source.
+    inputCostPerMillionTokens: z.number().optional(),
+    outputCostPerMillionTokens: z.number().optional(),
+  })
+  .superRefine((model, ctx) => {
+    const hasInput = model.inputCostPerMillionTokens !== undefined;
+    const hasOutput = model.outputCostPerMillionTokens !== undefined;
+    if (!hasInput && !hasOutput) return;
+    if (hasInput !== hasOutput) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'propose inputCostPerMillionTokens and outputCostPerMillionTokens together, or neither',
+        path: [hasInput ? 'outputCostPerMillionTokens' : 'inputCostPerMillionTokens'],
+      });
+    }
+    for (const field of ['inputCostPerMillionTokens', 'outputCostPerMillionTokens'] as const) {
+      const value = model[field];
+      if (value !== undefined && !isValidPrice(value)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `${field} must be a number from 0 to ${MAX_PRICE_PER_MILLION} (USD per 1M tokens)`,
+          path: [field],
+        });
+      }
+    }
+    if (!hasPriceSource(model.sources)) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'a proposed price needs a web_search, knowledge_base or external_call source with a reference — training knowledge alone is not enough',
+        path: ['sources'],
+      });
+    }
+  });
 
 const discoveryBranchSchema = z.object({
   newModels: z.array(newModelSchema),

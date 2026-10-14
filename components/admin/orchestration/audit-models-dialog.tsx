@@ -367,6 +367,11 @@ export function AuditModelsDialog({
           bestRole: m.bestRole,
           dimensions: m.dimensions,
           schemaCompatible: m.schemaCompatible,
+          // Current prices, so a price proposal's `currentValue` matches the
+          // row and `apply_audit_changes`' drift check can pass (t-774).
+          costPerMillionTokens: m.costPerMillionTokens ?? null,
+          inputCostPerMillionTokens: m.inputCostPerMillionTokens ?? null,
+          outputCostPerMillionTokens: m.outputCostPerMillionTokens ?? null,
         })),
         __runSupervisor: runSupervisor,
         __generateReport: generateReport,
@@ -726,10 +731,10 @@ export function AuditModelsDialog({
                       {estimate.modelMix.some((m) => !m.pricingKnown) ? (
                         <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
                           One or more models referenced by this workflow have no pricing in the
-                          registry — likely a matrix row with an empty{' '}
-                          <code>costPerMillionTokens</code> for a custom/local id. Set a non-zero
-                          value, or use a model that OpenRouter / the static fallback catalogue
-                          knows. The estimate above excludes their contribution.
+                          registry — likely a matrix row for a custom/local id with no input and
+                          output prices. Set them on the row, or use a model that OpenRouter / the
+                          static fallback catalogue knows. The estimate above excludes their
+                          contribution.
                         </p>
                       ) : null}
                     </div>

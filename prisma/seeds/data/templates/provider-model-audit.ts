@@ -98,6 +98,19 @@ const SEARCH_RESULTS_BLOCK = `
 When citing \`[N]\` set \`reference\` to the URL of result [N] and \`snippet\` to a ≤200-char excerpt from its description.
 `.trim();
 
+// Chat pricing (t-774). A price lands in recorded costs and budget caps once
+// approved, so it is held to a stricter source rule than other fields: the
+// `audit-proposals` schema rejects a price without a referenced source.
+const PRICING_INSTRUCTIONS = `
+**Pricing (chat models).** \`inputCostPerMillionTokens\` and \`outputCostPerMillionTokens\` are the provider's published USD price per 1M input and per 1M output tokens.
+
+- Propose them **only from a source you can cite with a URL**: a \`web_search\` result (the provider's pricing page is best), or a \`knowledge_base\` / \`external_call\` source with a reference. Training knowledge alone is NOT enough for a price — prices change, and a wrong one mis-records every turn. If you can't cite one, leave the price out.
+- Always propose **both, together**: input and output as a pair, never one alone.
+- Use dollars per **1M** tokens (e.g. 3 and 15), not per token or per 1K. Values must be between 0 and 10000.
+- \`costPerMillionTokens\` is a legacy single blended rate; never propose it — the split pair replaces it.
+- If the model's current input and output prices already match the source, propose no change.
+`.trim();
+
 export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
   slug: 'tpl-provider-model-audit',
   name: 'Provider Model Audit',
@@ -148,7 +161,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         type: 'llm_call',
         config: {
           prompt:
-            'You are a data preparation assistant. Parse the following input and produce a structured JSON summary of the models to audit.\n\nInput:\n{{input}}\n\nRespond with a JSON object containing:\n- "modelIds": array of model IDs to audit\n- "modelCount": total number of models\n- "scope": "all" if auditing everything, "subset" if specific models were selected\n\nIf the input contains model data objects, extract the key fields (name, modelId, providerSlug, tierRole, capabilities, costEfficiency, reasoningDepth, latency, contextLength, toolUse, bestRole) for each model into a "models" array.\n\nRespond with ONLY the JSON object, no markdown fencing.',
+            'You are a data preparation assistant. Parse the following input and produce a structured JSON summary of the models to audit.\n\nInput:\n{{input}}\n\nRespond with a JSON object containing:\n- "modelIds": array of model IDs to audit\n- "modelCount": total number of models\n- "scope": "all" if auditing everything, "subset" if specific models were selected\n\nIf the input contains model data objects, extract the key fields (name, modelId, providerSlug, tierRole, capabilities, costEfficiency, reasoningDepth, latency, contextLength, toolUse, bestRole, costPerMillionTokens, inputCostPerMillionTokens, outputCostPerMillionTokens) for each model into a "models" array.\n\nRespond with ONLY the JSON object, no markdown fencing.',
           temperature: 0.1,
         },
         nextSteps: [{ targetStepId: 'search_provider_info' }],
@@ -259,7 +272,7 @@ export const PROVIDER_MODEL_AUDIT_TEMPLATE: WorkflowTemplate = {
         id: 'analyse_chat',
         name: 'Analyse chat/completion models',
         description:
-          'Evaluates every chat/completion model in scope and proposes field-level changes (tier role, latency, cost-efficiency, context length, tool use, deployment profiles) with per-claim source attribution.',
+          'Evaluates every chat/completion model in scope and proposes field-level changes (tier role, latency, cost-efficiency, context length, tool use, deployment profiles, input/output prices) with per-claim source attribution.',
         type: 'llm_call',
         config: {
           prompt: `{{#if vars.__retryContext}}**Previous attempt failed schema validation.** Reason: {{vars.__retryContext.failureReason}} (attempt {{vars.__retryContext.attempt}} of {{vars.__retryContext.maxRetries}}). Re-evaluate the data, fix the specific issues identified above, and produce corrected output. Pay particular attention to enum values — they must match the allowed lists exactly, every change MUST carry a non-empty \`sources\` array, and every change's \`reason\` MUST explicitly reference the model's current value.
@@ -296,6 +309,9 @@ For each chat/completion model, evaluate:
 8. **Best role** — Still the right summary?
 9. **Description** — Accurate and current?
 10. **Deprecated/discontinued** — Has this model been deprecated, sunset, or replaced by a newer version from the same provider?
+11. **Prices** — Are \`inputCostPerMillionTokens\` / \`outputCostPerMillionTokens\` set and current? See the pricing rules below.
+
+${PRICING_INSTRUCTIONS}
 
 **Rationale rule.** Every change's \`reason\` field MUST explicitly reference the model's \`currentValue\` for that field. "This is a chat model" is not a valid reason when the current tier is \`worker\` — explain why \`worker\` should change. Generic framings get rejected by the validator.
 
@@ -459,9 +475,12 @@ Each entry in \`newModels\`:
 - \`toolUse\`: \`strong\` / \`moderate\` / \`none\`
 - \`bestRole\`: One-line summary of the optimal slot (≤8 words).
 - For embedding models also include: \`dimensions\` (int), \`quality\` (\`high\` / \`medium\` / \`budget\`), \`schemaCompatible\` (bool).
-- \`sources\`: non-empty array per the rules below.
+- For chat models, when a citable source gives them: \`inputCostPerMillionTokens\` and \`outputCostPerMillionTokens\` (numbers, USD per 1M tokens), as a pair. Omit both otherwise — a model added without prices is better than one added with guessed ones.
+- \`sources\`: non-empty array per the rules below. When you include prices, one source MUST be the citable page they came from.
 
 ${SOURCES_INSTRUCTIONS}
+
+${PRICING_INSTRUCTIONS}
 
 ## Worked example
 
@@ -625,7 +644,7 @@ RETRY CONTEXT: a previous attempt failed: {{vars.__retryContext.failureReason}}.
         type: 'reflect',
         config: {
           critiquePrompt:
-            'Review the proposed model audit changes and new model proposals critically:\n\n1. Are any proposed changes based on outdated information about the model?\n2. Do the confidence levels accurately reflect certainty? High confidence should only be used for clear, verifiable facts.\n3. Are the reasons specific enough to help an admin understand why the change is proposed?\n4. Are there any contradictions between proposed changes for the same model?\n5. Should any "medium" confidence changes be downgraded to "low" if the evidence is circumstantial?\n6. For new model proposals: are the slugs, model IDs, and capability classifications plausible? Are there any duplicates of existing models under a different name?\n\nProvide specific, actionable feedback for each issue found.',
+            'Review the proposed model audit changes and new model proposals critically:\n\n1. Are any proposed changes based on outdated information about the model?\n2. Do the confidence levels accurately reflect certainty? High confidence should only be used for clear, verifiable facts.\n3. Are the reasons specific enough to help an admin understand why the change is proposed?\n4. Are there any contradictions between proposed changes for the same model?\n5. Should any "medium" confidence changes be downgraded to "low" if the evidence is circumstantial?\n6. For new model proposals: are the slugs, model IDs, and capability classifications plausible? Are there any duplicates of existing models under a different name?\n7. For any proposed price: is it per 1M tokens (not per token or per 1K), are input and output proposed together, and does a cited URL actually state it? Drop a price the sources do not support.\n\nProvide specific, actionable feedback for each issue found.',
           maxIterations: 2,
         },
         nextSteps: [{ targetStepId: 'score_audit' }],
@@ -786,6 +805,21 @@ RETRY CONTEXT: a previous attempt failed: {{vars.__retryContext.failureReason}}.
                     enumValuesFrom: 'TOOL_USE',
                   },
                   { key: 'bestRole', label: 'Best role', display: 'text', editable: true },
+                  // Chat pricing (t-774). Editable so the admin can correct
+                  // a figure against the cited page before it reaches
+                  // recorded costs; created only as a pair.
+                  {
+                    key: 'inputCostPerMillionTokens',
+                    label: 'Input $ / 1M',
+                    display: 'number',
+                    editable: true,
+                  },
+                  {
+                    key: 'outputCostPerMillionTokens',
+                    label: 'Output $ / 1M',
+                    display: 'number',
+                    editable: true,
+                  },
                   // Same pill renderer as the changes section — the admin
                   // sees `[training · low]` vs `[web · provider.com]` and
                   // can spot un-grounded proposals before approving.

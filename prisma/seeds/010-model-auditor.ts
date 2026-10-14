@@ -47,6 +47,8 @@ export const APPLY_AUDIT_CHANGES_DEFINITION = {
                   'dimensions',
                   'schemaCompatible',
                   'quality',
+                  'inputCostPerMillionTokens',
+                  'outputCostPerMillionTokens',
                 ],
                 description: 'The auditable field name to update.',
               },
@@ -203,6 +205,16 @@ export const ADD_PROVIDER_MODELS_DEFINITION = {
               quality: {
                 type: 'string',
                 enum: ['high', 'medium', 'budget'],
+              },
+              inputCostPerMillionTokens: {
+                type: 'number',
+                description:
+                  'Published USD price per 1M input tokens. Set together with outputCostPerMillionTokens, or omit both.',
+              },
+              outputCostPerMillionTokens: {
+                type: 'number',
+                description:
+                  'Published USD price per 1M output tokens. Set together with inputCostPerMillionTokens, or omit both.',
               },
             },
             required: [

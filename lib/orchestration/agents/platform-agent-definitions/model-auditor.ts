@@ -31,6 +31,7 @@ For each model entry, assess:
 6. **Context length** — Current window size classification
 7. **Tool use** — Actual function-calling capability level
 8. **Best role** — One-line summary of optimal use case
+9. **Prices** — Published USD input and output price per 1M tokens, proposed as a pair and only from a source you can cite with a URL (the provider's pricing page). Never from memory alone: a wrong price mis-records the cost of every turn.
 
 For embedding models, also evaluate dimensions, quality rating, and schema compatibility.
 

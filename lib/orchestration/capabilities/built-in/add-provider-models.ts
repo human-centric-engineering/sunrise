@@ -25,6 +25,15 @@ import type {
   CapabilityResult,
 } from '@/lib/orchestration/capabilities/types';
 
+/**
+ * A price per 1M tokens. The approval screen edits values as text, so an
+ * admin's modified `"3.5"` is read as the number it spells.
+ */
+const priceSchema = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : v),
+  z.number().nonnegative().max(10_000)
+);
+
 const newModelSchema = z.object({
   name: z.string().min(1).max(100).trim(),
   slug: z
@@ -61,6 +70,11 @@ const newModelSchema = z.object({
   dimensions: z.number().int().positive().optional(),
   schemaCompatible: z.boolean().optional(),
   quality: z.enum(['high', 'medium', 'budget']).optional(),
+  // Chat pricing per 1M tokens (t-774), proposed by the audit and checked
+  // by the admin. Created only as a pair (see `execute`).
+  // `null` is an admin clearing the cell on the approval screen: no price.
+  inputCostPerMillionTokens: priceSchema.nullish(),
+  outputCostPerMillionTokens: priceSchema.nullish(),
 });
 
 // Unwrap an `approvalPayload: { newModels }` envelope written by
@@ -162,6 +176,16 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
                 description: 'Compatible with pgvector(1536) schema.',
               },
               quality: { type: 'string', enum: ['high', 'medium', 'budget'] },
+              inputCostPerMillionTokens: {
+                type: 'number',
+                description:
+                  'Published USD price per 1M input tokens. Set together with outputCostPerMillionTokens, or omit both.',
+              },
+              outputCostPerMillionTokens: {
+                type: 'number',
+                description:
+                  'Published USD price per 1M output tokens. Set together with inputCostPerMillionTokens, or omit both.',
+              },
             },
             required: [
               'name',
@@ -211,6 +235,21 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
     let invalid = 0;
 
     for (const model of args.newModels) {
+      // Half a price records the other half of every turn at $0 (t-774).
+      if (
+        (model.inputCostPerMillionTokens == null) !==
+        (model.outputCostPerMillionTokens == null)
+      ) {
+        results.push({
+          name: model.name,
+          slug: model.slug,
+          providerSlug: model.providerSlug,
+          status: 'invalid',
+          reason: 'Input and output prices must be set together, or neither',
+        });
+        invalid++;
+        continue;
+      }
       try {
         await prisma.aiProviderModel.create({
           data: {
@@ -231,6 +270,8 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
             dimensions: model.dimensions ?? null,
             schemaCompatible: model.schemaCompatible ?? null,
             quality: model.quality ?? null,
+            inputCostPerMillionTokens: model.inputCostPerMillionTokens ?? null,
+            outputCostPerMillionTokens: model.outputCostPerMillionTokens ?? null,
             isDefault: false,
             isActive: true,
             createdBy: context.userId,
