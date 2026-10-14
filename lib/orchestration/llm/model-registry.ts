@@ -244,12 +244,13 @@ let lastRegistered: ModelInfo[] = [];
  *
  *   - **Pricing + context length** keep the existing entry's value
  *     whenever it is positive; the incoming row only fills a field the
- *     registry has at zero. `AiProviderModel.costPerMillionTokens` is a
- *     single blended rate (nullable; unfilled rows coerce to 0 via
+ *     registry has at zero. A matrix row's rates are operator-entered
+ *     (its split input/output columns, or one blended
+ *     `costPerMillionTokens` for both; unfilled rows coerce to 0 via
  *     `dbModelToModelInfo`, marked `pricingUnknown` until something
  *     prices them — see `settlePricingFlag`) and `contextLength` is a coarse bucket, so
- *     letting either beat the registry's exact input/output split and
- *     real window mis-prices turns and mis-sizes the history budget. A
+ *     letting either beat the registry's published figures and real
+ *     window mis-prices turns and mis-sizes the history budget. A
  *     custom / local model the registry has never seen is unaffected —
  *     its row is the only source and is registered as-is, and a figure
  *     an earlier hydrate wrote stays replaceable by the row's current
@@ -285,9 +286,10 @@ export function registerModels(infos: ModelInfo[]): void {
       continue;
     }
     // Same provider: the incoming row wins on descriptive fields. On price
-    // and context a positive REGISTRY figure wins — a matrix row carries one
-    // blended rate and a coarse context bucket, the registry's input/output
-    // split and real window are the exact ones. See `pickNumber`.
+    // and context a positive REGISTRY figure wins — a matrix row's rates are
+    // hand-entered (often one blended rate) and its context a coarse bucket;
+    // the registry's published split and real window are the exact ones.
+    // See `pickNumber`.
     const sourced = dbSourced.get(info.id);
     const input = pickNumber(
       'input',

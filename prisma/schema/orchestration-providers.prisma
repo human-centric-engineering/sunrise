@@ -135,7 +135,16 @@ model AiProviderModel {
   // Embedding-specific (nullable for chat-only models)
   dimensions           Int?
   schemaCompatible     Boolean?
+  // One rate for every token: an embedding model's price, or a chat
+  // model's blended (input + output) / 2 where no split is known. The
+  // split columns below win for chat cost when set (t-774).
   costPerMillionTokens Float?
+
+  // Chat pricing per 1M tokens, input and output apart. Nullable: a row
+  // without them falls back to `costPerMillionTokens` for both
+  // (`dbModelToModelInfo`).
+  inputCostPerMillionTokens  Float?
+  outputCostPerMillionTokens Float?
   hasFreeTier          Boolean?
   local                Boolean  @default(false)
   quality              String? // 'high' | 'medium' | 'budget'

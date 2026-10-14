@@ -29,20 +29,20 @@ const unit: SeedUnit = {
 
     // Pricing notes:
     //
-    // `costPerMillionTokens` is a single value used by the cost tracker
-    // for BOTH input and output tokens (see lib/orchestration/llm/db-model-adapter.ts).
-    // Hosted chat models have asymmetric input/output rates — OpenAI's
-    // GPT-5 is $1.25 in / $10 out, Anthropic's Opus 4 is $15 in / $75 out.
-    // Until the schema gains separate input/output columns (tracked
-    // follow-up: AiProviderModel.inputCostPerMillionTokens + outputCostPerMillionTokens),
-    // we store an (input + output) / 2 blended rate. Cost figures
-    // sourced from each vendor's public pricing page as of 2026-05.
+    // A hosted chat model carries its published input and output rates in
+    // `inputCostPerMillionTokens` / `outputCostPerMillionTokens` (t-774),
+    // which the cost tracker uses when the model is not in the built-in
+    // price list (lib/orchestration/llm/db-model-adapter.ts). Its
+    // `costPerMillionTokens` keeps the (input + output) / 2 blended rate:
+    // the fallback a row without the split uses, and what forks and older
+    // code read. Flat-rate hosts (Groq, Together, Fireworks) and embedding
+    // models carry only the single rate, which is exact for them. Cost
+    // figures sourced from each vendor's public pricing page as of 2026-05.
     //
     // The in-memory model registry (lib/orchestration/llm/model-registry.ts)
     // carries separate input/output rates for the most common ids and
-    // wins over the DB row on `getModel(id)` — so cost figures for
-    // gpt-5, gpt-4o, Claude Opus 4 etc. stay precise. The seed rates
-    // below are the safety net for rows not in the static fallback.
+    // wins over the DB row on `getModel(id)`. The seed rates below price
+    // the rows not in that static fallback.
     const models = [
       // ========================================================================
       // Anthropic
@@ -63,6 +63,8 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'Planner / orchestrator',
         costPerMillionTokens: 45, // ($15 in + $75 out) / 2
+        inputCostPerMillionTokens: 15,
+        outputCostPerMillionTokens: 75,
       },
       {
         slug: 'anthropic-claude-sonnet-4',
@@ -80,6 +82,8 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'Versatile worker agent',
         costPerMillionTokens: 9, // ($3 in + $15 out) / 2
+        inputCostPerMillionTokens: 3,
+        outputCostPerMillionTokens: 15,
       },
       {
         slug: 'anthropic-claude-haiku-4-5',
@@ -97,6 +101,8 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'Fast tool execution',
         costPerMillionTokens: 3, // ($1 in + $5 out) / 2
+        inputCostPerMillionTokens: 1,
+        outputCostPerMillionTokens: 5,
       },
 
       // ========================================================================
@@ -122,6 +128,8 @@ const unit: SeedUnit = {
         // and skips temperature when paramProfile is set to 'openai-reasoning'.
         paramProfile: 'openai-reasoning',
         costPerMillionTokens: 5.625, // ($1.25 in + $10 out) / 2
+        inputCostPerMillionTokens: 1.25,
+        outputCostPerMillionTokens: 10,
       },
       {
         slug: 'openai-gpt-4-1',
@@ -139,6 +147,8 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'General-purpose worker',
         costPerMillionTokens: 5, // ($2 in + $8 out) / 2
+        inputCostPerMillionTokens: 2,
+        outputCostPerMillionTokens: 8,
       },
       {
         slug: 'openai-gpt-4o',
@@ -155,6 +165,8 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'Multimodal worker',
         costPerMillionTokens: 6.25, // ($2.50 in + $10 out) / 2
+        inputCostPerMillionTokens: 2.5,
+        outputCostPerMillionTokens: 10,
       },
       {
         slug: 'openai-gpt-4o-mini',
@@ -172,6 +184,8 @@ const unit: SeedUnit = {
         toolUse: 'moderate',
         bestRole: 'High-throughput loops',
         costPerMillionTokens: 0.375, // ($0.15 in + $0.60 out) / 2
+        inputCostPerMillionTokens: 0.15,
+        outputCostPerMillionTokens: 0.6,
       },
 
       // OpenAI — Reasoning model
@@ -192,6 +206,8 @@ const unit: SeedUnit = {
         bestRole: 'Hard reasoning, planning, verification',
         paramProfile: 'openai-reasoning',
         costPerMillionTokens: 2.75, // ($1.10 in + $4.40 out) / 2
+        inputCostPerMillionTokens: 1.1,
+        outputCostPerMillionTokens: 4.4,
       },
 
       // OpenAI — Audio (Whisper) — unlocks the streaming-chat mic input.
@@ -313,6 +329,8 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'Retrieval + multimodal',
         costPerMillionTokens: 3.125, // ($1.25 in + $5 out) / 2
+        inputCostPerMillionTokens: 1.25,
+        outputCostPerMillionTokens: 5,
       },
       {
         slug: 'google-gemini-2-5-flash',
@@ -330,6 +348,8 @@ const unit: SeedUnit = {
         toolUse: 'moderate',
         bestRole: 'Fast multimodal agent',
         costPerMillionTokens: 1.4, // ($0.30 in + $2.50 out) / 2
+        inputCostPerMillionTokens: 0.3,
+        outputCostPerMillionTokens: 2.5,
       },
       {
         slug: 'google-text-embedding-004',
@@ -374,6 +394,8 @@ const unit: SeedUnit = {
         toolUse: 'moderate',
         bestRole: 'Real-time context agents',
         costPerMillionTokens: 9, // ($3 in + $15 out) / 2
+        inputCostPerMillionTokens: 3,
+        outputCostPerMillionTokens: 15,
       },
       {
         slug: 'xai-grok-3-mini',
@@ -390,6 +412,8 @@ const unit: SeedUnit = {
         toolUse: 'moderate',
         bestRole: 'Fast worker loops',
         costPerMillionTokens: 0.4, // ($0.30 in + $0.50 out) / 2
+        inputCostPerMillionTokens: 0.3,
+        outputCostPerMillionTokens: 0.5,
       },
 
       // ========================================================================
@@ -410,6 +434,8 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'Multilingual worker',
         costPerMillionTokens: 4, // ($2 in + $6 out) / 2
+        inputCostPerMillionTokens: 2,
+        outputCostPerMillionTokens: 6,
       },
       {
         slug: 'mistral-mistral-small',
@@ -426,6 +452,8 @@ const unit: SeedUnit = {
         toolUse: 'moderate',
         bestRole: 'Cost-efficient loops',
         costPerMillionTokens: 0.4, // ($0.20 in + $0.60 out) / 2
+        inputCostPerMillionTokens: 0.2,
+        outputCostPerMillionTokens: 0.6,
       },
       {
         slug: 'mistral-mistral-embed',
@@ -470,6 +498,8 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'Enterprise RAG workflows',
         costPerMillionTokens: 6.25, // ($2.50 in + $10 out) / 2
+        inputCostPerMillionTokens: 2.5,
+        outputCostPerMillionTokens: 10,
       },
       {
         slug: 'cohere-embed-english-v3',
@@ -537,6 +567,8 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'Cheap reasoning worker',
         costPerMillionTokens: 0.21, // ($0.14 in + $0.28 out) / 2
+        inputCostPerMillionTokens: 0.14,
+        outputCostPerMillionTokens: 0.28,
       },
       {
         slug: 'deepseek-deepseek-coder',
@@ -554,6 +586,8 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'Code generation worker',
         costPerMillionTokens: 0.21, // ($0.14 in + $0.28 out) / 2
+        inputCostPerMillionTokens: 0.14,
+        outputCostPerMillionTokens: 0.28,
       },
 
       // ========================================================================
@@ -574,6 +608,8 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'Search-grounded agents',
         costPerMillionTokens: 9, // ($3 in + $15 out) / 2
+        inputCostPerMillionTokens: 3,
+        outputCostPerMillionTokens: 15,
       },
 
       // ========================================================================
@@ -595,6 +631,8 @@ const unit: SeedUnit = {
         toolUse: 'moderate',
         bestRole: 'Low-latency execution',
         costPerMillionTokens: 0.69, // ($0.59 in + $0.79 out) / 2
+        inputCostPerMillionTokens: 0.59,
+        outputCostPerMillionTokens: 0.79,
       },
       {
         slug: 'groq-mixtral-8x7b',
@@ -674,6 +712,8 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'Enterprise orchestration',
         costPerMillionTokens: 9, // Bedrock Claude Sonnet 4: ($3 in + $15 out) / 2
+        inputCostPerMillionTokens: 3,
+        outputCostPerMillionTokens: 15,
       },
 
       // ========================================================================
@@ -695,6 +735,8 @@ const unit: SeedUnit = {
         toolUse: 'strong',
         bestRole: 'Enterprise GPT layer',
         costPerMillionTokens: 6.25, // Azure GPT-4o: ($2.50 in + $10 out) / 2
+        inputCostPerMillionTokens: 2.5,
+        outputCostPerMillionTokens: 10,
         // Seeded INACTIVE. This row shares `modelId: 'gpt-4o'` with the OpenAI
         // row, and an unconfigured example provider has no business competing
         // for that id in catalogue lookups — it is how genuine OpenAI spend
@@ -901,6 +943,8 @@ const unit: SeedUnit = {
         dimensions: model.dimensions ?? null,
         schemaCompatible: model.schemaCompatible ?? null,
         costPerMillionTokens: model.costPerMillionTokens ?? null,
+        inputCostPerMillionTokens: model.inputCostPerMillionTokens ?? null,
+        outputCostPerMillionTokens: model.outputCostPerMillionTokens ?? null,
         hasFreeTier: model.hasFreeTier ?? null,
         local: model.local ?? false,
         quality: model.quality ?? null,

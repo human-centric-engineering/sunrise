@@ -20,9 +20,10 @@
  *     each judge's bound model). Heuristic graders cost nothing and are
  *     not counted. Range is wide (±50% / ×2) to signal uncertainty.
  *
- * Pricing comes from the model registry (`getModel`) — operator-curated
- * `AiProviderModel.costPerMillionTokens` prices models the static fallback
- * and OpenRouter do not know, and fills a rate they carry at zero.
+ * Pricing comes from the model registry (`getModel`) — an operator-curated
+ * `AiProviderModel` row (its input/output prices, or its blended
+ * `costPerMillionTokens`) prices models the static fallback and OpenRouter
+ * do not know, and fills a rate they carry at zero.
  * A model with no pricing surfaces as `pricingKnown: false` on the
  * relevant `modelMix` entry so the UI can call out the unknown rather
  * than silently reading $0 as "free".

@@ -92,17 +92,35 @@ export function narrowParamProfile(raw: string | null | undefined): ParamProfile
   return undefined;
 }
 
+/**
+ * A row's input and output rates per 1M tokens (t-774). Each split column
+ * wins when set; an unset one falls back to the blended
+ * `costPerMillionTokens`, which an embedding model and a row written before
+ * the split carry. `null` means neither is known.
+ */
+function rowRates(
+  row: Pick<
+    AiProviderModel,
+    'costPerMillionTokens' | 'inputCostPerMillionTokens' | 'outputCostPerMillionTokens'
+  >
+): { input: number | null; output: number | null } {
+  return {
+    input: row.inputCostPerMillionTokens ?? row.costPerMillionTokens,
+    output: row.outputCostPerMillionTokens ?? row.costPerMillionTokens,
+  };
+}
+
 /** Convert a single DB row into a `ModelInfo`. Always marks `available: true`. */
 export function dbModelToModelInfo(row: AiProviderModel): ModelInfo {
-  const cost = row.costPerMillionTokens ?? 0;
+  const rates = rowRates(row);
   const paramProfile = narrowParamProfile(row.paramProfile);
   return {
     id: row.modelId,
     name: row.name,
     provider: row.providerSlug,
     tier: mapTierRoleToTier(row.tierRole, row.deploymentProfiles),
-    inputCostPerMillion: cost,
-    outputCostPerMillion: cost,
+    inputCostPerMillion: rates.input ?? 0,
+    outputCostPerMillion: rates.output ?? 0,
     maxContext: mapContextLengthToMax(row.contextLength),
     supportsTools: row.toolUse !== 'none',
     available: true,
@@ -113,7 +131,9 @@ export function dbModelToModelInfo(row: AiProviderModel): ModelInfo {
     capabilities: row.capabilities,
     ...(paramProfile ? { paramProfile } : {}),
     // A null cost is "not priced", not "free" — an explicit 0 stays free.
-    ...(row.costPerMillionTokens === null ? { pricingUnknown: true as const } : {}),
+    // Either rate missing leaves the row unpriced: half a price would
+    // record the other half of every turn at $0.
+    ...(rates.input === null || rates.output === null ? { pricingUnknown: true as const } : {}),
   };
 }
 

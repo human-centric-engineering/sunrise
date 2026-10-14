@@ -130,8 +130,8 @@ export interface WorkflowCostEstimateModel {
    * Whether the registry has pricing data for `modelId` (`isModelPriced`).
    * False when `getModel(modelId)` returns undefined — typically a model id
    * that isn't in the static fallback, isn't in the OpenRouter catalogue,
-   * and has no matrix row — or when its matrix row has no
-   * `costPerMillionTokens` (`pricingUnknown`). A free model (local tier, or
+   * and has no matrix row — or when its matrix row has no price for input
+   * or output (`pricingUnknown`). A free model (local tier, or
    * a rate set to 0) is priced, at $0. When unpriced, the cost
    * contribution is $0 in that case; the UI should surface it as
    * "pricing unknown" so the operator knows the overall estimate is
