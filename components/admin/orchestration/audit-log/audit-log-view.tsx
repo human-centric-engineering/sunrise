@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { API } from '@/lib/api/endpoints';
 import {
   Table,
@@ -88,6 +88,7 @@ export function AuditLogView() {
   const [dateTo, setDateTo] = useState('');
 
   const limit = 25;
+  const latestRequest = useRef(0);
 
   // Only a real change to the search resets the page. Scheduling on mount as
   // well sent anyone who paged within 300ms of load back to page 1 (t-799).
@@ -102,6 +103,10 @@ export function AuditLogView() {
   }, [search, debouncedSearch]);
 
   const fetchEntries = useCallback(async () => {
+    // Only the latest request may write state: an older one that resolves
+    // late would otherwise show rows for a page or filter no longer selected.
+    const seq = ++latestRequest.current;
+    const isCurrent = () => seq === latestRequest.current;
     setLoading(true);
     setError(null);
     setExpandedId(null);
@@ -112,6 +117,7 @@ export function AuditLogView() {
       if (dateFrom) params.set('dateFrom', dateFrom);
       if (dateTo) params.set('dateTo', dateTo);
       const res = await fetch(`${API.ADMIN.ORCHESTRATION.AUDIT_LOG}?${params}`);
+      if (!isCurrent()) return;
       if (!res.ok) {
         setError('Failed to load audit log. Please try again.');
         return;
@@ -121,14 +127,18 @@ export function AuditLogView() {
         data: AuditEntry[];
         meta: { total: number };
       };
+      if (!isCurrent()) return;
       if (json.success) {
         setEntries(json.data);
         setTotal(json.meta.total);
       } else {
         setError('Server returned an error. Please try again.');
       }
+    } catch {
+      // A network failure or a body that isn't JSON
+      if (isCurrent()) setError('Failed to load audit log. Please try again.');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [page, entityType, debouncedSearch, dateFrom, dateTo]);
 

@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AuditLogView } from '@/components/admin/orchestration/audit-log/audit-log-view';
 
@@ -97,14 +97,45 @@ function lastFetchUrl(): string {
 }
 
 /**
- * Fires the search box's 300ms debounce now, rather than waiting for it in real
- * time: a wall-clock wait raced the timer when the machine was busy (t-799).
- * Needs `vi.useFakeTimers({ shouldAdvanceTime: true })` — the auto-advance keeps
- * Testing Library's own polling alive. The fetch the debounce triggers is called
- * synchronously in the effect, so it is recorded by the time this resolves.
+ * Freezes `setTimeout`, so the search box's 300ms debounce fires only when a
+ * test calls `flushSearchDebounce()`. Waiting for it in real time raced the
+ * timer when the machine was busy (t-799).
+ *
+ * Testing Library's async helpers — `findBy*`, `waitFor`, and every user-event
+ * call, which runs through the same wrapper — drain with a `setTimeout(0)` that
+ * never fires while timeouts are frozen. These tests therefore drive input with
+ * the synchronous `fireEvent` and wait with `flushUntil`.
  */
+function freezeTimeouts() {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+}
+
+/** Fires a pending search debounce now; the fetch it triggers is called synchronously. */
 async function flushSearchDebounce() {
   await act(() => vi.advanceTimersByTimeAsync(300));
+}
+
+/**
+ * Re-checks `assertion` between microtask flushes inside `act`. The mocked
+ * fetch settles on microtasks alone, so this needs no clock, real or fake.
+ */
+async function flushUntil(assertion: () => void) {
+  for (let i = 0; i < 50; i++) {
+    try {
+      assertion();
+      return;
+    } catch {
+      await act(async () => {
+        await new Promise<void>((resolve) => queueMicrotask(resolve));
+      });
+    }
+  }
+  assertion();
+}
+
+/** Waits for the in-flight fetch to finish (Refresh is disabled while loading). */
+async function settle() {
+  await flushUntil(() => expect(screen.getByRole('button', { name: /refresh/i })).toBeEnabled());
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -242,37 +273,61 @@ describe('AuditLogView', () => {
   // ── Search filter (server-side via `q` query param) ──────────────────────
 
   it('debounces search input and sends q as a server-side query param', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    freezeTimeouts();
     mockFetchSuccess([makeEntry()]);
 
     render(<AuditLogView />);
-    await screen.findByText('Support Bot');
+    await flushUntil(() => screen.getByText('Support Bot'));
 
-    await user.type(screen.getByPlaceholderText(/filter by action/i), 'workflow');
+    fireEvent.change(screen.getByPlaceholderText(/filter by action/i), {
+      target: { value: 'workflow' },
+    });
     await flushSearchDebounce();
 
     expect(lastFetchUrl()).toContain('q=workflow');
+    await settle();
+  });
+
+  it('keeps the page when the search is typed and reverted within the debounce window', async () => {
+    freezeTimeouts();
+    mockFetchSuccess([makeEntry()], 50);
+
+    render(<AuditLogView />);
+    await flushUntil(() => screen.getByText(/1 \/ 2/));
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
+    await settle();
+    const callsBefore = fetchUrls().length;
+
+    // The query ends where it started, so nothing resets to page 1
+    const searchInput = screen.getByPlaceholderText(/filter by action/i);
+    fireEvent.change(searchInput, { target: { value: 'ab' } });
+    fireEvent.change(searchInput, { target: { value: ' ' } });
+    await flushSearchDebounce();
+
+    expect(screen.getByText(/2 \/ 2/)).toBeInTheDocument();
+    expect(fetchUrls().length).toBe(callsBefore);
   });
 
   it('resets to page=1 when search query changes', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    freezeTimeouts();
     // 50 entries at 25 per page → two pages
     mockFetchSuccess([makeEntry()], 50);
 
     render(<AuditLogView />);
-    await screen.findByText(/1 \/ 2/);
+    await flushUntil(() => screen.getByText(/1 \/ 2/));
 
-    await user.click(screen.getByRole('button', { name: /next page/i }));
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
     expect(screen.getByText(/2 \/ 2/)).toBeInTheDocument();
 
-    await user.type(screen.getByPlaceholderText(/filter by action/i), 'alice');
+    fireEvent.change(screen.getByPlaceholderText(/filter by action/i), {
+      target: { value: 'alice' },
+    });
     await flushSearchDebounce();
 
     expect(lastFetchUrl()).toContain('page=1');
     expect(lastFetchUrl()).toContain('q=alice');
     expect(screen.getByText(/1 \/ 2/)).toBeInTheDocument();
+    await settle();
   });
 
   // ── Refresh ───────────────────────────────────────────────────────────────
@@ -466,25 +521,25 @@ describe('AuditLogView', () => {
   });
 
   it('omits q from the URL when the search input is empty', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    freezeTimeouts();
     mockFetchSuccess([makeEntry()]);
 
     render(<AuditLogView />);
-    await screen.findByText('Support Bot');
+    await flushUntil(() => screen.getByText('Support Bot'));
 
     const searchInput = screen.getByPlaceholderText(/filter by action/i);
-    await user.type(searchInput, 'workflow');
+    fireEvent.change(searchInput, { target: { value: 'workflow' } });
     await flushSearchDebounce();
     expect(lastFetchUrl()).toContain('q=workflow');
 
     // Clear the search — the next debounced fetch omits q
     const callsBefore = fetchUrls().length;
-    await user.clear(searchInput);
+    fireEvent.change(searchInput, { target: { value: '' } });
     await flushSearchDebounce();
 
     expect(fetchUrls().length).toBeGreaterThan(callsBefore);
     expect(lastFetchUrl()).not.toContain('q=');
+    await settle();
   });
 
   it('falls back to entityId when entityName is null but entityId is present', async () => {
@@ -581,6 +636,7 @@ describe('AuditLogView', () => {
 
     expect(fetchUrls().slice(callsBefore)).toEqual([expect.stringContaining('page=2')]);
     expect(screen.getByText(/2 \/ 2/)).toBeInTheDocument();
+    await settle();
   });
 
   it('clicking prev page button from page 2 triggers fetch with page=1', async () => {
@@ -597,22 +653,81 @@ describe('AuditLogView', () => {
 
     expect(fetchUrls().slice(callsBefore)).toEqual([expect.stringContaining('page=1')]);
     expect(screen.getByText(/1 \/ 2/)).toBeInTheDocument();
+    await settle();
   });
 
   // Regression (t-799): the search debounce also ran on mount, and 300ms later
   // reset the page to 1, so paging straight after load bounced back.
   it('stays on page 2 when the search debounce window after load passes', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    freezeTimeouts();
     mockFetchSuccess([makeEntry()], 50);
     render(<AuditLogView />);
-    await screen.findByText(/1 \/ 2/);
+    await flushUntil(() => screen.getByText(/1 \/ 2/));
 
-    await user.click(screen.getByRole('button', { name: /next page/i }));
+    fireEvent.click(screen.getByRole('button', { name: /next page/i }));
     const callsAfterClick = fetchUrls().length;
     await flushSearchDebounce();
 
     expect(screen.getByText(/2 \/ 2/)).toBeInTheDocument();
     expect(fetchUrls().length).toBe(callsAfterClick);
+    await settle();
+  });
+
+  // ── Out-of-order and failed requests ───────────────────────────────────────
+
+  it('ignores a response that arrives after a newer request was made', async () => {
+    const user = userEvent.setup();
+    const json = (entry: ReturnType<typeof makeEntry>) =>
+      new Response(JSON.stringify({ success: true, data: [entry], meta: { total: 50 } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    let releasePage2: () => void = () => {};
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('page=2')) {
+        return new Promise<Response>((resolve) => {
+          releasePage2 = () => resolve(json(makeEntry({ entityName: 'Page Two Row' })));
+        });
+      }
+      return Promise.resolve(json(makeEntry({ entityName: 'Page One Row' })));
+    });
+
+    render(<AuditLogView />);
+    await screen.findByText('Page One Row');
+
+    // page=2 hangs; going back to page 1 is the newer request and resolves first
+    await user.click(screen.getByRole('button', { name: /next page/i }));
+    await user.click(screen.getByRole('button', { name: /previous page/i }));
+    await settle();
+
+    await act(async () => {
+      releasePage2();
+    });
+
+    expect(screen.getByText('Page One Row')).toBeInTheDocument();
+    expect(screen.queryByText('Page Two Row')).not.toBeInTheDocument();
+    expect(screen.getByText(/1 \/ 2/)).toBeInTheDocument();
+  });
+
+  it('shows the load error when fetch itself rejects', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    render(<AuditLogView />);
+
+    expect(await screen.findByText(/failed to load audit log/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /refresh/i })).toBeEnabled();
+  });
+
+  it('shows the load error when the body is not JSON', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response('<html>proxy error</html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        })
+      )
+    );
+    render(<AuditLogView />);
+
+    expect(await screen.findByText(/failed to load audit log/i)).toBeInTheDocument();
   });
 });
