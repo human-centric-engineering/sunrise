@@ -89,13 +89,17 @@ export function AuditLogView() {
 
   const limit = 25;
 
+  // Only a real change to the search resets the page. Scheduling on mount as
+  // well sent anyone who paged within 300ms of load back to page 1 (t-799).
   useEffect(() => {
+    const next = search.trim();
+    if (next === debouncedSearch) return;
     const handle = setTimeout(() => {
-      setDebouncedSearch(search.trim());
+      setDebouncedSearch(next);
       setPage(1);
     }, 300);
     return () => clearTimeout(handle);
-  }, [search]);
+  }, [search, debouncedSearch]);
 
   const fetchEntries = useCallback(async () => {
     setLoading(true);

@@ -16,8 +16,8 @@
  * @see components/admin/orchestration/audit-log/audit-log-view.tsx
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AuditLogView } from '@/components/admin/orchestration/audit-log/audit-log-view';
 
@@ -87,12 +87,36 @@ function mockFetchSuccess(entries: unknown[], total = entries.length) {
     );
 }
 
+function fetchUrls(): string[] {
+  return (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as string);
+}
+
+function lastFetchUrl(): string {
+  const urls = fetchUrls();
+  return urls[urls.length - 1];
+}
+
+/**
+ * Fires the search box's 300ms debounce now, rather than waiting for it in real
+ * time: a wall-clock wait raced the timer when the machine was busy (t-799).
+ * Needs `vi.useFakeTimers({ shouldAdvanceTime: true })` — the auto-advance keeps
+ * Testing Library's own polling alive. The fetch the debounce triggers is called
+ * synchronously in the effect, so it is recorded by the time this resolves.
+ */
+async function flushSearchDebounce() {
+  await act(() => vi.advanceTimersByTimeAsync(300));
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('AuditLogView', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockFetchSuccess([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   // ── Loading ───────────────────────────────────────────────────────────────
@@ -218,46 +242,37 @@ describe('AuditLogView', () => {
   // ── Search filter (server-side via `q` query param) ──────────────────────
 
   it('debounces search input and sends q as a server-side query param', async () => {
-    const user = userEvent.setup();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     mockFetchSuccess([makeEntry()]);
 
     render(<AuditLogView />);
-    await waitFor(() => screen.getByText('Support Bot'));
+    await screen.findByText('Support Bot');
 
     await user.type(screen.getByPlaceholderText(/filter by action/i), 'workflow');
+    await flushSearchDebounce();
 
-    await waitFor(
-      () => {
-        const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
-        const lastUrl = calls[calls.length - 1][0] as string;
-        expect(lastUrl).toContain('q=workflow');
-      },
-      { timeout: 1500 }
-    );
+    expect(lastFetchUrl()).toContain('q=workflow');
   });
 
   it('resets to page=1 when search query changes', async () => {
-    const user = userEvent.setup();
-    // Start on page 2 by having 50 entries
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    // 50 entries at 25 per page → two pages
     mockFetchSuccess([makeEntry()], 50);
 
     render(<AuditLogView />);
-    await waitFor(() => screen.getByText(/1 \/ 2/));
+    await screen.findByText(/1 \/ 2/);
 
     await user.click(screen.getByRole('button', { name: /next page/i }));
-    await waitFor(() => screen.getByText(/2 \/ 2/), { timeout: 3000 });
+    expect(screen.getByText(/2 \/ 2/)).toBeInTheDocument();
 
     await user.type(screen.getByPlaceholderText(/filter by action/i), 'alice');
+    await flushSearchDebounce();
 
-    await waitFor(
-      () => {
-        const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
-        const lastUrl = calls[calls.length - 1][0] as string;
-        expect(lastUrl).toContain('page=1');
-        expect(lastUrl).toContain('q=alice');
-      },
-      { timeout: 1500 }
-    );
+    expect(lastFetchUrl()).toContain('page=1');
+    expect(lastFetchUrl()).toContain('q=alice');
+    expect(screen.getByText(/1 \/ 2/)).toBeInTheDocument();
   });
 
   // ── Refresh ───────────────────────────────────────────────────────────────
@@ -451,36 +466,25 @@ describe('AuditLogView', () => {
   });
 
   it('omits q from the URL when the search input is empty', async () => {
-    const user = userEvent.setup();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     mockFetchSuccess([makeEntry()]);
 
     render(<AuditLogView />);
-    await waitFor(() => screen.getByText('Support Bot'));
+    await screen.findByText('Support Bot');
 
     const searchInput = screen.getByPlaceholderText(/filter by action/i);
     await user.type(searchInput, 'workflow');
+    await flushSearchDebounce();
+    expect(lastFetchUrl()).toContain('q=workflow');
 
-    // Wait for debounced fetch with q
-    await waitFor(
-      () => {
-        const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
-        const lastUrl = calls[calls.length - 1][0] as string;
-        expect(lastUrl).toContain('q=workflow');
-      },
-      { timeout: 1500 }
-    );
-
-    // Clear the search — next debounced fetch should omit q
+    // Clear the search — the next debounced fetch omits q
+    const callsBefore = fetchUrls().length;
     await user.clear(searchInput);
+    await flushSearchDebounce();
 
-    await waitFor(
-      () => {
-        const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
-        const lastUrl = calls[calls.length - 1][0] as string;
-        expect(lastUrl).not.toContain('q=');
-      },
-      { timeout: 1500 }
-    );
+    expect(fetchUrls().length).toBeGreaterThan(callsBefore);
+    expect(lastFetchUrl()).not.toContain('q=');
   });
 
   it('falls back to entityId when entityName is null but entityId is present', async () => {
@@ -559,62 +563,56 @@ describe('AuditLogView', () => {
 
   // ── Pagination navigation ──────────────────────────────────────────────────
 
+  // Changing page sets state and fetches in the same commit, and `user.click`
+  // resolves after that commit, so the request and the counter are both there
+  // to assert on straight away — no wait for a re-render.
+
   it('clicking next page button triggers a new fetch with page=2', async () => {
     const user = userEvent.setup();
     // Set total to 50 so there are multiple pages (25 per page → 2 pages)
     mockFetchSuccess([makeEntry()], 50);
     render(<AuditLogView />);
-    await waitFor(() => screen.getByText(/1 \/ 2/));
+    await screen.findByText(/1 \/ 2/);
 
     const nextButton = screen.getByRole('button', { name: /next page/i });
     expect(nextButton).not.toBeDisabled();
+    const callsBefore = fetchUrls().length;
     await user.click(nextButton);
 
-    // Don't rely on "last fetch URL" — under load a debounced search/filter
-    // refetch could interleave. Assert that *some* fetch carried page=2.
-    await waitFor(
-      () => {
-        const urls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map(
-          (c) => c[0] as string
-        );
-        expect(urls.some((u) => u.includes('page=2'))).toBe(true);
-      },
-      { timeout: 3000 }
-    );
+    expect(fetchUrls().slice(callsBefore)).toEqual([expect.stringContaining('page=2')]);
+    expect(screen.getByText(/2 \/ 2/)).toBeInTheDocument();
   });
 
   it('clicking prev page button from page 2 triggers fetch with page=1', async () => {
     const user = userEvent.setup();
     mockFetchSuccess([makeEntry()], 50);
     render(<AuditLogView />);
-    await waitFor(() => screen.getByText(/1 \/ 2/));
+    await screen.findByText(/1 \/ 2/);
 
-    // Navigate to page 2 and wait for both the fetch *and* the re-render
-    // to settle before clicking prev — clicking during a pending update
-    // races the React commit and the second click can be dropped.
     await user.click(screen.getByRole('button', { name: /next page/i }));
-    await waitFor(() => screen.getByText(/2 \/ 2/), { timeout: 3000 });
-    await waitFor(
-      () => {
-        const urls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map(
-          (c) => c[0] as string
-        );
-        expect(urls.some((u) => u.includes('page=2'))).toBe(true);
-      },
-      { timeout: 3000 }
-    );
+    expect(screen.getByText(/2 \/ 2/)).toBeInTheDocument();
 
-    const callsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    const callsBefore = fetchUrls().length;
     await user.click(screen.getByRole('button', { name: /previous page/i }));
 
-    // Any fetch after the prev-click that carries page=1 — order-independent.
-    await waitFor(
-      () => {
-        const callsAfter = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
-        const newUrls = callsAfter.slice(callsBefore).map((c) => c[0] as string);
-        expect(newUrls.some((u) => u.includes('page=1'))).toBe(true);
-      },
-      { timeout: 3000 }
-    );
+    expect(fetchUrls().slice(callsBefore)).toEqual([expect.stringContaining('page=1')]);
+    expect(screen.getByText(/1 \/ 2/)).toBeInTheDocument();
+  });
+
+  // Regression (t-799): the search debounce also ran on mount, and 300ms later
+  // reset the page to 1, so paging straight after load bounced back.
+  it('stays on page 2 when the search debounce window after load passes', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    mockFetchSuccess([makeEntry()], 50);
+    render(<AuditLogView />);
+    await screen.findByText(/1 \/ 2/);
+
+    await user.click(screen.getByRole('button', { name: /next page/i }));
+    const callsAfterClick = fetchUrls().length;
+    await flushSearchDebounce();
+
+    expect(screen.getByText(/2 \/ 2/)).toBeInTheDocument();
+    expect(fetchUrls().length).toBe(callsAfterClick);
   });
 });
