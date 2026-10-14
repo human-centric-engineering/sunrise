@@ -14,7 +14,8 @@
  *      not, and hands them no colleague's id.
  *   2. After erasure, no delivery payload holds the subject's id; an event
  *      about their activity keeps only its record keys, so the free text in
- *      it is gone; one still retrying is stopped; one about a change they made
+ *      it is gone; one still retrying is stopped, and one already exhausted is
+ *      marked so a retry refuses it; one about a change they made
  *      keeps the change and loses only them. Each keeps its destination.
  *   3. A colleague's email subscription to the subject's address (typed in a
  *      different case) is cleared and deactivated, with an audit entry that
@@ -41,6 +42,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { eraseUser } from '@/lib/privacy/erase-user';
 import { SUBJECT_DATA_SOURCES } from '@/lib/privacy/export-sources';
+import { isStoppedByErasure } from '@/lib/orchestration/webhooks/not-retried';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
@@ -254,6 +256,12 @@ async function main(): Promise<void> {
         error: SECRET_TEXT,
       },
       'failed'
+    );
+    // Their activity, already out of attempts: the DLQ's population (t-793).
+    const deadLettered = await webhook(
+      'chat_budget_exceeded_per_turn',
+      { agentId: agent.id, conversationId: conversation.id, usedUsd: 0.5, limitUsd: 0.1 },
+      'exhausted'
     );
     // Nothing to do with the subject.
     const unrelated = await webhook('conversation_escalated', {
@@ -472,6 +480,11 @@ async function main(): Promise<void> {
         perTurnAfter.nextRetryAt === null &&
         (perTurnAfter.lastError ?? '').includes('subject erased'),
       'an event about their conversation that was retrying is stopped'
+    );
+    const deadLetteredAfter = row(deadLettered.id);
+    check(
+      deadLetteredAfter.status === 'exhausted' && isStoppedByErasure(deadLetteredAfter.lastError),
+      'one already in the dead-letter queue keeps its status and is marked, so a replay refuses it (t-793)'
     );
     const agentUpdatedAfter = webhookAfter.find((r) => r.id === agentUpdated.id);
     const agentUpdatedData = dataOf(row(agentUpdated.id).payload);

@@ -31,9 +31,11 @@ import { matchesEntityScope } from '@/lib/orchestration/webhooks/event-entity-ke
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
 import {
   AWAITING_RETRY_STATUSES,
+  claimArmedRetry,
   isArmedRetry,
   isAwaitingRetry,
   isStoppedByErasure,
+  logSettledInFlight,
   notRetried,
 } from '@/lib/orchestration/webhooks/not-retried';
 import {
@@ -213,9 +215,15 @@ export async function retryDelivery(
   if (isStoppedByErasure(delivery.lastError)) return false;
 
   // Reset status for retry, only if the row is as it was read. An erasure that
-  // committed in between has redacted it or stopped it, and is not undone.
+  // committed in between has redacted it or stopped it, and is not undone; a
+  // timer or the tick that claimed it meanwhile sends it instead.
   const reset = await prisma.aiWebhookDelivery.updateMany({
-    where: { id: deliveryId, status: delivery.status, lastError: delivery.lastError },
+    where: {
+      id: deliveryId,
+      status: delivery.status,
+      lastError: delivery.lastError,
+      nextRetryAt: delivery.nextRetryAt,
+    },
     data: {
       status: 'pending',
       attempts: 0,
@@ -272,8 +280,10 @@ export async function processPendingRetries(): Promise<number> {
   await Promise.allSettled(
     pending.map(async (delivery) => {
       if (!delivery.subscription || !delivery.subscription.isActive) {
-        await prisma.aiWebhookDelivery.update({
-          where: { id: delivery.id },
+        // Conditional: an erasure that stopped the row since it was read keeps
+        // its mark, which a manual retry reads (t-793).
+        await prisma.aiWebhookDelivery.updateMany({
+          where: { id: delivery.id, status: { in: [...AWAITING_RETRY_STATUSES] } },
           data: {
             status: 'exhausted',
             nextRetryAt: null,
@@ -284,6 +294,14 @@ export async function processPendingRetries(): Promise<number> {
         });
         return;
       }
+
+      // Claimed, so an in-process timer firing for the same row now does not
+      // send it as well (t-793).
+      if (!delivery.nextRetryAt) return;
+      const claimed = await prisma.aiWebhookDelivery.updateMany(
+        claimArmedRetry(delivery.id, delivery.nextRetryAt)
+      );
+      if (claimed.count === 0) return;
 
       const storedPayload = toJsonRecord(delivery.payload);
       const body = JSON.stringify({
@@ -311,15 +329,28 @@ export async function processPendingRetries(): Promise<number> {
 const SUBSCRIPTION_DELETED = 'subscription deleted';
 
 /**
- * An attempt finished after its row was settled elsewhere, most likely
- * stopped by an erasure, and left the row as it found it (t-793). The send
- * itself already happened. This records that its outcome was not written.
+ * An attempt finished after its row stopped awaiting a send (t-793): its
+ * outcome is not written over the stop, but the row still records that an
+ * attempt went out — when, and what came back. Neither the status, the
+ * `lastError` that marks an erasure's stop, nor the destination is touched:
+ * an erasure may have redacted the destination, and writing the
+ * subscription's current one back could restore an erased address.
  */
-function logSettledInFlight(deliveryId: string, outcome: 'delivered' | 'failed'): void {
-  logger.info('Webhook delivery outcome not recorded: the row was settled while in flight', {
-    deliveryId,
-    outcome,
+async function recordSettledAttempt(
+  deliveryId: string,
+  at: Date,
+  outcome: DeliveryOutcome,
+  kind: 'delivered' | 'failed'
+): Promise<void> {
+  await prisma.aiWebhookDelivery.updateMany({
+    where: { id: deliveryId },
+    data: {
+      attempts: { increment: 1 },
+      lastAttemptAt: at,
+      lastResponseCode: outcome.statusCode ?? null,
+    },
   });
+  logSettledInFlight('Webhook', deliveryId, kind);
 }
 
 /**
@@ -368,7 +399,7 @@ async function attemptDelivery(
         ...recordDestination,
       },
     });
-    if (settled.count === 0) logSettledInFlight(deliveryId, 'delivered');
+    if (settled.count === 0) await recordSettledAttempt(deliveryId, now, outcome, 'delivered');
     return;
   }
 
@@ -378,10 +409,6 @@ async function attemptDelivery(
   });
 
   if (!delivery) return;
-  if (!isAwaitingRetry(delivery.status)) {
-    logSettledInFlight(deliveryId, 'failed');
-    return;
-  }
 
   const newAttempts = delivery.attempts + 1;
   // `terminal` forces exhausted regardless of attempt count.
@@ -394,9 +421,9 @@ async function attemptDelivery(
   const retryDelay = backoffIndex >= 0 ? policy.retryBackoffMs[backoffIndex] : undefined;
   const nextRetryAt = exhausted || !retryDelay ? null : new Date(Date.now() + retryDelay);
 
-  // Conditional for the same reason as the delivered write: an erasure can
-  // commit between the read above and this write. Matching nothing, it arms
-  // no timer.
+  // Conditional for the same reason as the delivered write: one an erasure
+  // stopped, before the read above or after it, is left stopped. Matching
+  // nothing, it arms no timer.
   const written = await prisma.aiWebhookDelivery.updateMany({
     where: { id: deliveryId, status: { in: [...AWAITING_RETRY_STATUSES] } },
     data: {
@@ -410,7 +437,7 @@ async function attemptDelivery(
     },
   });
   if (written.count === 0) {
-    logSettledInFlight(deliveryId, 'failed');
+    await recordSettledAttempt(deliveryId, now, outcome, 'failed');
     return;
   }
 
@@ -676,8 +703,10 @@ function scheduleRetry(
           if (delivery && !isArmedRetry(delivery, armedFor)) return;
           if (!delivery || !sub || !sub.isActive) {
             if (delivery) {
-              await prisma.aiWebhookDelivery.update({
-                where: { id: deliveryId },
+              // Conditional: an erasure that stopped the row since it was read
+              // keeps its mark, which a manual retry reads (t-793).
+              await prisma.aiWebhookDelivery.updateMany({
+                where: { id: deliveryId, status: { in: [...AWAITING_RETRY_STATUSES] } },
                 data: {
                   status: 'exhausted',
                   nextRetryAt: null,
@@ -689,6 +718,12 @@ function scheduleRetry(
             }
             return;
           }
+          // Claimed, so the maintenance tick or a manual retry racing this
+          // timer does not send the row as well (t-793).
+          const claimed = await prisma.aiWebhookDelivery.updateMany(
+            claimArmedRetry(deliveryId, armedFor)
+          );
+          if (claimed.count === 0) return;
           const storedPayload = toJsonRecord(delivery.payload);
           const body = JSON.stringify({
             ...storedPayload,

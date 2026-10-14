@@ -425,7 +425,7 @@ describe('retryDelivery', () => {
     // The reset matches the row as it was read, so a concurrent change is not undone.
     expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'del-1', status: 'exhausted', lastError: null },
+        where: { id: 'del-1', status: 'exhausted', lastError: null, nextRetryAt: null },
         data: expect.objectContaining({
           status: 'pending',
           attempts: 0,
@@ -513,15 +513,45 @@ describe('processPendingRetries', () => {
   });
 
   it('processes pending retries and returns count', async () => {
+    const due = new Date(Date.now() - 1_000);
     vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([
-      { ...makeDelivery({ id: 'del-1', attempts: 1 }), subscription: makeSub() },
-      { ...makeDelivery({ id: 'del-2', attempts: 2 }), subscription: makeSub({ id: 'sub-2' }) },
+      {
+        ...makeDelivery({ id: 'del-1', status: 'failed', attempts: 1, nextRetryAt: due }),
+        subscription: makeSub(),
+      },
+      {
+        ...makeDelivery({ id: 'del-2', status: 'failed', attempts: 2, nextRetryAt: due }),
+        subscription: makeSub({ id: 'sub-2' }),
+      },
     ] as never);
 
     const count = await processPendingRetries();
 
     expect(count).toBe(2);
     expect(mockFetch).toHaveBeenCalledTimes(2);
+    // Each row is claimed before it is sent, so a timer firing for it now
+    // does not send it as well (t-793).
+    for (const id of ['del-1', 'del-2']) {
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith({
+        where: { id, status: 'failed', nextRetryAt: due },
+        data: { nextRetryAt: expect.any(Date) },
+      });
+    }
+  });
+
+  it('sends nothing for a row a timer claimed first (t-793)', async () => {
+    const due = new Date(Date.now() - 1_000);
+    vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([
+      {
+        ...makeDelivery({ id: 'del-1', status: 'failed', attempts: 1, nextRetryAt: due }),
+        subscription: makeSub(),
+      },
+    ] as never);
+    vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValueOnce({ count: 0 });
+
+    await processPendingRetries();
+
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('queries for failed deliveries past their nextRetryAt without an attempts cap', async () => {
@@ -779,11 +809,14 @@ describe('scheduleRetry (in-process timer-based retry)', () => {
     await vi.runAllTimersAsync();
 
     // Assert: delivery marked as exhausted because subscription is inactive
-    expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith(
+    // Conditional, so an erasure's mark on a row stopped meanwhile survives (t-793).
+    expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: AWAITING,
         data: expect.objectContaining({ status: 'exhausted', nextRetryAt: null }),
       })
     );
+    expect(prisma.aiWebhookDelivery.update).not.toHaveBeenCalled();
   });
 
   it('marks delivery as exhausted when subscription is null during scheduled retry', async () => {
@@ -798,11 +831,14 @@ describe('scheduleRetry (in-process timer-based retry)', () => {
     await vi.runAllTimersAsync();
 
     // Assert: delivery marked as exhausted
-    expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith(
+    // Conditional, so an erasure's mark on a row stopped meanwhile survives (t-793).
+    expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: AWAITING,
         data: expect.objectContaining({ status: 'exhausted', nextRetryAt: null }),
       })
     );
+    expect(prisma.aiWebhookDelivery.update).not.toHaveBeenCalled();
   });
 
   it.each(['exhausted', 'delivered'])(
@@ -910,7 +946,7 @@ describe('an erasure’s stop on a delivery (t-793)', () => {
       );
     });
 
-    it('writes nothing and arms no timer when the failure re-reads a stopped row', async () => {
+    it('leaves a stopped row stopped and arms no timer when the send fails', async () => {
       mockFetch.mockResolvedValue({ ok: false, status: 503 });
       vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
         makeDelivery({
@@ -919,13 +955,27 @@ describe('an erasure’s stop on a delivery (t-793)', () => {
         })
       );
 
+      // The stopped row matches no awaiting status
+      vi.mocked(prisma.aiWebhookDelivery.updateMany)
+        .mockResolvedValueOnce({ count: 0 })
+        .mockResolvedValueOnce({ count: 1 });
+
       await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
       await vi.advanceTimersByTimeAsync(10 * 60_000);
 
-      expect(prisma.aiWebhookDelivery.updateMany).not.toHaveBeenCalled();
       expect(prisma.aiWebhookDelivery.update).not.toHaveBeenCalled();
       expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(prisma.aiWebhookSubscription.findUnique).not.toHaveBeenCalled();
+      // The attempt that went out is still recorded, without touching the
+      // status, the erasure's mark or the destination.
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenLastCalledWith({
+        where: { id: 'del-1' },
+        data: {
+          attempts: { increment: 1 },
+          lastAttemptAt: expect.any(Date),
+          lastResponseCode: 503,
+        },
+      });
     });
 
     it('arms no timer when the stop lands between the failure’s read and its write', async () => {
@@ -940,7 +990,8 @@ describe('an erasure’s stop on a delivery (t-793)', () => {
       await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
       await vi.advanceTimersByTimeAsync(10 * 60_000);
 
-      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledTimes(1);
+      // The conditional outcome write, then the attempt recorded alone
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledTimes(2);
       expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: AWAITING,
@@ -989,7 +1040,7 @@ describe('an erasure’s stop on a delivery (t-793)', () => {
       expect(result).toBe(false);
       expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'del-1', status: 'exhausted', lastError: 'HTTP 503' },
+          where: { id: 'del-1', status: 'exhausted', lastError: 'HTTP 503', nextRetryAt: null },
         })
       );
       expect(prisma.aiWebhookDelivery.findUnique).toHaveBeenCalledTimes(1);
@@ -1055,6 +1106,26 @@ describe('an erasure’s stop on a delivery (t-793)', () => {
       );
       await vi.advanceTimersByTimeAsync(10_000);
 
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('claims the row before sending, and sends nothing when the tick claimed it first', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 503 });
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockImplementation((async () =>
+        armedRow({ attempts: 0 })) as never);
+
+      await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+      const armedFor: unknown = armedRow().nextRetryAt;
+      if (!(armedFor instanceof Date)) throw new Error('the failed attempt armed no retry');
+      // The tick's claim landed first: the timer's claim matches nothing.
+      vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValueOnce({ count: 0 });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenLastCalledWith({
+        where: { id: 'del-1', status: 'failed', nextRetryAt: armedFor },
+        data: { nextRetryAt: expect.any(Date) },
+      });
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
@@ -1584,8 +1655,8 @@ describe('delivery destination recording', () => {
 
       expect(mockFetch).not.toHaveBeenCalled();
       // The real failure survives; the reason retries stopped is appended to it.
-      expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith({
-        where: { id: 'del-gone' },
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith({
+        where: { id: 'del-gone', status: { in: ['pending', 'failed'] } },
         data: {
           status: 'exhausted',
           nextRetryAt: null,
@@ -1601,8 +1672,8 @@ describe('delivery destination recording', () => {
 
       await processPendingRetries();
 
-      expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith({
-        where: { id: 'del-gone' },
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith({
+        where: { id: 'del-gone', status: { in: ['pending', 'failed'] } },
         data: expect.objectContaining({ lastError: 'Not retried: subscription deleted' }),
       });
     });
@@ -1618,8 +1689,8 @@ describe('delivery destination recording', () => {
       await processPendingRetries();
 
       expect(mockFetch).not.toHaveBeenCalled();
-      expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith({
-        where: { id: 'del-off' },
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith({
+        where: { id: 'del-off', status: { in: ['pending', 'failed'] } },
         data: expect.objectContaining({
           status: 'exhausted',
           lastError: 'Subscription deactivated',
@@ -1641,8 +1712,8 @@ describe('delivery destination recording', () => {
 
       // Only the initial attempt reached the network; the retry did not.
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(prisma.aiWebhookDelivery.update).toHaveBeenLastCalledWith({
-        where: { id: 'del-1' },
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenLastCalledWith({
+        where: AWAITING,
         data: {
           status: 'exhausted',
           nextRetryAt: null,
@@ -1663,8 +1734,8 @@ describe('delivery destination recording', () => {
       await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
       await vi.runAllTimersAsync();
 
-      expect(prisma.aiWebhookDelivery.update).toHaveBeenLastCalledWith({
-        where: { id: 'del-1' },
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenLastCalledWith({
+        where: AWAITING,
         data: expect.objectContaining({
           status: 'exhausted',
           lastError: 'Subscription deactivated',

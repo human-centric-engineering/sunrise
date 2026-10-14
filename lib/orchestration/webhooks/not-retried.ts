@@ -8,6 +8,8 @@
  *
  * Platform-agnostic: no Next.js imports.
  */
+import { logger } from '@/lib/logging';
+
 export function notRetried(lastError: string | null, reason: string): string {
   return lastError ? `${lastError}${notRetriedSuffix(reason)}` : `Not retried: ${reason}`;
 }
@@ -71,15 +73,65 @@ export function isAwaitingRetry(status: string): boolean {
  *   - stopped by an erasure, or delivered;
  *   - an admin retried it by hand, which resets it to `pending`, and if that
  *     attempt fails, writes a new `nextRetryAt` and arms its own timer;
- *   - the maintenance tick retried it first.
+ *   - the maintenance tick, or another timer, claimed it
+ *     ({@link claimArmedRetry}).
  *
  * {@link isAwaitingRetry} alone could not tell the first of those from a
  * manual retry, which read `pending` or `failed` too. A stale timer then sent
- * the row a second time.
+ * the row a second time. This is the cheap check before the claim; the claim
+ * is what settles a race.
  */
 export function isArmedRetry(
   row: { status: string; nextRetryAt: Date | null },
   armedFor: Date
 ): boolean {
   return row.status === 'failed' && row.nextRetryAt?.getTime() === armedFor.getTime();
+}
+
+/**
+ * How far a claimed retry's `nextRetryAt` moves on. Long enough for any one
+ * attempt (the dispatch timeouts are seconds). Short enough that a process
+ * which claimed a row and died hands it back to the maintenance tick.
+ */
+export const RETRY_CLAIM_LEASE_MS = 5 * 60_000;
+
+/**
+ * The `updateMany` arguments that claim a `failed` row's due retry (t-793).
+ * They match only the row as the sender read it, `failed` with that
+ * `nextRetryAt`, and move `nextRetryAt` on by {@link RETRY_CLAIM_LEASE_MS}.
+ * Every sender of a due retry (the in-process timer, the maintenance tick)
+ * claims first and sends only on `count === 1`. Two of them racing for one
+ * row then send it once. A manual retry's reset matches `nextRetryAt` too, so
+ * it loses to a claim and a claim loses to it. The attempt's own outcome write
+ * replaces the lease with the real next retry time, or clears it.
+ */
+export function claimArmedRetry(
+  id: string,
+  armedFor: Date,
+  now: Date = new Date()
+): {
+  where: { id: string; status: 'failed'; nextRetryAt: Date };
+  data: { nextRetryAt: Date };
+} {
+  return {
+    where: { id, status: 'failed', nextRetryAt: armedFor },
+    data: { nextRetryAt: new Date(now.getTime() + RETRY_CLAIM_LEASE_MS) },
+  };
+}
+
+/**
+ * An attempt finished after its row stopped awaiting a send, and its outcome
+ * was not written over that (t-793). An erasure stopped the row, or an admin
+ * retried it by hand while this attempt was out. The send itself happened; the
+ * row records it as an attempt, and this line says which outcome it had.
+ */
+export function logSettledInFlight(
+  kind: 'Webhook' | 'Hook',
+  deliveryId: string,
+  outcome: 'delivered' | 'failed'
+): void {
+  logger.info(`${kind} delivery outcome not recorded: the row was settled while in flight`, {
+    deliveryId,
+    outcome,
+  });
 }

@@ -374,7 +374,7 @@ describe('retryHookDelivery', () => {
     // The reset matches the row as it was read, so a concurrent change is not undone.
     expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'del-1', status: 'exhausted', lastError: null },
+        where: { id: 'del-1', status: 'exhausted', lastError: null, nextRetryAt: null },
         data: expect.objectContaining({
           status: 'pending',
           attempts: 0,
@@ -416,12 +416,16 @@ describe('an erasure’s stop on a hook delivery (t-793)', () => {
     expect(prisma.aiEventHookDelivery.update).not.toHaveBeenCalled();
   });
 
-  it('writes nothing and arms no timer when the failure re-reads a stopped row', async () => {
+  it('leaves a stopped row stopped and arms no timer when the send fails', async () => {
     vi.useFakeTimers();
     mockFetch.mockResolvedValue({ ok: false, status: 503 });
     vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue(
       makeDelivery({ status: 'exhausted', lastError: 'Not retried: subject erased' })
     );
+    // The stopped row matches no awaiting status
+    vi.mocked(prisma.aiEventHookDelivery.updateMany)
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
 
     emitHookEvent('conversation.started', { conversationId: 'conv-1' });
     await vi.waitFor(() => {
@@ -432,9 +436,15 @@ describe('an erasure’s stop on a hook delivery (t-793)', () => {
     });
     await vi.advanceTimersByTimeAsync(10 * 60_000);
 
-    expect(prisma.aiEventHookDelivery.updateMany).not.toHaveBeenCalled();
     expect(prisma.aiEventHookDelivery.update).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenCalledTimes(1);
+    // The attempt that went out is still recorded, without touching the
+    // status or the erasure's mark.
+    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledTimes(2);
+    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'del-1' },
+      data: { attempts: { increment: 1 }, lastAttemptAt: expect.any(Date), lastResponseCode: 503 },
+    });
   });
 
   it('arms no timer when the stop lands between the failure’s read and its write', async () => {
@@ -446,8 +456,9 @@ describe('an erasure’s stop on a hook delivery (t-793)', () => {
     vi.mocked(prisma.aiEventHookDelivery.updateMany).mockResolvedValue({ count: 0 });
 
     emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+    // The conditional outcome write, then the attempt recorded alone
     await vi.waitFor(() => {
-      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledTimes(2);
     });
     await vi.advanceTimersByTimeAsync(10 * 60_000);
 
@@ -482,7 +493,7 @@ describe('an erasure’s stop on a hook delivery (t-793)', () => {
     expect(result).toBe(false);
     expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'del-1', status: 'exhausted', lastError: 'HTTP 503' },
+        where: { id: 'del-1', status: 'exhausted', lastError: 'HTTP 503', nextRetryAt: null },
       })
     );
     expect(prisma.aiEventHookDelivery.findUnique).toHaveBeenCalledTimes(1);
@@ -504,6 +515,52 @@ describe('an erasure’s stop on a hook delivery (t-793)', () => {
 
     expect(result).toBe(false);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('settles a reset row whose payload no longer parses, rather than leave it pending', async () => {
+    vi.mocked(prisma.aiEventHookDelivery.findUnique)
+      .mockResolvedValueOnce({
+        ...makeDelivery({ status: 'exhausted' }),
+        hook: makeHook(),
+      } as never)
+      .mockResolvedValueOnce(makeDelivery({ status: 'pending', payload: { not: 'an event' } }));
+
+    const result = await retryHookDelivery('del-1');
+
+    expect(result).toBe(false);
+    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'del-1', status: 'pending' },
+      data: { status: 'exhausted', nextRetryAt: null, lastError: 'invalid_payload' },
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('claims the row before a timer sends it, and sends nothing when the tick claimed it first', async () => {
+    vi.useFakeTimers();
+    mockFetch.mockResolvedValue({ ok: false, status: 503 });
+    vi.mocked(prisma.aiEventHookDelivery.findUnique)
+      .mockResolvedValueOnce(makeDelivery({ status: 'pending' }))
+      .mockImplementationOnce((async () => ({
+        ...armedRow({ attempts: 1 }),
+        hook: makeHook(),
+      })) as never);
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledTimes(1);
+    });
+    const armedFor: unknown = armedRow().nextRetryAt;
+    if (!(armedFor instanceof Date)) throw new Error('the failed attempt armed no retry');
+    // The tick's claim landed first: the timer's claim matches nothing.
+    vi.mocked(prisma.aiEventHookDelivery.updateMany).mockResolvedValueOnce({ count: 0 });
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'del-1', status: 'failed', nextRetryAt: armedFor },
+      data: { nextRetryAt: expect.any(Date) },
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it('does not send again from a timer armed before the row was reset by hand', async () => {
@@ -598,8 +655,13 @@ describe('scheduleRetry (via emitHookEvent failure + timer advancement)', () => 
     // Assert — the retry fired, second fetch was called, and delivery flipped to delivered
     expect(mockFetch).toHaveBeenCalledTimes(2);
 
+    // The failed outcome, the timer's claim, then the delivered outcome
     const allUpdateCalls = vi.mocked(prisma.aiEventHookDelivery.updateMany).mock.calls;
-    expect(allUpdateCalls.length).toBe(2);
+    expect(allUpdateCalls.length).toBe(3);
+    expect(allUpdateCalls[1][0]).toMatchObject({
+      where: { id: deliveryId, status: 'failed' },
+      data: { nextRetryAt: expect.any(Date) },
+    });
     expect(allUpdateCalls.at(-1)![0]).toMatchObject({
       where: { id: deliveryId, status: AWAITING_STATUS },
       data: expect.objectContaining({
@@ -654,15 +716,15 @@ describe('scheduleRetry (via emitHookEvent failure + timer advancement)', () => 
     // Assert — fetch was NOT called again (no re-dispatch)
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
-    // An exhausted update was issued for the disabled hook, on top of the one
-    // outcome write the failed attempt made (that one is the conditional updateMany).
-    expect(vi.mocked(prisma.aiEventHookDelivery.updateMany).mock.calls.length).toBe(1);
-    const allUpdateCalls = vi.mocked(prisma.aiEventHookDelivery.update).mock.calls;
-    expect(allUpdateCalls.length).toBe(1);
+    // An exhausted write for the disabled hook, after the failed attempt's
+    // outcome write. Both conditional, so an erasure's mark survives (t-793).
+    const allUpdateCalls = vi.mocked(prisma.aiEventHookDelivery.updateMany).mock.calls;
+    expect(allUpdateCalls.length).toBe(2);
     expect(allUpdateCalls.at(-1)![0]).toMatchObject({
-      where: { id: deliveryId },
+      where: { id: deliveryId, status: AWAITING_STATUS },
       data: expect.objectContaining({ status: 'exhausted', nextRetryAt: null }),
     });
+    expect(prisma.aiEventHookDelivery.update).not.toHaveBeenCalled();
   });
 
   it.each(['exhausted', 'delivered'])(
@@ -790,14 +852,15 @@ describe('scheduleRetry (via emitHookEvent failure + timer advancement)', () => 
     // Assert — fetch was NOT called again (returned early for non-webhook action)
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
-    // parseDeliveryForDispatch issues an exhausted update for the invalid action row, on
-    // top of the initial failure write (a conditional updateMany): 2 writes in total.
-    expect(vi.mocked(prisma.aiEventHookDelivery.updateMany).mock.calls.length).toBe(1);
-    const allUpdates = vi.mocked(prisma.aiEventHookDelivery.update).mock.calls;
-    expect(allUpdates.length).toBe(1);
-    const exhaustedUpdate = allUpdates[0];
+    // parseDeliveryForDispatch issues an exhausted write for the invalid action row, after
+    // the initial failure write. Both conditional: 2 updateMany writes in total.
+    const allUpdates = vi.mocked(prisma.aiEventHookDelivery.updateMany).mock.calls;
+    expect(allUpdates.length).toBe(2);
+    expect(prisma.aiEventHookDelivery.update).not.toHaveBeenCalled();
+    const exhaustedUpdate = allUpdates[1];
     expect(exhaustedUpdate?.[0]).toMatchObject({
-      where: { id: deliveryId },
+      // Only over the lastError it read, so an erasure's mark survives (t-793)
+      where: { id: deliveryId, lastError: null },
       data: expect.objectContaining({
         status: 'exhausted',
         lastError: 'invalid_action',
@@ -817,15 +880,44 @@ describe('processPendingHookRetries', () => {
   });
 
   it('processes pending retries and returns count', async () => {
+    const due = new Date(Date.now() - 1_000);
     vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([
-      { ...makeDelivery({ id: 'del-1', attempts: 1 }), hook: makeHook() },
-      { ...makeDelivery({ id: 'del-2', attempts: 2 }), hook: makeHook({ id: 'hook-2' }) },
+      {
+        ...makeDelivery({ id: 'del-1', status: 'failed', attempts: 1, nextRetryAt: due }),
+        hook: makeHook(),
+      },
+      {
+        ...makeDelivery({ id: 'del-2', status: 'failed', attempts: 2, nextRetryAt: due }),
+        hook: makeHook({ id: 'hook-2' }),
+      },
     ] as never);
 
     const count = await processPendingHookRetries();
 
     expect(count).toBe(2);
     expect(mockFetch).toHaveBeenCalledTimes(2);
+    // Each row is claimed before it is sent (t-793).
+    for (const id of ['del-1', 'del-2']) {
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith({
+        where: { id, status: 'failed', nextRetryAt: due },
+        data: { nextRetryAt: expect.any(Date) },
+      });
+    }
+  });
+
+  it('sends nothing for a row a timer claimed first (t-793)', async () => {
+    const due = new Date(Date.now() - 1_000);
+    vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([
+      {
+        ...makeDelivery({ id: 'del-1', status: 'failed', attempts: 1, nextRetryAt: due }),
+        hook: makeHook(),
+      },
+    ] as never);
+    vi.mocked(prisma.aiEventHookDelivery.updateMany).mockResolvedValueOnce({ count: 0 });
+
+    await processPendingHookRetries();
+
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('marks deliveries exhausted when their hook has been disabled', async () => {
@@ -836,9 +928,9 @@ describe('processPendingHookRetries', () => {
     await processPendingHookRetries();
 
     expect(mockFetch).not.toHaveBeenCalled();
-    expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith(
+    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'del-1' },
+        where: { id: 'del-1', status: AWAITING_STATUS },
         data: expect.objectContaining({ status: 'exhausted', nextRetryAt: null }),
       })
     );
@@ -951,9 +1043,9 @@ describe('retryHookDelivery (parseDeliveryForDispatch validation)', () => {
     expect(result).toBe(false);
 
     // Delivery marked exhausted with the canonical lastError string
-    expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith(
+    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'del-bad-action' },
+        where: { id: 'del-bad-action', lastError: null },
         data: expect.objectContaining({
           status: 'exhausted',
           nextRetryAt: null,
@@ -988,9 +1080,9 @@ describe('retryHookDelivery (parseDeliveryForDispatch validation)', () => {
     expect(result).toBe(false);
 
     // Delivery marked exhausted with the canonical lastError string
-    expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith(
+    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'del-bad-payload' },
+        where: { id: 'del-bad-payload', lastError: null },
         data: expect.objectContaining({
           status: 'exhausted',
           lastError: 'invalid_payload',
@@ -1086,7 +1178,13 @@ describe('processPendingHookRetries (parseDeliveryForDispatch validation in batc
         }),
       },
       {
-        ...makeDelivery({ id: validId, attempts: 1, payload: validPayload }),
+        ...makeDelivery({
+          id: validId,
+          status: 'failed',
+          attempts: 1,
+          payload: validPayload,
+          nextRetryAt: new Date(Date.now() - 1_000),
+        }),
         hook: makeHook({
           id: 'hook-valid',
           isEnabled: true,
@@ -1099,9 +1197,9 @@ describe('processPendingHookRetries (parseDeliveryForDispatch validation in batc
     await processPendingHookRetries();
 
     // Assert — the invalid delivery was marked exhausted with invalid_action
-    expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith(
+    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: invalidId },
+        where: { id: invalidId, lastError: null },
         data: expect.objectContaining({
           status: 'exhausted',
           lastError: 'invalid_action',
@@ -1551,8 +1649,8 @@ describe('delivery destination recording', () => {
 
       expect(mockFetch).not.toHaveBeenCalled();
       // The real failure survives; the reason retries stopped is appended to it.
-      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith({
-        where: { id: 'del-gone' },
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith({
+        where: { id: 'del-gone', status: AWAITING_STATUS },
         data: {
           status: 'exhausted',
           nextRetryAt: null,
@@ -1568,8 +1666,8 @@ describe('delivery destination recording', () => {
 
       await processPendingHookRetries();
 
-      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith({
-        where: { id: 'del-gone' },
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith({
+        where: { id: 'del-gone', status: AWAITING_STATUS },
         data: expect.objectContaining({ lastError: 'Not retried: hook deleted' }),
       });
     });
@@ -1584,8 +1682,8 @@ describe('delivery destination recording', () => {
 
       await processPendingHookRetries();
 
-      expect(prisma.aiEventHookDelivery.update).toHaveBeenCalledWith({
-        where: { id: 'del-off' },
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith({
+        where: { id: 'del-off', status: AWAITING_STATUS },
         data: { status: 'exhausted', nextRetryAt: null },
       });
     });
@@ -1609,8 +1707,8 @@ describe('delivery destination recording', () => {
       await vi.advanceTimersByTimeAsync(10_000);
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(prisma.aiEventHookDelivery.update).toHaveBeenLastCalledWith({
-        where: { id: 'del-1' },
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenLastCalledWith({
+        where: { id: 'del-1', status: AWAITING_STATUS },
         data: {
           status: 'exhausted',
           nextRetryAt: null,
@@ -1636,8 +1734,8 @@ describe('delivery destination recording', () => {
       });
       await vi.advanceTimersByTimeAsync(10_000);
 
-      expect(prisma.aiEventHookDelivery.update).toHaveBeenLastCalledWith({
-        where: { id: 'del-1' },
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenLastCalledWith({
+        where: { id: 'del-1', status: AWAITING_STATUS },
         data: { status: 'exhausted', nextRetryAt: null },
       });
     });

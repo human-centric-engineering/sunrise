@@ -278,22 +278,32 @@ transaction):
      - An attempt already in flight when the erasure commits writes its
        outcome only to a row still `pending` or `failed`, so a stopped row
        stays stopped, and no further retry is armed. The POST that was
-       already out cannot be recalled.
-     - A retry timer fires only for the exact retry it was armed for: still
-       `failed`, with the same `nextRetryAt` (`isArmedRetry`). A row the
-       erasure stopped, or one an admin retried by hand meanwhile, is left
-       alone. A stale timer used to send the hand-retried row a second time.
+       already out cannot be recalled; the row records it as an attempt
+       (count, time, response code) without touching its status, its mark or
+       its destination.
+     - A due retry is sent only by whoever claims it: the in-process timer or
+       the maintenance tick moves the row's `nextRetryAt` on by a five-minute
+       lease (`claimArmedRetry`) and sends only if that matched. A timer also
+       checks the row is still the retry it was armed for (`isArmedRetry`).
+       A row the erasure stopped, one an admin retried by hand meanwhile, or
+       one the other sender claimed is left alone. A stale timer used to send
+       a hand-retried row a second time, and a timer and the tick could both
+       send one due retry. A sender that dies holding a claim hands the row
+       back to the tick when the lease runs out.
      - A manual retry (`409`) or a DLQ replay (counted as skipped) refuses a
-       row an erasure stopped. That covers both stop reasons: "subject
-       erased" here, and "recipient erased" in step 5. The mark is the
-       `lastError` wording (`isStoppedByErasure`), which the erasure SQL
-       builds from the same functions. A retry also resets the row only if
-       it is unchanged since it was read, and sends the payload as it stands
-       after the reset.
+       row an erasure stopped or marked. That covers both stop reasons:
+       "subject erased" here, and "recipient erased" in step 5. The mark is
+       the `lastError` wording (`isStoppedByErasure`), which the erasure SQL
+       builds from the same functions; a write that settles a row for another
+       reason (its subscription deactivated or deleted) is conditional on the
+       row still awaiting a send, so it cannot overwrite the mark. A retry
+       also resets the row only if it is unchanged since it was read, and
+       sends the payload as it stands after the reset.
 
-     A row that was already `delivered` or `exhausted` when the erasure ran
-     is redacted but not marked. A manual retry of it sends the redacted
-     event.
+     An `activity` row already `exhausted` when the erasure runs, the DLQ's
+     population, keeps its status and gets the same mark, so a replay refuses
+     it. A row already `delivered` is redacted but not marked; a manual retry
+     of it sends the redacted event.
 
    - An event about a **change they made** (`ADMIN_ACTION_EVENTS`:
      `agent_updated`, `capability.*quarantined`, `execution.force_failed`) or

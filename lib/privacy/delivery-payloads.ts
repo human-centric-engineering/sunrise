@@ -39,8 +39,9 @@
  * included. An `actor` row keeps its data, which describes the org's change,
  * and loses only who made it, as the admin audit log does (`SetNull`). In both,
  * the subject's id becomes `null`, their display name goes, and they leave
- * `approverUserIds`. An `activity` row still waiting to retry stops: the event
- * it would send is now about nobody.
+ * `approverUserIds`. An `activity` row still waiting to retry stops, and one
+ * already `exhausted` is marked so it is not replayed (t-793): the event it
+ * would send is now about nobody.
  *
  * **What subject access returns.** The same rows, each with the parts of its
  * `data` that are the subject's to see: an `activity` row's record keys and
@@ -363,8 +364,9 @@ const STOPPED_LAST_ERROR = Prisma.sql`CASE WHEN d."lastError" IS NULL OR d."last
   ELSE d."lastError" || ${notRetriedSuffix(SUBJECT_ERASED)} END`;
 
 /**
- * Redact the subject from every delivery in `table` that names them, and stop
- * the `activity` rows still waiting to retry. One statement per
+ * Redact the subject from every delivery in `table` that names them, stop
+ * the `activity` rows still waiting to retry, and mark the `exhausted` ones
+ * so a retry refuses them (`isStoppedByErasure`). One statement per
  * {@link WRITE_CHUNK} rows, so the transaction's cost tracks the rows
  * rather than a round trip each. Returns the number of rows rewritten.
  *
@@ -385,6 +387,10 @@ export async function eraseSubjectFromDeliveries(
   }));
   const t = TABLES[table];
   const stopNow = Prisma.sql`(w.activity AND d.status = ANY(${[...AWAITING_RETRY_STATUSES]}::text[]))`;
+  // An `activity` row already `exhausted` is the DLQ's population: it keeps
+  // its status but gets the same mark, so a replay or manual retry refuses it
+  // rather than send an event about nobody (t-793).
+  const markNow = Prisma.sql`(w.activity AND (d.status = ANY(${[...AWAITING_RETRY_STATUSES]}::text[]) OR d.status = 'exhausted'))`;
   for (let i = 0; i < writes.length; i += WRITE_CHUNK) {
     const chunk = writes.slice(i, i + WRITE_CHUNK);
     await client.$executeRaw`
@@ -392,7 +398,7 @@ export async function eraseSubjectFromDeliveries(
          SET payload = w.payload,
              status = CASE WHEN ${stopNow} THEN 'exhausted' ELSE d.status END,
              "nextRetryAt" = CASE WHEN ${stopNow} THEN NULL ELSE d."nextRetryAt" END,
-             "lastError" = CASE WHEN ${stopNow} THEN ${STOPPED_LAST_ERROR} ELSE d."lastError" END
+             "lastError" = CASE WHEN ${markNow} THEN ${STOPPED_LAST_ERROR} ELSE d."lastError" END
         FROM jsonb_to_recordset(${JSON.stringify(chunk)}::jsonb)
              AS w(id text, payload jsonb, activity boolean)
        WHERE d.id = w.id

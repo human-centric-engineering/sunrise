@@ -671,7 +671,10 @@ describe('eraseSubjectFromDeliveries', () => {
     expect(text).toMatch(
       new RegExp(`"nextRetryAt" = CASE WHEN ${stop} THEN NULL ELSE d\\."nextRetryAt" END`)
     );
-    expect(text).toMatch(new RegExp(`"lastError" = CASE WHEN ${stop} THEN`));
+    // The mark also lands on an activity row already exhausted, which keeps
+    // its status, so a DLQ replay refuses it (t-793).
+    const mark = String.raw`\(w\.activity AND \(d\.status = ANY\(\$\d+::text\[\]\) OR d\.status = 'exhausted'\)\)`;
+    expect(text).toMatch(new RegExp(`"lastError" = CASE WHEN ${mark} THEN`));
     expect(text).toContain('ELSE d."lastError" END');
     // The not-retried wording is built in SQL from the row's own lastError,
     // with notRetried's wording bound as parameters, so isStoppedByErasure
