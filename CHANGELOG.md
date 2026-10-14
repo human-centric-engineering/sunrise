@@ -432,10 +432,9 @@ release process.
   change and loses only them; one still retrying about their activity stops
   — and a retry timer armed before the erasure no longer undoes that: the
   in-process retry timers for webhook and event-hook deliveries now skip a row
-  that is no longer `pending` or `failed` when they fire, which also holds the
-  stop §109 t-739 applies to a delivery emailed to an erased person. (An
-  attempt already in flight when the erasure commits can still overwrite it;
-  t-793.)
+  that has moved on since they were armed, which also holds the stop §109
+  t-739 applies to a delivery emailed to an erased person. An attempt already
+  in flight when the erasure commits no longer overwrites it either (t-793).
   Another admin's email subscription to the person's verified address has the
   address cleared and is deactivated, with a
   `webhook_subscription.recipient_erased` audit entry that names the
@@ -444,7 +443,8 @@ release process.
   them — never other people, nor org configuration such as a notification
   step's `webhookUrl`) beside `sentTo`, and a new `eventHookDeliveries` section
   carries event-hook deliveries. A migration adds a GIN index on each delivery
-  table's `payload` (not `CONCURRENTLY`; retention bounds both tables). A fork
+  table's `payload` (not `CONCURRENTLY`; both tables are bounded only once
+  `webhookRetentionDays` is set). A fork
   whose own events name a person under another key clears it with a
   `scrubInTransaction` hook; see `.context/privacy/data-erasure.md`.
 
