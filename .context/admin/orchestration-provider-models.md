@@ -110,7 +110,7 @@ Filter chips and search match the View Models panel's pattern — one chip per `
 
 ### Step 3 — Review
 
-Expandable card per selected candidate with the heuristic-derived metadata as editable form controls (name, description, capability checkboxes, tierRole select, the five rating selects, bestRole text). Each card has a **Reset to suggestion** link that rolls back operator edits to the discovery defaults. A chat candidate's card also shows its price from the provider's catalogue (vendor first, then OpenRouter); when the catalogue has both an input and an output price they are saved with the model as `inputCostPerMillionTokens` / `outputCostPerMillionTokens` (t-774). When it has neither or only one, the card says so and the model is added unpriced; set its prices on the edit form.
+Expandable card per selected candidate with the heuristic-derived metadata as editable form controls (name, description, capability checkboxes, tierRole select, the five rating selects, bestRole text). Each card has a **Reset to suggestion** link that rolls back operator edits to the discovery defaults. A chat or reasoning candidate's card also shows its price from the provider's catalogue (vendor first, then OpenRouter); when the catalogue has both an input and an output price they are saved with the model as `inputCostPerMillionTokens` / `outputCostPerMillionTokens` (t-774). When it has neither, only one, or a value the matrix refuses (OpenRouter lists router entries at -1), the card says so and the model is added unpriced; set its prices on the edit form.
 
 Embedding-specific fields (`dimensions`, `schemaCompatible`, `costPerMillionTokens`, `hasFreeTier`, `quality`, `strengths`, `setup`) are **not** in the dialog UI — operators can edit them via the legacy `/provider-models/[id]` edit form after creation. Keeps the review step tractable.
 
@@ -205,7 +205,7 @@ A misclassified reasoning model returns `400 Unsupported parameter: 'max_tokens'
 
 ### Chat pricing
 
-Rendered in a bordered "Chat Pricing" block when the Chat capability is checked:
+Rendered in a bordered "Chat Pricing" block when the Chat or Reasoning capability is checked (`hasSplitPricing` in `lib/validations/model-pricing.ts`; the o-series is classed `reasoning`):
 
 | Field              | Notes                                                           |
 | ------------------ | --------------------------------------------------------------- |
@@ -234,7 +234,7 @@ The embedding block feeds the "Compare Embedding Providers" modal on the Knowled
 ### Submit behaviour
 
 - Validation errors surface inline below each field (`errors.{name}.message`).
-- The submit handler sends `capabilities[]` directly from the checkbox state and parses numeric strings (`dimensions`, `costPerMillionTokens`, the two chat prices) before POST. In create mode, embedding fields are omitted when `embedding` is not in the array, and the chat prices when they are blank. In edit mode, removing `embedding` from the array explicitly nulls the embedding-only fields (`dimensions`, `schemaCompatible`, `hasFreeTier`, `quality`, `strengths`, `setup`) so stale values are cleared from the database, and blank chat prices are sent as `null` together. `costPerMillionTokens` is never cleared this way: it is also a chat row's blended fallback price, and clearing it (as the form did before t-774) left every edited chat model unpriced.
+- The submit handler sends `capabilities[]` directly from the checkbox state and parses numeric strings (`dimensions`, `costPerMillionTokens`, the two chat prices) before POST. In create mode, embedding fields are omitted when `embedding` is not in the array, and the chat prices when they are blank. In edit mode, removing `embedding` from the array explicitly nulls the embedding-only fields (`dimensions`, `schemaCompatible`, `hasFreeTier`, `quality`, `strengths`, `setup`) so stale values are cleared from the database, and blank prices are sent as `null` together, but only while the pricing section is shown: a model without chat or reasoning keeps whatever prices it has. `costPerMillionTokens` is cleared only when the edit removes the embedding capability (it was the embedding rate). Otherwise `costPerMillionTokens` is left alone: it is also a chat row's blended fallback price, and clearing it (as the form did before t-774) left every edited chat model unpriced.
 - Create: `POST /api/v1/admin/orchestration/provider-models` → router pushes to the new model's edit page with a success banner.
 - Edit: `PATCH /api/v1/admin/orchestration/provider-models/:id` → inline "Saved" flash for 2s.
 - Most fields have a `<FieldHelp>` popover per the contextual-help rule. Fields with FieldHelp: Provider Slug, Model ID, Slug, Capabilities, Tier Role, Best Role, Input / Output price, Dimensions, Schema Compatible, and all five rating dimensions (Reasoning Depth, Latency, Cost Efficiency, Context Length, Tool Use). Remaining embedding fields (Cost/1M Tokens, Free Tier, Local/Self-hosted, Quality, Strengths, Setup) also have FieldHelp.
