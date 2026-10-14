@@ -298,4 +298,62 @@ describe('POST /api/v1/admin/orchestration/provider-models/bulk', () => {
       expect((createCall?.data as Array<unknown>) ?? []).toHaveLength(0);
     });
   });
+
+  describe('split input/output prices (t-774)', () => {
+    it('carries both prices on each row to createMany, null where absent', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.aiProviderModel.createMany).mockResolvedValue({ count: 2 });
+
+      const response = await POST(
+        makeRequest({
+          providerSlug: 'openai',
+          models: [
+            makeRow({
+              modelId: 'gpt-4o',
+              inputCostPerMillionTokens: 2.5,
+              outputCostPerMillionTokens: 10,
+            }),
+            makeRow({ modelId: 'gpt-4o-mini' }),
+          ],
+        })
+      );
+
+      expect(response.status).toBe(201);
+      const call = vi.mocked(prisma.aiProviderModel.createMany).mock.calls[0]?.[0];
+      const rows = call?.data as Array<{
+        modelId: string;
+        inputCostPerMillionTokens: number | null;
+        outputCostPerMillionTokens: number | null;
+      }>;
+      const priced = rows.find((r) => r.modelId === 'gpt-4o');
+      const unpriced = rows.find((r) => r.modelId === 'gpt-4o-mini');
+      expect(priced?.inputCostPerMillionTokens).toBe(2.5);
+      expect(priced?.outputCostPerMillionTokens).toBe(10);
+      expect(unpriced?.inputCostPerMillionTokens).toBeNull();
+      expect(unpriced?.outputCostPerMillionTokens).toBeNull();
+    });
+
+    it('returns 400 and writes nothing when a row sets only one price', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(
+        makeRequest({
+          providerSlug: 'openai',
+          models: [
+            makeRow({ modelId: 'gpt-4o', inputCostPerMillionTokens: 2.5 }),
+            makeRow({ modelId: 'gpt-5' }),
+          ],
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const body = await parseJson<{ error: { code: string; details: Record<string, unknown> } }>(
+        response
+      );
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(JSON.stringify(body.error.details)).toContain('outputCostPerMillionTokens');
+      expect(prisma.aiProviderModel.createMany).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -556,4 +556,65 @@ describe('POST /api/v1/admin/orchestration/provider-models', () => {
     expect(body.success).toBe(false);
     expect(body.error.code).toBe('CONFLICT');
   });
+
+  describe('split input/output prices (t-774)', () => {
+    it('persists each split price on its own column', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.create).mockResolvedValue(makeModel() as never);
+
+      const response = await POST(
+        makePostRequest({
+          ...validBody,
+          inputCostPerMillionTokens: 3,
+          outputCostPerMillionTokens: 15,
+        })
+      );
+
+      expect(response.status).toBe(201);
+      const data = vi.mocked(prisma.aiProviderModel.create).mock.calls[0][0].data;
+      expect(data.inputCostPerMillionTokens).toBe(3);
+      expect(data.outputCostPerMillionTokens).toBe(15);
+    });
+
+    it('rejects an input price without an output price, naming the missing field', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(makePostRequest({ ...validBody, inputCostPerMillionTokens: 3 }));
+
+      expect(response.status).toBe(400);
+      const body = await parseJson<{
+        success: boolean;
+        error: { code: string; details: Record<string, unknown> };
+      }>(response);
+      expect(body.success).toBe(false);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(JSON.stringify(body.error.details)).toContain('outputCostPerMillionTokens');
+      expect(prisma.aiProviderModel.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects an output price without an input price, naming the missing field', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await POST(
+        makePostRequest({ ...validBody, outputCostPerMillionTokens: 15 })
+      );
+
+      expect(response.status).toBe(400);
+      const body = await parseJson<{ error: { details: Record<string, unknown> } }>(response);
+      expect(JSON.stringify(body.error.details)).toContain('inputCostPerMillionTokens');
+      expect(prisma.aiProviderModel.create).not.toHaveBeenCalled();
+    });
+
+    it('stores both split prices as null when neither is sent', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderModel.create).mockResolvedValue(makeModel() as never);
+
+      const response = await POST(makePostRequest(validBody));
+
+      expect(response.status).toBe(201);
+      const data = vi.mocked(prisma.aiProviderModel.create).mock.calls[0][0].data;
+      expect(data.inputCostPerMillionTokens).toBeNull();
+      expect(data.outputCostPerMillionTokens).toBeNull();
+    });
+  });
 });

@@ -250,6 +250,45 @@ describe('GET /api/v1/admin/orchestration/models', () => {
       });
     });
 
+    it('prices a matrix-only model from its split columns, not the blended figure (t-774)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(getAvailableModels).mockReturnValue([]);
+      vi.mocked(prisma.aiProviderModel.findMany).mockResolvedValue([
+        {
+          id: 'm3',
+          slug: 'openai-gpt-6',
+          providerSlug: 'openai',
+          modelId: 'gpt-6',
+          name: 'GPT-6',
+          tierRole: 'thinking',
+          contextLength: 'very_high',
+          toolUse: 'strong',
+          costPerMillionTokens: 9,
+          inputCostPerMillionTokens: 3,
+          outputCostPerMillionTokens: 15,
+          isActive: true,
+        } as never,
+      ]);
+
+      const response = await GET(makeGetRequest());
+
+      const data = await parseJson<{
+        data: {
+          models: Array<{
+            id: string;
+            inputCostPerMillion: number;
+            outputCostPerMillion: number;
+            pricingUnknown?: boolean;
+          }>;
+        };
+      }>(response);
+      expect(data.data.models).toHaveLength(1);
+      expect(data.data.models[0].id).toBe('gpt-6');
+      expect(data.data.models[0].inputCostPerMillion).toBe(3);
+      expect(data.data.models[0].outputCostPerMillion).toBe(15);
+      expect(data.data.models[0].pricingUnknown).toBeUndefined();
+    });
+
     it('queries AiProviderModel with isActive: true filter', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(getAvailableModels).mockReturnValue([]);

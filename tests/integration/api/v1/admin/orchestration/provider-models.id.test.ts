@@ -96,6 +96,8 @@ function makeModel(overrides: Record<string, unknown> = {}) {
     dimensions: null,
     schemaCompatible: null,
     costPerMillionTokens: null,
+    inputCostPerMillionTokens: null,
+    outputCostPerMillionTokens: null,
     hasFreeTier: null,
     local: false,
     quality: null,
@@ -440,6 +442,114 @@ describe('PATCH /api/v1/admin/orchestration/provider-models/:id', () => {
     const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
     expect(data.success).toBe(false);
     expect(data.error.code).toBe('VALIDATION_ERROR');
+  });
+});
+
+describe('PATCH split input/output prices (t-774)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function patchWith(current: Record<string, unknown>, body: Record<string, unknown>) {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const existing = makeModel({ isDefault: false, ...current });
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
+    vi.mocked(prisma.aiProviderModel.update).mockResolvedValue(existing as never);
+    return PATCH(makePatchRequest(MODEL_ID, body), routeContext(MODEL_ID));
+  }
+
+  it('passes both prices through to prisma.update when set together', async () => {
+    const response = await patchWith(
+      {},
+      { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 }
+    );
+
+    expect(response.status).toBe(200);
+    const data = vi.mocked(prisma.aiProviderModel.update).mock.calls[0][0].data;
+    expect(data.inputCostPerMillionTokens).toBe(3);
+    expect(data.outputCostPerMillionTokens).toBe(15);
+  });
+
+  it('rejects an input-only price when the saved row has neither', async () => {
+    const response = await patchWith({}, { inputCostPerMillionTokens: 3 });
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{
+      success: boolean;
+      error: { code: string; details: Record<string, string[]> };
+    }>(response);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(body.error.details.outputCostPerMillionTokens).toEqual([
+      'Set the input and output prices together, or neither',
+    ]);
+    expect(prisma.aiProviderModel.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an output-only price when the saved row has neither', async () => {
+    const response = await patchWith({}, { outputCostPerMillionTokens: 15 });
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { details: Record<string, string[]> } }>(response);
+    expect(body.error.details.inputCostPerMillionTokens).toEqual([
+      'Set the input and output prices together, or neither',
+    ]);
+    expect(prisma.aiProviderModel.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects clearing only the input price when the saved row has both', async () => {
+    const response = await patchWith(
+      { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 },
+      { inputCostPerMillionTokens: null }
+    );
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ error: { details: Record<string, string[]> } }>(response);
+    expect(body.error.details.inputCostPerMillionTokens).toBeDefined();
+    expect(prisma.aiProviderModel.update).not.toHaveBeenCalled();
+  });
+
+  it('accepts changing only the input price when the saved row already has both', async () => {
+    const response = await patchWith(
+      { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 },
+      { inputCostPerMillionTokens: 4 }
+    );
+
+    expect(response.status).toBe(200);
+    const data = vi.mocked(prisma.aiProviderModel.update).mock.calls[0][0].data;
+    expect(data.inputCostPerMillionTokens).toBe(4);
+    // The untouched half must not be rewritten.
+    expect(data).not.toHaveProperty('outputCostPerMillionTokens');
+  });
+
+  it('accepts changing only the output price when the saved row already has both', async () => {
+    const response = await patchWith(
+      { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 },
+      { outputCostPerMillionTokens: 20 }
+    );
+
+    expect(response.status).toBe(200);
+    const data = vi.mocked(prisma.aiProviderModel.update).mock.calls[0][0].data;
+    expect(data.outputCostPerMillionTokens).toBe(20);
+    expect(data).not.toHaveProperty('inputCostPerMillionTokens');
+  });
+
+  it('accepts clearing both prices together, writing null to each', async () => {
+    const response = await patchWith(
+      { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 },
+      { inputCostPerMillionTokens: null, outputCostPerMillionTokens: null }
+    );
+
+    expect(response.status).toBe(200);
+    const data = vi.mocked(prisma.aiProviderModel.update).mock.calls[0][0].data;
+    expect(data.inputCostPerMillionTokens).toBeNull();
+    expect(data.outputCostPerMillionTokens).toBeNull();
+  });
+
+  it('accepts an unrelated edit on a row that has neither price', async () => {
+    const response = await patchWith({}, { name: 'Renamed' });
+
+    expect(response.status).toBe(200);
+    expect(prisma.aiProviderModel.update).toHaveBeenCalledTimes(1);
   });
 });
 

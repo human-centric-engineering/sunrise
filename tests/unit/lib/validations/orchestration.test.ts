@@ -3539,3 +3539,194 @@ describe('updateOrchestrationSettingsSchema — escalationConfig.webhookUrl', ()
     expect(result.success).toBe(true);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// Provider model split input/output prices (t-774)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('provider model split prices (t-774)', () => {
+  const PAIR_MESSAGE = 'Set the input and output prices together, or neither';
+
+  function baseCreate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      name: 'GPT-5',
+      slug: 'openai-gpt-5',
+      providerSlug: 'openai',
+      modelId: 'gpt-5',
+      description: 'Frontier chat model',
+      capabilities: ['chat'],
+      tierRole: 'thinking',
+      reasoningDepth: 'very_high',
+      latency: 'medium',
+      costEfficiency: 'medium',
+      contextLength: 'very_high',
+      toolUse: 'strong',
+      bestRole: 'Reasoning',
+      ...overrides,
+    };
+  }
+
+  function baseBulkRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      modelId: 'gpt-5',
+      name: 'GPT-5',
+      tierRole: 'thinking',
+      reasoningDepth: 'very_high',
+      latency: 'medium',
+      costEfficiency: 'medium',
+      contextLength: 'very_high',
+      toolUse: 'strong',
+      bestRole: 'Reasoning',
+      ...overrides,
+    };
+  }
+
+  function bulk(row: Record<string, unknown>) {
+    return bulkCreateProviderModelsSchema.safeParse({ providerSlug: 'openai', models: [row] });
+  }
+
+  describe('createProviderModelSchema', () => {
+    it('accepts both prices and keeps them in the parsed data', () => {
+      const result = createProviderModelSchema.safeParse(
+        baseCreate({ inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 })
+      );
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.inputCostPerMillionTokens).toBe(3);
+        expect(result.data.outputCostPerMillionTokens).toBe(15);
+      }
+    });
+
+    it('accepts neither price', () => {
+      expect(createProviderModelSchema.safeParse(baseCreate()).success).toBe(true);
+    });
+
+    it('accepts an explicit zero for both (a free model)', () => {
+      const result = createProviderModelSchema.safeParse(
+        baseCreate({ inputCostPerMillionTokens: 0, outputCostPerMillionTokens: 0 })
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects input without output, flagging the output field', () => {
+      const result = createProviderModelSchema.safeParse(
+        baseCreate({ inputCostPerMillionTokens: 3 })
+      );
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toHaveLength(1);
+        expect(result.error.issues[0].path).toEqual(['outputCostPerMillionTokens']);
+        expect(result.error.issues[0].message).toBe(PAIR_MESSAGE);
+      }
+    });
+
+    it('rejects output without input, flagging the input field', () => {
+      const result = createProviderModelSchema.safeParse(
+        baseCreate({ outputCostPerMillionTokens: 15 })
+      );
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0].path).toEqual(['inputCostPerMillionTokens']);
+        expect(result.error.issues[0].message).toBe(PAIR_MESSAGE);
+      }
+    });
+
+    it('treats a lone zero as set (zero input without output is still half a price)', () => {
+      const result = createProviderModelSchema.safeParse(
+        baseCreate({ inputCostPerMillionTokens: 0 })
+      );
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts the 10000 ceiling and rejects above it', () => {
+      expect(
+        createProviderModelSchema.safeParse(
+          baseCreate({ inputCostPerMillionTokens: 10000, outputCostPerMillionTokens: 10000 })
+        ).success
+      ).toBe(true);
+      expect(
+        createProviderModelSchema.safeParse(
+          baseCreate({ inputCostPerMillionTokens: 10000.01, outputCostPerMillionTokens: 1 })
+        ).success
+      ).toBe(false);
+      expect(
+        createProviderModelSchema.safeParse(
+          baseCreate({ inputCostPerMillionTokens: 1, outputCostPerMillionTokens: 10001 })
+        ).success
+      ).toBe(false);
+    });
+
+    it('rejects a negative price', () => {
+      const result = createProviderModelSchema.safeParse(
+        baseCreate({ inputCostPerMillionTokens: -1, outputCostPerMillionTokens: 1 })
+      );
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe('updateProviderModelSchema', () => {
+    it('accepts each price as a number', () => {
+      const result = updateProviderModelSchema.safeParse({
+        inputCostPerMillionTokens: 3,
+        outputCostPerMillionTokens: 15,
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts each price as null (clearing)', () => {
+      const result = updateProviderModelSchema.safeParse({
+        inputCostPerMillionTokens: null,
+        outputCostPerMillionTokens: null,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.inputCostPerMillionTokens).toBeNull();
+        expect(result.data.outputCostPerMillionTokens).toBeNull();
+      }
+    });
+
+    it('accepts one price alone (the pair rule is enforced against the saved row by the route)', () => {
+      expect(updateProviderModelSchema.safeParse({ inputCostPerMillionTokens: 3 }).success).toBe(
+        true
+      );
+    });
+
+    it('rejects a price above 10000 or below 0', () => {
+      expect(
+        updateProviderModelSchema.safeParse({ inputCostPerMillionTokens: 10001 }).success
+      ).toBe(false);
+      expect(
+        updateProviderModelSchema.safeParse({ outputCostPerMillionTokens: -0.5 }).success
+      ).toBe(false);
+    });
+  });
+
+  describe('bulkCreateProviderModelsSchema rows', () => {
+    it('accepts a row with both prices and keeps them', () => {
+      const result = bulk(
+        baseBulkRow({ inputCostPerMillionTokens: 2.5, outputCostPerMillionTokens: 10 })
+      );
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.models[0].inputCostPerMillionTokens).toBe(2.5);
+        expect(result.data.models[0].outputCostPerMillionTokens).toBe(10);
+      }
+    });
+
+    it('rejects a row with only one price, flagging the missing field on that row', () => {
+      const result = bulk(baseBulkRow({ outputCostPerMillionTokens: 10 }));
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0].path).toEqual(['models', 0, 'inputCostPerMillionTokens']);
+        expect(result.error.issues[0].message).toBe(PAIR_MESSAGE);
+      }
+    });
+
+    it('rejects a row price above 10000', () => {
+      const result = bulk(
+        baseBulkRow({ inputCostPerMillionTokens: 10001, outputCostPerMillionTokens: 1 })
+      );
+      expect(result.success).toBe(false);
+    });
+  });
+});
