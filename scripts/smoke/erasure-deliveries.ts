@@ -1,6 +1,6 @@
 /**
  * Erasure of a person from delivery payloads and colleagues' subscriptions
- * (t-783, t-786).
+ * (t-783, t-786, t-792).
  *
  * Proves, against a real Postgres, what mocked tests cannot: the raw SQL in
  * `lib/privacy/delivery-payloads.ts` (JSON containment, the joins through the
@@ -21,6 +21,12 @@
  *      does not hold the address. A subscription to anyone else is untouched.
  *   4. An unverified account's address leaves a colleague's subscription to
  *      it untouched: it may be a stranger's inbox.
+ *
+ * Steps 1 and 2 include events in the shape t-792 gave them, which name their
+ * owner as `userId`, written for a conversation and a run that are deleted
+ * before the export or the erasure reads anything. They are still found,
+ * while an event in the older shape, naming only the deleted conversation, is
+ * not.
  *
  * Skips cleanly (exit 0) when no database is reachable. Self-cleaning: creates
  * only `smoke-test-erasure-deliv-*` rows and removes whatever it created.
@@ -281,6 +287,78 @@ async function main(): Promise<void> {
       role: 'user',
     });
 
+    // t-792: the events that named the subject only through a conversation or
+    // run now carry its owner. The conversation and run they are about are
+    // deleted before anything reads them (the person deleted the
+    // conversation, retention pruned the run), so only the payload's own
+    // `userId` still names the subject.
+    const goneConversation = await prisma.aiConversation.create({
+      data: { userId: subject.id, agentId: agent.id, title: `${PREFIX} deleted convo` },
+    });
+    const goneRun = await prisma.aiWorkflowExecution.create({
+      data: {
+        workflowId: workflow.id,
+        status: 'failed',
+        inputData: {},
+        executionTrace: [],
+        userId: subject.id,
+      },
+    });
+    const ownedPerTurn = await webhook(
+      'chat_budget_exceeded_per_turn',
+      {
+        agentId: agent.id,
+        conversationId: goneConversation.id,
+        userId: subject.id,
+        usedUsd: 0.5,
+        limitUsd: 0.1,
+      },
+      'failed'
+    );
+    const ownedNotification = await webhook('workflow_notification', {
+      workflowId: workflow.id,
+      executionId: goneRun.id,
+      userId: subject.id,
+      body: SECRET_TEXT,
+    });
+    const ownedBudget = await webhook('workflow_budget_exceeded', {
+      workflowId: workflow.id,
+      executionId: goneRun.id,
+      userId: subject.id,
+      usedUsd: 2,
+      limitUsd: 1,
+      failedStepId: 'step-1',
+    });
+    const ownedFailedHook = await hookRow('workflow.failed', {
+      executionId: goneRun.id,
+      workflowId: workflow.id,
+      userId: subject.id,
+      source: 'admin-force-fail',
+      errorMessage: SECRET_TEXT,
+    });
+    const ownedForceFailed = await hookRow('execution.force_failed', {
+      executionId: goneRun.id,
+      workflowId: workflow.id,
+      userId: subject.id,
+      actorUserId: colleague.id,
+      reason: SECRET_TEXT,
+      previousStatus: 'running',
+    });
+    // The shape written before t-792, for contrast: once the conversation is
+    // gone nothing names the subject. That is the limit data-erasure.md
+    // documents for older rows, and what shows the rows above are found by
+    // their own `userId` rather than through the conversation or run.
+    const legacyPerTurn = await webhook('chat_budget_exceeded_per_turn', {
+      agentId: agent.id,
+      conversationId: goneConversation.id,
+      usedUsd: 0.5,
+      limitUsd: 0.1,
+    });
+    await prisma.aiConversation.delete({ where: { id: goneConversation.id } });
+    await prisma.aiWorkflowExecution.delete({ where: { id: goneRun.id } });
+    const ownedWebhooks = [ownedPerTurn, ownedNotification, ownedBudget];
+    const ownedHooks = [ownedFailedHook, ownedForceFailed];
+
     // Colleagues' email subscriptions: to the subject (typed in another case),
     // to someone else, and to the unverified account.
     const subscribe = async (emailAddress: string) => {
@@ -327,6 +405,15 @@ async function main(): Promise<void> {
       'every event-hook delivery naming the subject is exported'
     );
     check(!hookIds.includes(unrelatedHook.id), 'a colleague’s message event is not');
+    check(
+      ownedWebhooks.every((r) => webhookIds.includes(r.id)) &&
+        ownedHooks.every((r) => hookIds.includes(r.id)),
+      'every event that names its owner is exported after its conversation or run was deleted (t-792)'
+    );
+    check(
+      !webhookIds.includes(legacyPerTurn.id),
+      'an older event naming only the deleted conversation is not: the documented limit'
+    );
     const exportedText = JSON.stringify([...webhookRows, ...hookRows]);
     check(exportedText.includes(SECRET_TEXT), 'the export carries what their own events said');
     check(
@@ -423,6 +510,28 @@ async function main(): Promise<void> {
     check(
       isDeepStrictEqual(row(unrelatedHook.id).payload, unrelatedHook.payload),
       'a colleague’s message event is untouched'
+    );
+    const ownedPerTurnAfter = row(ownedPerTurn.id);
+    check(
+      dataOf(ownedPerTurnAfter.payload).userId === null &&
+        ownedPerTurnAfter.status === 'exhausted' &&
+        (ownedPerTurnAfter.lastError ?? '').includes('subject erased'),
+      'a per-turn budget event whose conversation was deleted is redacted and its retry stopped (t-792)'
+    );
+    check(
+      !('body' in dataOf(row(ownedNotification.id).payload)),
+      'a notification whose run was deleted loses the body that echoed their input'
+    );
+    const ownedForceFailedData = dataOf(row(ownedForceFailed.id).payload);
+    check(
+      ownedForceFailedData.userId === null &&
+        ownedForceFailedData.actorUserId === colleague.id &&
+        !('reason' in ownedForceFailedData),
+      'a force-fail of a deleted run loses its owner and the free text, and keeps the admin'
+    );
+    check(
+      isDeepStrictEqual(row(legacyPerTurn.id).payload, legacyPerTurn.payload),
+      'the older event is left as it was: nothing names the subject in it'
     );
 
     // ── 3. A colleague's subscription to them is cleared and deactivated ──

@@ -290,14 +290,16 @@ transaction):
    Written in bulk (500 rows a statement), so a person with years of chat
    events costs a few statements, not a round trip each, and the transaction
    is given 60 s (`ERASURE_TRANSACTION_TIMEOUT_MS`) rather than Prisma's 5 s
-   default. **Known limit:** an event that names the subject only by
-   `conversationId` or `executionId` — `chat_budget_exceeded_per_turn`,
-   `workflow_notification`, `workflow_budget_exceeded`, the force-fail hooks —
-   is found only while that conversation or run still exists. One the person
-   deleted, or that retention pruned before the delivery, no longer links the
-   event to anyone, and erasure and subject access both miss it until
-   retention prunes the delivery too (t-792)
-   The same goes for a delivery written while the erasure is in flight — a
+   default. Every core event about a conversation or workflow run names its
+   owner on the payload itself (`userId`, or `embedVisitorId` for a visitor),
+   so the match does not depend on the conversation or run still existing
+   (t-792). **Known limit:** rows written before that change by
+   `chat_budget_exceeded_per_turn`, `workflow_notification`,
+   `workflow_budget_exceeded` and the force-fail hooks name the subject only
+   by `conversationId` or `executionId`. Once the person deletes that
+   conversation, or retention prunes it or the run before the delivery,
+   nothing links the row to them, and erasure and subject access both miss it
+   until retention prunes the delivery too. The same goes for a delivery written while the erasure is in flight — a
    chat turn or run still emitting events as the person is erased — which
    the match has already passed by. **A fork that emits
    its own events** (`emitHookEvent('app.…')`) and names a person under a key

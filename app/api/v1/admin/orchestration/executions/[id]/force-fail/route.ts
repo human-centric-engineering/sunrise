@@ -158,15 +158,20 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   // firing; `execution.force_failed` lets consumers distinguish admin
   // termination from natural failure. Both go through the standard
   // dispatcher (HMAC, retry, audit row) — see `lib/orchestration/hooks/registry.ts`.
+  // Both name the run's owner as `userId`, as the engine's `workflow.failed`
+  // does, so erasure and subject access still find the delivery once the run
+  // is gone (t-792). `actorUserId` stays the admin who force-failed it.
   emitHookEvent('workflow.failed', {
     executionId: id,
     workflowId: existing.workflowId,
+    userId: existing.userId,
     source: 'admin-force-fail',
     errorMessage,
   });
   emitHookEvent('execution.force_failed', {
     executionId: id,
     workflowId: existing.workflowId,
+    userId: existing.userId,
     actorUserId: session.user.id,
     reason: reason ?? null,
     previousStatus: existing.status,

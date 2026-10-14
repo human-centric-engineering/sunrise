@@ -76,6 +76,14 @@ export function budgetWarning(usedUsd: number, limitUsd: number): ExecutionEvent
   return { type: 'budget_warning', usedUsd, limitUsd };
 }
 
+/** The run a `workflow_budget_exceeded` event is about. */
+export interface BudgetExceededRun {
+  executionId?: string;
+  workflowId?: string;
+  /** The run's owner; `null` for a system-owned run. */
+  userId: string | null;
+}
+
 /**
  * Fires when the per-execution cost cap is breached. Emitted by the
  * engine immediately before `workflow_failed` at all four cap-check
@@ -91,20 +99,26 @@ export function budgetWarning(usedUsd: number, limitUsd: number): ExecutionEvent
  * generic `workflow_failed` webhook still fires from `workflowFailed()`
  * below — subscribers wanting only one notification should listen to the
  * specific event and ignore the generic one.
+ *
+ * `run.userId` is the run's owner, left off the payload for a system-owned
+ * run. It names them on the payload itself, so erasure and subject access
+ * still find the delivery once the run is gone (t-792). It is required, `null`
+ * included, so a new call site cannot leave it out by accident.
  */
 export function workflowBudgetExceeded(
   usedUsd: number,
   limitUsd: number,
   failedStepId: string,
-  executionId?: string,
-  workflowId?: string
+  run: BudgetExceededRun
 ): ExecutionEvent {
+  const { executionId, workflowId, userId } = run;
   dispatchWebhookEvent('workflow_budget_exceeded', {
     usedUsd,
     limitUsd,
     failedStepId,
     ...(executionId ? { executionId } : {}),
     ...(workflowId ? { workflowId } : {}),
+    ...(userId ? { userId } : {}),
   }).catch((err) => {
     logger.warn('Webhook dispatch failed for workflow_budget_exceeded', {
       failedStepId,

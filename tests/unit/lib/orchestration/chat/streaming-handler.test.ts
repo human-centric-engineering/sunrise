@@ -3741,6 +3741,9 @@ describe('mid-loop budget re-check', () => {
       expect.objectContaining({
         agentId: 'agent-1',
         agentSlug: 'helper',
+        // The turn's owner, so erasure finds the delivery after the
+        // conversation is deleted (t-792).
+        userId: 'u1',
         usedUsd: 0.03,
         limitUsd: 0.02,
       })
@@ -3836,9 +3839,44 @@ describe('mid-loop budget re-check', () => {
       expect.objectContaining({
         agentId: 'agent-1',
         agentSlug: 'helper',
+        // The turn's owner, so erasure finds the delivery after the
+        // conversation is deleted (t-792).
+        userId: 'u1',
         usedUsd: 0.03,
         limitUsd: 0.02,
       })
+    );
+  });
+
+  it('names an embed visitor on the per-turn webhook as embedVisitorId, with userId null (t-792)', async () => {
+    // A visitor is not a `User`: a subscriber reading `userId` as one gets
+    // `null`, and the visitor arrives as `embedVisitorId`, as on the chat
+    // hook events.
+    (checkBudget as ReturnType<typeof vi.fn>).mockResolvedValue({
+      withinBudget: true,
+      spent: 0.1,
+      limit: 100,
+      remaining: 99.9,
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxCostPerTurnUsd: 0.02 })
+    );
+    const provider = mockProvider([
+      [
+        { type: 'text', content: 'An answer' },
+        { type: 'done', usage: { inputTokens: 1000, outputTokens: 500 } },
+      ],
+    ]);
+    (getProviderWithFallbacks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      provider,
+      usedSlug: 'anthropic',
+    });
+
+    await collect(streamChat({ ...baseRequest, userId: 'embed_deadbeefdeadbeef' }));
+
+    expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+      'chat_budget_exceeded_per_turn',
+      expect.objectContaining({ userId: null, embedVisitorId: 'embed_deadbeefdeadbeef' })
     );
   });
 

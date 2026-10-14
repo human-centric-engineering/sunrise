@@ -413,6 +413,15 @@ describe('executeNotification', () => {
       );
     });
 
+    it("names the run's owner as userId, so erasure finds the delivery after the run is gone (t-792)", async () => {
+      await executor(makeWebhookStep(), makeCtx({ userId: 'owner-7' }));
+
+      expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledWith(
+        'workflow_notification',
+        expect.objectContaining({ userId: 'owner-7' })
+      );
+    });
+
     it('throws ExecutorError(WEBHOOK_DISPATCH_ERROR, retriable) when dispatchWebhookEvent throws', async () => {
       vi.mocked(dispatchWebhookEvent).mockRejectedValue(new Error('Network timeout'));
 

@@ -344,9 +344,11 @@ interface PersistMessageParams {
  *
  * The same fragment serves as the create data and as the ownership filter on
  * load, so a visitor reaches only conversations created under their own id.
- * (The per-user cap does not apply to a visitor.) Hook events name their
- * caller with it too, so a subscriber that reads `userId` as a `User` never
- * gets a visitor id, and sees the visitor as the conversation row does.
+ * (The per-user cap does not apply to a visitor.) Hook events and the
+ * per-turn budget webhook name their caller with it too, so a subscriber that
+ * reads `userId` as a `User` never gets a visitor id, and sees the visitor as
+ * the conversation row does. It also lets erasure and subject access find the
+ * delivery after the conversation is gone (t-792).
  */
 function conversationOwner(
   userId: string
@@ -2015,6 +2017,7 @@ export class StreamingChatHandler {
               agentId: agent.id,
               agentSlug: agent.slug,
               conversationId: conversation.id,
+              ...conversationOwner(request.userId),
               usedUsd: turnCostUsd,
               limitUsd: terminalCap,
               iteration,
@@ -2132,6 +2135,7 @@ export class StreamingChatHandler {
             agentId: agent.id,
             agentSlug: agent.slug,
             conversationId: conversation.id,
+            ...conversationOwner(request.userId),
             usedUsd: turnCostUsd,
             limitUsd: turnCap,
             iteration,

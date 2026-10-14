@@ -213,6 +213,9 @@ async function executeNotification(
         workflowId: ctx.workflowId,
         workflowName,
         executionId: ctx.executionId,
+        // The run's owner, so erasure and subject access still find this
+        // delivery once the run is gone: `body` can echo their input (t-792).
+        userId: ctx.userId,
         stepId: step.id,
       });
 

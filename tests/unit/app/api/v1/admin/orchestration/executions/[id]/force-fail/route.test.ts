@@ -280,13 +280,19 @@ describe('POST /executions/:id/force-fail', () => {
 
     // Two hook events — workflow.failed (existing integrations) and
     // execution.force_failed (admin-termination distinction)
+    // Both name the run's owner as `userId`, so erasure finds the delivery
+    // after the run is gone (t-792).
     expect(emitHookEvent).toHaveBeenCalledWith(
       'workflow.failed',
-      expect.objectContaining({ executionId: EXEC_ID, source: 'admin-force-fail' })
+      expect.objectContaining({
+        executionId: EXEC_ID,
+        userId: USER_ID,
+        source: 'admin-force-fail',
+      })
     );
     expect(emitHookEvent).toHaveBeenCalledWith(
       'execution.force_failed',
-      expect.objectContaining({ executionId: EXEC_ID, actorUserId: USER_ID })
+      expect.objectContaining({ executionId: EXEC_ID, userId: USER_ID, actorUserId: USER_ID })
     );
 
     // The tx callback swept running steps
@@ -310,6 +316,25 @@ describe('POST /executions/:id/force-fail', () => {
     }>(res);
     expect(body.data.previousStatus).toBe('pending');
     expect(body.data.status).toBe('failed');
+  });
+
+  it("names a system-owned run's owner as null on both hook events, and the admin as the actor (t-792)", async () => {
+    vi.mocked(prisma.aiWorkflowExecution.findUnique).mockResolvedValue(
+      makeExecution({ status: 'running', userId: null }) as never
+    );
+    setupHappyTransaction(1);
+
+    const res = await POST(makeRequest(), makeContext());
+
+    expect(res.status).toBe(200);
+    expect(emitHookEvent).toHaveBeenCalledWith(
+      'workflow.failed',
+      expect.objectContaining({ executionId: EXEC_ID, userId: null })
+    );
+    expect(emitHookEvent).toHaveBeenCalledWith(
+      'execution.force_failed',
+      expect.objectContaining({ executionId: EXEC_ID, userId: null, actorUserId: USER_ID })
+    );
   });
 
   // ── 11. Happy path — paused_for_approval ─────────────────────────────────
