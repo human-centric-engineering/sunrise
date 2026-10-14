@@ -261,6 +261,8 @@ Flags a conversation for human review when the agent cannot resolve a query. Log
 
 Applies approved field changes to provider model entries. Validates each change against the update schema and invalidates the model cache. Used by the Provider Model Audit workflow.
 
+Each change is drift-checked against the row (its `currentValue` must still match) and written in its own serializable transaction, except the two prices: `inputCostPerMillionTokens` and `outputCostPerMillionTokens` apply as one unit, both or neither (t-774). A price change without its partner is reported `invalid` and not written; if either drifts or fails validation, neither is written. A numeric string (`"3.5"`, as the approval screen sends an edited value) is read as a number for the price fields and `dimensions`.
+
 | Parameter  | Type   | Required | Description                                                           |
 | ---------- | ------ | -------- | --------------------------------------------------------------------- |
 | `model_id` | string | No       | Model ID (single-model mode)                                          |
@@ -269,7 +271,7 @@ Applies approved field changes to provider model entries. Validates each change 
 
 ### `add_provider_models`
 
-Adds new provider model entries to the registry. Validates against the create schema, skips duplicates, and invalidates the model cache.
+Adds new provider model entries to the registry. Validates against the create schema, skips duplicates, and invalidates the model cache. A model may carry `inputCostPerMillionTokens` and `outputCostPerMillionTokens` (USD per 1M tokens, 0–10,000); one without the other marks that model `invalid` and it is not created, while the rest of the batch still is (t-774).
 
 | Parameter   | Type  | Required | Description                                                                                     |
 | ----------- | ----- | -------- | ----------------------------------------------------------------------------------------------- |
