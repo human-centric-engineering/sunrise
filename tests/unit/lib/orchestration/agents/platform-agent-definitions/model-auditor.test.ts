@@ -23,10 +23,16 @@ describe('PROVIDER_MODEL_AUDITOR_AGENT', () => {
     expect(instructions).toContain('Never from memory alone');
   });
 
-  it('is install-only and can write audited changes back to the matrix', () => {
-    expect(PROVIDER_MODEL_AUDITOR_AGENT.audience).toBe('install-only');
-    expect(PROVIDER_MODEL_AUDITOR_AGENT.capabilities).toEqual(
-      expect.arrayContaining(['apply_audit_changes', 'add_provider_models'])
-    );
+  it('cannot write to the Model Matrix itself: writes wait for the approval step', () => {
+    // The discover_new_models agent turn reads web search results; with a
+    // write tool bound, text planted there could change the matrix (prices
+    // included) before the workflow's human_approval step.
+    for (const write of [
+      'apply_audit_changes',
+      'add_provider_models',
+      'deactivate_provider_models',
+    ]) {
+      expect(PROVIDER_MODEL_AUDITOR_AGENT.capabilities).not.toContain(write);
+    }
   });
 });

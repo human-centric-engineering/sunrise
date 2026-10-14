@@ -362,6 +362,16 @@ release process.
 
 ### Security
 
+- **The `provider-model-auditor` agent no longer has write tools bound**
+  (t-774). It held `apply_audit_changes`, `add_provider_models` and
+  `deactivate_provider_models`, so the audit's `discover_new_models` turn,
+  whose prompt carries web search results, could change the Model Matrix
+  before the workflow's approval step. The workflow's own write steps run
+  under the workflow and never needed the binding. The reconcile removes the
+  three bindings from existing instances. An admin who chatted with the
+  auditor to apply changes directly now applies them through the audit's
+  approval step or the Model Matrix.
+
 - **The logger reduces every outbound URL it writes, whatever the key**
   (t-778). `Logger`'s sanitiser now passes each string in a log entry (the
   message, an error's message and stack, any field) through the new
