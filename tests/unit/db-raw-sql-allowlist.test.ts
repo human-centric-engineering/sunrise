@@ -151,6 +151,11 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     why: 'cost aggregation windows',
   },
   {
+    file: 'lib/privacy/config-recipients.ts',
+    calls: 3,
+    why: 'erasure (t-791): the settings singleton (a global model, no org) and the workflow drafts and versions that could name the person, read FOR UPDATE and narrowed by a text search Prisma cannot express; deliberately system-scoped at multi, since a person must be removed from every org’s workflows, like every erasure read',
+  },
+  {
     file: 'lib/privacy/delivery-payloads.ts',
     calls: 2,
     why: 'deliveries whose payload names a person (JSON containment via the GIN index) and their bulk redaction (t-783); system-scoped at multi, like every erasure and subject-access read',
