@@ -18,6 +18,7 @@
  * so a partial selection doesn't 403 the whole batch. A delivery whose
  * subscription was deleted may be visible (`webhook-delivery-access.ts`) but
  * has nowhere to go, so `retryDelivery` refuses it and it counts as skipped.
+ * So does one an erasure stopped (t-793).
  */
 
 import { z } from 'zod';

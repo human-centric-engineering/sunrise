@@ -45,7 +45,11 @@ import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
 import { eraseSubjectFromDeliveries } from '@/lib/privacy/delivery-payloads';
 import { eraseFromConfigRecipients } from '@/lib/privacy/config-recipients';
 import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settings';
-import { AWAITING_RETRY_STATUSES, notRetried } from '@/lib/orchestration/webhooks/not-retried';
+import {
+  AWAITING_RETRY_STATUSES,
+  RECIPIENT_ERASED,
+  notRetried,
+} from '@/lib/orchestration/webhooks/not-retried';
 import {
   ERASED_DESTINATION,
   normaliseAddress,
@@ -316,7 +320,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
             data: {
               status: 'exhausted',
               nextRetryAt: null,
-              lastError: notRetried(row.lastError, 'recipient erased'),
+              lastError: notRetried(row.lastError, RECIPIENT_ERASED),
               ...(row.destination === address
                 ? { destination: ERASED_DESTINATION, destinationFingerprint: null }
                 : {}),

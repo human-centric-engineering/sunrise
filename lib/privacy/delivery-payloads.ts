@@ -60,7 +60,12 @@
  */
 
 import { Prisma } from '@prisma/client';
-import { AWAITING_RETRY_STATUSES } from '@/lib/orchestration/webhooks/not-retried';
+import {
+  AWAITING_RETRY_STATUSES,
+  SUBJECT_ERASED,
+  notRetried,
+  notRetriedSuffix,
+} from '@/lib/orchestration/webhooks/not-retried';
 
 /** Which delivery table: webhook subscriptions', or event hooks'. */
 export type DeliveryTable = 'webhook' | 'hook';
@@ -347,12 +352,15 @@ export function subjectViewOfPayload(
 const WRITE_CHUNK = 500;
 
 /**
- * The `lastError` a stopped row gets: `notRetried`'s wording (`lib/orchestration/webhooks/not-retried.ts`), in SQL, so
- * it is built from the row as the `UPDATE` finds it rather than as it was read.
+ * The `lastError` a stopped row gets: `notRetried`'s wording
+ * (`lib/orchestration/webhooks/not-retried.ts`), in SQL, so it is built from
+ * the row as the `UPDATE` finds it rather than as it was read. Built from the
+ * same functions, so `isStoppedByErasure` recognises it and a manual retry
+ * refuses the row (t-793).
  */
 const STOPPED_LAST_ERROR = Prisma.sql`CASE WHEN d."lastError" IS NULL OR d."lastError" = ''
-  THEN 'Not retried: subject erased'
-  ELSE d."lastError" || ' (not retried: subject erased)' END`;
+  THEN ${notRetried(null, SUBJECT_ERASED)}
+  ELSE d."lastError" || ${notRetriedSuffix(SUBJECT_ERASED)} END`;
 
 /**
  * Redact the subject from every delivery in `table` that names them, and stop

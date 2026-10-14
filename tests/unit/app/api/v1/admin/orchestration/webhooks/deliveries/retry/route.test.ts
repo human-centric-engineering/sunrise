@@ -207,6 +207,44 @@ describe('POST /webhooks/deliveries/:id/retry', () => {
     expect(response.status).toBe(404);
   });
 
+  describe('a delivery stopped by an erasure (t-793)', () => {
+    it.each([
+      ['subject erased', 'HTTP 500 (not retried: subject erased)'],
+      ['subject erased, with no earlier error', 'Not retried: subject erased'],
+      ['recipient erased', 'Resend 422 (not retried: recipient erased)'],
+    ])('returns 409, without retrying or auditing: %s', async (_label, lastError) => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+        lastError,
+        subscription: { createdBy: ADMIN_USER_ID },
+      } as never);
+      // If the route skipped the check, this would turn the 409 into a 200.
+      vi.mocked(retryDelivery).mockResolvedValue(true);
+
+      const response = await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
+
+      expect(response.status).toBe(409);
+      const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+      expect(body.error.code).toBe('CONFLICT');
+      expect(retryDelivery).not.toHaveBeenCalled();
+      expect(logAdminAction).not.toHaveBeenCalled();
+    });
+
+    it('retries a delivery whose error merely mentions an erasure elsewhere in the text', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+        lastError: 'HTTP 400: subject erased field missing',
+        subscription: { createdBy: ADMIN_USER_ID },
+      } as never);
+      vi.mocked(retryDelivery).mockResolvedValue(true);
+
+      const response = await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
+
+      expect(response.status).toBe(200);
+      expect(retryDelivery).toHaveBeenCalledWith(DELIVERY_ID);
+    });
+  });
+
   describe('orphaned deliveries (subscription deleted)', () => {
     it('returns 409 for an orphan, without retrying or auditing', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());

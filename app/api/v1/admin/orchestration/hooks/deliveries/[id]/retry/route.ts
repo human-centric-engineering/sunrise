@@ -6,7 +6,8 @@
  * Manually retries a failed or exhausted event-hook delivery.
  * Resets the attempt counter and re-dispatches. A delivery whose hook was
  * deleted is kept as a record and answers 409, as the webhook retry route
- * does: there is no current destination to send it to.
+ * does: there is no current destination to send it to. So does one an
+ * erasure stopped (t-793): what it would send is about the erased person.
  *
  * Authentication: Admin only.
  */
@@ -19,6 +20,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { retryHookDelivery } from '@/lib/orchestration/hooks/registry';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
+import { isStoppedByErasure } from '@/lib/orchestration/webhooks/not-retried';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -30,12 +32,17 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   const delivery = await prisma.aiEventHookDelivery.findUnique({
     where: { id },
-    select: { hookId: true },
+    select: { hookId: true, lastError: true },
   });
   if (!delivery) throw new NotFoundError('Hook delivery not found');
   if (delivery.hookId === null) {
     throw new ConflictError(
       'The hook that sent this delivery was deleted; the delivery is kept as a record and cannot be retried'
+    );
+  }
+  if (isStoppedByErasure(delivery.lastError)) {
+    throw new ConflictError(
+      'This delivery was stopped because the person it concerns was erased; it is kept as a record and cannot be retried'
     );
   }
 

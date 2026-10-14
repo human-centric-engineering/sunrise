@@ -10,6 +10,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
+import { isStoppedByErasure } from '@/lib/orchestration/webhooks/not-retried';
 import {
   ADMIN_ACTION_EVENTS,
   EVENT_RECORD_KEYS,
@@ -672,9 +673,14 @@ describe('eraseSubjectFromDeliveries', () => {
     );
     expect(text).toMatch(new RegExp(`"lastError" = CASE WHEN ${stop} THEN`));
     expect(text).toContain('ELSE d."lastError" END');
-    // The not-retried wording is built in SQL from the row's own lastError
-    expect(text).toContain("'Not retried: subject erased'");
-    expect(text).toContain(`d."lastError" || ' (not retried: subject erased)'`);
+    // The not-retried wording is built in SQL from the row's own lastError,
+    // with notRetried's wording bound as parameters, so isStoppedByErasure
+    // recognises the result and a manual retry refuses the row (t-793).
+    expect(values).toContain('Not retried: subject erased');
+    expect(values).toContain(' (not retried: subject erased)');
+    expect(text).toMatch(/ELSE d\."lastError" \|\| \$\d+ END/);
+    expect(isStoppedByErasure('Not retried: subject erased')).toBe(true);
+    expect(isStoppedByErasure('HTTP 500 (not retried: subject erased)')).toBe(true);
     expect(text).toContain('AS w(id text, payload jsonb, activity boolean)');
   });
 
