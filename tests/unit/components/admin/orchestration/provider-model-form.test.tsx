@@ -815,6 +815,24 @@ describe('ProviderModelForm — chat pricing (t-774)', () => {
     expect(mockPost).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard
   });
 
+  it('saves once chat is unticked, even with half a price typed into the hidden section', async () => {
+    // The pair check only applies while Chat Pricing is shown: an error on a
+    // hidden field would block Save with nothing on screen.
+    const user = userEvent.setup();
+    render(<ProviderModelForm model={makeModel({ capabilities: ['chat', 'embedding'] })} />);
+
+    await user.type(screen.getByPlaceholderText('e.g. 3'), '3');
+    await user.click(screen.getByRole('checkbox', { name: /^chat$/i }));
+    expect(screen.queryByPlaceholderText('e.g. 3')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
+    const body = (mockPatch.mock.calls[0][1] as { body: Record<string, unknown> }).body;
+    expect(body.capabilities).toEqual(['embedding']);
+    expect(body.inputCostPerMillionTokens).toBeNull();
+    expect(body.outputCostPerMillionTokens).toBeNull();
+  });
+
   it('rejects a non-numeric price and sends nothing', async () => {
     const user = userEvent.setup();
     render(<ProviderModelForm model={makeModel()} />);

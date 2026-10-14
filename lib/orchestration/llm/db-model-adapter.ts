@@ -93,10 +93,13 @@ export function narrowParamProfile(raw: string | null | undefined): ParamProfile
 }
 
 /**
- * A row's input and output rates per 1M tokens (t-774). Each split column
- * wins when set; an unset one falls back to the blended
- * `costPerMillionTokens`, which an embedding model and a row written before
- * the split carry. `null` means neither is known.
+ * A row's input and output rates per 1M tokens (t-774). The split columns
+ * are read as a pair: when both are set they win, otherwise both rates are
+ * the blended `costPerMillionTokens`, which an embedding model and a row
+ * written before the split carry. A row never mixes one split rate with the
+ * blended one. The database holds the pair (`ai_provider_model_price_pair`);
+ * this keeps a row from before that constraint, or a mock, from being priced
+ * half one way and half the other. `null` means no rate is known.
  */
 function rowRates(
   row: Pick<
@@ -104,10 +107,11 @@ function rowRates(
     'costPerMillionTokens' | 'inputCostPerMillionTokens' | 'outputCostPerMillionTokens'
   >
 ): { input: number | null; output: number | null } {
-  return {
-    input: row.inputCostPerMillionTokens ?? row.costPerMillionTokens,
-    output: row.outputCostPerMillionTokens ?? row.costPerMillionTokens,
-  };
+  const input = row.inputCostPerMillionTokens;
+  const output = row.outputCostPerMillionTokens;
+  if (input != null && output != null) return { input, output };
+  const blended = row.costPerMillionTokens ?? null;
+  return { input: blended, output: blended };
 }
 
 /** Convert a single DB row into a `ModelInfo`. Always marks `available: true`. */

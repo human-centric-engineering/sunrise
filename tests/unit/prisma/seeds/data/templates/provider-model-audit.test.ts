@@ -87,6 +87,9 @@ describe('provider-model-audit template — pricing (t-774)', () => {
     expect(prompt).toContain('inputCostPerMillionTokens');
     expect(prompt).toContain('outputCostPerMillionTokens');
     expect(prompt).toContain('both, together');
+    // The schema rejects a lone price change, so the prompt must say to
+    // restate an unchanged price rather than leave it out.
+    expect(prompt).toContain('If only one of them changed, still propose both');
   });
 
   it('discover_new_models message carries the pricing rules', () => {

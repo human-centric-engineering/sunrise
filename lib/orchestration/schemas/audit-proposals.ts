@@ -32,6 +32,7 @@
 import { z } from 'zod';
 
 import { registerSchema } from '@/lib/orchestration/schemas/registry';
+import { MAX_PRICE_PER_MILLION_TOKENS, splitPriceSchema } from '@/lib/validations/orchestration';
 import {
   CAPABILITIES,
   CONFIDENCE,
@@ -81,9 +82,6 @@ const KINDS_REQUIRING_REFERENCE = new Set([
  */
 const PRICE_SOURCE_KINDS = new Set(['web_search', 'knowledge_base', 'external_call']);
 
-/** The most a price per 1M tokens may be: catches a per-token or per-1K figure. */
-const MAX_PRICE_PER_MILLION = 10_000;
-
 function hasPriceSource(sources: ReadonlyArray<{ source: string; reference?: string }>): boolean {
   return sources.some(
     (s) => PRICE_SOURCE_KINDS.has(s.source) && typeof s.reference === 'string' && s.reference !== ''
@@ -91,12 +89,7 @@ function hasPriceSource(sources: ReadonlyArray<{ source: string; reference?: str
 }
 
 function isValidPrice(value: unknown): boolean {
-  return (
-    typeof value === 'number' &&
-    Number.isFinite(value) &&
-    value >= 0 &&
-    value <= MAX_PRICE_PER_MILLION
-  );
+  return splitPriceSchema.safeParse(value).success;
 }
 
 // ─── Sub-schemas ───────────────────────────────────────────────────────────
@@ -227,7 +220,7 @@ const changeSchema = z
       if (!isValidPrice(change.proposedValue)) {
         ctx.addIssue({
           code: 'custom',
-          message: `field "${change.field}": proposedValue must be a number from 0 to ${MAX_PRICE_PER_MILLION} (USD per 1M tokens)`,
+          message: `field "${change.field}": proposedValue must be a number from 0 to ${MAX_PRICE_PER_MILLION_TOKENS} (USD per 1M tokens)`,
           path: ['proposedValue'],
         });
       }
@@ -307,12 +300,13 @@ const newModelSchema = z
     quality: z.enum(asEnum(QUALITY)).optional(),
     schemaCompatible: z.boolean().optional(),
     // Chat pricing (t-774): optional, as a pair, backed by a checkable source.
-    inputCostPerMillionTokens: z.number().optional(),
-    outputCostPerMillionTokens: z.number().optional(),
+    // `null` is the model saying it found no price — the same as leaving it out.
+    inputCostPerMillionTokens: z.number().nullish(),
+    outputCostPerMillionTokens: z.number().nullish(),
   })
   .superRefine((model, ctx) => {
-    const hasInput = model.inputCostPerMillionTokens !== undefined;
-    const hasOutput = model.outputCostPerMillionTokens !== undefined;
+    const hasInput = model.inputCostPerMillionTokens != null;
+    const hasOutput = model.outputCostPerMillionTokens != null;
     if (!hasInput && !hasOutput) return;
     if (hasInput !== hasOutput) {
       ctx.addIssue({
@@ -324,10 +318,10 @@ const newModelSchema = z
     }
     for (const field of ['inputCostPerMillionTokens', 'outputCostPerMillionTokens'] as const) {
       const value = model[field];
-      if (value !== undefined && !isValidPrice(value)) {
+      if (value != null && !isValidPrice(value)) {
         ctx.addIssue({
           code: 'custom',
-          message: `${field} must be a number from 0 to ${MAX_PRICE_PER_MILLION} (USD per 1M tokens)`,
+          message: `${field} must be a number from 0 to ${MAX_PRICE_PER_MILLION_TOKENS} (USD per 1M tokens)`,
           path: [field],
         });
       }

@@ -156,20 +156,22 @@ describe('dbModelToModelInfo', () => {
       expect(info.pricingUnknown).toBeUndefined();
     });
 
-    it('falls back to the blended rate for each side the split leaves unset', () => {
+    it('ignores half a split and charges the blended rate for both', () => {
+      // The database refuses half a split (`ai_provider_model_price_pair`);
+      // a row from before that constraint must not mix the two rates.
       const info = dbModelToModelInfo(
         makeRow({ costPerMillionTokens: 9, inputCostPerMillionTokens: 3 })
       );
-      expect(info.inputCostPerMillion).toBe(3);
+      expect(info.inputCostPerMillion).toBe(9);
       expect(info.outputCostPerMillion).toBe(9);
       expect(info.pricingUnknown).toBeUndefined();
     });
 
-    it('marks a row unpriced when one side has neither a split nor a blended rate', () => {
+    it('marks a row unpriced when it has half a split and no blended rate', () => {
       const info = dbModelToModelInfo(
         makeRow({ costPerMillionTokens: null, inputCostPerMillionTokens: 3 })
       );
-      expect(info.inputCostPerMillion).toBe(3);
+      expect(info.inputCostPerMillion).toBe(0);
       expect(info.outputCostPerMillion).toBe(0);
       expect(info.pricingUnknown).toBe(true);
     });

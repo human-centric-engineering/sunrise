@@ -1033,6 +1033,45 @@ describe('ApplyAuditChangesCapability', () => {
       expect(mockTransaction).toHaveBeenCalledTimes(1);
     });
 
+    it.each([
+      ['input cleared, output set', null, 5],
+      ['input set, output cleared', 5, null],
+    ])(
+      'refuses a pair that would leave half a price (%s), writing nothing',
+      async (_label, inProposed, outProposed) => {
+        mockFindUnique.mockResolvedValue(modelWithPrices());
+        const cap = new ApplyAuditChangesCapability();
+
+        const result = await cap.execute(
+          { model_id: 'model-1', changes: priceChanges(inProposed, outProposed) },
+          context
+        );
+
+        expect(result.data?.invalid).toBe(2);
+        expect(result.data?.changes.map((c) => c.reason)).toEqual([
+          'Set the input and output prices together, or clear both',
+          'Set the input and output prices together, or clear both',
+        ]);
+        expect(priceWrites()).toEqual([]);
+        expect(mockTransaction).not.toHaveBeenCalled();
+      }
+    );
+
+    it('clears both prices together', async () => {
+      mockFindUnique.mockResolvedValue(modelWithPrices());
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute(
+        { model_id: 'model-1', changes: priceChanges(null, null) },
+        context
+      );
+
+      expect(result.data?.applied).toBe(2);
+      expect(priceWrites()).toEqual([
+        { inputCostPerMillionTokens: null, outputCostPerMillionTokens: null },
+      ]);
+    });
+
     it('reads numeric-string prices (edited on the approval screen) as numbers', async () => {
       mockFindUnique.mockResolvedValue(modelWithPrices());
       const cap = new ApplyAuditChangesCapability();

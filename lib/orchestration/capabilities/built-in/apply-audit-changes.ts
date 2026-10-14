@@ -451,6 +451,22 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
       };
     }
 
+    // A price pair must leave both set or both cleared: one number beside a
+    // `null` is half a price, which the update schema accepts field by field
+    // and the database refuses (`ai_provider_model_price_pair`).
+    const prices = validated.filter(({ change }) => PRICE_FIELDS.has(change.field));
+    if (prices.length === 2 && (prices[0].value === null) !== (prices[1].value === null)) {
+      return {
+        results: prices.map(({ change }) => ({
+          field: change.field,
+          previousValue: change.currentValue,
+          newValue: change.proposedValue,
+          status: 'invalid' as const,
+          reason: 'Set the input and output prices together, or clear both',
+        })),
+      };
+    }
+
     let outcome: 'applied' | 'drift' | 'missing' | 'error';
     const drift: Record<string, unknown> = {};
     let updateError: string | null = null;

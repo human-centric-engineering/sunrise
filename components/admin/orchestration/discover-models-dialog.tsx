@@ -147,6 +147,11 @@ interface ReviewRow {
   contextLength: ContextLengthLevel;
   toolUse: ToolUseLevel;
   bestRole: string;
+  // Live chat prices from the vendor's or OpenRouter's catalogue (t-774),
+  // carried to the new row so it is priced from its first turn. Read-only
+  // here; null when the catalogue gave none.
+  inputCostPerMillionTokens: number | null;
+  outputCostPerMillionTokens: number | null;
 }
 
 // One bucket per inference output. Previously reasoning + moderation +
@@ -197,7 +202,28 @@ function reviewFromCandidate(c: Candidate): ReviewRow {
     contextLength: c.suggested.contextLength,
     toolUse: c.suggested.toolUse,
     bestRole: c.suggested.bestRole,
+    inputCostPerMillionTokens: c.suggested.inputCostPerMillion,
+    outputCostPerMillionTokens: c.suggested.outputCostPerMillion,
   };
+}
+
+/**
+ * A review row's prices for the bulk create: the pair only when both are
+ * known, and only for a chat model, since the matrix takes them as a pair
+ * for chat pricing (t-774).
+ */
+function pricesFor(row: ReviewRow): {
+  inputCostPerMillionTokens?: number;
+  outputCostPerMillionTokens?: number;
+} {
+  return row.capabilities.includes('chat') &&
+    row.inputCostPerMillionTokens !== null &&
+    row.outputCostPerMillionTokens !== null
+    ? {
+        inputCostPerMillionTokens: row.inputCostPerMillionTokens,
+        outputCostPerMillionTokens: row.outputCostPerMillionTokens,
+      }
+    : {};
 }
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -413,6 +439,7 @@ export function DiscoverModelsDialog({
               contextLength: r.contextLength,
               toolUse: r.toolUse,
               bestRole: r.bestRole,
+              ...pricesFor(r),
             })),
           },
         }
@@ -886,6 +913,13 @@ function ReviewCard({
       </button>
       {isOpen && (
         <div className="space-y-3 border-t px-4 py-3">
+          {row.capabilities.includes('chat') && (
+            <p className="text-muted-foreground text-xs">
+              {row.inputCostPerMillionTokens !== null && row.outputCostPerMillionTokens !== null
+                ? `Price from the provider's catalogue: $${row.inputCostPerMillionTokens} in / $${row.outputCostPerMillionTokens} out per 1M tokens. Saved with the model.`
+                : 'No price in the provider’s catalogue. Set input and output prices on the model after adding it, or its chat turns are recorded as unpriced.'}
+            </p>
+          )}
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Name">
               <Input

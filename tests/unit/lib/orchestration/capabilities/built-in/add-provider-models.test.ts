@@ -527,20 +527,23 @@ describe('AddProviderModelsCapability', () => {
       );
     });
 
-    it('reads numeric-string prices (edited on the approval screen) as numbers', () => {
+    it('reads numeric-string prices (edited on the approval screen) as numbers', async () => {
       const cap = new AddProviderModelsCapability();
       const args = cap.validate({
         newModels: [
           {
             ...makeNewModel(),
             inputCostPerMillionTokens: '3.5',
-            outputCostPerMillionTokens: '16',
+            outputCostPerMillionTokens: ' 16 ',
           },
         ],
       });
 
-      expect(args.newModels[0].inputCostPerMillionTokens).toBe(3.5);
-      expect(args.newModels[0].outputCostPerMillionTokens).toBe(16);
+      await cap.execute(args, context);
+
+      const data = mockCreate.mock.calls[0][0].data as Record<string, unknown>;
+      expect(data.inputCostPerMillionTokens).toBe(3.5);
+      expect(data.outputCostPerMillionTokens).toBe(16);
     });
 
     it('treats null prices as absent and writes null for both', async () => {
@@ -559,23 +562,34 @@ describe('AddProviderModelsCapability', () => {
       expect(data.outputCostPerMillionTokens).toBeNull();
     });
 
-    it('rejects a price outside 0..10000', () => {
-      const cap = new AddProviderModelsCapability();
-      expect(() =>
-        cap.validate({
+    it.each([
+      ['above 10000', 10001],
+      ['negative', -1],
+      ['not a number', '1e'],
+    ])(
+      'marks a model with a price %s invalid without failing the rest of the batch',
+      async (_label, badPrice) => {
+        const cap = new AddProviderModelsCapability();
+        const args = cap.validate({
           newModels: [
-            { ...makeNewModel(), inputCostPerMillionTokens: 10001, outputCostPerMillionTokens: 1 },
+            {
+              ...makeNewModel({ slug: 'acme-bad', modelId: 'bad' }),
+              inputCostPerMillionTokens: badPrice,
+              outputCostPerMillionTokens: 1,
+            },
+            makeNewModel({ slug: 'acme-good', modelId: 'good' }),
           ],
-        })
-      ).toThrow(CapabilityValidationError);
-      expect(() =>
-        cap.validate({
-          newModels: [
-            { ...makeNewModel(), inputCostPerMillionTokens: -1, outputCostPerMillionTokens: 1 },
-          ],
-        })
-      ).toThrow(CapabilityValidationError);
-    });
+        });
+
+        const result = await cap.execute(args, context);
+
+        const bad = result.data?.models.find((m) => m.slug === 'acme-bad');
+        expect(bad?.status).toBe('invalid');
+        expect(bad?.reason).toContain('Input price must be a number from 0 to 10000');
+        expect(mockCreate).toHaveBeenCalledTimes(1);
+        expect(mockCreate.mock.calls[0][0].data).toMatchObject({ slug: 'acme-good' });
+      }
+    );
 
     it('marks a model with only one price invalid, creates nothing for it, and still creates the others', async () => {
       const cap = new AddProviderModelsCapability();

@@ -859,5 +859,29 @@ describe('audit-proposals schema', () => {
       );
       expect(result.success).toBe(true);
     });
+
+    it('treats null prices as no price: accepted without a price source', () => {
+      // LLMs commonly emit null for "not found"; the prompt asks them to
+      // leave prices out, and null must mean the same.
+      const result = auditProposalsSchema.safeParse(
+        newModelInput(
+          pricedNewModel({
+            sources: [TRAINING],
+            inputCostPerMillionTokens: null,
+            outputCostPerMillionTokens: null,
+          })
+        )
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('still rejects one null price beside a set one', () => {
+      const result = auditProposalsSchema.safeParse(
+        newModelInput(
+          pricedNewModel({ inputCostPerMillionTokens: 3, outputCostPerMillionTokens: null })
+        )
+      );
+      expect(result.success).toBe(false);
+    });
   });
 });

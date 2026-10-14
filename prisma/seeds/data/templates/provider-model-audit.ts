@@ -105,7 +105,7 @@ const PRICING_INSTRUCTIONS = `
 **Pricing (chat models).** \`inputCostPerMillionTokens\` and \`outputCostPerMillionTokens\` are the provider's published USD price per 1M input and per 1M output tokens.
 
 - Propose them **only from a source you can cite with a URL**: a \`web_search\` result (the provider's pricing page is best), or a \`knowledge_base\` / \`external_call\` source with a reference. Training knowledge alone is NOT enough for a price — prices change, and a wrong one mis-records every turn. If you can't cite one, leave the price out.
-- Always propose **both, together**: input and output as a pair, never one alone.
+- Always propose **both, together**: input and output as a pair, never one alone. If only one of them changed, still propose both — give the unchanged one its current value as the proposed value — or the whole proposal set is rejected.
 - Use dollars per **1M** tokens (e.g. 3 and 15), not per token or per 1K. Values must be between 0 and 10000.
 - \`costPerMillionTokens\` is a legacy single blended rate; never propose it — the split pair replaces it.
 - If the model's current input and output prices already match the source, propose no change.

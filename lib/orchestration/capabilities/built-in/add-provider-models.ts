@@ -11,6 +11,10 @@
  */
 
 import { z } from 'zod';
+import {
+  MAX_PRICE_PER_MILLION_TOKENS,
+  splitPriceInputSchema,
+} from '@/lib/validations/orchestration';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
@@ -26,13 +30,32 @@ import type {
 } from '@/lib/orchestration/capabilities/types';
 
 /**
- * A price per 1M tokens. The approval screen edits values as text, so an
- * admin's modified `"3.5"` is read as the number it spells.
+ * A new model's chat prices (t-774), read one model at a time: each must be
+ * a valid price (a numeric string, as the approval screen sends an edited
+ * cell, is read as a number), and they come as a pair. `null` or absent is
+ * an admin clearing the cell, or the audit finding no price: no price.
  */
-const priceSchema = z.preprocess(
-  (v) => (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : v),
-  z.number().nonnegative().max(10_000)
-);
+function readPrices(
+  rawInput: unknown,
+  rawOutput: unknown
+): { ok: true; input: number | null; output: number | null } | { ok: false; reason: string } {
+  const read = (raw: unknown, label: string): number | null | string => {
+    if (raw === null || raw === undefined) return null;
+    const parsed = splitPriceInputSchema.safeParse(raw);
+    return parsed.success
+      ? parsed.data
+      : `${label} price must be a number from 0 to ${MAX_PRICE_PER_MILLION_TOKENS} per 1M tokens`;
+  };
+  const input = read(rawInput, 'Input');
+  const output = read(rawOutput, 'Output');
+  if (typeof input === 'string') return { ok: false, reason: input };
+  if (typeof output === 'string') return { ok: false, reason: output };
+  // Half a price records the other half of every turn at $0.
+  if ((input === null) !== (output === null)) {
+    return { ok: false, reason: 'Input and output prices must be set together, or neither' };
+  }
+  return { ok: true, input, output };
+}
 
 const newModelSchema = z.object({
   name: z.string().min(1).max(100).trim(),
@@ -72,9 +95,10 @@ const newModelSchema = z.object({
   quality: z.enum(['high', 'medium', 'budget']).optional(),
   // Chat pricing per 1M tokens (t-774), proposed by the audit and checked
   // by the admin. Created only as a pair (see `execute`).
-  // `null` is an admin clearing the cell on the approval screen: no price.
-  inputCostPerMillionTokens: priceSchema.nullish(),
-  outputCostPerMillionTokens: priceSchema.nullish(),
+  // Validated per model in `execute`, not here: one bad cell an admin typed
+  // on the approval screen must fail that model, not every approved one.
+  inputCostPerMillionTokens: z.unknown().optional(),
+  outputCostPerMillionTokens: z.unknown().optional(),
 });
 
 // Unwrap an `approvalPayload: { newModels }` envelope written by
@@ -235,17 +259,14 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
     let invalid = 0;
 
     for (const model of args.newModels) {
-      // Half a price records the other half of every turn at $0 (t-774).
-      if (
-        (model.inputCostPerMillionTokens == null) !==
-        (model.outputCostPerMillionTokens == null)
-      ) {
+      const prices = readPrices(model.inputCostPerMillionTokens, model.outputCostPerMillionTokens);
+      if (!prices.ok) {
         results.push({
           name: model.name,
           slug: model.slug,
           providerSlug: model.providerSlug,
           status: 'invalid',
-          reason: 'Input and output prices must be set together, or neither',
+          reason: prices.reason,
         });
         invalid++;
         continue;
@@ -270,8 +291,8 @@ export class AddProviderModelsCapability extends BaseCapability<Args, Data> {
             dimensions: model.dimensions ?? null,
             schemaCompatible: model.schemaCompatible ?? null,
             quality: model.quality ?? null,
-            inputCostPerMillionTokens: model.inputCostPerMillionTokens ?? null,
-            outputCostPerMillionTokens: model.outputCostPerMillionTokens ?? null,
+            inputCostPerMillionTokens: prices.input,
+            outputCostPerMillionTokens: prices.output,
             isDefault: false,
             isActive: true,
             createdBy: context.userId,

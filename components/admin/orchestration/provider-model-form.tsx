@@ -163,6 +163,10 @@ const modelFormSchema = z
     isActive: z.boolean(),
   })
   .superRefine((data, ctx) => {
+    // Only while the Chat Pricing section is shown: a hidden field's error
+    // would block Save with nothing on screen, and submit drops the prices
+    // for a model without `chat` anyway.
+    if (!data.capabilities.includes('chat')) return;
     const hasInput = data.inputCostPerMillionTokens !== '';
     const hasOutput = data.outputCostPerMillionTokens !== '';
     if (hasInput === hasOutput) return;

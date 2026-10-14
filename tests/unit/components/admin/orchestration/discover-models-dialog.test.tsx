@@ -344,6 +344,59 @@ describe('DiscoverModelsDialog', () => {
       });
     });
 
+    describe('catalogue prices (t-774)', () => {
+      async function submitOne(candidate: ReturnType<typeof makeCandidate>) {
+        const { apiClient } = await import('@/lib/api/client');
+        vi.mocked(apiClient.get).mockResolvedValueOnce({
+          providerSlug: 'openai',
+          candidates: [candidate],
+        });
+        vi.mocked(apiClient.post).mockResolvedValue({ created: 1, skipped: 0, conflicts: [] });
+
+        const user = userEvent.setup();
+        render(<DiscoverModelsDialog open onOpenChange={() => {}} providerSlug="openai" />);
+        await waitFor(() => expect(screen.getByText(candidate.modelId)).toBeInTheDocument());
+        await user.click(
+          screen.getByRole('checkbox', { name: new RegExp(`select ${candidate.modelId}`, 'i') })
+        );
+        await user.click(screen.getByRole('button', { name: /continue/i }));
+        await user.click(await screen.findByRole('button', { name: /add 1 model/i }));
+        await waitFor(() => expect(apiClient.post).toHaveBeenCalled());
+
+        const [, options] = vi.mocked(apiClient.post).mock.calls[0];
+        return (options as { body: { models: Array<Record<string, unknown>> } }).body.models[0];
+      }
+
+      it("sends a chat candidate's catalogue prices as the input/output pair", async () => {
+        const row = await submitOne(makeCandidate());
+
+        expect(row.inputCostPerMillionTokens).toBe(0.15);
+        expect(row.outputCostPerMillionTokens).toBe(0.6);
+      });
+
+      it('sends no prices when the catalogue gave only one of the two', async () => {
+        const base = makeCandidate();
+        const row = await submitOne({
+          ...base,
+          suggested: { ...base.suggested, outputCostPerMillion: null },
+        });
+
+        expect(row).not.toHaveProperty('inputCostPerMillionTokens');
+        expect(row).not.toHaveProperty('outputCostPerMillionTokens');
+      });
+
+      it('sends no chat prices for a candidate without the chat capability', async () => {
+        const base = makeCandidate({ modelId: 'text-embedding-3-small' });
+        const row = await submitOne({
+          ...base,
+          inferredCapability: 'embedding',
+          suggested: { ...base.suggested, capabilities: ['embedding'] },
+        });
+
+        expect(row).not.toHaveProperty('inputCostPerMillionTokens');
+      });
+    });
+
     it('renders inactive conflicts under a "reactivate from the matrix list" heading', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.get).mockResolvedValueOnce({

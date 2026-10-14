@@ -142,7 +142,12 @@ model AiProviderModel {
 
   // Chat pricing per 1M tokens, input and output apart. Nullable: a row
   // without them falls back to `costPerMillionTokens` for both
-  // (`dbModelToModelInfo`).
+  // (`dbModelToModelInfo`). Both or neither: PRISMA-SCHEMA DRIFT WARNING —
+  // the CHECK constraint `ai_provider_model_price_pair` (A10) enforces that
+  // in raw SQL (`20261014130000_provider_model_price_pair`). Prisma cannot
+  // model it, so `prisma migrate dev` will emit a DROP CONSTRAINT for it;
+  // author migrations on this table with `--create-only` and delete that
+  // line. See .context/database/prisma-unmodelled-objects.md.
   inputCostPerMillionTokens  Float?
   outputCostPerMillionTokens Float?
   hasFreeTier                Boolean?
