@@ -705,4 +705,159 @@ describe('audit-proposals schema', () => {
     );
     expect(result.success).toBe(expected);
   });
+
+  // ── Chat prices (t-774) ──────────────────────────────────────────────
+  describe('price proposals', () => {
+    const IN = 'inputCostPerMillionTokens';
+    const OUT = 'outputCostPerMillionTokens';
+    const TRAINING = { source: 'training_knowledge', confidence: 'low' };
+    const KB = { source: 'knowledge_base', confidence: 'medium', reference: 'doc-12' };
+
+    function priceChange(field: string, proposedValue: unknown, sources: unknown[] = [SOURCE]) {
+      return {
+        field,
+        currentValue: 1,
+        proposedValue,
+        reason: 'Current price is 1; provider page lists a new rate',
+        confidence: 'high',
+        sources,
+      };
+    }
+
+    function chatInput(changes: unknown[]) {
+      return makeInput({
+        analyse_chat: {
+          models: [
+            {
+              model_id: 'm1',
+              modelName: 'Demo',
+              providerSlug: 'provider',
+              changes,
+              overallConfidence: 'high',
+              reasoning: 'prices moved',
+            },
+          ],
+          deactivateModels: [],
+        },
+      });
+    }
+
+    function pricedNewModel(extra: Record<string, unknown>) {
+      return {
+        name: 'Demo',
+        slug: 'provider-demo',
+        providerSlug: 'provider',
+        modelId: 'demo-1',
+        description: 'A demo model',
+        capabilities: ['chat'],
+        tierRole: 'thinking',
+        deploymentProfiles: ['hosted'],
+        bestRole: 'Demo',
+        sources: [SOURCE],
+        ...extra,
+      };
+    }
+
+    function newModelInput(model: unknown) {
+      return makeInput({ discover_new_models: { newModels: [model], reasoning: 'x' } });
+    }
+
+    it('accepts a price pair backed by a web_search source with a reference', () => {
+      const result = auditProposalsSchema.safeParse(
+        chatInput([priceChange(IN, 3), priceChange(OUT, 15)])
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('accepts a price pair backed by a knowledge_base source with a reference', () => {
+      const result = auditProposalsSchema.safeParse(
+        chatInput([priceChange(IN, 3, [KB]), priceChange(OUT, 15, [KB])])
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects a price backed only by training_knowledge', () => {
+      const result = auditProposalsSchema.safeParse(
+        chatInput([priceChange(IN, 3, [TRAINING]), priceChange(OUT, 15, [TRAINING])])
+      );
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result.error?.issues)).toContain('training knowledge alone');
+    });
+
+    it('rejects a price whose only price-capable source has an empty reference', () => {
+      const blank = { source: 'web_search', confidence: 'medium', reference: '' };
+      const result = auditProposalsSchema.safeParse(
+        chatInput([priceChange(IN, 3, [blank]), priceChange(OUT, 15, [blank])])
+      );
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects a price backed only by a prior_step source', () => {
+      const prior = { source: 'prior_step', confidence: 'medium', reference: 'load_models' };
+      const result = auditProposalsSchema.safeParse(
+        chatInput([priceChange(IN, 3, [prior]), priceChange(OUT, 15, [prior])])
+      );
+      expect(result.success).toBe(false);
+    });
+
+    it.each([
+      ['a string', '3'],
+      ['negative', -1],
+      ['above 10000', 10001],
+      ['null', null],
+    ])('rejects a price proposedValue that is %s', (_label, value) => {
+      const result = auditProposalsSchema.safeParse(
+        chatInput([priceChange(IN, value), priceChange(OUT, 15)])
+      );
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects a model proposal that changes only one price field', () => {
+      const result = auditProposalsSchema.safeParse(chatInput([priceChange(IN, 3)]));
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result.error?.issues)).toContain('together, once each');
+    });
+
+    it('rejects a model proposal that changes one price field twice', () => {
+      const result = auditProposalsSchema.safeParse(
+        chatInput([priceChange(IN, 3), priceChange(IN, 4)])
+      );
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts a new model with both prices and a referenced web_search source', () => {
+      const result = auditProposalsSchema.safeParse(
+        newModelInput(pricedNewModel({ [IN]: 3, [OUT]: 15 }))
+      );
+      expect(result.success).toBe(true);
+    });
+
+    it('rejects a new model with only one price', () => {
+      const result = auditProposalsSchema.safeParse(newModelInput(pricedNewModel({ [IN]: 3 })));
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result.error?.issues)).toContain('together, or neither');
+    });
+
+    it('rejects a new model with an out-of-range price', () => {
+      const result = auditProposalsSchema.safeParse(
+        newModelInput(pricedNewModel({ [IN]: 3, [OUT]: 10001 }))
+      );
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects a new model with prices but only a training_knowledge source', () => {
+      const result = auditProposalsSchema.safeParse(
+        newModelInput(pricedNewModel({ [IN]: 3, [OUT]: 15, sources: [TRAINING] }))
+      );
+      expect(result.success).toBe(false);
+      expect(JSON.stringify(result.error?.issues)).toContain('training knowledge alone');
+    });
+
+    it('still accepts a new model with no prices and a training_knowledge source', () => {
+      const result = auditProposalsSchema.safeParse(
+        newModelInput(pricedNewModel({ sources: [TRAINING] }))
+      );
+      expect(result.success).toBe(true);
+    });
+  });
 });

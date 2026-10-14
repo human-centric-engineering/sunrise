@@ -76,3 +76,52 @@ describe('provider-model-audit template — supervisor wiring', () => {
     expect(byId['report_validation_failure'].nextSteps).toEqual([]);
   });
 });
+
+describe('provider-model-audit template — pricing (t-774)', () => {
+  const steps = PROVIDER_MODEL_AUDIT_TEMPLATE.workflowDefinition.steps;
+  const byId = Object.fromEntries(steps.map((s) => [s.id, s]));
+
+  it('analyse_chat prompt carries the pricing rules', () => {
+    const prompt = (byId['analyse_chat'].config as { prompt: string }).prompt;
+    expect(prompt).toContain('Training knowledge alone is NOT enough for a price');
+    expect(prompt).toContain('inputCostPerMillionTokens');
+    expect(prompt).toContain('outputCostPerMillionTokens');
+    expect(prompt).toContain('both, together');
+  });
+
+  it('discover_new_models message carries the pricing rules', () => {
+    const message = (byId['discover_new_models'].config as { message: string }).message;
+    expect(message).toContain('Training knowledge alone is NOT enough for a price');
+    expect(message).toContain('inputCostPerMillionTokens');
+  });
+
+  it('load_models extracts both price fields', () => {
+    const prompt = (byId['load_models'].config as { prompt: string }).prompt;
+    expect(prompt).toContain('inputCostPerMillionTokens');
+    expect(prompt).toContain('outputCostPerMillionTokens');
+  });
+
+  it('refine_findings critique asks the reflector to check prices', () => {
+    const critique = (byId['refine_findings'].config as { critiquePrompt: string }).critiquePrompt;
+    expect(critique).toContain('For any proposed price');
+    expect(critique).toContain('per 1M tokens');
+  });
+
+  it('review_changes newModels section has editable numeric price columns', () => {
+    const config = byId['review_changes'].config as {
+      reviewSchema: {
+        sections: Array<{
+          id: string;
+          fields: Array<{ key: string; display: string; editable?: boolean }>;
+        }>;
+      };
+    };
+    const section = config.reviewSchema.sections.find((x) => x.id === 'newModels');
+    for (const key of ['inputCostPerMillionTokens', 'outputCostPerMillionTokens']) {
+      const field = section?.fields.find((f) => f.key === key);
+      expect(field, key).toBeDefined();
+      expect(field?.display).toBe('number');
+      expect(field?.editable).toBe(true);
+    }
+  });
+});

@@ -500,4 +500,101 @@ describe('AddProviderModelsCapability', () => {
       );
     });
   });
+
+  describe('execute() — chat prices (t-774)', () => {
+    it('writes both prices to prisma.create when set together', async () => {
+      const cap = new AddProviderModelsCapability();
+      const args = cap.validate({
+        newModels: [
+          {
+            ...makeNewModel(),
+            inputCostPerMillionTokens: 3,
+            outputCostPerMillionTokens: 15,
+          },
+        ],
+      });
+
+      const result = await cap.execute(args, context);
+
+      expect(result.data?.created).toBe(1);
+      expect(mockCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            inputCostPerMillionTokens: 3,
+            outputCostPerMillionTokens: 15,
+          }),
+        })
+      );
+    });
+
+    it('reads numeric-string prices (edited on the approval screen) as numbers', () => {
+      const cap = new AddProviderModelsCapability();
+      const args = cap.validate({
+        newModels: [
+          {
+            ...makeNewModel(),
+            inputCostPerMillionTokens: '3.5',
+            outputCostPerMillionTokens: '16',
+          },
+        ],
+      });
+
+      expect(args.newModels[0].inputCostPerMillionTokens).toBe(3.5);
+      expect(args.newModels[0].outputCostPerMillionTokens).toBe(16);
+    });
+
+    it('treats null prices as absent and writes null for both', async () => {
+      const cap = new AddProviderModelsCapability();
+      const args = cap.validate({
+        newModels: [
+          { ...makeNewModel(), inputCostPerMillionTokens: null, outputCostPerMillionTokens: null },
+        ],
+      });
+
+      const result = await cap.execute(args, context);
+
+      expect(result.data?.created).toBe(1);
+      const data = mockCreate.mock.calls[0][0].data as Record<string, unknown>;
+      expect(data.inputCostPerMillionTokens).toBeNull();
+      expect(data.outputCostPerMillionTokens).toBeNull();
+    });
+
+    it('rejects a price outside 0..10000', () => {
+      const cap = new AddProviderModelsCapability();
+      expect(() =>
+        cap.validate({
+          newModels: [
+            { ...makeNewModel(), inputCostPerMillionTokens: 10001, outputCostPerMillionTokens: 1 },
+          ],
+        })
+      ).toThrow(CapabilityValidationError);
+      expect(() =>
+        cap.validate({
+          newModels: [
+            { ...makeNewModel(), inputCostPerMillionTokens: -1, outputCostPerMillionTokens: 1 },
+          ],
+        })
+      ).toThrow(CapabilityValidationError);
+    });
+
+    it('marks a model with only one price invalid, creates nothing for it, and still creates the others', async () => {
+      const cap = new AddProviderModelsCapability();
+      const args = cap.validate({
+        newModels: [
+          { ...makeNewModel({ slug: 'half-priced', name: 'Half' }), inputCostPerMillionTokens: 3 },
+          makeNewModel({ slug: 'unpriced', name: 'Unpriced' }),
+        ],
+      });
+
+      const result = await cap.execute(args, context);
+
+      expect(result.data?.created).toBe(1);
+      expect(result.data?.invalid).toBe(1);
+      const half = result.data?.models.find((r) => r.slug === 'half-priced');
+      expect(half?.status).toBe('invalid');
+      expect(half?.reason).toContain('must be set together');
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      expect(mockCreate.mock.calls[0][0].data.slug).toBe('unpriced');
+    });
+  });
 });

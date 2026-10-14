@@ -865,6 +865,46 @@ describe('AuditModelsDialog', () => {
       expect(body.inputData.modelIds).toEqual([MODEL_OPENAI.id]);
       expect(body.inputData.modelIds).not.toContain(MODEL_ANTHROPIC.id);
     });
+
+    it("sends each selected row's current prices, null when a row has none (t-774)", async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.get).mockResolvedValue([
+        { id: 'wf-prices', slug: 'tpl-provider-model-audit' },
+      ]);
+      const priced = makeModel({
+        id: 'model-priced',
+        name: 'Priced',
+        costPerMillionTokens: 9,
+        inputCostPerMillionTokens: 3,
+        outputCostPerMillionTokens: 15,
+      });
+      const unpriced = makeModel({ id: 'model-unpriced', name: 'Unpriced' });
+
+      const user = userEvent.setup();
+      render(<AuditModelsDialog {...DEFAULT_PROPS} models={[priced, unpriced]} />);
+
+      await user.click(await screen.findByRole('button', { name: /^select all$/i }));
+      await user.click(await screen.findByRole('button', { name: /audit 2 models/i }));
+
+      await waitFor(() => {
+        expect(fetchMock).toHaveBeenCalled();
+      });
+      const init = fetchMock.mock.calls[0][1] as RequestInit;
+      const body = JSON.parse(init.body as string) as {
+        inputData: { models: Array<Record<string, unknown>> };
+      };
+      const sent = (id: string) => body.inputData.models.find((m) => m.id === id);
+      expect(sent('model-priced')).toMatchObject({
+        costPerMillionTokens: 9,
+        inputCostPerMillionTokens: 3,
+        outputCostPerMillionTokens: 15,
+      });
+      expect(sent('model-unpriced')).toMatchObject({
+        costPerMillionTokens: null,
+        inputCostPerMillionTokens: null,
+        outputCostPerMillionTokens: null,
+      });
+    });
   });
 
   // ── Error states ───────────────────────────────────────────────────────────

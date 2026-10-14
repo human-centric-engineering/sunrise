@@ -993,6 +993,173 @@ describe('ApplyAuditChangesCapability', () => {
     });
   });
 
+  describe('execute() — paired price changes (t-774)', () => {
+    const IN = 'inputCostPerMillionTokens' as AuditableField;
+    const OUT = 'outputCostPerMillionTokens' as AuditableField;
+
+    function priceChanges(
+      inProposed: unknown = 3,
+      outProposed: unknown = 15,
+      inCurrent: unknown = 2.5,
+      outCurrent: unknown = 10
+    ) {
+      return [
+        makeChange({ field: IN, currentValue: inCurrent, proposedValue: inProposed }),
+        makeChange({ field: OUT, currentValue: outCurrent, proposedValue: outProposed }),
+      ];
+    }
+
+    /** All writes to the price-bearing `data` objects (excludes metadata write). */
+    function priceWrites() {
+      return mockUpdate.mock.calls
+        .map((c) => (c[0] as { data: Record<string, unknown> }).data)
+        .filter((d) => IN in d || OUT in d);
+    }
+
+    const modelWithPrices = () =>
+      makeModel({ inputCostPerMillionTokens: 2.5, outputCostPerMillionTokens: 10 });
+
+    it('writes both prices in ONE update inside one transaction', async () => {
+      mockFindUnique.mockResolvedValue(modelWithPrices());
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute({ model_id: 'model-1', changes: priceChanges() }, context);
+
+      expect(result.data?.applied).toBe(2);
+      expect(priceWrites()).toEqual([
+        { inputCostPerMillionTokens: 3, outputCostPerMillionTokens: 15 },
+      ]);
+      // one transaction for the pair
+      expect(mockTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('reads numeric-string prices (edited on the approval screen) as numbers', async () => {
+      mockFindUnique.mockResolvedValue(modelWithPrices());
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute(
+        { model_id: 'model-1', changes: priceChanges('3.5', ' 16 ') },
+        context
+      );
+
+      expect(result.data?.applied).toBe(2);
+      expect(priceWrites()).toEqual([
+        { inputCostPerMillionTokens: 3.5, outputCostPerMillionTokens: 16 },
+      ]);
+    });
+
+    it('reports a lone price change as invalid "apply as a pair" and writes nothing', async () => {
+      mockFindUnique.mockResolvedValue(modelWithPrices());
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute(
+        { model_id: 'model-1', changes: [priceChanges()[0]] },
+        context
+      );
+
+      expect(result.data?.invalid).toBe(1);
+      expect(result.data?.applied).toBe(0);
+      expect(result.data?.changes[0].reason).toContain('apply as a pair');
+      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(mockTransaction).not.toHaveBeenCalled();
+    });
+
+    it('reports a price field given twice as invalid and writes nothing for it', async () => {
+      mockFindUnique.mockResolvedValue(modelWithPrices());
+      const cap = new ApplyAuditChangesCapability();
+      const [a] = priceChanges();
+
+      const result = await cap.execute({ model_id: 'model-1', changes: [a, a] }, context);
+
+      expect(result.data?.invalid).toBe(2);
+      expect(result.data?.changes.every((c) => c.reason?.includes('apply as a pair'))).toBe(true);
+      expect(priceWrites()).toHaveLength(0);
+    });
+
+    it('still applies non-price changes when the price changes are unpaired', async () => {
+      mockFindUnique.mockResolvedValue(modelWithPrices());
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute(
+        { model_id: 'model-1', changes: [priceChanges()[0], makeChange()] },
+        context
+      );
+
+      expect(result.data?.applied).toBe(1);
+      expect(result.data?.invalid).toBe(1);
+      expect(mockUpdate).toHaveBeenCalledWith({
+        where: { id: 'model-1' },
+        data: { costEfficiency: 'high' },
+      });
+      expect(priceWrites()).toHaveLength(0);
+    });
+
+    it('skips BOTH prices when only one has drifted, writing nothing', async () => {
+      // output price changed in the DB since the audit
+      mockFindUnique.mockResolvedValue(
+        makeModel({ inputCostPerMillionTokens: 2.5, outputCostPerMillionTokens: 12 })
+      );
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute({ model_id: 'model-1', changes: priceChanges() }, context);
+
+      expect(result.data?.skipped).toBe(2);
+      expect(result.data?.applied).toBe(0);
+      const byField = Object.fromEntries(result.data!.changes.map((c) => [c.field, c]));
+      expect(byField[OUT].reason).toContain('Field value changed since audit');
+      expect(byField[IN].reason).toContain('its paired field changed since audit');
+      expect(mockUpdate).not.toHaveBeenCalled();
+    });
+
+    it('marks both invalid and writes nothing when one price fails validation', async () => {
+      mockFindUnique.mockResolvedValue(modelWithPrices());
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute(
+        { model_id: 'model-1', changes: priceChanges(3, -1) },
+        context
+      );
+
+      expect(result.data?.invalid).toBe(2);
+      const byField = Object.fromEntries(result.data!.changes.map((c) => [c.field, c]));
+      expect(byField[IN].reason).toContain('its paired change is invalid');
+      expect(byField[OUT].reason).not.toContain('its paired change is invalid');
+      expect(mockUpdate).not.toHaveBeenCalled();
+    });
+
+    it('rejects a price above 10000', async () => {
+      mockFindUnique.mockResolvedValue(modelWithPrices());
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute(
+        { model_id: 'model-1', changes: priceChanges(10001, 15) },
+        context
+      );
+
+      expect(result.data?.invalid).toBe(2);
+      expect(mockUpdate).not.toHaveBeenCalled();
+    });
+
+    it('coerces a numeric-string dimensions value', async () => {
+      mockFindUnique.mockResolvedValue(makeModel({ dimensions: 1536 }));
+      const cap = new ApplyAuditChangesCapability();
+
+      const result = await cap.execute(
+        {
+          model_id: 'model-1',
+          changes: [makeChange({ field: 'dimensions', currentValue: 1536, proposedValue: '3072' })],
+        },
+        context
+      );
+
+      expect(result.data?.applied).toBe(1);
+      expect(mockUpdate).toHaveBeenCalledWith({
+        where: { id: 'model-1' },
+        data: { dimensions: 3072 },
+      });
+    });
+  });
+
   describe('execute() — mixed changes', () => {
     it('correctly tallies applied, skipped, and invalid across multiple changes', async () => {
       // Arrange: model has costEfficiency='medium', name='GPT-4o'
