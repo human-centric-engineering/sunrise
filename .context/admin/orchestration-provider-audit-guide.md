@@ -159,6 +159,7 @@ The workflow needs model data as input. The easiest way is to copy it from the A
    - **Accept** is the default for every change — leave it alone to apply
    - **Reject** any individual change you disagree with (use the per-row Reject button); the rest still apply
    - **Modify** to edit the proposed value before accepting — for enum fields (`tierRole`, `latency`, etc.) you get a dropdown of valid values; for free-text fields (`bestRole`, `description`) you get an input. A "Modified" badge marks the edited row.
+   - **Prices** (`inputCostPerMillionTokens` / `outputCostPerMillionTokens`) apply only as a pair: accept both or reject both. See [Prices are held to a stricter rule](#prices-are-held-to-a-stricter-rule).
 8. Click **Approve selected** (add optional notes) — only the accepted (and possibly modified) changes flow downstream
    - Or click **Reject** with a reason to cancel the whole workflow
 
@@ -245,6 +246,18 @@ Each producer step (`analyse_chat`, `analyse_embedding`, `discover_new_models`) 
 ```
 
 Note the `reason` references the current value (`worker`) by name — Rule 10 of `validate_proposals` rejects rationale that doesn't engage with what's actually changing, so generic "this is a chat model" framings get caught at the guard step.
+
+### Prices are held to a stricter rule
+
+The audit can propose a chat model's `inputCostPerMillionTokens` and `outputCostPerMillionTokens` (USD per 1M tokens), on an existing model or on a newly discovered one (t-774). An approved price goes straight into recorded turn costs, budgets and cost caps, so it gets checks the other fields don't:
+
+- **A price needs a source you can open.** `validate_proposals` (the `audit-proposals` schema) rejects a price change unless one of its sources is `web_search`, `knowledge_base` or `external_call` with a reference. `training_knowledge` alone is not enough, whatever its confidence. A new model carrying prices needs such a source among its own. Without Brave Search configured, the audit therefore proposes no prices at all.
+- **Range.** A price must be a number from 0 to 10,000 per 1M tokens; that catches a per-token or per-1K figure.
+- **A pair, together.** Input and output are proposed together, once each. On the approval screen, **accept both or reject both**: accepting one and rejecting the other applies neither (`apply_audit_changes` reports both as invalid), and the pair is drift-checked and written in one transaction.
+- **Modify against the source.** Before accepting, open the cited page from the source pill and check the figure. A modified price is read as a number.
+- **Known models keep their built-in price.** For a model in the built-in price list (or OpenRouter's), a row's price doesn't change what turns cost (t-769); the audit's prices matter for models only the matrix knows.
+
+`costPerMillionTokens`, the legacy blended rate, is never proposed.
 
 ### Two-axis model classification
 

@@ -203,6 +203,17 @@ Leave on **Auto** for most rows — the heuristic correctly classifies any id st
 
 A misclassified reasoning model returns `400 Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.` on the first chat turn — the request envelope is captured on the execution trace (`requestParams` field on the failed step) so the misconfiguration is visible from the UI.
 
+### Chat pricing
+
+Rendered in a bordered "Chat Pricing" block when the Chat capability is checked:
+
+| Field              | Notes                                                           |
+| ------------------ | --------------------------------------------------------------- |
+| Input / 1M Tokens  | USD per 1M input (prompt) tokens → `inputCostPerMillionTokens`  |
+| Output / 1M Tokens | USD per 1M output (reply) tokens → `outputCostPerMillionTokens` |
+
+Set them **as a pair, or not at all**: the form, the create / bulk schemas and the PATCH route (against the row as saved) all refuse exactly one, because half a price would record the other half of every turn at $0. They price chat turns for a model the built-in price list doesn't know — dated snapshot ids, new releases, custom models. A model the built-in list (or OpenRouter) prices keeps that price; the row's figures don't override it (t-769). A row without them falls back to its single blended `costPerMillionTokens` for both input and output, and the form says so when editing such a row. Added in t-774; before it, a matrix-only model was charged `(input + output) / 2` both ways, overstating an input-heavy turn about 2×.
+
 ### Embedding-only fields
 
 Rendered in a bordered "Embedding Details" block that only appears when the Embedding capability is checked (the form watches `capabilities.includes('embedding')`):
@@ -223,10 +234,10 @@ The embedding block feeds the "Compare Embedding Providers" modal on the Knowled
 ### Submit behaviour
 
 - Validation errors surface inline below each field (`errors.{name}.message`).
-- The submit handler sends `capabilities[]` directly from the checkbox state and parses numeric strings (`dimensions`, `costPerMillionTokens`) before POST. In create mode, embedding fields are omitted when `embedding` is not in the array. In edit mode, removing `embedding` from the array explicitly nulls all embedding fields (`dimensions`, `schemaCompatible`, `costPerMillionTokens`, `hasFreeTier`, `quality`, `strengths`, `setup`) so stale values are cleared from the database.
+- The submit handler sends `capabilities[]` directly from the checkbox state and parses numeric strings (`dimensions`, `costPerMillionTokens`, the two chat prices) before POST. In create mode, embedding fields are omitted when `embedding` is not in the array, and the chat prices when they are blank. In edit mode, removing `embedding` from the array explicitly nulls the embedding-only fields (`dimensions`, `schemaCompatible`, `hasFreeTier`, `quality`, `strengths`, `setup`) so stale values are cleared from the database, and blank chat prices are sent as `null` together. `costPerMillionTokens` is never cleared this way: it is also a chat row's blended fallback price, and clearing it (as the form did before t-774) left every edited chat model unpriced.
 - Create: `POST /api/v1/admin/orchestration/provider-models` → router pushes to the new model's edit page with a success banner.
 - Edit: `PATCH /api/v1/admin/orchestration/provider-models/:id` → inline "Saved" flash for 2s.
-- Most fields have a `<FieldHelp>` popover per the contextual-help rule. Fields with FieldHelp: Provider Slug, Model ID, Slug, Capabilities, Tier Role, Best Role, Dimensions, Schema Compatible, and all five rating dimensions (Reasoning Depth, Latency, Cost Efficiency, Context Length, Tool Use). Remaining embedding fields (Cost/1M Tokens, Free Tier, Local/Self-hosted, Quality, Strengths, Setup) also have FieldHelp.
+- Most fields have a `<FieldHelp>` popover per the contextual-help rule. Fields with FieldHelp: Provider Slug, Model ID, Slug, Capabilities, Tier Role, Best Role, Input / Output price, Dimensions, Schema Compatible, and all five rating dimensions (Reasoning Depth, Latency, Cost Efficiency, Context Length, Tool Use). Remaining embedding fields (Cost/1M Tokens, Free Tier, Local/Self-hosted, Quality, Strengths, Setup) also have FieldHelp.
 
 ## Recommend endpoint
 

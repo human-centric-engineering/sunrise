@@ -110,6 +110,32 @@ release process.
   cap. See
   [Costs → Per-org usage](./.context/admin/orchestration-costs.md#per-org-usage).
 
+- **Separate input and output prices on Model Matrix rows** (t-774).
+  `AiProviderModel` gains nullable `inputCostPerMillionTokens` and
+  `outputCostPerMillionTokens` (migration
+  `20261014120000_provider_model_split_prices`). `dbModelToModelInfo` uses each
+  when set and falls back to the blended `costPerMillionTokens` otherwise; a
+  row missing either rate is `pricingUnknown`. The blended column stays: an
+  embedding model has one rate, and a row without the split still uses it.
+  Written by the admin create, PATCH and bulk routes, the provider-model form
+  (a new Chat Pricing section), the seed, and the provider-model audit (below).
+  Every writer takes them as a pair: setting exactly one is refused, including
+  a PATCH that would leave the saved row with one. A positive price from the
+  built-in list or OpenRouter still wins over a matrix row for the same
+  provider (t-769), so this prices matrix-only models exactly; it is not a new
+  override for known ones. A fork writing `AiProviderModel` directly may set
+  the pair.
+- **The provider-model audit proposes input and output prices** (t-774).
+  `apply_audit_changes` gains both fields in `AUDITABLE_FIELDS`, and
+  `add_provider_models` accepts them on a new model. A price must be backed by
+  a `web_search`, `knowledge_base` or `external_call` source with a reference
+  (the `audit-proposals` schema rejects `training_knowledge` alone), be 0–10,000
+  per 1M tokens, and come as a pair. On approval the pair applies together or
+  not at all, drift-checked and written in one transaction. The
+  `provider-model-auditor` agent's instructions and the audit template's
+  prompts and approval screen are updated; the next seed publishes a new
+  version of the system audit workflow.
+
 ### Changed
 
 - **The org and global monthly budget caps hold every paid AI call, not only
@@ -250,6 +276,15 @@ release process.
   they are, and org erasure does not reach the older ones. See
   `.context/storage/tenancy.md`.
 
+- **Recorded costs change for models only the Model Matrix prices**
+  (t-774). Once a matrix row has split prices, its chat turns are recorded at
+  the input and output rates instead of the blended `(input + output) / 2`
+  for both, so an input-heavy turn (long prompt, short reply) records about
+  half what it did. The seed now carries split prices for its hosted chat
+  rows, so seed-managed rows change on the next seed; rows an admin has edited
+  keep the blended rate until their prices are set. Models in the built-in
+  price list are unaffected.
+
 ### Fixed
 
 - **Embeddings from Google, Mistral and Cohere models are costed instead of
@@ -318,6 +353,12 @@ release process.
   whose own events name a person under another key clears it with a
   `scrubInTransaction` hook; see `.context/privacy/data-erasure.md`.
 
+
+- **Editing a chat model in the provider-model form no longer unprices it**
+  (t-774). The form cleared `costPerMillionTokens` whenever a model without
+  the embedding capability was saved, but that column is also a chat model's
+  blended price, so every edited chat model went to "pricing unknown" and its
+  turns were recorded at $0.
 
 ### Security
 
