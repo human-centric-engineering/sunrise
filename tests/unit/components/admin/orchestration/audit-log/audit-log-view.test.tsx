@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AuditLogView } from '@/components/admin/orchestration/audit-log/audit-log-view';
+import { logger } from '@/lib/logging';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -31,6 +32,10 @@ vi.mock('@/lib/api/endpoints', () => ({
       },
     },
   },
+}));
+
+vi.mock('@/lib/logging', () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
 // DatePicker → plain native input so existing change-event drivers still work
@@ -75,8 +80,13 @@ function makeEntry(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** The `meta` `paginatedResponse()` sends, at the view's 25 rows per page. */
+function pageMeta(total: number, page = 1) {
+  return { page, limit: 25, total, totalPages: Math.ceil(total / 25) };
+}
+
 function mockFetchSuccess(entries: unknown[], total = entries.length) {
-  const body = JSON.stringify({ success: true, data: entries, meta: { total } });
+  const body = JSON.stringify({ success: true, data: entries, meta: pageMeta(total) });
   // Use mockImplementation to create a fresh Response per call (body can only be consumed once)
   globalThis.fetch = vi
     .fn()
@@ -279,12 +289,16 @@ describe('AuditLogView', () => {
     render(<AuditLogView />);
     await flushUntil(() => screen.getByText('Support Bot'));
 
+    const callsBefore = fetchUrls().length;
     fireEvent.change(screen.getByPlaceholderText(/filter by action/i), {
       target: { value: 'workflow' },
     });
+    // Nothing is sent until the debounce window passes
+    expect(fetchUrls().length).toBe(callsBefore);
+
     await flushSearchDebounce();
 
-    expect(lastFetchUrl()).toContain('q=workflow');
+    expect(fetchUrls().slice(callsBefore)).toEqual([expect.stringContaining('q=workflow')]);
     await settle();
   });
 
@@ -678,16 +692,26 @@ describe('AuditLogView', () => {
   it('ignores a response that arrives after a newer request was made', async () => {
     const user = userEvent.setup();
     const json = (entry: ReturnType<typeof makeEntry>) =>
-      new Response(JSON.stringify({ success: true, data: [entry], meta: { total: 50 } }), {
+      new Response(JSON.stringify({ success: true, data: [entry], meta: pageMeta(50) }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       });
+    // The late page=2 response. The test waits on the fetch promise and, if the
+    // view goes on to read the body, on that too, so the stale request has had
+    // its chance to write before the assertions run.
     let releasePage2: () => void = () => {};
+    let page2Fetch: Promise<Response> | undefined;
+    let page2BodyRead: Promise<unknown> | undefined;
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
       if (url.includes('page=2')) {
-        return new Promise<Response>((resolve) => {
-          releasePage2 = () => resolve(json(makeEntry({ entityName: 'Page Two Row' })));
-        });
+        return (page2Fetch = new Promise<Response>((resolve) => {
+          releasePage2 = () => {
+            const res = json(makeEntry({ entityName: 'Page Two Row' }));
+            const read = res.json.bind(res);
+            res.json = () => (page2BodyRead = read());
+            resolve(res);
+          };
+        }));
       }
       return Promise.resolve(json(makeEntry({ entityName: 'Page One Row' })));
     });
@@ -700,21 +724,54 @@ describe('AuditLogView', () => {
     await user.click(screen.getByRole('button', { name: /previous page/i }));
     await settle();
 
+    const logged = vi.mocked(logger.error).mock.calls.length;
     await act(async () => {
       releasePage2();
+      await page2Fetch;
+    });
+    await act(async () => {
+      await page2BodyRead;
     });
 
     expect(screen.getByText('Page One Row')).toBeInTheDocument();
     expect(screen.queryByText('Page Two Row')).not.toBeInTheDocument();
     expect(screen.getByText(/1 \/ 2/)).toBeInTheDocument();
+    expect(vi.mocked(logger.error).mock.calls.length).toBe(logged);
   });
 
-  it('shows the load error when fetch itself rejects', async () => {
-    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+  it('clears the previous page’s rows when the next page fails to load', async () => {
+    const user = userEvent.setup();
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation((url: string) =>
+        url.includes('page=2')
+          ? Promise.reject(new TypeError('Failed to fetch'))
+          : Promise.resolve(
+              new Response(
+                JSON.stringify({ success: true, data: [makeEntry()], meta: pageMeta(50) }),
+                { status: 200, headers: { 'Content-Type': 'application/json' } }
+              )
+            )
+      );
+
+    render(<AuditLogView />);
+    await screen.findByText('Support Bot');
+
+    await user.click(screen.getByRole('button', { name: /next page/i }));
+
+    expect(await screen.findByText(/failed to load audit log/i)).toBeInTheDocument();
+    expect(screen.queryByText('Support Bot')).not.toBeInTheDocument();
+    expect(screen.getByText(/2 \/ 2/)).toBeInTheDocument();
+  });
+
+  it('shows and logs the load error when fetch itself rejects', async () => {
+    const failure = new TypeError('Failed to fetch');
+    globalThis.fetch = vi.fn().mockRejectedValue(failure);
     render(<AuditLogView />);
 
     expect(await screen.findByText(/failed to load audit log/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /refresh/i })).toBeEnabled();
+    expect(logger.error).toHaveBeenCalledWith('audit log fetch failed', failure);
   });
 
   it('shows the load error when the body is not JSON', async () => {
@@ -729,5 +786,24 @@ describe('AuditLogView', () => {
     render(<AuditLogView />);
 
     expect(await screen.findByText(/failed to load audit log/i)).toBeInTheDocument();
+  });
+
+  it.each([
+    ['data is not an array', { success: true, data: null, meta: pageMeta(1) }],
+    ['meta is missing', { success: true, data: [makeEntry()] }],
+    ['meta has no total', { success: true, data: [makeEntry()], meta: { page: 1 } }],
+  ])('shows the server error instead of rendering when %s', async (_case, payload) => {
+    globalThis.fetch = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+    );
+    render(<AuditLogView />);
+
+    expect(await screen.findByText(/server returned an error/i)).toBeInTheDocument();
+    expect(screen.queryByText('Support Bot')).not.toBeInTheDocument();
   });
 });

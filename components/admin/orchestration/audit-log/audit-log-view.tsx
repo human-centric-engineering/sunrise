@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { API } from '@/lib/api/endpoints';
+import { parseApiResponse } from '@/lib/api/parse-response';
+import { logger } from '@/lib/logging';
+import { parsePaginationMeta } from '@/lib/validations/common';
 import {
   Table,
   TableBody,
@@ -107,6 +110,12 @@ export function AuditLogView() {
     // late would otherwise show rows for a page or filter no longer selected.
     const seq = ++latestRequest.current;
     const isCurrent = () => seq === latestRequest.current;
+    // A failed load clears the rows, so the last page's entries are not shown
+    // under a page or filter they don't belong to.
+    const fail = (message: string) => {
+      setError(message);
+      setEntries([]);
+    };
     setLoading(true);
     setError(null);
     setExpandedId(null);
@@ -119,24 +128,23 @@ export function AuditLogView() {
       const res = await fetch(`${API.ADMIN.ORCHESTRATION.AUDIT_LOG}?${params}`);
       if (!isCurrent()) return;
       if (!res.ok) {
-        setError('Failed to load audit log. Please try again.');
+        fail('Failed to load audit log. Please try again.');
         return;
       }
-      const json = (await res.json()) as {
-        success: boolean;
-        data: AuditEntry[];
-        meta: { total: number };
-      };
+      const body = await parseApiResponse<AuditEntry[]>(res);
       if (!isCurrent()) return;
-      if (json.success) {
-        setEntries(json.data);
-        setTotal(json.meta.total);
-      } else {
-        setError('Server returned an error. Please try again.');
+      const meta = body.success ? parsePaginationMeta(body.meta) : null;
+      if (!body.success || !Array.isArray(body.data) || !meta) {
+        fail('Server returned an error. Please try again.');
+        return;
       }
-    } catch {
-      // A network failure or a body that isn't JSON
-      if (isCurrent()) setError('Failed to load audit log. Please try again.');
+      setEntries(body.data);
+      setTotal(meta.total);
+    } catch (err) {
+      // A network failure, or a body that isn't a JSON API response
+      if (!isCurrent()) return;
+      logger.error('audit log fetch failed', err);
+      fail('Failed to load audit log. Please try again.');
     } finally {
       if (isCurrent()) setLoading(false);
     }
