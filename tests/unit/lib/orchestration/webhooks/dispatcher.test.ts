@@ -1064,7 +1064,8 @@ describe('an erasure’s stop on a delivery (t-793)', () => {
         armedRow({ attempts: 0 })) as never);
 
       await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
-      const armedFor = armedRow().nextRetryAt as Date;
+      const armedFor: unknown = armedRow().nextRetryAt;
+      if (!(armedFor instanceof Date)) throw new Error('the failed attempt armed no retry');
 
       // Failed again, from the manual attempt: a later nextRetryAt, its own timer.
       vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(

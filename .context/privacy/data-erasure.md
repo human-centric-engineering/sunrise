@@ -273,12 +273,28 @@ transaction):
      erased by default. One still waiting to retry is stopped
      (`exhausted`, "not retried: subject erased"), decided against the row's
      status when it is rewritten, so one the retry worker has just delivered
-     stays delivered: what it would send is now about nobody. A retry timer
-     armed before the erasure re-reads the row and skips it unless it is
-     still `pending` or `failed` (`isAwaitingRetry`). Two ways it can still
-     go out, both open (t-793): an attempt already in flight when the erasure
-     commits writes its own outcome over the stop, and an admin's manual
-     retry or replay sends a stopped row again.
+     stays delivered: what it would send is now about nobody. The stop holds
+     (t-793):
+     - An attempt already in flight when the erasure commits writes its
+       outcome only to a row still `pending` or `failed`, so a stopped row
+       stays stopped, and no further retry is armed. The POST that was
+       already out cannot be recalled.
+     - A retry timer fires only for the exact retry it was armed for: still
+       `failed`, with the same `nextRetryAt` (`isArmedRetry`). A row the
+       erasure stopped, or one an admin retried by hand meanwhile, is left
+       alone. A stale timer used to send the hand-retried row a second time.
+     - A manual retry (`409`) or a DLQ replay (counted as skipped) refuses a
+       row an erasure stopped. That covers both stop reasons: "subject
+       erased" here, and "recipient erased" in step 5. The mark is the
+       `lastError` wording (`isStoppedByErasure`), which the erasure SQL
+       builds from the same functions. A retry also resets the row only if
+       it is unchanged since it was read, and sends the payload as it stands
+       after the reset.
+
+     A row that was already `delivered` or `exhausted` when the erasure ran
+     is redacted but not marked. A manual retry of it sends the redacted
+     event.
+
    - An event about a **change they made** (`ADMIN_ACTION_EVENTS`:
      `agent_updated`, `capability.*quarantined`, `execution.force_failed`) or
      a step they were asked to approve keeps its
@@ -290,7 +306,26 @@ transaction):
    Written in bulk (500 rows a statement), so a person with years of chat
    events costs a few statements, not a round trip each, and the transaction
    is given 60 s (`ERASURE_TRANSACTION_TIMEOUT_MS`) rather than Prisma's 5 s
-   default. Every core event about a conversation or workflow run names its
+   default. **Measured limit** (t-793,
+   `scripts/spikes/erasure-delivery-scale.ts`, local Postgres on a loaded dev
+   machine, vacuumed tables):
+
+   | Rows naming the person (both tables) | Erasure | Share of the 60 s timeout |
+   | ------------------------------------ | ------- | ------------------------- |
+   | 50,000                               | 3.0 s   | 5%                        |
+   | 200,000                              | 18.9 s  | 32%                       |
+   | 400,000                              | 39.3 s  | 66%                       |
+
+   That is about 0.1 ms a row, mostly the read-back-and-rewrite of each
+   payload; the matching read is a small part of it (7.6 s at 400,000).
+   Somewhere around 600,000 rows the transaction times out, rolls back, and
+   the person cannot be erased until their history shrinks. Rows inserted
+   since the last vacuum cost more: GIN's pending list (up to
+   `gin_pending_list_limit`, 4 MB by default) is scanned on every match, and
+   a table bulk-loaded and not yet vacuumed doubled the time. Delivery rows
+   are kept for ever unless `webhookRetentionDays` is set. An install whose
+   users generate deliveries at that scale should set it. Moving the rewrite
+   into SQL (one `UPDATE … FROM`) is filed as t-806. Every core event about a conversation or workflow run names its
    owner on the payload itself (`userId`, or `embedVisitorId` for a visitor),
    so the match does not depend on the conversation or run still existing
    (t-792). **Known limit:** rows written before that change by

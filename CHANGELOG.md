@@ -174,6 +174,15 @@ release process.
 
 ### Changed
 
+- **Five events name the person whose conversation or run they report**
+  (t-792). `chat_budget_exceeded_per_turn` carries `userId` (`null` plus
+  `embedVisitorId` for an embed visitor); `workflow_budget_exceeded` (omitted
+  for a system-owned run) and `workflow_notification` carry the run owner's
+  `userId`; the force-fail `workflow.failed` and `execution.force_failed`
+  hooks carry it beside `actorUserId`, the admin. Additive for receivers.
+  Erasure and subject access now find these deliveries after the
+  conversation or run is deleted; rows written before this change still
+  name the person only through it.
 - **`escalationConfigSchema` reads an empty `emailAddresses` list**
   (t-791); `escalationConfigWriteSchema` still requires one address. Erasing
   the list's only recipient leaves it empty with the webhook kept, and a value
@@ -350,6 +359,12 @@ release process.
 
 ### Fixed
 
+- **An erasure's stop on a delivery is no longer undone** (t-793). An attempt
+  in flight when the erasure commits writes its outcome only to a row still
+  waiting to send, and arms no further retry. The manual retry routes answer
+  `409` for a row an erasure stopped, and a DLQ replay skips it. A retry
+  timer fires only for the exact retry it was armed for, which also stops a
+  stale timer double-sending a row an admin retried by hand.
 - **Erasing a person removes them from the escalation list and from workflow
   notification and approval steps** (t-791). Their verified address left
   `escalationConfig.emailAddresses` and `send_notification` steps' `to`, and
