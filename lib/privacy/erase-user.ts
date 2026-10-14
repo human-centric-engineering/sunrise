@@ -286,18 +286,6 @@ async function eraseRows(params: EraseUserParams): Promise<{
         subscriptionsDeactivated = cleared.length;
       }
 
-      // The escalation list and workflow notification / approval steps that
-      // name this person (t-791; owner rulings 2026-10-14): removed from the
-      // draft and every published version, a list they leave empty stays
-      // empty, and each change is audited. Before the user row goes, like
-      // everything here; `address` is null for an unverified account, so only
-      // the approver id is matched then.
-      const configRecipients = await eraseFromConfigRecipients(tx, {
-        userId,
-        address,
-        actorUserId,
-      });
-
       // Webhook deliveries now outlive the subscription that sent them (§109
       // t-739), as the org's record of where its events went. An email-channel
       // delivery records the address it went to, and when that is this person's
@@ -365,6 +353,20 @@ async function eraseRows(params: EraseUserParams): Promise<{
       // too, which cascade with the user row, so this must run before it goes.
       const webhookPayloadsRedacted = await eraseSubjectFromDeliveries(tx, 'webhook', userId);
       const eventHookPayloadsRedacted = await eraseSubjectFromDeliveries(tx, 'hook', userId);
+
+      // The escalation list and workflow notification / approval steps that
+      // name this person (t-791; owner rulings 2026-10-14): removed from the
+      // draft and every published version, a list they leave empty stays
+      // empty, and each change is audited. `address` is null for an unverified
+      // account, so only the approver id is matched then. After the delivery
+      // passes, the longest part of the transaction, so the configuration rows
+      // it locks — the settings singleton among them — are held only until
+      // the commit just below, not through them.
+      const configRecipients = await eraseFromConfigRecipients(tx, {
+        userId,
+        address,
+        actorUserId,
+      });
 
       // App-registered in-transaction scrub. Runs before `tx.user.delete()` so
       // hooks can still match retained rows on `userId`, and atomically with the

@@ -1211,8 +1211,14 @@ describe('eraseUser', () => {
       });
     });
 
-    it('runs before the receipt and tx.user.delete', async () => {
+    it('runs after the delivery passes, just before the receipt and tx.user.delete', async () => {
+      // Its row locks (the settings singleton among them) are then held only
+      // until the commit, not through the longest part of the transaction.
       const callOrder: string[] = [];
+      mockEraseDeliveries.mockImplementation(async (_tx: unknown, table: string) => {
+        callOrder.push(`deliveries:${table}`);
+        return 0;
+      });
       mockEraseConfig.mockImplementation(async () => {
         callOrder.push('config');
         return { escalationListsChanged: 0, workflowsChanged: 0 };
@@ -1228,7 +1234,13 @@ describe('eraseUser', () => {
 
       await eraseUser(BASE_PARAMS);
 
-      expect(callOrder).toEqual(['config', 'receipt', 'user.delete']);
+      expect(callOrder).toEqual([
+        'deliveries:webhook',
+        'deliveries:hook',
+        'config',
+        'receipt',
+        'user.delete',
+      ]);
     });
 
     it('logs both counts and clears the settings cache when an escalation list changed', async () => {

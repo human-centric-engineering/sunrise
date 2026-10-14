@@ -54,7 +54,9 @@ model AiWorkflow {
 
 // Immutable snapshot of a workflow definition at publish time.
 // Mirrors the AiAgentVersion model. New rows are inserted by `publishDraft` and
-// `rollback`; existing rows are never mutated. Per-execution pinning is via
+// `rollback`; existing rows are never mutated, with one exception: erasure
+// removes an erased person's address and id from `snapshot` in place (t-791,
+// lib/privacy/config-recipients.ts). Per-execution pinning is via
 // `AiWorkflowExecution.versionId`.
 model AiWorkflowVersion {
   id            String   @id @default(cuid())

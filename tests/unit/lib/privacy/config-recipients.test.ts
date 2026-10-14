@@ -279,7 +279,7 @@ describe('eraseFromConfigRecipients — escalation list', () => {
 
     const [settings] = queries(tx);
     expect(settings.sql).toContain('FROM ai_orchestration_settings');
-    expect(settings.sql).toContain('FOR UPDATE');
+    expect(settings.sql).toContain('FOR NO KEY UPDATE');
   });
 
   it('removes the address and keeps the other recipients, the webhook and the priority', async () => {
@@ -408,18 +408,28 @@ describe('eraseFromConfigRecipients — workflows', () => {
 
     const [, drafts, versions] = queries(tx);
     for (const q of [drafts, versions]) {
-      expect(q.sql).toContain('strpos(');
+      expect(q.sql).toContain('strpos(f.folded');
+      // ASCII letters and U+212A KELVIN SIGN, which toLowerCase() folds to "k"
       expect(q.sql).toContain('translate(');
+      expect(q.sql).toContain("'ABCDEFGHIJKLMNOPQRSTUVWXYZ\u212A', 'abcdefghijklmnopqrstuvwxyzk'");
       expect(q.sql).not.toMatch(/\blower\(|ILIKE/i);
-      expect(q.sql).toContain('FOR UPDATE');
-      // userId, the search term (twice: null test and search), the fallback flag, the email-step document
-      expect(q.values).toEqual([USER_ID, ADDRESS, ADDRESS, false, expect.any(String)]);
+      // NO KEY: a new run's FK insert takes FOR KEY SHARE on these rows, which FOR UPDATE would block
+      expect(q.sql).toContain('FOR NO KEY UPDATE');
+      // userId, the search term (null test and search), the fallback flag, the two fallback documents
+      expect(q.values).toEqual([
+        USER_ID,
+        ADDRESS,
+        ADDRESS,
+        false,
+        expect.any(String),
+        expect.any(String),
+      ]);
     }
-    expect(drafts.sql).toContain('FROM ai_workflow');
-    expect(versions.sql).toContain('FROM ai_workflow_version');
+    expect(drafts.sql).toContain('FROM ai_workflow w');
+    expect(versions.sql).toContain('FROM ai_workflow_version v');
   });
 
-  it('falls back to every email step for an address SQL cannot fold', async () => {
+  it('falls back to every email step and approval channel for an address SQL cannot fold', async () => {
     const tx = makeTx();
 
     await eraseFromConfigRecipients(tx as never, {
@@ -429,9 +439,19 @@ describe('eraseFromConfigRecipients — workflows', () => {
     });
 
     const [, drafts] = queries(tx);
-    expect(drafts.values).toEqual([USER_ID, null, null, true, expect.any(String)]);
+    expect(drafts.values).toEqual([
+      USER_ID,
+      null,
+      null,
+      true,
+      expect.any(String),
+      expect.any(String),
+    ]);
     expect(JSON.parse(drafts.values[4] as string)).toEqual({
       steps: [{ type: 'send_notification', config: { channel: 'email' } }],
+    });
+    expect(JSON.parse(drafts.values[5] as string)).toEqual({
+      steps: [{ type: 'human_approval', config: { notificationChannel: {} } }],
     });
   });
 
@@ -441,7 +461,14 @@ describe('eraseFromConfigRecipients — workflows', () => {
     await run(tx, null);
 
     const [drafts] = queries(tx);
-    expect(drafts.values).toEqual([USER_ID, null, null, false, expect.any(String)]);
+    expect(drafts.values).toEqual([
+      USER_ID,
+      null,
+      null,
+      false,
+      expect.any(String),
+      expect.any(String),
+    ]);
   });
 
   it('rewrites the draft and every version that names the person, and audits once per workflow', async () => {

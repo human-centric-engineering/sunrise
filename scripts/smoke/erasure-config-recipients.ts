@@ -318,6 +318,17 @@ async function main(): Promise<void> {
       },
     });
     workflowIds.push(accentedFlow.id);
+    // No email notification step: found only through the approval channel.
+    const accentedApproval = await prisma.aiWorkflow.create({
+      data: {
+        name: `${PREFIX} accented approval`,
+        slug: `${PREFIX}-accented-approval-${stamp}`,
+        description: 'smoke',
+        orgId: INSTALL_ORG_ID,
+        draftDefinition: definition(approval('ap', [other.id], accented.email)),
+      },
+    });
+    workflowIds.push(accentedApproval.id);
     const accentedResult = await eraseUser({
       userId: accented.id,
       actorUserId: other.id,
@@ -331,6 +342,50 @@ async function main(): Promise<void> {
     check(
       jsonEquals(config(accentedAfter.draftDefinition, 'n')?.to ?? null, [COLLEAGUE]),
       'a non-ASCII address typed in upper case is still found and removed'
+    );
+    const accentedApprovalAfter = await prisma.aiWorkflow.findUniqueOrThrow({
+      where: { id: accentedApproval.id },
+    });
+    check(
+      jsonEquals(config(accentedApprovalAfter.draftDefinition, 'ap')?.notificationChannel ?? null, {
+        type: 'email',
+      }),
+      'a non-ASCII address held only as an approval target is found and removed'
+    );
+
+    // ── A stored recipient spelled with U+212A KELVIN SIGN ────────────────
+    // toLowerCase() folds it to "k", so it is this person's address in code;
+    // the SQL fold must find it too.
+    console.log('kelvin sign');
+    const kate = await prisma.user.create({
+      data: {
+        name: `${PREFIX} kate`,
+        email: `kate-${PREFIX}-${stamp}@example.com`,
+        emailVerified: true,
+      },
+    });
+    userIds.push(kate.id);
+    const kelvinFlow = await prisma.aiWorkflow.create({
+      data: {
+        name: `${PREFIX} kelvin`,
+        slug: `${PREFIX}-kelvin-${stamp}`,
+        description: 'smoke',
+        orgId: INSTALL_ORG_ID,
+        draftDefinition: definition(notify('n', [`\u212A${kate.email.slice(1)}`, COLLEAGUE])),
+      },
+    });
+    workflowIds.push(kelvinFlow.id);
+    const kateResult = await eraseUser({
+      userId: kate.id,
+      actorUserId: other.id,
+      reason: 'admin_action',
+    });
+    receiptIds.push(kateResult.receiptId);
+    userIds.splice(userIds.indexOf(kate.id), 1);
+    const kelvinAfter = await prisma.aiWorkflow.findUniqueOrThrow({ where: { id: kelvinFlow.id } });
+    check(
+      jsonEquals(config(kelvinAfter.draftDefinition, 'n')?.to ?? null, [COLLEAGUE]),
+      'a recipient spelled with the Kelvin sign is found and removed'
     );
 
     // ── The only escalation recipient ─────────────────────────────────────

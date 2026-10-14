@@ -37,15 +37,21 @@
  * an address and is left alone. Approvers are matched on the user id, which
  * names exactly one account whether or not its address was verified.
  *
- * **Reading.** Every row is read `FOR UPDATE`, so an admin's save that lands
- * while the erasure runs waits for it instead of being overwritten by the copy
- * read before it. Workflows are narrowed in SQL by a plain substring test on
- * the definition's text — the user id, or the address with ASCII letters
- * folded by `translate()` (never `lower()`, whose result depends on the
- * database's collation) — so a row that cannot name the person is never
- * loaded; the exact match is then made in code. An address that is not plain
- * ASCII, or holds a character JSON escapes, cannot be found that way, and
- * every workflow with an email notification step is read instead.
+ * **Reading.** Every row is read `FOR NO KEY UPDATE`: an admin's write to the
+ * same row waits for the erasure rather than landing between its read and its
+ * write, and is not overwritten by the copy read before it — while a new run's
+ * insert, which takes `FOR KEY SHARE` on the workflow and version it points
+ * at, is not blocked. A writer that read *before* the erasure and writes after
+ * it (an open settings form, a builder tab, a publish in flight) still writes
+ * its old copy back: that is t-805. Workflows are narrowed in SQL by a plain
+ * substring test on the definition's text — the user id, or the address with
+ * ASCII letters (and U+212A KELVIN SIGN, the one non-ASCII character
+ * `toLowerCase()` turns into ASCII) folded by `translate()`, never `lower()`,
+ * whose result depends on the database's collation — so a row that cannot
+ * name the person is never loaded; the exact match is then made in code. An
+ * address that is not plain ASCII, or holds a character JSON escapes, cannot
+ * be found that way, and every workflow with an email notification step or an
+ * approval step's notification channel is read instead.
  *
  * Every change is audit-logged, naming what changed and never the address,
  * because the log outlives the erasure.
@@ -213,7 +219,7 @@ async function eraseFromEscalationLists(
   const rows = await tx.$queryRaw<
     Array<{ id: string; slug: string; escalationConfig: Prisma.JsonValue }>
   >`SELECT id, slug, "escalationConfig" FROM ai_orchestration_settings
-     WHERE "escalationConfig" IS NOT NULL FOR UPDATE`;
+     WHERE "escalationConfig" IS NOT NULL FOR NO KEY UPDATE`;
   let changed = 0;
   for (const row of rows) {
     const config = row.escalationConfig;
@@ -243,9 +249,16 @@ async function eraseFromEscalationLists(
   return changed;
 }
 
-/** Any email notification step: the fallback narrowing for an address SQL cannot search. */
+/**
+ * The fallback narrowing for an address SQL cannot search: any email
+ * notification step, and any approval step with a notification channel (an
+ * empty object is contained in every object, so `{}` matches any channel).
+ */
 const EMAIL_STEP = JSON.stringify({
   steps: [{ type: 'send_notification', config: { channel: 'email' } }],
+});
+const APPROVAL_CHANNEL_STEP = JSON.stringify({
+  steps: [{ type: 'human_approval', config: { notificationChannel: {} } }],
 });
 
 async function eraseFromWorkflows(
@@ -254,20 +267,23 @@ async function eraseFromWorkflows(
 ): Promise<number> {
   const { userId, address } = subject;
   const term = address ? asciiSearchTerm(address) : null;
-  const scanEmailSteps = address !== null && term === null;
+  const scanFallback = address !== null && term === null;
 
   // A superset of the rows that name the person; `removeFromDefinition` decides.
+  // The text is folded once per row and searched for both the id (a cuid, so
+  // already lower-case) and the address.
   const drafts = await tx.$queryRaw<
     Array<{ id: string; name: string; orgId: string | null; draftDefinition: Prisma.JsonValue }>
-  >`SELECT id, name, "orgId", "draftDefinition" FROM ai_workflow
-     WHERE "draftDefinition" IS NOT NULL AND (
-       strpos("draftDefinition"::text, ${userId}) > 0
-       OR (${term}::text IS NOT NULL AND strpos(
-         translate("draftDefinition"::text, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'),
-         ${term}::text) > 0)
-       OR (${scanEmailSteps} AND "draftDefinition" @> ${EMAIL_STEP}::jsonb)
+  >`SELECT w.id, w.name, w."orgId", w."draftDefinition" FROM ai_workflow w
+     CROSS JOIN LATERAL (SELECT translate(w."draftDefinition"::text,
+       'ABCDEFGHIJKLMNOPQRSTUVWXYZ\u212A', 'abcdefghijklmnopqrstuvwxyzk') AS folded) f
+     WHERE w."draftDefinition" IS NOT NULL AND (
+       strpos(f.folded, ${userId}) > 0
+       OR (${term}::text IS NOT NULL AND strpos(f.folded, ${term}::text) > 0)
+       OR (${scanFallback} AND (w."draftDefinition" @> ${EMAIL_STEP}::jsonb
+         OR w."draftDefinition" @> ${APPROVAL_CHANNEL_STEP}::jsonb))
      )
-     ORDER BY id FOR UPDATE`;
+     ORDER BY w.id FOR NO KEY UPDATE OF w`;
   const versions = await tx.$queryRaw<
     Array<{
       id: string;
@@ -279,12 +295,13 @@ async function eraseFromWorkflows(
     }>
   >`SELECT v.id, v."workflowId", v.version, v.snapshot, w.name, w."orgId"
      FROM ai_workflow_version v JOIN ai_workflow w ON w.id = v."workflowId"
-     WHERE strpos(v.snapshot::text, ${userId}) > 0
-       OR (${term}::text IS NOT NULL AND strpos(
-         translate(v.snapshot::text, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'),
-         ${term}::text) > 0)
-       OR (${scanEmailSteps} AND v.snapshot @> ${EMAIL_STEP}::jsonb)
-     ORDER BY v."workflowId", v.version FOR UPDATE OF v`;
+     CROSS JOIN LATERAL (SELECT translate(v.snapshot::text,
+       'ABCDEFGHIJKLMNOPQRSTUVWXYZ\u212A', 'abcdefghijklmnopqrstuvwxyzk') AS folded) f
+     WHERE strpos(f.folded, ${userId}) > 0
+       OR (${term}::text IS NOT NULL AND strpos(f.folded, ${term}::text) > 0)
+       OR (${scanFallback} AND (v.snapshot @> ${EMAIL_STEP}::jsonb
+         OR v.snapshot @> ${APPROVAL_CHANNEL_STEP}::jsonb))
+     ORDER BY v."workflowId", v.version FOR NO KEY UPDATE OF v`;
 
   // One entry per workflow, whether its draft, its versions or both matched.
   const workflows = new Map<

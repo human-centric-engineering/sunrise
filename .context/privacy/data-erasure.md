@@ -347,13 +347,17 @@ transaction):
    allowed to change a published version — see
    [Workflow Versioning](../orchestration/workflow-versioning.md). Workflows are
    narrowed in SQL by a substring test on the definition's text — the user
-   id, or the address with ASCII letters folded by `translate()`, never
-   `lower()`, which depends on the collation — so a workflow that cannot name
-   the person is never loaded; the exact match is made in code. An address
-   that is not plain ASCII, or holds a character JSON escapes, falls back to
-   reading every workflow with an email notification step. The settings row,
-   drafts and versions are read `FOR UPDATE`, so an admin's save that lands
-   during the erasure waits for it rather than being overwritten.
+   id, or the address with ASCII letters (and U+212A KELVIN SIGN, which
+   `toLowerCase()` folds to `k`) folded by `translate()`, never `lower()`,
+   which depends on the collation — so a workflow that cannot name the person
+   is never loaded; the exact match is made in code. An address that is not
+   plain ASCII, or holds a character JSON escapes, falls back to reading every
+   workflow with an email notification step or an approval notification
+   channel. The settings row, drafts and versions are read
+   `FOR NO KEY UPDATE`: a write to the same row waits for the erasure rather
+   than landing between its read and its write, while a new run's insert is
+   not blocked. The work runs after the delivery passes, so those locks are
+   held only until the commit.
 
    **A list the person leaves empty stays empty, and fails loudly.** A
    notification step whose only recipient was the person has none (`''`, or
@@ -370,15 +374,18 @@ transaction):
    Each change is audited: `settings.escalation_recipient_erased` (recipient
    count before and after) and `workflow.recipient_erased`, one per workflow,
    naming the draft, the version numbers and the step ids changed, and the
-   steps left without a recipient. Never the address. **Not reached:** a run
-   already paused at an approval keeps the person's id in its trace
-   (`approverUserIds`), where it now names no account; a workflow inside a
-   backup bundle already downloaded is outside the database. A saved template
-   is an ordinary workflow row, so it is rewritten like any other. Two gaps are
-   open: a literal address in a schedule's `inputTemplate`, which a template
-   recipient such as `{{input.userEmail}}` resolves to, is not reached (t-804);
-   and a settings form or workflow builder opened before the erasure writes the
-   whole value it loaded back on its next save, address included (t-805).
+   steps left without a recipient. Never the address. **Not reached:** a
+   workflow inside a backup bundle already downloaded is outside the database.
+   A saved template is an ordinary workflow row, so it is rewritten like any
+   other. Two gaps are open. First (t-804), data that is not a definition: a
+   literal address in a schedule's `inputTemplate`, which a template recipient
+   such as `{{input.userEmail}}` resolves to, and a run already paused at an
+   approval, whose stored approval payload and trace keep the person's id
+   (`approverUserIds`) and any notification target address. Second (t-805),
+   writers that read before the erasure and write after it: a settings form
+   (or another instance's 30 s settings cache), a workflow builder tab, or a
+   publish or rollback in flight writes the copy it read back, address
+   included.
 
 **At `multi`, a person's rows in every org go** (§107 t-748). The cascades are
 FK actions, which row-level security does not filter, so `user.delete` removes
