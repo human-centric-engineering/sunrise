@@ -33,7 +33,6 @@ import {
   AWAITING_RETRY_STATUSES,
   claimArmedRetry,
   isArmedRetry,
-  isAwaitingRetry,
   isStoppedByErasure,
   logSettledInFlight,
   notRetried,
@@ -216,8 +215,10 @@ export async function retryDelivery(
 
   // Reset status for retry, only if the row is as it was read. An erasure that
   // committed in between has redacted it or stopped it, and is not undone; a
-  // timer or the tick that claimed it meanwhile sends it instead.
-  const reset = await prisma.aiWebhookDelivery.updateMany({
+  // timer or the tick that claimed it meanwhile sends it instead. The reset
+  // returns the row as it wrote it, and that payload is the one sent: never
+  // the copy read above, which an erasure may have redacted since.
+  const [current] = await prisma.aiWebhookDelivery.updateManyAndReturn({
     where: {
       id: deliveryId,
       status: delivery.status,
@@ -233,11 +234,7 @@ export async function retryDelivery(
       lastResponseCode: null,
     },
   });
-  if (reset.count === 0) return false;
-  // Send what the row holds now, not the copy read above: an erasure that
-  // commits after the reset redacts the payload and stops the row.
-  const current = await prisma.aiWebhookDelivery.findUnique({ where: { id: deliveryId } });
-  if (!current || !isAwaitingRetry(current.status)) return false;
+  if (!current) return false;
 
   const storedPayload = toJsonRecord(current.payload);
   const body = JSON.stringify({
@@ -298,19 +295,21 @@ export async function processPendingRetries(): Promise<number> {
       // Claimed, so an in-process timer firing for the same row now does not
       // send it as well (t-793).
       if (!delivery.nextRetryAt) return;
-      const claimed = await prisma.aiWebhookDelivery.updateMany(
+      // The claim returns the row as it wrote it; its payload is the one sent,
+      // as an erasure may have redacted the copy read above.
+      const [claimed] = await prisma.aiWebhookDelivery.updateManyAndReturn(
         claimArmedRetry(delivery.id, delivery.nextRetryAt)
       );
-      if (claimed.count === 0) return;
+      if (!claimed) return;
 
-      const storedPayload = toJsonRecord(delivery.payload);
+      const storedPayload = toJsonRecord(claimed.payload);
       const body = JSON.stringify({
         ...storedPayload,
         timestamp: new Date().toISOString(),
       });
 
       await attemptDelivery(
-        delivery,
+        claimed,
         delivery.subscription,
         body,
         resolveRetryPolicy(delivery.subscription)
@@ -347,7 +346,9 @@ async function recordSettledAttempt(
     data: {
       attempts: { increment: 1 },
       lastAttemptAt: at,
-      lastResponseCode: outcome.statusCode ?? null,
+      // Only a code it has: an email send or a network failure has none, and
+      // must not null the one the settling write recorded.
+      ...(outcome.statusCode !== undefined ? { lastResponseCode: outcome.statusCode } : {}),
     },
   });
   logSettledInFlight('Webhook', deliveryId, kind);
@@ -720,16 +721,18 @@ function scheduleRetry(
           }
           // Claimed, so the maintenance tick or a manual retry racing this
           // timer does not send the row as well (t-793).
-          const claimed = await prisma.aiWebhookDelivery.updateMany(
+          // The claim returns the row as it wrote it; its payload is the one
+          // sent, as an erasure may have redacted the copy read above.
+          const [claimed] = await prisma.aiWebhookDelivery.updateManyAndReturn(
             claimArmedRetry(deliveryId, armedFor)
           );
-          if (claimed.count === 0) return;
-          const storedPayload = toJsonRecord(delivery.payload);
+          if (!claimed) return;
+          const storedPayload = toJsonRecord(claimed.payload);
           const body = JSON.stringify({
             ...storedPayload,
             timestamp: new Date().toISOString(),
           });
-          await attemptDelivery(delivery, sub, body, resolveRetryPolicy(sub));
+          await attemptDelivery(claimed, sub, body, resolveRetryPolicy(sub));
         } catch (err) {
           logger.error('Webhook scheduled retry error', {
             deliveryId,

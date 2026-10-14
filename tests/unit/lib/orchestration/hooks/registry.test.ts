@@ -21,6 +21,7 @@ vi.mock('@/lib/db/client', () => ({
       create: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
+      updateManyAndReturn: vi.fn(),
       findUnique: vi.fn(),
       findMany: vi.fn(),
     },
@@ -120,6 +121,18 @@ beforeEach(() => {
   vi.mocked(prisma.aiEventHookDelivery.create).mockResolvedValue(makeDelivery());
   vi.mocked(prisma.aiEventHookDelivery.update).mockResolvedValue(makeDelivery());
   vi.mocked(prisma.aiEventHookDelivery.updateMany).mockResolvedValue({ count: 1 });
+  // A claim or a reset matches, and returns the row as written. It carries the
+  // fixture payload; a test that needs a different one supplies its own result.
+  vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockImplementation((async (args: {
+    where: { id: string };
+    data: { status?: string; nextRetryAt?: Date | null };
+  }) => [
+    makeDelivery({
+      id: args.where.id,
+      status: args.data.status ?? 'failed',
+      nextRetryAt: args.data.nextRetryAt ?? null,
+    }),
+  ]) as never);
   vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue(makeDelivery());
 });
 
@@ -359,20 +372,21 @@ describe('retryHookDelivery', () => {
   });
 
   it('resets delivery state and re-attempts', async () => {
-    // First read: the exhausted row. Second read: the row after the reset.
-    vi.mocked(prisma.aiEventHookDelivery.findUnique)
-      .mockResolvedValueOnce({
-        ...makeDelivery({ status: 'exhausted', attempts: 3 }),
-        hook: makeHook(),
-      } as never)
-      .mockResolvedValueOnce(makeDelivery({ status: 'pending', attempts: 0 }));
+    // The read: the exhausted row. The reset returns the row it wrote.
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      ...makeDelivery({ status: 'exhausted', attempts: 3 }),
+      hook: makeHook(),
+    } as never);
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+      makeDelivery({ status: 'pending', attempts: 0 }),
+    ] as never);
 
     const result = await retryHookDelivery('del-1');
 
     // test-review:accept tobe_true — boolean return from retryHookDelivery; structural assertion on retry outcome
     expect(result).toBe(true);
     // The reset matches the row as it was read, so a concurrent change is not undone.
-    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith(
+    expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'del-1', status: 'exhausted', lastError: null, nextRetryAt: null },
         data: expect.objectContaining({
@@ -447,6 +461,30 @@ describe('an erasure’s stop on a hook delivery (t-793)', () => {
     });
   });
 
+  it('records an attempt that had no status code without a lastResponseCode, so the settled row’s code is not nulled', async () => {
+    vi.useFakeTimers();
+    // A fetch rejection: no response, so no status code.
+    mockFetch.mockRejectedValue(new Error('ECONNRESET'));
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue(
+      makeDelivery({ status: 'exhausted', lastError: 'Not retried: subject erased' })
+    );
+    vi.mocked(prisma.aiEventHookDelivery.updateMany)
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledTimes(2);
+    });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenLastCalledWith({
+      where: { id: 'del-1' },
+      data: { attempts: { increment: 1 }, lastAttemptAt: expect.any(Date) },
+    });
+  });
+
   it('arms no timer when the stop lands between the failure’s read and its write', async () => {
     vi.useFakeTimers();
     mockFetch.mockResolvedValue({ ok: false, status: 503 });
@@ -481,49 +519,40 @@ describe('an erasure’s stop on a hook delivery (t-793)', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
-  it('sends nothing when the row changed between the read and the reset', async () => {
+  // Merges the former "row changed between the read and the reset" and "an
+  // erasure stopped the row just after the reset": with the reset returning the
+  // row it wrote there is no later re-read, so the one real case left is a reset
+  // that matches nothing because an erasure (or any writer) changed the row first.
+  it('sends nothing when the row changed between the read and the reset, as an erasure does', async () => {
     vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
       ...makeDelivery({ status: 'exhausted', lastError: 'HTTP 503' }),
       hook: makeHook(),
     } as never);
-    vi.mocked(prisma.aiEventHookDelivery.updateMany).mockResolvedValue({ count: 0 });
-
-    const result = await retryHookDelivery('del-1');
-
-    expect(result).toBe(false);
-    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'del-1', status: 'exhausted', lastError: 'HTTP 503', nextRetryAt: null },
-      })
-    );
-    expect(prisma.aiEventHookDelivery.findUnique).toHaveBeenCalledTimes(1);
-    expect(mockFetch).not.toHaveBeenCalled();
-  });
-
-  it('sends nothing when an erasure stopped the row just after the reset', async () => {
-    vi.mocked(prisma.aiEventHookDelivery.findUnique)
-      .mockResolvedValueOnce({
-        ...makeDelivery({ status: 'exhausted' }),
-        hook: makeHook(),
-      } as never)
-      .mockResolvedValueOnce(
-        makeDelivery({ status: 'exhausted', lastError: 'Not retried: subject erased' })
-      );
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValue([]);
 
     const result = await retryHookDelivery('del-1');
     await Promise.resolve();
 
     expect(result).toBe(false);
+    expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'del-1', status: 'exhausted', lastError: 'HTTP 503', nextRetryAt: null },
+      })
+    );
+    // One read only: the reset is the last thing the retry asks the database.
+    expect(prisma.aiEventHookDelivery.findUnique).toHaveBeenCalledTimes(1);
+    expect(prisma.aiEventHookDelivery.updateMany).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('settles a reset row whose payload no longer parses, rather than leave it pending', async () => {
-    vi.mocked(prisma.aiEventHookDelivery.findUnique)
-      .mockResolvedValueOnce({
-        ...makeDelivery({ status: 'exhausted' }),
-        hook: makeHook(),
-      } as never)
-      .mockResolvedValueOnce(makeDelivery({ status: 'pending', payload: { not: 'an event' } }));
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      ...makeDelivery({ status: 'exhausted' }),
+      hook: makeHook(),
+    } as never);
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+      makeDelivery({ status: 'pending', payload: { not: 'an event' } }),
+    ] as never);
 
     const result = await retryHookDelivery('del-1');
 
@@ -552,11 +581,11 @@ describe('an erasure’s stop on a hook delivery (t-793)', () => {
     const armedFor: unknown = armedRow().nextRetryAt;
     if (!(armedFor instanceof Date)) throw new Error('the failed attempt armed no retry');
     // The tick's claim landed first: the timer's claim matches nothing.
-    vi.mocked(prisma.aiEventHookDelivery.updateMany).mockResolvedValueOnce({ count: 0 });
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([]);
 
     await vi.advanceTimersByTimeAsync(10_000);
 
-    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenLastCalledWith({
+    expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenLastCalledWith({
       where: { id: 'del-1', status: 'failed', nextRetryAt: armedFor },
       data: { nextRetryAt: expect.any(Date) },
     });
@@ -624,14 +653,36 @@ describe('scheduleRetry (via emitHookEvent failure + timer advancement)', () => 
     );
 
     // findUnique call 2 (in scheduleRetry timer, with include: { hook: true }) — returns delivery with enabled hook
+    // The timer's read carries the payload an erasure is about to redact.
     vi.mocked(prisma.aiEventHookDelivery.findUnique).mockImplementationOnce((async () => ({
-      ...armedRow({ id: deliveryId, attempts: 1 }),
+      ...armedRow({
+        id: deliveryId,
+        attempts: 1,
+        payload: {
+          eventType: 'workflow.completed',
+          timestamp: '2026-04-23T00:00:00Z',
+          data: { note: 'pre-claim-copy' },
+        },
+      }),
       hook: makeHook({
         id: hookId,
         eventType: 'workflow.completed',
         action: { type: 'webhook', url: webhookUrl },
       }),
     })) as never);
+    // The claim returns the row as the erasure left it: this is what is sent.
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+      makeDelivery({
+        id: deliveryId,
+        status: 'failed',
+        attempts: 1,
+        payload: {
+          eventType: 'workflow.completed',
+          timestamp: '2026-04-23T00:00:00Z',
+          data: { note: 'claimed-copy' },
+        },
+      }),
+    ] as never);
 
     // Act — emit event; initial attempt fails, schedules 10s retry
     emitHookEvent('workflow.completed', { workflowId: 'wf-1' });
@@ -655,13 +706,21 @@ describe('scheduleRetry (via emitHookEvent failure + timer advancement)', () => 
     // Assert — the retry fired, second fetch was called, and delivery flipped to delivered
     expect(mockFetch).toHaveBeenCalledTimes(2);
 
-    // The failed outcome, the timer's claim, then the delivered outcome
-    const allUpdateCalls = vi.mocked(prisma.aiEventHookDelivery.updateMany).mock.calls;
-    expect(allUpdateCalls.length).toBe(3);
-    expect(allUpdateCalls[1][0]).toMatchObject({
-      where: { id: deliveryId, status: 'failed' },
+    // The timer claimed the row before sending it
+    expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenCalledTimes(1);
+    expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: deliveryId, status: 'failed', nextRetryAt: expect.any(Date) },
       data: { nextRetryAt: expect.any(Date) },
     });
+    // What the retry sent is the payload the claim returned, not the copy the
+    // timer read before claiming.
+    const retryBody = String((mockFetch.mock.calls[1][1] as { body: string }).body);
+    expect(retryBody).toContain('claimed-copy');
+    expect(retryBody).not.toContain('pre-claim-copy');
+
+    // The failed outcome, then the delivered outcome
+    const allUpdateCalls = vi.mocked(prisma.aiEventHookDelivery.updateMany).mock.calls;
+    expect(allUpdateCalls.length).toBe(2);
     expect(allUpdateCalls.at(-1)![0]).toMatchObject({
       where: { id: deliveryId, status: AWAITING_STATUS },
       data: expect.objectContaining({
@@ -898,7 +957,7 @@ describe('processPendingHookRetries', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
     // Each row is claimed before it is sent (t-793).
     for (const id of ['del-1', 'del-2']) {
-      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith({
+      expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenCalledWith({
         where: { id, status: 'failed', nextRetryAt: due },
         data: { nextRetryAt: expect.any(Date) },
       });
@@ -913,11 +972,51 @@ describe('processPendingHookRetries', () => {
         hook: makeHook(),
       },
     ] as never);
-    vi.mocked(prisma.aiEventHookDelivery.updateMany).mockResolvedValueOnce({ count: 0 });
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([]);
 
     await processPendingHookRetries();
 
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('sends the payload the claim returned, not the copy the tick read before claiming', async () => {
+    // An erasure redacts a payload between the tick's read and its claim: the
+    // read still carries the PII, the row the claim returns does not.
+    const due = new Date(Date.now() - 1_000);
+    vi.mocked(prisma.aiEventHookDelivery.findMany).mockResolvedValue([
+      {
+        ...makeDelivery({
+          id: 'del-1',
+          status: 'failed',
+          attempts: 1,
+          nextRetryAt: due,
+          payload: {
+            eventType: 'conversation.started',
+            timestamp: '2026-04-23T00:00:00Z',
+            data: { note: 'pre-claim-copy' },
+          },
+        }),
+        hook: makeHook(),
+      },
+    ] as never);
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+      makeDelivery({
+        status: 'failed',
+        attempts: 1,
+        payload: {
+          eventType: 'conversation.started',
+          timestamp: '2026-04-23T00:00:00Z',
+          data: { note: 'claimed-copy' },
+        },
+      }),
+    ] as never);
+
+    await processPendingHookRetries();
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const body = String((mockFetch.mock.calls[0][1] as { body: string }).body);
+    expect(body).toContain('claimed-copy');
+    expect(body).not.toContain('pre-claim-copy');
   });
 
   it('marks deliveries exhausted when their hook has been disabled', async () => {
@@ -1104,20 +1203,19 @@ describe('retryHookDelivery (parseDeliveryForDispatch validation)', () => {
       data: { conversationId: 'conv-abc' },
     };
 
-    // The row after the reset holds a different payload from the first read, so what
-    // is sent shows which of the two reads the dispatch used.
+    // The row the reset returns holds a different payload from the first read, so
+    // what is sent shows which of the two the dispatch used.
     const rereadPayload = { ...validPayload, data: { conversationId: 'conv-reread' } };
-    vi.mocked(prisma.aiEventHookDelivery.findUnique)
-      .mockResolvedValueOnce({
-        ...makeDelivery({ id: deliveryId, status: 'failed', attempts: 1, payload: validPayload }),
-        hook: makeHook({
-          isEnabled: true,
-          action: { type: 'webhook', url: webhookUrl },
-        }),
-      } as never)
-      .mockResolvedValueOnce(
-        makeDelivery({ id: deliveryId, status: 'pending', attempts: 0, payload: rereadPayload })
-      );
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValueOnce({
+      ...makeDelivery({ id: deliveryId, status: 'failed', attempts: 1, payload: validPayload }),
+      hook: makeHook({
+        isEnabled: true,
+        action: { type: 'webhook', url: webhookUrl },
+      }),
+    } as never);
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+      makeDelivery({ id: deliveryId, status: 'pending', attempts: 0, payload: rereadPayload }),
+    ] as never);
 
     // Act
     const result = await retryHookDelivery(deliveryId);
@@ -1125,11 +1223,11 @@ describe('retryHookDelivery (parseDeliveryForDispatch validation)', () => {
     // test-review:accept tobe_true — boolean return from retryHookDelivery; structural assertion on retry outcome
     expect(result).toBe(true);
 
-    // First conditional write sets status: 'pending' (the reset before re-dispatch),
-    // matching the row as it was read
-    const updateCalls = vi.mocked(prisma.aiEventHookDelivery.updateMany).mock.calls;
-    const pendingUpdate = updateCalls[0];
-    expect(pendingUpdate?.[0]).toMatchObject({
+    // The reset sets status: 'pending' (before re-dispatch), matching the row as
+    // it was read
+    const resetCalls = vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mock.calls;
+    expect(resetCalls).toHaveLength(1);
+    expect(resetCalls[0]?.[0]).toMatchObject({
       where: { id: deliveryId, status: 'failed', lastError: null },
       data: expect.objectContaining({
         status: 'pending',
@@ -1149,7 +1247,7 @@ describe('retryHookDelivery (parseDeliveryForDispatch validation)', () => {
         })
       );
     });
-    // The payload sent is the re-read row's, not the first read's
+    // The payload sent is the reset's returned row, not the first read's
     const sentBody = (mockFetch.mock.calls[0]?.[1] as RequestInit).body as string;
     expect(sentBody).toContain('conv-reread');
     expect(sentBody).not.toContain('conv-abc');
@@ -1586,16 +1684,20 @@ describe('delivery destination recording', () => {
       ...makeDelivery({ status: 'failed', attempts: 1, ...oldPair }),
       hook: makeHook({ action: { type: 'webhook', url: NEW_URL } }),
     } as never);
+    // The reset returns the row as it wrote it: still carrying the old destination.
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValue([
+      makeDelivery({ status: 'pending', attempts: 0, ...oldPair }),
+    ] as never);
 
     const ok = await retryHookDelivery('del-1');
     expect(ok).toBe(true);
 
-    // [0] is the reset; [1] is the attempt's outcome
+    // The reset is updateManyAndReturn; the one updateMany is the attempt's outcome
     await vi.waitFor(() => {
-      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledTimes(2);
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledTimes(1);
     });
     expect(mockFetch).toHaveBeenCalledWith(NEW_URL, expect.anything());
-    const outcome = vi.mocked(prisma.aiEventHookDelivery.updateMany).mock.calls[1][0].data;
+    const outcome = vi.mocked(prisma.aiEventHookDelivery.updateMany).mock.calls[0][0].data;
     expect(outcome).toMatchObject({
       status: 'delivered',
       ...newPair,
@@ -1608,14 +1710,18 @@ describe('delivery destination recording', () => {
       ...makeDelivery({ status: 'failed', attempts: 1, ...oldPair }),
       hook: makeHook({ action: { type: 'webhook', url: OLD_URL } }),
     } as never);
+    // The reset returns the row as it wrote it: still carrying the old destination.
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValue([
+      makeDelivery({ status: 'pending', attempts: 0, ...oldPair }),
+    ] as never);
 
     await retryHookDelivery('del-1');
     await vi.waitFor(() => {
-      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledTimes(2);
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledTimes(1);
     });
 
-    // [0] is the reset; [1] is the attempt's outcome
-    const outcome = vi.mocked(prisma.aiEventHookDelivery.updateMany).mock.calls[1][0].data;
+    // The reset is updateManyAndReturn; the one updateMany is the attempt's outcome
+    const outcome = vi.mocked(prisma.aiEventHookDelivery.updateMany).mock.calls[0][0].data;
     expect(outcome).toMatchObject({ status: 'delivered' });
     expect(outcome).not.toHaveProperty('destination');
     expect(outcome).not.toHaveProperty('destinationFingerprint');

@@ -100,10 +100,14 @@ export const RETRY_CLAIM_LEASE_MS = 5 * 60_000;
  * They match only the row as the sender read it, `failed` with that
  * `nextRetryAt`, and move `nextRetryAt` on by {@link RETRY_CLAIM_LEASE_MS}.
  * Every sender of a due retry (the in-process timer, the maintenance tick)
- * claims first and sends only on `count === 1`. Two of them racing for one
- * row then send it once. A manual retry's reset matches `nextRetryAt` too, so
- * it loses to a claim and a claim loses to it. The attempt's own outcome write
- * replaces the lease with the real next retry time, or clears it.
+ * claims first, with `updateManyAndReturn`, and sends the payload the claim
+ * returned. Two of them racing for one row then send it once, and neither
+ * sends a copy read before an erasure redacted it. A manual retry that resets
+ * the row before a claim makes the claim miss. One that reads the row after a
+ * claim still resets it, because a held lease and an armed retry both look
+ * like a future `nextRetryAt`, and then both send: accepted, and documented in
+ * data-erasure.md step 6. The attempt's own outcome write replaces the lease
+ * with the real next retry time, or clears it.
  */
 export function claimArmedRetry(
   id: string,
@@ -121,9 +125,11 @@ export function claimArmedRetry(
 
 /**
  * An attempt finished after its row stopped awaiting a send, and its outcome
- * was not written over that (t-793). An erasure stopped the row, or an admin
- * retried it by hand while this attempt was out. The send itself happened; the
- * row records it as an attempt, and this line says which outcome it had.
+ * was not written over that (t-793): an erasure stopped the row, or another
+ * sender settled it, while this attempt was out. The send itself happened; the
+ * row records it as an attempt, and this line says which outcome it had. (A
+ * manual retry resets the row to `pending`, which still awaits a send, so an
+ * attempt in flight across one writes its outcome as usual.)
  */
 export function logSettledInFlight(
   kind: 'Webhook' | 'Hook',

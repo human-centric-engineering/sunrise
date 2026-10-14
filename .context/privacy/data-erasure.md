@@ -283,13 +283,19 @@ transaction):
        its destination.
      - A due retry is sent only by whoever claims it: the in-process timer or
        the maintenance tick moves the row's `nextRetryAt` on by a five-minute
-       lease (`claimArmedRetry`) and sends only if that matched. A timer also
-       checks the row is still the retry it was armed for (`isArmedRetry`).
-       A row the erasure stopped, one an admin retried by hand meanwhile, or
-       one the other sender claimed is left alone. A stale timer used to send
-       a hand-retried row a second time, and a timer and the tick could both
-       send one due retry. A sender that dies holding a claim hands the row
-       back to the tick when the lease runs out.
+       lease (`claimArmedRetry`, with `updateManyAndReturn`) and sends the
+       payload the claim returned, never a copy read before it, which an
+       erasure may have redacted since. A timer also checks the row is still
+       the retry it was armed for (`isArmedRetry`). A row the erasure stopped,
+       one an admin retried by hand meanwhile, or one the other sender
+       claimed is left alone. A stale timer used to send a hand-retried row a
+       second time, and a timer and the tick could both send one due retry. A
+       sender that dies holding a claim hands the row back to the tick when
+       the lease runs out. **Accepted:** an admin who retries a row by hand
+       while a claimed attempt is still out sends it a second time, because a
+       held lease and an armed retry both look like a future `nextRetryAt`.
+       The email channel has no send timeout, so an email attempt that hangs
+       past the lease can also be claimed and sent again (t-808).
      - A manual retry (`409`) or a DLQ replay (counted as skipped) refuses a
        row an erasure stopped or marked. That covers both stop reasons:
        "subject erased" here, and "recipient erased" in step 5. The mark is
@@ -298,12 +304,12 @@ transaction):
        reason (its subscription deactivated or deleted) is conditional on the
        row still awaiting a send, so it cannot overwrite the mark. A retry
        also resets the row only if it is unchanged since it was read, and
-       sends the payload as it stands after the reset.
+       sends the payload the reset returned.
 
-     An `activity` row already `exhausted` when the erasure runs, the DLQ's
-     population, keeps its status and gets the same mark, so a replay refuses
-     it. A row already `delivered` is redacted but not marked; a manual retry
-     of it sends the redacted event.
+     Every `activity` row gets the mark, whatever its status: one already
+     `exhausted` (the DLQ's population) or `delivered` keeps its status, and a
+     replay or manual retry refuses it. The mark lives in `lastError` text; a
+     dedicated column would not depend on every writer preserving it (t-809).
 
    - An event about a **change they made** (`ADMIN_ACTION_EVENTS`:
      `agent_updated`, `capability.*quarantined`, `execution.force_failed`) or

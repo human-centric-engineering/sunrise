@@ -362,11 +362,13 @@ release process.
 - **An erasure's stop on a delivery is no longer undone** (t-793). An attempt
   in flight when the erasure commits writes its outcome only to a row still
   waiting to send, and arms no further retry. The manual retry routes answer
-  `409` for a row an erasure stopped, and a DLQ replay skips it; an
-  `activity` row already in the DLQ is marked by the erasure too. A due retry
-  is claimed before it is sent, so a stale timer no longer double-sends a row
-  an admin retried by hand, and the in-process timer and the maintenance tick
-  no longer both send one retry.
+  `409` for a row an erasure stopped, and a DLQ replay skips it; the erasure
+  marks every delivery about the person's activity, delivered or exhausted
+  ones included, so none of them is sent again. A due retry is claimed before
+  it is sent and the claimed row's payload is the one sent, so a stale timer
+  no longer double-sends a row an admin retried by hand, the in-process timer
+  and the maintenance tick no longer both send one retry, and neither sends a
+  copy read before an erasure redacted it.
 - **Erasing a person removes them from the escalation list and from workflow
   notification and approval steps** (t-791). Their verified address left
   `escalationConfig.emailAddresses` and `send_notification` steps' `to`, and

@@ -14,8 +14,8 @@
  *      not, and hands them no colleague's id.
  *   2. After erasure, no delivery payload holds the subject's id; an event
  *      about their activity keeps only its record keys, so the free text in
- *      it is gone; one still retrying is stopped, and one already exhausted is
- *      marked so a retry refuses it; one about a change they made
+ *      it is gone; one still retrying is stopped, and every one is marked so
+ *      a retry refuses it, delivered or exhausted; one about a change they made
  *      keeps the change and loses only them. Each keeps its destination.
  *   3. A colleague's email subscription to the subject's address (typed in a
  *      different case) is cleared and deactivated, with an audit entry that
@@ -473,6 +473,10 @@ async function main(): Promise<void> {
     check(
       row(escalated.id).destination === 'https://receiver.smoke-test.example',
       'and its destination'
+    );
+    check(
+      row(escalated.id).status === 'delivered' && isStoppedByErasure(row(escalated.id).lastError),
+      'and stays delivered, marked so a manual retry refuses it (t-793)'
     );
     const perTurnAfter = webhookAfter.find((r) => r.id === perTurn.id);
     check(
