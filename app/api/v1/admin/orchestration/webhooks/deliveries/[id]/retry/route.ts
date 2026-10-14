@@ -52,7 +52,13 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   }
 
   const ok = await retryDelivery(id);
-  if (!ok) throw new NotFoundError('Webhook delivery not found');
+  // The row exists (read above) but changed before the retry could reset it:
+  // a retry timer or the maintenance tick claimed it, or an erasure settled it.
+  if (!ok) {
+    throw new ConflictError(
+      'The delivery changed while it was being retried; reload and try again'
+    );
+  }
 
   logAdminAction({
     userId: session.user.id,

@@ -8,7 +8,6 @@ import {
   RECIPIENT_ERASED,
   SUBJECT_ERASED,
   isArmedRetry,
-  isAwaitingRetry,
   isStoppedByErasure,
   notRetried,
   notRetriedSuffix,
@@ -27,16 +26,6 @@ describe('notRetried', () => {
 
   it('treats an empty earlier error as none', () => {
     expect(notRetried('', 'hook deleted')).toBe('Not retried: hook deleted');
-  });
-});
-
-describe('isAwaitingRetry', () => {
-  it.each(['pending', 'failed'])('is true for %s', (status) => {
-    expect(isAwaitingRetry(status)).toBe(true);
-  });
-
-  it.each(['exhausted', 'delivered', 'retrying', '', 'PENDING'])('is false for %s', (status) => {
-    expect(isAwaitingRetry(status)).toBe(false);
   });
 });
 

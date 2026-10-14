@@ -176,9 +176,9 @@ release process.
 
 - **Five events name the person whose conversation or run they report**
   (t-792). `chat_budget_exceeded_per_turn` carries `userId` (`null` plus
-  `embedVisitorId` for an embed visitor); `workflow_budget_exceeded` (omitted
-  for a system-owned run) and `workflow_notification` carry the run owner's
-  `userId`; the force-fail `workflow.failed` and `execution.force_failed`
+  `embedVisitorId` for an embed visitor); `workflow_budget_exceeded` and
+  `workflow_notification` carry the run owner's `userId` (`null` for a
+  system-owned run); the force-fail `workflow.failed` and `execution.force_failed`
   hooks carry it beside `actorUserId`, the admin. Additive for receivers.
   Erasure and subject access now find these deliveries after the
   conversation or run is deleted; rows written before this change still

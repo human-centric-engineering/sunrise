@@ -54,17 +54,6 @@ export function isStoppedByErasure(lastError: string | null): boolean {
 export const AWAITING_RETRY_STATUSES: readonly string[] = ['pending', 'failed'];
 
 /**
- * Whether a delivery is still waiting on its next attempt. An attempt writes
- * its outcome only to a row that still is (t-793). A row settled while the
- * attempt was in flight — stopped by an erasure (`exhausted`), or `delivered`
- * — is left as it is. Otherwise the attempt would flip it back and arm another
- * send.
- */
-export function isAwaitingRetry(status: string): boolean {
-  return AWAITING_RETRY_STATUSES.includes(status);
-}
-
-/**
  * Whether an in-process retry timer's row is still the retry it was armed
  * for: `failed`, with the `nextRetryAt` the failed attempt wrote when it armed
  * the timer (t-793). Anything else means the row moved on while the timer
@@ -76,8 +65,8 @@ export function isAwaitingRetry(status: string): boolean {
  *   - the maintenance tick, or another timer, claimed it
  *     ({@link claimArmedRetry}).
  *
- * {@link isAwaitingRetry} alone could not tell the first of those from a
- * manual retry, which read `pending` or `failed` too. A stale timer then sent
+ * Asking only whether the row still awaits a send (`pending` or `failed`)
+ * could not tell the first of those from a manual retry, which reads the same. A stale timer then sent
  * the row a second time. This is the cheap check before the claim; the claim
  * is what settles a race.
  */

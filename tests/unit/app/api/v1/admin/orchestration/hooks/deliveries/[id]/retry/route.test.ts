@@ -153,13 +153,15 @@ describe('POST /hooks/deliveries/:id/retry', () => {
     expect(logAdminAction).not.toHaveBeenCalled();
   });
 
-  it('returns 404 when delivery is not found or not retriable', async () => {
+  it('returns 409 when retryHookDelivery refuses a row that exists (t-793)', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(retryHookDelivery).mockResolvedValue(false);
 
     const response = await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
 
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(409);
+    const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+    expect(body.error.code).toBe('CONFLICT');
   });
 
   it('retries a delivery and returns success', async () => {
@@ -203,7 +205,7 @@ describe('POST /hooks/deliveries/:id/retry', () => {
 
     const response = await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
 
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(409);
     expect(retryHookDelivery).toHaveBeenCalledWith(DELIVERY_ID);
     expect(logAdminAction).not.toHaveBeenCalled();
   });

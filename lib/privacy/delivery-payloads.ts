@@ -391,7 +391,11 @@ export async function eraseSubjectFromDeliveries(
   // manual retry refuses it rather than send an event about nobody (t-793). An
   // `exhausted` row is the DLQ's population; a `delivered` one can still be
   // retried by hand. Only the rows still waiting to send also change status.
-  const markNow = Prisma.sql`w.activity`;
+  // A row already marked, by an earlier erasure of someone else it named, is
+  // not marked twice.
+  const markNow = Prisma.sql`(w.activity
+    AND d."lastError" IS DISTINCT FROM ${notRetried(null, SUBJECT_ERASED)}
+    AND right(coalesce(d."lastError", ''), ${notRetriedSuffix(SUBJECT_ERASED).length}) <> ${notRetriedSuffix(SUBJECT_ERASED)})`;
   for (let i = 0; i < writes.length; i += WRITE_CHUNK) {
     const chunk = writes.slice(i, i + WRITE_CHUNK);
     await client.$executeRaw`

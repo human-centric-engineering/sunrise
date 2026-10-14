@@ -456,7 +456,7 @@ describe('an erasure’s stop on a hook delivery (t-793)', () => {
     // status or the erasure's mark.
     expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledTimes(2);
     expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenLastCalledWith({
-      where: { id: 'del-1' },
+      where: { id: 'del-1', status: { not: 'delivered' } },
       data: { attempts: { increment: 1 }, lastAttemptAt: expect.any(Date), lastResponseCode: 503 },
     });
   });
@@ -480,7 +480,7 @@ describe('an erasure’s stop on a hook delivery (t-793)', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenLastCalledWith({
-      where: { id: 'del-1' },
+      where: { id: 'del-1', status: { not: 'delivered' } },
       data: { attempts: { increment: 1 }, lastAttemptAt: expect.any(Date) },
     });
   });

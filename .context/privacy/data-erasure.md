@@ -297,14 +297,18 @@ transaction):
        The email channel has no send timeout, so an email attempt that hangs
        past the lease can also be claimed and sent again (t-808).
      - A manual retry (`409`) or a DLQ replay (counted as skipped) refuses a
-       row an erasure stopped or marked. That covers both stop reasons:
-       "subject erased" here, and "recipient erased" in step 5. The mark is
-       the `lastError` wording (`isStoppedByErasure`), which the erasure SQL
-       builds from the same functions; a write that settles a row for another
-       reason (its subscription deactivated or deleted) is conditional on the
-       row still awaiting a send, so it cannot overwrite the mark. A retry
-       also resets the row only if it is unchanged since it was read, and
-       sends the payload the reset returned.
+       row an erasure stopped or marked: "subject erased" here, and
+       "recipient erased" on an email delivery that was still retrying when
+       step 5 ran. A delivered or exhausted email row sent to the person's
+       address is not marked; step 5 has taken the address off it, and if
+       its event names them, this step marks it. The mark is the `lastError`
+       wording (`isStoppedByErasure`), which the erasure SQL builds from the
+       same functions, added once however many erasures match the row; a
+       write that settles a row for another reason (its subscription
+       deactivated or deleted) is conditional on the row still awaiting a
+       send, so it cannot overwrite the mark. A retry also resets the row
+       only if it is unchanged since it was read, and sends the payload the
+       reset returned; a row that changed in between answers `409` too.
 
      Every `activity` row gets the mark, whatever its status: one already
      `exhausted` (the DLQ's population) or `delivered` keeps its status, and a

@@ -47,7 +47,14 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
   }
 
   const ok = await retryHookDelivery(id);
-  if (!ok) throw new NotFoundError('Hook delivery not found or no longer retriable');
+  // The row exists (read above) but cannot be retried now: its hook is
+  // disabled or no longer a webhook, or it changed before the retry could
+  // reset it (a timer or the tick claimed it, or an erasure settled it).
+  if (!ok) {
+    throw new ConflictError(
+      'The delivery cannot be retried now: its hook is disabled, or it changed while being retried'
+    );
+  }
 
   logAdminAction({
     userId: session.user.id,

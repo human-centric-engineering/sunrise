@@ -674,7 +674,11 @@ describe('eraseSubjectFromDeliveries', () => {
     // The mark lands on every activity row, whatever its status — an
     // exhausted one keeps its status, so a DLQ replay refuses it, and so does
     // a delivered one, which can still be retried by hand (t-793).
-    expect(text).toContain('"lastError" = CASE WHEN w.activity THEN');
+    expect(text).toMatch(
+      /"lastError" = CASE WHEN \(w\.activity\s+AND d\."lastError" IS DISTINCT FROM \$\d+\s+AND right\(coalesce\(d\."lastError", ''\), \$\d+\) <> \$\d+\) THEN/
+    );
+    // A row an earlier erasure already marked is not marked twice
+    expect(values).toContain(' (not retried: subject erased)'.length);
     expect(text).toContain('ELSE d."lastError" END');
     // The not-retried wording is built in SQL from the row's own lastError,
     // with notRetried's wording bound as parameters, so isStoppedByErasure

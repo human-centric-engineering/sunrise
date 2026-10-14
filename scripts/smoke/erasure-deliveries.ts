@@ -263,6 +263,17 @@ async function main(): Promise<void> {
       { agentId: agent.id, conversationId: conversation.id, usedUsd: 0.5, limitUsd: 0.1 },
       'exhausted'
     );
+    // Already marked by an earlier erasure of someone else it named: the mark
+    // is added once, not again (t-793).
+    const alreadyMarked = await webhook(
+      'conversation_escalated',
+      { agentId: agent.id, userId: subject.id, conversationId: conversation.id },
+      'exhausted'
+    );
+    await prisma.aiWebhookDelivery.update({
+      where: { id: alreadyMarked.id },
+      data: { lastError: 'HTTP 500 (not retried: subject erased)' },
+    });
     // Nothing to do with the subject.
     const unrelated = await webhook('conversation_escalated', {
       agentId: agent.id,
@@ -489,6 +500,10 @@ async function main(): Promise<void> {
     check(
       deadLetteredAfter.status === 'exhausted' && isStoppedByErasure(deadLetteredAfter.lastError),
       'one already in the dead-letter queue keeps its status and is marked, so a replay refuses it (t-793)'
+    );
+    check(
+      row(alreadyMarked.id).lastError === 'HTTP 500 (not retried: subject erased)',
+      'one an earlier erasure already marked is not marked twice'
     );
     const agentUpdatedAfter = webhookAfter.find((r) => r.id === agentUpdated.id);
     const agentUpdatedData = dataOf(row(agentUpdated.id).payload);

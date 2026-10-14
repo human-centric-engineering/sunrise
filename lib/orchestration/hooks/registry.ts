@@ -470,8 +470,9 @@ async function recordSettledAttempt(
   statusCode: number | undefined,
   kind: 'delivered' | 'failed'
 ): Promise<void> {
+  // Not onto a row another attempt delivered: it already records a send.
   await prisma.aiEventHookDelivery.updateMany({
-    where: { id: deliveryId },
+    where: { id: deliveryId, status: { not: 'delivered' } },
     data: {
       attempts: { increment: 1 },
       lastAttemptAt: at,

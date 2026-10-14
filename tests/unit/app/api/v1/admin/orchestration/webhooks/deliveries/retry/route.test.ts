@@ -195,7 +195,7 @@ describe('POST /webhooks/deliveries/:id/retry', () => {
     );
   });
 
-  it('returns 404 when retryDelivery returns false', async () => {
+  it('returns 409 when retryDelivery refuses a row that exists: it changed mid-retry (t-793)', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
       subscription: { createdBy: ADMIN_USER_ID },
@@ -204,7 +204,9 @@ describe('POST /webhooks/deliveries/:id/retry', () => {
 
     const response = await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
 
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(409);
+    const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+    expect(body.error.code).toBe('CONFLICT');
   });
 
   describe('a delivery stopped by an erasure (t-793)', () => {
@@ -319,7 +321,7 @@ describe('POST /webhooks/deliveries/:id/retry', () => {
 
       const response = await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
 
-      expect(response.status).toBe(404);
+      expect(response.status).toBe(409);
       expect(logAdminAction).not.toHaveBeenCalled();
     });
   });

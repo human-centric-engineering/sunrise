@@ -587,6 +587,20 @@ describe('eraseUser', () => {
   // -------------------------------------------------------------------------
 
   describe('webhook delivery redaction', () => {
+    /** The pass-1 writes: one conditional updateMany per retrying row, by id. */
+    function retryingWrites(): Array<{
+      where: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }> {
+      return (
+        mockDeliveryUpdateMany.mock.calls as unknown as Array<
+          [{ where: Record<string, unknown>; data: Record<string, unknown> }]
+        >
+      )
+        .map(([args]) => args)
+        .filter((args) => 'id' in args.where);
+    }
+
     const UNTIL = '2026-01-01T00:00:00.000Z';
 
     type Row = Record<string, unknown>;
@@ -679,9 +693,12 @@ describe('eraseUser', () => {
 
       await eraseUser(BASE_PARAMS);
 
-      expect(mockDeliveryUpdate).toHaveBeenCalledTimes(1);
-      expect(mockDeliveryUpdate).toHaveBeenCalledWith({
-        where: { id: 'd-retry' },
+      // Conditional on the row still retrying, so one an attempt delivered
+      // since the read stays delivered (t-793).
+      expect(mockDeliveryUpdate).not.toHaveBeenCalled();
+      expect(retryingWrites()).toHaveLength(1);
+      expect(mockDeliveryUpdateMany).toHaveBeenCalledWith({
+        where: { id: 'd-retry', status: { in: ['pending', 'failed'] } },
         data: {
           status: 'exhausted',
           nextRetryAt: null,
@@ -701,7 +718,7 @@ describe('eraseUser', () => {
 
       await eraseUser(BASE_PARAMS);
 
-      const [args] = mockDeliveryUpdate.mock.calls[0] as [{ data: Record<string, unknown> }];
+      const args = retryingWrites()[0];
       expect(args.data.lastError).toBe('Not retried: recipient erased');
       expect(args.data.status).toBe('exhausted');
     });
@@ -722,7 +739,7 @@ describe('eraseUser', () => {
 
       await eraseUser(BASE_PARAMS);
 
-      const [args] = mockDeliveryUpdate.mock.calls[0] as [{ data: Record<string, unknown> }];
+      const args = retryingWrites()[0];
       expect(args.data).toEqual({
         status: 'exhausted',
         nextRetryAt: null,
@@ -817,7 +834,7 @@ describe('eraseUser', () => {
 
       await eraseUser(BASE_PARAMS);
 
-      const [args] = mockDeliveryUpdate.mock.calls[0] as [{ data: Record<string, unknown> }];
+      const args = retryingWrites()[0];
       expect(args.data).not.toHaveProperty('previousDestinations');
     });
 
@@ -893,7 +910,7 @@ describe('eraseUser', () => {
 
       expect(callOrder).toEqual([
         'findMany:retrying',
-        'update',
+        'updateMany',
         'updateMany',
         'findMany:history',
         'update',
@@ -907,7 +924,7 @@ describe('eraseUser', () => {
           { id: 'd-1', destination: 'foo@bar.com', previousDestinations: null, lastError: null },
         ],
       });
-      mockDeliveryUpdate.mockRejectedValue(new Error('redaction failed'));
+      mockDeliveryUpdateMany.mockRejectedValueOnce(new Error('redaction failed'));
 
       await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('redaction failed');
 

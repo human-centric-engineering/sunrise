@@ -1030,7 +1030,7 @@ describe('an erasure’s stop on a delivery (t-793)', () => {
       // The attempt that went out is still recorded, without touching the
       // status, the erasure's mark or the destination.
       expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenLastCalledWith({
-        where: { id: 'del-1' },
+        where: { id: 'del-1', status: { not: 'delivered' } },
         data: {
           attempts: { increment: 1 },
           lastAttemptAt: expect.any(Date),
@@ -1054,7 +1054,7 @@ describe('an erasure’s stop on a delivery (t-793)', () => {
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenLastCalledWith({
-        where: { id: 'del-1' },
+        where: { id: 'del-1', status: { not: 'delivered' } },
         data: {
           attempts: { increment: 1 },
           lastAttemptAt: expect.any(Date),

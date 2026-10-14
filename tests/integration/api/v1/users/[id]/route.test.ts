@@ -854,9 +854,10 @@ describe('DELETE /api/v1/users/:id', () => {
         },
         select: { id: true, destination: true, previousDestinations: true, lastError: true },
       });
-      // The retrying row is stopped, keeping its real error, and its address erased.
-      expect(prisma.aiWebhookDelivery.update).toHaveBeenCalledWith({
-        where: { id: 'del-1' },
+      // The retrying row is stopped, keeping its real error, and its address
+      // erased, only if it is still retrying when written (t-793).
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith({
+        where: { id: 'del-1', status: { in: ['pending', 'failed'] } },
         data: {
           status: 'exhausted',
           nextRetryAt: null,

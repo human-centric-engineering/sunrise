@@ -203,6 +203,9 @@ async function measure(size: number): Promise<void> {
         where: { id: { startsWith: `${PREFIX}-conv-${stamp}` } },
       });
     }
+    // Fixture cleanup, as the erasure smokes do: the subject went through
+    // eraseUser() above; these are the seeded bystander and any user a failed
+    // run left behind, whose seeded rows are removed by id prefix first.
     await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   }
 }

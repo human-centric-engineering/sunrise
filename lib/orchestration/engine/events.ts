@@ -100,8 +100,8 @@ export interface BudgetExceededRun {
  * below — subscribers wanting only one notification should listen to the
  * specific event and ignore the generic one.
  *
- * `run.userId` is the run's owner, left off the payload for a system-owned
- * run. It names them on the payload itself, so erasure and subject access
+ * `run.userId` is the run's owner, `null` for a system-owned run, as on the
+ * other run events. It names them on the payload itself, so erasure and subject access
  * still find the delivery once the run is gone (t-792). It is required, `null`
  * included, so a new call site cannot leave it out by accident.
  */
@@ -118,7 +118,7 @@ export function workflowBudgetExceeded(
     failedStepId,
     ...(executionId ? { executionId } : {}),
     ...(workflowId ? { workflowId } : {}),
-    ...(userId ? { userId } : {}),
+    userId,
   }).catch((err) => {
     logger.warn('Webhook dispatch failed for workflow_budget_exceeded', {
       failedStepId,

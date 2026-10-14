@@ -288,6 +288,7 @@ describe('Event factory helpers', () => {
         limitUsd: 1.0,
         failedStepId: 'step-llm',
         executionId: 'exec-123',
+        userId: null,
       });
     });
 
@@ -297,6 +298,7 @@ describe('Event factory helpers', () => {
         usedUsd: 1.5,
         limitUsd: 1.0,
         failedStepId: 'step-llm',
+        userId: null,
       });
     });
 
@@ -315,6 +317,7 @@ describe('Event factory helpers', () => {
         failedStepId: 'step-llm',
         executionId: 'exec-123',
         workflowId: 'wf-1',
+        userId: null,
       });
     });
 
@@ -334,13 +337,13 @@ describe('Event factory helpers', () => {
       });
     });
 
-    it('omits userId for a system-owned run', () => {
+    it('sends userId null for a system-owned run, as the other run events do', () => {
       workflowBudgetExceeded(1.5, 1.0, 'step-llm', {
         executionId: 'exec-123',
         workflowId: 'wf-1',
         userId: null,
       });
-      expect(vi.mocked(dispatchWebhookEvent).mock.calls[0][1]).not.toHaveProperty('userId');
+      expect(vi.mocked(dispatchWebhookEvent).mock.calls[0][1]).toHaveProperty('userId', null);
     });
 
     it('does not throw when the webhook dispatch rejects — logs a warning instead', async () => {
