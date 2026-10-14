@@ -870,6 +870,217 @@ describe('scheduleRetry (in-process timer-based retry)', () => {
   });
 });
 
+// ─── An erasure's stop is not undone (t-793) ───────────────────────────────
+
+describe('an erasure’s stop on a delivery (t-793)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeSub()] as never);
+    vi.mocked(prisma.aiWebhookSubscription.findUnique).mockResolvedValue(makeSub());
+    vi.mocked(prisma.aiWebhookDelivery.create).mockResolvedValue(makeDelivery());
+    vi.mocked(prisma.aiWebhookDelivery.update).mockResolvedValue(makeDelivery());
+    vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(makeDelivery());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  describe('an attempt in flight when the erasure commits', () => {
+    it('leaves a stopped row stopped when the send succeeds, and says so', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+      // The erasure stopped the row while the POST was out: the conditional
+      // write matches nothing.
+      vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValue({ count: 0 });
+
+      await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: AWAITING,
+          data: expect.objectContaining({ status: 'delivered' }),
+        })
+      );
+      expect(prisma.aiWebhookDelivery.update).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith(
+        'Webhook delivery outcome not recorded: the row was settled while in flight',
+        { deliveryId: 'del-1', outcome: 'delivered' }
+      );
+    });
+
+    it('writes nothing and arms no timer when the failure re-reads a stopped row', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 503 });
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+        makeDelivery({
+          status: 'exhausted',
+          lastError: 'Not retried: subject erased',
+        })
+      );
+
+      await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+      expect(prisma.aiWebhookDelivery.updateMany).not.toHaveBeenCalled();
+      expect(prisma.aiWebhookDelivery.update).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(prisma.aiWebhookSubscription.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('arms no timer when the stop lands between the failure’s read and its write', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 503 });
+      // The re-read still sees the row waiting, but the conditional write
+      // finds it stopped.
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+        makeDelivery({ status: 'pending' })
+      );
+      vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValue({ count: 0 });
+
+      await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: AWAITING,
+          data: expect.objectContaining({ status: 'failed' }),
+        })
+      );
+      // The timer would have re-read the subscription and sent again.
+      expect(prisma.aiWebhookSubscription.findUnique).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(logger.info).toHaveBeenCalledWith(
+        'Webhook delivery outcome not recorded: the row was settled while in flight',
+        { deliveryId: 'del-1', outcome: 'failed' }
+      );
+    });
+  });
+
+  describe('a manual retry or replay', () => {
+    it.each(['HTTP 503 (not retried: subject erased)', 'Not retried: recipient erased'])(
+      'refuses a row an erasure stopped (%s): nothing reset, nothing sent',
+      async (lastError) => {
+        mockFetch.mockResolvedValue({ ok: true, status: 200 });
+        vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+          ...makeDelivery({ status: 'exhausted', lastError }),
+          subscription: makeSub(),
+        } as never);
+
+        const result = await retryDelivery('del-1', { awaitDelivery: true });
+
+        expect(result).toBe(false);
+        expect(prisma.aiWebhookDelivery.updateMany).not.toHaveBeenCalled();
+        expect(prisma.aiWebhookDelivery.update).not.toHaveBeenCalled();
+        expect(mockFetch).not.toHaveBeenCalled();
+      }
+    );
+
+    it('sends nothing when the row changed between the read and the reset', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+        ...makeDelivery({ status: 'exhausted', lastError: 'HTTP 503' }),
+        subscription: makeSub(),
+      } as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateMany).mockResolvedValue({ count: 0 });
+
+      const result = await retryDelivery('del-1', { awaitDelivery: true });
+
+      expect(result).toBe(false);
+      expect(prisma.aiWebhookDelivery.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'del-1', status: 'exhausted', lastError: 'HTTP 503' },
+        })
+      );
+      expect(prisma.aiWebhookDelivery.findUnique).toHaveBeenCalledTimes(1);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('sends nothing when an erasure stopped the row just after the reset', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+      vi.mocked(prisma.aiWebhookDelivery.findUnique)
+        .mockResolvedValueOnce({
+          ...makeDelivery({ status: 'exhausted' }),
+          subscription: makeSub(),
+        } as never)
+        .mockResolvedValueOnce(
+          makeDelivery({ status: 'exhausted', lastError: 'Not retried: subject erased' })
+        );
+
+      const result = await retryDelivery('del-1', { awaitDelivery: true });
+
+      expect(result).toBe(false);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it('sends the payload as it is after the reset, not the copy first read', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+      vi.mocked(prisma.aiWebhookDelivery.findUnique)
+        .mockResolvedValueOnce({
+          ...makeDelivery({
+            status: 'exhausted',
+            payload: { event: 'budget_exceeded', data: { note: 'first-read-copy' } },
+          }),
+          subscription: makeSub(),
+        } as never)
+        .mockResolvedValueOnce(
+          makeDelivery({
+            status: 'pending',
+            payload: { event: 'budget_exceeded', data: { note: 'after-the-reset' } },
+          })
+        );
+
+      const result = await retryDelivery('del-1', { awaitDelivery: true });
+
+      expect(result).toBe(true);
+      const body = String((mockFetch.mock.calls[0][1] as { body: string }).body);
+      expect(body).toContain('after-the-reset');
+      expect(body).not.toContain('first-read-copy');
+    });
+  });
+
+  describe('a retry timer armed before a manual retry', () => {
+    it('does not send again once the row was reset by hand', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 503 });
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockImplementation((async () =>
+        armedRow({ attempts: 0 })) as never);
+
+      await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      // An admin retried it while the timer waited: pending, with the manual
+      // attempt still in flight. The old check (pending or failed) sent it twice.
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+        makeDelivery({ status: 'pending', attempts: 0, nextRetryAt: null })
+      );
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not send again once the manual attempt failed and armed its own retry', async () => {
+      mockFetch.mockResolvedValue({ ok: false, status: 503 });
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockImplementation((async () =>
+        armedRow({ attempts: 0 })) as never);
+
+      await dispatchWebhookEvent('budget_exceeded', { agentId: 'agent-1' });
+      const armedFor = armedRow().nextRetryAt as Date;
+
+      // Failed again, from the manual attempt: a later nextRetryAt, its own timer.
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+        makeDelivery({
+          status: 'failed',
+          attempts: 1,
+          nextRetryAt: new Date(armedFor.getTime() + 5_000),
+        })
+      );
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
 // ─── Email-channel delivery ─────────────────────────────────────────────────
 
 describe('email-channel delivery', () => {

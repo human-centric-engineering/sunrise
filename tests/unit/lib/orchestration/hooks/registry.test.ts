@@ -386,6 +386,151 @@ describe('retryHookDelivery', () => {
   });
 });
 
+describe('an erasure’s stop on a hook delivery (t-793)', () => {
+  beforeEach(() => {
+    vi.mocked(prisma.aiEventHook.findMany).mockResolvedValue([makeHook()] as never);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('leaves a row stopped while the POST was out stopped when the send succeeds, and says so', async () => {
+    mockFetch.mockResolvedValue({ ok: true, status: 200 });
+    vi.mocked(prisma.aiEventHookDelivery.updateMany).mockResolvedValue({ count: 0 });
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+
+    await vi.waitFor(() => {
+      expect(logger.info).toHaveBeenCalledWith(
+        'Hook delivery outcome not recorded: the row was settled while in flight',
+        { deliveryId: 'del-1', outcome: 'delivered' }
+      );
+    });
+    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'del-1', status: AWAITING_STATUS },
+        data: expect.objectContaining({ status: 'delivered' }),
+      })
+    );
+    expect(prisma.aiEventHookDelivery.update).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing and arms no timer when the failure re-reads a stopped row', async () => {
+    vi.useFakeTimers();
+    mockFetch.mockResolvedValue({ ok: false, status: 503 });
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue(
+      makeDelivery({ status: 'exhausted', lastError: 'Not retried: subject erased' })
+    );
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+    await vi.waitFor(() => {
+      expect(logger.info).toHaveBeenCalledWith(
+        'Hook delivery outcome not recorded: the row was settled while in flight',
+        { deliveryId: 'del-1', outcome: 'failed' }
+      );
+    });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    expect(prisma.aiEventHookDelivery.updateMany).not.toHaveBeenCalled();
+    expect(prisma.aiEventHookDelivery.update).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('arms no timer when the stop lands between the failure’s read and its write', async () => {
+    vi.useFakeTimers();
+    mockFetch.mockResolvedValue({ ok: false, status: 503 });
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue(
+      makeDelivery({ status: 'pending' })
+    );
+    vi.mocked(prisma.aiEventHookDelivery.updateMany).mockResolvedValue({ count: 0 });
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledTimes(1);
+    });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    // A timer would have re-read the row with its hook and sent again.
+    expect(prisma.aiEventHookDelivery.findUnique).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a manual retry of a row an erasure stopped: nothing reset, nothing sent', async () => {
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
+      ...makeDelivery({ status: 'exhausted', lastError: 'HTTP 503 (not retried: subject erased)' }),
+      hook: makeHook(),
+    } as never);
+
+    const result = await retryHookDelivery('del-1');
+
+    expect(result).toBe(false);
+    expect(prisma.aiEventHookDelivery.updateMany).not.toHaveBeenCalled();
+    expect(prisma.aiEventHookDelivery.update).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing when the row changed between the read and the reset', async () => {
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
+      ...makeDelivery({ status: 'exhausted', lastError: 'HTTP 503' }),
+      hook: makeHook(),
+    } as never);
+    vi.mocked(prisma.aiEventHookDelivery.updateMany).mockResolvedValue({ count: 0 });
+
+    const result = await retryHookDelivery('del-1');
+
+    expect(result).toBe(false);
+    expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'del-1', status: 'exhausted', lastError: 'HTTP 503' },
+      })
+    );
+    expect(prisma.aiEventHookDelivery.findUnique).toHaveBeenCalledTimes(1);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing when an erasure stopped the row just after the reset', async () => {
+    vi.mocked(prisma.aiEventHookDelivery.findUnique)
+      .mockResolvedValueOnce({
+        ...makeDelivery({ status: 'exhausted' }),
+        hook: makeHook(),
+      } as never)
+      .mockResolvedValueOnce(
+        makeDelivery({ status: 'exhausted', lastError: 'Not retried: subject erased' })
+      );
+
+    const result = await retryHookDelivery('del-1');
+    await Promise.resolve();
+
+    expect(result).toBe(false);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('does not send again from a timer armed before the row was reset by hand', async () => {
+    vi.useFakeTimers();
+    mockFetch.mockResolvedValue({ ok: false, status: 503 });
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue(
+      makeDelivery({ status: 'pending' })
+    );
+
+    emitHookEvent('conversation.started', { conversationId: 'conv-1' });
+    await vi.waitFor(() => {
+      expect(prisma.aiEventHookDelivery.updateMany).toHaveBeenCalledTimes(1);
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    // An admin retried it while the timer waited: pending, the manual attempt
+    // still in flight. The old check (pending or failed) sent it a second time.
+    vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
+      ...makeDelivery({ status: 'pending', nextRetryAt: null }),
+      hook: makeHook(),
+    } as never);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('scheduleRetry (via emitHookEvent failure + timer advancement)', () => {
   afterEach(() => {
     vi.useRealTimers();
