@@ -16,6 +16,11 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { invalidateModelCache } from '@/lib/orchestration/llm/provider-selector';
 import { updateProviderModelSchema } from '@/lib/validations/orchestration';
+import {
+  isHalfPrice,
+  numericStringToNumber,
+  PRICE_PAIR_MESSAGE,
+} from '@/lib/validations/model-pricing';
 import { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
 import { unwrapApprovalPayload } from '@/lib/orchestration/capabilities/approval-payload-unwrap';
 import type {
@@ -63,10 +68,7 @@ export const PRICE_FIELDS: ReadonlySet<string> = new Set([
 const NUMERIC_AUDIT_FIELDS: ReadonlySet<string> = new Set([...PRICE_FIELDS, 'dimensions']);
 
 function coerceNumeric(field: string, value: unknown): unknown {
-  if (!NUMERIC_AUDIT_FIELDS.has(field) || typeof value !== 'string') return value;
-  const trimmed = value.trim();
-  const num = Number(trimmed);
-  return trimmed !== '' && Number.isFinite(num) ? num : value;
+  return NUMERIC_AUDIT_FIELDS.has(field) ? numericStringToNumber(value) : value;
 }
 
 /** The per-change results of applying one unit of changes. */
@@ -455,14 +457,14 @@ export class ApplyAuditChangesCapability extends BaseCapability<Args, Data> {
     // `null` is half a price, which the update schema accepts field by field
     // and the database refuses (`ai_provider_model_price_pair`).
     const prices = validated.filter(({ change }) => PRICE_FIELDS.has(change.field));
-    if (prices.length === 2 && (prices[0].value === null) !== (prices[1].value === null)) {
+    if (prices.length === 2 && isHalfPrice(prices[0].value, prices[1].value)) {
       return {
         results: prices.map(({ change }) => ({
           field: change.field,
           previousValue: change.currentValue,
           newValue: change.proposedValue,
           status: 'invalid' as const,
-          reason: 'Set the input and output prices together, or clear both',
+          reason: PRICE_PAIR_MESSAGE,
         })),
       };
     }

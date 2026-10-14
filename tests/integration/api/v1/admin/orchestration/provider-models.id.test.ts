@@ -470,6 +470,36 @@ describe('PATCH split input/output prices (t-774)', () => {
     expect(data.outputCostPerMillionTokens).toBe(15);
   });
 
+  it('answers 400, not 500, when the database refuses half a price after a race', async () => {
+    // Two PATCHes can each pass the route's check against the same saved
+    // row; the CHECK constraint refuses the second. Shape measured against
+    // the dev DB: P2039 naming `ai_provider_model_price_pair`.
+    const { Prisma } = await import('@prisma/client');
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(
+      makeModel({
+        isDefault: false,
+        inputCostPerMillionTokens: 3,
+        outputCostPerMillionTokens: 15,
+      }) as never
+    );
+    vi.mocked(prisma.aiProviderModel.update).mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError(
+        'Database error. Code: `23514`. Message: `new row for relation "ai_provider_model" violates check constraint "ai_provider_model_price_pair"`',
+        { code: 'P2039', clientVersion: 'test' }
+      )
+    );
+
+    const response = await PATCH(
+      makePatchRequest(MODEL_ID, { inputCostPerMillionTokens: 4 }),
+      routeContext(MODEL_ID)
+    );
+
+    expect(response.status).toBe(400);
+    const body = await parseJson<{ success: boolean; error: { message: string } }>(response);
+    expect(body.error.message).toBe('Set the input and output prices together, or neither');
+  });
+
   it('rejects an input-only price when the saved row has neither', async () => {
     const response = await patchWith({}, { inputCostPerMillionTokens: 3 });
 

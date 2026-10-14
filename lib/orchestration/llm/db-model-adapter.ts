@@ -96,10 +96,16 @@ export function narrowParamProfile(raw: string | null | undefined): ParamProfile
  * A row's input and output rates per 1M tokens (t-774). The split columns
  * are read as a pair: when both are set they win, otherwise both rates are
  * the blended `costPerMillionTokens`, which an embedding model and a row
- * written before the split carry. A row never mixes one split rate with the
- * blended one. The database holds the pair (`ai_provider_model_price_pair`);
- * this keeps a row from before that constraint, or a mock, from being priced
- * half one way and half the other. `null` means no rate is known.
+ * written before the split carry. The row's own rates never mix one split
+ * rate with the blended one. The database holds the pair
+ * (`ai_provider_model_price_pair`); this keeps a row from before that
+ * constraint, or a mock, from being priced half one way and half the other.
+ * `null` means no rate is known.
+ *
+ * What a turn is charged can still combine sources: `registerModels` (and
+ * `keepRegistryFigures` below) settle input and output separately, so a
+ * registry entry with one positive rate keeps it and the row fills the
+ * other (t-769).
  */
 function rowRates(
   row: Pick<

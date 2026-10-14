@@ -829,8 +829,65 @@ describe('ProviderModelForm — chat pricing (t-774)', () => {
     await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
     const body = (mockPatch.mock.calls[0][1] as { body: Record<string, unknown> }).body;
     expect(body.capabilities).toEqual(['embedding']);
-    expect(body.inputCostPerMillionTokens).toBeNull();
-    expect(body.outputCostPerMillionTokens).toBeNull();
+    // Hidden prices are left alone, not cleared.
+    expect(body).not.toHaveProperty('inputCostPerMillionTokens');
+    expect(body).not.toHaveProperty('outputCostPerMillionTokens');
+  });
+
+  it('shows the pricing section for a reasoning-only model', () => {
+    render(<ProviderModelForm model={makeModel({ capabilities: ['reasoning'] })} />);
+    expect(screen.getByPlaceholderText('e.g. 3')).toBeInTheDocument();
+  });
+
+  it("keeps a reasoning model's seeded prices when another field is edited", async () => {
+    // o3-mini is seeded as `reasoning` with 1.1 / 4.4; an edit to its
+    // description must not wipe them.
+    const user = userEvent.setup();
+    render(
+      <ProviderModelForm
+        model={makeModel({
+          capabilities: ['reasoning'],
+          inputCostPerMillionTokens: 1.1,
+          outputCostPerMillionTokens: 4.4,
+        })}
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
+    const body = (mockPatch.mock.calls[0][1] as { body: Record<string, unknown> }).body;
+    expect(body.inputCostPerMillionTokens).toBe(1.1);
+    expect(body.outputCostPerMillionTokens).toBe(4.4);
+  });
+
+  it('clears the blended rate when the edit removes the embedding capability', async () => {
+    // That rate was the embedding price; left in place it would price chat turns.
+    const user = userEvent.setup();
+    render(
+      <ProviderModelForm
+        model={makeModel({ capabilities: ['chat', 'embedding'], costPerMillionTokens: 0.02 })}
+      />
+    );
+
+    await user.click(screen.getByRole('checkbox', { name: /^embedding$/i }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
+    const body = (mockPatch.mock.calls[0][1] as { body: Record<string, unknown> }).body;
+    expect(body.costPerMillionTokens).toBeNull();
+  });
+
+  it('shows a field error for a price above the server limit and sends nothing', async () => {
+    const user = userEvent.setup();
+    render(<ProviderModelForm model={makeModel()} />);
+
+    await user.type(screen.getByPlaceholderText('e.g. 3'), '20000');
+    await user.type(screen.getByPlaceholderText('e.g. 15'), '1');
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+
+    expect(await screen.findByText('At most 10000 per 1M tokens')).toBeInTheDocument();
+    expect(mockPatch).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard
   });
 
   it('rejects a non-numeric price and sends nothing', async () => {

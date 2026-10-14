@@ -7,6 +7,7 @@
  */
 
 import { z } from 'zod';
+import { isHalfPrice, PRICE_PAIR_MESSAGE, splitPriceSchema } from '@/lib/validations/model-pricing';
 import {
   paginationQuerySchema,
   cuidSchema,
@@ -2014,42 +2015,19 @@ const paramProfileSchema = z.enum(['openai-legacy', 'openai-reasoning', 'anthrop
 const capabilitySchema = z.enum(['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation']);
 const embeddingQualitySchema = z.enum(['high', 'medium', 'budget']);
 
-/**
- * The most a chat price per 1M tokens may be (t-774). Generous for any real
- * model, and low enough to catch a per-token or per-1K figure typed in its
- * place.
- */
-export const MAX_PRICE_PER_MILLION_TOKENS = 10_000;
-
-/**
- * A chat model's price per 1M tokens, input and output apart (t-774). Set
- * as a pair: half a price would record the other half of every turn at $0.
- * Without them a row falls back to `costPerMillionTokens` for both. The
- * pair is also a database CHECK (`ai_provider_model_price_pair`).
- */
-export const splitPriceSchema = z.number().nonnegative().max(MAX_PRICE_PER_MILLION_TOKENS);
-
-/**
- * {@link splitPriceSchema} for a value that may arrive as text: the approval
- * screen edits proposed values as strings, so an admin's modified `"3.5"`
- * is read as the number it spells. Anything else is validated as given.
- */
-export const splitPriceInputSchema = z.preprocess(
-  (v) => (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : v),
-  splitPriceSchema
-);
-
 function requirePricePair(
   data: { inputCostPerMillionTokens?: number | null; outputCostPerMillionTokens?: number | null },
   ctx: z.RefinementCtx
 ): void {
-  const hasInput = data.inputCostPerMillionTokens != null;
-  const hasOutput = data.outputCostPerMillionTokens != null;
-  if (hasInput === hasOutput) return;
+  if (!isHalfPrice(data.inputCostPerMillionTokens, data.outputCostPerMillionTokens)) return;
   ctx.addIssue({
     code: 'custom',
-    path: [hasInput ? 'outputCostPerMillionTokens' : 'inputCostPerMillionTokens'],
-    message: 'Set the input and output prices together, or neither',
+    path: [
+      data.inputCostPerMillionTokens != null
+        ? 'outputCostPerMillionTokens'
+        : 'inputCostPerMillionTokens',
+    ],
+    message: PRICE_PAIR_MESSAGE,
   });
 }
 

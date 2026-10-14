@@ -32,7 +32,11 @@
 import { z } from 'zod';
 
 import { registerSchema } from '@/lib/orchestration/schemas/registry';
-import { MAX_PRICE_PER_MILLION_TOKENS, splitPriceSchema } from '@/lib/validations/orchestration';
+import {
+  isHalfPrice,
+  MAX_PRICE_PER_MILLION_TOKENS,
+  splitPriceSchema,
+} from '@/lib/validations/model-pricing';
 import {
   CAPABILITIES,
   CONFIDENCE,
@@ -306,9 +310,8 @@ const newModelSchema = z
   })
   .superRefine((model, ctx) => {
     const hasInput = model.inputCostPerMillionTokens != null;
-    const hasOutput = model.outputCostPerMillionTokens != null;
-    if (!hasInput && !hasOutput) return;
-    if (hasInput !== hasOutput) {
+    if (!hasInput && model.outputCostPerMillionTokens == null) return;
+    if (isHalfPrice(model.inputCostPerMillionTokens, model.outputCostPerMillionTokens)) {
       ctx.addIssue({
         code: 'custom',
         message:

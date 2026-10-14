@@ -33,9 +33,10 @@ const unit: SeedUnit = {
     // `inputCostPerMillionTokens` / `outputCostPerMillionTokens` (t-774),
     // which the cost tracker uses when the model is not in the built-in
     // price list (lib/orchestration/llm/db-model-adapter.ts). Its
-    // `costPerMillionTokens` keeps the (input + output) / 2 blended rate:
-    // the fallback a row without the split uses, and what forks and older
-    // code read. Flat-rate hosts (Groq, Together, Fireworks) and embedding
+    // `costPerMillionTokens` keeps the (input + output) / 2 blended rate,
+    // which the adapter falls back to if the split is ever cleared. Nothing
+    // keeps it in step with later price edits, so a split, once set, is the
+    // price. Flat-rate hosts (Groq, Together, Fireworks) and embedding
     // models carry only the single rate, which is exact for them. Cost
     // figures sourced from each vendor's public pricing page as of 2026-05.
     //

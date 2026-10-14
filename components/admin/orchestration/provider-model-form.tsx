@@ -37,6 +37,12 @@ import { API } from '@/lib/api/endpoints';
 import { narrowParamProfile } from '@/lib/orchestration/llm/db-model-adapter';
 import { useTimeout } from '@/lib/hooks/use-timeout';
 import {
+  hasSplitPricing,
+  isHalfPrice,
+  MAX_PRICE_PER_MILLION_TOKENS,
+  PRICE_PAIR_MESSAGE,
+} from '@/lib/validations/model-pricing';
+import {
   DEPLOYMENT_PROFILES,
   DEPLOYMENT_PROFILE_META,
   MODEL_CAPABILITIES,
@@ -108,11 +114,19 @@ function toSlug(value: string): string {
 // Schema (client-side subset)
 // ---------------------------------------------------------------------------
 
-/** A price per 1M tokens as typed: empty for "not set", otherwise a number. */
+/**
+ * A price per 1M tokens as typed: empty for "not set", otherwise a number up
+ * to the server's limit, so a too-large figure is caught under its own field
+ * rather than as a generic save error.
+ */
 const priceField = z
   .string()
   .max(20)
-  .refine((v) => v === '' || /^\d+(\.\d+)?$/.test(v), 'Must be a number');
+  .refine((v) => v === '' || /^\d+(\.\d+)?$/.test(v), 'Must be a number')
+  .refine(
+    (v) => v === '' || Number(v) <= MAX_PRICE_PER_MILLION_TOKENS,
+    `At most ${MAX_PRICE_PER_MILLION_TOKENS} per 1M tokens`
+  );
 
 const modelFormSchema = z
   .object({
@@ -163,17 +177,16 @@ const modelFormSchema = z
     isActive: z.boolean(),
   })
   .superRefine((data, ctx) => {
-    // Only while the Chat Pricing section is shown: a hidden field's error
-    // would block Save with nothing on screen, and submit drops the prices
-    // for a model without `chat` anyway.
-    if (!data.capabilities.includes('chat')) return;
-    const hasInput = data.inputCostPerMillionTokens !== '';
-    const hasOutput = data.outputCostPerMillionTokens !== '';
-    if (hasInput === hasOutput) return;
+    // Only while the pricing section is shown: a hidden field's error would
+    // block Save with nothing on screen, and submit leaves hidden prices alone.
+    if (!hasSplitPricing(data.capabilities)) return;
+    const input = data.inputCostPerMillionTokens || null;
+    const output = data.outputCostPerMillionTokens || null;
+    if (!isHalfPrice(input, output)) return;
     ctx.addIssue({
       code: 'custom',
-      path: [hasInput ? 'outputCostPerMillionTokens' : 'inputCostPerMillionTokens'],
-      message: 'Set the input and output prices together, or neither',
+      path: [input !== null ? 'outputCostPerMillionTokens' : 'inputCostPerMillionTokens'],
+      message: PRICE_PAIR_MESSAGE,
     });
   });
 
@@ -296,7 +309,8 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
   const providerSlug = watch('providerSlug');
   const capabilities = watch('capabilities');
   const hasEmbedding = capabilities.includes('embedding');
-  const hasChat = capabilities.includes('chat');
+  // Chat and reasoning models carry input/output prices (t-774).
+  const hasPricing = hasSplitPricing(capabilities);
   // Subset check: when the selection is non-empty and contains only
   // storage-only capabilities, render a clarifying note so operators
   // know the engine won't invoke this row at runtime.
@@ -351,11 +365,14 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
       local: data.local,
     };
 
-    // Chat pricing: sent as a pair, or cleared as a pair on edit.
-    if (hasChat && data.inputCostPerMillionTokens !== '') {
+    // Prices: sent as a pair, or cleared as a pair on edit — but only while
+    // the pricing section is shown. A model without chat or reasoning keeps
+    // whatever prices it has: they price nothing, and wiping them when the
+    // section is hidden lost a reasoning row's seeded prices.
+    if (hasPricing && data.inputCostPerMillionTokens !== '') {
       payload.inputCostPerMillionTokens = parseFloat(data.inputCostPerMillionTokens);
       payload.outputCostPerMillionTokens = parseFloat(data.outputCostPerMillionTokens);
-    } else if (isEdit) {
+    } else if (hasPricing && isEdit) {
       payload.inputCostPerMillionTokens = null;
       payload.outputCostPerMillionTokens = null;
     }
@@ -374,8 +391,11 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
       // Clear stale embedding fields when capability is removed
       payload.dimensions = null;
       payload.schemaCompatible = null;
-      // `costPerMillionTokens` is left alone: it is also a chat row's blended
+      // `costPerMillionTokens` is cleared only when the edit removes the
+      // embedding capability: then it was the embedding rate, and left in
+      // place it would price chat turns. Otherwise it is a chat row's blended
       // fallback price, and clearing it unpriced every edited chat model.
+      if (model.capabilities.includes('embedding')) payload.costPerMillionTokens = null;
       payload.hasFreeTier = null;
       payload.quality = null;
       payload.strengths = null;
@@ -819,7 +839,7 @@ export function ProviderModelForm({ model }: ProviderModelFormProps) {
         </div>
 
         {/* Chat pricing (t-774) */}
-        {hasChat && (
+        {hasPricing && (
           <div className="space-y-4 rounded-md border p-4">
             <h3 className="text-sm font-semibold">Chat Pricing</h3>
             <div className="grid grid-cols-2 gap-4">

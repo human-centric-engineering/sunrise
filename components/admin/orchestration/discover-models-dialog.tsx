@@ -83,6 +83,7 @@ import {
   type TierRole,
   type ToolUseLevel,
 } from '@/types/orchestration';
+import { hasSplitPricing, splitPriceSchema } from '@/lib/validations/model-pricing';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -208,21 +209,21 @@ function reviewFromCandidate(c: Candidate): ReviewRow {
 }
 
 /**
- * A review row's prices for the bulk create: the pair only when both are
- * known, and only for a chat model, since the matrix takes them as a pair
- * for chat pricing (t-774).
+ * A review row's prices for the bulk create: the pair only for a model that
+ * carries input/output prices (chat or reasoning), only when both are known,
+ * and only when both are prices the matrix accepts. A catalogue can carry a
+ * sentinel (OpenRouter lists router entries at -1); sending it would fail
+ * the whole batch, so the row is added unpriced instead (t-774).
  */
 function pricesFor(row: ReviewRow): {
   inputCostPerMillionTokens?: number;
   outputCostPerMillionTokens?: number;
 } {
-  return row.capabilities.includes('chat') &&
-    row.inputCostPerMillionTokens !== null &&
-    row.outputCostPerMillionTokens !== null
-    ? {
-        inputCostPerMillionTokens: row.inputCostPerMillionTokens,
-        outputCostPerMillionTokens: row.outputCostPerMillionTokens,
-      }
+  if (!hasSplitPricing(row.capabilities)) return {};
+  const input = splitPriceSchema.safeParse(row.inputCostPerMillionTokens);
+  const output = splitPriceSchema.safeParse(row.outputCostPerMillionTokens);
+  return input.success && output.success
+    ? { inputCostPerMillionTokens: input.data, outputCostPerMillionTokens: output.data }
     : {};
 }
 
@@ -913,11 +914,11 @@ function ReviewCard({
       </button>
       {isOpen && (
         <div className="space-y-3 border-t px-4 py-3">
-          {row.capabilities.includes('chat') && (
+          {hasSplitPricing(row.capabilities) && (
             <p className="text-muted-foreground text-xs">
-              {row.inputCostPerMillionTokens !== null && row.outputCostPerMillionTokens !== null
+              {pricesFor(row).inputCostPerMillionTokens !== undefined
                 ? `Price from the provider's catalogue: $${row.inputCostPerMillionTokens} in / $${row.outputCostPerMillionTokens} out per 1M tokens. Saved with the model.`
-                : 'No price in the provider’s catalogue. Set input and output prices on the model after adding it, or its chat turns are recorded as unpriced.'}
+                : 'No usable price in the provider’s catalogue. Set input and output prices on the model after adding it, or its turns are recorded as unpriced.'}
             </p>
           )}
           <div className="grid gap-3 sm:grid-cols-2">

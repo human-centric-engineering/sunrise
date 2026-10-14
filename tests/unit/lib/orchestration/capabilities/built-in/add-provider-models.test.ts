@@ -606,7 +606,7 @@ describe('AddProviderModelsCapability', () => {
       expect(result.data?.invalid).toBe(1);
       const half = result.data?.models.find((r) => r.slug === 'half-priced');
       expect(half?.status).toBe('invalid');
-      expect(half?.reason).toContain('must be set together');
+      expect(half?.reason).toContain('Set the input and output prices together, or neither');
       expect(mockCreate).toHaveBeenCalledTimes(1);
       expect(mockCreate.mock.calls[0][0].data.slug).toBe('unpriced');
     });

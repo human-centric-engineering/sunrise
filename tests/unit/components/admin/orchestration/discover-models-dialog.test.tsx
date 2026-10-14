@@ -72,7 +72,7 @@ function makeCandidate(overrides: Record<string, unknown> = {}) {
       toolUse: 'strong',
       bestRole: 'Quick worker for tool calls',
       inputCostPerMillion: 0.15,
-      outputCostPerMillion: 0.6,
+      outputCostPerMillion: 0.6 as number | null,
       maxContext: 128000,
       slug: 'openai-gpt-4o-mini',
     },
@@ -379,6 +379,35 @@ describe('DiscoverModelsDialog', () => {
         const row = await submitOne({
           ...base,
           suggested: { ...base.suggested, outputCostPerMillion: null },
+        });
+
+        expect(row).not.toHaveProperty('inputCostPerMillionTokens');
+        expect(row).not.toHaveProperty('outputCostPerMillionTokens');
+      });
+
+      it("sends a reasoning candidate's catalogue prices", async () => {
+        const base = makeCandidate({ modelId: 'o3-mini-2026-09-01' });
+        const row = await submitOne({
+          ...base,
+          inferredCapability: 'reasoning',
+          suggested: {
+            ...base.suggested,
+            capabilities: ['reasoning'],
+            inputCostPerMillion: 1.1,
+            outputCostPerMillion: 4.4,
+          },
+        });
+
+        expect(row.inputCostPerMillionTokens).toBe(1.1);
+        expect(row.outputCostPerMillionTokens).toBe(4.4);
+      });
+
+      it('drops a sentinel catalogue price instead of failing the batch', async () => {
+        // OpenRouter lists router entries at -1 per token.
+        const base = makeCandidate({ modelId: 'auto' });
+        const row = await submitOne({
+          ...base,
+          suggested: { ...base.suggested, inputCostPerMillion: -1_000_000 },
         });
 
         expect(row).not.toHaveProperty('inputCostPerMillionTokens');

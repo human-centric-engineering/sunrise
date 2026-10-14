@@ -23,7 +23,16 @@ import {
   type ProviderModelUsage,
 } from '@/lib/orchestration/admin/global-config-usage';
 import { updateProviderModelSchema } from '@/lib/validations/orchestration';
+import { isHalfPrice, PRICE_PAIR_MESSAGE } from '@/lib/validations/model-pricing';
 import { cuidSchema } from '@/lib/validations/common';
+
+/** The database CHECK that holds the price pair (A10, t-774). */
+const PRICE_PAIR_CONSTRAINT = 'ai_provider_model_price_pair';
+
+function pricePairError(input: number | null | undefined): ValidationError {
+  const field = input == null ? 'inputCostPerMillionTokens' : 'outputCostPerMillionTokens';
+  return new ValidationError(PRICE_PAIR_MESSAGE, { [field]: [PRICE_PAIR_MESSAGE] });
+}
 
 export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
   const log = await getRouteLogger(request);
@@ -68,13 +77,7 @@ export const PATCH = withAdminAuth<{ id: string }>(
       body.outputCostPerMillionTokens !== undefined
         ? body.outputCostPerMillionTokens
         : current.outputCostPerMillionTokens;
-    if ((nextInput === null) !== (nextOutput === null)) {
-      throw new ValidationError('Set the input and output prices together, or neither', {
-        [nextInput === null ? 'inputCostPerMillionTokens' : 'outputCostPerMillionTokens']: [
-          'Set the input and output prices together, or neither',
-        ],
-      });
-    }
+    if (isHalfPrice(nextInput, nextOutput)) throw pricePairError(nextInput);
 
     const data: Prisma.AiProviderModelUpdateInput = {};
     if (body.name !== undefined) data.name = body.name;
@@ -132,6 +135,13 @@ export const PATCH = withAdminAuth<{ id: string }>(
 
       return successResponse(updated);
     } catch (err) {
+      // Two PATCHes can each pass the check above against the same saved row
+      // and together leave half a price; the database refuses the second
+      // (`ai_provider_model_price_pair`, raised as P2039 under the driver
+      // adapter). Same answer as the check gives.
+      if (err instanceof Error && err.message.includes(PRICE_PAIR_CONSTRAINT)) {
+        throw pricePairError(null);
+      }
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         throw new ValidationError(`Provider model with slug '${body.slug}' already exists`, {
           slug: ['Slug is already in use'],

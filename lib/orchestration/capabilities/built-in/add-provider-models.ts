@@ -12,9 +12,11 @@
 
 import { z } from 'zod';
 import {
+  isHalfPrice,
   MAX_PRICE_PER_MILLION_TOKENS,
+  PRICE_PAIR_MESSAGE,
   splitPriceInputSchema,
-} from '@/lib/validations/orchestration';
+} from '@/lib/validations/model-pricing';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
@@ -51,8 +53,8 @@ function readPrices(
   if (typeof input === 'string') return { ok: false, reason: input };
   if (typeof output === 'string') return { ok: false, reason: output };
   // Half a price records the other half of every turn at $0.
-  if ((input === null) !== (output === null)) {
-    return { ok: false, reason: 'Input and output prices must be set together, or neither' };
+  if (isHalfPrice(input, output)) {
+    return { ok: false, reason: PRICE_PAIR_MESSAGE };
   }
   return { ok: true, input, output };
 }

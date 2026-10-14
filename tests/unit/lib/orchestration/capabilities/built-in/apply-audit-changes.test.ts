@@ -1049,8 +1049,8 @@ describe('ApplyAuditChangesCapability', () => {
 
         expect(result.data?.invalid).toBe(2);
         expect(result.data?.changes.map((c) => c.reason)).toEqual([
-          'Set the input and output prices together, or clear both',
-          'Set the input and output prices together, or clear both',
+          'Set the input and output prices together, or neither',
+          'Set the input and output prices together, or neither',
         ]);
         expect(priceWrites()).toEqual([]);
         expect(mockTransaction).not.toHaveBeenCalled();
