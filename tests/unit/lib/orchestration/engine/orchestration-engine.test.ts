@@ -4063,6 +4063,58 @@ describe('OrchestrationEngine', () => {
       );
     });
 
+    it('names the run owner when the check after a parallel batch trips (t-792)', async () => {
+      // The check inside the batch runs after every branch with the same
+      // condition, so through real steps it always fires first. This one is
+      // the backstop for a batch that comes back clean but over the cap,
+      // reached here by stubbing the batch.
+      const batch = vi
+        .spyOn(
+          OrchestrationEngine.prototype as unknown as {
+            executeParallelBatch: (...args: unknown[]) => Promise<unknown>;
+          },
+          'executeParallelBatch'
+        )
+        .mockImplementation(async (_steps: unknown, ctx: unknown) => {
+          (ctx as { totalCostUsd: number }).totalCostUsd = 2;
+          return { events: [], failed: false, paused: false, nextIds: ['a'] };
+        });
+      registerStepType('parallel', async () => ({ output: {}, tokensUsed: 0, costUsd: 0 }));
+      registerStepType('llm_call', async () => ({ output: 'x', tokensUsed: 0, costUsd: 0 }));
+      const def: WorkflowDefinition = {
+        steps: [
+          {
+            id: 'p',
+            name: 'P',
+            type: 'parallel',
+            config: {},
+            nextSteps: [{ targetStepId: 'a' }, { targetStepId: 'b' }],
+          },
+          { id: 'a', name: 'A', type: 'llm_call', config: { prompt: 'a' }, nextSteps: [] },
+          { id: 'b', name: 'B', type: 'llm_call', config: { prompt: 'b' }, nextSteps: [] },
+        ],
+        entryStepId: 'p',
+        errorStrategy: 'fail',
+      };
+
+      try {
+        const events = await collect(new OrchestrationEngine(), makeWorkflow(def), {
+          userId: USER_ID,
+          budgetLimitUsd: 1,
+        });
+
+        expect(batch).toHaveBeenCalled();
+        const breach = events.find((e) => e.type === 'workflow_budget_exceeded');
+        expect(breach).toMatchObject({ usedUsd: 2, limitUsd: 1, failedStepId: 'a' });
+        expect(dispatchWebhookEvent).toHaveBeenCalledWith(
+          'workflow_budget_exceeded',
+          expect.objectContaining({ failedStepId: 'a', userId: USER_ID })
+        );
+      } finally {
+        batch.mockRestore();
+      }
+    });
+
     it('propagates lastOutput from a parallel batch into the workflow_completed event', async () => {
       registerStepType('parallel', async () => ({
         output: { fanout: true },
