@@ -113,9 +113,12 @@ release process.
 - **Separate input and output prices on Model Matrix rows** (t-774).
   `AiProviderModel` gains nullable `inputCostPerMillionTokens` and
   `outputCostPerMillionTokens` (migration
-  `20261014120000_provider_model_split_prices`). `dbModelToModelInfo` uses each
-  when set and falls back to the blended `costPerMillionTokens` otherwise; a
-  row missing either rate is `pricingUnknown`. The blended column stays: an
+  `20261014120000_provider_model_split_prices`). On a chat or reasoning row
+  (`hasSplitPricing`) `dbModelToModelInfo` uses the pair when set and falls
+  back to the blended `costPerMillionTokens` otherwise; an embedding row keeps
+  its single rate whatever split it carries, and a row with no rate is
+  `pricingUnknown`. The pricing rules shared by every writer are in
+  `lib/validations/model-pricing.ts`. The blended column stays: an
   embedding model has one rate, and a row without the split still uses it.
   Written by the admin create, PATCH and bulk routes, the provider-model form
   (a new Chat Pricing section), the seed, and the provider-model audit (below).
@@ -135,7 +138,9 @@ release process.
   a `web_search`, `knowledge_base` or `external_call` source with a reference
   (the `audit-proposals` schema rejects `training_knowledge` alone), be 0–10,000
   per 1M tokens, and come as a pair. On approval the pair applies together or
-  not at all, drift-checked and written in one transaction. The
+  not at all, drift-checked and written in one transaction; a new model whose
+  prices are half-set or invalid is created without them, and the result says
+  why. The
   `provider-model-auditor` agent's instructions and the audit template's
   prompts and approval screen are updated; the next seed publishes a new
   version of the system audit workflow.
