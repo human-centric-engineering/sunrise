@@ -368,7 +368,9 @@ release process.
   it is sent and the claimed row's payload is the one sent, so a stale timer
   no longer double-sends a row an admin retried by hand, the in-process timer
   and the maintenance tick no longer both send one retry, and neither sends a
-  copy read before an erasure redacted it.
+  copy read before an erasure redacted it. Both retry routes also answer
+  `409`, not `404`, for a delivery that exists but changed before the retry
+  could reset it.
 - **Erasing a person removes them from the escalation list and from workflow
   notification and approval steps** (t-791). Their verified address left
   `escalationConfig.emailAddresses` and `send_notification` steps' `to`, and
