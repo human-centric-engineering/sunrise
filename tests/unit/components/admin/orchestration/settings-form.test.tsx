@@ -791,6 +791,96 @@ describe('SettingsForm', () => {
       });
     });
 
+    // t-791: erasing the list's only recipient leaves it empty with the webhook
+    // kept. Saving that as "off" would drop the webhook without anyone
+    // choosing to, so the form asks for an address instead.
+    describe('enabled with no recipients (t-791)', () => {
+      const emptied: OrchestrationSettings = {
+        ...FULL_SETTINGS,
+        escalationConfig: {
+          emailAddresses: [],
+          webhookUrl: 'https://hooks.example.com/escalate',
+          notifyOnPriority: 'high',
+        },
+      };
+
+      async function submit() {
+        const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+        await act(async () => {
+          fireEvent.submit(form!);
+        });
+      }
+
+      it('refuses to save and asks for an address, rather than PATCHing the config away', async () => {
+        const { apiClient } = await import('@/lib/api/client');
+        vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+        render(<SettingsForm initialSettings={emptied} />);
+        expect(
+          screen.getByRole('checkbox', { name: /enable escalation notifications/i })
+        ).toBeChecked();
+
+        await submit();
+
+        expect(
+          await screen.findByText(
+            'Add at least one email address, or turn escalation notifications off.'
+          )
+        ).toBeInTheDocument();
+        expect(apiClient.patch).not.toHaveBeenCalled();
+      });
+
+      it('clears the error when an address is added, and then saves it with the kept webhook', async () => {
+        const { apiClient } = await import('@/lib/api/client');
+        vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+        const user = userEvent.setup();
+        render(<SettingsForm initialSettings={emptied} />);
+        await submit();
+        await screen.findByText(/add at least one email address/i);
+
+        await user.type(screen.getByPlaceholderText(/add email address/i), 'ops@example.com');
+        await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+        expect(screen.queryByText(/add at least one email address/i)).not.toBeInTheDocument();
+        await submit();
+        await waitFor(() => {
+          expect(apiClient.patch).toHaveBeenCalledWith(
+            expect.stringContaining('/settings'),
+            expect.objectContaining({
+              body: expect.objectContaining({
+                escalationConfig: {
+                  emailAddresses: ['ops@example.com'],
+                  notifyOnPriority: 'high',
+                  webhookUrl: 'https://hooks.example.com/escalate',
+                },
+              }),
+            })
+          );
+        });
+      });
+
+      it('saves null once escalation is turned off: the deliberate way to drop it', async () => {
+        const { apiClient } = await import('@/lib/api/client');
+        vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+        const user = userEvent.setup();
+        render(<SettingsForm initialSettings={emptied} />);
+
+        await user.click(
+          screen.getByRole('checkbox', { name: /enable escalation notifications/i })
+        );
+        await submit();
+
+        await waitFor(() => {
+          expect(apiClient.patch).toHaveBeenCalledWith(
+            expect.stringContaining('/settings'),
+            expect.objectContaining({
+              body: expect.objectContaining({ escalationConfig: null }),
+            })
+          );
+        });
+        expect(screen.queryByText(/add at least one email address/i)).not.toBeInTheDocument();
+      });
+    });
+
     it('initialises email list from escalationConfig.emailAddresses', () => {
       // Arrange
       const settingsWithEscalation: OrchestrationSettings = {

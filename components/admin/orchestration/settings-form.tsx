@@ -212,14 +212,27 @@ export function SettingsForm({
   const formSchema = React.useMemo(
     () =>
       settingsFormSchema.superRefine((values, ctx) => {
-        // Mirror `onSubmit`'s condition EXACTLY. It sends webhookUrl only when
-        // escalation is enabled AND has recipients; otherwise it PATCHes
-        // `escalationConfig: null` and the URL never leaves the browser.
-        // Validating more eagerly than that would block an operator turning the
-        // feature off — or removing its last recipient — to be rid of a
-        // now-rejected legacy URL, and since this page saves every setting in
-        // one request, nothing else on it could be saved either.
-        if (!values.escalationEnabled || escalationEmails.length === 0) return;
+        if (!values.escalationEnabled) return;
+        // Enabled with no recipients is what erasing the list's only address
+        // leaves (t-791): the webhook was kept, and saving this as "off" would
+        // drop it without anyone choosing to. So ask: add an address, or turn
+        // escalation off — which is also how to be rid of a now-rejected
+        // legacy URL, since the URL is only checked below while it would be
+        // sent.
+        if (escalationEmails.length === 0) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['escalationEnabled'],
+            message: 'Add at least one email address, or turn escalation notifications off.',
+          });
+          return;
+        }
+        // Mirror `onSubmit`, which sends webhookUrl only while escalation is
+        // enabled; otherwise it PATCHes `escalationConfig: null` and the URL
+        // never leaves the browser. Validating more eagerly than that would
+        // block an operator turning the feature off to be rid of a rejected
+        // URL, and since this page saves every setting in one request, nothing
+        // else on it could be saved either.
         const url = values.escalationWebhookUrl;
         if (!url) return;
         if (
@@ -258,6 +271,9 @@ export function SettingsForm({
     setEmailError(null);
     setEscalationEmails((prev) => [...prev, val]);
     setEmailInput('');
+    // The "add an address" error is answered; it would otherwise stay until
+    // the next submit, since the list lives outside the form's own fields.
+    clearErrors('escalationEnabled');
   };
 
   const defaults: SettingsFormData = React.useMemo(
@@ -298,6 +314,7 @@ export function SettingsForm({
     handleSubmit,
     reset,
     watch,
+    clearErrors,
     formState: { errors, isDirty, isSubmitting },
   } = useForm<SettingsFormData>({
     resolver: zodResolver(formSchema),
@@ -344,6 +361,7 @@ export function SettingsForm({
           }
         : null;
 
+      // Enabled with no recipients never reaches here: the schema refuses it.
       const escalationConfig =
         values.escalationEnabled && escalationEmails.length > 0
           ? {
@@ -1034,6 +1052,9 @@ export function SettingsForm({
                 </Button>
               </div>
               {emailError && <p className="text-xs text-red-600">{emailError}</p>}
+              {errors.escalationEnabled && (
+                <p className="text-xs text-red-600">{errors.escalationEnabled.message}</p>
+              )}
               {escalationEmails.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {escalationEmails.map((email) => (

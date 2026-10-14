@@ -2006,7 +2006,6 @@ async function main(): Promise<void> {
         const { receiptId } = await run(() =>
           eraseUser({
             userId: who.userId,
-            userEmail: who.email,
             actorUserId: reason === 'self_service' ? who.userId : a.ownerId,
             reason,
           })

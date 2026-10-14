@@ -57,6 +57,7 @@ import {
   clampStuckThreshold,
   STUCK_THRESHOLD_BOUNDS,
 } from '@/lib/orchestration/settings';
+import { escalationConfigWriteSchema } from '@/lib/validations/orchestration';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -266,7 +267,36 @@ describe('parseEscalationConfig', () => {
     });
 
     it('still rejects a config that is invalid for another reason', () => {
-      expect(parseEscalationConfig({ emailAddresses: [] })).toBeNull();
+      expect(parseEscalationConfig({ emailAddresses: ['not-an-address'] })).toBeNull();
+    });
+  });
+
+  // t-791. Erasing the list's only recipient leaves it empty and keeps the
+  // webhook. The read path must return that, or the form could not show it and
+  // its next save would drop the webhook too; only the write path refuses it.
+  describe('an empty recipient list', () => {
+    const emptied = {
+      emailAddresses: [],
+      webhookUrl: 'https://hooks.example.com/escalate',
+      notifyOnPriority: 'high' as const,
+    };
+
+    it('is readable, webhook and priority intact', () => {
+      expect(parseEscalationConfig(emptied)).toEqual(emptied);
+    });
+
+    it('is not writable: the API boundary still requires an address', () => {
+      const result = escalationConfigWriteSchema.safeParse(emptied);
+
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]).toMatchObject({
+        path: ['emailAddresses'],
+        message: 'At least one email address is required',
+      });
+      expect(
+        escalationConfigWriteSchema.safeParse({ ...emptied, emailAddresses: ['ops@example.com'] })
+          .success
+      ).toBe(true);
     });
   });
 });

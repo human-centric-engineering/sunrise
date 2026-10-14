@@ -290,7 +290,6 @@ describe('DELETE /api/v1/users/me', () => {
     const session = mockAdminUser();
     // Override to get stable userId / email from the mock
     const userId = session.user.id;
-    const userEmail = session.user.email;
 
     vi.mocked(prisma.user.count).mockResolvedValue(2);
     vi.mocked(eraseUser).mockResolvedValue({ receiptId: 'receipt-1', erasedAt: new Date() });
@@ -314,9 +313,10 @@ describe('DELETE /api/v1/users/me', () => {
     // proves the route computed actorUserId === userId (self-service) and
     // reason === 'self_service' rather than forwarding incorrect values
     expect(eraseUser).toHaveBeenCalledTimes(1);
+    // No `userEmail`: it is deprecated, and the receipt reads the stored
+    // address instead of the session's possibly stale copy (t-797).
     expect(eraseUser).toHaveBeenCalledWith({
       userId,
-      userEmail,
       actorUserId: userId,
       reason: 'self_service',
     });
@@ -328,7 +328,6 @@ describe('DELETE /api/v1/users/me', () => {
     // Arrange — USER role; the admin count gate must NOT be invoked
     const session = buildUserSession('USER');
     const userId = session.user.id;
-    const userEmail = session.user.email;
 
     vi.mocked(eraseUser).mockResolvedValue({ receiptId: 'receipt-1', erasedAt: new Date() });
 
@@ -352,9 +351,10 @@ describe('DELETE /api/v1/users/me', () => {
 
     // eraseUser called with correct self-service payload
     expect(eraseUser).toHaveBeenCalledTimes(1);
+    // No `userEmail`: it is deprecated, and the receipt reads the stored
+    // address instead of the session's possibly stale copy (t-797).
     expect(eraseUser).toHaveBeenCalledWith({
       userId,
-      userEmail,
       actorUserId: userId,
       reason: 'self_service',
     });

@@ -2833,12 +2833,16 @@ export const searchConfigSchema = z.object({
     .optional(),
 });
 
+const escalationEmailAddressSchema = z.string().email('Each entry must be a valid email address');
+
 /** Escalation notification routing configuration. */
 export const escalationConfigSchema = z.object({
-  emailAddresses: z
-    .array(z.string().email('Each entry must be a valid email address'))
-    .min(1, 'At least one email address is required')
-    .max(20, 'At most 20 email addresses'),
+  // Empty is readable, though never writable: erasing the list's only
+  // recipient leaves it empty and keeps the webhook (t-791), and a stored
+  // value this read rejects is one the form cannot show — so its next save
+  // would silently drop the webhook too (#553). The write schema below still
+  // requires an address.
+  emailAddresses: z.array(escalationEmailAddressSchema).max(20, 'At most 20 email addresses'),
   // Syntax only — deliberately NOT the SSRF refine. This schema is what READS
   // the stored config, and a value that fails here is a value the settings API
   // cannot return, the form cannot display, and the operator therefore cannot
@@ -2864,6 +2868,10 @@ export const escalationConfigSchema = z.object({
  * Cloud-metadata hosts stay blocked regardless.
  */
 export const escalationConfigWriteSchema = escalationConfigSchema.extend({
+  emailAddresses: z
+    .array(escalationEmailAddressSchema)
+    .min(1, 'At least one email address is required')
+    .max(20, 'At most 20 email addresses'),
   webhookUrl: z
     .string()
     .url('Must be a valid URL')

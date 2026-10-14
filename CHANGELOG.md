@@ -159,6 +159,15 @@ release process.
 
 ### Changed
 
+- **`escalationConfigSchema` reads an empty `emailAddresses` list**
+  (t-791); `escalationConfigWriteSchema` still requires one address. Erasing
+  the list's only recipient leaves it empty with the webhook kept, and a value
+  the read schema rejected would vanish from the settings API and form. The
+  settings form now refuses to save escalation as enabled with no address
+  rather than saving `null`, which would have dropped the webhook; untick
+  **Enable notifications** to turn it off. A fork reading
+  `parseEscalationConfig()` may now see `emailAddresses: []`.
+
 - **The org and global monthly budget caps hold every paid AI call, not only
   chat** (§110 t-788). Only the streaming chat handler checked them, so
   workflow steps, the orchestrator, evaluations, judges, knowledge ingestion
@@ -306,8 +315,31 @@ release process.
   keep the blended rate until their prices are set. Models in the built-in
   price list are unaffected.
 
+### Deprecated
+
+- **`EraseUserParams.userEmail`** (t-797). Ignored: the erasure receipt now
+  hashes the address stored on the user row, read inside the erasure
+  transaction, rather than the caller's copy, which a session cached across an
+  email change could hold stale. The parameter is optional and still accepted
+  so existing callers compile; stop passing it. It will be removed at the next
+  MAJOR.
+
 ### Fixed
 
+- **Erasing a person removes them from the escalation list and from workflow
+  notification and approval steps** (t-791). Their verified address left
+  `escalationConfig.emailAddresses` and `send_notification` steps' `to`, and
+  their id `human_approval` steps' `approverUserIds`, so escalations and
+  workflows kept emailing, or naming, an erased person. `eraseUser()` now
+  removes them in the workflow draft **and every published version** (erasure
+  is the one writer allowed to change a version's `snapshot`), audited as
+  `settings.escalation_recipient_erased` and `workflow.recipient_erased`. A
+  list they leave empty stays empty: a notification step with no recipient
+  fails until an admin adds one. Unverified addresses are left alone. See
+  [Data erasure, step 8](./.context/privacy/data-erasure.md#what-eraseuser-does-beyond-the-cascade).
+- **The erasure receipt hashes the stored address** (t-797), not the
+  `userEmail` the caller passed, so it cannot name an address the account no
+  longer held.
 - **Embeddings from Google, Mistral and Cohere models are costed instead of
   recorded as free** (t-775). `calculateEmbeddingCost()` read only its own
   rate table, which covers OpenAI and Voyage, so `text-embedding-004`,

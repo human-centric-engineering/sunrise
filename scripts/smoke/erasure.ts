@@ -258,7 +258,6 @@ async function main(): Promise<void> {
     // Erase.
     const result = await eraseUser({
       userId: subject.id,
-      userEmail: subject.email,
       actorUserId: subject.id,
       reason: 'self_service',
     });

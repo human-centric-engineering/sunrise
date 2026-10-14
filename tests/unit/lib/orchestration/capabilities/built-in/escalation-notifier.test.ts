@@ -240,6 +240,26 @@ describe('notifyEscalation', () => {
 
       expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
     });
+
+    // t-791: erasing the only recipient leaves the list empty and keeps the
+    // webhook, which must still fire — the config is read, not discarded.
+    it('still POSTs the webhook when the list is empty', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettings({
+          emailAddresses: [],
+          notifyOnPriority: 'all',
+          webhookUrl: 'https://hooks.example.com/escalation',
+        }) as never
+      );
+
+      await notifyEscalation(makePayload());
+
+      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        'https://hooks.example.com/escalation',
+        expect.objectContaining({ method: 'POST' })
+      );
+    });
   });
 
   // ── Webhook POSTs ──────────────────────────────────────────────────────────

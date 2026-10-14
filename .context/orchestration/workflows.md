@@ -4,7 +4,7 @@ Structural validation for the `WorkflowDefinition` JSON. Lives in `lib/orchestra
 
 **Execution** is implemented by `OrchestrationEngine` at `lib/orchestration/engine/` — see [`engine.md`](./engine.md) for the event stream, executor registry, checkpoint lifecycle, and error strategies. This file covers **authoring-time** validation only.
 
-**Versioning.** Workflow definitions are stored as a chain of immutable `AiWorkflowVersion` rows pinned by `AiWorkflow.publishedVersionId`, plus an in-progress `draftDefinition` column. PATCH writes to the draft; explicit publish promotes to a new version; executions pin to the published version at trigger time. The full model is documented in [`workflow-versioning.md`](./workflow-versioning.md). Anti-pattern: reading `workflow.workflowDefinition` directly — that column is gone.
+**Versioning.** Workflow definitions are stored as a chain of immutable `AiWorkflowVersion` rows (erasure is the one exception) pinned by `AiWorkflow.publishedVersionId`, plus an in-progress `draftDefinition` column. PATCH writes to the draft; explicit publish promotes to a new version; executions pin to the published version at trigger time. The full model is documented in [`workflow-versioning.md`](./workflow-versioning.md). Anti-pattern: reading `workflow.workflowDefinition` directly — that column is gone.
 
 ## Module Layout
 

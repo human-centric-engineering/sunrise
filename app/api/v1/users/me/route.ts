@@ -333,7 +333,6 @@ export const DELETE = withAuth(
       // written; and avatar blobs are removed. See lib/privacy/erase-user.ts.
       await eraseUser({
         userId: session.user.id,
-        userEmail: session.user.email,
         actorUserId: session.user.id,
         reason: 'self_service',
       });

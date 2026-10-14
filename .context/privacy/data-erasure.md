@@ -30,7 +30,6 @@ import { eraseUser } from '@/lib/privacy/erase-user';
 
 await eraseUser({
   userId: session.user.id,
-  userEmail: session.user.email,
   actorUserId: session.user.id, // who initiated (self or an admin)
   reason: 'self_service', // 'self_service' | 'admin_action'
 });
@@ -209,7 +208,7 @@ relations the merge introduced** — they reintroduce this bug unnoticed.
 
 ## What `eraseUser()` Does Beyond the Cascade
 
-The DB cascade can't reach everything. The service adds seven steps; all but
+The DB cascade can't reach everything. The service adds eight steps; all but
 the avatar cleanup run in **one transaction** with the delete (avatar cleanup
 is a best-effort side effect first, since object storage can't enlist in a DB
 transaction):
@@ -324,6 +323,49 @@ transaction):
    runs before step 5, so the window in which a dispatch still reads the
    subscription as active is as short as it can be.
 
+8. **Remove them from configuration that names them** (t-791; owner rulings
+   2026-10-14), through `lib/privacy/config-recipients.ts`. Three places name a
+   person, and no foreign key reaches any of them:
+   - the **escalation email list** (`AiOrchestrationSettings.escalationConfig.emailAddresses`),
+     which every escalation emails;
+   - a workflow **`send_notification` step's `to`**, a literal address or a
+     list of them;
+   - a **`human_approval` step's `approverUserIds`**.
+
+   An address is matched as in step 7 (verified only; `normaliseAddress()`,
+   exact, compared in code), so an unverified account's address is left
+   everywhere, and a template recipient such as `{{input.email}}` is never an
+   address. An approver is matched on the user id, which names one account
+   whether or not its address was verified, so it is removed either way.
+
+   **Every version is rewritten**, not just the draft: the version executions
+   run would keep emailing the person, a rollback would bring the address back,
+   and old snapshots would keep their personal data. Erasure is the one writer
+   allowed to change a published version — see
+   [Workflow Versioning](../orchestration/workflow-versioning.md). Workflows are
+   narrowed by JSON containment on `steps` (any approval step naming the id,
+   any email notification step), with no index to serve it: workflow
+   definitions are configuration, not a growing table.
+
+   **A list the person leaves empty stays empty, and fails loudly.** A
+   notification step whose only recipient was the person has none (`''`, or
+   `[]` for a list): the step fails when it runs, and the builder will not
+   save, publish or run the workflow until an admin adds one. The escalation list keeps its
+   webhook and priority with no addresses, so the webhook still fires and
+   nothing is emailed; the settings form refuses to save escalation as
+   enabled with no address, so an admin adds one or turns escalation off — it
+   never quietly drops the webhook. An approval step with no named approvers
+   needs nothing: the run's owner and admins can still answer it.
+
+   Each change is audited: `settings.escalation_recipient_erased` (recipient
+   count before and after) and `workflow.recipient_erased`, one per workflow,
+   naming the draft, the version numbers and the step ids changed, and the
+   steps left without a recipient. Never the address. **Not reached:** a run
+   already paused at an approval keeps the person's id in its trace
+   (`approverUserIds`), where it now names no account; a workflow inside a
+   backup bundle already downloaded is outside the database. A saved template
+   is an ordinary workflow row, so it is rewritten like any other.
+
 **At `multi`, a person's rows in every org go** (§107 t-748). The cascades are
 FK actions, which row-level security does not filter, so `user.delete` removes
 the person's rows in every org whichever org the caller is in. The hooks and the
@@ -433,6 +475,11 @@ the subject's PII:
 - `subjectUserId` — opaque; the user row is gone, so it identifies nothing on its own.
 - `subjectEmailHash` — `sha256(lowercased email)` for correlating a later
   "did you erase me?" request. Not reversible; the raw email is never stored.
+  It hashes the address **stored on the user row**, read inside the erasure
+  transaction (t-797), not a caller's copy: a session cached across an email
+  change would otherwise have the receipt name an address the account no
+  longer held. `eraseUser()`'s `userEmail` parameter is therefore deprecated
+  and ignored.
 - `actorUserId`, `reason`, `erasedAt`.
 - **No foreign keys** — the receipt must outlive every referenced row, including
   the actor if they are erased later.

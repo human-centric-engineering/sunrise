@@ -338,7 +338,6 @@ async function main(): Promise<void> {
     console.log('Erasing the subject:');
     const erased = await eraseUser({
       userId: subject.id,
-      userEmail: subject.email,
       actorUserId: subject.id,
       reason: 'self_service',
     });
@@ -463,7 +462,6 @@ async function main(): Promise<void> {
     console.log('An unverified account:');
     const erasedUnverified = await eraseUser({
       userId: unverified.id,
-      userEmail: unverified.email,
       actorUserId: colleague.id,
       reason: 'admin_action',
     });

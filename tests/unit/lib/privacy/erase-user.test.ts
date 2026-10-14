@@ -121,6 +121,19 @@ vi.mock('@/lib/privacy/delivery-payloads', () => ({
   eraseSubjectFromDeliveries: mockEraseDeliveries,
 }));
 
+// The config rewrite has its own tests (config-recipients.test.ts); here only
+// the call contract matters: which client, whose id and address, and when.
+const { mockEraseConfig, mockInvalidateSettings } = vi.hoisted(() => ({
+  mockEraseConfig: vi.fn(),
+  mockInvalidateSettings: vi.fn(),
+}));
+vi.mock('@/lib/privacy/config-recipients', () => ({
+  eraseFromConfigRecipients: mockEraseConfig,
+}));
+vi.mock('@/lib/orchestration/settings', () => ({
+  invalidateOrchestrationSettingsCache: mockInvalidateSettings,
+}));
+
 // Storage — dynamically imported by the source; mock the module so dynamic
 // import picks up the mock at runtime.
 const { mockIsStorageEnabled, mockDeleteByPrefix } = vi.hoisted(() => ({
@@ -180,6 +193,7 @@ describe('eraseUser', () => {
     mockSubUpdateMany.mockResolvedValue({ count: 0 });
     mockAuditCreateMany.mockResolvedValue({ count: 0 });
     mockEraseDeliveries.mockResolvedValue(0);
+    mockEraseConfig.mockResolvedValue({ escalationListsChanged: 0, workflowsChanged: 0 });
     mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
     mockReceiptCreate.mockResolvedValue({
       id: 'receipt-1',
@@ -269,15 +283,49 @@ describe('eraseUser', () => {
   it('email-hash normalization — padded mixed-case email produces the same hash as lowercase trimmed form', async () => {
     // Arrange — two different email strings that should hash identically
     const normalizedHash = sha256Hex('foo@bar.com');
-    const paddedMixedCase = '  Foo@BAR.com ';
+    mockUserFind.mockResolvedValue({ email: '  Foo@BAR.com ', emailVerified: true });
 
-    // Act — call with the untrimmed/mixed-case variant
-    await eraseUser({ ...BASE_PARAMS, userEmail: paddedMixedCase });
+    // Act — the stored address is the untrimmed/mixed-case variant
+    await eraseUser(BASE_PARAMS);
 
     // Assert — the hash on the receipt matches what we computed for the
     // normalised string, proving the impl applied trim().toLowerCase()
     expect(mockReceiptCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({ subjectEmailHash: normalizedHash }),
+    });
+  });
+
+  describe('the receipt hashes the STORED address (t-797)', () => {
+    it('ignores a stale caller address: the hash is of the address on the user row', async () => {
+      // A cached session can still hold the address from before an email change
+      mockUserFind.mockResolvedValue({ email: 'new@bar.com', emailVerified: true });
+
+      await eraseUser({ ...BASE_PARAMS, userEmail: 'old@bar.com' });
+
+      const { data } = mockReceiptCreate.mock.calls[0][0] as { data: { subjectEmailHash: string } };
+      expect(data.subjectEmailHash).toBe(sha256Hex('new@bar.com'));
+      expect(data.subjectEmailHash).not.toBe(sha256Hex('old@bar.com'));
+    });
+
+    it('needs no userEmail at all', async () => {
+      mockUserFind.mockResolvedValue({ email: 'new@bar.com', emailVerified: true });
+      const { userEmail: _ignored, ...withoutEmail } = BASE_PARAMS;
+
+      await eraseUser(withoutEmail);
+
+      expect(mockReceiptCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ subjectEmailHash: sha256Hex('new@bar.com') }),
+      });
+    });
+
+    it('hashes an unverified address too: the receipt correlates, it erases nothing', async () => {
+      mockUserFind.mockResolvedValue({ email: 'new@bar.com', emailVerified: false });
+
+      await eraseUser({ ...BASE_PARAMS, userEmail: 'old@bar.com' });
+
+      expect(mockReceiptCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ subjectEmailHash: sha256Hex('new@bar.com') }),
+      });
     });
   });
 
@@ -1132,6 +1180,87 @@ describe('eraseUser', () => {
   // -------------------------------------------------------------------------
   // t-783: delivery payloads that name the person
   // -------------------------------------------------------------------------
+
+  describe('config that names the user (t-791)', () => {
+    it('passes the transaction client, the user id, the STORED normalised address and the actor', async () => {
+      const tx = { ...mockPrisma };
+      mockPrisma.$transaction.mockImplementation(
+        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)
+      );
+      mockUserFind.mockResolvedValue({ email: '  New@Bar.COM ', emailVerified: true });
+
+      await eraseUser({ ...BASE_PARAMS, userEmail: 'old@bar.com' });
+
+      expect(mockEraseConfig).toHaveBeenCalledTimes(1);
+      expect(mockEraseConfig).toHaveBeenCalledWith(tx, {
+        userId: BASE_PARAMS.userId,
+        address: 'new@bar.com',
+        actorUserId: BASE_PARAMS.actorUserId,
+      });
+    });
+
+    it('passes a null address for an unverified account, so only the approver id is matched', async () => {
+      mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: false });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockEraseConfig).toHaveBeenCalledWith(expect.anything(), {
+        userId: BASE_PARAMS.userId,
+        address: null,
+        actorUserId: BASE_PARAMS.actorUserId,
+      });
+    });
+
+    it('runs before the receipt and tx.user.delete', async () => {
+      const callOrder: string[] = [];
+      mockEraseConfig.mockImplementation(async () => {
+        callOrder.push('config');
+        return { escalationListsChanged: 0, workflowsChanged: 0 };
+      });
+      mockReceiptCreate.mockImplementation(async () => {
+        callOrder.push('receipt');
+        return { id: 'receipt-1', erasedAt: new Date('2026-01-01T00:00:00.000Z') };
+      });
+      mockUserDelete.mockImplementation(async () => {
+        callOrder.push('user.delete');
+        return { id: BASE_PARAMS.userId };
+      });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(callOrder).toEqual(['config', 'receipt', 'user.delete']);
+    });
+
+    it('logs both counts and clears the settings cache when an escalation list changed', async () => {
+      mockEraseConfig.mockResolvedValue({ escalationListsChanged: 1, workflowsChanged: 3 });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'User erased',
+        expect.objectContaining({ escalationListsChanged: 1, workflowsChanged: 3 })
+      );
+      expect(mockInvalidateSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the settings cache alone when no escalation list changed', async () => {
+      mockEraseConfig.mockResolvedValue({ escalationListsChanged: 0, workflowsChanged: 2 });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockInvalidateSettings).not.toHaveBeenCalled();
+    });
+
+    it('a failed rewrite rolls the erasure back: no receipt, the user row is never deleted', async () => {
+      mockEraseConfig.mockRejectedValue(new Error('config rewrite failed'));
+
+      await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('config rewrite failed');
+
+      expect(mockReceiptCreate).not.toHaveBeenCalled();
+      expect(mockUserDelete).not.toHaveBeenCalled();
+      expect(mockInvalidateSettings).not.toHaveBeenCalled();
+    });
+  });
 
   describe('delivery payload redaction (t-783)', () => {
     it('redacts both delivery tables for the user, through the transaction client', async () => {

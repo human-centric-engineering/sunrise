@@ -282,7 +282,6 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
   // avatar blobs are removed. See lib/privacy/erase-user.ts.
   await eraseUser({
     userId: id,
-    userEmail: user.email,
     actorUserId: session.user.id,
     reason: 'admin_action',
   });

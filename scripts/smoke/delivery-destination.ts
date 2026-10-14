@@ -259,7 +259,6 @@ async function main(): Promise<void> {
     console.log('Erasing the subscription creator:');
     const erased = await eraseUser({
       userId: user.id,
-      userEmail: user.email,
       actorUserId: user.id,
       reason: 'self_service',
     });

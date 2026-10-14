@@ -66,7 +66,6 @@ const unit: SeedUnit = {
 
       await eraseUser({
         userId: legacy.id,
-        userEmail: legacy.email,
         actorUserId: systemOwner.id,
         reason: 'admin_action',
       });

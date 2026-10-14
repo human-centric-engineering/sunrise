@@ -27,6 +27,9 @@
  *      subscriptions, and deactivate them, with an audit entry for each
  *      (t-786). Their own subscriptions cascade away; a colleague's that
  *      emails them would otherwise keep notifying an erased person.
+ *   8. Remove the user from the escalation email list and from every workflow
+ *      notification and approval step that names them, in drafts and in every
+ *      published version, with an audit entry for each (t-791).
  *
  * The scrub, contact delete, receipt, and user delete run in one transaction
  * so they commit or roll back together. Avatar cleanup runs first as a
@@ -40,6 +43,8 @@ import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 import { contactSubmissionsOf, contactSubmissionsUnder } from '@/lib/privacy/contact-submissions';
 import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
 import { eraseSubjectFromDeliveries } from '@/lib/privacy/delivery-payloads';
+import { eraseFromConfigRecipients } from '@/lib/privacy/config-recipients';
+import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settings';
 import { AWAITING_RETRY_STATUSES, notRetried } from '@/lib/orchestration/webhooks/not-retried';
 import {
   ERASED_DESTINATION,
@@ -59,8 +64,15 @@ export const ERASURE_TRANSACTION_TIMEOUT_MS = 60_000;
 export interface EraseUserParams {
   /** Id of the user to erase. */
   userId: string;
-  /** Email of the user — stored only as a hash on the receipt. */
-  userEmail: string;
+  /**
+   * @deprecated Ignored, and no longer needed. The receipt hashes the address
+   * stored on the user row, read inside the erasure transaction: a caller's
+   * copy can be stale (a cached session that predates an email change), and
+   * the receipt would then name an address the account no longer held (t-797).
+   * Still accepted so existing callers compile; it will be removed in a later
+   * release.
+   */
+  userEmail?: string;
   /** Who initiated the erasure (the user themselves, or an admin). */
   actorUserId: string;
   reason: ErasureReason;
@@ -110,8 +122,9 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
       )
     : await eraseRows(params);
 
-  // Contact messages, deliveries and colleagues' subscriptions are the things
-  // erased by address or payload rather than by FK, so they are what the
+  // Contact messages, deliveries, colleagues' subscriptions and the config that
+  // names the user are the things erased by address, id or payload rather than
+  // by FK, so they are what the
   // receipt cannot vouch for: log what was taken.
   logger.info('User erased', {
     userId,
@@ -123,7 +136,12 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
     webhookPayloadsRedacted: receipt.webhookPayloadsRedacted,
     eventHookPayloadsRedacted: receipt.eventHookPayloadsRedacted,
     subscriptionsDeactivated: receipt.subscriptionsDeactivated,
+    escalationListsChanged: receipt.escalationListsChanged,
+    workflowsChanged: receipt.workflowsChanged,
   });
+  // The settings row is cached in-process (#442); a list just rewritten should
+  // not be served stale to the settings page.
+  if (receipt.escalationListsChanged > 0) invalidateOrchestrationSettingsCache();
   // An unverified address matched nothing, so contact messages sent under it
   // are still there, and only a person can decide whether they were this
   // subject's. The address itself is gone with the user row and is not
@@ -154,8 +172,12 @@ async function eraseRows(params: EraseUserParams): Promise<{
   eventHookPayloadsRedacted: number;
   /** Other admins' email subscriptions cleared and deactivated. */
   subscriptionsDeactivated: number;
+  /** Settings rows whose escalation list named the user. */
+  escalationListsChanged: number;
+  /** Workflows with a draft or a published version that named the user. */
+  workflowsChanged: number;
 }> {
-  const { userId, userEmail, actorUserId, reason } = params;
+  const { userId, actorUserId, reason } = params;
 
   // 1b. App-registered external cleanup (object storage, search indexes, …).
   // Best-effort like the avatar cleanup above: a hook failure is logged and
@@ -264,6 +286,18 @@ async function eraseRows(params: EraseUserParams): Promise<{
         subscriptionsDeactivated = cleared.length;
       }
 
+      // The escalation list and workflow notification / approval steps that
+      // name this person (t-791; owner rulings 2026-10-14): removed from the
+      // draft and every published version, a list they leave empty stays
+      // empty, and each change is audited. Before the user row goes, like
+      // everything here; `address` is null for an unverified account, so only
+      // the approver id is matched then.
+      const configRecipients = await eraseFromConfigRecipients(tx, {
+        userId,
+        address,
+        actorUserId,
+      });
+
       // Webhook deliveries now outlive the subscription that sent them (§109
       // t-739), as the org's record of where its events went. An email-channel
       // delivery records the address it went to, and when that is this person's
@@ -343,7 +377,9 @@ async function eraseRows(params: EraseUserParams): Promise<{
       const created = await tx.dataErasureReceipt.create({
         data: {
           subjectUserId: userId,
-          subjectEmailHash: hashEmail(userEmail),
+          // The stored address, as the contact delete reads it: never the
+          // caller's copy, which can be stale (t-797).
+          subjectEmailHash: hashEmail(account.email),
           actorUserId,
           reason,
         },
@@ -360,6 +396,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
         webhookPayloadsRedacted,
         eventHookPayloadsRedacted,
         subscriptionsDeactivated,
+        ...configRecipients,
       };
     },
     // The delivery redaction scales with the person's history — every chat

@@ -1801,14 +1801,13 @@ describe('DELETE /api/v1/users/[id]', () => {
     expect(data.success).toBe(true);
     expect(data.data).toMatchObject({ id: targetUserId, deleted: true });
 
-    // Assert — eraseUser was called exactly once with the right contract arguments.
-    // The route passes target email (not session email) and admin id as actorUserId.
-    // This is the key behavioral proof: the handler passes the TARGET's email and
-    // the ADMIN's id, not any echo of the mock's return value.
+    // Assert — eraseUser was called exactly once with the right contract arguments:
+    // the TARGET's id and the ADMIN's id as actorUserId, not any echo of the
+    // mock's return value. No `userEmail`: it is deprecated, and the receipt
+    // reads the stored address itself (t-797).
     expect(eraseUser).toHaveBeenCalledOnce();
     expect(eraseUser).toHaveBeenCalledWith({
       userId: targetUserId,
-      userEmail: targetUser.email,
       actorUserId: adminId,
       reason: 'admin_action',
     });
