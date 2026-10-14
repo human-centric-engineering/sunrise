@@ -120,11 +120,15 @@ release process.
   Written by the admin create, PATCH and bulk routes, the provider-model form
   (a new Chat Pricing section), the seed, and the provider-model audit (below).
   Every writer takes them as a pair: setting exactly one is refused, including
-  a PATCH that would leave the saved row with one. A positive price from the
+  a PATCH that would leave the saved row with one, and migration
+  `20261014130000_provider_model_price_pair` adds a CHECK constraint
+  (`ai_provider_model_price_pair`, drift probe A10) so the database refuses it
+  too. A fork writing these columns directly must write both or neither. The
+  discover-models dialog now saves a chat model's prices from the provider's
+  catalogue when it has both. A positive price from the
   built-in list or OpenRouter still wins over a matrix row for the same
   provider (t-769), so this prices matrix-only models exactly; it is not a new
-  override for known ones. A fork writing `AiProviderModel` directly may set
-  the pair.
+  override for known ones.
 - **The provider-model audit proposes input and output prices** (t-774).
   `apply_audit_changes` gains both fields in `AUDITABLE_FIELDS`, and
   `add_provider_models` accepts them on a new model. A price must be backed by

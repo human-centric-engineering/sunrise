@@ -110,7 +110,7 @@ Filter chips and search match the View Models panel's pattern — one chip per `
 
 ### Step 3 — Review
 
-Expandable card per selected candidate with the heuristic-derived metadata as editable form controls (name, description, capability checkboxes, tierRole select, the five rating selects, bestRole text). Each card has a **Reset to suggestion** link that rolls back operator edits to the discovery defaults.
+Expandable card per selected candidate with the heuristic-derived metadata as editable form controls (name, description, capability checkboxes, tierRole select, the five rating selects, bestRole text). Each card has a **Reset to suggestion** link that rolls back operator edits to the discovery defaults. A chat candidate's card also shows its price from the provider's catalogue (vendor first, then OpenRouter); when the catalogue has both an input and an output price they are saved with the model as `inputCostPerMillionTokens` / `outputCostPerMillionTokens` (t-774). When it has neither or only one, the card says so and the model is added unpriced; set its prices on the edit form.
 
 Embedding-specific fields (`dimensions`, `schemaCompatible`, `costPerMillionTokens`, `hasFreeTier`, `quality`, `strengths`, `setup`) are **not** in the dialog UI — operators can edit them via the legacy `/provider-models/[id]` edit form after creation. Keeps the review step tractable.
 
