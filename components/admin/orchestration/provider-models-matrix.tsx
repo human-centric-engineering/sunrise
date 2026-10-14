@@ -168,6 +168,8 @@ export interface ModelRow {
   dimensions?: number | null;
   schemaCompatible?: boolean | null;
   costPerMillionTokens?: number | null;
+  inputCostPerMillionTokens?: number | null;
+  outputCostPerMillionTokens?: number | null;
   // Active agents bound to (providerSlug, modelId). Empty when no agent
   // currently references the row. Source: GET /provider-models LEFT
   // JOIN against AiAgent on the (provider, model) string pair.

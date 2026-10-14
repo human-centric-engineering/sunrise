@@ -2014,67 +2014,92 @@ const paramProfileSchema = z.enum(['openai-legacy', 'openai-reasoning', 'anthrop
 const capabilitySchema = z.enum(['chat', 'reasoning', 'embedding', 'audio', 'image', 'moderation']);
 const embeddingQualitySchema = z.enum(['high', 'medium', 'budget']);
 
+/**
+ * A chat model's price per 1M tokens, input and output apart (t-774). Set
+ * as a pair: half a price would record the other half of every turn at $0.
+ * Without them a row falls back to `costPerMillionTokens` for both.
+ */
+const splitPriceSchema = z.number().nonnegative().max(10_000);
+
+function requirePricePair(
+  data: { inputCostPerMillionTokens?: number | null; outputCostPerMillionTokens?: number | null },
+  ctx: z.RefinementCtx
+): void {
+  const hasInput = data.inputCostPerMillionTokens != null;
+  const hasOutput = data.outputCostPerMillionTokens != null;
+  if (hasInput === hasOutput) return;
+  ctx.addIssue({
+    code: 'custom',
+    path: [hasInput ? 'outputCostPerMillionTokens' : 'inputCostPerMillionTokens'],
+    message: 'Set the input and output prices together, or neither',
+  });
+}
+
 /** POST body for creating a provider model. */
-export const createProviderModelSchema = z.object({
-  name: z
-    .string()
-    .min(1, 'Name is required')
-    .max(100, 'Name must be less than 100 characters')
-    .trim(),
+export const createProviderModelSchema = z
+  .object({
+    name: z
+      .string()
+      .min(1, 'Name is required')
+      .max(100, 'Name must be less than 100 characters')
+      .trim(),
 
-  slug: slugSchema.pipe(z.string().max(80, 'Slug must be less than 80 characters')),
+    slug: slugSchema.pipe(z.string().max(80, 'Slug must be less than 80 characters')),
 
-  providerSlug: z
-    .string()
-    .min(1, 'Provider slug is required')
-    .max(50, 'Provider slug must be less than 50 characters')
-    .regex(
-      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
-      'Provider slug must be lowercase alphanumeric with hyphens'
-    )
-    .trim(),
+    providerSlug: z
+      .string()
+      .min(1, 'Provider slug is required')
+      .max(50, 'Provider slug must be less than 50 characters')
+      .regex(
+        /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+        'Provider slug must be lowercase alphanumeric with hyphens'
+      )
+      .trim(),
 
-  modelId: z
-    .string()
-    .min(1, 'Model ID is required')
-    .max(100, 'Model ID must be less than 100 characters')
-    .trim(),
+    modelId: z
+      .string()
+      .min(1, 'Model ID is required')
+      .max(100, 'Model ID must be less than 100 characters')
+      .trim(),
 
-  description: z
-    .string()
-    .min(1, 'Description is required')
-    .max(2000, 'Description must be less than 2000 characters')
-    .trim(),
+    description: z
+      .string()
+      .min(1, 'Description is required')
+      .max(2000, 'Description must be less than 2000 characters')
+      .trim(),
 
-  capabilities: z.array(capabilitySchema).min(1).default(['chat']),
-  tierRole: tierRoleSchema,
-  deploymentProfiles: deploymentProfilesSchema.default(['hosted']),
-  reasoningDepth: ratingLevelSchema,
-  latency: latencyLevelSchema,
-  costEfficiency: ratingLevelSchema,
-  contextLength: contextLengthLevelSchema,
-  toolUse: toolUseLevelSchema,
-  paramProfile: paramProfileSchema.nullable().optional(),
-  bestRole: z
-    .string()
-    .min(1, 'Best role is required')
-    .max(200, 'Best role must be less than 200 characters')
-    .trim(),
+    capabilities: z.array(capabilitySchema).min(1).default(['chat']),
+    tierRole: tierRoleSchema,
+    deploymentProfiles: deploymentProfilesSchema.default(['hosted']),
+    reasoningDepth: ratingLevelSchema,
+    latency: latencyLevelSchema,
+    costEfficiency: ratingLevelSchema,
+    contextLength: contextLengthLevelSchema,
+    toolUse: toolUseLevelSchema,
+    paramProfile: paramProfileSchema.nullable().optional(),
+    bestRole: z
+      .string()
+      .min(1, 'Best role is required')
+      .max(200, 'Best role must be less than 200 characters')
+      .trim(),
 
-  // Embedding-specific (optional)
-  dimensions: z.number().int().positive().optional(),
-  schemaCompatible: z.boolean().optional(),
-  costPerMillionTokens: z.number().nonnegative().optional(),
-  hasFreeTier: z.boolean().optional(),
-  local: z.boolean().default(false),
-  quality: embeddingQualitySchema.optional(),
-  strengths: z.string().max(500).trim().optional(),
-  setup: z.string().max(500).trim().optional(),
+    // Embedding-specific (optional)
+    dimensions: z.number().int().positive().optional(),
+    schemaCompatible: z.boolean().optional(),
+    costPerMillionTokens: z.number().nonnegative().optional(),
+    inputCostPerMillionTokens: splitPriceSchema.optional(),
+    outputCostPerMillionTokens: splitPriceSchema.optional(),
+    hasFreeTier: z.boolean().optional(),
+    local: z.boolean().default(false),
+    quality: embeddingQualitySchema.optional(),
+    strengths: z.string().max(500).trim().optional(),
+    setup: z.string().max(500).trim().optional(),
 
-  isActive: z.boolean().default(true),
+    isActive: z.boolean().default(true),
 
-  metadata: metadataSchema,
-});
+    metadata: metadataSchema,
+  })
+  .superRefine(requirePricePair);
 
 /** PATCH body for updating a provider model. All fields optional. */
 export const updateProviderModelSchema = z.object({
@@ -2128,6 +2153,8 @@ export const updateProviderModelSchema = z.object({
   dimensions: z.number().int().positive().nullable().optional(),
   schemaCompatible: z.boolean().nullable().optional(),
   costPerMillionTokens: z.number().nonnegative().nullable().optional(),
+  inputCostPerMillionTokens: splitPriceSchema.nullable().optional(),
+  outputCostPerMillionTokens: splitPriceSchema.nullable().optional(),
   hasFreeTier: z.boolean().nullable().optional(),
   local: z.boolean().optional(),
   quality: embeddingQualitySchema.nullable().optional(),
@@ -2145,45 +2172,49 @@ export const updateProviderModelSchema = z.object({
  * from the top-level envelope so the operator can't accidentally
  * mix providers in one batch.
  */
-const bulkProviderModelRowSchema = z.object({
-  modelId: z
-    .string()
-    .min(1, 'Model ID is required')
-    .max(100, 'Model ID must be less than 100 characters')
-    .trim(),
-  name: z
-    .string()
-    .min(1, 'Name is required')
-    .max(100, 'Name must be less than 100 characters')
-    .trim(),
-  description: z
-    .string()
-    .max(2000, 'Description must be less than 2000 characters')
-    .trim()
-    .default(''),
-  capabilities: z.array(capabilitySchema).min(1).default(['chat']),
-  tierRole: tierRoleSchema,
-  deploymentProfiles: deploymentProfilesSchema.default(['hosted']),
-  reasoningDepth: ratingLevelSchema,
-  latency: latencyLevelSchema,
-  costEfficiency: ratingLevelSchema,
-  contextLength: contextLengthLevelSchema,
-  toolUse: toolUseLevelSchema,
-  paramProfile: paramProfileSchema.nullable().optional(),
-  bestRole: z
-    .string()
-    .min(1, 'Best role is required')
-    .max(200, 'Best role must be less than 200 characters')
-    .trim(),
-  dimensions: z.number().int().positive().optional(),
-  schemaCompatible: z.boolean().optional(),
-  costPerMillionTokens: z.number().nonnegative().optional(),
-  hasFreeTier: z.boolean().optional(),
-  local: z.boolean().default(false),
-  quality: embeddingQualitySchema.optional(),
-  strengths: z.string().max(500).trim().optional(),
-  setup: z.string().max(500).trim().optional(),
-});
+const bulkProviderModelRowSchema = z
+  .object({
+    modelId: z
+      .string()
+      .min(1, 'Model ID is required')
+      .max(100, 'Model ID must be less than 100 characters')
+      .trim(),
+    name: z
+      .string()
+      .min(1, 'Name is required')
+      .max(100, 'Name must be less than 100 characters')
+      .trim(),
+    description: z
+      .string()
+      .max(2000, 'Description must be less than 2000 characters')
+      .trim()
+      .default(''),
+    capabilities: z.array(capabilitySchema).min(1).default(['chat']),
+    tierRole: tierRoleSchema,
+    deploymentProfiles: deploymentProfilesSchema.default(['hosted']),
+    reasoningDepth: ratingLevelSchema,
+    latency: latencyLevelSchema,
+    costEfficiency: ratingLevelSchema,
+    contextLength: contextLengthLevelSchema,
+    toolUse: toolUseLevelSchema,
+    paramProfile: paramProfileSchema.nullable().optional(),
+    bestRole: z
+      .string()
+      .min(1, 'Best role is required')
+      .max(200, 'Best role must be less than 200 characters')
+      .trim(),
+    dimensions: z.number().int().positive().optional(),
+    schemaCompatible: z.boolean().optional(),
+    costPerMillionTokens: z.number().nonnegative().optional(),
+    inputCostPerMillionTokens: splitPriceSchema.optional(),
+    outputCostPerMillionTokens: splitPriceSchema.optional(),
+    hasFreeTier: z.boolean().optional(),
+    local: z.boolean().default(false),
+    quality: embeddingQualitySchema.optional(),
+    strengths: z.string().max(500).trim().optional(),
+    setup: z.string().max(500).trim().optional(),
+  })
+  .superRefine(requirePricePair);
 
 export const bulkCreateProviderModelsSchema = z.object({
   providerSlug: z

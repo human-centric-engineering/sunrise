@@ -132,7 +132,7 @@ export const runHelp = {
     'Predicted USD cost of running the dataset against the agent + judges you picked. **Empirical** when 3+ past runs match the same agent + judges + dataset — the median per-case cost from those runs, repriced at current rates. **Heuristic** otherwise — a per-call token guess priced at each model. Heuristic graders are free; the subject bills against its usual budget.',
 
   costEstimateUnknownPricing:
-    "One or more models in the mix have no pricing data, so the total is missing a slice. Add a row to the provider model matrix (Costs → Provider models) to set `costPerMillionTokens`, or use a model that's already priced.",
+    "One or more models in the mix have no pricing data, so the total is missing a slice. Set the model's input and output prices on its provider model matrix row (Costs → Provider models), or use a model that's already priced.",
 } as const;
 
 // ---------------------------------------------------------------------------

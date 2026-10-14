@@ -168,6 +168,8 @@ export const POST = withAdminAuth(
           dimensions: body.dimensions ?? null,
           schemaCompatible: body.schemaCompatible ?? null,
           costPerMillionTokens: body.costPerMillionTokens ?? null,
+          inputCostPerMillionTokens: body.inputCostPerMillionTokens ?? null,
+          outputCostPerMillionTokens: body.outputCostPerMillionTokens ?? null,
           hasFreeTier: body.hasFreeTier ?? null,
           local: body.local,
           quality: body.quality ?? null,

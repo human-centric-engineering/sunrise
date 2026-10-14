@@ -58,6 +58,24 @@ export const PATCH = withAdminAuth<{ id: string }>(
 
     const body = await validateRequestBody(request, updateProviderModelSchema);
 
+    // The split prices are a pair on the row as saved, not just in the body:
+    // half a price records the other half of every turn at $0 (t-774).
+    const nextInput =
+      body.inputCostPerMillionTokens !== undefined
+        ? body.inputCostPerMillionTokens
+        : current.inputCostPerMillionTokens;
+    const nextOutput =
+      body.outputCostPerMillionTokens !== undefined
+        ? body.outputCostPerMillionTokens
+        : current.outputCostPerMillionTokens;
+    if ((nextInput === null) !== (nextOutput === null)) {
+      throw new ValidationError('Set the input and output prices together, or neither', {
+        [nextInput === null ? 'inputCostPerMillionTokens' : 'outputCostPerMillionTokens']: [
+          'Set the input and output prices together, or neither',
+        ],
+      });
+    }
+
     const data: Prisma.AiProviderModelUpdateInput = {};
     if (body.name !== undefined) data.name = body.name;
     if (body.slug !== undefined) data.slug = body.slug;
@@ -77,6 +95,10 @@ export const PATCH = withAdminAuth<{ id: string }>(
     if (body.schemaCompatible !== undefined) data.schemaCompatible = body.schemaCompatible;
     if (body.costPerMillionTokens !== undefined)
       data.costPerMillionTokens = body.costPerMillionTokens;
+    if (body.inputCostPerMillionTokens !== undefined)
+      data.inputCostPerMillionTokens = body.inputCostPerMillionTokens;
+    if (body.outputCostPerMillionTokens !== undefined)
+      data.outputCostPerMillionTokens = body.outputCostPerMillionTokens;
     if (body.hasFreeTier !== undefined) data.hasFreeTier = body.hasFreeTier;
     if (body.local !== undefined) data.local = body.local;
     if (body.quality !== undefined) data.quality = body.quality;
