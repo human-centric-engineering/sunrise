@@ -42,6 +42,7 @@ import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { cn } from '@/lib/utils';
 import { fieldLabels, fieldToTab } from '@/lib/orchestration/agents/agent-field-registry';
+import { HISTORY_LOAD_LIMIT } from '@/lib/orchestration/chat/types';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   resolveEffectivePrompt,
@@ -1629,9 +1630,9 @@ export function AgentForm({
                 How many prior messages this agent remembers verbatim per turn. Older messages get
                 rolled into a rolling summary that&apos;s persisted on the conversation row, so
                 older context survives even when dropped from the live history — just in compressed
-                form. Leave blank to use the platform default (50). Whatever you set, conversation
-                history is read from the most recent 200 messages, so verbatim memory tops out at
-                about 150 even if this is higher; the rolling summary covers the rest.
+                form. Leave blank to use the platform default (50). At most {HISTORY_LOAD_LIMIT}{' '}
+                messages are read per turn, so verbatim memory never exceeds that however high this
+                is set; the rolling summary covers everything before it.
                 <br />
                 <br />
                 Lower this for stateless or single-turn agents (e.g. classifiers, summarisers); use

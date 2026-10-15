@@ -141,7 +141,7 @@ import {
 import {
   MAX_HISTORY_MESSAGES,
   HISTORY_LOAD_LIMIT,
-  HISTORY_SUMMARY_HEADROOM,
+  SUMMARY_CATCHUP_MESSAGES,
   SUMMARY_LOOKAHEAD_MESSAGES,
   MAX_TOOL_ITERATIONS,
   type ChatRequest,
@@ -315,6 +315,21 @@ type AgentWithProfile = AiAgent & {
   /** Latest `AiAgentVersion` only — the pin stamped on assistant messages. */
   versions: Array<{ id: string }>;
 };
+
+/** Where the stored summary's pin sits in the conversation's total order. */
+interface HistoryPin {
+  id: string;
+  createdAt: Date;
+}
+
+/** What a history read returns; see `loadHistoryFromPin` / `loadNewestHistory`. */
+interface LoadedHistory {
+  rows: AiMessage[];
+  /** More than the load limit follow the pin; `rows` is the oldest of them. */
+  overflow: boolean;
+  /** Rows the read did not reach that nothing describes. */
+  omitted: number;
+}
 
 interface PersistMessageParams {
   conversationId: string;
@@ -703,10 +718,30 @@ export class StreamingChatHandler {
       );
       conversationId = conversation.id;
       setSpanAttributes(chatSpan, { [SUNRISE_CONVERSATION_ID]: conversation.id });
-      const { rows: history, truncated: historyTruncated } = await this.loadHistory(
-        conversation.id,
-        request.userId
-      );
+      // The stored summary, if there is a usable one. A pin with no text behind
+      // it covers nothing, whatever it says — and neither does a pin behind the
+      // placeholder. Rows written before #654 persisted `fellBack` results
+      // unconditionally, so live conversations exist whose `summary` IS
+      // `[Summary unavailable …]`; folding one forward would carry the apology
+      // into every future summary.
+      let storedSummary: string | null =
+        conversation.summary && !isPlaceholderSummary(conversation.summary)
+          ? conversation.summary
+          : null;
+      let summaryPinId: string | null = storedSummary ? conversation.summaryUpToMessageId : null;
+      // History is read from the pin onward, so the summary always sees every
+      // row after the point it covers (#655). Without a pin it is the newest
+      // rows.
+      const summaryPin = summaryPinId
+        ? await this.resolvePin(conversation.id, request.userId, summaryPinId)
+        : null;
+      let {
+        rows: history,
+        overflow: historyOverflow,
+        omitted: omittedBeforeHistory,
+      } = summaryPin
+        ? await this.loadHistoryFromPin(conversation.id, request.userId, summaryPin)
+        : await this.loadNewestHistory(conversation.id, request.userId, null);
 
       // Enforce message-per-conversation cap using actual DB count
       // (loadHistory returns at most HISTORY_LOAD_LIMIT rows, so
@@ -894,13 +929,14 @@ export class StreamingChatHandler {
       let summarizerSideEffect: SideEffectModelUsage | undefined;
       let historyDropCount = 0;
       let summaryCoversCount = 0;
+
       // `historyRows` is indexed INTERCHANGEABLY with `history` below — the
       // summary's coverage index is found in one and sliced out of the other,
       // and the pin is read back from the third. Keep this a strict 1:1 `map`:
       // adding a `filter` here desynchronises the two and the summary silently
       // covers the wrong messages. (A boundary that has to agree with another
       // one is the exact shape #654 was; this is the last of them.)
-      const historyRows = history.map((m) => {
+      const toHistoryRow = (m: AiMessage) => {
         // Rehydrate tool_calls the assistant requested on this turn so
         // the next LLM call's history has them. Persisted in metadata
         // because `AiMessage` has no scalar column for them; without
@@ -918,202 +954,198 @@ export class StreamingChatHandler {
           toolCallId: m.toolCallId,
           ...(toolCalls ? { toolCalls } : {}),
         };
-      });
+      };
+
+      /** One summariser call, with the options every call carries. */
+      const runSummariser = (rows: ReturnType<typeof toHistoryRow>[], previousSummary?: string) =>
+        summarizeMessages(rows, resolvedBinding.providerSlug, resolvedFallbackProviders, {
+          ...(previousSummary ? { previousSummary } : {}),
+          ...(resolvedBinding.provenance ? { provenance: resolvedBinding.provenance } : {}),
+          // The roster table in `.context/orchestration/capabilities.md`
+          // names this boundary as carrying the caller's tags. It has to
+          // actually carry them, or the doc is asserting something false
+          // about the line it was written for.
+          ...(request.costLogMetadata ? { costLogMetadata: request.costLogMetadata } : {}),
+          // Real foreign keys, both of them. The literals that used to sit
+          // here (`'system'` / `'summary'`) violated each one, so every
+          // summary's cost row was rejected and swallowed — see #654.
+          agentId: agent.id,
+          conversationId: conversation.id,
+          // The summary is spend this user's turn caused, so it is
+          // attributed to them like the turn itself — see #654 for what
+          // happens when this boundary drops a cost row's real keys.
+          userId: userIdForUserRef(request.userId),
+        });
+
+      /** Fold a finished call into the one side-effect row this turn reports. */
+      const recordSummariserCall = (r: Awaited<ReturnType<typeof runSummariser>>): void => {
+        if (!r.model) return;
+        const prev = summarizerSideEffect;
+        const sum = (a: number | undefined, b: number | undefined): number | undefined =>
+          typeof a === 'number' || typeof b === 'number' ? (a ?? 0) + (b ?? 0) : undefined;
+        const inputTokens = sum(prev?.inputTokens, r.inputTokens);
+        const outputTokens = sum(prev?.outputTokens, r.outputTokens);
+        const costUsd = sum(prev?.costUsd, r.costUsd);
+        summarizerSideEffect = {
+          kind: 'summarizer',
+          model: r.model,
+          ...(r.provider ? { provider: r.provider } : {}),
+          callCount: (prev?.callCount ?? 0) + 1,
+          ...(typeof inputTokens === 'number' ? { inputTokens } : {}),
+          ...(typeof outputTokens === 'number' ? { outputTokens } : {}),
+          ...(typeof costUsd === 'number' ? { costUsd } : {}),
+        };
+      };
+
+      // Catch-up. More than the load limit of rows follow the pin — a long
+      // summariser outage, or a run of turns that wrote a great many rows (one
+      // parallel tool dispatch saves a row per call). What was read is the oldest
+      // of them, so fold part of it into the summary, move the pin, and read
+      // again, until everything after the pin fits. Nothing is ever skipped: the
+      // summary always covers a contiguous prefix (#655).
+      let catchUpFailed = false;
+      while (historyOverflow && storedSummary) {
+        const chunk = history.slice(0, SUMMARY_CATCHUP_MESSAGES);
+        if (chunk.length === 0) {
+          catchUpFailed = true;
+          break;
+        }
+        yield { type: 'status', message: 'Summarizing conversation history...' };
+        const folded = await runSummariser(chunk.map(toHistoryRow), storedSummary);
+        if (folded.fellBack) {
+          catchUpFailed = true;
+          break;
+        }
+        recordSummariserCall(folded);
+        storedSummary = folded.summary;
+        summaryPinId = chunk[chunk.length - 1].id;
+        await prisma.aiConversation.update({
+          where: { id: conversation.id, ...conversationOwner(request.userId) },
+          data: { summary: storedSummary, summaryUpToMessageId: summaryPinId },
+        });
+        const next = await this.loadHistoryFromPin(conversation.id, request.userId, {
+          id: summaryPinId,
+          createdAt: chunk[chunk.length - 1].createdAt,
+        });
+        ({ rows: history, overflow: historyOverflow, omitted: omittedBeforeHistory } = next);
+      }
+      if (catchUpFailed) {
+        // The summariser could not run. Keep the stored summary exactly as it is
+        // (persisting a placeholder would destroy it), show the newest rows, and
+        // say how many sit between the pin and them. Explicit, not silent; the
+        // next turn tries again from the same pin.
+        ({ rows: history, omitted: omittedBeforeHistory } = await this.loadNewestHistory(
+          conversation.id,
+          request.userId,
+          summaryPin
+        ));
+        historyOverflow = false;
+      }
+
+      const historyRows = history.map(toHistoryRow);
       const effectiveMessageCap =
         typeof agent.maxHistoryMessages === 'number' && agent.maxHistoryMessages >= 0
           ? agent.maxHistoryMessages
           : MAX_HISTORY_MESSAGES;
 
       // The minimum number of leading rows that must leave the prompt for it to
-      // respect the cap. Zero means the whole history fits and the summary — if
-      // one is stored — is simply not needed this turn.
-      //
-      // The window is the agent's cap, but never wider than `loadBoundWindow`:
-      // what `loadHistory` can return less the headroom that keeps the stored
-      // summary's pin inside the loaded rows. A cap at or above the load limit
-      // would otherwise make `requiredDrop` zero forever, and everything older
-      // than the loaded rows would leave the prompt with no summary standing in
-      // for it (#655). See HISTORY_SUMMARY_HEADROOM for why the headroom is as
-      // large as it is.
-      const loadBoundWindow = HISTORY_LOAD_LIMIT - HISTORY_SUMMARY_HEADROOM;
-      const summaryWindow = Math.min(effectiveMessageCap, loadBoundWindow);
-      // Error markers are dropped AFTER the load limit applies, so a truncated
-      // load can come back under the window while older rows are still cut off.
-      // For caps that reach the load-bound window, a truncated load always
-      // summarises at least the oldest row.
-      const keep =
-        historyTruncated && effectiveMessageCap >= loadBoundWindow
-          ? Math.max(0, Math.min(summaryWindow, historyRows.length - 1))
-          : summaryWindow;
-      const requiredDrop = Math.max(0, historyRows.length - keep);
+      // respect the cap. Zero means the whole history fits. A stored summary is
+      // still rendered then — it describes the rows before the first one loaded.
+      const requiredDrop = Math.max(0, historyRows.length - effectiveMessageCap);
 
-      // A pin with no text behind it covers nothing, whatever it says — and
-      // neither does a pin behind the placeholder. Rows written before #654
-      // persisted `fellBack` results unconditionally, so live conversations
-      // exist whose `summary` IS `[Summary unavailable …]`; folding one
-      // forward would carry the apology into every future summary.
-      // Only read when a summary could matter this turn.
-      const storedSummary =
-        (requiredDrop > 0 || historyTruncated) && !isPlaceholderSummary(conversation.summary)
-          ? conversation.summary
-          : null;
-      // How far into THIS window the stored summary reaches. `-1` means
-      // "nothing in the loaded rows", which covers both no summary at all and
-      // a pin older than the rows `loadHistory` returns. Those need the same
-      // treatment — fold from index 0 — and in the second case the stored text
-      // still has to be carried forward or everything before the window is
-      // lost with the rows.
-      const coveredIdx =
-        storedSummary && conversation.summaryUpToMessageId
-          ? history.findIndex((m) => m.id === conversation.summaryUpToMessageId)
-          : -1;
+      if (catchUpFailed || requiredDrop === 0) {
+        // Nothing is summarised this turn: either the summariser could not run
+        // (the stored text stays exactly as it is — persisting a placeholder
+        // would destroy it) or everything after the pin fits the cap. The stored
+        // summary, if any, is rendered either way — it describes the rows before
+        // the first one loaded, and rendering it is what stops them being lost
+        // when the cap is raised or the summary was kept (#655). The builder
+        // applies the cap's own drop; the summary covers none of the loaded rows,
+        // so it is labelled without a count.
+        conversationSummary = storedSummary ?? undefined;
+      } else {
+        // Extend the prefix past what this turn needs, so the next few turns
+        // take the branch above instead of paying for another call.
+        // The lookahead never takes more than half the agent's window.
+        // Unclamped, a small `maxHistoryMessages` loses everything: at a cap
+        // of 4, a fixed 10-message lookahead summarises all 5 loaded rows and
+        // the prompt gets ZERO verbatim history — including the assistant
+        // turn the user is replying to — and it recurs every third turn.
+        // `maxHistoryMessages` is validated `min(0).max(500)`, so small caps
+        // are a supported configuration, not a misuse.
+        //
+        // At the default cap of 50 this is `min(10, 25)` = 10, so the reuse
+        // win is untouched. Cap `0` — the documented stateless agent — clamps
+        // to 0, which is exactly the pure-summary view that setting asks for.
+        //
+        // **The reuse win does not survive at caps of 1-3.** A lookahead of 0
+        // or 1 is exhausted by the next turn's two new messages, so those
+        // agents summarise on every turn — the #654 cadence, for them
+        // unchanged. That is inherent, not a gap: with a two-message window
+        // there is no room to summarise ahead AND keep anything verbatim, and
+        // keeping the last exchange is worth more. What DID change for them is
+        // the price — each call now folds ~2 new messages into the stored
+        // text instead of re-deriving the whole prefix. Do not read the
+        // "one call serves ~5 turns" figure as covering these agents.
+        const lookahead = Math.min(SUMMARY_LOOKAHEAD_MESSAGES, Math.floor(effectiveMessageCap / 2));
+        const targetIdx = Math.min(requiredDrop - 1 + lookahead, historyRows.length - 1);
+        const newlyCovered = historyRows.slice(0, targetIdx + 1);
 
-      if (requiredDrop > 0) {
-        if (storedSummary && coveredIdx >= requiredDrop - 1) {
-          // Already covered — no LLM call. This is the branch #654 could never
-          // reach. Drop to the summary's own boundary, not the cap's: the
-          // lookahead messages are inside the summary, and leaving them verbatim
-          // as well would put the same content in the prompt twice.
-          conversationSummary = storedSummary;
-          historyDropCount = coveredIdx + 1;
-          summaryCoversCount = coveredIdx + 1;
+        // Rows the read never reached are in neither the stored text nor the
+        // loaded rows, and this summary is about to be persisted as covering
+        // everything up to its pin. Say so in the text itself, so the gap is
+        // carried forward rather than forgotten.
+        const gapNote =
+          omittedBeforeHistory > 0
+            ? `(${omittedBeforeHistory} earlier messages were never summarised and are not described here.)`
+            : null;
+        const previousSummary = [storedSummary, gapNote].filter(Boolean).join('\n\n') || undefined;
+
+        yield { type: 'status', message: 'Summarizing conversation history...' };
+        const summarizeResult = await runSummariser(newlyCovered, previousSummary);
+        conversationSummary = summarizeResult.summary;
+
+        if (summarizeResult.fellBack) {
+          // The summariser did not run. Persisting now would overwrite a good
+          // summary with a placeholder *and* record it as covering messages
+          // that nothing describes — permanently, from one transient provider
+          // error. Keep what is stored, drop only what the cap demands, and
+          // let the next turn try again.
+          //
+          // `requiredDrop` is the cap's own drop: the rows past the cap leave
+          // this one turn's prompt with nothing standing in for them. It is the
+          // least-bad of three
+          // options — keeping them would breach the agent's configured cap,
+          // and persisting the placeholder would lose the good summary
+          // permanently instead of for one turn. It is also strictly better
+          // than the behaviour it replaces, which represented *every* dropped
+          // message with `[Summary unavailable]` and then wrote that down.
+          historyDropCount = requiredDrop;
+          // The stored summary describes only rows older than anything loaded, so
+          // it covers none of what is being dropped *here*. Say so, rather than
+          // letting the prompt claim the gap is summarised: the builder labels it
+          // without a count and announces the dropped rows as omitted. Passing
+          // `undefined` for the text, when nothing is stored, is what
+          // distinguishes "no summary" from "a summary of older rows".
+          summaryCoversCount = 0;
+          // Never the placeholder: on this path `summarizeResult.summary` is
+          // the stored text when there is one and the placeholder when there
+          // is not, and the placeholder is not a summary.
+          conversationSummary = storedSummary ?? undefined;
         } else {
-          // Extend the prefix past what this turn needs, so the next few turns
-          // take the branch above instead of paying for another call.
-          // The lookahead never takes more than half the agent's window.
-          // Unclamped, a small `maxHistoryMessages` loses everything: at a cap
-          // of 4, a fixed 10-message lookahead summarises all 5 loaded rows and
-          // the prompt gets ZERO verbatim history — including the assistant
-          // turn the user is replying to — and it recurs every third turn.
-          // `maxHistoryMessages` is validated `min(0).max(500)`, so small caps
-          // are a supported configuration, not a misuse.
-          //
-          // At the default cap of 50 this is `min(10, 25)` = 10, so the reuse
-          // win is untouched. Cap `0` — the documented stateless agent — clamps
-          // to 0, which is exactly the pure-summary view that setting asks for.
-          //
-          // **The reuse win does not survive at caps of 1-3.** A lookahead of 0
-          // or 1 is exhausted by the next turn's two new messages, so those
-          // agents summarise on every turn — the #654 cadence, for them
-          // unchanged. That is inherent, not a gap: with a two-message window
-          // there is no room to summarise ahead AND keep anything verbatim, and
-          // keeping the last exchange is worth more. What DID change for them is
-          // the price — each call now folds ~2 new messages into the stored
-          // text instead of re-deriving the whole prefix. Do not read the
-          // "one call serves ~5 turns" figure as covering these agents.
-          const lookahead = Math.min(SUMMARY_LOOKAHEAD_MESSAGES, Math.floor(keep / 2));
-          const targetIdx = Math.min(requiredDrop - 1 + lookahead, historyRows.length - 1);
-          const newlyCovered = historyRows.slice(coveredIdx + 1, targetIdx + 1);
-
-          yield { type: 'status', message: 'Summarizing conversation history...' };
-          const summarizeResult = await summarizeMessages(
-            newlyCovered,
-            resolvedBinding.providerSlug,
-            resolvedFallbackProviders,
-            {
-              ...(storedSummary ? { previousSummary: storedSummary } : {}),
-              ...(resolvedBinding.provenance ? { provenance: resolvedBinding.provenance } : {}),
-              // The roster table in `.context/orchestration/capabilities.md`
-              // names this boundary as carrying the caller's tags. It has to
-              // actually carry them, or the doc is asserting something false
-              // about the line it was written for.
-              ...(request.costLogMetadata ? { costLogMetadata: request.costLogMetadata } : {}),
-              // Real foreign keys, both of them. The literals that used to sit
-              // here (`'system'` / `'summary'`) violated each one, so every
-              // summary's cost row was rejected and swallowed — see #654.
-              agentId: agent.id,
-              conversationId: conversation.id,
-              // The summary is spend this user's turn caused, so it is
-              // attributed to them like the turn itself — see #654 for what
-              // happens when this boundary drops a cost row's real keys.
-              userId: userIdForUserRef(request.userId),
-            }
-          );
-          conversationSummary = summarizeResult.summary;
-
-          if (summarizeResult.fellBack) {
-            // The summariser did not run. Persisting now would overwrite a good
-            // summary with a placeholder *and* record it as covering messages
-            // that nothing describes — permanently, from one transient provider
-            // error. Keep what is stored, drop only what the cap demands, and
-            // let the next turn try again.
-            //
-            // Drop only what the stored summary already covers (those rows would
-            // otherwise be in the prompt twice); the builder applies the cap's
-            // own drop on top. NOT `requiredDrop`: that is the SUMMARY window,
-            // which at caps near the load limit is narrower than the cap, and
-            // rows the cap has room for must not be thrown away because a
-            // provider is down.
-            //
-            // What that costs, stated plainly: the messages between the stored
-            // summary's boundary and the drop leave this one turn's prompt with
-            // nothing standing in for them. It is the least-bad of three
-            // options — keeping them would breach the agent's configured cap,
-            // and persisting the placeholder would lose the good summary
-            // permanently instead of for one turn. It is also strictly better
-            // than the behaviour it replaces, which represented *every* dropped
-            // message with `[Summary unavailable]` and then wrote that down.
-            historyDropCount = coveredIdx + 1;
-            // The stored summary still only covers what it always did, which is
-            // LESS than we are about to drop. Say so, rather than letting the
-            // prompt claim the gap is summarised.
-            //
-            // `coveredIdx + 1` is 0 in TWO different situations, and they are
-            // not the same: there is no stored summary at all, or there is one
-            // whose pin has scrolled out of the loaded rows — the case the
-            // extend branch above goes out of its way to fold forward. In the
-            // second, the text is real context describing messages older than
-            // anything loaded, so it still belongs in the prompt; it just covers
-            // none of what is being dropped *here*, which is why the builder
-            // labels it without a count. Passing `undefined` for the text is
-            // what distinguishes them.
-            summaryCoversCount = coveredIdx + 1;
-            // Never the placeholder: on this path `summarizeResult.summary` is
-            // the stored text when there is one and the placeholder when there
-            // is not, and the placeholder is not a summary.
-            conversationSummary = storedSummary ?? undefined;
-          } else {
-            historyDropCount = targetIdx + 1;
-            summaryCoversCount = targetIdx + 1;
-            if (summarizeResult.model) {
-              summarizerSideEffect = {
-                kind: 'summarizer',
-                model: summarizeResult.model,
-                ...(summarizeResult.provider ? { provider: summarizeResult.provider } : {}),
-                callCount: 1,
-                ...(typeof summarizeResult.inputTokens === 'number'
-                  ? { inputTokens: summarizeResult.inputTokens }
-                  : {}),
-                ...(typeof summarizeResult.outputTokens === 'number'
-                  ? { outputTokens: summarizeResult.outputTokens }
-                  : {}),
-                ...(typeof summarizeResult.costUsd === 'number'
-                  ? { costUsd: summarizeResult.costUsd }
-                  : {}),
-              };
-            }
-            // Persist for future turns, pinned to the newest message the
-            // summary now covers.
-            await prisma.aiConversation.update({
-              where: { id: conversation.id, ...conversationOwner(request.userId) },
-              data: {
-                summary: conversationSummary,
-                summaryUpToMessageId: history[targetIdx].id,
-              },
-            });
-          }
+          historyDropCount = targetIdx + 1;
+          summaryCoversCount = targetIdx + 1;
+          recordSummariserCall(summarizeResult);
+          // Persist for future turns, pinned to the newest message the
+          // summary now covers.
+          await prisma.aiConversation.update({
+            where: { id: conversation.id, ...conversationOwner(request.userId) },
+            data: {
+              summary: conversationSummary,
+              summaryUpToMessageId: history[targetIdx].id,
+            },
+          });
         }
-      } else if (historyTruncated && storedSummary) {
-        // Nothing has to leave the prompt, but the load was cut short, so the
-        // stored summary may describe rows older than any that were loaded —
-        // and an error-marker-heavy window can leave `requiredDrop` at zero
-        // while that is true. Keep it in the prompt. If the pin IS inside the
-        // loaded rows, drop to it, as the reuse branch does, so the covered
-        // rows are not in the prompt twice. (#655) A zero `summaryCoversCount`
-        // is what tells the builder to render it with nothing dropped.
-        conversationSummary = storedSummary;
-        historyDropCount = coveredIdx + 1;
-        summaryCoversCount = coveredIdx + 1;
       }
 
       // Three independent reads, none of which depends on the others, and all
@@ -1187,6 +1219,7 @@ export class StreamingChatHandler {
         maxHistoryMessages: agent.maxHistoryMessages,
         historyDropCount,
         conversationSummaryCovers: summaryCoversCount,
+        omittedBeforeHistory,
       });
       let messages: LlmMessage[] = initialMessages;
 
@@ -1204,7 +1237,9 @@ export class StreamingChatHandler {
       // force-search loop. No-op unless the capability is actually enabled this
       // turn. See .context/orchestration/knowledge.md.
       const knowledgeSearchEnabled = toolDefinitions.some((t) => t.name === SEARCH_KNOWLEDGE_SLUG);
-      const isFirstUserTurn = !history.some((m) => m.role === 'user');
+      // A stored summary means earlier turns exist, even when the rows read from
+      // its pin onward hold no user message.
+      const isFirstUserTurn = !storedSummary && !history.some((m) => m.role === 'user');
       const forcedToolChoice: LlmToolChoice | undefined = !knowledgeSearchEnabled
         ? undefined
         : agent.knowledgeRetrievalMode === 'every_turn'
@@ -2963,43 +2998,123 @@ export class StreamingChatHandler {
   }
 
   /**
-   * `userId` is the caller the conversation was loaded for, and its owner
-   * (`loadOrCreateConversation` matched it): naming it here is what confines
-   * the read for the owner layer (`lib/db/owner-extension.ts`).
+   * The summary pin's position, or `null` when its row no longer exists.
+   *
+   * `userId` here and on the history reads below is the caller the conversation
+   * was loaded for, and its owner (`loadOrCreateConversation` matched it):
+   * naming it is what confines the read for the owner layer
+   * (`lib/db/owner-extension.ts`).
    */
-  private async loadHistory(
+  private async resolvePin(
     conversationId: string,
-    userId: string
-  ): Promise<{ rows: AiMessage[]; truncated: boolean }> {
-    // Fetch the HISTORY_LOAD_LIMIT most recent messages (desc) then reverse to
-    // chronological order. Previously `asc` loaded the oldest rows — wrong for
-    // conversations longer than the limit.
-    // Secondary sort on `id` ensures deterministic ordering for
-    // messages persisted in the same millisecond.
-    const messages = await prisma.aiMessage.findMany({
-      where: { conversationId, conversation: conversationOwner(userId) },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      // One extra row, so a conversation of exactly the limit is not mistaken
-      // for a truncated one.
+    userId: string,
+    pinId: string
+  ): Promise<HistoryPin | null> {
+    const row = await prisma.aiMessage.findFirst({
+      where: { id: pinId, conversationId, conversation: conversationOwner(userId) },
+      select: { id: true, createdAt: true },
+    });
+    return row ? { id: row.id, createdAt: row.createdAt } : null;
+  }
+
+  /**
+   * Drop error markers. They exist so the CLIENT can show a failed turn instead
+   * of an unanswered question; this history is only ever used to rebuild the
+   * prompt (`historyRows`, the summary threshold, the first-turn check) and
+   * never returned to a caller. Feeding "[An error occurred and the response
+   * could not be completed.]" back to the model burns context and invites
+   * imitation, for the rest of the conversation. Excluded in JS rather than the
+   * `where` because the flag lives in a JSON column.
+   */
+  private withoutErrorMarkers(messages: AiMessage[]): AiMessage[] {
+    return messages.filter((m) => {
+      const metadata = (m.metadata ?? null) as MessageMetadata | null;
+      return metadata?.error !== true;
+    });
+  }
+
+  /**
+   * The rows after `pin`, oldest first.
+   *
+   * Reading from the summary's pin onward — rather than the newest N rows and
+   * hoping the pin is among them — is what guarantees the summary sees every row
+   * after the point it covers, however many a turn wrote (#655). The summary
+   * describes everything up to and including the pin, so the pin row itself is
+   * not returned. `overflow` says more than {@link HISTORY_LOAD_LIMIT} rows
+   * follow it: what came back is the OLDEST of them, and the caller folds them
+   * into the summary and reads again.
+   *
+   * Ordered `createdAt` then `id`, the same total order as the newest-first read.
+   */
+  private async loadHistoryFromPin(
+    conversationId: string,
+    userId: string,
+    pin: HistoryPin
+  ): Promise<LoadedHistory> {
+    const fetched = await prisma.aiMessage.findMany({
+      where: {
+        conversationId,
+        conversation: conversationOwner(userId),
+        OR: [
+          { createdAt: { gt: pin.createdAt } },
+          { createdAt: pin.createdAt, id: { gt: pin.id } },
+        ],
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      // One extra row, so exactly the limit is not mistaken for an overflow.
       take: HISTORY_LOAD_LIMIT + 1,
     });
-    // Drop error markers. They exist so the CLIENT can show a failed turn
-    // instead of an unanswered question; this history is only ever used to
-    // rebuild the prompt (`historyRows`, the summary threshold, the
-    // first-turn check) and never returned to a caller. Feeding
-    // "[An error occurred and the response could not be completed.]" back to
-    // the model burns context and invites imitation, for the rest of the
-    // conversation. Excluded in JS rather than the `where` because the flag
-    // lives in a JSON column.
     return {
-      truncated: messages.length > HISTORY_LOAD_LIMIT,
-      rows: messages
-        .slice(0, HISTORY_LOAD_LIMIT)
-        .filter((m) => {
-          const metadata = (m.metadata ?? null) as MessageMetadata | null;
-          return metadata?.error !== true;
-        })
-        .reverse(),
+      rows: this.withoutErrorMarkers(fetched.slice(0, HISTORY_LOAD_LIMIT)),
+      overflow: fetched.length > HISTORY_LOAD_LIMIT,
+      omitted: 0,
+    };
+  }
+
+  /**
+   * The newest {@link HISTORY_LOAD_LIMIT} rows, oldest first. Used when there is
+   * no pin, and as the fallback when the rows after a pin could not be folded
+   * in.
+   *
+   * `omitted` counts the rows this read did not reach that nothing describes —
+   * everything older than the window, or, given `afterPin`, only what follows
+   * the pin (older rows are the summary's). The prompt announces it, so a gap is
+   * never silent.
+   */
+  private async loadNewestHistory(
+    conversationId: string,
+    userId: string,
+    afterPin: HistoryPin | null
+  ): Promise<LoadedHistory> {
+    const scope = { conversationId, conversation: conversationOwner(userId) };
+    // Secondary sort on `id` ensures deterministic ordering for messages
+    // persisted in the same millisecond.
+    const fetched = await prisma.aiMessage.findMany({
+      where: scope,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      // One extra row, so exactly the limit is not mistaken for a truncation.
+      take: HISTORY_LOAD_LIMIT + 1,
+    });
+    const truncated = fetched.length > HISTORY_LOAD_LIMIT;
+    let omitted = 0;
+    if (truncated) {
+      const unseen = await prisma.aiMessage.count({
+        where: afterPin
+          ? {
+              ...scope,
+              OR: [
+                { createdAt: { gt: afterPin.createdAt } },
+                { createdAt: afterPin.createdAt, id: { gt: afterPin.id } },
+              ],
+            }
+          : scope,
+      });
+      omitted = Math.max(0, unseen - HISTORY_LOAD_LIMIT);
+    }
+    return {
+      rows: this.withoutErrorMarkers(fetched.slice(0, HISTORY_LOAD_LIMIT)).reverse(),
+      overflow: false,
+      omitted,
     };
   }
 

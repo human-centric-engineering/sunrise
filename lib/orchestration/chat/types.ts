@@ -132,25 +132,22 @@ export const MAX_TOOL_ITERATIONS = 5;
 export const MAX_HISTORY_MESSAGES = 50;
 
 /**
- * How many of the most recent messages `loadHistory` reads from the database.
- * Anything older is invisible to the prompt builder, so the rolling summary has
- * to take over before a conversation outgrows this window — whatever the
- * agent's own `maxHistoryMessages` is (#655).
+ * The most messages `loadHistory` reads in one go. It reads from the stored
+ * summary's pin onward (or the newest rows when there is no pin), so every row
+ * after the point the summary covers is seen — and a conversation that has
+ * more than this after the pin is folded forward in catch-up passes rather
+ * than cut off (#655).
  */
 export const HISTORY_LOAD_LIMIT = 200;
 
 /**
- * Rows held back from {@link HISTORY_LOAD_LIMIT} when an agent's cap reaches
- * the load window, so the stored summary's pin stays inside the loaded rows.
- *
- * Once a conversation outgrows the window the oldest loaded row moves forward
- * by every row a turn writes: the user message, up to `MAX_TOOL_ITERATIONS`
- * rounds of assistant tool_calls plus one tool row each, and the reply — about
- * a dozen. A pin that sits less far in than that scrolls out, and the rows
- * between the old pin and the new first row are then in neither the summary nor
- * the prompt. Fifty leaves room for several such turns. (#655)
+ * How many messages one catch-up summarisation folds forward when more than
+ * {@link HISTORY_LOAD_LIMIT} rows sit after the stored summary's pin (a long
+ * summariser outage, or a turn that wrote a great many rows). Half the load
+ * window: enough to clear the overflow in one pass in practice, while leaving
+ * about as many rows verbatim afterwards. (#655)
  */
-export const HISTORY_SUMMARY_HEADROOM = 50;
+export const SUMMARY_CATCHUP_MESSAGES = HISTORY_LOAD_LIMIT / 2;
 
 /**
  * How far **past** the current drop boundary a summarisation run extends.
@@ -169,9 +166,7 @@ export const HISTORY_SUMMARY_HEADROOM = 50;
  * summarised (the summary boundary IS the drop boundary, so nothing is ever in
  * the prompt twice), which means a larger value trades verbatim recall for
  * fewer summariser calls. At 10 the verbatim window sits between
- * `cap - 10` and `cap` messages — for caps below
- * `HISTORY_LOAD_LIMIT - HISTORY_SUMMARY_HEADROOM`; at and above that the
- * window is bound by the load limit instead.
+ * `cap - 10` and `cap` messages.
  */
 export const SUMMARY_LOOKAHEAD_MESSAGES = 10;
 

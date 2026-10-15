@@ -31,7 +31,7 @@ vi.mock('@/lib/db/client', () => ({
     // a fire-and-forget `aiAgent.update`. Stubbed so the bump is silent.
     aiAgent: { findFirst: vi.fn(), update: vi.fn().mockResolvedValue({}) },
     aiConversation: { findFirst: vi.fn(), create: vi.fn(), count: vi.fn(), update: vi.fn() },
-    aiMessage: { findMany: vi.fn(), create: vi.fn(), count: vi.fn() },
+    aiMessage: { findMany: vi.fn(), findFirst: vi.fn(), create: vi.fn(), count: vi.fn() },
     aiUserMemory: { findMany: vi.fn() },
     aiOrchestrationSettings: { findUnique: vi.fn() },
     aiEvaluationLog: { findFirst: vi.fn(), create: vi.fn() },
@@ -387,6 +387,7 @@ beforeEach(() => {
   (prisma.aiConversation.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
   (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (prisma.aiMessage.count as ReturnType<typeof vi.fn>).mockResolvedValue(0);
+  (prisma.aiMessage.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
   (prisma.aiUserMemory.findMany as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (prisma.aiOrchestrationSettings.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(null);
   (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mockResolvedValue({});
@@ -4698,8 +4699,47 @@ describe('rolling conversation summarization', () => {
   const NO_SUMMARY: SummaryState = { summary: null, summaryUpToMessageId: null };
 
   /**
+   * A message store that answers the three reads the handler makes, the way the
+   * database does: the pin row by id, the rows strictly after a pin (oldest
+   * first, bounded by `take`), and the newest rows (newest first, bounded by
+   * `take`). `all` is the WHOLE conversation, oldest first — which is what makes
+   * the multi-turn tests honest about rows the handler did or did not read.
+   */
+  function installMessageStore(all: ReturnType<typeof makeHistoryMessages>) {
+    type FindArgs = {
+      where: { id?: string; OR?: [unknown, { id: { gt: string } }] };
+      orderBy?: [{ createdAt: 'asc' | 'desc' }];
+      take?: number;
+    };
+    const indexOf = (id: string) => all.findIndex((m) => m.id === id);
+    const afterPin = (args: FindArgs) => args.where.OR?.[1].id.gt;
+    (prisma.aiMessage.findFirst as ReturnType<typeof vi.fn>).mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises
+      (args: FindArgs) => {
+        const i = indexOf(args.where.id ?? '');
+        return Promise.resolve(i < 0 ? null : { id: all[i].id, createdAt: all[i].createdAt });
+      }
+    );
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockImplementation((args: FindArgs) => {
+      const take = args.take ?? all.length;
+      const pinId = afterPin(args);
+      if (pinId !== undefined) {
+        const from = indexOf(pinId) + 1;
+        return Promise.resolve(all.slice(from, from + take));
+      }
+      return Promise.resolve([...all].reverse().slice(0, take));
+    });
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
+    (prisma.aiMessage.count as ReturnType<typeof vi.fn>).mockImplementation((args: FindArgs) => {
+      const pinId = afterPin(args);
+      return Promise.resolve(pinId === undefined ? all.length : all.length - indexOf(pinId) - 1);
+    });
+  }
+
+  /**
    * Run one turn of `streamChat` against a conversation whose stored summary is
-   * `stored`, with `history` as the loaded rows.
+   * `stored`, with `history` as the whole conversation.
    *
    * Returns the summary state *after* the turn — which is `stored` unchanged
    * when nothing was persisted — plus what the summariser was asked to do and
@@ -4716,9 +4756,7 @@ describe('rolling conversation summarization', () => {
     summarize.mockClear();
     (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mockClear();
 
-    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
-      [...history].reverse()
-    );
+    installMessageStore(history);
     (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeConversation({ id: conversationId, ...stored })
     );
@@ -4888,17 +4926,16 @@ describe('rolling conversation summarization', () => {
     expect(turn.prompt.some((m) => m.content.includes('summary-text'))).toBe(true);
   });
 
-  it('folds forward when the pin has scrolled out of the loaded window', async () => {
-    // `loadHistory` returns at most 200 rows, so a long-running conversation's
-    // pin eventually names a message that is no longer loaded. That is not a
-    // reason to start again: the stored text still describes everything before
-    // the window, and discarding it would silently erase the start of the
+  it('folds the stored text forward when the pin row no longer exists', async () => {
+    // A pin that names a message that is gone (a retention purge, a deletion) is
+    // not a reason to start again: the stored text still describes everything
+    // before it, and discarding it would silently erase the start of the
     // conversation.
     mockSummariser();
 
-    const turn = await runTurn('conv-scrolled', makeHistoryMessages(52), {
+    const turn = await runTurn('conv-pin-gone', makeHistoryMessages(52), {
       summary: 'everything that came before',
-      summaryUpToMessageId: 'hist-msg-from-a-previous-window',
+      summaryUpToMessageId: 'hist-msg-that-was-deleted',
     });
 
     expect(turn.calls).toBe(1);
@@ -4931,182 +4968,161 @@ describe('rolling conversation summarization', () => {
     );
   });
 
-  it.each([200, 250, 500])(
-    'summarises what the 200-row load window cuts off when maxHistoryMessages is %i (#655)',
-    async (cap) => {
-      // `loadHistory` returns at most 200 rows, so `rows - cap` is never
-      // positive at a cap of 200+ and the summary never ran: everything older
-      // than the window left the prompt with nothing standing in for it.
-      mockSummariser();
+  describe('history is read from the summary pin onward (#655)', () => {
+    const STORED = { summary: 'old-summary', summaryUpToMessageId: 'hist-msg-100' };
+
+    function capAgent(cap: number) {
       (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
         makeAgent({ maxHistoryMessages: cap })
       );
+    }
 
-      const turn = await runTurn(`conv-high-cap-${cap}`, makeHistoryMessages(200), NO_SUMMARY);
+    it.each([200, 250, 500])(
+      'folds every row after the pin into the summary, in passes, at maxHistoryMessages %i',
+      async (cap) => {
+        // 450 rows, pin at 100: 349 rows follow it, more than one read returns.
+        // Newest-N would have started at row 250 and left 101-249 in neither the
+        // summary nor the prompt. Reading from the pin, the summary is folded
+        // forward through them — two passes, each starting right after the last.
+        mockSummariser();
+        capAgent(cap);
+
+        const turn = await runTurn(`conv-catch-up-${cap}`, makeHistoryMessages(450), STORED);
+
+        const summarize = summarizeMessages as ReturnType<typeof vi.fn>;
+        const deltas = summarize.mock.calls.map((c: unknown[]) =>
+          (c[0] as { content: string }[]).map((m) => m.content)
+        );
+        expect(deltas).toHaveLength(2);
+        expect(deltas[0][0]).toBe('Message 101');
+        expect(deltas[0]).toHaveLength(100);
+        expect(deltas[1][0]).toBe('Message 201');
+        expect((summarize.mock.calls[0][3] as { previousSummary: string }).previousSummary).toBe(
+          'old-summary'
+        );
+        expect((summarize.mock.calls[1][3] as { previousSummary: string }).previousSummary).toBe(
+          'summary-text'
+        );
+
+        // Every pass is persisted, so a failure part-way keeps what was done.
+        const pins = (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mock.calls
+          .map((c: unknown[]) => (c[0] as { data?: { summaryUpToMessageId?: string } }).data)
+          .filter((d) => d?.summaryUpToMessageId)
+          .map((d) => d!.summaryUpToMessageId);
+        expect(pins).toEqual(['hist-msg-200', 'hist-msg-300']);
+
+        // Rows 301-449 follow the pin and fit every cap here: all verbatim, none
+        // omitted, with the summary standing in for everything before.
+        const verbatim = verbatimHistory(turn.prompt);
+        expect(verbatim.size).toBe(149);
+        expect(verbatim.has('Message 301')).toBe(true);
+        expect(verbatim.has('Message 449')).toBe(true);
+        expect(turn.prompt.some((m) => m.content.includes('summary-text'))).toBe(true);
+        expect(turn.prompt.some((m) => m.content.includes('omitted'))).toBe(false);
+      }
+    );
+
+    it('does not skip rows when a turn wrote more than the old headroom (parallel tool calls)', async () => {
+      // One parallel dispatch saves a row per call, so a single turn can write
+      // 50+ rows. 60 rows after the pin is nothing for a read from the pin.
+      mockSummariser();
+      capAgent(500);
+
+      const turn = await runTurn('conv-big-turn', makeHistoryMessages(161), STORED);
+
+      expect(turn.calls).toBe(0);
+      expect(verbatimHistory(turn.prompt).size).toBe(60);
+      expect(verbatimHistory(turn.prompt).has('Message 101')).toBe(true);
+      expect(turn.prompt.some((m) => m.content.includes('old-summary'))).toBe(true);
+    });
+
+    it('keeps the stored summary in the prompt when everything after the pin fits the cap', async () => {
+      // The cap was raised (or the conversation is short): nothing has to leave,
+      // but the rows before the pin are only in the summary, so it has to be
+      // there. Reading from the pin and ignoring the summary would lose them.
+      mockSummariser();
+      capAgent(500);
+
+      const turn = await runTurn('conv-fits', makeHistoryMessages(160), STORED);
+
+      expect(turn.calls).toBe(0);
+      expect(turn.prompt.some((m) => m.content.includes('old-summary'))).toBe(true);
+      expect(verbatimHistory(turn.prompt).has('Message 100')).toBe(false);
+      expect(verbatimHistory(turn.prompt).has('Message 101')).toBe(true);
+    });
+
+    it('skips error markers when folding, and never feeds one to the summariser', async () => {
+      mockSummariser();
+      capAgent(500);
+      const rows = makeHistoryMessages(450);
+      for (let i = 101; i <= 160; i++)
+        (rows[i] as { metadata: unknown }).metadata = { error: true };
+
+      await runTurn('conv-markers', rows, STORED);
+
+      const summarize = summarizeMessages as ReturnType<typeof vi.fn>;
+      const first = (summarize.mock.calls[0][0] as { content: string }[]).map((m) => m.content);
+      expect(first[0]).toBe('Message 161');
+      expect(first).toHaveLength(100);
+    });
+
+    it('announces the gap, and keeps the summary, when the summariser is down', async () => {
+      // 349 rows follow the pin but only the newest 200 can be shown. The summary
+      // cannot be advanced, so it is kept as it is, nothing is persisted, and the
+      // rows in between are announced instead of vanishing.
+      (summarizeMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+        summary: 'old-summary',
+        fellBack: true,
+      });
+      capAgent(500);
+
+      const turn = await runTurn('conv-down', makeHistoryMessages(450), STORED);
+
+      // One attempt, not a second one from the ordinary path.
+      expect(turn.calls).toBe(1);
+      expect(turn.persisted).toBeUndefined();
+      expect(turn.prompt.some((m) => m.content.includes('old-summary'))).toBe(true);
+      expect(turn.prompt.some((m) => m.content.includes('149 older messages omitted'))).toBe(true);
+      expect(verbatimHistory(turn.prompt).size).toBe(200);
+      expect(verbatimHistory(turn.prompt).has('Message 449')).toBe(true);
+      expect(verbatimHistory(turn.prompt).has('Message 250')).toBe(true);
+    });
+
+    it('survives an overflow made entirely of error markers', async () => {
+      mockSummariser();
+      capAgent(500);
+      const rows = makeHistoryMessages(450);
+      for (let i = 101; i <= 301; i++)
+        (rows[i] as { metadata: unknown }).metadata = { error: true };
+
+      const turn = await runTurn('conv-all-markers', rows, STORED);
+
+      expect(turn.calls).toBe(0);
+      expect(turn.prompt.some((m) => m.content.includes('old-summary'))).toBe(true);
+    });
+
+    it('announces rows older than the newest window when there is no summary yet', async () => {
+      // No pin: newest rows. 300 rows, 200 read, 100 never seen by anything — said
+      // so, rather than silently dropped.
+      mockSummariser();
+      capAgent(500);
+
+      const turn = await runTurn('conv-no-pin', makeHistoryMessages(300), NO_SUMMARY);
+
+      expect(turn.calls).toBe(0);
+      expect(turn.prompt.some((m) => m.content.includes('100 older messages omitted'))).toBe(true);
+      expect(verbatimHistory(turn.prompt).size).toBe(200);
+    });
+
+    it('records the gap in the summary it first builds, so it is not forgotten', async () => {
+      mockSummariser();
+      capAgent(50);
+
+      const turn = await runTurn('conv-no-pin-small', makeHistoryMessages(300), NO_SUMMARY);
 
       expect(turn.calls).toBe(1);
-      expect(turn.persisted).toBeDefined();
-      expect(turn.prompt.some((m) => m.content.includes('summary-text'))).toBe(true);
-      // The newest rows are still verbatim.
-      expect(verbatimHistory(turn.prompt).has('Message 199')).toBe(true);
-    }
-  );
-
-  it('summarises a truncated load even when error markers shrink it below the window (#655)', async () => {
-    mockSummariser();
-    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeAgent({ maxHistoryMessages: 300 })
-    );
-    const rows = makeHistoryMessages(201);
-    for (let i = 100; i < 115; i++) {
-      (rows[i] as { metadata: unknown }).metadata = { error: true };
-    }
-
-    const turn = await runTurn('conv-high-cap-markers', rows, NO_SUMMARY);
-
-    expect(turn.calls).toBe(1);
-    expect(turn.prompt.some((m) => m.content.includes('summary-text'))).toBe(true);
-    expect(verbatimHistory(turn.prompt).has('Message 200')).toBe(true);
-  });
-
-  it('does not treat exactly 200 rows with error markers as truncated (#655)', async () => {
-    mockSummariser();
-    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeAgent({ maxHistoryMessages: 300 })
-    );
-    const rows = makeHistoryMessages(200);
-    for (let i = 20; i < 80; i++) {
-      (rows[i] as { metadata: unknown }).metadata = { error: true };
-    }
-
-    const turn = await runTurn('conv-exact-limit-markers', rows, NO_SUMMARY);
-
-    expect(turn.calls).toBe(0);
-  });
-
-  it('survives a truncated load made entirely of error markers (#655)', async () => {
-    mockSummariser();
-    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeAgent({ maxHistoryMessages: 300 })
-    );
-    const rows = makeHistoryMessages(201);
-    for (const r of rows) (r as { metadata: unknown }).metadata = { error: true };
-
-    const turn = await runTurn('conv-all-markers', rows, NO_SUMMARY);
-
-    expect(turn.calls).toBe(0);
-  });
-
-  it.each([
-    [150, 0],
-    [151, 1],
-  ])(
-    'cap 250 with %i untruncated rows: %i summariser calls (#655 boundary at the 150-row summary window)',
-    async (n, calls) => {
-      mockSummariser();
-      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
-        makeAgent({ maxHistoryMessages: 250 })
-      );
-
-      const turn = await runTurn(`conv-boundary-${n}`, makeHistoryMessages(n), NO_SUMMARY);
-
-      expect(turn.calls).toBe(calls);
-    }
-  );
-
-  it('keeps the stored summary reachable when a big turn slides the load window past its pin (#655)', async () => {
-    // A turn can write ~a dozen rows (user, five tool rounds, reply). With the
-    // pin too close to the front of the window, one such turn scrolled it out of
-    // the loaded rows and the span between the old pin and the new first row
-    // was in neither the summary nor the prompt.
-    mockSummariser('first-summary');
-    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeAgent({ maxHistoryMessages: 500 })
-    );
-
-    const turn1 = await runTurn('conv-slide', makeHistoryMessages(201).slice(0, 200), NO_SUMMARY);
-    expect(turn1.calls).toBe(1);
-    expect(turn1.persisted).toBeDefined();
-    const pinIdx = Number(turn1.persisted!.summaryUpToMessageId!.replace('hist-msg-', ''));
-
-    // 40 more rows land before the next turn: far more than one turn writes,
-    // and four times the old 10-row headroom.
-    mockSummariser('second-summary');
-    const slid = makeHistoryMessages(241).slice(40); // 201 rows -> loads ids 41..240
-    const turn2 = await runTurn('conv-slide', slid, turn1.state);
-
-    expect(pinIdx).toBeGreaterThan(41);
-    expect(turn2.calls).toBe(1);
-    expect(turn2.options?.previousSummary).toBe('first-summary');
-    // Folded forward from the row right after the old pin: nothing skipped.
-    expect(turn2.delta![0].content).toBe(`Message ${pinIdx + 1}`);
-  });
-
-  it('keeps a stored summary in the prompt when a truncated load falls under the window (#655)', async () => {
-    mockSummariser();
-    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeAgent({ maxHistoryMessages: 140 })
-    );
-    // 201 rows fetched, 70 of them error markers: 130 survive, under the cap.
-    const rows = makeHistoryMessages(201);
-    for (let i = 100; i < 170; i++) {
-      (rows[i] as { metadata: unknown }).metadata = { error: true };
-    }
-
-    const turn = await runTurn('conv-trunc-stored', rows, {
-      summary: 'older-context',
-      summaryUpToMessageId: 'hist-msg-not-loaded',
+      expect(turn.options?.previousSummary).toContain('100 earlier messages were never summarised');
     });
-
-    expect(turn.calls).toBe(0);
-    expect(turn.prompt.some((m) => m.content.includes('older-context'))).toBe(true);
-    expect(verbatimHistory(turn.prompt).has('Message 200')).toBe(true);
-  });
-
-  it('on summariser fallback, keeps the rows a high cap has room for (#655)', async () => {
-    (summarizeMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
-      summary: '[Summary unavailable — earlier messages omitted]',
-      fellBack: true,
-    });
-    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeAgent({ maxHistoryMessages: 500 })
-    );
-
-    const turn = await runTurn('conv-fallback-high-cap', makeHistoryMessages(200), NO_SUMMARY);
-
-    expect(verbatimHistory(turn.prompt).size).toBe(200);
-    expect(turn.prompt.some((m) => m.content.includes('older messages omitted'))).toBe(false);
-  });
-
-  it('keeps half of a thin truncated load verbatim rather than summarising all of it (#655)', async () => {
-    mockSummariser();
-    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeAgent({ maxHistoryMessages: 300 })
-    );
-    // 201 rows fetched (the oldest is cut), 196 of the loaded 200 are error markers:
-    // 4 survive (ids 197..200).
-    const rows = makeHistoryMessages(201);
-    for (let i = 1; i < 197; i++) (rows[i] as { metadata: unknown }).metadata = { error: true };
-
-    const turn = await runTurn('conv-thin-truncated', rows, NO_SUMMARY);
-
-    expect(turn.calls).toBe(1);
-    // requiredDrop is 1 and the lookahead is floor(3 / 2) = 1, so 2 stay verbatim
-    // instead of the whole history going into the summary.
-    expect(verbatimHistory(turn.prompt).size).toBe(2);
-    expect(verbatimHistory(turn.prompt).has('Message 200')).toBe(true);
-  });
-
-  it('does not summarise a high-cap conversation that still fits the load window (#655)', async () => {
-    mockSummariser();
-    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeAgent({ maxHistoryMessages: 250 })
-    );
-
-    const turn = await runTurn('conv-high-cap-fits', makeHistoryMessages(150), NO_SUMMARY);
-
-    expect(turn.calls).toBe(0);
-    expect(verbatimHistory(turn.prompt).size).toBe(150);
   });
 
   it('never summarises away more than half a small agent window', async () => {
@@ -5170,7 +5186,7 @@ describe('rolling conversation summarization', () => {
     const summaryBlock = turn.prompt.find((m) => m.content.includes('Conversation summary of'));
     const marker = turn.prompt.find((m) => m.content.includes('older messages omitted'));
 
-    expect(summaryBlock?.content).toContain('Conversation summary of 12 earlier messages');
+    expect(summaryBlock?.content).toContain('[Conversation summary of earlier messages]');
     expect(marker?.content).toContain('4 older messages omitted');
   });
 
@@ -5345,9 +5361,12 @@ describe('rolling conversation summarization', () => {
     // Mock returns descending order (newest first) to match the real DB query.
     const history = makeHistoryMessages(HISTORY_SIZE);
     const lastDroppedId = history[1].id; // droppedCount - 1 = index 1
-    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
-      [...history].reverse()
-    );
+    // The handler reads from the pin onward: the pin row, then the rows after it.
+    (prisma.aiMessage.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: lastDroppedId,
+      createdAt: history[1].createdAt,
+    });
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(history.slice(2));
     (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeConversation({
         id: 'conv-cached',
@@ -6117,9 +6136,12 @@ describe('history summarization — existing summary reuse', () => {
     const history = makeHistoryMessages(HISTORY_SIZE);
     const lastDroppedId = history[1].id; // droppedCount - 1 = index 1
 
-    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(
-      [...history].reverse()
-    );
+    // The handler reads from the pin onward: the pin row, then the rows after it.
+    (prisma.aiMessage.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: lastDroppedId,
+      createdAt: history[1].createdAt,
+    });
+    (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockResolvedValue(history.slice(2));
     (prisma.aiConversation.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeConversation({
         id: 'conv-reuse',

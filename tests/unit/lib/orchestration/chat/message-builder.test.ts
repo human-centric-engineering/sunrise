@@ -485,7 +485,10 @@ describe('buildMessages', () => {
     ).toBeUndefined();
   });
 
-  it('ignores conversationSummary when history is within the cap', () => {
+  it('renders a conversationSummary the caller passes even when no loaded row is dropped', () => {
+    // The handler reads history from the summary's pin onward, so the summary
+    // describes rows older than every loaded one (#655). Whether one applies is
+    // the caller's call; leaving it out is how a stored summary is ignored.
     const history = [
       { role: 'user', content: 'hi' },
       { role: 'assistant', content: 'hello' },
@@ -496,15 +499,41 @@ describe('buildMessages', () => {
       contextBlock: null,
       history,
       newUserMessage: 'new',
-      conversationSummary: 'Some summary that should not appear.',
+      conversationSummary: 'Some summary of older rows.',
     });
 
+    const block = messages.find((m) => getTextContent(m.content).includes('Conversation summary'));
+    expect(getTextContent(block!.content)).toContain('[Conversation summary of earlier messages]');
+    expect(getTextContent(block!.content)).toContain('Some summary of older rows.');
+    expect(messages.filter((m) => getTextContent(m.content).includes('omitted'))).toHaveLength(0);
+  });
+
+  it('announces omittedBeforeHistory as omitted, with or without a summary', () => {
+    const history = [{ role: 'user', content: 'hi' }];
+
+    const bare = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history,
+      newUserMessage: 'new',
+      omittedBeforeHistory: 7,
+    });
+    expect(bare.some((m) => getTextContent(m.content).includes('7 older messages omitted'))).toBe(
+      true
+    );
+
+    const withSummary = buildMessages({
+      systemInstructions: 'sys',
+      contextBlock: null,
+      history,
+      newUserMessage: 'new',
+      conversationSummary: 'older stuff',
+      omittedBeforeHistory: 7,
+    });
     expect(
-      messages.find((m) => getTextContent(m.content).includes('Conversation summary'))
-    ).toBeUndefined();
-    expect(
-      messages.find((m) => getTextContent(m.content).includes('Some summary'))
-    ).toBeUndefined();
+      withSummary.some((m) => getTextContent(m.content).includes('7 older messages omitted'))
+    ).toBe(true);
+    expect(withSummary.some((m) => getTextContent(m.content).includes('older stuff'))).toBe(true);
   });
 
   it('falls back to old marker when history exceeds cap but no summary provided', () => {

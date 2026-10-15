@@ -144,6 +144,13 @@ export interface BuildMessagesArgs {
    * omitted instead, which is true.
    */
   conversationSummaryCovers?: number;
+  /**
+   * Messages older than the first row of `history` that nothing describes — the
+   * loaded window did not reach back to the summary's pin (or to the start of
+   * the conversation). Announced to the model as omitted, so that a gap is never
+   * silent. Defaults to none.
+   */
+  omittedBeforeHistory?: number;
 }
 
 /**
@@ -270,10 +277,12 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
     }
   }
 
-  // A summary that covers zero of the loaded rows is still rendered when nothing
-  // is dropped: a truncated load can hold a stored summary of rows older than
-  // anything loaded (#655). Without an explicit zero it is ignored, as before.
-  if (droppedCount > 0 || (args.conversationSummary && args.conversationSummaryCovers === 0)) {
+  // A summary the caller passes is rendered whether or not any loaded row is
+  // dropped: the handler loads from the summary's pin onward, so a summary can
+  // describe rows older than every loaded one (#655). The caller decides when
+  // one applies; omitting it is how a stored summary is ignored.
+  const omittedBeforeHistory = Math.max(0, args.omittedBeforeHistory ?? 0);
+  if (droppedCount > 0 || omittedBeforeHistory > 0 || args.conversationSummary) {
     // Split the dropped span into the part the summary describes and the part
     // nothing describes. Equal on every normal path — `summarised` is
     // `droppedCount` and the marker below never renders — so this is the same
@@ -295,7 +304,7 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
       messages.push({ role: 'system', content: summaryBlock });
       breakdown.conversationSummary = makePart(summaryBlock, modelId);
     }
-    const unsummarised = droppedCount - summarised;
+    const unsummarised = droppedCount - summarised + omittedBeforeHistory;
     if (unsummarised > 0) {
       // Emitted after the summary because these are the more RECENT of the
       // dropped messages: the summary covers a prefix, so the gap sits between

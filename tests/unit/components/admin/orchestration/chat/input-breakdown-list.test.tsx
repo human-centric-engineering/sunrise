@@ -5,6 +5,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { InputBreakdownList } from '@/components/admin/orchestration/chat/input-breakdown-list';
+import { HISTORY_LOAD_LIMIT } from '@/lib/orchestration/chat/types';
 import type { InputBreakdown } from '@/types/orchestration';
 
 function makeBreakdown(overrides: Partial<InputBreakdown> = {}): InputBreakdown {
@@ -192,6 +193,10 @@ describe('InputBreakdownList', () => {
     expect(within(panel).getByText('Summariser')).toBeInTheDocument();
     expect(within(panel).getByText(/900→120/)).toBeInTheDocument();
     // The footnote states the summariser's real trigger, not the cap alone.
-    expect(within(panel).getByText(/150-message load window/)).toBeInTheDocument();
+    expect(
+      within(panel).getByText(
+        new RegExp(`past ${HISTORY_LOAD_LIMIT}\\s+messages after the last summary`)
+      )
+    ).toBeInTheDocument();
   });
 });

@@ -123,7 +123,7 @@ Optional number input (`AiAgent.maxHistoryTokens`). Overrides the context-window
 
 ### Memory length (messages)
 
-Optional number input (`AiAgent.maxHistoryMessages`). Per-agent override for the message-count cap on conversation history. Validation min 0, max 500. Leave blank to use the platform default (`MAX_HISTORY_MESSAGES`, currently 50). **This is the behavioural knob** — distinct from _Max history tokens_ above. Use it to control how far back the agent remembers verbatim (history is read from the most recent 200 messages and the summary window is held 50 below that, so verbatim memory tops out at about 150 whatever you set above it; see `.context/orchestration/chat.md`), even when the context window has plenty of room. `0` means "stateless agent: no prior history re-sent each turn"; older context still survives via the rolling summary that the streaming handler maintains on `AiConversation.summary`.
+Optional number input (`AiAgent.maxHistoryMessages`). Per-agent override for the message-count cap on conversation history. Validation min 0, max 500. Leave blank to use the platform default (`MAX_HISTORY_MESSAGES`, currently 50). **This is the behavioural knob** — distinct from _Max history tokens_ above. Use it to control how far back the agent remembers verbatim (at most `HISTORY_LOAD_LIMIT`, 200, messages are read per turn, so verbatim memory never exceeds that whatever you set above it; the rolling summary covers everything before; see `.context/orchestration/chat.md`), even when the context window has plenty of room. `0` means "stateless agent: no prior history re-sent each turn"; older context still survives via the rolling summary that the streaming handler maintains on `AiConversation.summary`.
 
 ### Monthly budget (USD)
 
