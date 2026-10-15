@@ -173,9 +173,9 @@ async function eraseRows(params: EraseUserParams): Promise<{
   contactSubmissionsLeft: number;
   /** Rows touched by the delivery redaction; a row can count in two passes. */
   webhookDeliveriesRedacted: number;
-  /** Webhook deliveries whose payload named the user. */
+  /** Webhook deliveries whose payload naming the user was changed, by the pre-pass or the transaction. */
   webhookPayloadsRedacted: number;
-  /** Event-hook deliveries whose payload named the user. */
+  /** Event-hook deliveries whose payload naming the user was changed, by the pre-pass or the transaction. */
   eventHookPayloadsRedacted: number;
   /** Other admins' email subscriptions cleared and deactivated. */
   subscriptionsDeactivated: number;
@@ -214,7 +214,11 @@ async function eraseRows(params: EraseUserParams): Promise<{
   const preRedacted = { webhook: 0, hook: 0 };
   for (const table of ['webhook', 'hook'] as const) {
     try {
-      preRedacted[table] = await preRedactSubjectFromDeliveries(prisma, table, userId);
+      // Counted per committed chunk: one that throws part-way has still
+      // written the chunks before it, which the transaction then skips.
+      await preRedactSubjectFromDeliveries(prisma, table, userId, (written) => {
+        preRedacted[table] += written;
+      });
     } catch (error) {
       logger.error('Erasure delivery pre-pass failed; the transaction redacts instead', {
         userId,

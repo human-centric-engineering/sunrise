@@ -1,10 +1,16 @@
 /**
- * The `lastError` for a webhook or event-hook delivery whose retry stopped
- * because its subscription or hook was deleted (§109 t-739).
+ * When a webhook or event-hook delivery is sent again, and what it says when
+ * it is not: the rules the webhook dispatcher and the hook registry share.
  *
- * The real failure first, then why it was not retried. The row outlives its
- * parent as the record of where an event went, so replacing the failure with
- * the reason the retries stopped would lose why the delivery failed at all.
+ *   - `notRetried()`: the `lastError` wording for a row whose retry stopped
+ *     (its subscription or hook was deleted, §109 t-739; an erasure, t-783).
+ *     The real failure first, then why it was not retried: the row outlives
+ *     its parent as the record of where an event went, so replacing the
+ *     failure would lose why the delivery failed at all.
+ *   - Which statuses still await a send, and the retry claim and its lease
+ *     (t-793).
+ *   - `DISPATCH_TIMEOUT_MS`: each channel's send timeout, held below the lease
+ *     (t-808).
  *
  * Platform-agnostic: no Next.js imports.
  */

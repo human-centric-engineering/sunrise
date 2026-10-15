@@ -641,9 +641,14 @@ describe('eraseSubjectFromDeliveries', () => {
     await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
 
     const { text, values } = renderCall(executeRaw);
-    expect(text.split('SELECT d.id, d.payload, ')).toHaveLength(6);
+    // The arms read ids only; the payload is read once, joined back under a
+    // row lock in id order, so a concurrent erasure's write is seen (t-806).
+    expect(text.split('SELECT d.id, true')).toHaveLength(4);
     expect(text).toMatch(
-      /SELECT DISTINCT ON \(id\) id, payload, activity\s+FROM \([\s\S]+\) matched\s+ORDER BY id, activity DESC/
+      /SELECT DISTINCT ON \(id\) id, activity\s+FROM \([\s\S]+\) arms\s+ORDER BY id, activity DESC/
+    );
+    expect(text).toMatch(
+      /JOIN ai_webhook_delivery d ON d\.id = m\.id\s+ORDER BY d\.id FOR UPDATE OF d/
     );
     expect(values).toContainEqual([...ADMIN_ACTION_EVENTS]);
   });
@@ -705,7 +710,7 @@ describe('eraseSubjectFromDeliveries', () => {
     );
   });
 
-  it('marks every activity row stoppedByErasure, and words lastError only on a row not already marked (t-809)', async () => {
+  it('marks every activity row stoppedByErasure, and words lastError once, by the wording itself (t-809)', async () => {
     const { client, executeRaw } = makeClient([]);
 
     await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
@@ -713,10 +718,13 @@ describe('eraseSubjectFromDeliveries', () => {
     const { text, values } = renderCall(executeRaw);
     // The column is set on every activity row and never cleared.
     expect(text).toContain('"stoppedByErasure" = d."stoppedByErasure" OR r.activity');
-    // The wording, for people to read, is added once.
+    // The wording, for people to read, is added once: decided on the wording,
+    // not the column, so a row step 5 stopped as "recipient erased" still
+    // says its content was erased.
     expect(text).toMatch(
-      /"lastError" = CASE WHEN \(r\.activity AND NOT d\."stoppedByErasure"\) THEN CASE WHEN d\."lastError" IS NULL OR d\."lastError" = ''/
+      /"lastError" = CASE WHEN \(r\.activity\s+AND d\."lastError" IS DISTINCT FROM \$\d+\s+AND right\(coalesce\(d\."lastError", ''\), \$\d+\) <> \$\d+\) THEN CASE WHEN d\."lastError" IS NULL OR d\."lastError" = ''/
     );
+    expect(values).toContain(' (not retried: subject erased)'.length);
     expect(values).toContain('Not retried: subject erased');
     expect(values).toContain(' (not retried: subject erased)');
     expect(text).toMatch(/ELSE d\."lastError" \|\| \$\d+ END ELSE d\."lastError" END/);
@@ -729,7 +737,7 @@ describe('eraseSubjectFromDeliveries', () => {
 
     const { text } = renderCall(executeRaw);
     expect(text).toMatch(
-      /WHERE d\.id = r\.id\s+AND \(r\.payload IS DISTINCT FROM d\.payload OR \(r\.activity AND NOT d\."stoppedByErasure"\) OR \(r\.activity AND d\.status = ANY\(\$\d+::text\[\]\)\)\)/
+      /WHERE d\.id = r\.id\s+AND \(r\.payload IS DISTINCT FROM d\.payload OR \(r\.activity AND NOT d\."stoppedByErasure"\) OR \(r\.activity\s+AND d\."lastError" IS DISTINCT FROM [\s\S]+?\) OR \(r\.activity AND d\.status = ANY\(\$\d+::text\[\]\)\)\)/
     );
   });
 
@@ -799,9 +807,29 @@ describe('preRedactSubjectFromDeliveries', () => {
     );
     expect(values).toContainEqual(['r10000']);
     expect(values).toContainEqual([true]);
+    // Each chunk reads its rows under a lock, in id order (t-806).
+    expect(text).toMatch(
+      /JOIN ai_event_hook_delivery d ON d\.id = w\.id\s+ORDER BY d\.id FOR UPDATE OF d/
+    );
     // The same skip-unchanged update as the transaction's pass.
     expect(text).toContain('UPDATE ai_event_hook_delivery AS d');
     expect(text).toContain('r.payload IS DISTINCT FROM d.payload');
+  });
+
+  it('reports each chunk as it commits, so a later failure does not lose the count', async () => {
+    const { client, queryRaw, executeRaw } = makeClient([]);
+    queryRaw.mockResolvedValueOnce(matchedIds(12_000) as unknown as RawRow[]);
+    executeRaw
+      .mockResolvedValueOnce(5_000)
+      .mockResolvedValueOnce(4_000)
+      .mockRejectedValueOnce(new Error('connection lost'));
+    const heard: number[] = [];
+
+    await expect(
+      preRedactSubjectFromDeliveries(client, 'webhook', SUBJECT, (n) => heard.push(n))
+    ).rejects.toThrow('connection lost');
+
+    expect(heard).toEqual([5_000, 4_000]);
   });
 
   it('writes nothing when nothing names the subject', async () => {

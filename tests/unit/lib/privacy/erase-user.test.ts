@@ -1374,8 +1374,20 @@ describe('eraseUser', () => {
 
       await eraseUser(BASE_PARAMS);
 
-      expect(mockPreRedact).toHaveBeenNthCalledWith(1, mockPrisma, 'webhook', BASE_PARAMS.userId);
-      expect(mockPreRedact).toHaveBeenNthCalledWith(2, mockPrisma, 'hook', BASE_PARAMS.userId);
+      expect(mockPreRedact).toHaveBeenNthCalledWith(
+        1,
+        mockPrisma,
+        'webhook',
+        BASE_PARAMS.userId,
+        expect.any(Function)
+      );
+      expect(mockPreRedact).toHaveBeenNthCalledWith(
+        2,
+        mockPrisma,
+        'hook',
+        BASE_PARAMS.userId,
+        expect.any(Function)
+      );
       expect(callOrder).toEqual([
         'pre:webhook:prisma',
         'pre:hook:prisma',
@@ -1383,6 +1395,28 @@ describe('eraseUser', () => {
         'final:webhook',
         'final:hook',
       ]);
+    });
+
+    it('counts the chunks a failed pre-pass committed before it threw', async () => {
+      mockPreRedact.mockImplementation(
+        async (_c: unknown, table: string, _u: string, onCommitted: (n: number) => void) => {
+          if (table === 'hook') {
+            onCommitted(5_000);
+            throw new Error('connection lost');
+          }
+          return 0;
+        }
+      );
+      mockEraseDeliveries.mockImplementation(async (_tx: unknown, table: string) =>
+        table === 'hook' ? 7 : 0
+      );
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'User erased',
+        expect.objectContaining({ eventHookPayloadsRedacted: 5_007 })
+      );
     });
 
     it('a failed pre-pass is logged and the transaction redacts everything instead', async () => {
@@ -1401,8 +1435,14 @@ describe('eraseUser', () => {
     });
 
     it('logs what the pre-pass and the transaction redacted together', async () => {
-      mockPreRedact.mockImplementation(async (_c: unknown, table: string) =>
-        table === 'webhook' ? 100 : 200
+      mockPreRedact.mockImplementation(
+        async (_c: unknown, table: string, _u: string, onCommitted: (n: number) => void) => {
+          // Two chunks each, heard as they commit.
+          const per = table === 'webhook' ? 50 : 100;
+          onCommitted(per);
+          onCommitted(per);
+          return per * 2;
+        }
       );
       mockEraseDeliveries.mockImplementation(async (_tx: unknown, table: string) =>
         table === 'webhook' ? 4 : 7

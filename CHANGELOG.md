@@ -25,6 +25,8 @@ release process.
   of on the `"(not retried: subject erased)"` wording at the end of
   `lastError`, so a later `lastError` write can no longer clear the stop, and a
   receiver's error text that ends in the same words no longer looks stopped.
+  The migration marks existing rows by that wording once, so a row from before
+  it whose text merely ended in those words is marked too.
   The wording stays on `lastError` for people to read. `isStoppedByErasure()`
   is gone from `lib/orchestration/webhooks/not-retried.ts`. **Forks:** a job
   or route of yours that retries or replays a delivery should refuse a row with

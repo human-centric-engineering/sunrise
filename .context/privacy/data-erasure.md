@@ -313,7 +313,11 @@ transaction):
        unmarked since it was read, and sends the payload the reset returned; a
        row that changed in between answers `409` too. Rows an erasure stopped
        before the column existed were marked by its migration from their
-       `lastError` wording.
+       `lastError` wording, the test the old check used, so a row from before
+       it whose text merely ended in those words is marked too. The wording
+       ("not retried: subject erased") is still added to `lastError`, once,
+       for people to read, including on a row step 5 already stopped as
+       "recipient erased".
 
      Every `activity` row gets the mark, whatever its status: one already
      `exhausted` (the DLQ's population) or `delivered` keeps its status, and a

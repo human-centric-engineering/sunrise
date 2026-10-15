@@ -450,13 +450,19 @@ function redactedPayloadSql(userId: string): Prisma.Sql {
 function redactUpdate(table: DeliveryTable, userId: string, source: Prisma.Sql): Prisma.Sql {
   const t = TABLES[table];
   const stopNow = Prisma.sql`(r.activity AND d.status = ANY(${[...AWAITING_RETRY_STATUSES]}::text[]))`;
-  // Every `activity` row is marked, whatever its status, so a replay or a
-  // manual retry refuses it rather than send an event about nobody (t-793). An
-  // `exhausted` row is the DLQ's population; a `delivered` one can still be
-  // retried by hand. Only the rows still waiting to send also change status.
-  // A row already marked, by an earlier erasure of someone else it named,
-  // keeps its `lastError` as it is.
+  // Every `activity` row is marked `stoppedByErasure`, whatever its status, so
+  // a replay or a manual retry refuses it rather than send an event about
+  // nobody (t-793, t-809). An `exhausted` row is the DLQ's population; a
+  // `delivered` one can still be retried by hand. Only the rows still waiting
+  // to send also change status.
   const markNow = Prisma.sql`(r.activity AND NOT d."stoppedByErasure")`;
+  // The "subject erased" wording, for people reading `lastError`, is added
+  // once: decided on the wording itself rather than on the column, so a row
+  // already stopped for another reason (step 5's "recipient erased") still
+  // says its content was erased too.
+  const wordNow = Prisma.sql`(r.activity
+    AND d."lastError" IS DISTINCT FROM ${notRetried(null, SUBJECT_ERASED)}
+    AND right(coalesce(d."lastError", ''), ${notRetriedSuffix(SUBJECT_ERASED).length}) <> ${notRetriedSuffix(SUBJECT_ERASED)})`;
   return Prisma.sql`
     WITH one_each AS (${source}),
     redacted AS (${redactedPayloadSql(userId)})
@@ -464,11 +470,11 @@ function redactUpdate(table: DeliveryTable, userId: string, source: Prisma.Sql):
        SET payload = r.payload,
            status = CASE WHEN ${stopNow} THEN 'exhausted' ELSE d.status END,
            "nextRetryAt" = CASE WHEN ${stopNow} THEN NULL ELSE d."nextRetryAt" END,
-           "lastError" = CASE WHEN ${markNow} THEN ${STOPPED_LAST_ERROR} ELSE d."lastError" END,
+           "lastError" = CASE WHEN ${wordNow} THEN ${STOPPED_LAST_ERROR} ELSE d."lastError" END,
            "stoppedByErasure" = d."stoppedByErasure" OR r.activity
       FROM redacted r
      WHERE d.id = r.id
-       AND (r.payload IS DISTINCT FROM d.payload OR ${markNow} OR ${stopNow})
+       AND (r.payload IS DISTINCT FROM d.payload OR ${markNow} OR ${wordNow} OR ${stopNow})
   `;
 }
 
@@ -541,12 +547,14 @@ const PRE_PASS_CHUNK = 5_000;
  * redaction is idempotent, and a retried erasure completes it.
  *
  * Matches once, reading only ids and bases, then rewrites each chunk from the
- * row as it is at that moment.
+ * row as it is at that moment. `onCommitted` hears each chunk's count as it
+ * commits, so a caller still knows what was written when a later chunk throws.
  */
 export async function preRedactSubjectFromDeliveries(
   client: RawClient,
   table: DeliveryTable,
-  userId: string
+  userId: string,
+  onCommitted: (changed: number) => void = () => undefined
 ): Promise<number> {
   const matched = await client.$queryRaw<Array<{ id: string; activity: boolean }>>`
     SELECT DISTINCT ON (id) id, activity
@@ -563,7 +571,9 @@ export async function preRedactSubjectFromDeliveries(
              AS w(id, activity)
         JOIN ${t} d ON d.id = w.id
        ${LOCKED_LATEST}`;
-    changed += await client.$executeRaw(redactUpdate(table, userId, source));
+    const written = await client.$executeRaw(redactUpdate(table, userId, source));
+    changed += written;
+    onCommitted(written);
   }
   return changed;
 }
