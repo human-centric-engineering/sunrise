@@ -13,6 +13,7 @@
 
 import { withAdminAuth } from '@/lib/auth/guards';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
+import { withOutboundDispatcher } from '@/lib/security/safe-dispatcher';
 import { prisma } from '@/lib/db/client';
 import { BRAND } from '@/lib/brand';
 import { successResponse } from '@/lib/api/responses';
@@ -158,29 +159,34 @@ export const POST = withAdminAuth<{ id: string }>(
     const timeout = setTimeout(() => controller.abort(), 5000);
 
     try {
-      const res = await fetch(webhook.url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Webhook-Signature': signature,
-          'X-Webhook-Event': 'ping',
-        },
-        body: payload,
-        signal: controller.signal,
-        // Refuse redirects, matching `webhooks/dispatcher.ts` on the SAME value
-        // (#635). `webhook.url` is validated at create, at update when the patch
-        // carries one, when a patch ACTIVATES the subscription, and on backup
-        // import — but never here, and never per dispatch. A redirect TARGET is a
-        // second address none of those ever saw, so it is unvalidated — and
-        // `X-Webhook-Signature` is a CUSTOM header name, which the fetch spec
-        // does not strip cross-origin the way it strips `Authorization`. The HMAC
-        // would travel.
-        //
-        // The divergence also made this button lie: following a redirect reports
-        // the final hop's status as the endpoint's, so an endpoint that moved
-        // read as healthy here while production delivery refused it.
-        redirect: 'error',
-      });
+      // Pinned to a checked address when acting for a customer org (§111
+      // t-811): the guard above reads the URL's text, not where it resolves.
+      const res = await fetch(
+        webhook.url,
+        withOutboundDispatcher({
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Webhook-Signature': signature,
+            'X-Webhook-Event': 'ping',
+          },
+          body: payload,
+          signal: controller.signal,
+          // Refuse redirects, matching `webhooks/dispatcher.ts` on the SAME value
+          // (#635). `webhook.url` is validated at create, at update when the patch
+          // carries one, when a patch ACTIVATES the subscription, and on backup
+          // import — but never here, and never per dispatch. A redirect TARGET is a
+          // second address none of those ever saw, so it is unvalidated — and
+          // `X-Webhook-Signature` is a CUSTOM header name, which the fetch spec
+          // does not strip cross-origin the way it strips `Authorization`. The HMAC
+          // would travel.
+          //
+          // The divergence also made this button lie: following a redirect reports
+          // the final hop's status as the endpoint's, so an endpoint that moved
+          // read as healthy here while production delivery refused it.
+          redirect: 'error',
+        })
+      );
 
       statusCode = res.status;
     } catch (err) {

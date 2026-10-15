@@ -36,6 +36,12 @@
  *     the same string and never resolves anything, so against a hostname
  *     pointing at a private address a second identical check adds nothing.
  *     (An earlier version of this comment claimed otherwise — see #534.)
+ *
+ *     **Closed where a customer chooses the URL** (§111 t-811): a fetch made
+ *     for a customer org at `multi` connects through
+ *     `lib/security/safe-dispatcher.ts`, which applies {@link checkSafeAddress}
+ *     to what the host resolved to, at connect time. Everywhere else the
+ *     URL's author is the operator, and the accepted risk stands.
  *   - **Validation is per-URL, not per-hop.** A caller that follows redirects
  *     presents the guard with only the first target; every subsequent `Location`
  *     is unchecked. Callers must either refuse redirects (`redirect: 'error'`)
@@ -208,8 +214,29 @@ export function checkSafeProviderUrl(
   // a single canonical form.
   // Unwrap IPv4-in-IPv6 BEFORE any comparison, so a mapped literal is subject
   // to the identical denylist and range checks as its dotted-quad form (#534).
-  const host = unwrapIpv4InIpv6(stripIpv6Brackets(parsed.hostname.toLowerCase()));
+  // A trailing dot names the same host (`metadata.google.internal.`), so it is
+  // dropped before the denylist is consulted, or the dotted form walks past it.
+  const host = unwrapIpv4InIpv6(
+    stripIpv6Brackets(parsed.hostname.toLowerCase()).replace(/\.+$/, '')
+  );
+  return checkSafeHost(host, options);
+}
 
+/**
+ * Is a resolved address a safe outbound target? The same rules as
+ * {@link checkSafeProviderUrl} applies to an IP literal in a URL, applied to
+ * what a hostname actually resolved to — which is the check the URL form
+ * cannot make (see the module docblock). Used by
+ * `lib/security/safe-dispatcher.ts` at connect time.
+ */
+export function checkSafeAddress(
+  address: string,
+  options: SafeUrlCheckOptions = {}
+): SafeUrlCheckResult {
+  return checkSafeHost(unwrapIpv4InIpv6(stripIpv6Brackets(address.toLowerCase())), options);
+}
+
+function checkSafeHost(host: string, options: SafeUrlCheckOptions): SafeUrlCheckResult {
   if (BLOCKED_HOSTNAMES.has(host)) {
     return {
       ok: false,

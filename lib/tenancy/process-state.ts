@@ -747,6 +747,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'A monotonic counter for correlating Redis calls in the logs.',
   },
   {
+    file: 'lib/security/safe-dispatcher.ts',
+    holders: ['defaultDispatcher'],
+    posture: 'no-tenant-data',
+    why: 'One undici Agent for the outbound fetches a customer org chooses; it holds sockets keyed by origin and no row of any org, and every new connection is checked against what its host resolved to.',
+  },
+  {
     file: 'lib/storage/client.ts',
     holders: ['storageClient', 'unboundClient', 'initWarningLogged'],
     posture: 'no-tenant-data',

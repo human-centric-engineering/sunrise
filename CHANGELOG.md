@@ -555,6 +555,24 @@ release process.
 
 ### Security
 
+- **A URL a customer org chooses can no longer reach the platform's own
+  network** (§111 t-811). With the knowledge URL import and webhook
+  subscriptions open to org admins, `checkSafeProviderUrl` was not enough:
+  it reads the URL's text, so a hostname resolving inside the network
+  (`db`, `169.254.169.254.nip.io`, an attacker's A record) passed, and the
+  imported page could be read back. At `multi`, a fetch made for a
+  non-install org (knowledge URL import, webhook delivery, webhook test) now
+  connects through `withOutboundDispatcher()` (new
+  `lib/security/safe-dispatcher.ts`). It refuses the connection if the host
+  resolved to any loopback, link-local, private, CGNAT or unique-local
+  address, and connects to the address it checked, so DNS rebinding and
+  redirect hops are covered too. New `checkSafeAddress()` in
+  `lib/security/safe-url.ts` applies the URL rules to a resolved address.
+  `checkSafeProviderUrl` now drops a trailing dot before its denylist
+  (`metadata.google.internal.` was let through). The install org, a platform
+  scope and `single` installs connect as before. Adds `undici` (7.x, the
+  major Node 24's `fetch` runs on) as a direct dependency.
+
 - **A customer org's configs can no longer read the platform's env vars**
   (§111 t-811). Opening the agent, workflow and chat routes to org admins let
   them author the configs that name env vars: `${env:NAME}` templates in

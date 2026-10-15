@@ -394,6 +394,8 @@ Private / metadata ranges stay blocked even with `allowLoopback: true` — local
 
 **Limitation — by design:** no DNS resolution. Defending against DNS rebinding would require pinning the resolved IP through the subsequent fetch, which the OpenAI / Anthropic SDKs don't expose. The build-time re-check narrows the rebinding window but does not close it.
 
+**Where a customer chooses the URL, the resolved address is checked too (§111 t-811).** At `multi` an org OWNER/ADMIN sets the URL for a knowledge URL import, a webhook subscription and its test, and the operator's network is not theirs to reach. A fetch made for a customer org connects through `withOutboundDispatcher()` (`lib/security/safe-dispatcher.ts`). That is an undici `Agent` whose `lookup` resolves the host, refuses if any address it resolved to is loopback, link-local, private, CGNAT or unique-local (`checkSafeAddress()`), and connects to the address it checked. Because the check runs at connect time, DNS rebinding and redirect hops are covered as well. The install org, a platform scope and `single` installs connect as before. A trailing dot no longer slips a denylisted name past the URL check (`metadata.google.internal.`).
+
 ## Input Validation
 
 **Implementation**: Zod schemas in `lib/validations/`

@@ -111,6 +111,7 @@ import * as providers from '@/app/api/v1/admin/orchestration/providers/route';
 import * as tags from '@/app/api/v1/admin/orchestration/knowledge/tags/route';
 import { POST as testConnection } from '@/app/api/v1/admin/orchestration/providers/[id]/test/route';
 import { POST as testModel } from '@/app/api/v1/admin/orchestration/providers/[id]/test-model/route';
+import { POST as testWebhook } from '@/app/api/v1/admin/orchestration/webhooks/[id]/test/route';
 
 const ORG_B = 'cmorg0000000000000000orgb';
 const PROVIDER_ID = 'cmjbv4i3x00003wsloputgwul';
@@ -285,5 +286,29 @@ describe('an ADMIN of a customer org, at multi: testing a provider from the agen
     expect(await res.json()).toMatchObject({ success: true, data: { ok: true } });
     expect(unapprovedProviders).not.toHaveBeenCalled();
     expect(ranIn).toEqual([INSTALL_ORG_ID]);
+  });
+});
+
+describe('an ADMIN of a customer org, at multi: testing a webhook (§111 t-811 security review)', () => {
+  it('sends the ping through the safe dispatcher, which checks where the host resolves', async () => {
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue({
+      id: PROVIDER_ID,
+      channel: 'webhook',
+      url: 'https://hooks.example.com/in',
+      secret: 'test-secret-key-1234567890',
+      emailAddress: null,
+    } as never);
+    const fetchSpy = vi.fn().mockResolvedValue(new Response('ok', { status: 200 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      const res = await testWebhook(post(`/webhooks/${PROVIDER_ID}/test`, {}), params);
+
+      expect(res.status).toBe(200);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const init = fetchSpy.mock.calls[0]?.[1] as Record<string, unknown>;
+      expect(init.dispatcher).toBeDefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
