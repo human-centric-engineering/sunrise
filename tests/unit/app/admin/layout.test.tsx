@@ -292,6 +292,8 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
 
   it.each([
     ['a page not on the roster', '/admin/users'],
+    ['Organisations, which stays the platform’s (t-813)', '/admin/orgs'],
+    ['an organisation’s detail page', '/admin/orgs/cmorg00000000000customer'],
     ['a page below an org-tier page, which a pattern does not cover', `${ORG_PAGE}/new`],
     ['no pathname header at all', null],
   ])('refuses the same org OWNER %s', async (_label, path) => {

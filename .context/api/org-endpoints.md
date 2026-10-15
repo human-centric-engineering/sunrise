@@ -30,6 +30,7 @@ the per-admin export sub-cap noted below.
 | `GET /api/v1/orgs/[id]`                     | `withAuth`      | Any member of that org (keyed on the caller's own membership).                                                                                         |
 | `GET/POST /api/v1/orgs/[id]/members`        | `withAuth`      | The org's OWNER/ADMIN **while acting in it**, or a platform admin — the policy's org arm. Browser session only (`GET` included: the roster is people). |
 | `PATCH/DELETE …/members/[userId]`           | `withAuth`      | As above. Granting `OWNER`, or changing / removing an `OWNER`, needs an OWNER (or platform admin).                                                     |
+| `POST /api/v1/orgs/[id]/invitations`        | `withAuth`      | As above. Inviting as `OWNER` needs an OWNER (or platform admin). Not the install org. Per-IP invite sub-cap.                                          |
 | `GET/POST /api/v1/admin/orgs`               | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET/PATCH/DELETE /api/v1/admin/orgs/[id]`  | `withAdminAuth` | Platform admins.                                                                                                                                       |
 | `GET /api/v1/admin/orgs/[id]/export`        | `withAdminAuth` | Platform admins; per-admin sub-cap.                                                                                                                    |
@@ -213,14 +214,49 @@ POST /api/v1/orgs/[id]/members
 
 Adding by id enrols the user without asking them — it mirrors the platform
 admin naming an owner at creation, and the org's administrators already see
-the roster. The consenting path is an invitation (`POST /api/v1/users/invite`
-with `orgId`), which the invitee accepts. The `404` for an unknown id confirms
+the roster. The consenting path is an invitation, which the invitee accepts:
+`POST /api/v1/orgs/[id]/invitations` below, or the platform's
+`POST /api/v1/users/invite` with `orgId`. The `404` for an unknown id confirms
 only that a cuid — unguessable — does not name a user.
 
 **Response** (201 Created): the membership row.
 
 **Error Responses**: `400` with code `INSTALL_ORG_MEMBERSHIP` (a role on the
 install org) · `403 OWNER_STANDING` · `404 USER_NOT_FOUND` · `409 ALREADY_MEMBER`.
+
+### Invite someone into the org
+
+```
+POST /api/v1/orgs/[id]/invitations
+POST /api/v1/orgs/[id]/invitations?resend=true
+```
+
+The org's own invitation (§111 t-813), behind the Members page. Same admission
+as the members routes. The invitee joins this org on acceptance, as a platform
+`USER`.
+
+**Request Body** (`inviteOrgMemberSchema`):
+
+```json
+{ "name": "Ada", "email": "ada@example.com", "orgRole": "ADMIN" }
+```
+
+- `orgRole`: optional, default `MEMBER` on acceptance. `OWNER` needs OWNER
+  standing.
+- No platform `role` and no `orgId`. A `role` key is dropped.
+
+**Response** (201 Created): `{ message, invitation: { email, name, orgId,
+orgRole, invitedAt, expiresAt, link }, emailStatus }`, the same shape as the
+platform route without `role`. If an invitation into this org is already
+pending, the answer is `200` with `emailStatus: "pending"` and no link. Send
+`?resend=true` to issue a new token.
+
+**Error Responses**: `400 INSTALL_ORG_MEMBERSHIP` (invite into the install org
+from Users) · `400 ORG_NOT_ACTIVE` (suspended) · `403 OWNER_STANDING` ·
+`409 EMAIL_TAKEN` (the email has an account; a platform admin adds it by id) ·
+`409 CONFLICT` (an invitation for this email is pending into another org, or
+carries a platform role; it is left untouched and not named) · `429` (invite
+sub-cap).
 
 ### Change a member's role
 

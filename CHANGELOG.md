@@ -64,6 +64,19 @@ release process.
   registry lists it as a non-config scalar, so the agent form, agent export
   and backup bundles, and version snapshots leave it out. The org data export,
   which takes whole rows, includes it.
+- **An org's OWNER/ADMIN can invite people into their org** (§111 t-813).
+  New `POST /api/v1/orgs/[id]/invitations`, with the same admission as the
+  members routes. It writes an invitation into the URL's org as a platform
+  `USER`, and has no platform `role` or `orgId` in its body. New
+  `checkInvitationInto()` in `lib/tenancy/lifecycle.ts` holds the rules: an
+  `OWNER` invitation needs owner standing, and the install org and a suspended
+  org are refused. A pending invitation into another org is refused, not
+  re-targeted. `OrgLifecycleErrorCode` gains `ORG_NOT_ACTIVE`. A new org-tier
+  **Members** page (`/admin/members`, nav shown at `multi` only) lists, invites,
+  re-roles and removes the entered org's members. At `multi` the admin header
+  names the org being acted in. `POST /api/v1/users/invite` is unchanged and
+  stays the platform's. **Forks:** a `switch` over `OrgLifecycleErrorCode`
+  meets the new code. See [Org endpoints](./.context/api/org-endpoints.md#invite-someone-into-the-org).
 - **Admin tiers: a surface can declare it is the org's** (§111 t-810). New
   `tier` option on `withAdminAuth()` (`{ tier: 'org' }`), passed to the policy
   as `scope.tier`. New `lib/auth/admin-tier.ts`: `AdminTier`, the page roster

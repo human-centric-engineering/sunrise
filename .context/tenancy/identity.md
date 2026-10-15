@@ -27,7 +27,8 @@ anti-pattern below.
 | The role a new user gets          | `initialMembershipFor()` / `membershipForNewUser()` — same module |
 | The org a new session starts in   | `activeOrgForSession()` — same module                             |
 | Change the org a session acts in  | `POST /api/v1/orgs/switch` — `app/api/v1/orgs/switch/route.ts`    |
-| Invite someone into an org        | `POST /api/v1/users/invite` with `orgId` (+ `orgRole`)            |
+| Invite someone into an org        | `POST /api/v1/users/invite` with `orgId` (+ `orgRole`) — platform |
+| …as that org's OWNER/ADMIN        | `POST /api/v1/orgs/[id]/invitations` — `checkInvitationInto()`    |
 | Create / suspend / erase an org   | `/api/v1/admin/orgs` — `lib/tenancy/lifecycle.ts`, `erase-org.ts` |
 | Manage an org's members           | `/api/v1/orgs/[id]/members` — `lib/tenancy/lifecycle.ts`          |
 | Give an org its data              | `exportOrgData()` — `lib/privacy/export-org.ts`                   |
@@ -255,10 +256,24 @@ resolver). Under Sunrise's default policy that answers exactly what
 `withAdminAuth` already answered — platform admins only — so nothing widens
 today. The policy's org arm says yes to an org's own OWNER/ADMIN only for a
 resource that carries that org ([authorization.md](../auth/authorization.md#the-org-input));
-this route asks about the org itself, so the arm applies once `withAdminAuth`
-admits an org admin — which, under the control-plane split the lifecycle
-applies, it does not: inviting is a platform act today, and an org admin adds
-an existing user through `POST /api/v1/orgs/[id]/members` instead.
+this route asks about the org itself, so the arm would apply if `withAdminAuth`
+admitted an org admin. It does not, and this route stays the platform's: it
+sets a platform role and can name any org.
+
+**An org's own OWNER/ADMIN invites through `POST /api/v1/orgs/[id]/invitations`**
+(§111 t-813), the route behind the Members page. It has the members routes'
+admission (the org `resource`), takes `{ name, email, orgRole? }`, and writes
+an invitation into the URL's org as a platform `USER`. It has no platform
+role and no `orgId` in its body. `checkInvitationInto()` holds the rules: an
+`OWNER` invitation needs owner standing, the install org is refused (invite
+there from Users, where the platform role is set), and a suspended org is
+refused. Two refusals protect invitations the caller does not own. A pending
+invitation for the same email into another org, or one carrying a platform
+role, gets a `409` that names neither and is left untouched; re-sending it
+from here would re-target it. An email that already has an account also gets
+a `409`. That tells an org admin an account exists, which is the cost of
+telling them why the invitation cannot go: adding an existing account takes
+its user id, which only a platform admin can look up.
 The named org must exist and be `ACTIVE` _when the invitation
 is written_; a missing and a suspended org get the same 400, so the endpoint
 leaks nothing about orgs the caller may not administer. Acceptance does not
@@ -374,6 +389,11 @@ while they are acting in that org — never by a role check in a route.
   Found by t-672's security review: without it the last-OWNER guard protected
   the count of owners while a delegate could crown themself and remove their
   appointer in two requests.
+- **An invitation is held to the same rules before it is sent**
+  (`checkInvitationInto`, t-813): an `OWNER` invitation needs owner standing,
+  and the install org and a suspended org (`ORG_NOT_ACTIVE`) take none from
+  the org route. Acceptance cannot check the inviter's standing, so the check
+  is made when the invitation is written.
 - **The install org's memberships follow the platform role**
   (`INSTALL_ORG_MEMBERSHIP`; the ruling above), so the members API refuses a
   role there, and refuses a removal there.

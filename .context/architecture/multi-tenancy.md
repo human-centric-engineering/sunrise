@@ -557,6 +557,7 @@ fork's own surface, declare it the same way.
 | `orchestration/event-subscriptions` (+ `dlq`)       | `AiWebhookSubscription`, `AiEventHook`                |
 | `orchestration/mcp/keys`                            | `McpApiKey`                                           |
 | `orchestration/approvals`                           | Approvals on executions                               |
+| `members` (§111 t-813, shown at `multi` only)       | `OrgMembership` of the entered org, and invitations   |
 
 ### Mixed — split per viewer, not assigned
 
