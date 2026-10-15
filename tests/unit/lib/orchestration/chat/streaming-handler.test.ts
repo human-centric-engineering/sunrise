@@ -4952,6 +4952,35 @@ describe('rolling conversation summarization', () => {
     }
   );
 
+  it('summarises a truncated load even when error markers shrink it below the window (#655)', async () => {
+    mockSummariser();
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxHistoryMessages: 300 })
+    );
+    const rows = makeHistoryMessages(200);
+    for (let i = 100; i < 115; i++) {
+      (rows[i] as { metadata: unknown }).metadata = { error: true };
+    }
+
+    const turn = await runTurn('conv-high-cap-markers', rows, NO_SUMMARY);
+
+    expect(turn.calls).toBe(1);
+  });
+
+  it.each([
+    [190, 0],
+    [191, 1],
+  ])('cap 250 with %i untruncated rows: %i summariser calls (#655 boundary)', async (n, calls) => {
+    mockSummariser();
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxHistoryMessages: 250 })
+    );
+
+    const turn = await runTurn(`conv-boundary-${n}`, makeHistoryMessages(n), NO_SUMMARY);
+
+    expect(turn.calls).toBe(calls);
+  });
+
   it('does not summarise a high-cap conversation that still fits the load window (#655)', async () => {
     mockSummariser();
     (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(

@@ -702,7 +702,10 @@ export class StreamingChatHandler {
       );
       conversationId = conversation.id;
       setSpanAttributes(chatSpan, { [SUNRISE_CONVERSATION_ID]: conversation.id });
-      const history = await this.loadHistory(conversation.id, request.userId);
+      const { rows: history, truncated: historyTruncated } = await this.loadHistory(
+        conversation.id,
+        request.userId
+      );
 
       // Enforce message-per-conversation cap using actual DB count
       // (loadHistory returns at most 200 rows, so history.length can't
@@ -935,7 +938,15 @@ export class StreamingChatHandler {
         effectiveMessageCap,
         HISTORY_LOAD_LIMIT - SUMMARY_LOOKAHEAD_MESSAGES
       );
-      const requiredDrop = Math.max(0, historyRows.length - summaryWindow);
+      // Error markers are dropped AFTER the load limit applies, so a truncated
+      // load can come back under the window while older rows are still cut off.
+      // Whenever the load was truncated, at least the oldest row must be
+      // summarised away.
+      const requiredDrop = Math.max(
+        0,
+        historyRows.length -
+          (historyTruncated ? Math.min(summaryWindow, historyRows.length - 1) : summaryWindow)
+      );
 
       if (requiredDrop > 0) {
         // A pin with no text behind it covers nothing, whatever it says — and
@@ -2942,7 +2953,10 @@ export class StreamingChatHandler {
    * (`loadOrCreateConversation` matched it): naming it here is what confines
    * the read for the owner layer (`lib/db/owner-extension.ts`).
    */
-  private async loadHistory(conversationId: string, userId: string): Promise<AiMessage[]> {
+  private async loadHistory(
+    conversationId: string,
+    userId: string
+  ): Promise<{ rows: AiMessage[]; truncated: boolean }> {
     // Fetch the 200 most recent messages (desc) then reverse to
     // chronological order. Previous `asc + take: 200` loaded the
     // oldest 200 — wrong for conversations with >200 messages.
@@ -2961,12 +2975,15 @@ export class StreamingChatHandler {
     // the model burns context and invites imitation, for the rest of the
     // conversation. Excluded in JS rather than the `where` because the flag
     // lives in a JSON column.
-    return messages
-      .filter((m) => {
-        const metadata = (m.metadata ?? null) as MessageMetadata | null;
-        return metadata?.error !== true;
-      })
-      .reverse();
+    return {
+      truncated: messages.length >= HISTORY_LOAD_LIMIT,
+      rows: messages
+        .filter((m) => {
+          const metadata = (m.metadata ?? null) as MessageMetadata | null;
+          return metadata?.error !== true;
+        })
+        .reverse(),
+    };
   }
 
   /**
