@@ -32,17 +32,21 @@
  * actually writes is what gets checked, however the seed is written.
  *
  * ---------------------------------------------------------------------------
- * FORK NOTE — your capability seeds are run here too
+ * FORK NOTE — your seeds are run here too
  * ---------------------------------------------------------------------------
- * Every seed under `prisma/seeds/` is run, yours included, and each
- * capability it writes needs a pair. Declare yours in
+ * Every seed under `prisma/seeds/` is run, yours included, against a STRICT
+ * mock client, and each capability it writes needs a pair. Declare yours in
  * `lib/app/capability-seed-pairs.ts` (`APP_CAPABILITY_PAIRS`, spread into
  * `PAIRS` below) — do not add rows to `PAIRS`, which is Sunrise's and a merge
- * conflict on every upgrade. A seed must write through the `prisma` it is
- * handed (as the runner requires anyway): the app's own client is stubbed to
- * throw here, and a seed that names `aiCapability` but writes nothing through
- * the mock fails "captures the capability seeds through the client they are
- * handed".
+ * conflict on every upgrade. What fails here, and why:
+ *
+ *  - A seed that throws under the mock — including by calling a client method
+ *    or `$`-call the mock does not model, or by writing a capability through
+ *    another model's nested write.
+ *  - A seed that uses the app's own client (`@/lib/db/client`) at all, even if
+ *    it catches the error. Only `GLOBAL_CLIENT_SEEDS` may, each with a reason.
+ *  - A seed whose source writes `aiCapability` by name but was seen writing
+ *    none: its writes sit behind a path the mock did not drive.
  *
  * @see .context/database/seeding.md — the seed ownership rule
  * @see lib/app/capability-seed-pairs.ts — where a fork's pairs go
@@ -53,15 +57,20 @@ import { join } from 'node:path';
 
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 
-// The app's own client, for a seed that bypasses the one it is handed: any use
-// throws, so such a seed fails here instead of reaching a configured database.
+/**
+ * The app's own client, for a seed that bypasses the one it is handed. Any use
+ * throws, and is RECORDED first — a seed that catches its own errors (021 does,
+ * per org) would otherwise swallow the throw and pass.
+ */
+const globalClient = vi.hoisted(() => ({ current: '', uses: [] as string[] }));
 vi.mock('@/lib/db/client', () => {
   const refuse = new Proxy(
     {},
     {
       get: (_target, prop) => {
         if (prop === 'then') return undefined;
-        throw new Error(`a capability seed used the global Prisma client (.${String(prop)})`);
+        globalClient.uses.push(globalClient.current);
+        throw new Error(`used the global Prisma client (.${String(prop)})`);
       },
     }
   );
@@ -97,7 +106,9 @@ const PAIRS: readonly AppCapabilityPair[] = [
   { slug: 'upload_to_storage', instance: new UploadToStorageCapability() },
   { slug: 'send_message_to_channel', instance: new SendMessageToChannelCapability() },
   // 019 seeds each of these from its class — slug, handler and definition —
-  // so a hand-written row here could only restate the seed's own list.
+  // so a hand-written row here could only restate the seed's own list. Which
+  // slugs 019 seeds is pinned independently, by `CLEANUP_SLUGS` in its own
+  // unit test: dropping an entry there fails that test, not this one.
   ...CLEANUP_CAPABILITIES.map(({ capability }) => ({
     slug: capability.slug,
     instance: capability,
@@ -107,6 +118,19 @@ const PAIRS: readonly AppCapabilityPair[] = [
 
 const SEED_DIR = join(process.cwd(), 'prisma', 'seeds');
 
+/**
+ * Seeds allowed to use the app's own client, each with its reason. Everything
+ * else that touches it fails — whatever a seed does through that client is
+ * invisible here, capability writes included.
+ */
+const GLOBAL_CLIENT_SEEDS: ReadonlyMap<string, string> = new Map([
+  [
+    '007-knowledge-chunks.ts',
+    'seeds the patterns knowledge through seedChunks(), which writes with the app client; ' +
+      'it writes no capability',
+  ],
+]);
+
 /** One capability write a seed performed. */
 interface Captured {
   file: string;
@@ -114,29 +138,76 @@ interface Captured {
   functionDefinition: unknown;
 }
 
+const READS = new Set([
+  'findUnique',
+  'findFirst',
+  'findMany',
+  'findUniqueOrThrow',
+  'findFirstOrThrow',
+  'count',
+]);
+const WRITES = new Set([
+  'create',
+  'createMany',
+  'createManyAndReturn',
+  'update',
+  'updateMany',
+  'updateManyAndReturn',
+  'upsert',
+  'delete',
+  'deleteMany',
+]);
+/** A seed that writes `aiCapability` this way in its source must be seen writing one. */
+const NAMED_CAPABILITY_WRITE =
+  /\baiCapability\s*\.\s*(?:create|createMany|createManyAndReturn|update|updateMany|updateManyAndReturn|upsert)\b/;
+
+/** Fails on a capability created or changed through another model's nested write. */
+function refuseNestedCapabilityWrite(value: unknown, path: string): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => refuseNestedCapabilityWrite(item, `${path}[${i}]`));
+    return;
+  }
+  if (!isRecord(value)) return;
+  for (const [key, child] of Object.entries(value)) {
+    if (
+      // `capability` is the relation to `AiCapability` on its join models
+      // (`AiAgentCapability`, the MCP pivot); `capabilities` on `AiAgent` is
+      // the join table itself, and creating a binding there is not a capability write.
+      key === 'capability' &&
+      isRecord(child) &&
+      ['create', 'createMany', 'connectOrCreate', 'upsert', 'update', 'updateMany'].some(
+        (op) => op in child
+      )
+    ) {
+      throw new Error(`writes a capability through a nested write at ${path}.${key}, not captured`);
+    }
+    refuseNestedCapabilityWrite(child, `${path}.${key}`);
+  }
+}
+
 /**
- * A client that records `aiCapability` writes and answers everything else
- * with an inert value: any single read or write returns a row with an id (so a
- * seed that looks up its owner proceeds), `[]` for lists, `0` for counts, and
- * `$transaction(fn)` runs `fn` against the same client.
+ * A STRICT client: only the reads and writes above, and `$transaction`, are
+ * modelled — anything else throws, so a seed doing something this cannot see
+ * fails rather than passing over it.
  *
- * A capability lookup answers as `capabilities` says — `'absent'` so a
- * create-if-missing branch runs, `'present'` so an update-if-exists one does.
- * Each seed runs once each way; a write either branch makes is captured.
+ * Every `aiCapability` write is recorded, bulk ones unpacked. Capability
+ * lookups answer as `capabilities` says — `'absent'` (nothing exists, so a
+ * create-if-missing branch runs) or `'present'` (one row per lookup, so an
+ * update-if-exists or update-each branch does). Each seed runs once each way.
+ * Other models: a single read returns a row with an id (so a seed that looks
+ * up its owner proceeds), a list returns none.
  */
-function recordingClient(
+function strictClient(
   file: string,
   captured: Captured[],
-  touched: Set<string>,
   capabilities: 'absent' | 'present'
 ): unknown {
-  const record = (method: string, args: unknown): void => {
+  const record = (args: unknown): void => {
     if (!isRecord(args)) return;
     const where = isRecord(args.where) ? args.where : {};
-    const writes: unknown[] =
-      method === 'createMany' && Array.isArray(args.data)
-        ? args.data
-        : [args.create, args.update, args.data];
+    const writes: unknown[] = Array.isArray(args.data)
+      ? args.data
+      : [args.create, args.update, args.data];
     for (const data of writes) {
       if (!isRecord(data) || !('functionDefinition' in data)) continue;
       captured.push({
@@ -152,23 +223,31 @@ function recordingClient(
       {
         get: (_target, method) => {
           if (typeof method !== 'string') return undefined;
+          if (!READS.has(method) && !WRITES.has(method)) {
+            throw new Error(`called ${name}.${method}, which the parity mock does not model`);
+          }
           return (args: unknown) => {
-            if (name === 'aiCapability') {
-              touched.add(file);
-              record(method, args);
-              // (`…OrThrow` asserts the row exists, so it always gets one.)
-              if (method === 'findMany') return Promise.resolve([]);
-              if (/^find(Unique|First)$/.test(method) && capabilities === 'absent') {
-                return Promise.resolve(null);
-              }
-              if (/^find/.test(method)) {
-                const where = isRecord(args) && isRecord(args.where) ? args.where : {};
-                return Promise.resolve({ id: 'parity-mock-id', slug: where.slug });
-              }
+            const where = isRecord(args) && isRecord(args.where) ? args.where : {};
+            const row = {
+              id: 'parity-mock-id',
+              slug: typeof where.slug === 'string' ? where.slug : undefined,
+            };
+            if (WRITES.has(method)) {
+              if (name === 'aiCapability') record(args);
+              else refuseNestedCapabilityWrite(args, `${name}.${method}`);
+              if (/Many$/.test(method)) return Promise.resolve({ count: 1 });
+              if (/ManyAndReturn$/.test(method)) return Promise.resolve([row]);
+              return Promise.resolve(row);
             }
-            if (method === 'findMany' || method === 'groupBy') return Promise.resolve([]);
+            if (name === 'aiCapability' && !/OrThrow$/.test(method)) {
+              const present = capabilities === 'present';
+              if (method === 'findMany') return Promise.resolve(present ? [row] : []);
+              if (method === 'count') return Promise.resolve(present ? 1 : 0);
+              return Promise.resolve(present ? row : null);
+            }
+            if (method === 'findMany') return Promise.resolve([]);
             if (method === 'count') return Promise.resolve(0);
-            return Promise.resolve({ id: 'parity-mock-id' });
+            return Promise.resolve(row);
           };
         },
       }
@@ -180,9 +259,15 @@ function recordingClient(
         if (typeof prop !== 'string' || prop === 'then') return undefined;
         if (prop === '$transaction') {
           return (arg: unknown) =>
-            typeof arg === 'function' ? Promise.resolve(arg(client)) : Promise.resolve([]);
+            typeof arg === 'function'
+              ? Promise.resolve(arg(client))
+              : Array.isArray(arg)
+                ? Promise.all(arg)
+                : Promise.reject(new Error('$transaction with neither a function nor an array'));
         }
-        if (prop.startsWith('$')) return () => Promise.resolve([]);
+        if (prop.startsWith('$')) {
+          throw new Error(`called ${prop}, which the parity mock does not model`);
+        }
         return model(prop);
       },
     }
@@ -195,66 +280,61 @@ const isSeedUnit = (value: unknown): value is SeedUnit =>
 
 /** Every capability write the seeds made. */
 const captured: Captured[] = [];
-/** Seeds that called anything on `aiCapability` through the client they were handed. */
-const touched = new Set<string>();
-/** Seeds that threw under the mock, and whether their source names `aiCapability`. */
-const failed: { file: string; error: string; namesCapability: boolean }[] = [];
-/** Seeds whose source names `aiCapability` — they are expected to reach it. */
-const namingCapability: string[] = [];
+/** Seeds that threw under the mock. */
+const failed: { file: string; error: string }[] = [];
+/** Seeds whose source writes `aiCapability` by name — each must be seen writing one. */
+const namingCapabilityWrite: string[] = [];
 
 // 60s: this imports every seed's module graph, and the 10s hook default is not
 // enough on a contended runner.
 beforeAll(async () => {
   // EVERY seed runs, not those that look like capability seeds: one that
-  // writes through an alias or a helper names no `aiCapability` of its own,
-  // and selecting by source text would skip it — the #646 failure again. A
-  // seed that reaches for the app's own client hits the stub above and throws.
+  // writes through an alias or a helper names no `aiCapability` of its own.
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   for (const file of (await discoverSeedFiles(SEED_DIR, SEED_DIR)).sort()) {
-    const namesCapability = readFileSync(join(SEED_DIR, file), 'utf8').includes('aiCapability');
-    if (namesCapability) namingCapability.push(file);
+    globalClient.current = file;
+    if (NAMED_CAPABILITY_WRITE.test(readFileSync(join(SEED_DIR, file), 'utf8'))) {
+      namingCapabilityWrite.push(file);
+    }
     try {
       const mod: unknown = await import(/* @vite-ignore */ join(SEED_DIR, file));
       const unit = isRecord(mod) ? mod.default : undefined;
       if (!isSeedUnit(unit)) throw new Error('does not default-export a SeedUnit');
       for (const capabilities of ['absent', 'present'] as const) {
         await unit.run({
-          prisma: recordingClient(file, captured, touched, capabilities),
+          prisma: strictClient(file, captured, capabilities),
           logger,
         } as unknown as SeedContext);
       }
     } catch (err) {
-      failed.push({
-        file,
-        error: err instanceof Error ? err.message : String(err),
-        namesCapability,
-      });
+      failed.push({ file, error: err instanceof Error ? err.message : String(err) });
     }
   }
 }, 60_000);
 
 describe('capabilities — seeded definition matches the class (#545, #646)', () => {
-  it('captures the capability seeds through the client they are handed', () => {
+  it('runs every seed through the client it is handed', () => {
     // Floor first, in distinct capabilities — each upsert records create and
-    // update, so a count of writes would be met by 019 alone. An earlier
-    // version read zero names through a regex bug and passed.
+    // update, so a count of writes would be met by 019 alone.
     expect(new Set(captured.map((c) => c.slug)).size).toBeGreaterThanOrEqual(24);
-    // A seed that throws part-way may not have reached its capability writes.
-    // One that never touched or named `aiCapability` cannot be a capability
-    // seed (`007` throws on the stubbed global client, by design); any other
-    // failure is reported, not taken on trust.
-    expect(failed.filter((f) => f.namesCapability || touched.has(f.file))).toEqual([]);
-    // A seed that names `aiCapability` but touched nothing here either wrote
-    // through another client or only on a path the mock did not take (a loop
-    // over rows it looked up, which read as empty here) — either way, nothing
-    // it writes was checked. One that only reads capabilities is fine.
-    expect(namingCapability.filter((file) => !touched.has(file))).toEqual([]);
+    // A seed the mock could not run, or one that used the app's own client,
+    // may have written capabilities this never saw. Only the allow-listed
+    // seeds may do either, and only by way of that client.
+    const allowed = (file: string, error?: string) =>
+      GLOBAL_CLIENT_SEEDS.has(file) && (error === undefined || error.startsWith('used the global'));
+    expect(failed.filter((f) => !allowed(f.file, f.error))).toEqual([]);
+    expect([...new Set(globalClient.uses)].filter((file) => !allowed(file))).toEqual([]);
+    // A seed that writes `aiCapability` by name but was seen writing none took
+    // a path the mock did not drive (a loop over rows it looked up, which
+    // read as empty) — nothing it writes was checked.
+    const wrote = new Set(captured.map((c) => c.file));
+    expect(namingCapabilityWrite.filter((file) => !wrote.has(file))).toEqual([]);
   });
 
   it('pairs every capability the seeds write, and nothing they do not', () => {
     const written = new Set(captured.map((c) => c.slug));
     const paired = new Set(PAIRS.map((p) => p.slug));
-    expect(new Set(PAIRS.map((p) => p.slug)).size).toBe(PAIRS.length);
+    expect(paired.size).toBe(PAIRS.length);
     expect([...written].filter((slug) => typeof slug !== 'string' || !paired.has(slug))).toEqual(
       []
     );

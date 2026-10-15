@@ -12,7 +12,8 @@
  * ## Why this exists
  *
  * That test runs every seed under `prisma/seeds/` — yours included,
- * since the runner discovers seeds recursively — against a mock Prisma client,
+ * since the runner discovers seeds recursively — against a strict mock Prisma
+ * client (what it refuses is listed in that test's FORK NOTE),
  * captures each capability the seeds write, and requires the written
  * `functionDefinition` to equal the one its class declares (#545). A captured
  * capability with no pair fails it, so every capability you seed needs one.

@@ -23,11 +23,12 @@ release process.
   empty) lists which class goes with which slug, and is spread into
   `capability-class-seed-parity`'s `PAIRS`, so a fork's capability seeds are
   held to their classes without editing a Sunrise test. That test now runs
-  every seed against a recording mock client instead of reading seed source, so it checks every capability a seed writes,
+  every seed against a strict recording mock client instead of reading seed source, so it checks every capability a seed writes,
   however the seed is written. **Forks:** a capability seed that the old
   source reader could not see (a hoisted const, a definition taken from the
-  class) now fails the test until you pair it here, and a seed must write
-  through the `prisma` it is handed for its capabilities to be captured.
+  class) now fails the test until you pair it here. A seed must also run
+  under the mock: one that calls a client method it does not model, uses the
+  app's own client, or writes a capability through a nested write fails it.
 
 - **Admin tiers: a surface can declare it is the org's** (§111 t-810). New
   `tier` option on `withAdminAuth()` (`{ tier: 'org' }`), passed to the policy
