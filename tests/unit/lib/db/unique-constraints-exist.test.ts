@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest';
 import { UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 
 const MIGRATIONS = path.join(process.cwd(), 'prisma/migrations');
+const SCHEMA_DIR = path.join(process.cwd(), 'prisma/schema');
 
 const IDENT = String.raw`(?:"[^"]+"\.)?"([^"]+)"`; // optionally schema-qualified
 const unquote = (c: string) => c.trim().replace(/^"|"$/g, '');
@@ -50,6 +51,14 @@ function liveUniqueIndexes(sql: string): Map<string, LiveIndex> {
     String.raw`^ALTER INDEX (?:IF EXISTS )?${IDENT} RENAME TO "([^"]+)"`,
     'i'
   );
+  const renameColumn = new RegExp(
+    String.raw`^ALTER TABLE (?:ONLY )?${IDENT} RENAME (?:COLUMN )?"([^"]+)" TO "([^"]+)"`,
+    'i'
+  );
+  const renameTable = new RegExp(
+    String.raw`^ALTER TABLE (?:ONLY )?${IDENT} RENAME TO "([^"]+)"`,
+    'i'
+  );
   for (const st of statements) {
     let m: RegExpMatchArray | null;
     if ((m = st.match(createIndex))) {
@@ -58,6 +67,13 @@ function liveUniqueIndexes(sql: string): Map<string, LiveIndex> {
       live.set(m[2], { table: m[1], columns: m[3].split(',').map(unquote) });
     } else if ((m = st.match(dropConstraint))) {
       live.delete(m[2]);
+    } else if ((m = st.match(renameTable))) {
+      for (const index of live.values()) if (index.table === m[1]) index.table = m[2];
+    } else if ((m = st.match(renameColumn))) {
+      for (const index of live.values()) {
+        if (index.table === m[1])
+          index.columns = index.columns.map((c) => (c === m![2] ? m![3] : c));
+      }
     } else if ((m = st.match(renameIndex))) {
       const index = live.get(m[1]);
       live.delete(m[1]);
@@ -95,14 +111,33 @@ describe('liveUniqueIndexes', () => {
       ALTER TABLE "u" DROP CONSTRAINT "d_key";
       DROP TABLE "gone";
       ALTER INDEX "a_key" RENAME TO "a2_key";
+      ALTER TABLE "t" RENAME COLUMN "slug" TO "handle";
+      ALTER TABLE "t" RENAME TO "t2";
+      CREATE UNIQUE INDEX "g_key" ON "h"("q");
+      ALTER TABLE "h" RENAME TO "h2";
+      DROP TABLE "h2";
     `);
     expect([...live.keys()].sort()).toEqual(['a2_key', 'f_key']);
-    expect(live.get('a2_key')).toEqual({ table: 't', columns: ['orgId', 'slug'] });
+    expect(live.get('a2_key')).toEqual({ table: 't2', columns: ['orgId', 'handle'] });
   });
 });
 
+/** Prisma model name → its table, from `@@map` (or the model name). */
+function modelTables(): Map<string, string> {
+  const schema = readdirSync(SCHEMA_DIR)
+    .filter((f) => f.endsWith('.prisma'))
+    .map((f) => readFileSync(path.join(SCHEMA_DIR, f), 'utf8'))
+    .join('\n');
+  const tables = new Map<string, string>();
+  for (const m of schema.matchAll(/^model (\w+) \{([\s\S]*?)^\}/gm)) {
+    tables.set(m[1], m[2].match(/@@map\("([^"]+)"\)/)?.[1] ?? m[1]);
+  }
+  return tables;
+}
+
 describe('UNIQUE_CONSTRAINTS names indexes the migrations create', () => {
   const live = liveUniqueIndexes(migrationsSql());
+  const tables = modelTables();
 
   it('sees the indexes at all (the parser is not silently matching nothing)', () => {
     expect(live.get('user_email_key')).toEqual({ table: 'user', columns: ['email'] });
@@ -111,6 +146,12 @@ describe('UNIQUE_CONSTRAINTS names indexes the migrations create', () => {
   });
 
   it.each(Object.entries(UNIQUE_CONSTRAINTS))('%s', (_key, constraint) => {
-    expect(live.get(constraint.index)?.columns).toEqual([...constraint.fields]);
+    // The model must be the schema's, on the index's table: a columns-only
+    // match compares it with the error's modelName.
+    expect(tables.get(constraint.model)).toBeDefined();
+    expect(live.get(constraint.index)).toEqual({
+      table: tables.get(constraint.model),
+      columns: [...constraint.fields],
+    });
   });
 });

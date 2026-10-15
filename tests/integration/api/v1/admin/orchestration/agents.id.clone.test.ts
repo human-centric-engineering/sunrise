@@ -419,25 +419,41 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       expect(data.error.code).toBe('NOT_FOUND');
     });
 
-    it('returns 400 (unique constraint) when all slug collision attempts are exhausted', async () => {
-      // The route retries up to MAX_SLUG_ATTEMPTS (5) times on P2002. On the
-      // final attempt it re-throws the raw PrismaClientKnownRequestError, which
-      // handleAPIError maps to 400 VALIDATION_ERROR (unique constraint). The ConflictError guard
-      // after the loop is unreachable because the last re-throw exits before it.
+    it('returns 409 after trying every slug suffix when each one collides', async () => {
+      // The route retries up to MAX_SLUG_ATTEMPTS (5) slugs on a slug collision,
+      // then answers its own ConflictError.
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeSourceAgent() as never);
-      const slugCollision = uniqueViolationError({
-        index: 'ai_agent_orgId_slug_key',
-        modelName: 'AiAgent',
-      });
-      vi.mocked(prisma.$transaction).mockRejectedValue(slugCollision);
+      vi.mocked(prisma.$transaction).mockRejectedValue(
+        uniqueViolationError({ index: 'ai_agent_orgId_slug_key', modelName: 'AiAgent' })
+      );
 
       const response = await POST(makePostRequest(), makeParams(AGENT_ID));
 
-      // handleAPIError maps a non-email P2002 → 400 VALIDATION_ERROR, never EMAIL_TAKEN (t-796)
+      expect(response.status).toBe(409);
+      const body = (await response.json()) as { error: { code: string; message: string } };
+      expect(body.error.code).toBe('CONFLICT');
+      expect(body.error.message).toMatch(/Could not generate a unique slug for clone \(tried 5/);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(5);
+    });
+
+    it('does not retry a unique violation a new slug cannot fix (t-796)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeSourceAgent() as never);
+      vi.mocked(prisma.$transaction).mockRejectedValue(
+        uniqueViolationError({
+          index: 'ai_agent_capability_agentId_capabilityId_key',
+          modelName: 'AiAgentCapability',
+        })
+      );
+
+      const response = await POST(makePostRequest(), makeParams(AGENT_ID));
+
+      // The shared handler's answer for a non-email unique violation.
       expect(response.status).toBe(400);
       const body = (await response.json()) as { error: { code: string } };
       expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
 
     it('CRITICAL: returns 500 on plain Error but does NOT leak raw error message', async () => {

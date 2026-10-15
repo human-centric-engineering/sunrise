@@ -85,6 +85,14 @@ describe('uniqueViolation', () => {
     expect(uniqueViolation(err)?.index).toBe('ai_agent_orgId_slug_key');
   });
 
+  it('keeps modelName when the adapter error has a shape it does not know', () => {
+    const err = p2002({
+      modelName: 'AiAgent',
+      driverAdapterError: { cause: { constraint: null } },
+    });
+    expect(uniqueViolation(err)).toEqual({ modelName: 'AiAgent', index: null, fields: null });
+  });
+
   it('is null for anything that is not a P2002', () => {
     const p2025 = new Prisma.PrismaClientKnownRequestError('Not found', {
       code: 'P2025',

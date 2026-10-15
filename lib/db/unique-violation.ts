@@ -82,7 +82,10 @@ const metaSchema = z
           })
           .optional(),
       })
-      .optional(),
+      .optional()
+      // An adapter shape this does not know is dropped, like `target`, rather
+      // than failing the parse and losing `modelName` with it.
+      .catch(undefined),
   })
   .passthrough();
 

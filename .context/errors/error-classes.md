@@ -198,8 +198,11 @@ The `handleAPIError` function automatically translates Prisma error codes:
   }
 }
 
-// On any other unique constraint, 400 (not 409: routes use 409 for
-// "a concurrent change, please retry", and retrying a taken value never works):
+// On any other unique constraint, 400. Routes that catch a slug clash
+// themselves often answer 409 ConflictError instead; a P2002 they do not
+// catch arrives here. Routes that answer 409 for "a concurrent change, please
+// retry" (agent PATCH and import, bulk, instructions revert, backup import)
+// rely on this staying 400 to tell the two apart:
 {
   success: false,
   error: {

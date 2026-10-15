@@ -13,6 +13,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -169,13 +170,10 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
       break; // Success — exit retry loop
     } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === 'P2002' &&
-        attempt < MAX_SLUG_ATTEMPTS - 1
-      ) {
-        continue; // Slug collision — try next suffix
-      }
+      // Only a slug collision is fixed by the next suffix; any other unique
+      // violation fails the same way every time (t-796). Running out of
+      // suffixes falls through to the ConflictError below.
+      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.agentSlug)) continue;
       throw err;
     }
   }

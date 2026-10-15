@@ -236,9 +236,11 @@ export function handleAPIError(error: unknown): Response {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     // Unique constraint violation. Only a duplicate email is EMAIL_TAKEN,
     // which clients render as "this email address is already registered".
-    // Any other collision is a 400 VALIDATION_ERROR: the value is taken, and
-    // retrying will not help. Not 409, which routes here use to mean "a
-    // concurrent change, please retry" (t-796).
+    // Any other collision keeps the 400 it always had, as VALIDATION_ERROR: the
+    // value is taken. Some routes answer 409 for "a concurrent change, please
+    // retry" and send every other unique violation here to tell the two apart
+    // (agent PATCH and import, bulk, instructions revert, backup import), and
+    // the knowledge section editor reads any 409 as an edit conflict (t-796).
     if (error.code === 'P2002') {
       if (isUniqueViolationOn(error, UNIQUE_CONSTRAINTS.userEmail)) {
         return errorResponse('Email already exists', {
