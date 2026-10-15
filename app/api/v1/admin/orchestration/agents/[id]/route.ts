@@ -45,6 +45,7 @@ import {
 import {
   assertAgentSlugNotReserved,
   assertPlatformOwnedFieldsUnchanged,
+  bindingOwnerForPatch,
   platformAgentEditPolicy,
   sameGrantSet,
 } from '@/lib/orchestration/agents/platform-agent-guard';
@@ -215,6 +216,12 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     data.systemInstructions = body.systemInstructions;
     data.systemInstructionsHistory = history;
   }
+
+  // Who decides provider and model from now on (t-798): a change to either
+  // makes them the org's, so the platform never moves them again; the body's
+  // `bindingOwner` hands them back. Not versioned — it is not config.
+  const bindingOwner = bindingOwnerForPatch(current, body);
+  if (bindingOwner !== undefined) data.bindingOwner = bindingOwner;
 
   // Version-triggering fields — snapshot the current config before the update
   // if any of these are changing. Derived from the agent field registry (the

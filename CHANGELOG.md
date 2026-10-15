@@ -18,6 +18,21 @@ release process.
 
 ### Added
 
+- **`AiAgent.bindingOwner` records who decides a platform agent's provider
+  and model** (t-798; migration `20261015120000_ai_agent_binding_owner`). It is
+  `'platform'` while the agent follows the platform's pick, `'org'` once an
+  admin sets either field, or `null` until classified. Agents from before this
+  change are classified on their next reconcile. `PATCH
+  /api/v1/admin/orchestration/agents/:id` sets `'org'` when it changes provider
+  or model, and so does version restore. The PATCH body also accepts
+  `bindingOwner` (`'platform'` hands the binding back, `'org'` takes it), but
+  only on a platform agent whose definition picks its binding. Forks: a route of
+  yours that writes a platform agent's provider or model should call
+  `bindingOwnerAfterWrite` (`lib/orchestration/agents/binding-owner.ts`), or the
+  platform will keep moving a binding your admin chose. The column is not
+  agent config: the field registry lists it as a non-config scalar, so the
+  agent form, agent export and backup bundles, and version snapshots leave it
+  out. The org data export, which takes whole rows, includes it.
 - **A fork classifies its own models for the owner layer** (§115 t-807): the
   new `lib/app/owner-classification.ts` seam (`initAppOwnerClassification()`,
   ships empty) and its primitive `registerAppOwnerClassification()` in
@@ -396,15 +411,15 @@ release process.
   has any provider grant, so the clean-up agent started unpinned and ran on
   the default chat model until a registry change triggered a reconcile; a pin
   to a provider later revoked was refused on every call. While the agent's
-  provider and model are the platform's — empty, or still what it last
-  placed, now recorded in `Org.settings.platformAgentBindings` — the `platformAgents`
-  maintenance job re-picks them every pass and moves them when the pick
-  changes: a grant, a revocation (back to inherit if nothing qualifies), a
-  provider switched on, a key set, a strong model added.
+  provider and model are the platform's (the new `AiAgent.bindingOwner`, see
+  Added), the `platformAgents` maintenance job re-picks them every pass and
+  moves them when the pick changes: a grant, a revocation (back to inherit if
+  nothing qualifies), a provider switched on, a key set, a strong model added.
   `PUT /api/v1/admin/orgs/[id]/providers` also reconciles at once on a policy
   change (`tryReconcilePlatformAgents`, which never fails the grant). A
-  provider or model an org admin set is never moved. A pin placed before this
-  change is treated as the admin's.
+  provider or model an org admin set, including an explicit inherit, is never
+  moved. The pick's ranking now ends on the provider slug, so two providers
+  offering one model no longer trade places between passes.
 - **Code that handles a particular unique violation recognises it again**
   (t-796). Under Prisma 7's driver adapter a P2002 carries no `meta.target`,
   so every reader of it missed. An inbound trigger replay answered `500`

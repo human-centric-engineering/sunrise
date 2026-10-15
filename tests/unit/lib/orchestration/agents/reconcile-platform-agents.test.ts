@@ -86,9 +86,7 @@ const fake = vi.hoisted(() => {
     writes: [] as string[],
     failOn: null as string | null,
     orgOf: () => 'install' as string,
-    /** The options each transaction was opened with, in order. */
-    txOptions: [] as unknown[],
-    /** Runs as a guarded binding write starts: an admin saving in between. */
+    /** Runs as an agent update starts: an admin saving in between. */
     beforeBindingWrite: null as (() => void) | null,
   };
   const id = (p: string) => `${p}-${++state.seq}`;
@@ -102,6 +100,7 @@ const fake = vi.hoisted(() => {
 
   const AGENT_DEFAULTS = {
     fallbackProviders: [],
+    bindingOwner: null,
     providerConfig: null,
     monthlyBudgetUsd: null,
     maxCostPerTurnUsd: null,
@@ -162,14 +161,9 @@ const fake = vi.hoisted(() => {
         state.agents.push(row);
         return row;
       },
-      update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
-        write('aiAgent.update');
-        const row = state.agents.find((a) => a.id === where.id)!;
-        for (const [k, v] of Object.entries(data)) row[k] = unjson(v);
-        row.updatedAt = ++state.seq;
-        return row;
-      },
-      updateMany: async ({
+      // Every key of `where` must match, as Prisma's filtered unique update
+      // does; a miss throws P2025 like the real client.
+      update: async ({
         where,
         data,
       }: {
@@ -177,18 +171,20 @@ const fake = vi.hoisted(() => {
         data: Record<string, unknown>;
       }) => {
         state.beforeBindingWrite?.();
-        write('aiAgent.updateMany');
-        const rows = state.agents.filter((a) =>
-          Object.entries(where).every(([k, v]) => a[k] === v)
+        write('aiAgent.update');
+        const row = state.agents.find((a) =>
+          Object.entries(where).every(([k, v]) => (a[k] ?? null) === v)
         );
-        for (const row of rows) {
-          for (const [k, v] of Object.entries(data)) row[k] = unjson(v);
-          row.updatedAt = ++state.seq;
+        if (!row) {
+          throw new Prisma.PrismaClientKnownRequestError('Record to update not found.', {
+            code: 'P2025',
+            clientVersion: '7.0.0',
+          });
         }
-        return { count: rows.length };
+        for (const [k, v] of Object.entries(data)) row[k] = unjson(v);
+        row.updatedAt = ++state.seq;
+        return row;
       },
-      findUniqueOrThrow: async ({ where }: { where: { id: string } }) =>
-        state.agents.find((a) => a.id === where.id)!,
     },
     aiCapability: {
       findMany: async ({ where }: { where: { slug: { in: string[] } } }) =>
@@ -257,10 +253,7 @@ const fake = vi.hoisted(() => {
     },
     aiProviderConfig: { findMany: async () => state.providers },
     aiProviderModel: { findMany: async () => state.models },
-    $transaction: async (fn: (tx: unknown) => Promise<unknown>, options?: unknown) => {
-      state.txOptions.push(options);
-      return fn(db);
-    },
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(db),
   };
   return { state, db };
 });
@@ -344,15 +337,6 @@ function marker(orgId = 'install') {
   return settings?.platformAgents;
 }
 
-/** What the reconcile recorded as placed by the platform (t-798), by slug. */
-function recordedBindings(orgId = 'install') {
-  const settings = fake.state.orgs.get(orgId)?.settings as
-    | { platformAgentBindings?: Record<string, { provider: string; model: string }> }
-    | null
-    | undefined;
-  return settings?.platformAgentBindings ?? {};
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   mockEnv.TENANCY_MODE = 'single';
@@ -376,7 +360,6 @@ beforeEach(() => {
   s.models = [];
   s.writes = [];
   s.failOn = null;
-  s.txOptions = [];
   s.beforeBindingWrite = null;
   // The org the data layer would stamp: whatever the REAL context holds.
   s.orgOf = () => getTenantContext()?.orgId ?? 'NO-CONTEXT';
@@ -935,18 +918,22 @@ describe('reconcilePlatformAgents', () => {
         defaultBinding: async () => ({ provider: 'openai', model: 'gpt-4.1' }),
       });
 
-    it('is pinned on create, and filled later only while provider and model are both empty', async () => {
+    it('is pinned on create, never moved once the org sets it, and filled again when handed back', async () => {
       registry.definitions = [withPin()];
       await reconcilePlatformAgents('install');
       expect(agent('advisor')).toMatchObject({ provider: 'openai', model: 'gpt-4.1' });
 
-      // The org chose its own: never overwritten.
-      Object.assign(agent('advisor')!, { provider: 'anthropic', model: 'claude' });
+      // The org chose its own (the PATCH route marks it theirs): never overwritten.
+      Object.assign(agent('advisor')!, {
+        provider: 'anthropic',
+        model: 'claude',
+        bindingOwner: 'org',
+      });
       await reconcilePlatformAgents('install');
       expect(agent('advisor')).toMatchObject({ provider: 'anthropic', model: 'claude' });
 
-      // Back to "inherit": filled again.
-      Object.assign(agent('advisor')!, { provider: '', model: '' });
+      // Handed back: on the pick again.
+      agent('advisor')!.bindingOwner = 'platform';
       await reconcilePlatformAgents('install');
       expect(agent('advisor')).toMatchObject({ provider: 'openai', model: 'gpt-4.1' });
     });
@@ -1027,10 +1014,22 @@ describe('a binding the platform picks follows what the org can reach (t-798)', 
     const row = agent('advisor')!;
     return { provider: row.provider, model: row.model };
   };
+  /** An admin's save through the PATCH route: the binding becomes the org's. */
+  const adminSets = (provider: string, model: string) =>
+    Object.assign(agent('advisor')!, { provider, model, bindingOwner: 'org' });
+
+  it('marks the platform as owner of what it places, and only on agents that pick', async () => {
+    pick = { provider: 'anthropic', model: 'claude' };
+    await reconcilePlatformAgents('install');
+
+    expect(agent('advisor')).toMatchObject({ ...pick, bindingOwner: 'platform' });
+    expect(agent('judge')!.bindingOwner).toBeNull();
+  });
 
   it('pins an agent created unpinned once the org can reach a model, on the next job pass', async () => {
     await reconcilePlatformAgentsIfStale('install');
     expect(binding()).toEqual({ provider: '', model: '' });
+    expect(agent('advisor')!.bindingOwner).toBe('platform');
     expect(await reconcilePlatformAgentsIfStale('install')).toEqual({ reconciled: false });
 
     // e.g. a provider switched on, or its key set: no write the job could hook.
@@ -1038,7 +1037,6 @@ describe('a binding the platform picks follows what the org can reach (t-798)', 
     expect((await reconcilePlatformAgentsIfStale('install')).reconciled).toBe(true);
 
     expect(binding()).toEqual({ provider: 'openai', model: 'gpt-4.1' });
-    expect(recordedBindings().advisor).toEqual({ provider: 'openai', model: 'gpt-4.1' });
     expect(await reconcilePlatformAgentsIfStale('install')).toEqual({ reconciled: false });
   });
 
@@ -1054,102 +1052,126 @@ describe('a binding the platform picks follows what the org can reach (t-798)', 
     pick = null;
     await reconcilePlatformAgentsIfStale('install');
     expect(binding()).toEqual({ provider: '', model: '' });
-    expect(recordedBindings().advisor).toBeUndefined();
+    expect(agent('advisor')!.bindingOwner).toBe('platform');
   });
 
-  it('never moves a binding the org set, and does not keep reconciling over it', async () => {
+  it('labels a re-pick in version history as what the org can reach, not a definition change', async () => {
     pick = { provider: 'anthropic', model: 'claude' };
-    await reconcilePlatformAgentsIfStale('install');
-    Object.assign(agent('advisor')!, { provider: 'mistral', model: 'large' });
-
+    await reconcilePlatformAgents('install');
     pick = { provider: 'openai', model: 'gpt-4.1' };
-    // One pass drops the record of the platform's old pick; none after that.
-    expect((await reconcilePlatformAgentsIfStale('install')).reconciled).toBe(true);
-    expect(recordedBindings().advisor).toBeUndefined();
-    expect(await reconcilePlatformAgentsIfStale('install')).toEqual({ reconciled: false });
+    await reconcilePlatformAgents('install');
 
-    expect(binding()).toEqual({ provider: 'mistral', model: 'large' });
+    const id = agent('advisor')!.id;
+    const latest = fake.state.versions.filter((v) => v.agentId === id).at(-1)!;
+    expect(latest.changeSummary).toBe(
+      'Re-picked for what the org can reach: Model: Provider, Model'
+    );
   });
 
-  it('keeps it the org’s when they later set the platform’s old pick again', async () => {
+  it('never moves a binding the org owns, and does not keep reconciling over it', async () => {
     pick = { provider: 'anthropic', model: 'claude' };
     await reconcilePlatformAgentsIfStale('install');
-    Object.assign(agent('advisor')!, { provider: 'mistral', model: 'large' });
-    await reconcilePlatformAgentsIfStale('install');
+    adminSets('mistral', 'large');
 
-    Object.assign(agent('advisor')!, { provider: 'anthropic', model: 'claude' });
     pick = { provider: 'openai', model: 'gpt-4.1' };
     expect((await reconcilePlatformAgentsIfStale('install')).reconciled).toBe(false);
     await reconcilePlatformAgents('install');
 
-    expect(binding()).toEqual({ provider: 'anthropic', model: 'claude' });
+    expect(binding()).toEqual({ provider: 'mistral', model: 'large' });
   });
 
-  it('drops a record left behind when the org hands back a binding there is nothing to pick for', async () => {
+  it('keeps an admin’s explicit inherit, rather than re-pinning it', async () => {
     pick = { provider: 'anthropic', model: 'claude' };
     await reconcilePlatformAgentsIfStale('install');
-    Object.assign(agent('advisor')!, { provider: '', model: '' });
-    pick = null;
+    adminSets('', '');
 
-    // Nothing to move — the binding is already "inherit" — but the record goes.
-    expect((await reconcilePlatformAgentsIfStale('install')).reconciled).toBe(true);
-    expect(recordedBindings().advisor).toBeUndefined();
+    expect((await reconcilePlatformAgentsIfStale('install')).reconciled).toBe(false);
+    await reconcilePlatformAgents('install');
+    expect(binding()).toEqual({ provider: '', model: '' });
+  });
 
-    // So the org's later choice of that model stays theirs.
-    Object.assign(agent('advisor')!, { provider: 'anthropic', model: 'claude' });
+  it('keeps the org’s choice of the platform’s old pick as the org’s', async () => {
+    pick = { provider: 'anthropic', model: 'claude' };
+    await reconcilePlatformAgentsIfStale('install');
+    adminSets('mistral', 'large');
+    adminSets('anthropic', 'claude');
+
     pick = { provider: 'openai', model: 'gpt-4.1' };
     await reconcilePlatformAgents('install');
     expect(binding()).toEqual({ provider: 'anthropic', model: 'claude' });
   });
 
-  it('records the pick even when the run cannot complete, so the binding stays the platform’s', async () => {
-    // A declared capability with no row yet holds the marker back.
-    registry.definitions = [
-      definition('advisor', {
-        defaultBinding: async () => pick,
-        capabilities: ['search_knowledge_base', 'not_seeded_yet'],
-      }),
-    ];
+  it('follows the pick again once the org hands the binding back', async () => {
     pick = { provider: 'anthropic', model: 'claude' };
-    await reconcilePlatformAgents('install');
-    expect(marker()).toBeUndefined();
-    expect(recordedBindings().advisor).toEqual({ provider: 'anthropic', model: 'claude' });
+    await reconcilePlatformAgentsIfStale('install');
+    adminSets('mistral', 'large');
+    agent('advisor')!.bindingOwner = 'platform';
 
-    pick = { provider: 'openai', model: 'gpt-4.1' };
-    await reconcilePlatformAgents('install');
-    expect(binding()).toEqual({ provider: 'openai', model: 'gpt-4.1' });
+    expect((await reconcilePlatformAgentsIfStale('install')).reconciled).toBe(true);
+    expect(binding()).toEqual({ provider: 'anthropic', model: 'claude' });
   });
 
-  it('writes the record in the binding’s own SERIALIZABLE transaction', async () => {
-    pick = { provider: 'anthropic', model: 'claude' };
-    await reconcilePlatformAgents('install');
-    fake.state.txOptions = [];
+  describe('an agent from before t-798, with no owner recorded', () => {
+    const legacy = (provider: string, model: string) =>
+      Object.assign(agent('advisor')!, { provider, model, bindingOwner: null });
 
-    pick = { provider: 'openai', model: 'gpt-4.1' };
-    await reconcilePlatformAgents('install');
+    it('is the platform’s when it holds the current pick, and then follows it', async () => {
+      pick = { provider: 'anthropic', model: 'claude' };
+      await reconcilePlatformAgents('install');
+      legacy('anthropic', 'claude');
 
-    expect(fake.state.txOptions[0]).toEqual({ isolationLevel: 'Serializable' });
-    expect(recordedBindings().advisor).toEqual({ provider: 'openai', model: 'gpt-4.1' });
+      expect((await reconcilePlatformAgentsIfStale('install')).reconciled).toBe(true);
+      expect(agent('advisor')!.bindingOwner).toBe('platform');
+
+      pick = { provider: 'openai', model: 'gpt-4.1' };
+      await reconcilePlatformAgentsIfStale('install');
+      expect(binding()).toEqual({ provider: 'openai', model: 'gpt-4.1' });
+    });
+
+    it('is the platform’s when it is on inherit, as the old reconcile treated it', async () => {
+      await reconcilePlatformAgents('install');
+      legacy('', '');
+      pick = { provider: 'openai', model: 'gpt-4.1' };
+
+      await reconcilePlatformAgentsIfStale('install');
+      expect(agent('advisor')).toMatchObject({ ...pick, bindingOwner: 'platform' });
+    });
+
+    it('is the org’s when it holds anything else, and is never moved', async () => {
+      pick = { provider: 'anthropic', model: 'claude' };
+      await reconcilePlatformAgents('install');
+      legacy('mistral', 'large');
+
+      expect((await reconcilePlatformAgentsIfStale('install')).reconciled).toBe(true);
+      expect(agent('advisor')!.bindingOwner).toBe('org');
+      expect(binding()).toEqual({ provider: 'mistral', model: 'large' });
+      expect(await reconcilePlatformAgentsIfStale('install')).toEqual({ reconciled: false });
+    });
   });
 
-  it('leaves an admin’s choice saved between the read and the write, and records nothing', async () => {
+  it('leaves an admin’s save between the read and the write, and writes nothing of its own', async () => {
     pick = { provider: 'anthropic', model: 'claude' };
     await reconcilePlatformAgents('install');
 
     pick = { provider: 'openai', model: 'gpt-4.1' };
-    fake.state.beforeBindingWrite = () =>
-      Object.assign(agent('advisor')!, { provider: 'mistral', model: 'large' });
+    fake.state.beforeBindingWrite = () => {
+      fake.state.beforeBindingWrite = null;
+      adminSets('mistral', 'large');
+    };
     const result = await reconcilePlatformAgents('install');
 
-    expect(binding()).toEqual({ provider: 'mistral', model: 'large' });
-    expect(recordedBindings().advisor).toEqual({ provider: 'anthropic', model: 'claude' });
+    expect(agent('advisor')).toMatchObject({
+      provider: 'mistral',
+      model: 'large',
+      bindingOwner: 'org',
+    });
     expect(result.unchanged).toContain('advisor');
   });
 
-  it('does not ask the pick for a binding the org set, so its failure cannot stop the run', async () => {
+  it('does not ask the pick for a binding the org owns, so its failure cannot stop the run', async () => {
     pick = { provider: 'anthropic', model: 'claude' };
     await reconcilePlatformAgents('install');
-    Object.assign(agent('advisor')!, { provider: 'mistral', model: 'large' });
+    adminSets('mistral', 'large');
     registry.definitions = [
       definition('advisor', {
         defaultBinding: () => Promise.reject(new Error('policy unreadable')),
@@ -1184,19 +1206,20 @@ describe('a binding the platform picks follows what the org can reach (t-798)', 
     expect(order).toEqual(['forget', 'pick']);
   });
 
-  it('treats a pinned agent with no record of the platform placing it as the org’s', async () => {
-    pick = { provider: 'anthropic', model: 'claude' };
-    await reconcilePlatformAgents('install');
-    // As every pin placed before t-798 stands: nothing recorded who placed it.
-    delete (fake.state.orgs.get('install')!.settings as Record<string, unknown>)
-      .platformAgentBindings;
-
-    pick = { provider: 'openai', model: 'gpt-4.1' };
-    expect((await reconcilePlatformAgentsIfStale('install')).reconciled).toBe(false);
+  it('gives a definition’s own starting binding to the org', async () => {
+    registry.definitions = [
+      definition('advisor', {
+        defaultBinding: async () => ({ provider: 'openai', model: 'gpt-4.1' }),
+        defaults: { provider: 'anthropic', model: 'claude' },
+      }),
+    ];
     await reconcilePlatformAgents('install');
 
-    // The platform cannot tell its old pin from an admin's choice, so it keeps it.
-    expect(binding()).toEqual({ provider: 'anthropic', model: 'claude' });
+    expect(agent('advisor')).toMatchObject({
+      provider: 'anthropic',
+      model: 'claude',
+      bindingOwner: 'org',
+    });
   });
 
   it('asks nothing of an org whose agents pick no binding', async () => {

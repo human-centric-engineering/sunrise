@@ -116,6 +116,7 @@ function makeSystemSeededAgent(): AiAgent {
     maxCostPerTurnUsd: null,
     isActive: true,
     isSystem: true,
+    bindingOwner: null,
     kind: 'chat',
     createdBy: 'system',
     createdAt: new Date('2025-01-01'),

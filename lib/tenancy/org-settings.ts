@@ -6,9 +6,7 @@
  * is the whole of what the platform keeps there: a `retention` slice naming
  * the windows an org wants instead of the global ones, a `platformAgents`
  * marker recording which platform-agent definitions the org was last
- * reconciled against (see {@link readPlatformAgentsMarker}), a
- * `platformAgentBindings` slice recording the providers and models that
- * reconcile placed (see {@link readPlatformAgentBindings}), a `providers`
+ * reconciled against (see {@link readPlatformAgentsMarker}), and a `providers`
  * slice naming the providers a platform admin approved the org for (see
  * {@link readOrgProviderPolicy}), and a `quotas` slice holding the org's own
  * caps (see {@link readOrgQuotas}). Everything else in that JSON belongs to
@@ -234,80 +232,6 @@ export function readPlatformAgentsMarker(settings: unknown): PlatformAgentsMarke
   if (!isJsonObject(settings)) return null;
   const parsed = platformAgentsMarkerSchema.safeParse(settings[ORG_PLATFORM_AGENTS_KEY]);
   return parsed.success ? parsed.data : null;
-}
-
-/** The key the reconcile keeps the bindings it placed under (t-798). */
-export const ORG_PLATFORM_AGENT_BINDINGS_KEY = 'platformAgentBindings';
-
-const platformAgentBindingsSchema = z.record(
-  z.string(),
-  z.object({ provider: z.string(), model: z.string() })
-);
-
-/**
- * The provider and model the platform placed on each of an org's agents whose
- * definition picks one (`defaultBinding`), by slug (t-798). An agent whose
- * binding no longer matches its entry was set by the org, and the platform
- * leaves it alone from then on; an agent on "inherit" has no entry.
- *
- * Kept apart from the marker because it is written in the same transaction
- * as the binding it describes, whether or not the run completes: a binding
- * moved with no record of it would read as the org's choice, for good.
- */
-export type PlatformAgentBindings = z.infer<typeof platformAgentBindingsSchema>;
-
-/**
- * Read the placed bindings out of an org's `settings`. Absent or unreadable is
- * `{}`: every pinned binding then reads as the org's, so the platform moves
- * nothing it cannot prove it placed.
- */
-export function readPlatformAgentBindings(settings: unknown): PlatformAgentBindings {
-  if (!isJsonObject(settings)) return {};
-  const parsed = platformAgentBindingsSchema.safeParse(settings[ORG_PLATFORM_AGENT_BINDINGS_KEY]);
-  return parsed.success ? parsed.data : {};
-}
-
-/**
- * Set or clear (`null`) one agent's placed binding, preserving every other
- * key in `settings`. Takes the caller's transaction, so the record commits or
- * rolls back with the binding write; the caller runs that transaction
- * SERIALIZABLE, which is what keeps this read-modify-write from losing a
- * concurrent {@link writeSettingsSlice}.
- */
-export async function recordPlatformAgentBinding(
-  tx: Pick<PrismaClient, 'org'>,
-  orgId: string,
-  slug: string,
-  binding: PlatformAgentBindings[string] | null
-): Promise<void> {
-  const row = await tx.org.findUnique({ where: { id: orgId }, select: { settings: true } });
-  if (!row) return;
-  const base: Record<string, unknown> = isJsonObject(row.settings) ? { ...row.settings } : {};
-  const bindings = { ...readPlatformAgentBindings(base) };
-  if (binding === null) delete bindings[slug];
-  else bindings[slug] = binding;
-  if (Object.keys(bindings).length === 0) delete base[ORG_PLATFORM_AGENT_BINDINGS_KEY];
-  else base[ORG_PLATFORM_AGENT_BINDINGS_KEY] = bindings;
-  await tx.org.update({
-    where: { id: orgId },
-    data: {
-      settings: Object.keys(base).length === 0 ? Prisma.DbNull : (base as Prisma.InputJsonObject),
-    },
-  });
-}
-
-/** One org's marker and placed bindings, from one read; `null` when the org does not exist. */
-export async function loadPlatformAgentsState(
-  orgId: string,
-  db: Pick<PrismaClient, 'org'> = prisma
-): Promise<{ marker: PlatformAgentsMarker | null; bindings: PlatformAgentBindings } | null> {
-  const org = await db.org.findUnique({ where: { id: orgId }, select: { settings: true } });
-  return org
-    ? {
-        marker: readPlatformAgentsMarker(org.settings),
-        bindings: readPlatformAgentBindings(org.settings),
-      }
-    : null;
 }
 
 /** One org's marker. `Org` is a system model, so no tenant scope is needed. */

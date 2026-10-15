@@ -83,11 +83,11 @@ const CLEANUP_CAPABILITY_SLUGS = [
  *    provider (`source: 'explicit'`).
  * With nothing eligible this returns null and the agent inherits, choosing per
  * turn among what the org may use. While the agent's binding is the
- * platform's — empty, or still what this last picked — the maintenance job
+ * platform's, the maintenance job
  * asks again every pass and moves it when the answer changes: a provider
  * granted, revoked, switched on, its key set, a strong model added (t-798).
- * Once an org admin picks the provider, it is theirs and this is not asked
- * for that agent again.
+ * Once an org admin sets provider or model, the binding is theirs
+ * (`AiAgent.bindingOwner`) and this is not asked for that agent again.
  *
  * A policy that cannot be read THROWS rather than answering "nothing": the
  * reconcile then fails and leaves the org unmarked, so the maintenance job
@@ -97,7 +97,9 @@ const CLEANUP_CAPABILITY_SLUGS = [
  *
  * Preference order: worker tier before thinking tier (a whole-document rewrite
  * on a thinking-tier model is expensive and no better at choosing a regex),
- * then deepest reasoning, then model id for a stable tie-break. Returns null
+ * then deepest reasoning, then model id, then provider slug — a total order,
+ * so two providers offering the same model never trade places between
+ * passes and move the agent back and forth (t-798). Returns null
  * when nothing qualifies, in which case the agent is left on (or put back to)
  * the empty-string inherit-at-runtime behaviour.
  */
@@ -151,7 +153,9 @@ export async function pickCleanupBinding(
     const reasoning =
       (REASONING_RANK[a.reasoningDepth] ?? 9) - (REASONING_RANK[b.reasoningDepth] ?? 9);
     if (reasoning !== 0) return reasoning;
-    return a.modelId.localeCompare(b.modelId);
+    const model = a.modelId.localeCompare(b.modelId);
+    if (model !== 0) return model;
+    return a.providerSlug.localeCompare(b.providerSlug);
   });
   const best = ranked[0];
   return { provider: best.providerSlug, model: best.modelId };

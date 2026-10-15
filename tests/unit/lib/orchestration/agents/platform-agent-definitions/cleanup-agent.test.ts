@@ -108,6 +108,25 @@ describe('pickCleanupBinding', () => {
     );
   });
 
+  it('gives the same answer whatever order the database returns two providers of one model in (t-798)', async () => {
+    // The job re-asks every pass: an order-dependent answer would move the
+    // agent between the two providers, and version it, every 15 minutes.
+    const providers = [
+      providerRow('openai', 'OPENAI_API_KEY'),
+      providerRow('azure', 'OPENAI_API_KEY'),
+    ];
+    const models = [modelRow('openai', 'gpt-4.1'), modelRow('azure', 'gpt-4.1')];
+
+    expect(await pickCleanupBinding(db(providers, models).client)).toEqual({
+      provider: 'azure',
+      model: 'gpt-4.1',
+    });
+    expect(await pickCleanupBinding(db(providers, [...models].reverse()).client)).toEqual({
+      provider: 'azure',
+      model: 'gpt-4.1',
+    });
+  });
+
   it('prefers a worker-tier model over a thinking-tier one', async () => {
     // A whole-document rewrite on a thinking-tier model costs far more and is
     // no better at choosing between two regex tools.

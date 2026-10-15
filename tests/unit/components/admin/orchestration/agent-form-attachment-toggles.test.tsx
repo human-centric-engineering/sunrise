@@ -178,6 +178,7 @@ function makeAgent(model: string, provider: string = 'openai') {
     deletedAt: null,
     lastActiveAt: null,
     isSystem: false,
+    bindingOwner: null,
     kind: 'chat',
     createdBy: 'u',
     createdAt: new Date(),

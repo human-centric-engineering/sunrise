@@ -200,6 +200,7 @@ describe('AgentForm — General tab', () => {
         maxCostPerTurnUsd: null,
         isActive: true,
         isSystem: false,
+        bindingOwner: null,
         kind: 'chat',
         createdBy: 'system',
         createdAt: new Date(),

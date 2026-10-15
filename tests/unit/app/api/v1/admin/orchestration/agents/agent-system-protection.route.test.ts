@@ -462,6 +462,62 @@ describe('System agent protection', () => {
     });
   });
 
+  describe('PATCH — who decides provider and model (t-798)', () => {
+    const cleanup = () =>
+      makeSystemAgent({ slug: 'cleanup-agent', name: 'Clean Up', bindingOwner: 'platform' });
+
+    it('makes the binding the org’s when the admin changes provider or model', async () => {
+      mockFindUnique.mockResolvedValue(cleanup());
+      mockUpdate.mockResolvedValue(cleanup());
+
+      const response = await PATCH(makePatchRequest({ provider: 'openai' }), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(200);
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ bindingOwner: 'org' }) })
+      );
+    });
+
+    it('leaves the owner alone on a save that keeps provider and model as they were', async () => {
+      mockFindUnique.mockResolvedValue(cleanup());
+      mockUpdate.mockResolvedValue(cleanup());
+
+      await PATCH(
+        makePatchRequest({ provider: 'anthropic', model: 'claude-sonnet-4-6', rateLimitRpm: 30 }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(mockUpdate.mock.calls[0][0].data).not.toHaveProperty('bindingOwner');
+    });
+
+    it('hands the binding back to the platform', async () => {
+      mockFindUnique.mockResolvedValue({ ...cleanup(), bindingOwner: 'org' });
+      mockUpdate.mockResolvedValue(cleanup());
+
+      const response = await PATCH(
+        makePatchRequest({ bindingOwner: 'platform' }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ bindingOwner: 'platform' }) })
+      );
+    });
+
+    it('refuses a hand-back that also changes the binding, writing nothing', async () => {
+      mockFindUnique.mockResolvedValue({ ...cleanup(), bindingOwner: 'org' });
+
+      const response = await PATCH(
+        makePatchRequest({ bindingOwner: 'platform', provider: 'openai' }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(400);
+      expect(mockUpdate).not.toHaveBeenCalled();
+    });
+  });
+
   describe('PATCH — reserved slugs (§116 t-725)', () => {
     it.each(['quiz-master', 'eval-judge-relevance', 'provider-model-auditor'])(
       "rejects renaming an org's agent to the platform slug %s",

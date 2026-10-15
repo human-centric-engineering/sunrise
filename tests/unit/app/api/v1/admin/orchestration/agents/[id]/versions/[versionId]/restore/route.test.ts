@@ -423,6 +423,34 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
     );
   });
 
+  it('makes the binding the org’s when the restore brings back another provider or model (t-798)', async () => {
+    const restoreWith = async (snapshot: Record<string, unknown>) => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
+        makeAgent({ bindingOwner: 'platform' }) as never
+      );
+      vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue(
+        makeVersion({ snapshot: { ...makeVersion().snapshot, ...snapshot } })
+      );
+      const txAgentUpdate = vi.fn().mockResolvedValue(makeAgent());
+      vi.mocked(prisma.$transaction).mockImplementation(async (callback) =>
+        callback({
+          aiAgent: { update: txAgentUpdate },
+          aiAgentVersion: {
+            findFirst: vi.fn().mockResolvedValue({ version: 2 }),
+            create: vi.fn().mockResolvedValue({}),
+          },
+        } as never)
+      );
+      await POST(makeRequest(AGENT_ID, VERSION_ID), makeParams(AGENT_ID, VERSION_ID));
+      return txAgentUpdate.mock.calls[0][0].data as Record<string, unknown>;
+    };
+
+    expect((await restoreWith({ provider: 'openai', model: 'gpt-5' })).bindingOwner).toBe('org');
+    // The same binding as now: the platform keeps it.
+    expect(await restoreWith({})).not.toHaveProperty('bindingOwner');
+  });
+
   it('coerces null JSON columns to Prisma.JsonNull and restores knowledgeAccessMode', async () => {
     // metadata/providerConfig are nullable Json columns — Prisma rejects a
     // literal null on write, so restore must coerce to Prisma.JsonNull (as the

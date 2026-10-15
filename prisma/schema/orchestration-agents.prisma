@@ -92,6 +92,16 @@ model AiAgent {
   enableDocumentInput       Boolean   @default(false) // when true, surfaces an attach-PDF control on chat surfaces (admin + embed) and accepts PDF attachments. Effective state also depends on AiOrchestrationSettings.documentInputGloballyEnabled and the resolved chat model carrying the `documents` capability.
   isActive                  Boolean   @default(true)
   isSystem                  Boolean   @default(false)
+  // Who decides `provider` and `model` on a platform agent whose definition
+  // picks them (`defaultBinding`, t-798): 'platform' — the reconcile keeps them
+  // on its pick as what the org can reach changes; 'org' — an admin set them,
+  // and the platform never moves them. NULL = not yet classified (an agent
+  // from before t-798, or any agent the reconcile does not place); the
+  // reconcile classifies such a platform agent on its next run. Written by
+  // the reconcile and by the agent PATCH / version-restore routes, which set
+  // 'org' when they change either field. Not config (a non-config scalar in
+  // the agent field registry): no form, agent bundle or version carries it.
+  bindingOwner              String?
   // Discriminator for "what role does this agent play". Chat agents serve
   // end users via streamChat / the embed widget. Judge agents are driven
   // by the evaluation worker (and the manual-session scorer) and never

@@ -66,20 +66,27 @@ Every agent field declares its side (see
   touched again. A definition may give a starting value (the auditor starts
   with a $25 monthly budget), and `cleanup-agent` pins the strongest
   tool-using model the org can reach, among providers the org may use
-  (§120 t-746). That pin is the one exception to "set once": while provider
-  and model are empty or still what the platform last placed, every
-  reconcile moves them to the current pick — onto a model newly reachable,
-  off a provider the org lost, or back to "inherit" when nothing qualifies.
-  What it placed is recorded in `Org.settings.platformAgentBindings`, in the
-  same SERIALIZABLE transaction as the binding write, so a run that stops
-  part-way never leaves a pin it cannot recognise as its own. The write only
-  lands while the binding is still what the run read, so an admin's save in
-  between stands. Once the org sets them, they are the org's: the next pass
-  drops the record, so setting the platform's old pick again later stays the
-  org's choice too. Setting them back to empty hands them back (t-798). A pin
-  placed before t-798 has no record, so it is treated as the org's. The pick
-  is asked only for a binding the platform owns, so a policy that cannot be
-  read never stops the reconcile of an org that chose its own provider.
+  (§120 t-746). That pin is the one exception to "set once" (t-798). Who
+  decides provider and model is stored on the row, in `AiAgent.bindingOwner`
+  (`lib/orchestration/agents/binding-owner.ts`):
+  - **`'platform'`**: every reconcile moves them to the current pick, onto a
+    model newly reachable, off a provider the org lost, or back to "inherit"
+    when nothing qualifies. The write lands only while the binding and its
+    owner are still what the run read, so an admin's save in between stands.
+  - **`'org'`**: never moved. `PATCH /agents/:id` and version restore set it
+    whenever they change provider or model, including to an explicit inherit.
+    `bindingOwner: 'platform'` in a PATCH body hands the binding back, and
+    `'org'` takes it as it stands.
+  - **`null`**: not yet classified, which covers every agent from before
+    t-798. The next reconcile classifies it once. On inherit, or on the
+    platform's current pick, it becomes the platform's, because that is what
+    the platform would have placed. Anything else becomes the org's, because
+    moving an admin's choice is worse than leaving a pin the platform placed.
+
+  Ownership is stored rather than inferred from the values because a value
+  can't say who wrote it. The pick is asked only for a binding the platform
+  owns or has yet to classify, so a policy that cannot be read never stops
+  the reconcile of an org that chose its own provider.
 
 ## What an org's admin can change
 
@@ -93,6 +100,11 @@ accepted and then quietly undone
   a client that sends the whole agent back with only the model changed
   goes through. The org's fields (provider, model, fallbacks, provider
   config, budget, per-turn cap, rate limit, retention) are always writable.
+  A change to provider or model sets `bindingOwner: 'org'`. On an agent whose
+  definition picks its binding, the body's `bindingOwner` hands the binding
+  back (`'platform'`) or takes it as it stands (`'org'`). A hand-back that
+  also changes provider or model is refused with 400. The agent form has no
+  control for this yet, so a hand-back goes through the API.
 - **The binding routes** refuse attach, detach, and switching a binding on
   or off (`isEnabled`): the reconcile writes both the set and the state back.
   A binding's `customConfig` and `customRateLimit` stay writable, because
@@ -103,7 +115,8 @@ accepted and then quietly undone
   agent's widget config is the platform's.
 - **Version restore** brings back only the org's fields and leaves the
   grants as they are. The Versions tab's confirm dialog says so and names
-  the fields.
+  the fields. A restore that brings back a different provider or model sets
+  `bindingOwner: 'org'`, as a PATCH does.
 - **Delete, bulk actions and the instructions revert** refuse system agents,
   as they always have. **Clone** is allowed: the copy is the org's own agent.
 

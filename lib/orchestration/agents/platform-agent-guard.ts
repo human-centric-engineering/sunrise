@@ -29,6 +29,10 @@
  */
 import { ForbiddenError, ValidationError } from '@/lib/api/errors';
 import { platformAgentFieldNames } from '@/lib/orchestration/agents/agent-field-registry';
+import {
+  bindingOwnerAfterWrite,
+  type BindingOwner,
+} from '@/lib/orchestration/agents/binding-owner';
 import { getPlatformAgent } from '@/lib/orchestration/agents/platform-agents';
 import { jsonEquals } from '@/lib/utils/json-equal';
 
@@ -218,4 +222,38 @@ export function assertAgentSlugNotReserved(slug: string): void {
   if (!isReservedAgentSlug(slug)) return;
   const message = reservedAgentSlugMessage(slug);
   throw new ValidationError(message, { slug: [message] });
+}
+
+/**
+ * The `bindingOwner` an agent PATCH writes, or `undefined` for none. A change
+ * to provider or model makes the binding the org's. `bindingOwner` in the
+ * body sets it outright: `'platform'` hands the binding back, so the next
+ * maintenance pass puts it on the platform's pick; `'org'` keeps it where it
+ * is, including on inherit. Only a platform agent whose definition picks its
+ * binding has an owner to set, and a hand-back cannot also change the
+ * binding — which would win is not the caller's to guess.
+ */
+export function bindingOwnerForPatch(
+  current: {
+    isSystem: boolean;
+    slug: string;
+    provider: string;
+    model: string;
+    bindingOwner: string | null;
+  },
+  next: { provider?: string; model?: string; bindingOwner?: BindingOwner }
+): BindingOwner | undefined {
+  const written = bindingOwnerAfterWrite(current, next);
+  if (next.bindingOwner === undefined) return written;
+  if (!current.isSystem || !getPlatformAgent(current.slug)?.defaultBinding) {
+    throw new ValidationError('This agent has no platform-picked provider and model to hand over', {
+      bindingOwner: ['Only a platform agent that picks its own provider and model has an owner'],
+    });
+  }
+  if (next.bindingOwner === 'platform' && written) {
+    throw new ValidationError('Hand the provider and model back to the platform, or change them', {
+      bindingOwner: ['Cannot hand the binding back in the same request that changes it'],
+    });
+  }
+  return next.bindingOwner === current.bindingOwner ? undefined : next.bindingOwner;
 }
