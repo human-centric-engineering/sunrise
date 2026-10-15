@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { McpInfoModal } from '@/components/admin/orchestration/mcp/mcp-info-modal';
 import { McpDashboard } from '@/components/admin/orchestration/mcp/mcp-dashboard';
 import { API } from '@/lib/api/endpoints';
+import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { mcpSettingsResponseSchema, type McpSettingsResponse } from '@/lib/validations/mcp';
@@ -27,34 +28,34 @@ async function getMcpSettings(): Promise<McpSettingsResponse | null> {
   }
 }
 
-async function getStats(): Promise<{
+/**
+ * The count on each card. An org viewer (§111 t-812) gets the keys count only:
+ * the other three lists are the platform's, and their routes refuse them.
+ */
+async function getStats(platform: boolean): Promise<{
   tools: number;
   resources: number;
   prompts: number;
   keys: number;
 }> {
+  // One list's total, or 0 when it is not fetched or fails.
+  const total = async (path: string | null): Promise<number> => {
+    if (!path) return 0;
+    const res = await serverFetch(`${path}?page=1&limit=1`);
+    if (!res.ok) return 0;
+    const body = await parseApiResponse<unknown[]>(res);
+    if (!body.success || !body.meta || typeof body.meta !== 'object' || !('total' in body.meta))
+      return 0;
+    const value = (body.meta as Record<string, unknown>).total;
+    return typeof value === 'number' ? value : 0;
+  };
+
   try {
-    const [toolsRes, resourcesRes, promptsRes, keysRes] = await Promise.all([
-      serverFetch(`${API.ADMIN.ORCHESTRATION.MCP_TOOLS}?page=1&limit=1`),
-      serverFetch(`${API.ADMIN.ORCHESTRATION.MCP_RESOURCES}?page=1&limit=1`),
-      serverFetch(`${API.ADMIN.ORCHESTRATION.MCP_PROMPTS}?page=1&limit=1`),
-      serverFetch(`${API.ADMIN.ORCHESTRATION.MCP_KEYS}?page=1&limit=1`),
-    ]);
-
-    const parseMeta = async (res: Response): Promise<number> => {
-      if (!res.ok) return 0;
-      const body = await parseApiResponse<unknown[]>(res);
-      if (!body.success || !body.meta || typeof body.meta !== 'object' || !('total' in body.meta))
-        return 0;
-      const total = (body.meta as Record<string, unknown>).total;
-      return typeof total === 'number' ? total : 0;
-    };
-
     const [tools, resources, prompts, keys] = await Promise.all([
-      parseMeta(toolsRes),
-      parseMeta(resourcesRes),
-      parseMeta(promptsRes),
-      parseMeta(keysRes),
+      total(platform ? API.ADMIN.ORCHESTRATION.MCP_TOOLS : null),
+      total(platform ? API.ADMIN.ORCHESTRATION.MCP_RESOURCES : null),
+      total(platform ? API.ADMIN.ORCHESTRATION.MCP_PROMPTS : null),
+      total(API.ADMIN.ORCHESTRATION.MCP_KEYS),
     ]);
 
     return { tools, resources, prompts, keys };
@@ -64,7 +65,14 @@ async function getStats(): Promise<{
 }
 
 export default async function McpDashboardPage() {
-  const [settings, stats] = await Promise.all([getMcpSettings(), getStats()]);
+  const viewerTier = await adminPageViewerTier();
+  const platform = viewerTier === 'platform';
+  // The server's settings are the platform's (§111 t-812): an org viewer's
+  // dashboard shows none of them, and the route refuses them.
+  const [settings, stats] = await Promise.all([
+    platform ? getMcpSettings() : null,
+    getStats(platform),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -110,9 +118,9 @@ export default async function McpDashboardPage() {
         </p>
       </header>
 
-      <SharedSettingsReadOnlyNotice />
+      {platform && <SharedSettingsReadOnlyNotice />}
 
-      <McpDashboard initialSettings={settings} stats={stats} />
+      <McpDashboard initialSettings={settings} stats={stats} viewerTier={viewerTier} />
     </div>
   );
 }

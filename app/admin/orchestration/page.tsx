@@ -19,6 +19,7 @@ import {
   type CapabilityUsage,
 } from '@/components/admin/orchestration/top-capabilities-panel';
 import { API } from '@/lib/api/endpoints';
+import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
@@ -40,6 +41,12 @@ export const metadata: Metadata = {
  *
  * Every fetch is `null`-safe — a failing API renders an empty state,
  * never throws.
+ *
+ * An org admin (§111 t-812) sees their org's half: the stats, spend, budget
+ * alerts and activity, each read in the entered org. The platform-ops half —
+ * the setup wizard and banner (providers and global settings) and the
+ * capability quarantines (global config) — is neither fetched nor rendered
+ * for them, and its routes refuse them.
  */
 
 function hasNumericTotal(meta: unknown): meta is { total: number } {
@@ -241,6 +248,7 @@ async function getActivityFeed(
 }
 
 export default async function OrchestrationDashboardPage() {
+  const platform = (await adminPageViewerTier()) === 'platform';
   const [
     costSummary,
     budgetAlerts,
@@ -258,8 +266,8 @@ export default async function OrchestrationDashboardPage() {
     getPaginatedTotal(`${API.ADMIN.ORCHESTRATION.AGENTS}?isSystem=false`),
     getDashboardStats(),
     getModels(),
-    getSetupState(),
-    getActiveQuarantines(),
+    platform ? getSetupState() : null,
+    platform ? getActiveQuarantines() : [],
   ]);
 
   const todayCostUsd = costSummary?.totals.today ?? null;
@@ -277,14 +285,14 @@ export default async function OrchestrationDashboardPage() {
             Operational overview — agents, spend, and activity.
           </p>
         </div>
-        <SetupWizardLauncher forceOpen={!setupState.hasProvider} />
+        {setupState && <SetupWizardLauncher forceOpen={!setupState.hasProvider} />}
       </header>
 
-      <SetupRequiredBanner hasProvider={setupState.hasProvider} />
+      {setupState && <SetupRequiredBanner hasProvider={setupState.hasProvider} />}
 
       <BudgetAlertsBanner alerts={budgetAlerts} />
 
-      <ActiveQuarantinesPanel rows={activeQuarantines} />
+      {platform && <ActiveQuarantinesPanel rows={activeQuarantines} />}
 
       <section aria-label="Summary statistics">
         <DashboardStatsCards

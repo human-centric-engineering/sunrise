@@ -62,10 +62,16 @@ const TREE: RosterInput = {
 };
 
 describe('the pins', () => {
-  it('opens exactly the customer’s sections to an org admin (t-811)', () => {
+  it('opens exactly the customer’s sections and the mixed pages to an org admin (t-811, t-812)', () => {
     // A page added here is a page every org OWNER/ADMIN can open: add it to
     // ORG_TIER_ADMIN_PAGES and here, in the same diff, and say why in the PR.
     expect(ORG_TIER_ADMIN_PAGES).toEqual([
+      '/admin',
+      '/admin/orchestration',
+      '/admin/orchestration/costs',
+      '/admin/orchestration/analytics',
+      '/admin/orchestration/executions',
+      '/admin/orchestration/mcp',
       '/admin/orchestration/agents',
       '/admin/orchestration/agents/new',
       '/admin/orchestration/agents/[id]',
@@ -101,7 +107,7 @@ describe('the pins', () => {
     ]);
   });
 
-  it('opens exactly the routes those pages call (t-811)', () => {
+  it('opens exactly the routes those pages call (t-811, t-812)', () => {
     // As above, for `withAdminAuth(…, { tier: 'org' })` — `path#METHOD`.
     expect(ORG_TIER_ADMIN_ROUTES).toEqual([
       'app/api/v1/admin/orchestration/agent-profiles/route.ts#GET',
@@ -136,6 +142,11 @@ describe('the pins', () => {
       'app/api/v1/admin/orchestration/agents/import/route.ts#POST',
       'app/api/v1/admin/orchestration/agents/route.ts#GET',
       'app/api/v1/admin/orchestration/agents/route.ts#POST',
+      'app/api/v1/admin/orchestration/analytics/content-gaps/route.ts#GET',
+      'app/api/v1/admin/orchestration/analytics/engagement/route.ts#GET',
+      'app/api/v1/admin/orchestration/analytics/feedback/route.ts#GET',
+      'app/api/v1/admin/orchestration/analytics/topics/route.ts#GET',
+      'app/api/v1/admin/orchestration/analytics/unanswered/route.ts#GET',
       'app/api/v1/admin/orchestration/approvals/history/route.ts#GET',
       'app/api/v1/admin/orchestration/capabilities/route.ts#GET',
       'app/api/v1/admin/orchestration/chat/stream/route.ts#POST',
@@ -149,6 +160,9 @@ describe('the pins', () => {
       'app/api/v1/admin/orchestration/conversations/export/route.ts#GET',
       'app/api/v1/admin/orchestration/conversations/route.ts#GET',
       'app/api/v1/admin/orchestration/conversations/search/route.ts#GET',
+      'app/api/v1/admin/orchestration/costs/alerts/route.ts#GET',
+      'app/api/v1/admin/orchestration/costs/route.ts#GET',
+      'app/api/v1/admin/orchestration/costs/summary/route.ts#GET',
       'app/api/v1/admin/orchestration/embedding-models/route.ts#GET',
       'app/api/v1/admin/orchestration/evaluations/[id]/complete/route.ts#POST',
       'app/api/v1/admin/orchestration/evaluations/[id]/logs/route.ts#GET',
@@ -228,6 +242,8 @@ describe('the pins', () => {
       'app/api/v1/admin/orchestration/mcp/keys/[id]/route.ts#PATCH',
       'app/api/v1/admin/orchestration/mcp/keys/route.ts#GET',
       'app/api/v1/admin/orchestration/mcp/keys/route.ts#POST',
+      'app/api/v1/admin/orchestration/models/route.ts#GET',
+      'app/api/v1/admin/orchestration/observability/dashboard-stats/route.ts#GET',
       'app/api/v1/admin/orchestration/provider-models/route.ts#GET',
       'app/api/v1/admin/orchestration/providers/[id]/test-model/route.ts#POST',
       'app/api/v1/admin/orchestration/providers/[id]/test/route.ts#POST',

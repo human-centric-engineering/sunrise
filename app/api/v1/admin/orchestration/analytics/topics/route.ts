@@ -13,11 +13,21 @@ import { validateQueryParams } from '@/lib/api/validation';
 import { analyticsQuerySchema } from '@/lib/validations/orchestration';
 import { getPopularTopics } from '@/lib/orchestration/analytics';
 
-export const GET = withAdminAuth(async (request, session) => {
-  const { searchParams } = new URL(request.url);
-  const query = validateQueryParams(searchParams, analyticsQuerySchema);
+export const GET = withAdminAuth(
+  async (request, session) => {
+    const { searchParams } = new URL(request.url);
+    const query = validateQueryParams(searchParams, analyticsQuerySchema);
 
-  const topics = await getPopularTopics(query, session);
+    const topics = await getPopularTopics(query, session);
 
-  return successResponse({ topics });
-});
+    return successResponse({ topics });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Figures count every member's conversations in the entered org and carry no message text (`acrossOwners`); any quoted message comes only from conversations this caller may open, keyed on the caller's id (§115 t-802).",
+    },
+  }
+);

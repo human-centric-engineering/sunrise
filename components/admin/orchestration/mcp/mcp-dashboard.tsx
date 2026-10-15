@@ -4,6 +4,11 @@
  * MCP Dashboard Component
  *
  * Shows master toggle, quick stats, and links to sub-pages.
+ *
+ * An org viewer (§111 t-812) sees the API Keys card alone. Their org's keys
+ * are theirs; the server toggle, the exposed tools, resources and prompts,
+ * the audit log and the settings are the platform's, configured once for
+ * every org, and their pages and routes refuse an org admin.
  */
 
 import { useState } from 'react';
@@ -24,6 +29,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { FieldHelp } from '@/components/ui/field-help';
 import { apiClient } from '@/lib/api/client';
+import type { AdminViewerTier } from '@/lib/auth/admin-tier';
 import { API } from '@/lib/api/endpoints';
 import { mcpSettingsResponseSchema, type McpSettingsResponse } from '@/lib/validations/mcp';
 import { MCP_LATEST_PROTOCOL_VERSION, MCP_MIN_PROTOCOL_VERSION } from '@/types/mcp';
@@ -31,7 +37,11 @@ import { MCP_LATEST_PROTOCOL_VERSION, MCP_MIN_PROTOCOL_VERSION } from '@/types/m
 interface McpDashboardProps {
   initialSettings: McpSettingsResponse | null;
   stats: { tools: number; resources: number; prompts: number; keys: number };
+  /** Who is viewing: an org viewer gets the API Keys card only. Defaults to the platform. */
+  viewerTier?: AdminViewerTier;
 }
+
+const KEYS_HREF = '/admin/orchestration/mcp/keys';
 
 const DEFAULT_SETTINGS: McpSettingsResponse = {
   isEnabled: false,
@@ -41,7 +51,11 @@ const DEFAULT_SETTINGS: McpSettingsResponse = {
   auditRetentionDays: 90,
 };
 
-export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
+export function McpDashboard({
+  initialSettings,
+  stats,
+  viewerTier = 'platform',
+}: McpDashboardProps) {
   const readOnly = useSharedSettingsReadOnly();
   const [settings, setSettings] = useState<McpSettingsResponse>(
     initialSettings ?? DEFAULT_SETTINGS
@@ -93,7 +107,7 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
         'Slash-command templates clients show to end users (e.g. /analyze-pattern). Not auto-invoked by the model',
     },
     {
-      href: '/admin/orchestration/mcp/keys',
+      href: KEYS_HREF,
       label: 'API Keys',
       icon: Key,
       count: stats.keys,
@@ -115,6 +129,36 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
       description: 'Configure rate limits and audit log retention',
     },
   ];
+
+  const renderLink = (link: (typeof quickLinks)[number]) => {
+    const Icon = link.icon;
+    return (
+      <Link key={link.href} href={link.href} className="h-full">
+        <Card className="hover:border-primary/50 h-full transition-colors">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center justify-between text-sm font-medium">
+              <span className="flex items-center gap-2">
+                <Icon className="h-4 w-4" />
+                {link.label}
+              </span>
+              {link.count !== null && <Badge variant="secondary">{link.count}</Badge>}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-muted-foreground text-xs">{link.description}</p>
+          </CardContent>
+        </Card>
+      </Link>
+    );
+  };
+
+  if (viewerTier !== 'platform') {
+    return (
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {quickLinks.filter((link) => link.href === KEYS_HREF).map(renderLink)}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -175,29 +219,7 @@ export function McpDashboard({ initialSettings, stats }: McpDashboardProps) {
       </Card>
 
       {/* Quick Links */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {quickLinks.map((link) => {
-          const Icon = link.icon;
-          return (
-            <Link key={link.href} href={link.href} className="h-full">
-              <Card className="hover:border-primary/50 h-full transition-colors">
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center justify-between text-sm font-medium">
-                    <span className="flex items-center gap-2">
-                      <Icon className="h-4 w-4" />
-                      {link.label}
-                    </span>
-                    {link.count !== null && <Badge variant="secondary">{link.count}</Badge>}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground text-xs">{link.description}</p>
-                </CardContent>
-              </Card>
-            </Link>
-          );
-        })}
-      </div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{quickLinks.map(renderLink)}</div>
 
       {/* Connection Info */}
       {settings.isEnabled && (

@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { CostsView } from '@/components/admin/orchestration/costs/costs-view';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
+import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
@@ -36,6 +37,11 @@ export const metadata: Metadata = {
  *   - `/costs/orgs`         → each org's spend this month against its cap (shown
  *                             only with more than one org; refused outside the
  *                             install org at `multi`, which hides the table)
+ *
+ * An org admin (§111 t-812) gets their org's half: every figure above is
+ * `AiCostLog` read in the entered org, so it is already theirs. The
+ * platform-ops half — each org's usage and the settings card for the global
+ * budget — is not fetched or rendered for them, and its routes refuse them.
  *
  * Every fetch is wrapped so that an upstream failure renders an empty
  * state rather than throwing. This mirrors `app/admin/orchestration/page.tsx`.
@@ -129,7 +135,8 @@ async function getModels(): Promise<ModelsResponse | null> {
 export default async function CostsPage() {
   // Ensure model pricing is current before rendering. No-op if cache
   // is fresh (< 24h); only hits OpenRouter when stale or on cold start.
-  await refreshFromOpenRouter();
+  const [, viewerTier] = await Promise.all([refreshFromOpenRouter(), adminPageViewerTier()]);
+  const platform = viewerTier === 'platform';
 
   // Settings are no longer needed here — the default-models form moved
   // to the Settings page; the Costs page keeps a footer link to it.
@@ -138,7 +145,7 @@ export default async function CostsPage() {
     getBudgetAlerts(),
     getPerModel30Day(),
     getModels(),
-    getOrgUsage(),
+    platform ? getOrgUsage() : Promise.resolve(null),
   ]);
 
   return (
@@ -181,6 +188,7 @@ export default async function CostsPage() {
         models={modelsResponse?.models ?? null}
         registryFetchedAt={modelsResponse?.fetchedAt ?? null}
         orgUsage={orgUsage}
+        viewerTier={viewerTier}
       />
     </div>
   );

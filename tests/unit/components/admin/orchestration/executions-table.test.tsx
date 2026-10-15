@@ -734,4 +734,27 @@ describe('ExecutionsTable', () => {
       });
     });
   });
+
+  // ─── An org viewer's table (§111 t-812) ─────────────────────────────────────
+
+  describe('without engine controls (an org viewer, §111 t-812)', () => {
+    it('offers View trace and neither View lease nor Force fail', async () => {
+      const user = userEvent.setup();
+      render(
+        <ExecutionsTable
+          initialExecutions={[makeExecution()]}
+          initialMeta={MOCK_META}
+          engineControls={false}
+        />
+      );
+
+      await user.click(screen.getByRole('button', { name: /row actions/i }));
+
+      expect(
+        await screen.findByRole('menuitem', { name: /view trace/i, hidden: true })
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('menuitem', { name: /view lease/i, hidden: true })).toBeNull();
+      expect(screen.queryByRole('menuitem', { name: /force fail/i, hidden: true })).toBeNull();
+    });
+  });
 });

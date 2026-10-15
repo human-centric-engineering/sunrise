@@ -14,6 +14,11 @@
  * `searchParams.get('status')` changes and refetches — wired up in
  * `ExecutionsTable`'s `useEffect` on `searchParams`. The result: one
  * URL, one paint, both jobs first-class.
+ *
+ * An org viewer (§111 t-812) gets the table alone: the live-engine cards
+ * describe engine state the platform runs for every org, and the row
+ * controls act on it, so neither is theirs. Their table lists their own
+ * org's executions, as the list route already scopes it.
  */
 
 import { useCallback, useRef, type ReactElement } from 'react';
@@ -24,6 +29,7 @@ import {
   type LiveEngineSnapshotView,
 } from '@/components/admin/orchestration/live-engine-dashboard';
 import { ExecutionsTable } from '@/components/admin/orchestration/executions-table';
+import type { AdminViewerTier } from '@/lib/auth/admin-tier';
 import type { PaginationMeta } from '@/types/api';
 import type { ExecutionListItem } from '@/types/orchestration';
 
@@ -34,6 +40,8 @@ export interface ExecutionsListViewProps {
   initialWorkflowId?: string;
   initialStatus?: string;
   stuckThresholdMins: number;
+  /** Who is viewing: an org viewer gets no live-engine cards or row controls. Defaults to the platform. */
+  viewerTier?: AdminViewerTier;
 }
 
 export function ExecutionsListView({
@@ -43,7 +51,9 @@ export function ExecutionsListView({
   initialWorkflowId,
   initialStatus,
   stuckThresholdMins,
+  viewerTier = 'platform',
 }: ExecutionsListViewProps): ReactElement {
+  const platform = viewerTier === 'platform';
   const router = useRouter();
   const searchParams = useSearchParams();
   const tableSectionRef = useRef<HTMLDivElement>(null);
@@ -67,11 +77,13 @@ export function ExecutionsListView({
 
   return (
     <div className="space-y-6">
-      <LiveEngineDashboard
-        initial={initialSnapshot}
-        stuckThresholdMins={stuckThresholdMins}
-        onCardClick={handleCardClick}
-      />
+      {platform && (
+        <LiveEngineDashboard
+          initial={initialSnapshot}
+          stuckThresholdMins={stuckThresholdMins}
+          onCardClick={handleCardClick}
+        />
+      )}
       <div ref={tableSectionRef}>
         <ExecutionsTable
           initialExecutions={initialExecutions}
@@ -79,6 +91,7 @@ export function ExecutionsListView({
           initialWorkflowId={initialWorkflowId}
           initialStatus={initialStatus}
           stuckThresholdMins={stuckThresholdMins}
+          engineControls={platform}
         />
       </div>
     </div>

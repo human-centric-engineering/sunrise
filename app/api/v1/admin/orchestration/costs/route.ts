@@ -28,23 +28,33 @@ import { getRouteLogger } from '@/lib/api/context';
 import { costBreakdownQuerySchema } from '@/lib/validations/orchestration';
 import { getCostBreakdown } from '@/lib/orchestration/llm/cost-reports';
 
-export const GET = withAdminAuth(async (request) => {
-  const log = await getRouteLogger(request);
-  const { searchParams } = new URL(request.url);
-  const params = validateQueryParams(searchParams, costBreakdownQuerySchema);
+export const GET = withAdminAuth(
+  async (request) => {
+    const log = await getRouteLogger(request);
+    const { searchParams } = new URL(request.url);
+    const params = validateQueryParams(searchParams, costBreakdownQuerySchema);
 
-  const breakdown = await getCostBreakdown({
-    dateFrom: params.dateFrom,
-    dateTo: params.dateTo,
-    groupBy: params.groupBy,
-    ...(params.agentId ? { agentId: params.agentId } : {}),
-  });
+    const breakdown = await getCostBreakdown({
+      dateFrom: params.dateFrom,
+      dateTo: params.dateTo,
+      groupBy: params.groupBy,
+      ...(params.agentId ? { agentId: params.agentId } : {}),
+    });
 
-  log.info('Cost breakdown fetched', {
-    groupBy: breakdown.groupBy,
-    rowCount: breakdown.rows.length,
-    totalCostUsd: breakdown.totals.totalCostUsd,
-  });
+    log.info('Cost breakdown fetched', {
+      groupBy: breakdown.groupBy,
+      rowCount: breakdown.rows.length,
+      totalCostUsd: breakdown.totals.totalCostUsd,
+    });
 
-  return successResponse(breakdown);
-});
+    return successResponse(breakdown);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        "Spend records are not personal (`lib/db/owner-classification.ts`): every figure is an aggregate over the entered org's `AiCostLog`, which row isolation bounds to that org.",
+    },
+  }
+);

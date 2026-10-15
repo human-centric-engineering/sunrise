@@ -433,7 +433,7 @@ describe('AdminSidebar — what an org viewer sees', () => {
     expect(screen.getByText('Fork Console')).toBeInTheDocument();
   });
 
-  it('shows an org viewer exactly the customer’s core sections (t-811)', () => {
+  it('shows an org viewer exactly the customer’s core sections and the mixed pages (t-811, t-812)', () => {
     render(<AdminSidebar viewerTier="org" />);
 
     const hrefs = screen
@@ -441,14 +441,19 @@ describe('AdminSidebar — what an org viewer sees', () => {
       .map((link) => link.getAttribute('href'))
       .filter((href): href is string => href?.startsWith('/admin/') ?? false);
     expect(hrefs).toEqual([
+      '/admin/orchestration',
       '/admin/orchestration/agents',
       '/admin/orchestration/workflows',
+      '/admin/orchestration/mcp',
       '/admin/orchestration/knowledge',
+      '/admin/orchestration/executions',
       '/admin/orchestration/conversations',
       '/admin/orchestration/approvals',
       '/admin/orchestration/triggers',
       '/admin/orchestration/event-subscriptions',
       '/admin/orchestration/evaluations',
+      '/admin/orchestration/analytics',
+      '/admin/orchestration/costs',
     ]);
   });
 

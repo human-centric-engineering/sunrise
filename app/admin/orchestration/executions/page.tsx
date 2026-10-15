@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ExecutionsListView } from '@/components/admin/orchestration/executions-list-view';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
+import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
@@ -82,9 +83,15 @@ export default async function ExecutionsListPage({ searchParams }: PageProps) {
   // the settings singleton (for the stuck-step threshold). The
   // snapshot and threshold are both required by the dashboard above
   // the table; the page fans them all so the user sees one paint.
+  //
+  // An org admin (§111 t-812) gets the table alone: the live engine is
+  // the platform's, its route refuses them, so its snapshot is not
+  // fetched. The threshold still marks stuck-looking rows in their table.
+  const viewerTier = await adminPageViewerTier();
+  const platform = viewerTier === 'platform';
   const [{ executions, meta }, snapshot, settings] = await Promise.all([
     getExecutions(workflowId, initialStatus),
-    getInitialSnapshot(),
+    platform ? getInitialSnapshot() : EMPTY_SNAPSHOT,
     getOrchestrationSettings(),
   ]);
 
@@ -106,15 +113,23 @@ export default async function ExecutionsListPage({ searchParams }: PageProps) {
               — inputs, outputs, tokens, cost, and errors.
             </p>
             <p className="text-foreground mt-2 font-medium">This page</p>
-            <p>
-              The cards above the table show in-flight engine state and auto-refresh every 5 seconds
-              while this tab is in the foreground. The list below shows every execution — click any
-              row to inspect the step-by-step trace, or use the row menu to force-fail a stuck run.
-            </p>
+            {platform ? (
+              <p>
+                The cards above the table show in-flight engine state and auto-refresh every 5
+                seconds while this tab is in the foreground. The list below shows every execution —
+                click any row to inspect the step-by-step trace, or use the row menu to force-fail a
+                stuck run.
+              </p>
+            ) : (
+              <p>
+                The list shows your organisation&apos;s executions. Click any row to inspect the
+                step-by-step trace.
+              </p>
+            )}
           </FieldHelp>
         </h1>
         <p className="text-muted-foreground text-sm">
-          In-flight engine state plus past execution runs.
+          {platform ? 'In-flight engine state plus past execution runs.' : 'Past execution runs.'}
         </p>
       </header>
 
@@ -125,6 +140,7 @@ export default async function ExecutionsListPage({ searchParams }: PageProps) {
         initialWorkflowId={workflowId}
         initialStatus={initialStatus}
         stuckThresholdMins={settings.stuckExecutionThresholdMins}
+        viewerTier={viewerTier}
       />
     </div>
   );

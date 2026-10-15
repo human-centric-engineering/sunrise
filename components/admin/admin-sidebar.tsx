@@ -105,6 +105,7 @@ export const coreNavSections: NavSection[] = [
         items: [
           {
             href: '/admin/orchestration',
+            tier: 'org',
             label: 'Dashboard',
             icon: Bot,
             description: 'Overview and setup',
@@ -150,6 +151,7 @@ export const coreNavSections: NavSection[] = [
           },
           {
             href: '/admin/orchestration/mcp',
+            tier: 'org',
             label: 'MCP Server',
             icon: Plug,
             description: 'External tool access',
@@ -169,6 +171,7 @@ export const coreNavSections: NavSection[] = [
           },
           {
             href: '/admin/orchestration/executions',
+            tier: 'org',
             label: 'Executions',
             icon: PlayCircle,
             description: 'Live engine state and runtime history',
@@ -210,12 +213,14 @@ export const coreNavSections: NavSection[] = [
           },
           {
             href: '/admin/orchestration/analytics',
+            tier: 'org',
             label: 'Analytics',
             icon: BarChart3,
             description: 'Usage and insights',
           },
           {
             href: '/admin/orchestration/costs',
+            tier: 'org',
             label: 'Costs & Budget',
             icon: DollarSign,
             description: 'Spend and alerts',

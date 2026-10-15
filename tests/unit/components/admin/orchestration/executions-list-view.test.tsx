@@ -159,4 +159,20 @@ describe('ExecutionsListView', () => {
       scroll: false,
     });
   });
+
+  it('shows an org viewer the table without the live-engine cards (§111 t-812)', () => {
+    render(
+      <ExecutionsListView
+        initialSnapshot={SNAPSHOT}
+        initialExecutions={[makeExecution()]}
+        initialMeta={META}
+        stuckThresholdMins={5}
+        viewerTier="org"
+      />
+    );
+
+    expect(screen.getByText(/Execution ID/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Provider in-flight/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Orphaned$/i)).not.toBeInTheDocument();
+  });
 });

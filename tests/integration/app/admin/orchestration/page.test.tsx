@@ -29,6 +29,14 @@ vi.mock('@/lib/orchestration/setup-state', () => ({
   getSetupState: vi.fn(),
 }));
 
+// Who is viewing (§111 t-812). Every case before the last describe is the
+// platform's view, as it was before the page asked; the org viewer's half is
+// the last describe's.
+const viewer = vi.hoisted(() => ({ tier: 'platform' }));
+vi.mock('@/lib/auth/admin-page-viewer', () => ({
+  adminPageViewerTier: vi.fn(() => Promise.resolve(viewer.tier)),
+}));
+
 vi.mock('@/lib/logging', () => ({
   logger: {
     info: vi.fn(),
@@ -413,5 +421,61 @@ describe('OrchestrationDashboardPage (server component)', () => {
       // the branch is the goal.
       expect(screen.getByTestId('dashboard-stats-cards')).toBeInTheDocument();
     });
+  });
+});
+
+describe('OrchestrationDashboardPage — an org admin’s half (§111 t-812)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    viewer.tier = 'org';
+  });
+
+  afterEach(() => {
+    viewer.tier = 'platform';
+    vi.restoreAllMocks();
+  });
+
+  async function fetchedUrls(): Promise<string[]> {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    return vi.mocked(serverFetch).mock.calls.map(([url]) => String(url));
+  }
+
+  it('shows the org’s stats, spend and activity', async () => {
+    await setupHappyPathMocks({ hasProvider: true, hasAgent: true, hasDefaultChatModel: true });
+
+    await renderPage();
+
+    expect(screen.getByTestId('dashboard-stats-cards')).toBeInTheDocument();
+    expect(screen.getByTestId('budget-alerts-banner')).toBeInTheDocument();
+    expect(screen.getByTestId('dashboard-activity-feed')).toBeInTheDocument();
+    const urls = await fetchedUrls();
+    expect(urls.some((u) => u.includes('/costs/summary'))).toBe(true);
+    expect(urls.some((u) => u.includes('/observability/dashboard-stats'))).toBe(true);
+  });
+
+  it('neither fetches nor renders the setup wizard, setup banner or quarantines', async () => {
+    const { getSetupState } = await import('@/lib/orchestration/setup-state');
+    // No provider: the platform's view would force the wizard open and show the banner.
+    await setupHappyPathMocks({ hasProvider: false, hasAgent: false, hasDefaultChatModel: false });
+
+    await renderPage();
+
+    expect(screen.queryByTestId('setup-wizard-launcher')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('setup-required-banner')).not.toBeInTheDocument();
+    expect(getSetupState).not.toHaveBeenCalled();
+    expect((await fetchedUrls()).some((u) => u.includes('/active-quarantines'))).toBe(false);
+  });
+
+  it('control: the platform’s view of the same data has all three', async () => {
+    viewer.tier = 'platform';
+    const { getSetupState } = await import('@/lib/orchestration/setup-state');
+    await setupHappyPathMocks({ hasProvider: false, hasAgent: false, hasDefaultChatModel: false });
+
+    await renderPage();
+
+    expect(screen.getByTestId('setup-wizard-launcher')).toHaveAttribute('data-force-open', 'true');
+    expect(screen.getByTestId('setup-required-banner')).toBeInTheDocument();
+    expect(getSetupState).toHaveBeenCalled();
+    expect((await fetchedUrls()).some((u) => u.includes('/active-quarantines'))).toBe(true);
   });
 });

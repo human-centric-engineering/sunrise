@@ -100,6 +100,13 @@ export interface ExecutionsTableProps {
    * to 5 if missing.
    */
   stuckThresholdMins?: number;
+  /**
+   * Show the live-engine controls on each row: the lease inspector and
+   * force-fail. Both act on engine state the platform runs for every org, and
+   * their routes admit a platform admin only, so an org viewer's table
+   * (§111 t-812) leaves them out. Defaults to shown.
+   */
+  engineControls?: boolean;
 }
 
 const FORCE_FAILABLE = new Set<string>(['running', 'pending', 'paused_for_approval']);
@@ -110,6 +117,7 @@ export function ExecutionsTable({
   initialWorkflowId,
   initialStatus,
   stuckThresholdMins = 5,
+  engineControls = true,
 }: ExecutionsTableProps): ReactElement {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -343,7 +351,11 @@ export function ExecutionsTable({
               </TableHead>
               <TableHead>
                 <Tip
-                  label={`Time the running step has been in flight. Rows past ${stuckThresholdMins}m are highlighted amber but NOT auto-failed — use the row menu to force-fail if needed. Threshold is set in Settings → Limits.`}
+                  label={
+                    engineControls
+                      ? `Time the running step has been in flight. Rows past ${stuckThresholdMins}m are highlighted amber but NOT auto-failed — use the row menu to force-fail if needed. Threshold is set in Settings → Limits.`
+                      : `Time the running step has been in flight. Rows past ${stuckThresholdMins}m are highlighted amber.`
+                  }
                 >
                   <span>Step age</span>
                 </Tip>
@@ -445,24 +457,28 @@ export function ExecutionsTable({
                               View trace
                             </Link>
                           </DropdownMenuItem>
-                          <DropdownMenuItem onSelect={() => setLeaseInspectorId(ex.id)}>
-                            <KeyRound className="mr-2 h-4 w-4" />
-                            View lease
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            disabled={!canForceFail}
-                            onSelect={() => {
-                              if (!canForceFail) return;
-                              setForceFailTarget(ex);
-                              setForceFailReason('');
-                              setForceFailError(null);
-                            }}
-                            className="text-red-600 focus:text-red-700"
-                          >
-                            <StopCircle className="mr-2 h-4 w-4" />
-                            Force fail…
-                          </DropdownMenuItem>
+                          {engineControls && (
+                            <>
+                              <DropdownMenuItem onSelect={() => setLeaseInspectorId(ex.id)}>
+                                <KeyRound className="mr-2 h-4 w-4" />
+                                View lease
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                disabled={!canForceFail}
+                                onSelect={() => {
+                                  if (!canForceFail) return;
+                                  setForceFailTarget(ex);
+                                  setForceFailReason('');
+                                  setForceFailError(null);
+                                }}
+                                className="text-red-600 focus:text-red-700"
+                              >
+                                <StopCircle className="mr-2 h-4 w-4" />
+                                Force fail…
+                              </DropdownMenuItem>
+                            </>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>

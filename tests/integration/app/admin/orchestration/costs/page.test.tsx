@@ -60,6 +60,14 @@ vi.mock('@/lib/orchestration/llm/model-registry', () => ({
   refreshFromOpenRouter: vi.fn(() => Promise.resolve()),
 }));
 
+// Who is viewing (§111 t-812). Every case before the last describe is the
+// platform's view, as it was before the page asked; the org viewer's half is
+// the last describe's.
+const viewer = vi.hoisted(() => ({ tier: 'platform' }));
+vi.mock('@/lib/auth/admin-page-viewer', () => ({
+  adminPageViewerTier: vi.fn(() => Promise.resolve(viewer.tier)),
+}));
+
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const MOCK_SUMMARY = {
@@ -318,5 +326,89 @@ describe('CostsPage (server component)', () => {
     expect(serverFetch).toHaveBeenCalledWith('/api/v1/admin/orchestration/costs/orgs');
     expect(screen.getByTestId('per-org-usage-table')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Acme' })).toHaveAttribute('href', '/admin/orgs/acme');
+  });
+});
+
+describe('CostsPage — an org admin’s half (§111 t-812)', () => {
+  const orgRow = (orgId: string, name: string, totalCostUsd: number) => ({
+    orgId,
+    name,
+    slug: orgId,
+    status: 'ACTIVE',
+    totalCostUsd,
+    inputTokens: 100,
+    outputTokens: 10,
+    count: 1,
+    monthlyBudgetUsd: null,
+    utilisation: null,
+  });
+  // Every route answers, the per-org one included, so a page that still
+  // fetched and rendered it would show it.
+  const bodies: Record<string, unknown> = {
+    '/api/v1/admin/orchestration/costs/summary': MOCK_SUMMARY,
+    '/api/v1/admin/orchestration/costs/alerts': {
+      alerts: MOCK_ALERTS,
+      globalCap: { cap: null, spent: null, exceeded: false },
+    },
+    '/api/v1/admin/orchestration/models': { models: MOCK_MODELS, fetchedAt: 1715260800000 },
+    '/api/v1/admin/orchestration/costs/orgs': {
+      period: '2026-10',
+      periodStart: '2026-10-01T00:00:00.000Z',
+      periodEnd: '2026-11-01T00:00:00.000Z',
+      orgs: [orgRow('acme', 'Acme', 5), orgRow('install', 'Install', 1)],
+      detached: null,
+      totals: { totalCostUsd: 6, inputTokens: 200, outputTokens: 20, count: 2 },
+    },
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    viewer.tier = 'org';
+    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockImplementation(
+      async (path: string) => ({ ok: path in bodies, path }) as unknown as Response
+    );
+    vi.mocked(parseApiResponse).mockImplementation((async (res: { path: string }) => ({
+      success: true,
+      data: bodies[res.path],
+    })) as never);
+  });
+
+  afterEach(() => {
+    viewer.tier = 'platform';
+    vi.restoreAllMocks();
+  });
+
+  it('shows the org’s spend: summary, alerts, per-agent and per-model', async () => {
+    const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
+
+    render(await CostsPage());
+
+    expect(screen.getByTestId('cost-summary-cards')).toBeInTheDocument();
+    expect(screen.getByTestId('budget-alerts-list')).toBeInTheDocument();
+    expect(screen.getByTestId('per-agent-cost-table')).toBeInTheDocument();
+    expect(screen.getByTestId('per-model-breakdown-table')).toBeInTheDocument();
+    expect(screen.getByText('Beta Bot')).toBeInTheDocument();
+  });
+
+  it('neither fetches nor shows each org’s usage, nor links to the budget settings', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
+
+    render(await CostsPage());
+
+    expect(serverFetch).not.toHaveBeenCalledWith('/api/v1/admin/orchestration/costs/orgs');
+    expect(screen.queryByTestId('per-org-usage-table')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /open settings/i })).not.toBeInTheDocument();
+  });
+
+  it('control: the platform’s view of the same answers has both', async () => {
+    viewer.tier = 'platform';
+    const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
+
+    render(await CostsPage());
+
+    expect(screen.getByTestId('per-org-usage-table')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /open settings/i })).toBeInTheDocument();
   });
 });

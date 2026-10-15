@@ -20,6 +20,10 @@
  * The default-models form used to live here too; it now lives on the
  * Settings page where developers actually look for it. A small footer
  * link below points there.
+ *
+ * An org viewer (§111 t-812) sees their org's spend and none of the
+ * platform-ops half: no per-org table and no link to the global budget
+ * settings, neither of which they may use.
  */
 
 import Link from 'next/link';
@@ -36,6 +40,7 @@ import { PerOrgUsageTable } from '@/components/admin/orchestration/costs/per-org
 import { PricingReference } from '@/components/admin/orchestration/costs/pricing-reference';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import type { AdminViewerTier } from '@/lib/auth/admin-tier';
 import type {
   BudgetAlert,
   CostSummary,
@@ -62,6 +67,8 @@ export interface CostsViewProps {
    * caller is outside the install org at `multi` (the endpoint refuses them).
    */
   orgUsage?: OrgUsageReport | null;
+  /** Who is viewing: an org viewer gets no platform-ops section. Defaults to the platform. */
+  viewerTier?: AdminViewerTier;
 }
 
 export function CostsView({
@@ -72,7 +79,9 @@ export function CostsView({
   models,
   registryFetchedAt,
   orgUsage,
+  viewerTier = 'platform',
 }: CostsViewProps) {
+  const platform = viewerTier === 'platform';
   return (
     <div className="space-y-8">
       <CostSummaryCards summary={summary} />
@@ -86,9 +95,11 @@ export function CostsView({
         <PerModelBreakdownTable rows={summary?.byModel ?? null} models={models} />
       </div>
 
-      {orgUsage && (orgUsage.orgs.length > 1 || (orgUsage.detached?.count ?? 0) > 0) && (
-        <PerOrgUsageTable report={orgUsage} />
-      )}
+      {platform &&
+        orgUsage &&
+        (orgUsage.orgs.length > 1 || (orgUsage.detached?.count ?? 0) > 0) && (
+          <PerOrgUsageTable report={orgUsage} />
+        )}
 
       <LocalVsCloudPanel summary={summary} models={models} />
 
@@ -96,26 +107,28 @@ export function CostsView({
 
       <CostMethodology />
 
-      <Card>
-        <CardContent className="flex flex-col items-start gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <SettingsIcon
-              className="text-muted-foreground mt-0.5 h-5 w-5 shrink-0"
-              aria-hidden="true"
-            />
-            <div className="text-sm">
-              <p className="font-medium">Default models &amp; budget caps</p>
-              <p className="text-muted-foreground">
-                Configure the per-task default models and the global monthly budget on the Settings
-                page.
-              </p>
+      {platform && (
+        <Card>
+          <CardContent className="flex flex-col items-start gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <SettingsIcon
+                className="text-muted-foreground mt-0.5 h-5 w-5 shrink-0"
+                aria-hidden="true"
+              />
+              <div className="text-sm">
+                <p className="font-medium">Default models &amp; budget caps</p>
+                <p className="text-muted-foreground">
+                  Configure the per-task default models and the global monthly budget on the
+                  Settings page.
+                </p>
+              </div>
             </div>
-          </div>
-          <Button asChild size="sm" variant="outline" className="shrink-0">
-            <Link href="/admin/orchestration/settings">Open Settings</Link>
-          </Button>
-        </CardContent>
-      </Card>
+            <Button asChild size="sm" variant="outline" className="shrink-0">
+              <Link href="/admin/orchestration/settings">Open Settings</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

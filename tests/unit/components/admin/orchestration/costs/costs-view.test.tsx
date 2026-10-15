@@ -358,4 +358,42 @@ describe('CostsView', () => {
       expect(screen.queryByTestId('per-org-usage-table')).not.toBeInTheDocument();
     });
   });
+
+  describe('an org viewer (§111 t-812)', () => {
+    it('shows no per-org table and no link to the budget settings, given both', () => {
+      render(
+        <CostsView
+          summary={MOCK_SUMMARY}
+          alerts={[]}
+          globalCap={null}
+          perModel={PER_MODEL}
+          models={MOCK_MODELS}
+          orgUsage={{
+            period: '2026-10',
+            periodStart: '2026-10-01T00:00:00.000Z',
+            periodEnd: '2026-11-01T00:00:00.000Z',
+            orgs: ['install', 'acme'].map((orgId) => ({
+              orgId,
+              name: orgId,
+              slug: orgId,
+              status: 'ACTIVE',
+              totalCostUsd: 1,
+              inputTokens: 10,
+              outputTokens: 1,
+              count: 1,
+              monthlyBudgetUsd: null,
+              utilisation: null,
+            })),
+            detached: null,
+            totals: { totalCostUsd: 2, inputTokens: 0, outputTokens: 0, count: 0 },
+          }}
+          viewerTier="org"
+        />
+      );
+
+      expect(screen.getByTestId('cost-summary-cards')).toBeInTheDocument();
+      expect(screen.queryByTestId('per-org-usage-table')).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /open settings/i })).not.toBeInTheDocument();
+    });
+  });
 });

@@ -20,18 +20,28 @@ import { getRouteLogger } from '@/lib/api/context';
 import { getCostSummary } from '@/lib/orchestration/llm/cost-reports';
 import { computeETag, checkConditional } from '@/lib/api/etag';
 
-export const GET = withAdminAuth(async (request) => {
-  const log = await getRouteLogger(request);
-  const summary = await getCostSummary();
+export const GET = withAdminAuth(
+  async (request) => {
+    const log = await getRouteLogger(request);
+    const summary = await getCostSummary();
 
-  const etag = computeETag(summary);
-  const notModified = checkConditional(request, etag);
-  if (notModified) return notModified;
+    const etag = computeETag(summary);
+    const notModified = checkConditional(request, etag);
+    if (notModified) return notModified;
 
-  log.info('Cost summary fetched', {
-    monthTotal: summary.totals.month,
-    agentCount: summary.byAgent.length,
-    modelCount: summary.byModel.length,
-  });
-  return successResponse(summary, undefined, { headers: { ETag: etag } });
-});
+    log.info('Cost summary fetched', {
+      monthTotal: summary.totals.month,
+      agentCount: summary.byAgent.length,
+      modelCount: summary.byModel.length,
+    });
+    return successResponse(summary, undefined, { headers: { ETag: etag } });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        "Spend records are not personal (`lib/db/owner-classification.ts`): every figure is an aggregate over the entered org's `AiCostLog`, which row isolation bounds to that org.",
+    },
+  }
+);

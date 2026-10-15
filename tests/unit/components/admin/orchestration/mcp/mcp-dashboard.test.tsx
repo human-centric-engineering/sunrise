@@ -216,4 +216,23 @@ describe('McpDashboard', () => {
       expect(screen.getByText('Disabled')).toBeInTheDocument();
     });
   });
+
+  describe('an org viewer (§111 t-812)', () => {
+    it('shows the API Keys card alone, linking to the keys page', () => {
+      render(
+        <McpDashboard initialSettings={ENABLED_SETTINGS} stats={STATS_WITH_DATA} viewerTier="org" />
+      );
+
+      const hrefs = screen.getAllByRole('link').map((a) => a.getAttribute('href'));
+      expect(hrefs).toEqual(['/admin/orchestration/mcp/keys']);
+      expect(screen.getByText('API Keys')).toBeInTheDocument();
+      expect(screen.queryByText('Exposed Tools')).not.toBeInTheDocument();
+      expect(screen.queryByText('Resources')).not.toBeInTheDocument();
+      expect(screen.queryByText('Prompts')).not.toBeInTheDocument();
+      expect(screen.queryByText('Settings')).not.toBeInTheDocument();
+      // Nor the server status card and its toggle, though the settings say enabled.
+      expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+      expect(screen.queryByText('Client Configuration')).not.toBeInTheDocument();
+    });
+  });
 });

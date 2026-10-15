@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import React from 'react';
 
@@ -13,16 +13,27 @@ vi.mock('@/lib/logging', () => ({
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 
+// Who is viewing (§111 t-812). Every case before the last describe is the
+// platform's view, as it was before the page asked; the org viewer's half is
+// the last describe's.
+const viewer = vi.hoisted(() => ({ tier: 'platform' }));
+vi.mock('@/lib/auth/admin-page-viewer', () => ({
+  adminPageViewerTier: vi.fn(() => Promise.resolve(viewer.tier)),
+}));
+
 vi.mock('@/components/admin/orchestration/mcp/mcp-dashboard', () => ({
   McpDashboard: ({
     initialSettings,
     stats,
+    viewerTier,
   }: {
     initialSettings: unknown;
     stats: { tools: number; resources: number; prompts: number; keys: number };
+    viewerTier?: string;
   }) => (
     <div
       data-testid="mcp-dashboard"
+      data-viewer-tier={viewerTier ?? ''}
       data-has-settings={initialSettings === null ? 'false' : 'true'}
       data-settings={initialSettings ? JSON.stringify(initialSettings) : ''}
       data-tools={stats.tools}
@@ -321,5 +332,42 @@ describe('McpDashboardPage', () => {
       expect.stringContaining('MCP dashboard: settings fetch failed'),
       expect.any(Error)
     );
+  });
+});
+
+describe('McpDashboardPage — an org admin’s keys (§111 t-812)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    viewer.tier = 'org';
+    setupDefaultServerFetch();
+    setupDefaultParseApiResponse({ tools: 3, resources: 5, prompts: 4, keys: 2 });
+  });
+
+  afterEach(() => {
+    viewer.tier = 'platform';
+  });
+
+  it('fetches the keys count alone, and none of the server’s settings or exposed lists', async () => {
+    render(await McpDashboardPage());
+
+    const urls = vi.mocked(serverFetch).mock.calls.map(([url]) => String(url));
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toContain(API.ADMIN.ORCHESTRATION.MCP_KEYS);
+    const dashboard = screen.getByTestId('mcp-dashboard');
+    expect(dashboard).toHaveAttribute('data-viewer-tier', 'org');
+    expect(dashboard).toHaveAttribute('data-has-settings', 'false');
+    expect(dashboard).toHaveAttribute('data-keys', '2');
+    expect(dashboard).toHaveAttribute('data-tools', '0');
+  });
+
+  it('control: the platform’s view fetches all five', async () => {
+    viewer.tier = 'platform';
+
+    render(await McpDashboardPage());
+
+    expect(vi.mocked(serverFetch)).toHaveBeenCalledTimes(5);
+    const dashboard = screen.getByTestId('mcp-dashboard');
+    expect(dashboard).toHaveAttribute('data-viewer-tier', 'platform');
+    expect(dashboard).toHaveAttribute('data-tools', '3');
   });
 });

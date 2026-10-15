@@ -64,15 +64,26 @@ export type AdminViewerTier = 'platform' | 'org';
  * until it is listed — the same fail-closed default as everything else here.
  *
  * The customer's sections (§111 t-811): the pages the control-plane map in
- * `.context/architecture/multi-tenancy.md` puts on the customer's side. The
- * mixed pages (the dashboard, costs, analytics, executions, the MCP landing)
- * are not here: each is split by viewer rather than assigned. The roster test
+ * `.context/architecture/multi-tenancy.md` puts on the customer's side. And
+ * the mixed pages (§111 t-812) — the orchestration dashboard, costs,
+ * analytics, executions and the MCP landing — which an org admin opens to
+ * their org's half: each page asks who is viewing
+ * (`lib/auth/admin-page-viewer.ts`) and renders its platform-ops panels for a
+ * platform viewer only, and the routes behind those panels stay undeclared.
+ * `/admin` itself is here so it can send an org admin to the dashboard; the
+ * overview it sends a platform admin to is not. The roster test
  * pins this list, so widening it fails until the test is updated in the same
  * diff. Frozen, because it is a constant and not a registry: nothing adds to
  * it at runtime (and `lib/tenancy/process-state.ts` would have to vet it if
  * anything could).
  */
 export const ORG_TIER_ADMIN_PAGES: readonly string[] = Object.freeze([
+  '/admin',
+  '/admin/orchestration',
+  '/admin/orchestration/costs',
+  '/admin/orchestration/analytics',
+  '/admin/orchestration/executions',
+  '/admin/orchestration/mcp',
   '/admin/orchestration/agents',
   '/admin/orchestration/agents/new',
   '/admin/orchestration/agents/[id]',
@@ -145,6 +156,11 @@ export const ORG_TIER_ADMIN_ROUTES: readonly string[] = Object.freeze([
   'app/api/v1/admin/orchestration/agents/import/route.ts#POST',
   'app/api/v1/admin/orchestration/agents/route.ts#GET',
   'app/api/v1/admin/orchestration/agents/route.ts#POST',
+  'app/api/v1/admin/orchestration/analytics/content-gaps/route.ts#GET',
+  'app/api/v1/admin/orchestration/analytics/engagement/route.ts#GET',
+  'app/api/v1/admin/orchestration/analytics/feedback/route.ts#GET',
+  'app/api/v1/admin/orchestration/analytics/topics/route.ts#GET',
+  'app/api/v1/admin/orchestration/analytics/unanswered/route.ts#GET',
   'app/api/v1/admin/orchestration/approvals/history/route.ts#GET',
   'app/api/v1/admin/orchestration/capabilities/route.ts#GET',
   'app/api/v1/admin/orchestration/chat/stream/route.ts#POST',
@@ -158,6 +174,9 @@ export const ORG_TIER_ADMIN_ROUTES: readonly string[] = Object.freeze([
   'app/api/v1/admin/orchestration/conversations/export/route.ts#GET',
   'app/api/v1/admin/orchestration/conversations/route.ts#GET',
   'app/api/v1/admin/orchestration/conversations/search/route.ts#GET',
+  'app/api/v1/admin/orchestration/costs/alerts/route.ts#GET',
+  'app/api/v1/admin/orchestration/costs/route.ts#GET',
+  'app/api/v1/admin/orchestration/costs/summary/route.ts#GET',
   'app/api/v1/admin/orchestration/embedding-models/route.ts#GET',
   'app/api/v1/admin/orchestration/evaluations/[id]/complete/route.ts#POST',
   'app/api/v1/admin/orchestration/evaluations/[id]/logs/route.ts#GET',
@@ -237,6 +256,8 @@ export const ORG_TIER_ADMIN_ROUTES: readonly string[] = Object.freeze([
   'app/api/v1/admin/orchestration/mcp/keys/[id]/route.ts#PATCH',
   'app/api/v1/admin/orchestration/mcp/keys/route.ts#GET',
   'app/api/v1/admin/orchestration/mcp/keys/route.ts#POST',
+  'app/api/v1/admin/orchestration/models/route.ts#GET',
+  'app/api/v1/admin/orchestration/observability/dashboard-stats/route.ts#GET',
   'app/api/v1/admin/orchestration/provider-models/route.ts#GET',
   'app/api/v1/admin/orchestration/providers/[id]/test-model/route.ts#POST',
   'app/api/v1/admin/orchestration/providers/[id]/test/route.ts#POST',
