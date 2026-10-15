@@ -65,7 +65,7 @@ const URL = '/api/v1/orgs/org-1/invitations';
 function sentResponse() {
   return {
     message: 'Invitation sent',
-    invitation: { email: 'new@example.com', name: 'New Person', link: 'https://x.test/accept?t=1' },
+    invitation: { email: 'new@example.com', name: 'New Person' },
     emailStatus: 'sent' as const,
   };
 }
@@ -109,7 +109,7 @@ describe('MemberInviteForm', () => {
     });
   });
 
-  it('shows the message and link, clears the form and refreshes after a send', async () => {
+  it('shows the message, clears the form and refreshes after a send', async () => {
     vi.mocked(apiClient.post).mockResolvedValue(sentResponse());
     const user = userEvent.setup();
     render(<MemberInviteForm orgId="org-1" />);
@@ -118,10 +118,26 @@ describe('MemberInviteForm', () => {
     await user.click(screen.getByRole('button', { name: /send invitation/i }));
 
     expect(await screen.findByText(/Invitation sent \(new@example.com\)/)).toBeInTheDocument();
-    expect(screen.getByLabelText('Invitation link')).toHaveValue('https://x.test/accept?t=1');
+    expect(screen.queryByText(/did not go out/)).not.toBeInTheDocument();
     expect(screen.getByLabelText('Name')).toHaveValue('');
     expect(screen.getByLabelText(/^Email/, { selector: 'input' })).toHaveValue('');
     expect(mockRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('says the email did not go out, and offers no link, when it was not sent', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue({
+      ...sentResponse(),
+      message: 'Invitation created but email failed to send',
+      emailStatus: 'failed' as const,
+    });
+    const user = userEvent.setup();
+    render(<MemberInviteForm orgId="org-1" />);
+
+    await fill(user, 'New Person', 'new@example.com');
+    await user.click(screen.getByRole('button', { name: /send invitation/i }));
+
+    expect(await screen.findByText(/did not go out/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Invitation link')).not.toBeInTheDocument();
   });
 
   it('shows the API error verbatim and neither clears nor refreshes', async () => {

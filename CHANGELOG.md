@@ -71,7 +71,8 @@ release process.
   `checkInvitationInto()` in `lib/tenancy/lifecycle.ts` holds the rules: an
   `OWNER` invitation needs owner standing, and the install org and a suspended
   org are refused. A pending invitation into another org is refused, not
-  re-targeted. `OrgLifecycleErrorCode` gains `ORG_NOT_ACTIVE`. A new org-tier
+  re-targeted. Unlike the platform route, it never returns the invitation
+  link: the invitee gets it by email only. `OrgLifecycleErrorCode` gains `ORG_NOT_ACTIVE`. A new org-tier
   **Members** page (`/admin/members`, nav shown at `multi` only) lists, invites,
   re-roles and removes the entered org's members. At `multi` the admin header
   names the org being acted in. `POST /api/v1/users/invite` is unchanged and

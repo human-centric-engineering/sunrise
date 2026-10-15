@@ -13,7 +13,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { CheckCircle, Copy, Send } from 'lucide-react';
+import { CheckCircle, Send } from 'lucide-react';
 import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
@@ -32,7 +32,6 @@ import { FormError } from '@/components/forms/form-error';
 import { OrgRoleHelp, ORG_ROLE_LABELS } from '@/components/admin/members/org-role-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { useCopyToClipboard } from '@/lib/hooks/use-copy-to-clipboard';
 import { DEFAULT_ORG_ROLE, ORG_ROLES } from '@/lib/tenancy/roles';
 
 const inviteFormSchema = z.object({
@@ -45,7 +44,7 @@ type InviteFormData = z.infer<typeof inviteFormSchema>;
 
 interface OrgInvitationResponse {
   message: string;
-  invitation: { email: string; name: string; link?: string };
+  invitation: { email: string; name: string };
   emailStatus: 'sent' | 'failed' | 'disabled' | 'pending';
 }
 
@@ -58,7 +57,6 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<OrgInvitationResponse | null>(null);
-  const { copied, copy } = useCopyToClipboard();
 
   const {
     register,
@@ -187,23 +185,11 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
               <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
               {result.message} ({result.invitation.email})
             </p>
-            {result.invitation.link && (
-              <div className="flex max-w-xl gap-2">
-                <Input
-                  value={result.invitation.link}
-                  readOnly
-                  aria-label="Invitation link"
-                  className="text-muted-foreground text-xs"
-                />
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => void copy(result.invitation.link ?? '')}
-                >
-                  <Copy className="h-4 w-4" />
-                  <span className="sr-only">{copied ? 'Copied' : 'Copy link'}</span>
-                </Button>
-              </div>
+            {result.emailStatus !== 'sent' && (
+              <p className="text-muted-foreground">
+                The invitation is saved, but the email did not go out. Ask a platform admin to
+                re-send it from Users.
+              </p>
             )}
           </div>
         )}

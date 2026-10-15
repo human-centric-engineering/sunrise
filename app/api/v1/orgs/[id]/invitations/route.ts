@@ -25,6 +25,13 @@
  * because the invitation cannot be sent either way, and the inviter needs to
  * know why.
  *
+ * **The invitation link is never returned.** The platform route returns it so
+ * a platform admin can hand it over when email is down. Here the inviter is a
+ * tenant's admin, and the token is all `accept-invite` asks for before it
+ * creates a verified account with a password the caller picks. So the link
+ * reaches the invitee by email only. If email is not configured, the
+ * invitation is stored, and a platform admin re-sends it from Users.
+ *
  * A browser session only, as the members routes require: the roster's shape
  * is not something a key's scopes cover.
  */
@@ -166,7 +173,10 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
         orgRole: body.orgRole ?? null,
         invitedAt,
         expiresAt: delivered.expiresAt.toISOString(),
-        link: delivered.link,
+        // No `link`: the token in it is the only proof acceptance asks for,
+        // and acceptance verifies the email. Handing it to the inviter would
+        // let an org admin open a verified account for an address they do
+        // not own, so it goes to the invitee by email and nowhere else.
       },
       emailStatus: delivered.emailStatus,
     },

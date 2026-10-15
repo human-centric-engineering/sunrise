@@ -144,7 +144,11 @@ describe('POST /api/v1/orgs/[id]/invitations — admission', () => {
       name: 'Jane Doe',
     });
     expect(body.data.invitation).toMatchObject({ orgId: ORG, orgRole: ORG_ADMIN_ROLE });
-    expect(body.data.invitation.link).toContain('token=tok-new');
+    // The token goes to the invitee by email only: an inviter holding it could
+    // accept in the invitee's place and get a verified account for their address.
+    expect(body.data.invitation).not.toHaveProperty('link');
+    expect(JSON.stringify(body)).not.toContain('tok-new');
+    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: 'jane@example.com' }));
     expect(body.data.emailStatus).toBe('sent');
   });
 
@@ -352,7 +356,7 @@ describe('POST /api/v1/orgs/[id]/invitations — existing accounts and invitatio
       expect.objectContaining({ role: 'USER', orgId: ORG })
     );
     expect(generateInvitationToken).not.toHaveBeenCalled();
-    expect(body.data.invitation.link).toContain('token=tok-re');
+    expect(JSON.stringify(body)).not.toContain('tok-re');
     expect(body.data.message).toMatch(/resent/);
   });
 });
@@ -379,7 +383,7 @@ describe('POST /api/v1/orgs/[id]/invitations — limits and delivery', () => {
     expect(generateInvitationToken).not.toHaveBeenCalled();
   });
 
-  it('still creates the invitation when the email fails, returning the link', async () => {
+  it('still creates the invitation when the email fails, and still withholds the link', async () => {
     vi.mocked(sendEmail).mockResolvedValue({ success: false, status: 'failed', error: 'down' });
 
     const res = await post(invitee);
@@ -387,9 +391,8 @@ describe('POST /api/v1/orgs/[id]/invitations — limits and delivery', () => {
 
     expect(res.status).toBe(201);
     expect(body.data.emailStatus).toBe('failed');
-    expect(body.data.invitation.link).toBe(
-      'http://app.test/accept-invite?token=tok-new&email=jane%40example.com'
-    );
+    expect(body.data.invitation).not.toHaveProperty('link');
+    expect(JSON.stringify(body)).not.toContain('tok-new');
     expect(generateInvitationToken).toHaveBeenCalledTimes(1);
   });
 

@@ -246,8 +246,13 @@ as the members routes. The invitee joins this org on acceptance, as a platform
 - No platform `role` and no `orgId`. A `role` key is dropped.
 
 **Response** (201 Created): `{ message, invitation: { email, name, orgId,
-orgRole, invitedAt, expiresAt, link }, emailStatus }`, the same shape as the
-platform route without `role`. If an invitation into this org is already
+orgRole, invitedAt, expiresAt }, emailStatus }`. That is the platform route's
+shape without `role` and **without `link`**. The token in the link is all
+`accept-invite` asks for before it creates a verified account with a
+password the caller chooses. An inviter who held it could therefore open an
+account for an address they do not own. It goes to the invitee by email only. If
+`emailStatus` is not `sent`, the invitation is stored, and a platform admin
+re-sends it from Users. A platform resend keeps the pending org. If an invitation into this org is already
 pending, the answer is `200` with `emailStatus: "pending"` and no link. Send
 `?resend=true` to issue a new token.
 
