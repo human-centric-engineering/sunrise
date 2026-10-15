@@ -5078,6 +5078,25 @@ describe('rolling conversation summarization', () => {
     expect(turn.prompt.some((m) => m.content.includes('older messages omitted'))).toBe(false);
   });
 
+  it('keeps half of a thin truncated load verbatim rather than summarising all of it (#655)', async () => {
+    mockSummariser();
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxHistoryMessages: 300 })
+    );
+    // 201 rows fetched (the oldest is cut), 196 of the loaded 200 are error markers:
+    // 4 survive (ids 197..200).
+    const rows = makeHistoryMessages(201);
+    for (let i = 1; i < 197; i++) (rows[i] as { metadata: unknown }).metadata = { error: true };
+
+    const turn = await runTurn('conv-thin-truncated', rows, NO_SUMMARY);
+
+    expect(turn.calls).toBe(1);
+    // requiredDrop is 1 and the lookahead is floor(3 / 2) = 1, so 2 stay verbatim
+    // instead of the whole history going into the summary.
+    expect(verbatimHistory(turn.prompt).size).toBe(2);
+    expect(verbatimHistory(turn.prompt).has('Message 200')).toBe(true);
+  });
+
   it('does not summarise a high-cap conversation that still fits the load window (#655)', async () => {
     mockSummariser();
     (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(

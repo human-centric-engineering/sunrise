@@ -1001,7 +1001,13 @@ export class StreamingChatHandler {
           // the price — each call now folds ~2 new messages into the stored
           // text instead of re-deriving the whole prefix. Do not read the
           // "one call serves ~5 turns" figure as covering these agents.
-          const lookahead = Math.min(SUMMARY_LOOKAHEAD_MESSAGES, Math.floor(summaryWindow / 2));
+          const lookahead = Math.min(
+            SUMMARY_LOOKAHEAD_MESSAGES,
+            Math.floor(summaryWindow / 2),
+            // And never more than half of what stays verbatim. Equal to the
+            // clamp above except when a truncated load left few rows.
+            Math.floor((historyRows.length - requiredDrop) / 2)
+          );
           const targetIdx = Math.min(requiredDrop - 1 + lookahead, historyRows.length - 1);
           const newlyCovered = historyRows.slice(coveredIdx + 1, targetIdx + 1);
 
