@@ -59,12 +59,12 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import { auth } from '@/lib/auth/config';
-import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import {
   ensureBaselineVersion,
   recordAgentVersion,
 } from '@/lib/orchestration/agents/agent-versioning';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -209,10 +209,9 @@ describe('POST /api/v1/admin/orchestration/agents/bulk', () => {
   it('returns a retryable 409 when a concurrent edit takes a version number', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(recordAgentVersion).mockRejectedValueOnce(
-      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: 'test',
-        meta: { modelName: 'AiAgentVersion' },
+      uniqueViolationError({
+        index: 'ai_agent_version_agentId_version_key',
+        modelName: 'AiAgentVersion',
       })
     );
 

@@ -109,7 +109,6 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
-import { Prisma } from '@prisma/client';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
@@ -119,6 +118,7 @@ import {
   ensureBaselineVersion,
   recordAgentVersion,
 } from '@/lib/orchestration/agents/agent-versioning';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -462,10 +462,9 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       getTxMock().aiAgent.findFirst.mockResolvedValue(makeDbAgent(AGENT_ID, 'existing-agent'));
       vi.mocked(recordAgentVersion).mockRejectedValueOnce(
-        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-          code: 'P2002',
-          clientVersion: 'test',
-          meta: { modelName: 'AiAgentVersion' },
+        uniqueViolationError({
+          index: 'ai_agent_version_agentId_version_key',
+          modelName: 'AiAgentVersion',
         })
       );
 
@@ -484,10 +483,9 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
       getTxMock().aiAgent.findFirst.mockResolvedValue(null);
       // e.g. a bundle listing the same capability twice: it fails every time.
       getTxMock().aiAgentCapability.createMany.mockRejectedValueOnce(
-        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-          code: 'P2002',
-          clientVersion: 'test',
-          meta: { modelName: 'AiAgentCapability' },
+        uniqueViolationError({
+          index: 'ai_agent_capability_agentId_capabilityId_key',
+          modelName: 'AiAgentCapability',
         })
       );
       vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([
@@ -500,10 +498,9 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
         })
       );
 
-      // The shared API error handler's answer for a unique violation, not the
-      // route's "conflicted with a concurrent change, please retry". Both are
-      // 409 since t-796, so the message is what tells them apart.
-      expect(response.status).toBe(409);
+      // The shared API error handler's answer for a unique violation (400),
+      // not "conflicted with a concurrent change, please retry" (409).
+      expect(response.status).toBe(400);
       const body = (await response.json()) as { error: { message: string } };
       expect(body.error.message).toBe('A record with that value already exists');
     });

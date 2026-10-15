@@ -51,7 +51,8 @@ describe('uniqueViolation', () => {
   it('reads the columns when the adapter reports fields instead of a name', () => {
     const err = p2002({
       modelName: 'AiWorkflowExecution',
-      driverAdapterError: { cause: { constraint: { fields: ['dedupKey'] } } },
+      // adapter-pg copies Postgres's `Key ("dedupKey")=...` detail, quotes included.
+      driverAdapterError: { cause: { constraint: { fields: ['"dedupKey"'] } } },
     });
     expect(uniqueViolation(err)).toEqual({
       modelName: 'AiWorkflowExecution',
@@ -107,14 +108,27 @@ describe('isUniqueViolationOn', () => {
     expect(isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.agentSlug)).toBe(false);
   });
 
-  it('matches reported fields as a set, in any order, and not a subset', () => {
-    const fields = (f: string[]) =>
-      p2002({ driverAdapterError: { cause: { constraint: { fields: f } } } });
-    expect(isUniqueViolationOn(fields(['slug', 'orgId']), UNIQUE_CONSTRAINTS.agentSlug)).toBe(true);
-    expect(isUniqueViolationOn(fields(['slug']), UNIQUE_CONSTRAINTS.agentSlug)).toBe(false);
+  const fields = (f: string[], modelName?: string) =>
+    p2002({ modelName, driverAdapterError: { cause: { constraint: { fields: f } } } });
+
+  it('matches reported fields on the same model as a set, in any order, and not a subset', () => {
+    const agent = (f: string[]) => fields(f, 'AiAgent');
+    expect(isUniqueViolationOn(agent(['slug', '"orgId"']), UNIQUE_CONSTRAINTS.agentSlug)).toBe(
+      true
+    );
+    expect(isUniqueViolationOn(agent(['slug']), UNIQUE_CONSTRAINTS.agentSlug)).toBe(false);
     expect(
-      isUniqueViolationOn(fields(['orgId', 'slug', 'name']), UNIQUE_CONSTRAINTS.agentSlug)
+      isUniqueViolationOn(agent(['orgId', 'slug', 'name']), UNIQUE_CONSTRAINTS.agentSlug)
     ).toBe(false);
+  });
+
+  it("does not match another table's key on the same columns, or a columns-only error with no model", () => {
+    const docSlug = fields(['orgId', 'slug'], 'AiKnowledgeDocument');
+    expect(isUniqueViolationOn(docSlug, UNIQUE_CONSTRAINTS.knowledgeDocumentSlug)).toBe(true);
+    expect(isUniqueViolationOn(docSlug, UNIQUE_CONSTRAINTS.agentSlug)).toBe(false);
+    expect(isUniqueViolationOn(fields(['orgId', 'slug']), UNIQUE_CONSTRAINTS.agentSlug)).toBe(
+      false
+    );
   });
 
   it('is false when the P2002 names no constraint at all', () => {

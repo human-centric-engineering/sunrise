@@ -18,6 +18,7 @@
 
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
+import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
@@ -94,13 +95,7 @@ function withImportedFromSlug(metadata: unknown, slug: string): Prisma.InputJson
  * 409, as for an agent version conflict).
  */
 export function isWorkflowSlugConflict(err: unknown): boolean {
-  return (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === 'P2002' &&
-    // The driver adapter names the model, not the constraint's fields;
-    // `slug` is the only unique key a create here can collide on.
-    err.meta?.modelName === 'AiWorkflow'
-  );
+  return isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.workflowSlug);
 }
 
 /**

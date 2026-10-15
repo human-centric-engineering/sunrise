@@ -419,10 +419,10 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       expect(data.error.code).toBe('NOT_FOUND');
     });
 
-    it('returns 409 (unique constraint) when all slug collision attempts are exhausted', async () => {
+    it('returns 400 (unique constraint) when all slug collision attempts are exhausted', async () => {
       // The route retries up to MAX_SLUG_ATTEMPTS (5) times on P2002. On the
       // final attempt it re-throws the raw PrismaClientKnownRequestError, which
-      // handleAPIError maps to 409 CONFLICT (unique constraint). The ConflictError guard
+      // handleAPIError maps to 400 VALIDATION_ERROR (unique constraint). The ConflictError guard
       // after the loop is unreachable because the last re-throw exits before it.
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeSourceAgent() as never);
@@ -434,10 +434,10 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
 
       const response = await POST(makePostRequest(), makeParams(AGENT_ID));
 
-      // handleAPIError maps a non-email P2002 → 409 CONFLICT, never EMAIL_TAKEN (t-796)
-      expect(response.status).toBe(409);
+      // handleAPIError maps a non-email P2002 → 400 VALIDATION_ERROR, never EMAIL_TAKEN (t-796)
+      expect(response.status).toBe(400);
       const body = (await response.json()) as { error: { code: string } };
-      expect(body.error.code).toBe('CONFLICT');
+      expect(body.error.code).toBe('VALIDATION_ERROR');
     });
 
     it('CRITICAL: returns 500 on plain Error but does NOT leak raw error message', async () => {

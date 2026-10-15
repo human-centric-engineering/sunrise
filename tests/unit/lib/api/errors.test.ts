@@ -572,11 +572,11 @@ describe('handleAPIError', () => {
   describe('Prisma error handling', () => {
     describe('P2002 - Unique constraint violation', () => {
       // The driver adapter's P2002 names the index and has no meta.target (t-796).
-      const CONFLICT_BODY = {
+      const TAKEN_BODY = {
         success: false,
         error: {
           message: 'A record with that value already exists',
-          code: ErrorCodes.CONFLICT,
+          code: ErrorCodes.VALIDATION_ERROR,
           details: { constraint: 'unique' },
         },
       };
@@ -598,16 +598,16 @@ describe('handleAPIError', () => {
         });
       });
 
-      it('answers 409 CONFLICT, not EMAIL_TAKEN, for a collision on any other constraint', async () => {
+      it('answers 400 VALIDATION_ERROR, not EMAIL_TAKEN, for a collision on any other constraint', async () => {
         const response = handleAPIError(
           uniqueViolationError({ index: 'ai_agent_orgId_slug_key', modelName: 'AiAgent' })
         );
 
-        expect(response.status).toBe(409);
-        expect(await parseResponse(response)).toEqual(CONFLICT_BODY);
+        expect(response.status).toBe(400);
+        expect(await parseResponse(response)).toEqual(TAKEN_BODY);
       });
 
-      it('answers 409 CONFLICT when the P2002 names no constraint', async () => {
+      it('answers 400 VALIDATION_ERROR when the P2002 names no constraint', async () => {
         for (const meta of [undefined, { target: [] }, { target: 123 }, { target: null }]) {
           const prismaError = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
             code: 'P2002',
@@ -616,8 +616,8 @@ describe('handleAPIError', () => {
           });
           const response = handleAPIError(prismaError);
 
-          expect(response.status).toBe(409);
-          expect(await parseResponse(response)).toEqual(CONFLICT_BODY);
+          expect(response.status).toBe(400);
+          expect(await parseResponse(response)).toEqual(TAKEN_BODY);
         }
       });
     });

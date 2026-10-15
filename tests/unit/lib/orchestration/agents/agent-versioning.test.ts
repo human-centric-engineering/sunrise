@@ -15,6 +15,7 @@ import {
   readAgentConsistently,
   recordAgentVersion,
 } from '@/lib/orchestration/agents/agent-versioning';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 /** A live agent row: versioned columns plus columns the snapshot must drop. */
 const LIVE_AGENT = {
@@ -262,20 +263,24 @@ describe('agent-versioning helpers', () => {
   });
 
   describe('isAgentVersionConflict', () => {
-    const p2002 = (modelName: string) =>
-      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: 'test',
-        meta: { modelName },
-      });
+    // The P2002 the driver adapter throws: the index name, no meta.target (t-796).
+    const p2002 = (index: string, modelName: string) => uniqueViolationError({ index, modelName });
 
     it('is true for a unique violation on an agent version number', () => {
-      expect(isAgentVersionConflict(p2002('AiAgentVersion'))).toBe(true);
+      expect(
+        isAgentVersionConflict(p2002('ai_agent_version_agentId_version_key', 'AiAgentVersion'))
+      ).toBe(true);
     });
 
-    it('is false for a unique violation on any other model', () => {
+    it('is false for a unique violation on any other index', () => {
       // e.g. a duplicate capability pivot: retrying can never succeed.
-      expect(isAgentVersionConflict(p2002('AiAgentCapability'))).toBe(false);
+      expect(
+        isAgentVersionConflict(
+          p2002('ai_agent_capability_agentId_capabilityId_key', 'AiAgentCapability')
+        )
+      ).toBe(false);
+      // A primary-key collision on the version table is not a version race either.
+      expect(isAgentVersionConflict(p2002('ai_agent_version_pkey', 'AiAgentVersion'))).toBe(false);
     });
 
     it('is false for other errors', () => {

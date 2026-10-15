@@ -16,25 +16,42 @@
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 
-/** A unique constraint as Postgres names it, and the columns it covers. */
+/**
+ * A unique constraint: its Postgres name, the Prisma model it is on, and the
+ * columns it covers. The model disambiguates a match by columns, since two
+ * tables can each have a unique key on `(orgId, slug)`.
+ */
 export interface UniqueConstraint {
   readonly index: string;
+  readonly model: string;
   readonly fields: readonly string[];
 }
 
 /** The unique constraints application code tells apart on a P2002. */
 export const UNIQUE_CONSTRAINTS = {
-  userEmail: { index: 'user_email_key', fields: ['email'] },
-  agentSlug: { index: 'ai_agent_orgId_slug_key', fields: ['orgId', 'slug'] },
+  userEmail: { index: 'user_email_key', model: 'User', fields: ['email'] },
+  agentSlug: { index: 'ai_agent_orgId_slug_key', model: 'AiAgent', fields: ['orgId', 'slug'] },
+  agentVersion: {
+    index: 'ai_agent_version_agentId_version_key',
+    model: 'AiAgentVersion',
+    fields: ['agentId', 'version'],
+  },
+  workflowSlug: { index: 'ai_workflow_slug_key', model: 'AiWorkflow', fields: ['slug'] },
   knowledgeDocumentSlug: {
     index: 'ai_knowledge_document_orgId_slug_key',
+    model: 'AiKnowledgeDocument',
     fields: ['orgId', 'slug'],
   },
   knowledgeRevisionVersion: {
     index: 'ai_knowledge_document_revision_documentId_version_key',
+    model: 'AiKnowledgeDocumentRevision',
     fields: ['documentId', 'version'],
   },
-  workflowExecutionDedupKey: { index: 'ai_workflow_execution_dedup_key', fields: ['dedupKey'] },
+  workflowExecutionDedupKey: {
+    index: 'ai_workflow_execution_dedup_key',
+    model: 'AiWorkflowExecution',
+    fields: ['dedupKey'],
+  },
 } as const satisfies Record<string, UniqueConstraint>;
 
 /** What a P2002 says about the constraint it collided on. */
@@ -80,22 +97,27 @@ export function uniqueViolation(err: unknown): UniqueViolation | null {
   let index: string | null = null;
   let fields: string[] | null = null;
   if (constraint && 'index' in constraint) index = constraint.index;
-  else if (constraint) fields = constraint.fields;
+  // adapter-pg parses these from Postgres's `Key ("orgId", slug)=...` detail,
+  // which double-quotes a mixed-case column.
+  else if (constraint) fields = constraint.fields.map((f) => f.replace(/^"(.*)"$/, '$1'));
   else if (typeof meta.target === 'string') index = meta.target;
   else if (meta.target) fields = meta.target;
   return { modelName: meta.modelName ?? null, index, fields };
 }
 
-/** True when `err` is a P2002 on `constraint`, by its name or by its columns. */
+/**
+ * True when `err` is a P2002 on `constraint`: by its name, or else by its
+ * columns on the same model (a columns-only error that names no model is not
+ * matched, since the columns alone do not say which table).
+ */
 export function isUniqueViolationOn(err: unknown, constraint: UniqueConstraint): boolean {
   const violation = uniqueViolation(err);
   if (!violation) return false;
   if (violation.index !== null) return violation.index === constraint.index;
-  if (violation.fields !== null) {
-    return (
-      violation.fields.length === constraint.fields.length &&
-      constraint.fields.every((field) => violation.fields?.includes(field))
-    );
-  }
-  return false;
+  const { fields } = violation;
+  if (fields === null || violation.modelName !== constraint.model) return false;
+  return (
+    fields.length === constraint.fields.length &&
+    constraint.fields.every((field) => fields.includes(field))
+  );
 }

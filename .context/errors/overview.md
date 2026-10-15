@@ -150,7 +150,7 @@ API Request -> Route Handler Error
                 |       -> Return VALIDATION_ERROR response
                 |
                 +-- Prisma Error?
-                |   YES -> Translate Prisma code (P2002 -> EMAIL_TAKEN / CONFLICT)
+                |   YES -> Translate Prisma code (P2002 -> EMAIL_TAKEN / VALIDATION_ERROR)
                 |       -> Return appropriate error response
                 |
                 +-- Unknown Error?

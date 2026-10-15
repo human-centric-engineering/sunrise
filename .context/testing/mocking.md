@@ -148,7 +148,7 @@ field:
 // lib/api/errors.ts
 if (error instanceof Prisma.PrismaClientKnownRequestError) {
   if (error.code === 'P2002') {
-    /* 400 EMAIL_TAKEN on user_email_key, else 409 CONFLICT */
+    /* 400 EMAIL_TAKEN on user_email_key, else 400 VALIDATION_ERROR */
   }
 }
 ```

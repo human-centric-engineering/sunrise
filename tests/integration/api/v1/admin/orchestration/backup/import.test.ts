@@ -15,7 +15,6 @@ import {
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
 import { ZodError, ZodIssueCode } from 'zod';
-import { Prisma } from '@prisma/client';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -67,6 +66,7 @@ import { SHARED_SETTINGS_REFUSAL_CODE } from '@/lib/tenancy/shared-settings';
 import { BACKUP_SHARED_REFUSAL } from '@/lib/orchestration/backup/scope';
 import { importOrchestrationConfig } from '@/lib/orchestration/backup/importer';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -225,10 +225,9 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
     it('returns a retryable 409 when a concurrent write collides on a unique key', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(importOrchestrationConfig).mockRejectedValue(
-        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-          code: 'P2002',
-          clientVersion: 'test',
-          meta: { modelName: 'AiAgentVersion' },
+        uniqueViolationError({
+          index: 'ai_agent_version_agentId_version_key',
+          modelName: 'AiAgentVersion',
         })
       );
 
@@ -243,11 +242,7 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
     it('returns the retry 409 when another org took a workflow slug the import planned', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(importOrchestrationConfig).mockRejectedValue(
-        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-          code: 'P2002',
-          clientVersion: 'test',
-          meta: { modelName: 'AiWorkflow' },
-        })
+        uniqueViolationError({ index: 'ai_workflow_slug_key', modelName: 'AiWorkflow' })
       );
 
       const res = await POST(makePostRequest(makeValidPayload()));
@@ -266,11 +261,7 @@ describe('POST /api/v1/admin/orchestration/backup/import', () => {
     it('does not map a unique violation on another model to the retry 409', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(importOrchestrationConfig).mockRejectedValue(
-        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-          code: 'P2002',
-          clientVersion: 'test',
-          meta: { modelName: 'AiCapability' },
-        })
+        uniqueViolationError({ index: 'ai_capability_slug_key', modelName: 'AiCapability' })
       );
 
       const res = await POST(makePostRequest(makeValidPayload())).catch(() => null);

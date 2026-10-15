@@ -135,7 +135,7 @@ describe('handleAPIError', () => {
   describe('Prisma error handling', () => {
     describe('P2002 - Unique constraint violation', () => {
       it('answers EMAIL_TAKEN for a driver-adapter collision on user_email_key', async () => { ... });
-      it('answers 409 CONFLICT, not EMAIL_TAKEN, for a collision on any other constraint', async () => { ... });
+      it('answers 400 VALIDATION_ERROR, not EMAIL_TAKEN, for a collision on any other constraint', async () => { ... });
     });
 
     describe('P2025 - Record not found', () => {

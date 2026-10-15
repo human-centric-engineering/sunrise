@@ -39,6 +39,7 @@ import {
   INITIAL_VERSION_SUMMARY,
   asSnapshotJson,
   buildAgentSnapshot,
+  isAgentVersionConflict,
   nextAgentVersionNumber,
 } from '@/lib/orchestration/agents/agent-versioning';
 import {
@@ -462,16 +463,17 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
     return successResponse(agent);
   } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      // Disambiguate which unique constraint collided. A slug clash is a real
-      // user error; a collision on @@unique([agentId, version]) means two
-      // concurrent PATCHes raced for the same version number — surface that as a
-      // retryable conflict, not a misleading "slug already in use".
-      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.agentSlug)) {
-        throw new ValidationError(`Agent with slug '${body.slug}' already exists`, {
-          slug: ['Slug is already in use'],
-        });
-      }
+    // Disambiguate which unique constraint collided. A slug clash is a real
+    // user error; a collision on @@unique([agentId, version]) means two
+    // concurrent PATCHes raced for the same version number — surface that as a
+    // retryable conflict. Any other unique violation goes to the shared
+    // handler: retrying it would never succeed.
+    if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.agentSlug)) {
+      throw new ValidationError(`Agent with slug '${body.slug}' already exists`, {
+        slug: ['Slug is already in use'],
+      });
+    }
+    if (isAgentVersionConflict(err)) {
       throw new ConflictError('Agent update conflicted with a concurrent change. Please retry.');
     }
     throw err;

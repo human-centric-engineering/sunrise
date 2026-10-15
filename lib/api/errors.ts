@@ -235,8 +235,10 @@ export function handleAPIError(error: unknown): Response {
   // Handle Prisma errors
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     // Unique constraint violation. Only a duplicate email is EMAIL_TAKEN,
-    // which clients render as "this email address is already registered";
-    // any other collision is a conflict with an existing record (t-796).
+    // which clients render as "this email address is already registered".
+    // Any other collision is a 400 VALIDATION_ERROR: the value is taken, and
+    // retrying will not help. Not 409, which routes here use to mean "a
+    // concurrent change, please retry" (t-796).
     if (error.code === 'P2002') {
       if (isUniqueViolationOn(error, UNIQUE_CONSTRAINTS.userEmail)) {
         return errorResponse('Email already exists', {
@@ -246,8 +248,8 @@ export function handleAPIError(error: unknown): Response {
         });
       }
       return errorResponse('A record with that value already exists', {
-        code: ErrorCodes.CONFLICT,
-        status: 409,
+        code: ErrorCodes.VALIDATION_ERROR,
+        status: 400,
         details: { constraint: 'unique' },
       });
     }

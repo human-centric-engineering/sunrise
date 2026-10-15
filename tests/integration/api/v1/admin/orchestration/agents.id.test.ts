@@ -506,6 +506,24 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       expect(body.error.code).toBe('VALIDATION_ERROR');
     });
 
+    it('leaves a unique violation on any other constraint to the shared handler, not "please retry"', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
+      vi.mocked(prisma.aiAgent.update).mockRejectedValue(
+        uniqueViolationError({ index: 'ai_agent_pkey', modelName: 'AiAgent' })
+      );
+
+      const response = await PATCH(
+        makeRequest('PATCH', { slug: 'existing-slug' }),
+        makeParams(AGENT_ID)
+      );
+
+      // A retry can never fix this, so it must not be the retryable 409.
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+    });
+
     it('maps a version-number P2002 (concurrent PATCH race) to 409, not a bogus slug error', async () => {
       // Two concurrent versioned PATCHes can compute the same next version and
       // collide on @@unique([agentId, version]). That must NOT be reported as a

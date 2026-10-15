@@ -182,12 +182,14 @@ release process.
 
 ### Changed
 
-- **`handleAPIError` answers `409 CONFLICT` for a unique violation on any
-  constraint but the user email** (t-796). It answered every P2002 with
-  `400 EMAIL_TAKEN` and "Field already exists", which clients render as
-  "This email address is already registered", for a slug clash too. A
-  duplicate email (`user_email_key`) still answers `400 EMAIL_TAKEN`, now
-  with `details.field: 'email'`.
+- **`handleAPIError` answers `VALIDATION_ERROR`, not `EMAIL_TAKEN`, for a
+  unique violation on any constraint but the user email** (t-796). It
+  answered every P2002 with `EMAIL_TAKEN` and "Field already exists", which
+  clients render as "This email address is already registered", for a slug
+  clash too. The status stays `400`; the message is "A record with that value
+  already exists" and `details` no longer names a field. A duplicate email
+  (`user_email_key`) still answers `400 EMAIL_TAKEN`, now with
+  `details.field: 'email'`.
 - **Five events name the person whose conversation or run they report**
   (t-792). `chat_budget_exceeded_per_turn` carries `userId` (`null` plus
   `embedVisitorId` for an embed visitor); `workflow_budget_exceeded` and
@@ -380,6 +382,8 @@ release process.
   answered a slug clash with "concurrent change, please retry" (`409`) instead
   of `400`, a knowledge upload that lost a same-content race failed instead of
   returning the winner, and a revision-number collision was not retried.
+  Agent PATCH now answers "please retry" only for a version-number race;
+  another unique violation goes to the shared handler's `400`.
   `isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.<name>)` in
   `lib/db/unique-violation.ts` reads the collided index name; a test checks
   each named constraint against the migrations.

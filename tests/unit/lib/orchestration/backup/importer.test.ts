@@ -132,6 +132,7 @@ import {
   ensureBaselineVersion,
   recordAgentVersion,
 } from '@/lib/orchestration/agents/agent-versioning';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -2393,12 +2394,28 @@ describe('isWorkflowSlugConflict', () => {
       meta,
     });
 
-  it('is true for a unique violation on AiWorkflow', () => {
-    expect(isWorkflowSlugConflict(known('P2002', { modelName: 'AiWorkflow' }))).toBe(true);
+  it('is true for a driver-adapter unique violation on the workflow slug index', () => {
+    expect(
+      isWorkflowSlugConflict(
+        uniqueViolationError({ index: 'ai_workflow_slug_key', modelName: 'AiWorkflow' })
+      )
+    ).toBe(true);
   });
 
-  it('is false for a unique violation on another model', () => {
-    expect(isWorkflowSlugConflict(known('P2002', { modelName: 'AiAgentVersion' }))).toBe(false);
+  it('is false for a unique violation on another index, even of AiWorkflow', () => {
+    expect(
+      isWorkflowSlugConflict(
+        uniqueViolationError({ index: 'ai_workflow_pkey', modelName: 'AiWorkflow' })
+      )
+    ).toBe(false);
+    expect(
+      isWorkflowSlugConflict(
+        uniqueViolationError({
+          index: 'ai_agent_version_agentId_version_key',
+          modelName: 'AiAgentVersion',
+        })
+      )
+    ).toBe(false);
   });
 
   it('is false for a unique violation with no model name', () => {

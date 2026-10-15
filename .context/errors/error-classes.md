@@ -180,7 +180,7 @@ The `handleAPIError` function automatically translates Prisma error codes:
 | Prisma Code | API Error        | HTTP Status | Example                            |
 | ----------- | ---------------- | ----------- | ---------------------------------- |
 | `P2002`     | EMAIL_TAKEN      | 400         | Duplicate email (`user_email_key`) |
-| `P2002`     | CONFLICT         | 409         | Any other unique constraint        |
+| `P2002`     | VALIDATION_ERROR | 400         | Any other unique constraint        |
 | `P2025`     | NOT_FOUND        | 404         | Record not found                   |
 | `P2003`     | VALIDATION_ERROR | 400         | Foreign key constraint violation   |
 | Other       | INTERNAL_ERROR   | 500         | Generic database error             |
@@ -198,11 +198,12 @@ The `handleAPIError` function automatically translates Prisma error codes:
   }
 }
 
-// On any other unique constraint, 409:
+// On any other unique constraint, 400 (not 409: routes use 409 for
+// "a concurrent change, please retry", and retrying a taken value never works):
 {
   success: false,
   error: {
-    code: "CONFLICT",
+    code: "VALIDATION_ERROR",
     message: "A record with that value already exists",
     details: { constraint: "unique" }
   }
@@ -214,7 +215,8 @@ collided index under `meta.driverAdapterError.cause.constraint`. To tell
 constraints apart, use `isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.<name>)`
 from `lib/db/unique-violation.ts`, and add the constraint to
 `UNIQUE_CONSTRAINTS` if it is not there. A test checks every entry against
-the migrations. Never read `meta.target`: no running code sets it.
+the migrations. Don't read `meta.target` directly: the adapter never sets it
+(the helper only falls back to it for an engine without the adapter).
 
 **P2025 - Record Not Found**:
 

@@ -22,6 +22,7 @@
  * pure and client-safe).
  */
 import { Prisma } from '@prisma/client';
+import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 
 import type { prisma } from '@/lib/db/client';
 import {
@@ -122,13 +123,7 @@ export function readAgentConsistently<T>(
  * a 409. Any other unique violation is not this, and may never succeed.
  */
 export function isAgentVersionConflict(err: unknown): boolean {
-  return (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === 'P2002' &&
-    // The driver adapter names the model, not the constraint's fields;
-    // `@@unique([agentId, version])` is AiAgentVersion's only unique key.
-    err.meta?.modelName === 'AiAgentVersion'
-  );
+  return isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.agentVersion);
 }
 
 /**
