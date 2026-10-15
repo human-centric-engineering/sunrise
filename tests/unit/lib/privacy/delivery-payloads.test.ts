@@ -641,14 +641,13 @@ describe('eraseSubjectFromDeliveries', () => {
     await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
 
     const { text, values } = renderCall(executeRaw);
-    // The arms read ids only; the payload is read once, joined back under a
-    // row lock in id order, so a concurrent erasure's write is seen (t-806).
+    // The arms read ids only; the row is joined back once, unlocked.
     expect(text.split('SELECT d.id, true')).toHaveLength(4);
     expect(text).toMatch(
       /SELECT DISTINCT ON \(id\) id, activity\s+FROM \([\s\S]+\) arms\s+ORDER BY id, activity DESC/
     );
     expect(text).toMatch(
-      /JOIN ai_webhook_delivery d ON d\.id = m\.id\s+ORDER BY d\.id FOR UPDATE OF d/
+      /SELECT d\.id, d\.payload, d\.status, d\."stoppedByErasure", d\."lastError", m\.activity[\s\S]+JOIN ai_webhook_delivery d ON d\.id = m\.id\)/
     );
     expect(values).toContainEqual([...ADMIN_ACTION_EVENTS]);
   });
@@ -687,7 +686,8 @@ describe('eraseSubjectFromDeliveries', () => {
     expect(text).toMatch(/WHERE a\.e <> to_jsonb\(\$\d+::text\)/);
     // Every step is fenced, so the planner evaluates each once per row rather
     // than inlining it into every reference (t-806: 9.9 s against 0.6 s).
-    expect(text.match(/\bOFFSET 0\s+\)/g)).toHaveLength(4);
+    // The redaction runs twice, the first look and the locked re-read.
+    expect(text.match(/\bOFFSET 0\s+\)/g)).toHaveLength(8);
     // A payload whose data is not an object is left as it was.
     expect(text).toMatch(
       /CASE WHEN jsonb_typeof\(o\.payload -> 'data'\) = 'object'\s+THEN jsonb_set\(o\.payload, '\{data\}', approvers\.v\)\s+ELSE o\.payload END/
@@ -738,6 +738,28 @@ describe('eraseSubjectFromDeliveries', () => {
     const { text } = renderCall(executeRaw);
     expect(text).toMatch(
       /WHERE d\.id = r\.id\s+AND \(r\.payload IS DISTINCT FROM d\.payload OR \(r\.activity AND NOT d\."stoppedByErasure"\) OR \(r\.activity\s+AND d\."lastError" IS DISTINCT FROM [\s\S]+?\) OR \(r\.activity AND d\.status = ANY\(\$\d+::text\[\]\)\)\)/
+    );
+  });
+
+  it('locks only the rows that still need a write, in id order, and redacts them as they are now (t-806)', async () => {
+    const { client, executeRaw } = makeClient([]);
+
+    await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
+
+    const { text } = renderCall(executeRaw);
+    // The first look redacts the snapshot; todo keeps rows that need a write.
+    expect(text).toMatch(/first_look AS \([\s\S]+?FROM one_each o/);
+    expect(text).toMatch(
+      /todo AS \(\s+SELECT f\.id, f\.activity\s+FROM first_look f\s+JOIN one_each o ON o\.id = f\.id\s+WHERE \(f\.payload IS DISTINCT FROM o\.payload OR/
+    );
+    // Only todo rows are locked, in id order, and re-read.
+    expect(text).toMatch(
+      /locked AS \(\s+SELECT d\.id, d\.payload, todo\.activity\s+FROM todo\s+JOIN ai_webhook_delivery d ON d\.id = todo\.id\s+ORDER BY d\.id\s+FOR UPDATE OF d\s+\)/
+    );
+    expect(text.match(/FOR UPDATE/g)).toHaveLength(1);
+    // The write redacts from the locked read, never the first look.
+    expect(text).toMatch(
+      /redacted AS \([\s\S]+FROM locked o[\s\S]+\)\s+UPDATE ai_webhook_delivery AS d/
     );
   });
 
@@ -807,10 +829,8 @@ describe('preRedactSubjectFromDeliveries', () => {
     );
     expect(values).toContainEqual(['r10000']);
     expect(values).toContainEqual([true]);
-    // Each chunk reads its rows under a lock, in id order (t-806).
-    expect(text).toMatch(
-      /JOIN ai_event_hook_delivery d ON d\.id = w\.id\s+ORDER BY d\.id FOR UPDATE OF d/
-    );
+    // Each chunk reads its rows unlocked; the update locks only what it writes.
+    expect(text).toMatch(/JOIN ai_event_hook_delivery d ON d\.id = w\.id\)/);
     // The same skip-unchanged update as the transaction's pass.
     expect(text).toContain('UPDATE ai_event_hook_delivery AS d');
     expect(text).toContain('r.payload IS DISTINCT FROM d.payload');
