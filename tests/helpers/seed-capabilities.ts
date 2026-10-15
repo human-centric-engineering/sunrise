@@ -46,8 +46,22 @@ export interface SeedScan {
    * from a const — so deriving coverage from `where` would silently check half
    * the capabilities. `functionDefinition.name` is a literal in all of them,
    * and equals the slug (asserted below), so it is the honest key.
+   *
+   * A definition held in a same-file const (`functionDefinition: FOO_DEF`, or
+   * the shorthand `{ functionDefinition }`) is resolved to that const's
+   * literal `name`.
    */
   definedNames: string[];
+  /** {@link definedNames}, each with the file it was read from. */
+  definitions: { file: string; name: string }[];
+  /**
+   * `functionDefinition` values this reader cannot name: imported, built at
+   * runtime, or read off a class instance (`cap.capability.functionDefinition`).
+   * Not `unparseable` — the upsert is fine — but not silently dropped either,
+   * which is how a seed built from a hoisted const went unwatched (#646). The
+   * parity test requires each file here to be covered.
+   */
+  opaqueDefinitions: { file: string; expr: string }[];
 }
 
 const SEED_DIR = join(process.cwd(), 'prisma', 'seeds');
@@ -129,11 +143,53 @@ function seedFiles(dir: string, prefix = ''): string[] {
   return out;
 }
 
+/**
+ * Blank `interface X { … }` and `type X = { … }` bodies, so a field typed
+ * `functionDefinition: Foo` is not read as a value.
+ */
+function maskTypeBodies(masked: string): string {
+  const out = masked.split('');
+  const re = /\b(?:interface\s+[\w$]+[^{=;]*|type\s+[\w$]+(?:<[^>]*>)?\s*=\s*)\{/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(masked)) !== null) {
+    const open = m.index + m[0].length - 1;
+    const close = objectEnd(masked, open);
+    if (close === -1) continue;
+    for (let i = open + 1; i < close; i++) if (out[i] !== '\n') out[i] = ' ';
+  }
+  return out.join('');
+}
+
+/**
+ * The first TOP-LEVEL `name:` string literal of the object opening at `open`.
+ * `null` when there is none (or it is not a literal); `undefined` when the
+ * object is unbalanced. A nested `properties: { name: {...} }` is deeper, and
+ * is an object rather than a string in any case.
+ */
+function literalName(raw: string, masked: string, open: number): string | null | undefined {
+  const close = objectEnd(masked, open);
+  if (close === -1) return undefined;
+  let depth = 0;
+  for (let i = open + 1; i < close; i++) {
+    const ch = masked[i];
+    if (ch === '{' || ch === '[' || ch === '(') depth++;
+    else if (ch === '}' || ch === ']' || ch === ')') depth--;
+    else if (depth === 0 && /^name\s*:/.test(masked.slice(i, i + 12))) {
+      if (i > open + 1 && /[\w$.]/.test(masked[i - 1])) continue;
+      const after = i + /^name\s*:/.exec(masked.slice(i, i + 12))![0].length;
+      const lit = /^\s*['"]([^'"]+)['"]/.exec(raw.slice(after));
+      return lit ? lit[1] : null;
+    }
+  }
+  return null;
+}
+
 /** @param seedDir Scan root; defaults to `prisma/seeds`. Tests pass a fixture dir. */
 export function scanCapabilitySeeds(seedDir: string = SEED_DIR): SeedScan {
   const upserts: CapabilityUpsert[] = [];
   const unparseable: { file: string; reason: string }[] = [];
-  const definedNames: string[] = [];
+  const definitions: { file: string; name: string }[] = [];
+  const opaqueDefinitions: { file: string; expr: string }[] = [];
 
   for (const file of seedFiles(seedDir)) {
     const raw = readFileSync(join(seedDir, file), 'utf8');
@@ -195,31 +251,75 @@ export function scanCapabilitySeeds(seedDir: string = SEED_DIR): SeedScan {
 
     // Capability names, wherever the definitions live in the file — inside an
     // array the seed loops over, a hoisted const, or the upsert itself.
-    const fd = /\bfunctionDefinition\s*:\s*\{/g;
+    const types = maskTypeBodies(masked);
+    const fd = /\bfunctionDefinition\b/g;
     let f: RegExpExecArray | null;
-    while ((f = fd.exec(masked)) !== null) {
-      const open = masked.indexOf('{', f.index + f[0].length - 1);
-      const close = objectEnd(masked, open);
-      if (close === -1) {
-        unparseable.push({ file, reason: 'unbalanced functionDefinition' });
+    while ((f = fd.exec(types)) !== null) {
+      const before = types.slice(0, f.index);
+      const after = types.slice(f.index + f[0].length);
+      // `const functionDefinition = …` and friends declare a binding; they are
+      // read when something references it, not here.
+      if (/\b(?:const|let|var|readonly|public|private|protected)\s+$/.test(before)) continue;
+      // Member access (`def.functionDefinition`) is a read, not a property key.
+      if (/\.\s*$/.test(before)) continue;
+
+      const colon = /^\s*:\s*/.exec(after);
+      let value: string;
+      let at: number;
+      if (colon) {
+        at = f.index + f[0].length + colon[0].length;
+        value = types.slice(at, at + 200);
+      } else if (/[{,]\s*$/.test(before) && /^\s*[,}]/.test(after)) {
+        // Shorthand `{ functionDefinition }` — the binding of the same name.
+        at = f.index;
+        value = 'functionDefinition';
+      } else {
         continue;
       }
-      // First TOP-LEVEL `name:` — a nested `properties: { name: {...} }` is
-      // deeper, and is an object rather than a string in any case.
-      let depth = 0;
-      for (let i = open + 1; i < close; i++) {
-        const ch = masked[i];
-        if (ch === '{' || ch === '[' || ch === '(') depth++;
-        else if (ch === '}' || ch === ']' || ch === ')') depth--;
-        else if (depth === 0 && /^name\s*:/.test(masked.slice(i, i + 12))) {
-          const after = i + /^name\s*:/.exec(masked.slice(i, i + 12))![0].length;
-          const lit = /^\s*['"]([^'"]+)['"]/.exec(raw.slice(after));
-          if (lit) definedNames.push(lit[1]);
-          break;
+
+      if (value.startsWith('{')) {
+        const name = literalName(raw, types, at);
+        if (name === undefined) {
+          unparseable.push({ file, reason: 'unbalanced functionDefinition' });
+          continue;
+        }
+        if (name !== null) {
+          definitions.push({ file, name });
+          continue;
+        }
+        // A literal whose `name` is computed (`name: cap.slug`) — falls through.
+      }
+
+      // An identifier: resolve it to a same-file `const x = { … }`.
+      const ident = /^([A-Za-z_$][\w$]*)\s*(?=[,}\n;]|$)/.exec(value);
+      if (!value.startsWith('{') && ident) {
+        const cm = new RegExp(`\\bconst\\s+${ident[1]}\\s*(?::[^=]+)?=\\s*\\{`).exec(types);
+        if (cm) {
+          const name = literalName(raw, types, types.indexOf('{', cm.index + cm[0].length - 1));
+          if (name === undefined) {
+            unparseable.push({ file, reason: `unbalanced const ${ident[1]}` });
+            continue;
+          }
+          if (name !== null) {
+            definitions.push({ file, name });
+            continue;
+          }
         }
       }
+
+      // Imported, built at runtime, read off a class instance, or a literal
+      // with a computed `name`: a definition this reader cannot name. Reported rather than dropped — the caller
+      // decides what covers it (#646).
+      const expr = value.startsWith('{') ? '{ … }' : /^[^,}\n;]*/.exec(value)![0].trim();
+      opaqueDefinitions.push({ file, expr });
     }
   }
 
-  return { upserts, unparseable, definedNames };
+  return {
+    upserts,
+    unparseable,
+    definitions,
+    definedNames: definitions.map((d) => d.name),
+    opaqueDefinitions,
+  };
 }

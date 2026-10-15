@@ -18,6 +18,17 @@ release process.
 
 ### Added
 
+- **A fork pairs its own capability seeds with their classes** (#646): the new
+  `lib/app/capability-seed-pairs.ts` seam (`APP_CAPABILITY_PAIRS`, ships
+  empty) is spread into `capability-class-seed-parity`'s `PAIRS`, so a fork's
+  capability seeds are held to their classes without editing a Sunrise test.
+  The seed reader now names a capability whose `functionDefinition` is a
+  same-file const (`functionDefinition: FOO_DEF`, or `{ functionDefinition }`),
+  and reports one it cannot name (imported, read off an instance) instead of
+  dropping it. **Forks:** a capability seed written that way was invisible to
+  the completeness check and now fails it until you pair it here; a pair for a
+  seed the reader cannot name also sets `seedFile`.
+
 - **A fork classifies its own models for the owner layer** (§115 t-807): the
   new `lib/app/owner-classification.ts` seam (`initAppOwnerClassification()`,
   ships empty) and its primitive `registerAppOwnerClassification()` in
@@ -390,6 +401,14 @@ release process.
   MAJOR.
 
 ### Fixed
+
+- **The 14 document-cleanup capabilities now seed the schema their classes
+  accept** (#646): `prisma/seeds/019-cleanup-capabilities.ts` wrote a
+  hand-copied `functionDefinition` that had drifted from every class
+  (different tool and parameter descriptions), and the parity test never saw
+  it. The seed now takes each definition from the class instance, so the next
+  deploy rewrites those rows' `functionDefinition` to the class's. Admin-owned
+  `name`, `description`, `rateLimit` and `isActive` are untouched.
 
 - **Code that handles a particular unique violation recognises it again**
   (t-796). Under Prisma 7's driver adapter a P2002 carries no `meta.target`,

@@ -62,6 +62,7 @@ import {
   appOwnerlessSurfaceExceptions,
 } from '@/lib/app/ci';
 import { occupiedTiers } from '@/lib/app/reserved-tiers';
+import { APP_CAPABILITY_PAIRS } from '@/lib/app/capability-seed-pairs';
 import { initAppUserCreatedHooks } from '@/lib/app/user-created';
 import { collectAppSubjectData } from '@/lib/app/data-export';
 import {
@@ -430,6 +431,11 @@ const SEAM_DEFAULTS: SeamDefault[] = [
     seam: 'lib/app/reserved-tiers.ts',
     risk: 'a stray entry would switch OFF the guard that keeps a reserved tier empty — and it is upstream, where core is the only thing that could put a file there, that the guard is the promise rather than a formality',
     assert: () => expect(occupiedTiers).toEqual([]),
+  },
+  {
+    seam: 'lib/app/capability-seed-pairs.ts',
+    risk: 'a stray pair would pin a capability no install seeds, and one declaring a `seedFile` would mark a seed as covered that nothing pairs — the parity check passing over the very file it was told to watch',
+    assert: () => expect(APP_CAPABILITY_PAIRS).toEqual([]),
   },
   {
     seam: 'lib/app/brand.ts',

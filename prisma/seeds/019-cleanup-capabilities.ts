@@ -1,12 +1,34 @@
 import type { Prisma } from '@prisma/client';
 import type { SeedUnit } from '@/prisma/runner';
+import type { BaseCapability } from '@/lib/orchestration/capabilities/base-capability';
+import { CollapseWhitespaceCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/collapse-whitespace';
+import { DedupeLinesCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/dedupe-lines';
+import { EstimateSizeCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/estimate-size';
+import { FindInDocumentCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/find-in-document';
+import { JoinWrappedLinesCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/join-wrapped-lines';
+import { NormalisePunctuationCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/normalise-punctuation';
+import { PreviewDiffCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/preview-diff';
+import { ReadDocumentCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/read-document';
+import { RewriteSectionWithLlmCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/rewrite-section-with-llm';
+import { RewriteWithLlmCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/rewrite-with-llm';
+import { StripLinesMatchingCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/strip-lines-matching';
+import { StripMatchesCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/strip-matches';
+import { StripSpeakerLabelsCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/strip-speaker-labels';
+import { StripTimestampsCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/strip-timestamps';
 
 interface CleanupCap {
   slug: string;
+  /** Admin-UI presentation, operator-owned — not what the LLM reads. */
   name: string;
+  /** Admin-UI presentation, operator-owned — not what the LLM reads. */
   description: string;
   handler: string;
-  parameters: Record<string, unknown>;
+  /**
+   * The class the dispatcher runs. Its `functionDefinition` IS the seeded one,
+   * so the schema the LLM is shown cannot drift from the schema the handler
+   * accepts (#545, #646). A hand-written copy here had drifted on all 14.
+   */
+  capability: BaseCapability;
   rateLimit: number;
 }
 
@@ -17,14 +39,7 @@ const DETERMINISTIC: CleanupCap[] = [
     description:
       'Remove whole lines from the cleanup document where a regex matches anywhere in the line.',
     handler: 'StripLinesMatchingCapability',
-    parameters: {
-      type: 'object',
-      properties: {
-        regex: { type: 'string', description: 'Regex pattern (no surrounding slashes).' },
-        flags: { type: 'string', description: 'Optional regex flags.' },
-      },
-      required: ['regex'],
-    },
+    capability: new StripLinesMatchingCapability(),
     rateLimit: 60,
   },
   {
@@ -33,14 +48,7 @@ const DETERMINISTIC: CleanupCap[] = [
     description:
       'Remove inline regex matches from the cleanup document, leaving surrounding text intact.',
     handler: 'StripMatchesCapability',
-    parameters: {
-      type: 'object',
-      properties: {
-        regex: { type: 'string' },
-        flags: { type: 'string' },
-      },
-      required: ['regex'],
-    },
+    capability: new StripMatchesCapability(),
     rateLimit: 60,
   },
   {
@@ -48,18 +56,7 @@ const DETERMINISTIC: CleanupCap[] = [
     name: 'Strip Timestamps',
     description: 'Remove timestamp markers (00:00, [12:34:56], etc.) from the cleanup document.',
     handler: 'StripTimestampsCapability',
-    parameters: {
-      type: 'object',
-      properties: {
-        formats: {
-          type: 'array',
-          items: {
-            type: 'string',
-            enum: ['hh_mm', 'hh_mm_ss', 'bracketed', 'parenthesised'],
-          },
-        },
-      },
-    },
+    capability: new StripTimestampsCapability(),
     rateLimit: 60,
   },
   {
@@ -67,12 +64,7 @@ const DETERMINISTIC: CleanupCap[] = [
     name: 'Strip Speaker Labels',
     description: 'Remove "Name:" or "[Name]" speaker labels at the start of lines.',
     handler: 'StripSpeakerLabelsCapability',
-    parameters: {
-      type: 'object',
-      properties: {
-        format: { type: 'string', enum: ['colon', 'bracketed', 'both'] },
-      },
-    },
+    capability: new StripSpeakerLabelsCapability(),
     rateLimit: 60,
   },
   {
@@ -80,10 +72,7 @@ const DETERMINISTIC: CleanupCap[] = [
     name: 'Collapse Whitespace',
     description: 'Collapse runs of spaces/tabs, trim trailing whitespace, and squash blank lines.',
     handler: 'CollapseWhitespaceCapability',
-    parameters: {
-      type: 'object',
-      properties: { keepBlankLines: { type: 'boolean' } },
-    },
+    capability: new CollapseWhitespaceCapability(),
     rateLimit: 60,
   },
   {
@@ -91,10 +80,7 @@ const DETERMINISTIC: CleanupCap[] = [
     name: 'Dedupe Lines',
     description: 'Remove duplicate lines (adjacent or document-wide).',
     handler: 'DedupeLinesCapability',
-    parameters: {
-      type: 'object',
-      properties: { consecutiveOnly: { type: 'boolean' } },
-    },
+    capability: new DedupeLinesCapability(),
     rateLimit: 60,
   },
   {
@@ -103,13 +89,7 @@ const DETERMINISTIC: CleanupCap[] = [
     description:
       'Rejoin sentences a PDF or fixed-width renderer wrapped across lines, and rejoin hyphen-split words.',
     handler: 'JoinWrappedLinesCapability',
-    parameters: {
-      type: 'object',
-      properties: {
-        dehyphenate: { type: 'boolean' },
-        onlyLowercaseContinuations: { type: 'boolean' },
-      },
-    },
+    capability: new JoinWrappedLinesCapability(),
     rateLimit: 60,
   },
   {
@@ -117,7 +97,7 @@ const DETERMINISTIC: CleanupCap[] = [
     name: 'Normalise Punctuation',
     description: 'Convert typographic punctuation (smart quotes, dashes, ellipsis) to ASCII.',
     handler: 'NormalisePunctuationCapability',
-    parameters: { type: 'object', properties: {} },
+    capability: new NormalisePunctuationCapability(),
     rateLimit: 60,
   },
 ];
@@ -129,14 +109,7 @@ const READ_ONLY: CleanupCap[] = [
     description:
       'Read a window of the cleanup document as numbered lines — the only capability that returns actual text.',
     handler: 'ReadDocumentCapability',
-    parameters: {
-      type: 'object',
-      properties: {
-        fromLine: { type: 'number' },
-        lineCount: { type: 'number' },
-        which: { type: 'string', enum: ['current', 'original'] },
-      },
-    },
+    capability: new ReadDocumentCapability(),
     rateLimit: 120,
   },
   {
@@ -145,15 +118,7 @@ const READ_ONLY: CleanupCap[] = [
     description:
       'Find lines matching a regex, returning line numbers and text. Checks a pattern before a destructive transform uses it.',
     handler: 'FindInDocumentCapability',
-    parameters: {
-      type: 'object',
-      properties: {
-        regex: { type: 'string', description: 'Regex pattern (no surrounding slashes).' },
-        flags: { type: 'string' },
-        maxMatches: { type: 'number' },
-      },
-      required: ['regex'],
-    },
+    capability: new FindInDocumentCapability(),
     rateLimit: 120,
   },
   {
@@ -161,7 +126,7 @@ const READ_ONLY: CleanupCap[] = [
     name: 'Preview Diff',
     description: 'Summarise the difference between the original and current cleanup state.',
     handler: 'PreviewDiffCapability',
-    parameters: { type: 'object', properties: {} },
+    capability: new PreviewDiffCapability(),
     rateLimit: 120,
   },
   {
@@ -170,7 +135,7 @@ const READ_ONLY: CleanupCap[] = [
     description:
       'Report token count and size class (small/medium/large/too-large) for the current cleanup state.',
     handler: 'EstimateSizeCapability',
-    parameters: { type: 'object', properties: {} },
+    capability: new EstimateSizeCapability(),
     rateLimit: 120,
   },
 ];
@@ -181,11 +146,7 @@ const LLM_BACKED: CleanupCap[] = [
     name: 'Rewrite With LLM',
     description: 'LLM rewrite of the entire cleanup document per natural-language instructions.',
     handler: 'RewriteWithLlmCapability',
-    parameters: {
-      type: 'object',
-      properties: { instructions: { type: 'string' } },
-      required: ['instructions'],
-    },
+    capability: new RewriteWithLlmCapability(),
     rateLimit: 6,
   },
   {
@@ -193,37 +154,51 @@ const LLM_BACKED: CleanupCap[] = [
     name: 'Rewrite Section With LLM',
     description: 'LLM rewrite of a single matched section of the cleanup document.',
     handler: 'RewriteSectionWithLlmCapability',
-    parameters: {
-      type: 'object',
-      properties: {
-        sectionMarker: { type: 'string' },
-        instructions: { type: 'string' },
-      },
-      required: ['sectionMarker', 'instructions'],
-    },
+    capability: new RewriteSectionWithLlmCapability(),
     rateLimit: 12,
   },
 ];
 
-const ALL = [...DETERMINISTIC, ...READ_ONLY, ...LLM_BACKED];
+export const CLEANUP_CAPABILITIES: readonly CleanupCap[] = [
+  ...DETERMINISTIC,
+  ...READ_ONLY,
+  ...LLM_BACKED,
+];
 
 // Seeds the Document Clean Up capabilities the Cleanup Agent owns.
-// Idempotent — re-seeding only sets isSystem: true so admin edits (name,
-// description, rate limit) survive. Agent binding lives in 020-cleanup-agent.
+// Idempotent — re-seeding re-applies the code-owned fields and isSystem, so
+// admin edits (name, description, rate limit) survive. Agent binding lives in
+// 020-cleanup-agent.
+//
+// `hashInputs` names every class file, because the definition the seed writes
+// now lives there: editing a class alone must re-run this unit, or the row
+// keeps the old schema (the runner only re-seeds when the hash moves).
 const unit: SeedUnit = {
   name: '019-cleanup-capabilities',
+  hashInputs: [
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/collapse-whitespace.ts',
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/dedupe-lines.ts',
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/estimate-size.ts',
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/find-in-document.ts',
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/join-wrapped-lines.ts',
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/normalise-punctuation.ts',
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/preview-diff.ts',
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/read-document.ts',
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/rewrite-section-with-llm.ts',
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/rewrite-with-llm.ts',
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/strip-lines-matching.ts',
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/strip-matches.ts',
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/strip-speaker-labels.ts',
+    '../../lib/orchestration/capabilities/built-in/document-cleanup/strip-timestamps.ts',
+  ],
   async run({ prisma, logger }) {
     logger.info('🧼 Seeding document cleanup capabilities...');
-    for (const cap of ALL) {
-      const functionDefinition: Prisma.InputJsonValue = {
-        name: cap.slug,
-        description: cap.description,
-        parameters: cap.parameters as Prisma.InputJsonValue,
-      };
+    for (const cap of CLEANUP_CAPABILITIES) {
       const codeOwned = {
         executionType: 'internal' as const,
         executionHandler: cap.handler,
-        functionDefinition: functionDefinition,
+        // Internal, typed data (the class's own definition), not external input.
+        functionDefinition: cap.capability.functionDefinition as unknown as Prisma.InputJsonValue,
       };
       await prisma.aiCapability.upsert({
         where: { slug: cap.slug },
@@ -240,7 +215,7 @@ const unit: SeedUnit = {
         },
       });
     }
-    logger.info(`✅ Seeded ${ALL.length} document cleanup capabilities`);
+    logger.info(`✅ Seeded ${CLEANUP_CAPABILITIES.length} document cleanup capabilities`);
   },
 };
 
