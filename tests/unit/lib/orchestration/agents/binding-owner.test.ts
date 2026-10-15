@@ -14,8 +14,8 @@ describe('bindingOwnerAfterWrite', () => {
   it('makes the binding the org’s when a write changes provider or model', () => {
     expect(bindingOwnerAfterWrite(current, { provider: 'openai' })).toBe('org');
     expect(bindingOwnerAfterWrite(current, { model: 'claude-2' })).toBe('org');
-    // An explicit inherit is a choice too.
-    expect(bindingOwnerAfterWrite(current, { provider: '', model: '' })).toBe('org');
+    // Both at once, as the form sends them.
+    expect(bindingOwnerAfterWrite(current, { provider: 'openai', model: 'gpt-5' })).toBe('org');
   });
 
   it('changes nothing when the write leaves both as they were, or does not send them', () => {

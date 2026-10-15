@@ -74,14 +74,21 @@ Every agent field declares its side (see
     when nothing qualifies. The write lands only while the binding and its
     owner are still what the run read, so an admin's save in between stands.
   - **`'org'`**: never moved. `PATCH /agents/:id` and version restore set it
-    whenever they change provider or model, including to an explicit inherit.
-    `bindingOwner: 'platform'` in a PATCH body hands the binding back, and
-    `'org'` takes it as it stands.
+    whenever they change provider or model. `bindingOwner: 'platform'` in a
+    PATCH body hands the binding back. `'org'` takes it as it stands, which is
+    how an admin keeps the agent on inherit, since the API cannot set
+    provider or model to empty.
   - **`null`**: not yet classified, which covers every agent from before
-    t-798. The next reconcile classifies it once. On inherit, or on the
-    platform's current pick, it becomes the platform's, because that is what
-    the platform would have placed. Anything else becomes the org's, because
-    moving an admin's choice is worse than leaving a pin the platform placed.
+    t-798. The next reconcile classifies it once, as the platform's when it
+    is on inherit or on the platform's current pick, or when the service
+    account wrote the version where its current binding began (so a pin the
+    platform placed on a provider since revoked moves). Otherwise it becomes
+    the org's, as it does when there's no history to go on, because moving
+    an admin's choice is worse than leaving a pin the platform placed.
+
+  Only a platform agent whose definition picks its binding has an owner;
+  every other agent's `bindingOwner` stays null, and a PATCH that echoes it
+  back unchanged asks for nothing.
 
   Ownership is stored rather than inferred from the values because a value
   can't say who wrote it. The pick is asked only for a binding the platform

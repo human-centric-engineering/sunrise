@@ -306,10 +306,10 @@ describe('bindingOwnerForPatch (t-798)', () => {
     expect(bindingOwnerForPatch(cleanup, { provider: 'anthropic', model: 'claude' })).toBe(
       undefined
     );
-    // An org's own agent too: the rule is the write, not the agent.
+    // Every other agent keeps no owner, whatever it writes.
     expect(
       bindingOwnerForPatch({ ...cleanup, isSystem: false, slug: 'mine' }, { model: 'x' })
-    ).toBe('org');
+    ).toBe(undefined);
   });
 
   it('hands the binding back, or takes it as it stands, when the body says so', () => {
@@ -323,9 +323,22 @@ describe('bindingOwnerForPatch (t-798)', () => {
     expect(bindingOwnerForPatch(cleanup, { bindingOwner: 'org', provider: 'openai' })).toBe('org');
   });
 
+  it('ignores an echo of the stored owner, on any agent', () => {
+    const mine = { ...cleanup, isSystem: false, slug: 'mine', bindingOwner: null };
+    expect(bindingOwnerForPatch(mine, { bindingOwner: null })).toBe(undefined);
+    expect(bindingOwnerForPatch(cleanup, { bindingOwner: 'platform' })).toBe(undefined);
+  });
+
+  it('refuses clearing the owner of an agent that has one', () => {
+    expect(() => bindingOwnerForPatch(cleanup, { bindingOwner: null })).toThrow(ValidationError);
+  });
+
   it('refuses a hand-back in the same request that changes the binding', () => {
     expect(() =>
-      bindingOwnerForPatch(cleanup, { bindingOwner: 'platform', provider: 'openai' })
+      bindingOwnerForPatch(
+        { ...cleanup, bindingOwner: 'org' },
+        { bindingOwner: 'platform', provider: 'openai' }
+      )
     ).toThrow(ValidationError);
   });
 
@@ -337,7 +350,10 @@ describe('bindingOwnerForPatch (t-798)', () => {
       )
     ).toThrow(ValidationError);
     expect(() =>
-      bindingOwnerForPatch({ ...cleanup, isSystem: false }, { bindingOwner: 'platform' })
+      bindingOwnerForPatch(
+        { ...cleanup, isSystem: false, bindingOwner: null },
+        { bindingOwner: 'platform' }
+      )
     ).toThrow(ValidationError);
   });
 });

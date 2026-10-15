@@ -28,7 +28,7 @@
  *    while the row's `bindingOwner` is `'platform'` they follow the pick, so
  *    they move when what the org can reach changes. An admin write to either
  *    makes them the org's, and they are never moved again (t-798; see
- *    `binding-owner.ts` and {@link bindingPlan}).
+ *    `binding-owner.ts`, {@link bindingTarget} and {@link classifyBindingOwner}).
  *  - **Bindings and knowledge grants are set to the declared set** — added,
  *    re-enabled or removed. Document grants are always empty. The one
  *    exception is a definition whose bindings are the org's
@@ -62,6 +62,7 @@
  */
 import { isDeepStrictEqual } from 'node:util';
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 
 import { serviceAccountWhere } from '@/lib/auth/account';
 import { prisma as defaultDb } from '@/lib/db/client';
@@ -93,7 +94,10 @@ import {
 } from '@/lib/orchestration/knowledge/seeder';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant, runAsOrg } from '@/lib/tenancy/context';
-import { forgetOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
+import {
+  forgetOrgProviderPolicy,
+  forgetProviderRow,
+} from '@/lib/orchestration/llm/org-provider-policy';
 import {
   loadPlatformAgentsMarker,
   writePlatformAgentsMarker,
@@ -148,41 +152,77 @@ function sameBinding(a: Binding, b: Binding): boolean {
   return a.provider === b.provider && a.model === b.model;
 }
 
-/**
- * Where one agent's provider and model should be after this run, and who owns
- * them (t-798): the one rule both the reconcile and the job's drift check
- * apply, so the two cannot disagree. `undefined` when the run leaves them
- * alone: the definition picks nothing, or the org owns them.
- *
- * While the platform owns them they follow the pick — onto a model newly
- * reachable, off a provider the org lost, or back to "inherit" when nothing
- * qualifies. A row nobody has classified (`bindingOwner` null: an agent from
- * before t-798) is classified once. "Inherit", or the platform's current
- * pick, reads as the platform's, since that is what the platform would have
- * placed; anything else reads as the org's, since moving an admin's choice is
- * worse than leaving a pin the platform placed.
- *
- * The pick is asked only when its answer is used, so a policy that cannot be
- * read never stops the reconcile of an org that chose its own provider.
- */
-async function bindingPlan(
-  definition: PlatformAgentDefinition,
-  row: Binding & { bindingOwner: string | null },
-  db: TenancyClient
-): Promise<{ owner: BindingOwner; binding: Binding } | undefined> {
-  if (!definition.defaultBinding || row.bindingOwner === 'org') return undefined;
-  const pick = (await definition.defaultBinding(db)) ?? INHERIT;
-  if (row.bindingOwner === 'platform' || sameBinding(row, INHERIT) || sameBinding(row, pick)) {
-    return { owner: 'platform', binding: pick };
-  }
-  return { owner: 'org', binding: { provider: row.provider, model: row.model } };
+/** A stored `bindingOwner`, or `null` for one nobody has classified (any other value too). */
+function storedOwner(value: string | null): BindingOwner | null {
+  return value === 'platform' || value === 'org' ? value : null;
 }
 
-type BindingPlan = Awaited<ReturnType<typeof bindingPlan>>;
+/**
+ * Where a classified agent's provider and model should be after this run
+ * (t-798): the one rule both the reconcile and the job's drift check apply,
+ * so the two cannot disagree. While the platform owns them they follow the
+ * pick — onto a model newly reachable, off a provider the org lost, or back
+ * to "inherit" when nothing qualifies. `undefined` when the run leaves them
+ * alone: the definition picks nothing, or the org owns them — so the pick is
+ * asked only when its answer is used, and a policy that cannot be read never
+ * stops the reconcile of an org that chose its own provider.
+ */
+async function bindingTarget(
+  definition: PlatformAgentDefinition,
+  owner: BindingOwner,
+  db: TenancyClient
+): Promise<Binding | undefined> {
+  return owner === 'platform' ? desiredBinding(definition, db) : undefined;
+}
 
-/** Whether applying `plan` to `row` writes anything. */
-function planChangesRow(plan: BindingPlan, row: Binding & { bindingOwner: string | null }) {
-  return plan !== undefined && (plan.owner !== row.bindingOwner || !sameBinding(row, plan.binding));
+/**
+ * Who owns the binding of a platform agent nobody has classified yet — one
+ * from before t-798 (`bindingOwner` null). Decided once, by the reconcile:
+ *
+ *  - "inherit", or the platform's pick today: the platform's, since that is
+ *    what it would have placed;
+ *  - otherwise, whoever wrote the binding the row holds: the author of the
+ *    version where it took that value. The service account's means the
+ *    platform pinned it, and it moves (off a provider since revoked, say);
+ *    anyone else's — or no history to tell — means the org's, since moving
+ *    an admin's choice is worse than leaving a pin the platform placed.
+ *
+ * A version the PATCH route backfilled (its pre-change state, authored by
+ * the admin) reads as the admin's, which errs the same safe way.
+ */
+async function classifyBindingOwner(
+  definition: PlatformAgentDefinition,
+  row: Binding & { id: string },
+  db: TenancyClient,
+  serviceAccountId: string
+): Promise<BindingOwner> {
+  const pick = await desiredBinding(definition, db);
+  if (sameBinding(row, INHERIT) || (pick && sameBinding(row, pick))) return 'platform';
+  return (await bindingAuthor(db, row)) === serviceAccountId ? 'platform' : 'org';
+}
+
+const snapshotBindingSchema = z.object({ provider: z.string(), model: z.string() });
+
+/** Who wrote the version where `row`'s current binding began, from its history; `null` if unknown. */
+async function bindingAuthor(
+  db: TenancyClient,
+  row: Binding & { id: string }
+): Promise<string | null> {
+  const versions = await db.aiAgentVersion.findMany({
+    where: { agentId: row.id },
+    orderBy: { version: 'asc' },
+    select: { snapshot: true, createdBy: true },
+  });
+  let author: string | null = null;
+  let held = false;
+  for (const version of versions) {
+    const parsed = snapshotBindingSchema.safeParse(version.snapshot);
+    const holds = parsed.success && sameBinding(parsed.data, row);
+    if (holds && !held) author = version.createdBy;
+    if (!holds) author = null;
+    held = holds;
+  }
+  return author;
 }
 
 /** Thrown inside an agent's transaction when its binding changed after it was read. */
@@ -383,7 +423,14 @@ export async function reconcilePlatformAgents(
       placed.push(definition.slug);
 
       // Before any write for this agent, as on create.
-      const plan = await bindingPlan(definition, existing, db);
+      const bindingOwner = definition.defaultBinding
+        ? (storedOwner(existing.bindingOwner) ??
+          (await classifyBindingOwner(definition, existing, db, owner.id)))
+        : storedOwner(existing.bindingOwner);
+      const plan = {
+        owner: bindingOwner,
+        target: bindingOwner ? await bindingTarget(definition, bindingOwner, db) : undefined,
+      };
       let outcome: Awaited<ReturnType<typeof updateInstance>>;
       try {
         outcome = await updateInstance(db, definition, existing, plan, {
@@ -494,9 +541,11 @@ export async function reconcilePlatformAgents(
  * an agent that picks its own binding, the agents' bindings, the org's
  * provider policy and the pick's provider and model reads.
  *
- * The org's cached provider policy is dropped first. This process may have
- * cached it before a grant or revocation served by another instance, and a
- * pick made from it would put a binding back where the org can no longer go.
+ * The org's cached provider policy, and the provider rows the policy judges
+ * (their jurisdiction), are dropped first. This process may have cached them
+ * before a grant, a revocation or a jurisdiction change served by another
+ * instance, and a pick made from them would put a binding back where the org
+ * can no longer go.
  */
 export async function reconcilePlatformAgentsIfStale(
   orgId: string,
@@ -505,6 +554,7 @@ export async function reconcilePlatformAgentsIfStale(
   if (!isMultiTenant() && orgId !== INSTALL_ORG_ID) return { reconciled: false };
   const db = options.db ?? defaultDb;
   forgetOrgProviderPolicy(orgId);
+  forgetProviderRow();
   const marker = await loadPlatformAgentsMarker(orgId, db);
   if (marker?.hash === platformAgentRegistryHash() && !(await platformBindingsDrifted(orgId, db))) {
     return { reconciled: false };
@@ -513,7 +563,7 @@ export async function reconcilePlatformAgentsIfStale(
 }
 
 /**
- * Whether any agent's provider and model are not where {@link bindingPlan}
+ * Whether any agent's provider and model are not where {@link bindingTarget}
  * would put them now (t-798). What the org can reach changes without the
  * registry changing: a provider granted or revoked, switched on or off, its
  * credential set, a tool-using model added, a fork's eligibility rule. None of
@@ -541,7 +591,11 @@ async function platformBindingsDrifted(orgId: string, db: TenancyClient): Promis
     });
     for (const definition of definitions) {
       const row = rows.find((r) => r.slug === definition.slug);
-      if (row && planChangesRow(await bindingPlan(definition, row, db), row)) return true;
+      if (!row) continue;
+      const owner = storedOwner(row.bindingOwner);
+      if (owner === null) return true;
+      const target = await bindingTarget(definition, owner, db);
+      if (target && !sameBinding(row, target)) return true;
     }
     return false;
   });
@@ -663,12 +717,15 @@ async function createInstance(
   });
 }
 
-/** `plan` is where the binding goes and who owns it after this run ({@link bindingPlan}). */
+/**
+ * `plan` is who owns the binding after this run and, while that is the
+ * platform, where it goes ({@link bindingTarget}).
+ */
 async function updateInstance(
   db: TenancyClient,
   definition: PlatformAgentDefinition,
   existing: ExistingAgent,
-  plan: BindingPlan,
+  plan: { owner: BindingOwner | null; target: Binding | undefined },
   desired: DesiredSets
 ): Promise<{ changed: boolean; bindingsChanged: boolean; accessChanged: boolean }> {
   const current: Record<string, unknown> = existing;
@@ -676,9 +733,11 @@ async function updateInstance(
   for (const [field, value] of Object.entries(codeOwnedValues(definition))) {
     if (!isDeepStrictEqual(current[field], value)) changes[field] = value;
   }
-  const writesBinding = plan !== undefined && planChangesRow(plan, existing);
-  if (plan && !sameBinding(existing, plan.binding)) Object.assign(changes, plan.binding);
-  if (plan && plan.owner !== existing.bindingOwner) changes.bindingOwner = plan.owner;
+  const movesBinding = plan.target !== undefined && !sameBinding(existing, plan.target);
+  const ownerChanges = plan.owner !== existing.bindingOwner;
+  if (movesBinding) Object.assign(changes, plan.target);
+  if (ownerChanges) changes.bindingOwner = plan.owner;
+  const writesBinding = movesBinding || ownerChanges;
 
   const currentTagIds = existing.grantedTags.map((g) => g.tagId);
   const currentDocumentIds = existing.grantedDocuments.map((g) => g.documentId);

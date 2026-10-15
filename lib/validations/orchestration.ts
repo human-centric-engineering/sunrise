@@ -275,9 +275,10 @@ export const updateAgentObjectSchema = z.object({
   /**
    * Who decides a platform agent's provider and model (t-798): `'platform'`
    * hands them back to the platform's pick, `'org'` keeps them as they are.
-   * Not a registry field — the PATCH route handles it explicitly.
+   * Nullable so an echo of what GET returned validates; the route refuses a
+   * change to null. Not a registry field — the PATCH route handles it.
    */
-  bindingOwner: z.enum(BINDING_OWNERS).optional(),
+  bindingOwner: z.enum(BINDING_OWNERS).nullable().optional(),
 
   name: z
     .string()

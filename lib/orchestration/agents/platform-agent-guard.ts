@@ -225,13 +225,28 @@ export function assertAgentSlugNotReserved(slug: string): void {
 }
 
 /**
- * The `bindingOwner` an agent PATCH writes, or `undefined` for none. A change
- * to provider or model makes the binding the org's. `bindingOwner` in the
- * body sets it outright: `'platform'` hands the binding back, so the next
- * maintenance pass puts it on the platform's pick; `'org'` keeps it where it
- * is, including on inherit. Only a platform agent whose definition picks its
- * binding has an owner to set, and a hand-back cannot also change the
- * binding — which would win is not the caller's to guess.
+ * Whether `agent` is a platform agent whose definition picks its own provider
+ * and model (`defaultBinding`, t-798) — the only agents with a binding owner.
+ * Every other agent keeps `bindingOwner` null.
+ */
+export function picksOwnBinding(agent: { isSystem: boolean; slug: string }): boolean {
+  return agent.isSystem && getPlatformAgent(agent.slug)?.defaultBinding !== undefined;
+}
+
+/**
+ * The `bindingOwner` an agent PATCH writes, or `undefined` for none (t-798).
+ *
+ * Only an agent that {@link picksOwnBinding} has an owner. There, a change to
+ * provider or model makes the binding the org's, and `bindingOwner` in the
+ * body sets it outright: `'platform'` hands it back, so the next maintenance
+ * pass puts it on the platform's pick; `'org'` takes it as it stands — the
+ * way to keep the agent on inherit, since the API cannot set provider or model
+ * to empty. A hand-back cannot also change the binding: which would win is
+ * not the caller's to guess.
+ *
+ * Compared by value, like every platform-agent rule: a client echoing back
+ * what GET returned — `bindingOwner` included, null on most agents — asks
+ * for nothing by it.
  */
 export function bindingOwnerForPatch(
   current: {
@@ -241,19 +256,29 @@ export function bindingOwnerForPatch(
     model: string;
     bindingOwner: string | null;
   },
-  next: { provider?: string; model?: string; bindingOwner?: BindingOwner }
+  next: { provider?: string; model?: string; bindingOwner?: BindingOwner | null }
 ): BindingOwner | undefined {
-  const written = bindingOwnerAfterWrite(current, next);
-  if (next.bindingOwner === undefined) return written;
-  if (!current.isSystem || !getPlatformAgent(current.slug)?.defaultBinding) {
+  const requested =
+    next.bindingOwner === undefined || next.bindingOwner === current.bindingOwner
+      ? undefined
+      : next.bindingOwner;
+  if (!picksOwnBinding(current)) {
+    if (requested === undefined) return undefined;
     throw new ValidationError('This agent has no platform-picked provider and model to hand over', {
       bindingOwner: ['Only a platform agent that picks its own provider and model has an owner'],
     });
   }
-  if (next.bindingOwner === 'platform' && written) {
+  const written = bindingOwnerAfterWrite(current, next);
+  if (requested === undefined) return written;
+  if (requested === null) {
+    throw new ValidationError('A binding owner cannot be cleared', {
+      bindingOwner: ["Set 'platform' or 'org'"],
+    });
+  }
+  if (requested === 'platform' && written) {
     throw new ValidationError('Hand the provider and model back to the platform, or change them', {
       bindingOwner: ['Cannot hand the binding back in the same request that changes it'],
     });
   }
-  return next.bindingOwner === current.bindingOwner ? undefined : next.bindingOwner;
+  return requested;
 }

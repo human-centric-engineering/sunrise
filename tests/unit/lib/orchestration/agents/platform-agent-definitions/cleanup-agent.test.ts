@@ -127,6 +127,15 @@ describe('pickCleanupBinding', () => {
     });
   });
 
+  it('orders model ids by code unit, so every instance agrees whatever its locale', async () => {
+    // `localeCompare` puts 'a…' before 'B…' in most locales; code units do not.
+    const { client } = db(
+      [providerRow('openai', 'OPENAI_API_KEY')],
+      [modelRow('openai', 'a-model'), modelRow('openai', 'B-model')]
+    );
+    expect(await pickCleanupBinding(client)).toEqual({ provider: 'openai', model: 'B-model' });
+  });
+
   it('prefers a worker-tier model over a thinking-tier one', async () => {
     // A whole-document rewrite on a thinking-tier model costs far more and is
     // no better at choosing between two regex tools.

@@ -27,8 +27,9 @@ export type BindingOwner = (typeof BINDING_OWNERS)[number];
  * What a write leaves `bindingOwner` as: `'org'` when it changes provider or
  * model, `undefined` (no change) otherwise. Compared by value, so a client
  * echoing the agent back takes nothing over. Every route that writes either
- * field calls this; the reconcile is the only writer of `'platform'` besides
- * an explicit hand-back.
+ * field of a platform agent that picks its own binding (`picksOwnBinding` in
+ * `platform-agent-guard.ts`) calls this; every other agent's owner stays null.
+ * The reconcile is the only writer of `'platform'` besides a hand-back.
  */
 export function bindingOwnerAfterWrite(
   current: { provider: string; model: string },

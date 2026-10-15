@@ -69,11 +69,14 @@ model newly reachable (a provider granted, switched on, its key set, a strong
 model added), off a provider the org lost, or back to inherit when nothing
 qualifies. A provider-policy change (`PUT /admin/orgs/[id]/providers`) also
 reconciles at once, so a grant shows straight away. An admin's own choice is
-never overwritten: once they set provider or model (to inherit as well), the
-agent's `bindingOwner` is `'org'` and the platform leaves it alone, until a
-`PATCH` with `bindingOwner: 'platform'` hands it back. An agent from before
-t-798 is classified on the next reconcile: it stays the platform's if it is
-on inherit or on today's pick, and is the admin's otherwise.
+never overwritten: once they set provider or model, the agent's
+`bindingOwner` is `'org'` and the platform leaves it alone, until a `PATCH`
+with `bindingOwner: 'platform'` hands it back. To keep the agent on inherit,
+which the API cannot set directly, an admin takes it with `bindingOwner:
+'org'` while it is there. An agent from before t-798 is classified on its next
+reconcile. It stays the platform's if it is on inherit or on today's pick, or
+if the service account wrote the version where its binding began. Otherwise
+it is the admin's.
 
 The system prompt tells the agent to read before it acts and verify after,
 states what each tool cannot do, prefers deterministic capabilities, covers the

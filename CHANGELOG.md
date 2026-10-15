@@ -19,17 +19,20 @@ release process.
 ### Added
 
 - **`AiAgent.bindingOwner` records who decides a platform agent's provider
-  and model** (t-798; migration `20261015120000_ai_agent_binding_owner`). It is
-  `'platform'` while the agent follows the platform's pick, `'org'` once an
-  admin sets either field, or `null` until classified. Agents from before this
-  change are classified on their next reconcile. `PATCH
-  /api/v1/admin/orchestration/agents/:id` sets `'org'` when it changes provider
-  or model, and so does version restore. The PATCH body also accepts
-  `bindingOwner` (`'platform'` hands the binding back, `'org'` takes it), but
-  only on a platform agent whose definition picks its binding. Forks: a route of
-  yours that writes a platform agent's provider or model should call
-  `bindingOwnerAfterWrite` (`lib/orchestration/agents/binding-owner.ts`), or the
-  platform will keep moving a binding your admin chose. The column is not
+  and model** (t-798; migration `20261015120000_ai_agent_binding_owner`). It
+  applies only to a platform agent whose definition picks its binding
+  (`defaultBinding`); every other agent keeps `null`. It is `'platform'` while
+  the agent follows the platform's pick, `'org'` once an admin sets either
+  field, or `null` until classified. Agents from before this change are
+  classified on their next reconcile, partly from their version history.
+  `PATCH /api/v1/admin/orchestration/agents/:id` sets `'org'` when it changes
+  provider or model, and so does version restore. The PATCH body also accepts
+  `bindingOwner` (`'platform'` hands the binding back, `'org'` takes it), and an
+  unchanged echo of it is ignored. Forks: a route of yours that writes such an
+  agent's provider or model should call `bindingOwnerAfterWrite`
+  (`lib/orchestration/agents/binding-owner.ts`, with `picksOwnBinding` from
+  `platform-agent-guard.ts`), or the platform will keep moving a binding your
+  admin chose. The column is not
   agent config: the field registry lists it as a non-config scalar, so the
   agent form, agent export and backup bundles, and version snapshots leave it
   out. The org data export, which takes whole rows, includes it.
@@ -212,6 +215,21 @@ release process.
   version of the system audit workflow.
 
 ### Changed
+
+- **A platform agent's `defaultBinding` is now asked on every maintenance
+  pass, and its answer moves the agent** (t-798). `PlatformAgentDefinition
+  .defaultBinding` used to be asked only when an instance was created, or
+  while its provider and model were empty. Now the `platformAgents` job asks
+  it every 15 minutes for each org whose agent's binding is the platform's,
+  and moves the agent whenever the answer changes; `null` moves it to
+  inherit. A fork that implements one should make it deterministic, with a
+  total order and no locale-dependent comparison, or the agent will move
+  back and forth between passes. It should also be cheap, and should throw
+  when it cannot answer rather than return `null`, which would move the agent
+  to inherit until the next pass. Core's eligibility and credential seams
+  still fail closed to "nothing eligible", so a fork resolver that is down
+  during a pass does move the clean-up agent to inherit for that pass
+  (t-819).
 
 - **`handleAPIError` answers `VALIDATION_ERROR`, not `EMAIL_TAKEN`, for a
   unique violation on any constraint but the user email** (t-796). It
@@ -417,8 +435,7 @@ release process.
   nothing qualifies), a provider switched on, a key set, a strong model added.
   `PUT /api/v1/admin/orgs/[id]/providers` also reconciles at once on a policy
   change (`tryReconcilePlatformAgents`, which never fails the grant). A
-  provider or model an org admin set, including an explicit inherit, is never
-  moved. The pick's ranking now ends on the provider slug, so two providers
+  provider or model an org admin set is never moved. The pick's ranking now ends on the provider slug, so two providers
   offering one model no longer trade places between passes.
 - **Code that handles a particular unique violation recognises it again**
   (t-796). Under Prisma 7's driver adapter a P2002 carries no `meta.target`,

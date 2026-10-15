@@ -424,11 +424,14 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
   });
 
   it('makes the binding the org’s when the restore brings back another provider or model (t-798)', async () => {
-    const restoreWith = async (snapshot: Record<string, unknown>) => {
+    // The clean-up agent picks its own binding; an org's own agent does not.
+    const cleanup = { isSystem: true, slug: 'cleanup-agent', bindingOwner: 'platform' };
+    const restoreWith = async (
+      snapshot: Record<string, unknown>,
+      agent: Record<string, unknown> = cleanup
+    ) => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(
-        makeAgent({ bindingOwner: 'platform' }) as never
-      );
+      vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent(agent) as never);
       vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue(
         makeVersion({ snapshot: { ...makeVersion().snapshot, ...snapshot } })
       );
@@ -449,6 +452,13 @@ describe('POST /agents/:id/versions/:versionId/restore', () => {
     expect((await restoreWith({ provider: 'openai', model: 'gpt-5' })).bindingOwner).toBe('org');
     // The same binding as now: the platform keeps it.
     expect(await restoreWith({})).not.toHaveProperty('bindingOwner');
+    // Any other agent keeps no owner, whatever the restore brings back.
+    expect(
+      await restoreWith(
+        { provider: 'openai', model: 'gpt-5' },
+        { isSystem: false, slug: 'mine', bindingOwner: null }
+      )
+    ).not.toHaveProperty('bindingOwner');
   });
 
   it('coerces null JSON columns to Prisma.JsonNull and restores knowledgeAccessMode', async () => {

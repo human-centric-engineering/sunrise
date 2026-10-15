@@ -153,12 +153,18 @@ export async function pickCleanupBinding(
     const reasoning =
       (REASONING_RANK[a.reasoningDepth] ?? 9) - (REASONING_RANK[b.reasoningDepth] ?? 9);
     if (reasoning !== 0) return reasoning;
-    const model = a.modelId.localeCompare(b.modelId);
+    // Code-unit order, not `localeCompare`: two instances with different
+    // locales must agree, or each pass would undo the other's pick.
+    const model = compareCodeUnits(a.modelId, b.modelId);
     if (model !== 0) return model;
-    return a.providerSlug.localeCompare(b.providerSlug);
+    return compareCodeUnits(a.providerSlug, b.providerSlug);
   });
   const best = ranked[0];
   return { provider: best.providerSlug, model: best.modelId };
+}
+
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 export const CLEANUP_AGENT: PlatformAgentDefinition = {

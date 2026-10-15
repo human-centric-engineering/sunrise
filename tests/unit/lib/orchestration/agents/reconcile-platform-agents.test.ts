@@ -238,6 +238,10 @@ const fake = vi.hoisted(() => {
       },
     },
     aiAgentVersion: {
+      findMany: async ({ where }: { where: { agentId: string } }) =>
+        state.versions
+          .filter((v) => v.agentId === where.agentId)
+          .sort((a, b) => (a.version as number) - (b.version as number)),
       findFirst: async ({ where }: { where: { agentId: string } }) => {
         const mine = state.versions.filter((v) => v.agentId === where.agentId);
         return mine.length === 0
@@ -579,6 +583,7 @@ describe('reconcilePlatformAgents', () => {
       deletedAt: null,
       provider: '',
       model: '',
+      bindingOwner: null,
       ...PLATFORM_AGENT_BASELINE,
       name: 'Agent advisor',
       description: 'The advisor agent',
@@ -1080,10 +1085,11 @@ describe('a binding the platform picks follows what the org can reach (t-798)', 
     expect(binding()).toEqual({ provider: 'mistral', model: 'large' });
   });
 
-  it('keeps an admin’s explicit inherit, rather than re-pinning it', async () => {
-    pick = { provider: 'anthropic', model: 'claude' };
+  it('keeps an agent on inherit when the admin takes it there, rather than re-pinning it', async () => {
     await reconcilePlatformAgentsIfStale('install');
-    adminSets('', '');
+    // PATCH `bindingOwner: 'org'` while it is on inherit: the API cannot set empty values.
+    agent('advisor')!.bindingOwner = 'org';
+    pick = { provider: 'anthropic', model: 'claude' };
 
     expect((await reconcilePlatformAgentsIfStale('install')).reconciled).toBe(false);
     await reconcilePlatformAgents('install');
@@ -1135,6 +1141,40 @@ describe('a binding the platform picks follows what the org can reach (t-798)', 
 
       await reconcilePlatformAgentsIfStale('install');
       expect(agent('advisor')).toMatchObject({ ...pick, bindingOwner: 'platform' });
+    });
+
+    it('is the platform’s when the service account wrote its binding, so a stale pin moves', async () => {
+      // The old reconcile pinned it; the provider has since been revoked, so
+      // the pick is elsewhere now and the row matches neither inherit nor it.
+      pick = { provider: 'anthropic', model: 'claude' };
+      await reconcilePlatformAgents('install');
+      legacy('anthropic', 'claude');
+      pick = { provider: 'openai', model: 'gpt-4.1' };
+
+      await reconcilePlatformAgentsIfStale('install');
+      expect(agent('advisor')).toMatchObject({ ...pick, bindingOwner: 'platform' });
+    });
+
+    it('is the org’s when an admin wrote the version its binding began in', async () => {
+      pick = { provider: 'anthropic', model: 'claude' };
+      await reconcilePlatformAgents('install');
+      const row = agent('advisor')!;
+      legacy('mistral', 'large');
+      fake.state.versions.push({
+        id: 'v-admin',
+        agentId: row.id,
+        version: 2,
+        snapshot: { provider: 'mistral', model: 'large' },
+        createdBy: 'an-admin',
+      });
+      pick = { provider: 'openai', model: 'gpt-4.1' };
+
+      await reconcilePlatformAgentsIfStale('install');
+      expect(agent('advisor')).toMatchObject({
+        provider: 'mistral',
+        model: 'large',
+        bindingOwner: 'org',
+      });
     });
 
     it('is the org’s when it holds anything else, and is never moved', async () => {

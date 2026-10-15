@@ -39,6 +39,7 @@ import {
 } from '@/lib/orchestration/agents/agent-versioning';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { bindingOwnerAfterWrite } from '@/lib/orchestration/agents/binding-owner';
+import { picksOwnBinding } from '@/lib/orchestration/agents/platform-agent-guard';
 import { assertAgentProvidersApproved } from '@/lib/orchestration/agents/provider-approval';
 
 /**
@@ -160,14 +161,16 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
       updateData[field] = getAgentField(field)?.json && value === null ? Prisma.JsonNull : value;
     }
 
-    // Bringing back a different provider or model is an admin's choice like
-    // any PATCH (t-798): the binding becomes the org's, and the platform
-    // stops moving it.
-    const bindingOwner = bindingOwnerAfterWrite(agent, {
-      provider: snapshot.provider,
-      model: snapshot.model,
-    });
-    if (bindingOwner !== undefined) updateData.bindingOwner = bindingOwner;
+    // On a platform agent that picks its own binding, bringing back a
+    // different provider or model is an admin's choice like any PATCH
+    // (t-798): the binding becomes the org's, and the platform stops moving it.
+    if (picksOwnBinding(agent)) {
+      const bindingOwner = bindingOwnerAfterWrite(agent, {
+        provider: snapshot.provider,
+        model: snapshot.model,
+      });
+      if (bindingOwner !== undefined) updateData.bindingOwner = bindingOwner;
+    }
 
     // A restore is a write like any other: at multi, a provider it brings back
     // that the agent does not hold now must be one the org is approved for

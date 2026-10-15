@@ -505,6 +505,21 @@ describe('System agent protection', () => {
       );
     });
 
+    it('accepts an echo of what GET returned, owner included, on any agent', async () => {
+      const mine = makeCustomAgent({ bindingOwner: null, rateLimitRpm: null });
+      mockFindUnique.mockResolvedValue(mine);
+      mockUpdate.mockResolvedValue(mine);
+
+      const response = await PATCH(
+        makePatchRequest({ bindingOwner: null, model: 'gpt-5', rateLimitRpm: 30 }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+      // An org's own agent has no binding owner, even when its model changes.
+      expect(mockUpdate.mock.calls[0][0].data).not.toHaveProperty('bindingOwner');
+    });
+
     it('refuses a hand-back that also changes the binding, writing nothing', async () => {
       mockFindUnique.mockResolvedValue({ ...cleanup(), bindingOwner: 'org' });
 
