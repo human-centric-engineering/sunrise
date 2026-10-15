@@ -1,0 +1,176 @@
+/**
+ * Invite someone into an org, for the people who administer it (§111 t-813)
+ *
+ * POST /api/v1/orgs/[id]/invitations — `{ name, email, orgRole? }`. The
+ * invitee joins this org on acceptance, as a platform USER.
+ * POST /api/v1/orgs/[id]/invitations?resend=true — re-send this org's pending
+ * invitation to that email, with a new token.
+ *
+ * The org's own counterpart to `POST /api/v1/users/invite`, which stays the
+ * platform's: that one sets a platform role and can name any org, so it is
+ * not something an org admin may call. This one cannot do either. Admission
+ * is the policy's, through the same org `resource` the members routes hand
+ * the guard (see `members/route.ts` for who the org arm admits); the rules
+ * on what may be invited are `checkInvitationInto` in
+ * `lib/tenancy/lifecycle.ts`. Nothing here decides who may call it.
+ *
+ * What this route will not do to an invitation it does not own: a pending
+ * invitation for the same email into another org, or one carrying a platform
+ * role, is answered with a 409 that names neither, and is left as it was.
+ * Re-sending it from here would re-target someone else's invitation to this
+ * org. An email that already has an account gets a 409 too: an org admin
+ * cannot add an existing account, because the roster's add-by-id takes a user
+ * id they have no way to look up. That leaves the answer saying an account
+ * exists, which an org admin could not otherwise learn. The cost is accepted
+ * because the invitation cannot be sent either way, and the inviter needs to
+ * know why.
+ *
+ * A browser session only, as the members routes require: the roster's shape
+ * is not something a key's scopes cover.
+ */
+
+import { withAuth } from '@/lib/auth/guards';
+import { isApiKeySession } from '@/lib/auth/api-keys';
+import { isPlatformAdmin, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
+import { prisma } from '@/lib/db/client';
+import { successResponse, errorResponse } from '@/lib/api/responses';
+import { ErrorCodes, ForbiddenError } from '@/lib/api/errors';
+import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
+import { orgIdParamSchema, inviteOrgMemberSchema } from '@/lib/validations/tenancy';
+import {
+  checkInvitationInto,
+  resolveOrgResource,
+  type MembershipActor,
+} from '@/lib/tenancy/lifecycle';
+import { getValidInvitation } from '@/lib/utils/invitation-token';
+import { deliverInvitation } from '@/lib/auth/invitation-delivery';
+import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { getClientIP } from '@/lib/security/ip';
+import { getRouteLogger } from '@/lib/api/context';
+
+const RESOURCE = {
+  resource: async (_request: unknown, context?: { params: Promise<{ id: string }> }) =>
+    resolveOrgResource(await context?.params),
+  // Ownership: the policy decided about the org the resolver named, and the
+  // invitation written is keyed on that resolved id.
+  ownership: {
+    decidedBy: 'resource',
+    because:
+      'The policy admitted the caller to the org the URL names; the invitation is written for that resolved org id, and a pending invitation into any other org is refused rather than touched.',
+  },
+} as const;
+
+/** The caller's standing for the ownership rule, from what the guard verified. */
+function actorOf(session: {
+  user: { role?: string | null };
+  principal: { orgRole?: string | null };
+}): MembershipActor {
+  return { platformAdmin: isPlatformAdmin(session.user), orgRole: session.principal.orgRole };
+}
+
+export const POST = withAuth<{ id: string }>(async (request, session, { params }) => {
+  const log = await getRouteLogger(request);
+
+  if (isApiKeySession(session)) {
+    log.warn('Rejected API-key attempt to invite an org member', { userId: session.user.id });
+    throw new ForbiddenError('Inviting members requires a browser session');
+  }
+
+  // Prevents email bombing, as on the platform's invite route.
+  const clientIP = getClientIP(request);
+  const rateLimitResult = inviteLimiter.check(clientIP);
+  if (!rateLimitResult.success) {
+    log.warn('Invite rate limit exceeded', { ip: clientIP, userId: session.user.id });
+    return createRateLimitResponse(rateLimitResult);
+  }
+
+  const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
+  const body = await validateRequestBody(request, inviteOrgMemberSchema);
+  const resend = new URL(request.url).searchParams.get('resend') === 'true';
+
+  await checkInvitationInto(id, body.orgRole, actorOf(session));
+
+  const existingUser = await prisma.user.findUnique({
+    where: { email: body.email },
+    select: { id: true },
+  });
+  if (existingUser) {
+    return errorResponse(
+      'This person already has an account. Ask a platform admin to add them to the organisation.',
+      { code: ErrorCodes.EMAIL_TAKEN, status: 409 }
+    );
+  }
+
+  const existingInvitation = await getValidInvitation(body.email);
+  if (
+    existingInvitation &&
+    (existingInvitation.metadata.orgId !== id ||
+      existingInvitation.metadata.role !== DEFAULT_USER_ROLE)
+  ) {
+    log.info('Invitation refused: another invitation is pending for this email', {
+      orgId: id,
+      userId: session.user.id,
+    });
+    return errorResponse('An invitation is already pending for this email address.', {
+      code: ErrorCodes.CONFLICT,
+      status: 409,
+    });
+  }
+
+  if (existingInvitation && !resend) {
+    return successResponse({
+      message: 'Invitation already pending. Use ?resend=true to send a new invitation email.',
+      invitation: {
+        email: body.email,
+        name: existingInvitation.metadata.name,
+        orgId: id,
+        orgRole: existingInvitation.metadata.orgRole ?? null,
+        invitedAt: existingInvitation.metadata.invitedAt,
+        expiresAt: existingInvitation.expiresAt.toISOString(),
+      },
+      emailStatus: 'pending' as const,
+    });
+  }
+
+  const invitedAt = new Date().toISOString();
+  const delivered = await deliverInvitation({
+    email: body.email,
+    name: body.name,
+    metadata: {
+      name: body.name,
+      role: DEFAULT_USER_ROLE,
+      invitedBy: session.user.id,
+      invitedAt,
+      orgId: id,
+      ...(body.orgRole ? { orgRole: body.orgRole } : {}),
+    },
+    isResend: !!existingInvitation,
+    inviterName: session.user.name || 'Administrator',
+    log,
+  });
+
+  log.info(existingInvitation ? 'Org invitation resent' : 'Org invitation created', {
+    orgId: id,
+    email: body.email,
+    orgRole: body.orgRole ?? null,
+    invitedBy: session.user.id,
+  });
+
+  return successResponse(
+    {
+      message: delivered.message,
+      invitation: {
+        email: body.email,
+        name: body.name,
+        orgId: id,
+        orgRole: body.orgRole ?? null,
+        invitedAt,
+        expiresAt: delivered.expiresAt.toISOString(),
+        link: delivered.link,
+      },
+      emailStatus: delivered.emailStatus,
+    },
+    undefined,
+    { status: 201 }
+  );
+}, RESOURCE);

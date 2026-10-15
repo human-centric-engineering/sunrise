@@ -7,6 +7,7 @@
  */
 import { z } from 'zod';
 import { cuidSchema, slugSchema } from '@/lib/validations/common';
+import { emailSchema } from '@/lib/validations/auth';
 import { ORG_ROLES, ORG_STATUSES } from '@/lib/tenancy/roles';
 import { ORG_ID_SHAPE } from '@/lib/tenancy/resolver';
 
@@ -314,3 +315,21 @@ export const updateOrgMemberSchema = z.object({
 });
 
 export type UpdateOrgMemberInput = z.infer<typeof updateOrgMemberSchema>;
+
+/**
+ * `POST /api/v1/orgs/[id]/invitations` body (§111 t-813). No platform role and
+ * no org: the invitee joins the org the URL names, as a platform USER. Keys
+ * outside the schema are dropped, so a `role` sent here sets nothing.
+ */
+export const inviteOrgMemberSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Name is required')
+    .max(100, 'Name must be less than 100 characters'),
+  email: emailSchema,
+  /** Absent ⇒ MEMBER on acceptance. OWNER needs the inviter's owner standing. */
+  orgRole: z.enum(ORG_ROLES).optional(),
+});
+
+export type InviteOrgMemberInput = z.infer<typeof inviteOrgMemberSchema>;

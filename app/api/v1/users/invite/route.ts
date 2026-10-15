@@ -48,20 +48,13 @@
 import { withAdminAuth } from '@/lib/auth/guards';
 import { canAdminister } from '@/lib/auth/authorization';
 import { prisma } from '@/lib/db/client';
-import { BRAND } from '@/lib/brand';
 import { successResponse, errorResponse } from '@/lib/api/responses';
 import { ErrorCodes, ForbiddenError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { inviteUserSchema } from '@/lib/validations/user';
-import {
-  generateInvitationToken,
-  getValidInvitation,
-  updateInvitationToken,
-} from '@/lib/utils/invitation-token';
-import { sendEmail } from '@/lib/email/send';
-import { resolveEmailTemplate } from '@/lib/email/registry';
+import { getValidInvitation } from '@/lib/utils/invitation-token';
+import { deliverInvitation } from '@/lib/auth/invitation-delivery';
 import { getRouteLogger } from '@/lib/api/context';
-import { env } from '@/lib/env';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
@@ -224,11 +217,15 @@ export const POST = withAdminAuth(async (request, session) => {
     ...(target.orgRole ? { orgRole: target.orgRole } : {}),
   };
 
-  // Use updateInvitationToken for resend (deletes old, creates new)
-  // Use generateInvitationToken for new invitations
-  const token = existingInvitation
-    ? await updateInvitationToken(body.email, invitationMetadata)
-    : await generateInvitationToken(body.email, invitationMetadata);
+  // 7–8. Store the token (replacing the pending one on a resend) and send the email
+  const delivered = await deliverInvitation({
+    email: body.email,
+    name: body.name,
+    metadata: invitationMetadata,
+    isResend: !!existingInvitation,
+    inviterName: session.user.name || 'Administrator',
+    log,
+  });
 
   log.info(existingInvitation ? 'Invitation resent' : 'Invitation created', {
     email: body.email,
@@ -239,54 +236,10 @@ export const POST = withAdminAuth(async (request, session) => {
     isResend: !!existingInvitation,
   });
 
-  // 8. Send invitation email
-  const appUrl = env.NEXT_PUBLIC_APP_URL || process.env.BETTER_AUTH_URL || 'http://localhost:3000';
-  const invitationUrl = `${appUrl}/accept-invite?token=${token}&email=${encodeURIComponent(body.email)}`;
-
-  // Calculate expiration for email (7 days from now)
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 7);
-
-  const emailResult = await sendEmail({
-    to: body.email,
-    subject: `You've been invited to join ${BRAND.name}`,
-    react: resolveEmailTemplate('invitation', {
-      inviterName: session.user.name || 'Administrator',
-      inviteeName: body.name,
-      inviteeEmail: body.email,
-      invitationUrl,
-      expiresAt,
-    }),
-  });
-
-  // Email sending failure should NOT fail the request (just log warning)
-  if (!emailResult.success) {
-    log.warn('Failed to send invitation email', {
-      email: body.email,
-      error: emailResult.error,
-      deliveryStatus: emailResult.status,
-    });
-  } else {
-    log.info('Invitation email sent', {
-      email: body.email,
-      messageId: emailResult.id,
-      deliveryStatus: emailResult.status,
-    });
-  }
-
   // 9. Return invitation details (NOT user object)
-  // Message varies based on email delivery status and whether this is a resend
-  const actionWord = existingInvitation ? 'resent' : 'sent';
-  const message =
-    emailResult.status === 'sent'
-      ? `Invitation ${actionWord} successfully`
-      : emailResult.status === 'failed'
-        ? `Invitation ${existingInvitation ? 'regenerated' : 'created'} but email failed to send`
-        : `Invitation ${existingInvitation ? 'regenerated' : 'created'} (email service not configured)`;
-
   return successResponse(
     {
-      message,
+      message: delivered.message,
       invitation: {
         email: body.email,
         name: body.name,
@@ -294,10 +247,10 @@ export const POST = withAdminAuth(async (request, session) => {
         orgId: target.orgId ?? null,
         orgRole: target.orgRole ?? null,
         invitedAt: new Date().toISOString(),
-        expiresAt: expiresAt.toISOString(),
-        link: invitationUrl,
+        expiresAt: delivered.expiresAt.toISOString(),
+        link: delivered.link,
       },
-      emailStatus: emailResult.status,
+      emailStatus: delivered.emailStatus,
     },
     undefined,
     { status: 201 }
