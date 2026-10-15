@@ -28,8 +28,6 @@ import { join } from 'node:path';
 export interface CapabilityUpsert {
   /** Path relative to `prisma/seeds`, e.g. `011-call-external-api.ts`. */
   file: string;
-  /** Slug from the `where:` clause, when it is a literal. */
-  slug: string | null;
   /** Top-level keys the `update` branch writes, with `...CONST` resolved. */
   update: string[];
 }
@@ -163,22 +161,7 @@ export function scanCapabilitySeeds(): SeedScan {
         else update.push(...topLevelKeys(masked, co + 1, ce));
       }
 
-      // `where: { slug: 'x' }` — located in the masked source, then read from
-      // the RAW one, because masking blanks the literal we are after.
-      //
-      // The match deliberately stops at the colon. Ending it with `\s*` looked
-      // right and was not: masking replaces the string with SPACES, so `\s*`
-      // ran straight past the literal and every slug came back null — an empty
-      // list that made the parity coverage check pass vacuously.
-      const whereRel = /\bwhere\s*:\s*\{\s*slug\s*:/.exec(masked.slice(argOpen, argEnd));
-      let slug: string | null = null;
-      if (whereRel) {
-        const at = argOpen + whereRel.index + whereRel[0].length;
-        const lit = /^\s*['"]([^'"]+)['"]/.exec(raw.slice(at));
-        slug = lit ? lit[1] : null;
-      }
-
-      upserts.push({ file, slug, update });
+      upserts.push({ file, update });
     }
   }
 

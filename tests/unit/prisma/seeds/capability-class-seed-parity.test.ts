@@ -62,7 +62,12 @@ import { describe, it, expect, vi, beforeAll } from 'vitest';
  * throws, and is RECORDED first — a seed that catches its own errors (021 does,
  * per org) would otherwise swallow the throw and pass.
  */
-const globalClient = vi.hoisted(() => ({ current: '', uses: [] as string[] }));
+const globalClient = vi.hoisted(() => ({
+  current: '',
+  uses: [] as string[],
+  /** The strict mock's own refusals, recorded for the same reason. */
+  refusals: [] as { file: string; error: string }[],
+}));
 vi.mock('@/lib/db/client', () => {
   const refuse = new Proxy(
     {},
@@ -161,6 +166,15 @@ const WRITES = new Set([
 const NAMED_CAPABILITY_WRITE =
   /\baiCapability\s*\.\s*(?:create|createMany|createManyAndReturn|update|updateMany|updateManyAndReturn|upsert)\b/;
 
+/**
+ * Records a refusal, then throws it. Recorded because a seed that catches its
+ * own errors (021 does, per org) would otherwise swallow the throw and pass.
+ */
+function refuse(file: string, error: string): never {
+  globalClient.refusals.push({ file, error });
+  throw new Error(error);
+}
+
 /** Fails on a capability created or changed through another model's nested write. */
 function refuseNestedCapabilityWrite(value: unknown, path: string): void {
   if (Array.isArray(value)) {
@@ -179,7 +193,10 @@ function refuseNestedCapabilityWrite(value: unknown, path: string): void {
         (op) => op in child
       )
     ) {
-      throw new Error(`writes a capability through a nested write at ${path}.${key}, not captured`);
+      refuse(
+        globalClient.current,
+        `writes a capability through a nested write at ${path}.${key}, not captured`
+      );
     }
     refuseNestedCapabilityWrite(child, `${path}.${key}`);
   }
@@ -224,7 +241,7 @@ function strictClient(
         get: (_target, method) => {
           if (typeof method !== 'string') return undefined;
           if (!READS.has(method) && !WRITES.has(method)) {
-            throw new Error(`called ${name}.${method}, which the parity mock does not model`);
+            refuse(file, `called ${name}.${method}, which the parity mock does not model`);
           }
           return (args: unknown) => {
             const where = isRecord(args) && isRecord(args.where) ? args.where : {};
@@ -233,8 +250,10 @@ function strictClient(
               slug: typeof where.slug === 'string' ? where.slug : undefined,
             };
             if (WRITES.has(method)) {
-              if (name === 'aiCapability') record(args);
-              else refuseNestedCapabilityWrite(args, `${name}.${method}`);
+              if (name === 'aiCapability') {
+                wroteCapability.add(file);
+                record(args);
+              } else refuseNestedCapabilityWrite(args, `${name}.${method}`);
               if (/Many$/.test(method)) return Promise.resolve({ count: 1 });
               if (/ManyAndReturn$/.test(method)) return Promise.resolve([row]);
               return Promise.resolve(row);
@@ -266,7 +285,7 @@ function strictClient(
                 : Promise.reject(new Error('$transaction with neither a function nor an array'));
         }
         if (prop.startsWith('$')) {
-          throw new Error(`called ${prop}, which the parity mock does not model`);
+          refuse(file, `called ${prop}, which the parity mock does not model`);
         }
         return model(prop);
       },
@@ -278,8 +297,10 @@ function strictClient(
 const isSeedUnit = (value: unknown): value is SeedUnit =>
   isRecord(value) && typeof value.run === 'function';
 
-/** Every capability write the seeds made. */
+/** Every capability write the seeds made that carried a definition. */
 const captured: Captured[] = [];
+/** Seeds seen making any `aiCapability` write, with a definition or without. */
+const wroteCapability = new Set<string>();
 /** Seeds that threw under the mock. */
 const failed: { file: string; error: string }[] = [];
 /** Seeds whose source writes `aiCapability` by name — each must be seen writing one. */
@@ -324,11 +345,15 @@ describe('capabilities — seeded definition matches the class (#545, #646)', ()
       GLOBAL_CLIENT_SEEDS.has(file) && (error === undefined || error.startsWith('used the global'));
     expect(failed.filter((f) => !allowed(f.file, f.error))).toEqual([]);
     expect([...new Set(globalClient.uses)].filter((file) => !allowed(file))).toEqual([]);
+    // The mock's refusals, including any a seed caught and carried on past.
+    expect(globalClient.refusals).toEqual([]);
     // A seed that writes `aiCapability` by name but was seen writing none took
     // a path the mock did not drive (a loop over rows it looked up, which
-    // read as empty) — nothing it writes was checked.
-    const wrote = new Set(captured.map((c) => c.file));
-    expect(namingCapabilityWrite.filter((file) => !wrote.has(file))).toEqual([]);
+    // read as empty) — nothing it writes was checked. NOT covered: the same
+    // loop calling a helper whose source, not the seed's, names the write.
+    // (Any write counts: one that only retires or renames a capability has no
+    // definition to check, but it did run.)
+    expect(namingCapabilityWrite.filter((file) => !wroteCapability.has(file))).toEqual([]);
   });
 
   it('pairs every capability the seeds write, and nothing they do not', () => {
