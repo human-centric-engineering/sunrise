@@ -216,7 +216,7 @@ Dispatch behaviour (`dispatchWebhook`):
 - Creates an `AiEventHookDelivery` record per dispatch (status `pending` → `delivered` / `failed` / `exhausted`)
 - `POST` with `Content-Type: application/json`, `X-Hook-Event: <eventType>`, plus any user-supplied headers
 - Body is the full `HookEventPayload`
-- 10-second timeout via `AbortSignal.timeout(10_000)`
+- 10-second timeout (`DISPATCH_TIMEOUT_MS.hook` in `lib/orchestration/webhooks/not-retried.ts`, kept below the retry claim lease by a test, t-808)
 - **Optional HMAC-SHA256 signing** when the hook has a `secret` — see [Signing](#signing) below
 - On non-2xx / network error: updates the delivery row with `lastResponseCode` / `lastError` and schedules an in-process retry (up to 3 attempts at 10s / 60s / 300s). If the process restarts mid-backoff, `processPendingHookRetries()` picks stale rows up on the next maintenance tick.
 - URLs are SSRF-validated via `isSafeProviderUrl` in the Zod schema on create/update (blocks RFC1918, metadata endpoints, etc.)

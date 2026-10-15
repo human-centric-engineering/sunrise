@@ -446,6 +446,7 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
           status: 'exhausted',
           nextRetryAt: null,
           lastError: 'SMTP 550 (not retried: recipient erased)',
+          stoppedByErasure: true,
           destination: '[erased]',
           destinationFingerprint: null,
         },

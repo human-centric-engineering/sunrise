@@ -157,8 +157,8 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
   },
   {
     file: 'lib/privacy/delivery-payloads.ts',
-    calls: 2,
-    why: 'deliveries whose payload names a person (JSON containment via the GIN index) and their bulk redaction (t-783); system-scoped at multi, like every erasure and subject-access read',
+    calls: 4,
+    why: 'deliveries whose payload names a person (JSON containment via the GIN index) and their redaction in SQL (t-783, t-806): the subject-access read, the in-transaction pass, and the pre-pass match and its chunked writes; system-scoped at multi, like every erasure and subject-access read',
   },
 ];
 

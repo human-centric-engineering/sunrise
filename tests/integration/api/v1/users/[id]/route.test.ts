@@ -862,6 +862,7 @@ describe('DELETE /api/v1/users/:id', () => {
           status: 'exhausted',
           nextRetryAt: null,
           lastError: 'SMTP 550 (not retried: recipient erased)',
+          stoppedByErasure: true,
           destination: '[erased]',
           destinationFingerprint: null,
         },

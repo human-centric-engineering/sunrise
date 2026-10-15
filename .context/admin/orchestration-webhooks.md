@@ -144,14 +144,15 @@ Event-hook deliveries (`AiEventHookDelivery`) follow the same rules; see
 
 ## Channel Behaviour
 
-| Aspect              | Webhook channel                          | Email channel                                                           |
-| ------------------- | ---------------------------------------- | ----------------------------------------------------------------------- |
-| Destination field   | `url` (validated by `isSafeProviderUrl`) | `emailAddress` (RFC-shape check)                                        |
-| Auth                | HMAC-SHA256 via `secret`                 | None — the channel is the auth                                          |
-| Payload             | JSON POST                                | React Email template (`emails/event-notification.tsx`)                  |
-| Retry semantics     | Per-subscription `maxAttempts` + DLQ     | Same (against Resend); Resend also retries on its side                  |
-| Audit row           | `AiWebhookDelivery`                      | `AiWebhookDelivery` (same table)                                        |
-| Config requirements | None                                     | `RESEND_API_KEY` + `EMAIL_FROM` must be set; otherwise marked exhausted |
+| Aspect              | Webhook channel                          | Email channel                                                                  |
+| ------------------- | ---------------------------------------- | ------------------------------------------------------------------------------ |
+| Destination field   | `url` (validated by `isSafeProviderUrl`) | `emailAddress` (RFC-shape check)                                               |
+| Auth                | HMAC-SHA256 via `secret`                 | None — the channel is the auth                                                 |
+| Payload             | JSON POST                                | React Email template (`emails/event-notification.tsx`)                         |
+| Retry semantics     | Per-subscription `maxAttempts` + DLQ     | Same (against Resend); Resend also retries on its side                         |
+| Send timeout        | 5 s (`DISPATCH_TIMEOUT_MS.webhook`)      | 15 s, render and send together (`DISPATCH_TIMEOUT_MS.email`, t-808); retriable |
+| Audit row           | `AiWebhookDelivery`                      | `AiWebhookDelivery` (same table)                                               |
+| Config requirements | None                                     | `RESEND_API_KEY` + `EMAIL_FROM` must be set; otherwise marked exhausted        |
 
 The generic email template renders the same `{ event, timestamp, data }`
 payload a webhook receiver would get — title from the event type, a
