@@ -42,7 +42,10 @@ import { logger } from '@/lib/logging';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
 import { contactSubmissionsOf, contactSubmissionsUnder } from '@/lib/privacy/contact-submissions';
 import { getErasureCleanupHooks } from '@/lib/privacy/erasure-hooks';
-import { eraseSubjectFromDeliveries } from '@/lib/privacy/delivery-payloads';
+import {
+  eraseSubjectFromDeliveries,
+  preRedactSubjectFromDeliveries,
+} from '@/lib/privacy/delivery-payloads';
 import { eraseFromConfigRecipients } from '@/lib/privacy/config-recipients';
 import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settings';
 import {
@@ -199,8 +202,30 @@ async function eraseRows(params: EraseUserParams): Promise<{
     }
   }
 
+  // 1c. Deliveries whose payload names this person, redacted ahead of the
+  // transaction in committed chunks (t-806; owner ruling 2026-10-15). A heavy
+  // history no longer fits the transaction's 60 s, and an erasure that times
+  // out erases nothing; the transaction's own pass below then writes only what
+  // this missed. Here because nothing past this point refuses the erasure, as
+  // with the avatars: if the transaction still fails, these payloads stay
+  // anonymised and a retried erasure completes the rest. Best-effort, like
+  // the hooks above: a failure is logged, and the transaction's pass does the
+  // whole job instead.
+  const preRedacted = { webhook: 0, hook: 0 };
+  for (const table of ['webhook', 'hook'] as const) {
+    try {
+      preRedacted[table] = await preRedactSubjectFromDeliveries(prisma, table, userId);
+    } catch (error) {
+      logger.error('Erasure delivery pre-pass failed; the transaction redacts instead', {
+        userId,
+        table,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   // 2. Scrub residual PII, write the receipt, and delete — atomically.
-  return prisma.$transaction(
+  const receipt = await prisma.$transaction(
     async (tx) => {
       // Retained admin-audit rows keep their IP after `userId` is SetNull'd.
       await tx.aiAdminAuditLog.updateMany({
@@ -359,6 +384,8 @@ async function eraseRows(params: EraseUserParams): Promise<{
       // Deliveries whose payload names this person (t-783): redacted, not
       // deleted, for the reason above. Matched on their conversations and runs
       // too, which cascade with the user row, so this must run before it goes.
+      // Writes only what the pre-pass (1c) did not: a delivery written since,
+      // or every row when the pre-pass failed.
       const webhookPayloadsRedacted = await eraseSubjectFromDeliveries(tx, 'webhook', userId);
       const eventHookPayloadsRedacted = await eraseSubjectFromDeliveries(tx, 'hook', userId);
 
@@ -409,9 +436,14 @@ async function eraseRows(params: EraseUserParams): Promise<{
         ...configRecipients,
       };
     },
-    // The delivery redaction scales with the person's history — every chat
-    // event a hook received — so Prisma's 5s default is too short for a heavy
-    // user, and a timeout rolls the whole erasure back every time it is tried.
+    // The delivery match scales with the person's history — every chat event
+    // a hook received — so Prisma's 5s default is too short for a heavy user,
+    // and a timeout rolls the whole erasure back every time it is tried.
     { timeout: ERASURE_TRANSACTION_TIMEOUT_MS }
   );
+  return {
+    ...receipt,
+    webhookPayloadsRedacted: receipt.webhookPayloadsRedacted + preRedacted.webhook,
+    eventHookPayloadsRedacted: receipt.eventHookPayloadsRedacted + preRedacted.hook,
+  };
 }

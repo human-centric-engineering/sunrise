@@ -54,6 +54,7 @@ import {
   retryDelivery,
   processPendingRetries,
 } from '@/lib/orchestration/webhooks/dispatcher';
+import { DISPATCH_TIMEOUT_MS } from '@/lib/orchestration/webhooks/not-retried';
 import { describeDestination } from '@/lib/orchestration/webhooks/destination';
 
 const mockFetch = vi.fn();
@@ -112,6 +113,7 @@ function makeDelivery(overrides: Record<string, unknown> = {}) {
     destination: null,
     destinationFingerprint: null,
     previousDestinations: null,
+    stoppedByErasure: false,
     ...overrides,
   };
 }
@@ -447,7 +449,13 @@ describe('retryDelivery', () => {
     // The reset matches the row as it was read, so a concurrent change is not undone.
     expect(prisma.aiWebhookDelivery.updateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'del-1', status: 'exhausted', lastError: null, nextRetryAt: null },
+        where: {
+          id: 'del-1',
+          status: 'exhausted',
+          lastError: null,
+          nextRetryAt: null,
+          stoppedByErasure: false,
+        },
         data: expect.objectContaining({
           status: 'pending',
           attempts: 0,
@@ -1093,12 +1101,20 @@ describe('an erasure’s stop on a delivery (t-793)', () => {
   });
 
   describe('a manual retry or replay', () => {
-    it.each(['HTTP 503 (not retried: subject erased)', 'Not retried: recipient erased'])(
-      'refuses a row an erasure stopped (%s): nothing reset, nothing sent',
+    // The stop is the column, not the wording (t-809): a later write that
+    // replaced `lastError` does not clear it, and a receiver's error text that
+    // happens to end in the same words does not set it.
+    it.each([
+      'HTTP 503 (not retried: subject erased)',
+      'Not retried: recipient erased',
+      'HTTP 500 written over the erasure’s wording',
+      null,
+    ])(
+      'refuses a row an erasure stopped, whatever its lastError (%s): nothing reset, nothing sent',
       async (lastError) => {
         mockFetch.mockResolvedValue({ ok: true, status: 200 });
         vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
-          ...makeDelivery({ status: 'exhausted', lastError }),
+          ...makeDelivery({ status: 'exhausted', lastError, stoppedByErasure: true }),
           subscription: makeSub(),
         } as never);
 
@@ -1110,6 +1126,23 @@ describe('an erasure’s stop on a delivery (t-793)', () => {
         expect(mockFetch).not.toHaveBeenCalled();
       }
     );
+
+    it('retries a row whose lastError only reads like an erasure’s (t-809)', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+      const receiverText = 'HTTP 422 (not retried: subject erased)';
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+        ...makeDelivery({ status: 'exhausted', lastError: receiverText }),
+        subscription: makeSub(),
+      } as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+        makeDelivery({ status: 'pending', attempts: 0 }),
+      ] as never);
+
+      const result = await retryDelivery('del-1', { awaitDelivery: true });
+
+      expect(result).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
 
     // Merges the former "row changed between the read and the reset" and "an
     // erasure stopped the row just after the reset": with the reset returning
@@ -1129,7 +1162,13 @@ describe('an erasure’s stop on a delivery (t-793)', () => {
       expect(result).toBe(false);
       expect(prisma.aiWebhookDelivery.updateManyAndReturn).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'del-1', status: 'exhausted', lastError: 'HTTP 503', nextRetryAt: null },
+          where: {
+            id: 'del-1',
+            status: 'exhausted',
+            lastError: 'HTTP 503',
+            nextRetryAt: null,
+            stoppedByErasure: false,
+          },
         })
       );
       // One read only: the reset is the last thing the retry asks the database.
@@ -1283,7 +1322,9 @@ describe('email-channel delivery', () => {
         // in the payload — "Support Bot" is the agentName here.
         subject: expect.stringContaining('Agent updated'),
         html: expect.stringContaining('rendered'),
-      })
+      }),
+      // Bounded: the SDK request is handed the timeout’s signal (t-808).
+      { signal: expect.any(AbortSignal) }
     );
   });
 
@@ -1316,6 +1357,49 @@ describe('email-channel delivery', () => {
       .mock.calls.find((c) => (c[0]?.data as Record<string, unknown>)?.status === 'failed');
     expect(failUpdate).toBeDefined();
     expect((failUpdate?.[0]?.data as Record<string, unknown>).lastError).toBe('Invalid recipient');
+  });
+
+  describe('a send that does not finish (t-808)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('fails as retriable once the email timeout passes, and aborts the SDK request', async () => {
+      vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeEmailSub()] as never);
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue(
+        makeDelivery({ attempts: 0 })
+      );
+      let signal: AbortSignal | undefined;
+      // Never settles, and ignores the signal: only the race can end it.
+      mockResendSend.mockImplementation((_payload: unknown, options?: { signal?: AbortSignal }) => {
+        signal = options?.signal;
+        return new Promise(() => undefined);
+      });
+
+      const dispatched = dispatchWebhookEvent('workflow_failed', { error: 'step exploded' });
+      await vi.advanceTimersByTimeAsync(DISPATCH_TIMEOUT_MS.email - 1);
+      expect(
+        vi
+          .mocked(prisma.aiWebhookDelivery.updateMany)
+          .mock.calls.some((c) => (c[0]?.data as Record<string, unknown>)?.status === 'failed')
+      ).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await dispatched;
+
+      expect(signal?.aborted).toBe(true);
+      const failUpdate = vi
+        .mocked(prisma.aiWebhookDelivery.updateMany)
+        .mock.calls.find((c) => (c[0]?.data as Record<string, unknown>)?.status === 'failed');
+      expect(failUpdate?.[0]?.data).toMatchObject({
+        status: 'failed',
+        lastError: `Email send timed out after ${DISPATCH_TIMEOUT_MS.email} ms`,
+        nextRetryAt: expect.any(Date),
+      });
+    });
   });
 
   it('marks email exhausted when email is not configured (RESEND_API_KEY missing)', async () => {
@@ -1428,7 +1512,8 @@ describe('email-channel delivery', () => {
     expect(mockResendSend).toHaveBeenCalledWith(
       expect.objectContaining({
         subject: expect.stringContaining('Workflow failed · Nightly Refresh'),
-      })
+      }),
+      { signal: expect.any(AbortSignal) }
     );
   });
 
@@ -1440,7 +1525,8 @@ describe('email-channel delivery', () => {
     expect(mockResendSend).toHaveBeenCalledWith(
       expect.objectContaining({
         subject: expect.stringContaining('Provider circuit breaker opened · anthropic'),
-      })
+      }),
+      { signal: expect.any(AbortSignal) }
     );
   });
 
@@ -1454,7 +1540,8 @@ describe('email-channel delivery', () => {
     expect(mockResendSend).toHaveBeenCalledWith(
       expect.objectContaining({
         subject: '[Sunrise] Sunrise event: custom_unknown',
-      })
+      }),
+      { signal: expect.any(AbortSignal) }
     );
   });
 });

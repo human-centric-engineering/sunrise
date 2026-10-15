@@ -384,6 +384,11 @@ const ACTIVITY_KEEP_KEYS: readonly string[] = [
  *   3. the subject leaves `approverUserIds`, when that is an array, the rest
  *      in their order.
  *
+ * Each step ends in `OFFSET 0`, which stops the planner from inlining it into
+ * the next. Without it every reference to a step's `v` re-ran the step, the
+ * `jsonb_each` aggregate included, several times per row: measured (t-806) at
+ * 9.9 s for 50,000 rows against 0.6 s fenced.
+ *
  * A payload whose `data` is not an object is left as it is. `erasedPayload()`
  * stays the specification: `smoke:erasure-deliveries` checks this against it
  * over every event shape it writes.
@@ -397,6 +402,7 @@ function redactedPayloadSql(userId: string): Prisma.Sql {
                     THEN jsonb_set(${Prisma.raw(`p${i}`)}.v, ${`{${id}}`}::text[], 'null'::jsonb)
                          ${name ? Prisma.sql`- ${name}::text` : Prisma.empty}
                     ELSE ${Prisma.raw(`p${i}`)}.v END
+        OFFSET 0
       ) ${Prisma.raw(`p${i + 1}`)}(v)`
   );
   const last = Prisma.raw(`p${PERSON_KEYS.length}`);
@@ -413,6 +419,7 @@ function redactedPayloadSql(userId: string): Prisma.Sql {
                             FROM jsonb_each(o.payload -> 'data') AS e
                            WHERE e.key = ANY(${ACTIVITY_KEEP_KEYS}::text[]))
                     ELSE o.payload -> 'data' END
+        OFFSET 0
       ) p0(v)
       ${Prisma.join(personSteps, '')}
       CROSS JOIN LATERAL (
@@ -423,29 +430,24 @@ function redactedPayloadSql(userId: string): Prisma.Sql {
                              WITH ORDINALITY AS a(e, i)
                        WHERE a.e <> ${subject}))
                     ELSE ${last}.v END
+        OFFSET 0
       ) approvers(v)`;
 }
 
 /**
- * Redact the subject from every delivery in `table` that names them, stop
- * the `activity` rows still waiting to retry, and mark every `activity` row
- * `stoppedByErasure` so a retry or a replay refuses it (t-793, t-809).
- * Returns the number of rows rewritten.
- *
- * One statement, with no payload passing through Node (t-806): match, redact
- * ({@link redactedPayloadSql}) and write all happen in Postgres, so a heavy
- * history costs the erasure transaction an index scan and a rewrite rather
- * than a round trip per row.
+ * The `UPDATE` that redacts, stops and marks the rows `source` yields
+ * (`id`, `payload`, `activity`, one per row), in `table`. Writes only a row
+ * that still needs it: one whose payload changes, or an `activity` row not yet
+ * marked or still waiting to send. A row already redacted, by an earlier pass
+ * of this erasure, is matched again (an `activity` row keeps its
+ * `conversationId`) and left alone, which is what lets the final pass inside
+ * the transaction cost a match rather than a rewrite.
  *
  * Whether a row stops is decided against its status as the `UPDATE` finds
  * it, not as the match read it: the retry worker can deliver a row in
  * between, and a delivered row must not be rewritten as exhausted.
  */
-export async function eraseSubjectFromDeliveries(
-  client: RawClient,
-  table: DeliveryTable,
-  userId: string
-): Promise<number> {
+function redactUpdate(table: DeliveryTable, userId: string, source: Prisma.Sql): Prisma.Sql {
   const t = TABLES[table];
   const stopNow = Prisma.sql`(r.activity AND d.status = ANY(${[...AWAITING_RETRY_STATUSES]}::text[]))`;
   // Every `activity` row is marked, whatever its status, so a replay or a
@@ -455,13 +457,8 @@ export async function eraseSubjectFromDeliveries(
   // A row already marked, by an earlier erasure of someone else it named,
   // keeps its `lastError` as it is.
   const markNow = Prisma.sql`(r.activity AND NOT d."stoppedByErasure")`;
-  return client.$executeRaw`
-    WITH matched AS (${matchArms(table, userId, Prisma.sql`d.id, d.payload`)}),
-    one_each AS (
-      SELECT DISTINCT ON (id) id, payload, activity
-        FROM matched
-       ORDER BY id, activity DESC
-    ),
+  return Prisma.sql`
+    WITH one_each AS (${source}),
     redacted AS (${redactedPayloadSql(userId)})
     UPDATE ${t} AS d
        SET payload = r.payload,
@@ -471,5 +468,82 @@ export async function eraseSubjectFromDeliveries(
            "stoppedByErasure" = d."stoppedByErasure" OR r.activity
       FROM redacted r
      WHERE d.id = r.id
+       AND (r.payload IS DISTINCT FROM d.payload OR ${markNow} OR ${stopNow})
   `;
+}
+
+/** Every row in `table` naming `userId`, once each, with its payload and basis. */
+function matchedRowsSql(table: DeliveryTable, userId: string): Prisma.Sql {
+  return Prisma.sql`
+    SELECT DISTINCT ON (id) id, payload, activity
+      FROM (${matchArms(table, userId, Prisma.sql`d.id, d.payload`)}) matched
+     ORDER BY id, activity DESC`;
+}
+
+/**
+ * Redact the subject from every delivery in `table` that names them, stop
+ * the `activity` rows still waiting to retry, and mark every `activity` row
+ * `stoppedByErasure` so a retry or a replay refuses it (t-793, t-809).
+ * Returns the number of rows it changed.
+ *
+ * One statement, with no payload passing through Node (t-806): match, redact
+ * ({@link redactedPayloadSql}) and write all happen in Postgres. Run inside the
+ * erasure transaction, after {@link preRedactSubjectFromDeliveries} has done
+ * the bulk of the writing outside it, so it rewrites only what that missed.
+ */
+export async function eraseSubjectFromDeliveries(
+  client: RawClient,
+  table: DeliveryTable,
+  userId: string
+): Promise<number> {
+  return client.$executeRaw(redactUpdate(table, userId, matchedRowsSql(table, userId)));
+}
+
+/** Rows the pre-pass writes per statement, each committed as it goes. */
+const PRE_PASS_CHUNK = 5_000;
+
+/**
+ * The same redaction as {@link eraseSubjectFromDeliveries}, run before the
+ * erasure transaction and committed {@link PRE_PASS_CHUNK} rows at a time
+ * (t-806; owner ruling 2026-10-15). Returns the number of rows it changed.
+ *
+ * Why: the transaction has 60 s, and rewriting a person's whole delivery
+ * history inside it ran out at a few hundred thousand rows. The row writes
+ * and their index entries are the cost, so no rewrite of the SQL brings a
+ * million rows inside the limit, and an erasure that times out erases
+ * nothing. Done first, in committed chunks, the transaction's own pass then
+ * finds those rows already redacted and writes only what arrived since.
+ *
+ * **What a failure leaves behind.** Call it only once nothing will refuse the
+ * erasure (`eraseUser()` runs it where it deletes the avatars, after its
+ * callers' checks). If the transaction then fails, the person's delivery
+ * payloads are already anonymised and their retries stopped while the account
+ * still exists. Accepted: anonymising is what the erasure was asked to do,
+ * redaction is idempotent, and a retried erasure completes it.
+ *
+ * Matches once, reading only ids and bases, then rewrites each chunk from the
+ * row as it is at that moment.
+ */
+export async function preRedactSubjectFromDeliveries(
+  client: RawClient,
+  table: DeliveryTable,
+  userId: string
+): Promise<number> {
+  const matched = await client.$queryRaw<Array<{ id: string; activity: boolean }>>`
+    SELECT DISTINCT ON (id) id, activity
+      FROM (${matchArms(table, userId, Prisma.sql`d.id`)}) matched
+     ORDER BY id, activity DESC
+  `;
+  const t = TABLES[table];
+  let changed = 0;
+  for (let i = 0; i < matched.length; i += PRE_PASS_CHUNK) {
+    const chunk = matched.slice(i, i + PRE_PASS_CHUNK);
+    const source = Prisma.sql`
+      SELECT d.id, d.payload, w.activity
+        FROM unnest(${chunk.map((m) => m.id)}::text[], ${chunk.map((m) => m.activity)}::boolean[])
+             AS w(id, activity)
+        JOIN ${t} d ON d.id = w.id`;
+    changed += await client.$executeRaw(redactUpdate(table, userId, source));
+  }
+  return changed;
 }

@@ -87,6 +87,7 @@ function makeDelivery(overrides: Record<string, unknown> = {}) {
     destination: null,
     destinationFingerprint: null,
     previousDestinations: null,
+    stoppedByErasure: false,
     ...overrides,
   };
 }
@@ -388,7 +389,13 @@ describe('retryHookDelivery', () => {
     // The reset matches the row as it was read, so a concurrent change is not undone.
     expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'del-1', status: 'exhausted', lastError: null, nextRetryAt: null },
+        where: {
+          id: 'del-1',
+          status: 'exhausted',
+          lastError: null,
+          nextRetryAt: null,
+          stoppedByErasure: false,
+        },
         data: expect.objectContaining({
           status: 'pending',
           attempts: 0,
@@ -505,18 +512,37 @@ describe('an erasure’s stop on a hook delivery (t-793)', () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses a manual retry of a row an erasure stopped: nothing reset, nothing sent', async () => {
+  // The stop is the column (t-809): a lastError written over the erasure's
+  // wording does not clear it.
+  it.each(['HTTP 503 (not retried: subject erased)', 'HTTP 500 written over the wording', null])(
+    'refuses a manual retry of a row an erasure stopped, whatever its lastError (%s)',
+    async (lastError) => {
+      vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
+        ...makeDelivery({ status: 'exhausted', lastError, stoppedByErasure: true }),
+        hook: makeHook(),
+      } as never);
+
+      const result = await retryHookDelivery('del-1');
+
+      expect(result).toBe(false);
+      expect(prisma.aiEventHookDelivery.updateMany).not.toHaveBeenCalled();
+      expect(prisma.aiEventHookDelivery.updateManyAndReturn).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    }
+  );
+
+  it('retries a row that is not marked, even if its lastError reads like an erasure’s (t-809)', async () => {
     vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
-      ...makeDelivery({ status: 'exhausted', lastError: 'HTTP 503 (not retried: subject erased)' }),
+      ...makeDelivery({ status: 'exhausted', lastError: 'HTTP 422 (not retried: subject erased)' }),
       hook: makeHook(),
     } as never);
+    vi.mocked(prisma.aiEventHookDelivery.updateManyAndReturn).mockResolvedValue([
+      makeDelivery({ status: 'pending', attempts: 0 }),
+    ] as never);
 
     const result = await retryHookDelivery('del-1');
 
-    expect(result).toBe(false);
-    expect(prisma.aiEventHookDelivery.updateMany).not.toHaveBeenCalled();
-    expect(prisma.aiEventHookDelivery.update).not.toHaveBeenCalled();
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result).toBe(true);
   });
 
   // Merges the former "row changed between the read and the reset" and "an
@@ -536,7 +562,13 @@ describe('an erasure’s stop on a hook delivery (t-793)', () => {
     expect(result).toBe(false);
     expect(prisma.aiEventHookDelivery.updateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'del-1', status: 'exhausted', lastError: 'HTTP 503', nextRetryAt: null },
+        where: {
+          id: 'del-1',
+          status: 'exhausted',
+          lastError: 'HTTP 503',
+          nextRetryAt: null,
+          stoppedByErasure: false,
+        },
       })
     );
     // One read only: the reset is the last thing the retry asks the database.

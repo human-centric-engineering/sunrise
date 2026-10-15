@@ -138,6 +138,8 @@ describe('POST /webhooks/dlq/replay', () => {
       subscriptionId: SUB_ID,
       status: 'exhausted',
       createdAt: { lt: new Date(before) },
+      // Rows an erasure stopped stay out of the oldest-first window (t-809).
+      stoppedByErasure: false,
     });
   });
 

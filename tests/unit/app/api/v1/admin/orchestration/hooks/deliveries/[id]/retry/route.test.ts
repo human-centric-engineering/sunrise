@@ -94,7 +94,7 @@ describe('POST /hooks/deliveries/:id/retry', () => {
     expect(response.status).toBe(403);
   });
 
-  it('looks the delivery up by id, selecting only hookId and lastError', async () => {
+  it('looks the delivery up by id, selecting only hookId and stoppedByErasure', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(retryHookDelivery).mockResolvedValue(true);
 
@@ -102,7 +102,7 @@ describe('POST /hooks/deliveries/:id/retry', () => {
 
     expect(prisma.aiEventHookDelivery.findUnique).toHaveBeenCalledWith({
       where: { id: DELIVERY_ID },
-      select: { hookId: true, lastError: true },
+      select: { hookId: true, stoppedByErasure: true },
     });
   });
 
@@ -135,11 +135,11 @@ describe('POST /hooks/deliveries/:id/retry', () => {
     expect(logAdminAction).not.toHaveBeenCalled();
   });
 
-  it('returns 409, without retrying or auditing, for a delivery an erasure stopped (t-793)', async () => {
+  it('returns 409, without retrying or auditing, for a delivery an erasure stopped (t-793, t-809)', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiEventHookDelivery.findUnique).mockResolvedValue({
       hookId: 'hook-1',
-      lastError: 'HTTP 503 (not retried: subject erased)',
+      stoppedByErasure: true,
     } as never);
     // If the route skipped the check, this would turn the 409 into a 200.
     vi.mocked(retryHookDelivery).mockResolvedValue(true);

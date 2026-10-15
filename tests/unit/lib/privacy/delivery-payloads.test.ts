@@ -8,9 +8,8 @@
  * @see lib/privacy/delivery-payloads.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
-import { isStoppedByErasure } from '@/lib/orchestration/webhooks/not-retried';
 import {
   ADMIN_ACTION_EVENTS,
   EVENT_RECORD_KEYS,
@@ -18,6 +17,7 @@ import {
   deliveriesNamingSubject,
   eraseSubjectFromDeliveries,
   erasedPayload,
+  preRedactSubjectFromDeliveries,
   subjectViewOfPayload,
   type RawClient,
 } from '@/lib/privacy/delivery-payloads';
@@ -67,10 +67,21 @@ function makeClient(rows: RawRow[]) {
   return { client, queryRaw, executeRaw };
 }
 
-/** The `[strings, ...values]` of the nth call to a tagged-template mock. */
+/**
+ * The SQL text and bound values of the nth call to a raw mock: called as a
+ * tagged template, or with one prebuilt `Prisma.Sql`.
+ */
 function renderCall(mock: ReturnType<typeof vi.fn>, n = 0) {
-  const [strings, ...values] = mock.mock.calls[n] as [TemplateStringsArray, ...unknown[]];
-  return render(strings, values);
+  const [first, ...values] = mock.mock.calls[n] as [
+    TemplateStringsArray | Prisma.Sql,
+    ...unknown[],
+  ];
+  // A template's strings are an array; a prebuilt fragment is not.
+  if (!Array.isArray(first)) {
+    const sql = first as Prisma.Sql;
+    return { text: sql.text, values: sql.values };
+  }
+  return render(first as TemplateStringsArray, values);
 }
 
 describe('erasedPayload', () => {
@@ -602,159 +613,203 @@ describe('deliveriesNamingSubject', () => {
 });
 
 describe('eraseSubjectFromDeliveries', () => {
-  let rows: RawRow[];
+  // One statement that matches, redacts and writes in Postgres (t-806). What
+  // it writes is pinned against erasedPayload() over real rows by
+  // smoke:erasure-deliveries; this covers the statement's shape.
 
-  beforeEach(() => {
-    rows = [];
+  it('issues one UPDATE, reads nothing into Node, and returns the rows it rewrote', async () => {
+    const { client, queryRaw, executeRaw } = makeClient([row({ id: 'never-read' })]);
+    executeRaw.mockResolvedValueOnce(1_000_001);
+
+    const count = await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
+
+    expect(count).toBe(1_000_001);
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(executeRaw).toHaveBeenCalledTimes(1);
+    const { text, values } = renderCall(executeRaw);
+    expect(text).toMatch(/^\s*WITH one_each AS \(/);
+    expect(text).toContain('UPDATE ai_webhook_delivery AS d');
+    expect(text).toContain('FROM redacted r');
+    expect(text).toContain('WHERE d.id = r.id');
+    // No payload is bound: nothing went through Node.
+    expect(values.some((v) => typeof v === 'string' && v.startsWith('[{'))).toBe(false);
   });
 
-  /** All rows written across every $executeRaw call, parsed from the bound jsonb parameter. */
-  function writtenRows(executeRaw: ReturnType<typeof vi.fn>) {
-    return executeRaw.mock.calls.flatMap((_c, i) => {
-      const { values } = renderCall(executeRaw, i);
-      const json = values.find((v): v is string => typeof v === 'string' && v.startsWith('['));
-      if (!json) throw new Error('no jsonb chunk bound');
-      const parsed: Array<{
-        id: string;
-        payload: Prisma.JsonValue;
-        activity: boolean;
-      }> = JSON.parse(json);
-      return parsed;
-    });
-  }
-
-  it('hands the UPDATE each row’s basis as `activity`, and computes no stop or lastError itself', async () => {
-    rows = [
-      row({ id: 'pend', status: 'pending', lastError: null, createdAt: new Date(1) }),
-      row({ id: 'fail', status: 'failed', lastError: 'HTTP 500', createdAt: new Date(2) }),
-      row({ id: 'done', status: 'delivered', lastError: null, createdAt: new Date(3) }),
-      row({
-        id: 'actor-pending',
-        activity: false,
-        status: 'pending',
-        lastError: 'earlier error',
-        payload: { data: { actorUserId: SUBJECT, changes: { a: 1 } } },
-        createdAt: new Date(4),
-      }),
-    ];
-    const { client, executeRaw } = makeClient(rows);
-
-    await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
-
-    // Exactly {id, payload, activity}: the status the read saw is not sent,
-    // so the UPDATE can only decide against the row as it finds it.
-    const written = writtenRows(executeRaw);
-    expect(written.map((w) => [w.id, w.activity])).toEqual([
-      ['pend', true],
-      ['fail', true],
-      ['done', true],
-      ['actor-pending', false],
-    ]);
-    for (const w of written) {
-      expect(Object.keys(w).sort()).toEqual(['activity', 'id', 'payload']);
-    }
-  });
-
-  it('decides the stop in SQL against the row’s live status, for activity rows only', async () => {
-    const { client, executeRaw } = makeClient([row({ id: 'one' })]);
+  it('matches through the same arms as subject access, keeping the activity copy of a row matched twice', async () => {
+    const { client, executeRaw } = makeClient([]);
 
     await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
 
     const { text, values } = renderCall(executeRaw);
-    // The live condition, with the awaiting-retry statuses bound as one array
-    const stop = String.raw`\(w\.activity AND d\.status = ANY\(\$\d+::text\[\]\)\)`;
+    expect(text.split('SELECT d.id, d.payload, ')).toHaveLength(6);
+    expect(text).toMatch(
+      /SELECT DISTINCT ON \(id\) id, payload, activity\s+FROM \([\s\S]+\) matched\s+ORDER BY id, activity DESC/
+    );
+    expect(values).toContainEqual([...ADMIN_ACTION_EVENTS]);
+  });
+
+  it('keeps exactly the event record keys and the person keys on an activity row', async () => {
+    const { client, executeRaw } = makeClient([]);
+
+    await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
+
+    const { text, values } = renderCall(executeRaw);
+    expect(text).toMatch(/WHEN o\.activity\s+THEN \(SELECT coalesce\(jsonb_object_agg/);
+    expect(text).toMatch(/WHERE e\.key = ANY\(\$\d+::text\[\]\)/);
+    const keep = values.find((v): v is string[] => Array.isArray(v) && v.includes('agentId'));
+    expect(new Set(keep)).toEqual(
+      new Set([...EVENT_RECORD_KEYS, 'userId', 'actorUserId', 'actorUserName', 'approverUserIds'])
+    );
+    // An actor row keeps all of its data.
+    expect(text).toContain("ELSE o.payload -> 'data' END");
+  });
+
+  it('nulls the subject’s ids, drops the actor’s name, and takes them out of the approvers', async () => {
+    const { client, executeRaw } = makeClient([]);
+
+    await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
+
+    const { text, values } = renderCall(executeRaw);
+    expect(values).toContain('{userId}');
+    expect(values).toContain('{actorUserId}');
+    expect(values).toContain('actorUserName');
+    expect(values).toContain('{approverUserIds}');
+    expect(text).toMatch(/jsonb_set\(p0\.v, \$\d+::text\[\], 'null'::jsonb\)\s+ELSE p0\.v END/);
+    expect(text).toMatch(
+      /jsonb_set\(p1\.v, \$\d+::text\[\], 'null'::jsonb\)\s+- \$\d+::text\s+ELSE p1\.v END/
+    );
+    expect(text).toMatch(/jsonb_agg\(a\.e ORDER BY a\.i\)/);
+    expect(text).toMatch(/WHERE a\.e <> to_jsonb\(\$\d+::text\)/);
+    // Every step is fenced, so the planner evaluates each once per row rather
+    // than inlining it into every reference (t-806: 9.9 s against 0.6 s).
+    expect(text.match(/\bOFFSET 0\s+\)/g)).toHaveLength(4);
+    // A payload whose data is not an object is left as it was.
+    expect(text).toMatch(
+      /CASE WHEN jsonb_typeof\(o\.payload -> 'data'\) = 'object'\s+THEN jsonb_set\(o\.payload, '\{data\}', approvers\.v\)\s+ELSE o\.payload END/
+    );
+  });
+
+  it('decides the stop against the row’s live status, for activity rows only', async () => {
+    const { client, executeRaw } = makeClient([]);
+
+    await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
+
+    const { text, values } = renderCall(executeRaw);
+    const stop = String.raw`\(r\.activity AND d\.status = ANY\(\$\d+::text\[\]\)\)`;
     expect(values).toContainEqual(['pending', 'failed']);
-    // Status, retry time and last error all hang off the same live condition
     expect(text).toMatch(
       new RegExp(`status = CASE WHEN ${stop} THEN 'exhausted' ELSE d\\.status END`)
     );
     expect(text).toMatch(
       new RegExp(`"nextRetryAt" = CASE WHEN ${stop} THEN NULL ELSE d\\."nextRetryAt" END`)
     );
-    // The mark lands on every activity row, whatever its status — an
-    // exhausted one keeps its status, so a DLQ replay refuses it, and so does
-    // a delivered one, which can still be retried by hand (t-793).
-    expect(text).toMatch(
-      /"lastError" = CASE WHEN \(w\.activity\s+AND d\."lastError" IS DISTINCT FROM \$\d+\s+AND right\(coalesce\(d\."lastError", ''\), \$\d+\) <> \$\d+\) THEN/
-    );
-    // A row an earlier erasure already marked is not marked twice
-    expect(values).toContain(' (not retried: subject erased)'.length);
-    expect(text).toContain('ELSE d."lastError" END');
-    // The not-retried wording is built in SQL from the row's own lastError,
-    // with notRetried's wording bound as parameters, so isStoppedByErasure
-    // recognises the result and a manual retry refuses the row (t-793).
-    expect(values).toContain('Not retried: subject erased');
-    expect(values).toContain(' (not retried: subject erased)');
-    expect(text).toMatch(/ELSE d\."lastError" \|\| \$\d+ END/);
-    expect(isStoppedByErasure('Not retried: subject erased')).toBe(true);
-    expect(isStoppedByErasure('HTTP 500 (not retried: subject erased)')).toBe(true);
-    expect(text).toContain('AS w(id text, payload jsonb, activity boolean)');
   });
 
-  it('writes the redacted payload for each basis', async () => {
-    rows = [
-      row({
-        id: 'act',
-        activity: true,
-        payload: { event: 'ev', data: { userId: SUBJECT, agentId: 'a', reason: 'private' } },
-        createdAt: new Date(1),
-      }),
-      row({
-        id: 'actr',
-        activity: false,
-        payload: { event: 'ev', data: { actorUserId: SUBJECT, changes: { k: 1 } } },
-        createdAt: new Date(2),
-      }),
-    ];
-    const { client, executeRaw } = makeClient(rows);
+  it('marks every activity row stoppedByErasure, and words lastError only on a row not already marked (t-809)', async () => {
+    const { client, executeRaw } = makeClient([]);
 
     await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
 
-    const byId = new Map(writtenRows(executeRaw).map((w) => [w.id, w.payload]));
-    expect(byId.get('act')).toEqual({ event: 'ev', data: { userId: null, agentId: 'a' } });
-    expect(byId.get('actr')).toEqual({
-      event: 'ev',
-      data: { actorUserId: null, changes: { k: 1 } },
-    });
-  });
-
-  it('writes in chunks of 500 and returns the row count', async () => {
-    rows = Array.from({ length: 1001 }, (_, i) =>
-      row({ id: `r${String(i).padStart(4, '0')}`, createdAt: new Date(i) })
+    const { text, values } = renderCall(executeRaw);
+    // The column is set on every activity row and never cleared.
+    expect(text).toContain('"stoppedByErasure" = d."stoppedByErasure" OR r.activity');
+    // The wording, for people to read, is added once.
+    expect(text).toMatch(
+      /"lastError" = CASE WHEN \(r\.activity AND NOT d\."stoppedByErasure"\) THEN CASE WHEN d\."lastError" IS NULL OR d\."lastError" = ''/
     );
-    const { client, executeRaw } = makeClient(rows);
-
-    const count = await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
-
-    expect(count).toBe(1001);
-    expect(executeRaw).toHaveBeenCalledTimes(3);
-    const sizes = executeRaw.mock.calls.map((_c, i) => {
-      const { values } = renderCall(executeRaw, i);
-      const json = values.find((v): v is string => typeof v === 'string' && v.startsWith('['));
-      return json ? JSON.parse(json).length : -1;
-    });
-    expect(sizes).toEqual([500, 500, 1]);
+    expect(values).toContain('Not retried: subject erased');
+    expect(values).toContain(' (not retried: subject erased)');
+    expect(text).toMatch(/ELSE d\."lastError" \|\| \$\d+ END ELSE d\."lastError" END/);
   });
 
-  it('makes no writes and returns 0 when nothing matched', async () => {
+  it('writes only a row that still needs it, so a row the pre-pass redacted costs no write', async () => {
     const { client, executeRaw } = makeClient([]);
 
-    const count = await eraseSubjectFromDeliveries(client, 'hook', SUBJECT);
+    await eraseSubjectFromDeliveries(client, 'webhook', SUBJECT);
 
-    expect(count).toBe(0);
-    expect(executeRaw).not.toHaveBeenCalled();
+    const { text } = renderCall(executeRaw);
+    expect(text).toMatch(
+      /WHERE d\.id = r\.id\s+AND \(r\.payload IS DISTINCT FROM d\.payload OR \(r\.activity AND NOT d\."stoppedByErasure"\) OR \(r\.activity AND d\.status = ANY\(\$\d+::text\[\]\)\)\)/
+    );
+  });
+
+  it('binds the subject as a parameter and never interpolates it', async () => {
+    const hostile = `x'); DROP TABLE ai_webhook_delivery; --`;
+    const { client, executeRaw } = makeClient([]);
+
+    await eraseSubjectFromDeliveries(client, 'webhook', hostile);
+
+    const { text, values } = renderCall(executeRaw);
+    expect(text).not.toContain(hostile);
+    expect(values).toContain(hostile);
   });
 
   it('updates the table matching the requested kind', async () => {
-    rows = [row({ id: 'one' })];
-    const hook = makeClient(rows);
-    const webhook = makeClient(rows);
+    const hook = makeClient([]);
+    const webhook = makeClient([]);
 
     await eraseSubjectFromDeliveries(hook.client, 'hook', SUBJECT);
     await eraseSubjectFromDeliveries(webhook.client, 'webhook', SUBJECT);
 
-    expect(renderCall(hook.executeRaw).text).toContain('UPDATE ai_event_hook_delivery');
-    expect(renderCall(webhook.executeRaw).text).toContain('UPDATE ai_webhook_delivery');
+    expect(renderCall(hook.executeRaw).text).toContain('UPDATE ai_event_hook_delivery AS d');
+    expect(renderCall(webhook.executeRaw).text).toContain('UPDATE ai_webhook_delivery AS d');
+  });
+});
+
+describe('preRedactSubjectFromDeliveries', () => {
+  function matchedIds(n: number) {
+    return Array.from({ length: n }, (_, i) => ({ id: `r${i}`, activity: i % 2 === 0 }));
+  }
+
+  it('matches once, reading only ids and bases, never a payload', async () => {
+    const { client, queryRaw } = makeClient([]);
+    queryRaw.mockResolvedValueOnce([]);
+
+    await preRedactSubjectFromDeliveries(client, 'webhook', SUBJECT);
+
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    const { text, values } = renderCall(queryRaw);
+    expect(text).toMatch(/^\s*SELECT DISTINCT ON \(id\) id, activity\s/);
+    expect(text.split('SELECT d.id, ')).toHaveLength(6);
+    expect(text).not.toContain('d.payload,');
+    expect(values).toContain(SUBJECT);
+  });
+
+  it('rewrites in committed chunks of 5,000, each from the row as it is, and sums what changed', async () => {
+    const { client, queryRaw, executeRaw } = makeClient([]);
+    queryRaw.mockResolvedValueOnce(matchedIds(10_001));
+    executeRaw.mockResolvedValueOnce(5_000).mockResolvedValueOnce(4_999).mockResolvedValueOnce(1);
+
+    const changed = await preRedactSubjectFromDeliveries(client, 'hook', SUBJECT);
+
+    expect(changed).toBe(10_000);
+    expect(executeRaw).toHaveBeenCalledTimes(3);
+    const sizes = [0, 1, 2].map((i) => {
+      const { values } = renderCall(executeRaw, i);
+      const ids = values.find(
+        (v): v is string[] => Array.isArray(v) && typeof v[0] === 'string' && v[0].startsWith('r')
+      );
+      return ids?.length;
+    });
+    expect(sizes).toEqual([5_000, 5_000, 1]);
+    const { text, values } = renderCall(executeRaw, 2);
+    // The chunk's ids and bases, joined to the live row: no payload is bound.
+    expect(text).toMatch(
+      /FROM unnest\(\$\d+::text\[\], \$\d+::boolean\[\]\)\s+AS w\(id, activity\)\s+JOIN ai_event_hook_delivery d ON d\.id = w\.id/
+    );
+    expect(values).toContainEqual(['r10000']);
+    expect(values).toContainEqual([true]);
+    // The same skip-unchanged update as the transaction's pass.
+    expect(text).toContain('UPDATE ai_event_hook_delivery AS d');
+    expect(text).toContain('r.payload IS DISTINCT FROM d.payload');
+  });
+
+  it('writes nothing when nothing names the subject', async () => {
+    const { client, queryRaw, executeRaw } = makeClient([]);
+    queryRaw.mockResolvedValueOnce([]);
+
+    expect(await preRedactSubjectFromDeliveries(client, 'webhook', SUBJECT)).toBe(0);
+    expect(executeRaw).not.toHaveBeenCalled();
   });
 });
 

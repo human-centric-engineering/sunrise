@@ -1,11 +1,12 @@
 /**
- * Erasure cost for a heavy delivery history (t-793): how long `eraseUser()`
- * takes when the person's events fill the webhook and event-hook delivery
- * tables. Measurement, not a check.
+ * Erasure cost for a heavy delivery history (t-793, t-806): how long
+ * `eraseUser()` takes when the person's events fill the webhook and event-hook
+ * delivery tables. Measurement, not a check.
  *
- * `eraseSubjectFromDeliveries` reads every matched payload into Node and
- * writes it back 500 rows a statement, inside the erasure transaction, which
- * has `ERASURE_TRANSACTION_TIMEOUT_MS` (60 s). This seeds, per size:
+ * `eraseSubjectFromDeliveries` matches, redacts and rewrites in one SQL
+ * statement per table (t-806; before it, every payload went through Node),
+ * inside the erasure transaction, which has `ERASURE_TRANSACTION_TIMEOUT_MS`
+ * (60 s). This seeds, per size:
  *
  *   - one subject with `size / 10` conversations;
  *   - `size` deliveries in EACH table naming them: a `message.created`-shaped
@@ -148,8 +149,8 @@ async function measure(size: number): Promise<void> {
       return;
     }
 
-    // The read on its own, outside any transaction: how much of the erasure
-    // is fetching the matched payloads into Node.
+    // The match on its own, outside any transaction, for comparison: the
+    // erasure no longer fetches these rows, but it runs the same match.
     const readStart = performance.now();
     let matched = 0;
     for (const table of ['webhook', 'hook'] as const) {

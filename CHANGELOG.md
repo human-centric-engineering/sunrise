@@ -18,6 +18,18 @@ release process.
 
 ### Added
 
+- **`AiWebhookDelivery.stoppedByErasure` and `AiEventHookDelivery.stoppedByErasure`
+  record that an erasure stopped the row** (t-809; migration
+  `20261015150000_delivery_stopped_by_erasure`, which backfills rows already
+  stopped). A manual retry and a DLQ replay now refuse on this column instead
+  of on the `"(not retried: subject erased)"` wording at the end of
+  `lastError`, so a later `lastError` write can no longer clear the stop, and a
+  receiver's error text that ends in the same words no longer looks stopped.
+  The wording stays on `lastError` for people to read. `isStoppedByErasure()`
+  is gone from `lib/orchestration/webhooks/not-retried.ts`. **Forks:** a job
+  or route of yours that retries or replays a delivery should refuse a row with
+  `stoppedByErasure: true`, and one that writes `lastError` no longer needs to
+  keep the suffix.
 - **`AiAgent.bindingOwner` records who decides a platform agent's provider
   and model** (t-798; migration `20261015120000_ai_agent_binding_owner`). It
   applies only to a platform agent whose definition picks its binding

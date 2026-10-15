@@ -118,6 +118,16 @@ import {
   type SubjectDataSource,
 } from '@/lib/privacy/export-sources';
 import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
+import { Prisma } from '@prisma/client';
+
+/**
+ * The parameters a tagged-template `$queryRaw` call binds, as Prisma flattens
+ * them: a fragment nested in the template contributes its own.
+ */
+function boundValues(call: unknown[]): unknown[] {
+  const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+  return Prisma.sql(strings, ...values).values;
+}
 
 const SUBJECT = {
   id: 'user-1',
@@ -475,7 +485,7 @@ describe('exportUserData', () => {
       );
       expect(webhookCalls).toHaveLength(1);
       // The subject's id is bound as a parameter of the statement.
-      expect(webhookCalls[0].slice(1)).toContain(SUBJECT.id);
+      expect(boundValues(webhookCalls[0])).toContain(SUBJECT.id);
     });
 
     it('adds the subject’s own normalised address to addressed rows as sentTo, with about null', async () => {
@@ -758,7 +768,7 @@ describe('exportUserData', () => {
         JSON.stringify(call.slice(1)).includes('ai_event_hook_delivery')
       );
       expect(hookCalls).toHaveLength(1);
-      expect(hookCalls[0].slice(1)).toContain(SUBJECT.id);
+      expect(boundValues(hookCalls[0])).toContain(SUBJECT.id);
     });
 
     it('exports each row with its basis and the subject’s view of the payload, nothing else', async () => {
@@ -1053,7 +1063,7 @@ describe('exportUserData', () => {
         JSON.stringify(call.slice(1)).includes('ai_event_hook_delivery')
       );
       expect(hookCalls).toHaveLength(RAW_READ_MODELS.size);
-      for (const call of hookCalls) expect(call.slice(1)).toContain(SUBJECT.id);
+      for (const call of hookCalls) expect(boundValues(call)).toContain(SUBJECT.id);
     });
 
     it('reads related rows only through relations named as the subject’s', async () => {

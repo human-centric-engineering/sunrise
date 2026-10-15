@@ -2,13 +2,15 @@
  * @see lib/orchestration/webhooks/not-retried.ts
  */
 
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
   AWAITING_RETRY_STATUSES,
+  DISPATCH_TIMEOUT_MS,
   RECIPIENT_ERASED,
+  RETRY_CLAIM_LEASE_MS,
   SUBJECT_ERASED,
   isArmedRetry,
-  isStoppedByErasure,
   notRetried,
   notRetriedSuffix,
 } from '@/lib/orchestration/webhooks/not-retried';
@@ -43,28 +45,37 @@ describe('notRetriedSuffix', () => {
   });
 });
 
-describe('isStoppedByErasure', () => {
-  it.each([
-    notRetried(null, SUBJECT_ERASED),
-    notRetried('HTTP 503', SUBJECT_ERASED),
-    notRetried(null, RECIPIENT_ERASED),
-    notRetried('Resend 422', RECIPIENT_ERASED),
-  ])('recognises %s', (lastError) => {
-    expect(isStoppedByErasure(lastError)).toBe(true);
-  });
+describe('the stoppedByErasure backfill (t-809)', () => {
+  // The migration marks rows an erasure stopped before the column existed by
+  // their `lastError` wording. Its literals must be exactly what notRetried()
+  // wrote, for both reasons, whole and as a suffix.
+  const migration = readFileSync(
+    'prisma/migrations/20261015150000_delivery_stopped_by_erasure/migration.sql',
+    'utf8'
+  );
 
-  it.each([
-    null,
-    '',
-    'HTTP 503',
-    notRetried('HTTP 503', 'subscription deleted'),
-    notRetried(null, 'hook deleted'),
-    'Subscription deactivated',
-    // The reason's words inside a receiver's own error are not the mark
-    'HTTP 400: subject erased field missing',
-    'subject erased',
-  ])('does not recognise %s', (lastError) => {
-    expect(isStoppedByErasure(lastError)).toBe(false);
+  it.each([SUBJECT_ERASED, RECIPIENT_ERASED])(
+    'matches notRetried()’s wording for “%s”, whole and as a suffix, in both tables',
+    (reason) => {
+      const whole = `'${notRetried(null, reason)}'`;
+      const suffix = `LIKE '%${notRetriedSuffix(reason)}'`;
+      expect(migration.split(whole)).toHaveLength(3);
+      expect(migration.split(suffix)).toHaveLength(3);
+    }
+  );
+});
+
+describe('DISPATCH_TIMEOUT_MS (t-808)', () => {
+  it.each(Object.entries(DISPATCH_TIMEOUT_MS))(
+    'bounds the %s channel’s send well inside the retry claim lease',
+    (_channel, timeout) => {
+      expect(timeout).toBeGreaterThan(0);
+      expect(timeout).toBeLessThan(RETRY_CLAIM_LEASE_MS);
+    }
+  );
+
+  it('names every delivery channel that sends', () => {
+    expect(Object.keys(DISPATCH_TIMEOUT_MS).sort()).toEqual(['email', 'hook', 'webhook']);
   });
 });
 

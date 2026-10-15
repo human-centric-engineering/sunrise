@@ -117,8 +117,10 @@ vi.mock('@/lib/db/client', () => ({
 
 // The payload redaction has its own tests (delivery-payloads.test.ts); here
 // only the call contract matters: which client, table and user, and when.
+const { mockPreRedact } = vi.hoisted(() => ({ mockPreRedact: vi.fn() }));
 vi.mock('@/lib/privacy/delivery-payloads', () => ({
   eraseSubjectFromDeliveries: mockEraseDeliveries,
+  preRedactSubjectFromDeliveries: mockPreRedact,
 }));
 
 // The config rewrite has its own tests (config-recipients.test.ts); here only
@@ -193,6 +195,7 @@ describe('eraseUser', () => {
     mockSubUpdateMany.mockResolvedValue({ count: 0 });
     mockAuditCreateMany.mockResolvedValue({ count: 0 });
     mockEraseDeliveries.mockResolvedValue(0);
+    mockPreRedact.mockResolvedValue(0);
     mockEraseConfig.mockResolvedValue({ escalationListsChanged: 0, workflowsChanged: 0 });
     mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
     mockReceiptCreate.mockResolvedValue({
@@ -703,6 +706,7 @@ describe('eraseUser', () => {
           status: 'exhausted',
           nextRetryAt: null,
           lastError: 'SMTP 550 mailbox full (not retried: recipient erased)',
+          stoppedByErasure: true,
           destination: '[erased]',
           destinationFingerprint: null,
         },
@@ -721,6 +725,8 @@ describe('eraseUser', () => {
       const args = retryingWrites()[0];
       expect(args.data.lastError).toBe('Not retried: recipient erased');
       expect(args.data.status).toBe('exhausted');
+      // What a retry refuses on (t-809); the wording is for people.
+      expect(args.data.stoppedByErasure).toBe(true);
     });
 
     it('stops a retrying row whose destination is someone else and only the history names them, without touching the destination', async () => {
@@ -744,6 +750,7 @@ describe('eraseUser', () => {
         status: 'exhausted',
         nextRetryAt: null,
         lastError: 'boom (not retried: recipient erased)',
+        stoppedByErasure: true,
         previousDestinations: [
           { destination: '[erased]', destinationFingerprint: null, until: UNTIL },
         ],
@@ -1344,6 +1351,68 @@ describe('eraseUser', () => {
       expect(mockLogger.info).toHaveBeenCalledWith(
         'User erased',
         expect.objectContaining({ webhookPayloadsRedacted: 4, eventHookPayloadsRedacted: 7 })
+      );
+    });
+
+    it('pre-redacts both tables before the transaction opens, on the outer client (t-806)', async () => {
+      const callOrder: string[] = [];
+      mockPreRedact.mockImplementation(async (client: unknown, table: string) => {
+        callOrder.push(`pre:${table}:${client === mockPrisma ? 'prisma' : 'other'}`);
+        return 0;
+      });
+      const tx = { ...mockPrisma };
+      mockPrisma.$transaction.mockImplementation(
+        (callback: (client: typeof tx) => Promise<unknown>) => {
+          callOrder.push('transaction');
+          return callback(tx);
+        }
+      );
+      mockEraseDeliveries.mockImplementation(async (_tx: unknown, table: string) => {
+        callOrder.push(`final:${table}`);
+        return 0;
+      });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockPreRedact).toHaveBeenNthCalledWith(1, mockPrisma, 'webhook', BASE_PARAMS.userId);
+      expect(mockPreRedact).toHaveBeenNthCalledWith(2, mockPrisma, 'hook', BASE_PARAMS.userId);
+      expect(callOrder).toEqual([
+        'pre:webhook:prisma',
+        'pre:hook:prisma',
+        'transaction',
+        'final:webhook',
+        'final:hook',
+      ]);
+    });
+
+    it('a failed pre-pass is logged and the transaction redacts everything instead', async () => {
+      mockPreRedact.mockRejectedValueOnce(new Error('pre-pass broke')).mockResolvedValueOnce(3);
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Erasure delivery pre-pass failed; the transaction redacts instead',
+        { userId: BASE_PARAMS.userId, table: 'webhook', error: 'pre-pass broke' }
+      );
+      // The other table's pre-pass still ran, and the erasure completed.
+      expect(mockPreRedact).toHaveBeenCalledTimes(2);
+      expect(mockEraseDeliveries).toHaveBeenCalledTimes(2);
+      expect(mockUserDelete).toHaveBeenCalledTimes(1);
+    });
+
+    it('logs what the pre-pass and the transaction redacted together', async () => {
+      mockPreRedact.mockImplementation(async (_c: unknown, table: string) =>
+        table === 'webhook' ? 100 : 200
+      );
+      mockEraseDeliveries.mockImplementation(async (_tx: unknown, table: string) =>
+        table === 'webhook' ? 4 : 7
+      );
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'User erased',
+        expect.objectContaining({ webhookPayloadsRedacted: 104, eventHookPayloadsRedacted: 207 })
       );
     });
 

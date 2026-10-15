@@ -64,10 +64,28 @@ export function isArmedRetry(
 
 /**
  * How far a claimed retry's `nextRetryAt` moves on. Long enough for any one
- * attempt (the dispatch timeouts are seconds). Short enough that a process
- * which claimed a row and died hands it back to the maintenance tick.
+ * attempt: every channel's send is bounded by {@link DISPATCH_TIMEOUT_MS},
+ * which a test holds below this. Short enough that a process which claimed a
+ * row and died hands it back to the maintenance tick.
  */
 export const RETRY_CLAIM_LEASE_MS = 5 * 60_000;
+
+/**
+ * How long one send may take, per delivery channel (t-808). An attempt that
+ * outlived {@link RETRY_CLAIM_LEASE_MS} would leave its row's lease expired
+ * while it was still out, and the next sender would claim the row and send it
+ * a second time. So every channel's send is bounded, and a test fails if any
+ * entry here reaches the lease. A new channel adds its entry here.
+ *
+ *   - `webhook`: a subscription's HTTP POST (`dispatcher.ts`);
+ *   - `email`: a subscription's email, rendering and the Resend call together;
+ *   - `hook`: an event hook's HTTP POST (`hooks/registry.ts`).
+ */
+export const DISPATCH_TIMEOUT_MS = {
+  webhook: 5_000,
+  email: 15_000,
+  hook: 10_000,
+} as const satisfies Record<string, number>;
 
 /**
  * The `updateMany` arguments that claim a `failed` row's due retry (t-793).

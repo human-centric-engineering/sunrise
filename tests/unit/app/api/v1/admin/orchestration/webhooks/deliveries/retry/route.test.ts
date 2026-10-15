@@ -209,15 +209,27 @@ describe('POST /webhooks/deliveries/:id/retry', () => {
     expect(body.error.code).toBe('CONFLICT');
   });
 
-  describe('a delivery stopped by an erasure (t-793)', () => {
-    it.each([
-      ['subject erased', 'HTTP 500 (not retried: subject erased)'],
-      ['subject erased, with no earlier error', 'Not retried: subject erased'],
-      ['recipient erased', 'Resend 422 (not retried: recipient erased)'],
-    ])('returns 409, without retrying or auditing: %s', async (_label, lastError) => {
+  describe('a delivery stopped by an erasure (t-793, t-809)', () => {
+    it('reads the stop from the column, not from lastError', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
-        lastError,
+        stoppedByErasure: false,
+        subscription: { createdBy: ADMIN_USER_ID },
+      } as never);
+      vi.mocked(retryDelivery).mockResolvedValue(true);
+
+      await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
+
+      expect(prisma.aiWebhookDelivery.findUnique).toHaveBeenCalledWith({
+        where: { id: DELIVERY_ID },
+        select: { stoppedByErasure: true, subscription: { select: { createdBy: true } } },
+      });
+    });
+
+    it('returns 409, without retrying or auditing', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
+        stoppedByErasure: true,
         subscription: { createdBy: ADMIN_USER_ID },
       } as never);
       // If the route skipped the check, this would turn the 409 into a 200.
@@ -226,16 +238,20 @@ describe('POST /webhooks/deliveries/:id/retry', () => {
       const response = await RetryDelivery(makeRequest(DELIVERY_ID), makeParams(DELIVERY_ID));
 
       expect(response.status).toBe(409);
-      const body = await parseJson<{ success: boolean; error: { code: string } }>(response);
+      const body = await parseJson<{
+        success: boolean;
+        error: { code: string; message: string };
+      }>(response);
       expect(body.error.code).toBe('CONFLICT');
+      expect(body.error.message).toContain('person it concerns was erased');
       expect(retryDelivery).not.toHaveBeenCalled();
       expect(logAdminAction).not.toHaveBeenCalled();
     });
 
-    it('retries a delivery whose error merely mentions an erasure elsewhere in the text', async () => {
+    it('retries a delivery that is not marked, even if its error text reads like an erasure’s', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({
-        lastError: 'HTTP 400: subject erased field missing',
+        stoppedByErasure: false,
         subscription: { createdBy: ADMIN_USER_ID },
       } as never);
       vi.mocked(retryDelivery).mockResolvedValue(true);

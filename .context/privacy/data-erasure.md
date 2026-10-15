@@ -294,26 +294,30 @@ transaction):
        the lease runs out. **Accepted:** an admin who retries a row by hand
        while a claimed attempt is still out sends it a second time, because a
        held lease and an armed retry both look like a future `nextRetryAt`.
-       The email channel has no send timeout, so an email attempt that hangs
-       past the lease can also be claimed and sent again (t-808).
+       Every channel's send is bounded well inside the lease
+       (`DISPATCH_TIMEOUT_MS`: webhook 5 s, email 15 s, event hook 10 s; a test
+       fails if any reaches it), so an attempt cannot outlive its claim and be
+       sent again by the next sender (t-808). An email that times out fails as
+       retriable.
      - A manual retry (`409`) or a DLQ replay (counted as skipped) refuses a
-       row an erasure stopped or marked: "subject erased" here, and
-       "recipient erased" on an email delivery that was still retrying when
-       step 5 ran. A delivered or exhausted email row sent to the person's
-       address is not marked; step 5 has taken the address off it, and if
-       its event names them, this step marks it. The mark is the `lastError`
-       wording (`isStoppedByErasure`), which the erasure SQL builds from the
-       same functions, added once however many erasures match the row; a
-       write that settles a row for another reason (its subscription
-       deactivated or deleted) is conditional on the row still awaiting a
-       send, so it cannot overwrite the mark. A retry also resets the row
-       only if it is unchanged since it was read, and sends the payload the
-       reset returned; a row that changed in between answers `409` too.
+       row an erasure marked: an `activity` row here, and an email delivery
+       that was still retrying when step 5 ran. A delivered or exhausted email
+       row sent to the person's address is not marked; step 5 has taken the
+       address off it, and if its event names them, this step marks it. The
+       mark is the row's `stoppedByErasure` column (t-809), which no later
+       `lastError` write can clear; `lastError` also gets "not retried:
+       subject erased" (or "recipient erased") for people to read, added once
+       however many erasures match the row. A replay of a whole subscription
+       leaves marked rows out of its oldest-first window, so a heavy erasure
+       cannot fill it. A retry also resets the row only if it is unchanged and
+       unmarked since it was read, and sends the payload the reset returned; a
+       row that changed in between answers `409` too. Rows an erasure stopped
+       before the column existed were marked by its migration from their
+       `lastError` wording.
 
      Every `activity` row gets the mark, whatever its status: one already
      `exhausted` (the DLQ's population) or `delivered` keeps its status, and a
-     replay or manual retry refuses it. The mark lives in `lastError` text; a
-     dedicated column would not depend on every writer preserving it (t-809).
+     replay or manual retry refuses it.
 
    - An event about a **change they made** (`ADMIN_ACTION_EVENTS`:
      `agent_updated`, `capability.*quarantined`, `execution.force_failed`) or
