@@ -301,8 +301,7 @@ release process.
   from an org admin inside an org-tier route. Platform admins, and every
   install at `single`, see no change. **Forks:** a route of yours that one of
   these pages calls stays platform-only until you declare it `tier: 'org'`.
-  The MCP keys page has no nav entry for an org admin until the MCP landing is
-  split. See [Authorization → Admin tiers](./.context/auth/authorization.md#admin-tiers).
+  An org admin reaches the MCP keys page from the MCP landing (t-812). See [Authorization → Admin tiers](./.context/auth/authorization.md#admin-tiers).
 
 - **An org admin now sees their org's half of the mixed admin pages**
   (§111 t-812). The orchestration dashboard, costs, analytics, the
@@ -323,6 +322,7 @@ release process.
   optional `engineControls`, each defaulting to the platform's view.
   **Forks:** a page you add that pairs a platform panel with org data should
   ask `adminPageViewerTier()` before you list it in the roster.
+
 - **A platform agent's `defaultBinding` is now asked on every maintenance
   pass, and its answer moves the agent** (t-798). `PlatformAgentDefinition
   .defaultBinding` used to be asked only when an instance was created, or
