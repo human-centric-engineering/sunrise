@@ -118,7 +118,7 @@ function topLevelKeys(masked: string, from: number, to: number): string[] {
   return keys;
 }
 
-/** Every `*.ts` under `dir`, recursively, as paths relative to `SEED_DIR`. */
+/** Every `*.ts` under `dir`, recursively, as paths relative to the scan root. */
 function seedFiles(dir: string, prefix = ''): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -129,13 +129,14 @@ function seedFiles(dir: string, prefix = ''): string[] {
   return out;
 }
 
-export function scanCapabilitySeeds(): SeedScan {
+/** @param seedDir Scan root; defaults to `prisma/seeds`. Tests pass a fixture dir. */
+export function scanCapabilitySeeds(seedDir: string = SEED_DIR): SeedScan {
   const upserts: CapabilityUpsert[] = [];
   const unparseable: { file: string; reason: string }[] = [];
   const definedNames: string[] = [];
 
-  for (const file of seedFiles(SEED_DIR)) {
-    const raw = readFileSync(join(SEED_DIR, file), 'utf8');
+  for (const file of seedFiles(seedDir)) {
+    const raw = readFileSync(join(seedDir, file), 'utf8');
     const masked = maskLiterals(raw);
     const re = /aiCapability\.upsert\(\s*\{/g;
     let m: RegExpExecArray | null;
