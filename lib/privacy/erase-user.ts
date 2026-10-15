@@ -173,9 +173,9 @@ async function eraseRows(params: EraseUserParams): Promise<{
   contactSubmissionsLeft: number;
   /** Rows touched by the delivery redaction; a row can count in two passes. */
   webhookDeliveriesRedacted: number;
-  /** Webhook deliveries whose payload naming the user was changed, by the pre-pass or the transaction. */
+  /** Webhook deliveries naming the user that were written (redacted, stopped or marked), by the pre-pass or the transaction. */
   webhookPayloadsRedacted: number;
-  /** Event-hook deliveries whose payload naming the user was changed, by the pre-pass or the transaction. */
+  /** Event-hook deliveries naming the user that were written (redacted, stopped or marked), by the pre-pass or the transaction. */
   eventHookPayloadsRedacted: number;
   /** Other admins' email subscriptions cleared and deactivated. */
   subscriptionsDeactivated: number;

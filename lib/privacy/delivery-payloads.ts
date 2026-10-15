@@ -407,7 +407,7 @@ function redactedPayloadSql(userId: string, from: 'one_each' | 'locked'): Prisma
   );
   const last = Prisma.raw(`p${PERSON_KEYS.length}`);
   return Prisma.sql`
-    SELECT o.id, o.activity,
+    SELECT o.id, o.activity, o.status, o."stoppedByErasure", o."lastError", o.payload AS before,
            CASE WHEN jsonb_typeof(o.payload -> 'data') = 'object'
                 THEN jsonb_set(o.payload, '{data}', approvers.v)
                 ELSE o.payload END AS payload
@@ -449,15 +449,16 @@ const SOURCE_COLUMNS = Prisma.sql`d.id, d.payload, d.status, d."stoppedByErasure
  * the column, so a row already stopped for another reason (step 5's
  * "recipient erased") still says its content was erased too.
  */
-function writeConditions(r: 'f' | 'r', d: 'o' | 'd') {
+function writeConditions(r: 'f' | 'r', d: 'f' | 'd', before: 'before' | 'payload') {
   const R = Prisma.raw(r);
   const D = Prisma.raw(d);
+  const BEFORE = Prisma.raw(`${d}.${before}`);
   const stopNow = Prisma.sql`(${R}.activity AND ${D}.status = ANY(${[...AWAITING_RETRY_STATUSES]}::text[]))`;
   const markNow = Prisma.sql`(${R}.activity AND NOT ${D}."stoppedByErasure")`;
   const wordNow = Prisma.sql`(${R}.activity
     AND ${D}."lastError" IS DISTINCT FROM ${notRetried(null, SUBJECT_ERASED)}
     AND right(coalesce(${D}."lastError", ''), ${notRetriedSuffix(SUBJECT_ERASED).length}) <> ${notRetriedSuffix(SUBJECT_ERASED)})`;
-  const needsWrite = Prisma.sql`(${R}.payload IS DISTINCT FROM ${D}.payload OR ${markNow} OR ${wordNow} OR ${stopNow})`;
+  const needsWrite = Prisma.sql`(${R}.payload IS DISTINCT FROM ${BEFORE} OR ${markNow} OR ${wordNow} OR ${stopNow})`;
   return { stopNow, wordNow, needsWrite };
 }
 
@@ -476,8 +477,13 @@ function writeConditions(r: 'f' | 'r', d: 'o' | 'd') {
  *   2. `locked` takes a row lock on each `todo` row, in id order, and reads it
  *      as it is now; `redacted` redacts that. Two erasures of people named on
  *      one row would otherwise each compute from the row before the other's
- *      write, and the second would put the first person back. In id order, so
- *      two erasures over the same rows queue rather than deadlock.
+ *      write, and the second would put the first person back. A `todo` row
+ *      that another pass finished in between is locked but not written, and
+ *      stays locked until the transaction ends. Id order keeps two payload
+ *      passes from deadlocking each other; the recipient passes in the same
+ *      erasure transaction lock rows in their own order, so two concurrent
+ *      erasures can still deadlock there. Postgres then aborts one, which
+ *      fails and is retried.
  *
  * A row that needed nothing in the snapshot cannot need something now: another
  * erasure only removes its own subject, a retry refuses a marked row, and no
@@ -489,19 +495,20 @@ function writeConditions(r: 'f' | 'r', d: 'o' | 'd') {
  */
 function redactUpdate(table: DeliveryTable, userId: string, source: Prisma.Sql): Prisma.Sql {
   const t = TABLES[table];
-  const look = writeConditions('f', 'o');
-  const live = writeConditions('r', 'd');
+  // The first look carries the row's columns and its payload as read
+  // (`before`), so `one_each` is read once and never joined back to itself.
+  const look = writeConditions('f', 'f', 'before');
+  const live = writeConditions('r', 'd', 'payload');
   return Prisma.sql`
     WITH one_each AS (${source}),
     first_look AS (${redactedPayloadSql(userId, 'one_each')}),
     todo AS (
       SELECT f.id, f.activity
         FROM first_look f
-        JOIN one_each o ON o.id = f.id
        WHERE ${look.needsWrite}
     ),
     locked AS (
-      SELECT d.id, d.payload, todo.activity
+      SELECT ${SOURCE_COLUMNS}, todo.activity
         FROM todo
         JOIN ${t} d ON d.id = todo.id
        ORDER BY d.id
@@ -574,8 +581,10 @@ const PRE_PASS_CHUNK = 5_000;
  * redaction is idempotent, and a retried erasure completes it.
  *
  * Matches once, reading only ids and bases, then rewrites each chunk from the
- * row as it is at that moment. `onCommitted` hears each chunk's count as it
- * commits, so a caller still knows what was written when a later chunk throws.
+ * row as it is at that moment. `onCommitted` hears each chunk's count once its
+ * statement returns, so a caller still knows what was written when a later
+ * chunk throws. Each chunk commits on its own only when `client` is not inside
+ * a transaction, which is how `eraseUser()` calls it.
  */
 export async function preRedactSubjectFromDeliveries(
   client: RawClient,

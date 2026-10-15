@@ -749,12 +749,15 @@ describe('eraseSubjectFromDeliveries', () => {
     const { text } = renderCall(executeRaw);
     // The first look redacts the snapshot; todo keeps rows that need a write.
     expect(text).toMatch(/first_look AS \([\s\S]+?FROM one_each o/);
+    // It filters the first look alone, comparing against the payload as read
+    // (`before`), so one_each is read once and never joined back to itself.
     expect(text).toMatch(
-      /todo AS \(\s+SELECT f\.id, f\.activity\s+FROM first_look f\s+JOIN one_each o ON o\.id = f\.id\s+WHERE \(f\.payload IS DISTINCT FROM o\.payload OR/
+      /todo AS \(\s+SELECT f\.id, f\.activity\s+FROM first_look f\s+WHERE \(f\.payload IS DISTINCT FROM f\.before OR/
     );
+    expect(text.match(/\bone_each\b/g)).toHaveLength(2);
     // Only todo rows are locked, in id order, and re-read.
     expect(text).toMatch(
-      /locked AS \(\s+SELECT d\.id, d\.payload, todo\.activity\s+FROM todo\s+JOIN ai_webhook_delivery d ON d\.id = todo\.id\s+ORDER BY d\.id\s+FOR UPDATE OF d\s+\)/
+      /locked AS \(\s+SELECT d\.id, d\.payload, d\.status, d\."stoppedByErasure", d\."lastError", todo\.activity\s+FROM todo\s+JOIN ai_webhook_delivery d ON d\.id = todo\.id\s+ORDER BY d\.id\s+FOR UPDATE OF d\s+\)/
     );
     expect(text.match(/FOR UPDATE/g)).toHaveLength(1);
     // The write redacts from the locked read, never the first look.

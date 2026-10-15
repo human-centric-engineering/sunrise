@@ -22,12 +22,13 @@
  *      does not hold the address. A subscription to anyone else is untouched.
  *   4. An unverified account's address leaves a colleague's subscription to
  *      it untouched: it may be a stranger's inbox.
- *   6. Two erasures over one row do not undo each other: while one
- *      person's redaction holds the row uncommitted, another's pre-pass
- *      waits for it and redacts the row as it was left (t-806).
  *   5. The t-809 migration's backfill sets `stoppedByErasure` on a row whose
  *      `lastError` carries an erasure's wording, and on no other (run inside a
  *      transaction that is rolled back).
+ *   6. Two erasures over one row do not undo each other: while one
+ *      person's redaction holds the row uncommitted, another's pre-pass
+ *      waits for it (seen waiting on a lock before the first is released) and
+ *      redacts the row as it was left (t-806).
  *
  * Step 2 also pins the SQL redaction to its specification (t-806): every
  * payload the erasure rewrote equals what `erasedPayload()` gives for that
@@ -783,13 +784,27 @@ async function main(): Promise<void> {
     // Y's pre-pass starts while X's write is uncommitted: it must wait for it
     // and redact the row as X left it, not as it read it before.
     const yPrePass = preRedactSubjectFromDeliveries(prisma, 'webhook', personY);
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    // Release X only once Y's write is seen blocked on a row lock: released
+    // any earlier, Y would read X's committed row and pass without the race.
+    const waitingOnLock = async (): Promise<boolean> => {
+      for (let i = 0; i < 100; i++) {
+        const [row] = await prisma.$queryRaw<Array<{ n: bigint }>>`
+          SELECT count(*)::bigint AS n FROM pg_stat_activity
+           WHERE wait_event_type = 'Lock' AND query LIKE '%first_look%'
+             AND pid <> pg_backend_pid()`;
+        if (Number(row.n) > 0) return true;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      return false;
+    };
+    const yBlocked = await waitingOnLock();
     release();
     await xErasure;
     await yPrePass;
     const sharedAfter = await prisma.aiWebhookDelivery.findUniqueOrThrow({
       where: { id: shared.id },
     });
+    check(yBlocked, 'the second erasure waited on the first’s row lock');
     check(
       isDeepStrictEqual(dataOf(sharedAfter.payload).approverUserIds, [colleague.id]),
       'the second erasure redacts the row as the first left it: neither person comes back'

@@ -362,9 +362,12 @@ transaction):
    past a million that match is what grows. Cutting it to rows created since
    the pre-pass began was considered and not done: a delivery committed by a
    transaction that started before the match would fall outside both passes.
-   The pass takes row locks only on rows it writes (locking all of them is a
-   write to each: 80 s for a million), and those in id order, so two
-   erasures over one row queue and neither undoes the other. Before t-806 a single in-transaction rewrite timed out near 600,000
+   The pass locks only the rows that looked unfinished as it read them
+   (locking every matched row is a write to each: 80 s for a million), in id
+   order, and redacts each as it is once locked, so two erasures over one row
+   do not undo each other. Two concurrent erasures can still deadlock, since
+   the address passes (step 5) lock rows in their own order; Postgres aborts
+   one, which fails and can be retried. Before t-806 a single in-transaction rewrite timed out near 600,000
    rows. Two things made the difference, both measured: each SQL redaction
    step is fenced (`OFFSET 0`), since an inlined step re-ran its `jsonb_each`
    per reference (9.9 s against 0.6 s for 50,000 rows), and the payload GIN
