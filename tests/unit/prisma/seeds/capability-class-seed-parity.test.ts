@@ -111,31 +111,37 @@ const PAIRS: AppCapabilityPair[] = [
   {
     slug: 'search_knowledge_base',
     seeded: byslug('search_knowledge_base'),
+    seedFile: '005-pattern-advisor.ts',
     instance: new SearchKnowledgeCapability(),
   },
   {
     slug: 'get_pattern_detail',
     seeded: byslug('get_pattern_detail'),
+    seedFile: '005-pattern-advisor.ts',
     instance: new GetPatternDetailCapability(),
   },
   {
     slug: 'estimate_workflow_cost',
     seeded: byslug('estimate_workflow_cost'),
+    seedFile: '005-pattern-advisor.ts',
     instance: new EstimateCostCapability(),
   },
   {
     slug: 'apply_audit_changes',
     seeded: APPLY_AUDIT_CHANGES_DEFINITION,
+    seedFile: '010-model-auditor.ts',
     instance: new ApplyAuditChangesCapability(),
   },
   {
     slug: 'add_provider_models',
     seeded: ADD_PROVIDER_MODELS_DEFINITION,
+    seedFile: '010-model-auditor.ts',
     instance: new AddProviderModelsCapability(),
   },
   {
     slug: 'deactivate_provider_models',
     seeded: DEACTIVATE_PROVIDER_MODELS_DEFINITION,
+    seedFile: '010-model-auditor.ts',
     instance: new DeactivateProviderModelsCapability(),
   },
   {
@@ -198,21 +204,24 @@ describe('built-in capabilities — seed definition matches the class (#545)', (
   it('covers every seed file whose definitions the reader cannot name (#646)', () => {
     // A definition the reader cannot name used to contribute nothing, and
     // nothing was reported either — so 019's fourteen capabilities went
-    // unwatched while every one of them drifted from its class. A file that
-    // also names capabilities (005 and 010 re-read their own literals through
-    // `def.functionDefinition`) is covered by the check above; one that names
-    // none must be declared by a pair's `seedFile`.
-    const { definitions, opaqueDefinitions } = scanCapabilitySeeds();
-    const named = new Set(definitions.map((d) => d.file));
-    const declared = new Set(PAIRS.map((p) => p.seedFile).filter(Boolean));
-    const uncovered = [...new Set(opaqueDefinitions.map((o) => o.file))].filter(
-      (file) => !named.has(file) && !declared.has(file)
-    );
-    expect(uncovered).toEqual([]);
+    // unwatched while every one of them drifted from its class.
+    //
+    // Every such file must be declared by a pair's `seedFile`, including one
+    // that ALSO names capabilities (005 and 010 re-read their own literals
+    // through `def.functionDefinition`): exempting a file for naming one
+    // capability would pass over an imported definition sitting beside it.
+    //
+    // The declaration is per FILE, because these are exactly the definitions
+    // the reader cannot name — it cannot say which capability is missing. So
+    // a file declared here needs its own per-capability check, as 019 has
+    // below.
+    const { opaqueDefinitions } = scanCapabilitySeeds();
+    const opaque = new Set(opaqueDefinitions.map((o) => o.file));
+    const declared = new Set(PAIRS.flatMap((p) => (p.seedFile ? [p.seedFile] : [])));
+    expect([...opaque].filter((file) => !declared.has(file))).toEqual([]);
     // A declared file must actually be opaque, or the declaration is a typo
     // that exempts nothing — and hides the file it meant.
-    const opaque = new Set(opaqueDefinitions.map((o) => o.file));
-    expect([...declared].filter((file) => !opaque.has(file as string))).toEqual([]);
+    expect([...declared].filter((file) => !opaque.has(file))).toEqual([]);
   });
 
   it('pairs every capability 019 seeds', () => {

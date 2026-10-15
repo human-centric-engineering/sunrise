@@ -199,3 +199,65 @@ describe('lib/app/** import boundary (seam 5)', () => {
     expect(msgs[0].message).toMatch(/Node-only/i);
   });
 });
+
+describe('lib/app/capability-seed-pairs.ts carve-out (#646)', () => {
+  const SEAM_FILE = 'lib/app/capability-seed-pairs.ts';
+  let seamRule: Linter.RuleEntry;
+
+  beforeAll(async () => {
+    const mod = (await import('@/eslint.config.mjs')) as { default: FlatConfigBlock[] };
+    // The LAST block naming the file wins in flat config, so that is the one
+    // under test.
+    const block = mod.default.findLast(
+      (c) => Array.isArray(c.files) && c.files.includes(SEAM_FILE)
+    );
+    if (!block) throw new Error(`No flat-config block targeting "${SEAM_FILE}" found`);
+    seamRule = block.rules?.['@typescript-eslint/no-restricted-imports'] as Linter.RuleEntry;
+  });
+
+  function lintSeam(code: string): Linter.LintMessage[] {
+    return new Linter().verify(
+      code,
+      [
+        {
+          files: ['**/*.ts'],
+          languageOptions: { parser: tseslint.parser },
+          plugins: { '@typescript-eslint': tseslint.plugin },
+          rules: { '@typescript-eslint/no-restricted-imports': seamRule },
+        },
+      ],
+      SEAM_FILE
+    );
+  }
+
+  const SEED_IMPORT =
+    "import { WITHDRAW_TASK_IMPL } from '@/prisma/seeds/app/030-tasks';\nexport const x = WITHDRAW_TASK_IMPL;";
+
+  it('allows the seed-module import its pairs are made of', () => {
+    expect(lintSeam(SEED_IMPORT)).toHaveLength(0);
+  });
+
+  it('still bans it in every other lib/app file', () => {
+    const msgs = lint(SEED_IMPORT);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].message).toMatch(/Prisma/);
+  });
+
+  it.each([
+    ["import { PrismaClient } from '@prisma/client';\nexport const x = PrismaClient;", /Prisma/],
+    ["import { PrismaClient } from 'prisma';\nexport const x = PrismaClient;", /Prisma/],
+    ["import { x } from './sibling';\nexport const y = x;", /@\/ path alias/],
+    ["import { readFile } from 'node:fs';\nexport const x = readFile;", /Node-only/i],
+    ["import { headers } from 'next/headers';\nexport const x = headers;", /framework-agnostic/],
+  ])('keeps every other ban: %s', (code, message) => {
+    const msgs = lintSeam(code);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].message).toMatch(message);
+  });
+
+  it('still allows a type-only Prisma import', () => {
+    expect(
+      lintSeam("import type { User } from '@prisma/client';\nexport type U = User;")
+    ).toHaveLength(0);
+  });
+});

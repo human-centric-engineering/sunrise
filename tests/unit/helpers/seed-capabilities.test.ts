@@ -145,4 +145,43 @@ ${upsertSeed('...IMPL')}`
     expect(scan.definedNames).toEqual(['typed_one']);
     expect(scan.opaqueDefinitions).toEqual([]);
   });
+
+  it('names a same-file const behind an `as` cast', () => {
+    write(
+      '906-cast.ts',
+      `const FOO_DEF = { name: 'foo_cast', parameters: {} };
+const IMPL = { executionType: 'internal', functionDefinition: FOO_DEF as Prisma.InputJsonValue };
+${upsertSeed('...IMPL')}`
+    );
+    const scan = scanCapabilitySeeds(dir);
+    expect(scan.definedNames).toEqual(['foo_cast']);
+    expect(scan.opaqueDefinitions).toEqual([]);
+  });
+
+  it('names a const whose identifier contains `$`', () => {
+    write(
+      '907-dollar.ts',
+      `const DEF$ = { name: 'dollar_def', parameters: {} };
+const IMPL$ = { executionType: 'internal', functionDefinition: DEF$ };
+${upsertSeed('...IMPL$')}`
+    );
+    const scan = scanCapabilitySeeds(dir);
+    expect(scan.definedNames).toEqual(['dollar_def']);
+    expect(scan.unparseable).toEqual([]);
+  });
+
+  it('reports a name shared by consts in two scopes as opaque rather than guessing', () => {
+    write(
+      '908-scopes.ts',
+      `function one() { const def = { name: 'first_cap' }; return { functionDefinition: def }; }
+function two() { const def = { name: 'second_cap' }; return { functionDefinition: def }; }
+${upsertSeed('isActive: true')}`
+    );
+    const scan = scanCapabilitySeeds(dir);
+    expect(scan.definedNames).toEqual([]);
+    expect(scan.opaqueDefinitions).toEqual([
+      { file: '908-scopes.ts', expr: 'def' },
+      { file: '908-scopes.ts', expr: 'def' },
+    ]);
+  });
 });

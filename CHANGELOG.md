@@ -25,9 +25,12 @@ release process.
   The seed reader now names a capability whose `functionDefinition` is a
   same-file const (`functionDefinition: FOO_DEF`, or `{ functionDefinition }`),
   and reports one it cannot name (imported, read off an instance) instead of
-  dropping it. **Forks:** a capability seed written that way was invisible to
-  the completeness check and now fails it until you pair it here; a pair for a
-  seed the reader cannot name also sets `seedFile`.
+  dropping it. `eslint.config.mjs` lets that one seam file import
+  `@/prisma/seeds/**` (the `lib/app/**` boundary otherwise matches it as a
+  Prisma import); `@prisma/*` stays banned there. **Forks:** a capability seed
+  written that way was invisible to the completeness check and now fails it
+  until you pair it here; a pair for a seed the reader cannot name also sets
+  `seedFile`, and that seed needs its own every-entry-is-paired test.
 
 - **A fork classifies its own models for the owner layer** (§115 t-807): the
   new `lib/app/owner-classification.ts` seam (`initAppOwnerClassification()`,

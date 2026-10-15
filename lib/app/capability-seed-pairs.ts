@@ -25,16 +25,26 @@
  * ## When `seedFile` is required
  *
  * The reader names a capability from its seed's `functionDefinition` when that
- * is an object literal with a literal `name`, or a same-file `const` holding
- * one. Anything else — a definition imported from the class module, read off
- * an instance, or built at runtime — it cannot name, and it reports the file
- * instead. The test then fails that file until some pair declares it as its
- * `seedFile`. Set `seedFile` on the pairs for such a seed; leave it off
+ * is an object literal with a literal `name`, or the only same-file `const` of
+ * that name holding one. Anything else — a definition imported from the class
+ * module, read off an instance, or built at runtime — it cannot name, and it
+ * reports the file instead. The test then fails that file until some pair
+ * declares it as its `seedFile`, even if the file also names other
+ * capabilities. Set `seedFile` on the pairs for such a seed; leave it off
  * otherwise.
  *
- * Boundary-clean: no imports at all, so this stays within the `lib/app/**`
- * framework-agnostic boundary. Your entries will import your seed constants
- * and capability classes; that is fine for a file only a test reads.
+ * **A declaration covers the file, not each capability in it** — the reader
+ * cannot say which of those definitions lacks a pair, which is why it could
+ * not name them. So for such a seed, export the list it seeds and add your own
+ * test that every entry has a pair, as Sunrise does for
+ * `019-cleanup-capabilities` ("pairs every capability 019 seeds").
+ *
+ * Imports: your entries import your seed constants and capability classes.
+ * The `lib/app/**` boundary bans Prisma imports, and its `'prisma'` pattern
+ * would also match `@/prisma/seeds/…`, so `eslint.config.mjs` carves out
+ * `@/prisma/seeds/**` for THIS file only — `@prisma/*` stays banned here too.
+ * Nothing at runtime imports this file, which is what makes that safe; keep it
+ * that way.
  *
  * Full guide: CUSTOMIZATION.md §4 · .context/database/seeding.md
  */

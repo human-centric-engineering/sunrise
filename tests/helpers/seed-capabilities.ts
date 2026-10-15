@@ -101,6 +101,9 @@ function maskLiterals(src: string): string {
   return out.join('');
 }
 
+/** An identifier as a regex fragment — `$` is legal in one and an anchor in a regex. */
+const ident$ = (name: string): string => name.replace(/\$/g, '\\$');
+
 /** End index of the object literal opening at `open`, or -1 if unbalanced. */
 function objectEnd(masked: string, open: number): number {
   let depth = 0;
@@ -220,7 +223,7 @@ export function scanCapabilitySeeds(seedDir: string = SEED_DIR): SeedScan {
 
       const update = topLevelKeys(masked, updOpen + 1, updEnd);
       for (const spread of masked.slice(updOpen, updEnd).matchAll(/\.\.\.([A-Za-z_$][\w$]*)/g)) {
-        const cm = new RegExp(`const\\s+${spread[1]}\\s*=\\s*\\{`).exec(masked);
+        const cm = new RegExp(`const\\s+${ident$(spread[1])}\\s*=\\s*\\{`).exec(masked);
         if (!cm) {
           unparseable.push({ file, reason: `spread ...${spread[1]} not resolvable in this file` });
           continue;
@@ -255,8 +258,10 @@ export function scanCapabilitySeeds(seedDir: string = SEED_DIR): SeedScan {
     const fd = /\bfunctionDefinition\b/g;
     let f: RegExpExecArray | null;
     while ((f = fd.exec(types)) !== null) {
-      const before = types.slice(0, f.index);
-      const after = types.slice(f.index + f[0].length);
+      // A short window either side is all the checks below read; slicing the
+      // whole prefix per match made a long seed quadratic.
+      const before = types.slice(Math.max(0, f.index - 64), f.index);
+      const after = types.slice(f.index + f[0].length, f.index + f[0].length + 16);
       // `const functionDefinition = …` and friends declare a binding; they are
       // read when something references it, not here.
       if (/\b(?:const|let|var|readonly|public|private|protected)\s+$/.test(before)) continue;
@@ -291,9 +296,14 @@ export function scanCapabilitySeeds(seedDir: string = SEED_DIR): SeedScan {
       }
 
       // An identifier: resolve it to a same-file `const x = { … }`.
-      const ident = /^([A-Za-z_$][\w$]*)\s*(?=[,}\n;]|$)/.exec(value);
+      // A trailing `as T` / `satisfies T` changes nothing about which const it is.
+      const ident = /^([A-Za-z_$][\w$]*)\s*(?=[,}\n;]|$|(?:as|satisfies)\b)/.exec(value);
       if (!value.startsWith('{') && ident) {
-        const cm = new RegExp(`\\bconst\\s+${ident[1]}\\s*(?::[^=]+)?=\\s*\\{`).exec(types);
+        const decl = new RegExp(`\\bconst\\s+${ident$(ident[1])}\\s*(?::[^=]+)?=\\s*\\{`, 'g');
+        const all = [...types.matchAll(decl)];
+        // Two consts of that name are two scopes, and this reader does not
+        // track scope: naming either would be a guess, so neither is named.
+        const cm = all.length === 1 ? all[0] : undefined;
         if (cm) {
           const name = literalName(raw, types, types.indexOf('{', cm.index + cm[0].length - 1));
           if (name === undefined) {
