@@ -25,8 +25,8 @@ release process.
   `adminPageTier()`. New optional `NavItem.tier`. The default policy's
   `canAdminister` now admits an org OWNER/ADMIN of the entered org to a
   surface that declares `tier: 'org'`, as a session and at `multi` only.
-  Undeclared surfaces stay platform-only, fork surfaces included, and no core
-  surface declares the tier yet. **Forks:** a `canAdminister` you replaced
+  Undeclared surfaces stay platform-only, fork surfaces included. Which core
+  surfaces declare it is t-811's entry under Changed. **Forks:** a `canAdminister` you replaced
   receives `scope.tier`. Ignoring it keeps org admins out (the safe failure),
   and a policy that admits on `viewer.orgRole` alone admits them everywhere,
   so gate on the tier. `AdminSidebar` now requires a `viewerTier` prop.
