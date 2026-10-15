@@ -393,7 +393,7 @@ const ACTIVITY_KEEP_KEYS: readonly string[] = [
  * stays the specification: `smoke:erasure-deliveries` checks this against it
  * over every event shape it writes.
  */
-function redactedPayloadSql(userId: string): Prisma.Sql {
+function redactedPayloadSql(userId: string, from: 'one_each' | 'locked'): Prisma.Sql {
   const subject = Prisma.sql`to_jsonb(${userId}::text)`;
   const personSteps = PERSON_KEYS.map(
     ({ id, name }, i) => Prisma.sql`
@@ -411,7 +411,7 @@ function redactedPayloadSql(userId: string): Prisma.Sql {
            CASE WHEN jsonb_typeof(o.payload -> 'data') = 'object'
                 THEN jsonb_set(o.payload, '{data}', approvers.v)
                 ELSE o.payload END AS payload
-      FROM one_each o
+      FROM ${Prisma.raw(from)} o
       CROSS JOIN LATERAL (
         SELECT CASE WHEN jsonb_typeof(o.payload -> 'data') <> 'object' THEN '{}'::jsonb
                     WHEN o.activity
@@ -434,76 +434,103 @@ function redactedPayloadSql(userId: string): Prisma.Sql {
       ) approvers(v)`;
 }
 
+/** The columns a redaction source reads: the row, and the basis it was matched on. */
+const SOURCE_COLUMNS = Prisma.sql`d.id, d.payload, d.status, d."stoppedByErasure", d."lastError"`;
+
 /**
- * The `UPDATE` that redacts, stops and marks the rows `source` yields
- * (`id`, `payload`, `activity`, one per row), in `table`. Writes only a row
- * that still needs it: one whose payload changes, or an `activity` row not yet
- * marked or still waiting to send. A row already redacted, by an earlier pass
- * of this erasure, is matched again (an `activity` row keeps its
- * `conversationId`) and left alone, which is what lets the final pass inside
- * the transaction cost a match rather than a rewrite.
- *
- * Whether a row stops is decided against its status as the `UPDATE` finds
- * it, not as the match read it: the retry worker can deliver a row in
- * between, and a delivered row must not be rewritten as exhausted.
+ * Whether the row `d` still needs the write that redaction `r` (payload and
+ * basis) would make: its payload changes, or it is an `activity` row not yet
+ * marked, not yet worded, or still waiting to send. Every `activity` row is
+ * marked `stoppedByErasure`, whatever its status, so a replay or a manual
+ * retry refuses it rather than send an event about nobody (t-793, t-809); an
+ * `exhausted` row is the DLQ's population, and a `delivered` one can still be
+ * retried by hand. Only a row still waiting to send also changes status. The
+ * "subject erased" wording is decided on the wording itself rather than on
+ * the column, so a row already stopped for another reason (step 5's
+ * "recipient erased") still says its content was erased too.
  */
-function redactUpdate(table: DeliveryTable, userId: string, source: Prisma.Sql): Prisma.Sql {
-  const t = TABLES[table];
-  const stopNow = Prisma.sql`(r.activity AND d.status = ANY(${[...AWAITING_RETRY_STATUSES]}::text[]))`;
-  // Every `activity` row is marked `stoppedByErasure`, whatever its status, so
-  // a replay or a manual retry refuses it rather than send an event about
-  // nobody (t-793, t-809). An `exhausted` row is the DLQ's population; a
-  // `delivered` one can still be retried by hand. Only the rows still waiting
-  // to send also change status.
-  const markNow = Prisma.sql`(r.activity AND NOT d."stoppedByErasure")`;
-  // The "subject erased" wording, for people reading `lastError`, is added
-  // once: decided on the wording itself rather than on the column, so a row
-  // already stopped for another reason (step 5's "recipient erased") still
-  // says its content was erased too.
-  const wordNow = Prisma.sql`(r.activity
-    AND d."lastError" IS DISTINCT FROM ${notRetried(null, SUBJECT_ERASED)}
-    AND right(coalesce(d."lastError", ''), ${notRetriedSuffix(SUBJECT_ERASED).length}) <> ${notRetriedSuffix(SUBJECT_ERASED)})`;
-  return Prisma.sql`
-    WITH one_each AS (${source}),
-    redacted AS (${redactedPayloadSql(userId)})
-    UPDATE ${t} AS d
-       SET payload = r.payload,
-           status = CASE WHEN ${stopNow} THEN 'exhausted' ELSE d.status END,
-           "nextRetryAt" = CASE WHEN ${stopNow} THEN NULL ELSE d."nextRetryAt" END,
-           "lastError" = CASE WHEN ${wordNow} THEN ${STOPPED_LAST_ERROR} ELSE d."lastError" END,
-           "stoppedByErasure" = d."stoppedByErasure" OR r.activity
-      FROM redacted r
-     WHERE d.id = r.id
-       AND (r.payload IS DISTINCT FROM d.payload OR ${markNow} OR ${wordNow} OR ${stopNow})
-  `;
+function writeConditions(r: 'f' | 'r', d: 'o' | 'd') {
+  const R = Prisma.raw(r);
+  const D = Prisma.raw(d);
+  const stopNow = Prisma.sql`(${R}.activity AND ${D}.status = ANY(${[...AWAITING_RETRY_STATUSES]}::text[]))`;
+  const markNow = Prisma.sql`(${R}.activity AND NOT ${D}."stoppedByErasure")`;
+  const wordNow = Prisma.sql`(${R}.activity
+    AND ${D}."lastError" IS DISTINCT FROM ${notRetried(null, SUBJECT_ERASED)}
+    AND right(coalesce(${D}."lastError", ''), ${notRetriedSuffix(SUBJECT_ERASED).length}) <> ${notRetriedSuffix(SUBJECT_ERASED)})`;
+  const needsWrite = Prisma.sql`(${R}.payload IS DISTINCT FROM ${D}.payload OR ${markNow} OR ${wordNow} OR ${stopNow})`;
+  return { stopNow, wordNow, needsWrite };
 }
 
 /**
- * Every row in `table` naming `userId`, once each, with its basis, and its
- * payload read under a row lock: see {@link LOCKED_LATEST}.
+ * The `UPDATE` that redacts, stops and marks the rows `source` yields
+ * ({@link SOURCE_COLUMNS} and `activity`, one per row, read without a lock),
+ * in `table`. Two looks, so that only rows that will be written are locked:
+ *
+ *   1. `first_look` redacts every row as the statement's snapshot read it,
+ *      and `todo` keeps the ones that still need a write. A row already
+ *      redacted, by an earlier pass of this erasure, is matched again (an
+ *      `activity` row keeps its `conversationId`) and drops out here, which is
+ *      what lets the final pass inside the transaction cost a match rather
+ *      than a rewrite. Locking every matched row instead is a write to each:
+ *      measured at 80 s for a million rows, over the transaction's 60.
+ *   2. `locked` takes a row lock on each `todo` row, in id order, and reads it
+ *      as it is now; `redacted` redacts that. Two erasures of people named on
+ *      one row would otherwise each compute from the row before the other's
+ *      write, and the second would put the first person back. In id order, so
+ *      two erasures over the same rows queue rather than deadlock.
+ *
+ * A row that needed nothing in the snapshot cannot need something now: another
+ * erasure only removes its own subject, a retry refuses a marked row, and no
+ * other writer changes a payload.
+ *
+ * Whether a row stops is decided against its status as the `UPDATE` finds
+ * it: the retry worker can deliver a row in between, and a delivered row must
+ * not be rewritten as exhausted.
  */
+function redactUpdate(table: DeliveryTable, userId: string, source: Prisma.Sql): Prisma.Sql {
+  const t = TABLES[table];
+  const look = writeConditions('f', 'o');
+  const live = writeConditions('r', 'd');
+  return Prisma.sql`
+    WITH one_each AS (${source}),
+    first_look AS (${redactedPayloadSql(userId, 'one_each')}),
+    todo AS (
+      SELECT f.id, f.activity
+        FROM first_look f
+        JOIN one_each o ON o.id = f.id
+       WHERE ${look.needsWrite}
+    ),
+    locked AS (
+      SELECT d.id, d.payload, todo.activity
+        FROM todo
+        JOIN ${t} d ON d.id = todo.id
+       ORDER BY d.id
+         FOR UPDATE OF d
+    ),
+    redacted AS (${redactedPayloadSql(userId, 'locked')})
+    UPDATE ${t} AS d
+       SET payload = r.payload,
+           status = CASE WHEN ${live.stopNow} THEN 'exhausted' ELSE d.status END,
+           "nextRetryAt" = CASE WHEN ${live.stopNow} THEN NULL ELSE d."nextRetryAt" END,
+           "lastError" = CASE WHEN ${live.wordNow} THEN ${STOPPED_LAST_ERROR} ELSE d."lastError" END,
+           "stoppedByErasure" = d."stoppedByErasure" OR r.activity
+      FROM redacted r
+     WHERE d.id = r.id
+       AND ${live.needsWrite}
+  `;
+}
+
+/** Every row in `table` naming `userId`, once each, with its basis. Unlocked. */
 function matchedRowsSql(table: DeliveryTable, userId: string): Prisma.Sql {
   return Prisma.sql`
-    SELECT d.id, d.payload, m.activity
+    SELECT ${SOURCE_COLUMNS}, m.activity
       FROM (
         SELECT DISTINCT ON (id) id, activity
           FROM (${matchArms(table, userId, Prisma.sql`d.id`)}) arms
          ORDER BY id, activity DESC
       ) m
-      JOIN ${TABLES[table]} d ON d.id = m.id
-     ${LOCKED_LATEST}`;
+      JOIN ${TABLES[table]} d ON d.id = m.id`;
 }
-
-/**
- * Ends the row source of every redaction `UPDATE`. The redacted payload is
- * computed from the payload the source read, so without a lock two erasures
- * of people named on one row could each compute from the row before the
- * other's write, and the second write would put the first person back. Under
- * a row lock, a source that waits on another erasure's write reads the row
- * as that write left it. Locked in id order, so two erasures over the same
- * rows queue rather than deadlock.
- */
-const LOCKED_LATEST = Prisma.sql`ORDER BY d.id FOR UPDATE OF d`;
 
 /**
  * Redact the subject from every delivery in `table` that names them, stop
@@ -566,11 +593,10 @@ export async function preRedactSubjectFromDeliveries(
   for (let i = 0; i < matched.length; i += PRE_PASS_CHUNK) {
     const chunk = matched.slice(i, i + PRE_PASS_CHUNK);
     const source = Prisma.sql`
-      SELECT d.id, d.payload, w.activity
+      SELECT ${SOURCE_COLUMNS}, w.activity
         FROM unnest(${chunk.map((m) => m.id)}::text[], ${chunk.map((m) => m.activity)}::boolean[])
              AS w(id, activity)
-        JOIN ${t} d ON d.id = w.id
-       ${LOCKED_LATEST}`;
+        JOIN ${t} d ON d.id = w.id`;
     const written = await client.$executeRaw(redactUpdate(table, userId, source));
     changed += written;
     onCommitted(written);
