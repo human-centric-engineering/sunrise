@@ -786,7 +786,7 @@ export class StreamingChatHandler {
       }
 
       // Enforce message-per-conversation cap using actual DB count
-      // (loadHistory returns at most HISTORY_LOAD_LIMIT rows, so
+      // (a history read returns at most HISTORY_LOAD_LIMIT rows, so
       // history.length can't detect conversations that exceed it).
       const maxMessages = capSettings?.maxMessagesPerConversation ?? null;
       if (maxMessages !== null) {

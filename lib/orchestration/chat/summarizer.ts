@@ -164,8 +164,13 @@ export interface SummarizeOptions {
  */
 export const SUMMARY_ROW_MAX_CHARS = 2000;
 
-/** The most one catch-up call's rows may add up to, after clipping. */
-export const SUMMARY_CHUNK_MAX_CHARS = 60_000;
+/**
+ * The most one summariser call's rows may add up to, after clipping — about 60k
+ * tokens, inside the context of any model the `routing` task is given. A full
+ * catch-up pass (100 rows) fits; the ordinary call's 160 rows can exceed it when
+ * every row is long, and then stop short and leave the rest for the next turn.
+ */
+export const SUMMARY_CHUNK_MAX_CHARS = 250_000;
 
 /** Clip each row's content for the summariser. Rows are never dropped. */
 export function clipForSummary(rows: HistoryRow[]): HistoryRow[] {
