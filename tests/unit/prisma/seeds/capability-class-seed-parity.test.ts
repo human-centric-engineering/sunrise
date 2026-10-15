@@ -37,6 +37,8 @@
  * @see lib/app/capability-seed-pairs.ts — where a fork's pairs go
  */
 
+import { join } from 'node:path';
+
 import { describe, it, expect } from 'vitest';
 
 import { scanCapabilitySeeds } from '@/tests/helpers/seed-capabilities';
@@ -92,7 +94,8 @@ const CLEANUP_SEED = '019-cleanup-capabilities.ts';
 
 /**
  * 019 builds each definition from the class instance it holds, so the reader
- * cannot name them (it reports the file as opaque). Each row still pins the
+ * cannot name them (it reports the file as opaque, and the module-side check
+ * below lists them instead). Each row still pins the
  * slug to a FRESH instance of the class the test expects, which is what
  * catches the seed wiring the wrong class to a slug.
  */
@@ -179,6 +182,32 @@ const PAIRS: AppCapabilityPair[] = [
 
 const paired = new Set(PAIRS.map((p) => p.slug));
 
+/**
+ * The `functionDefinition.name` of every definition a seed module exports —
+ * an exported definition, an array of them, and one level of nesting below an
+ * entry (019's `{ capability }`).
+ */
+function exportedDefinitionNames(mod: unknown): string[] {
+  const names: string[] = [];
+  const visit = (value: unknown, depth: number): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) visit(item, depth);
+      return;
+    }
+    if (typeof value !== 'object' || value === null) return;
+    if ('functionDefinition' in value) {
+      const fd: unknown = value.functionDefinition;
+      if (typeof fd === 'object' && fd !== null && 'name' in fd && typeof fd.name === 'string') {
+        names.push(fd.name);
+      }
+      return;
+    }
+    if (depth < 2) for (const child of Object.values(value)) visit(child, depth + 1);
+  };
+  visit(mod, 0);
+  return [...new Set(names)];
+}
+
 describe('built-in capabilities — seed definition matches the class (#545)', () => {
   it('covers every capability the seeds define', () => {
     // Derived from the seeds, not asserted against a literal. The first version
@@ -212,9 +241,8 @@ describe('built-in capabilities — seed definition matches the class (#545)', (
     // capability would pass over an imported definition sitting beside it.
     //
     // The declaration is per FILE, because these are exactly the definitions
-    // the reader cannot name — it cannot say which capability is missing. So
-    // a file declared here needs its own per-capability check, as 019 has
-    // below.
+    // the reader cannot name — it cannot say which capability is missing. The
+    // next test closes that from the module side.
     const { opaqueDefinitions } = scanCapabilitySeeds();
     const opaque = new Set(opaqueDefinitions.map((o) => o.file));
     const declared = new Set(PAIRS.flatMap((p) => (p.seedFile ? [p.seedFile] : [])));
@@ -224,14 +252,31 @@ describe('built-in capabilities — seed definition matches the class (#545)', (
     expect([...declared].filter((file) => !opaque.has(file))).toEqual([]);
   });
 
-  it('pairs every capability 019 seeds', () => {
-    // 019 is declared opaque above, so the reader cannot list its names; the
-    // seed module can. A capability added to it without a row fails here.
-    const unpaired = CLEANUP_CAPABILITIES.map((c) => c.slug).filter((s) => !paired.has(s));
-    expect(unpaired).toEqual([]);
+  it('pairs every definition a declared seed exports', async () => {
+    // A `seedFile` declaration covers a FILE, because the reader cannot name
+    // the definitions in it — so on its own it would pass over a capability
+    // added to that file later. The module can name them: every declared seed
+    // is imported and each definition it exports must have a pair. A declared
+    // seed that exports none fails, rather than being taken on trust.
+    const declared = [...new Set(PAIRS.flatMap((p) => (p.seedFile ? [p.seedFile] : [])))];
+    expect(declared.length).toBeGreaterThan(0);
+    for (const file of declared) {
+      const mod: unknown = await import(
+        /* @vite-ignore */ join(process.cwd(), 'prisma', 'seeds', file)
+      );
+      const names = exportedDefinitionNames(mod);
+      expect({ file, names: names.length > 0 }).toEqual({ file, names: true });
+      expect({ file, unpaired: names.filter((n) => !paired.has(n)) }).toEqual({
+        file,
+        unpaired: [],
+      });
+    }
   });
 
-  it.each(PAIRS)('$slug', ({ seeded, instance }) => {
+  it.each(PAIRS)('$slug', ({ slug, seeded, instance }) => {
     expect(seeded.functionDefinition).toEqual(instance.functionDefinition);
+    // The seed used to force `name` to the slug (019 did); taking it from the
+    // class instead means nothing else holds them together.
+    expect(instance.functionDefinition).toMatchObject({ name: slug });
   });
 });

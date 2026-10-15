@@ -246,6 +246,7 @@ describe('lib/app/capability-seed-pairs.ts carve-out (#646)', () => {
   it.each([
     ["import { PrismaClient } from '@prisma/client';\nexport const x = PrismaClient;", /Prisma/],
     ["import { PrismaClient } from 'prisma';\nexport const x = PrismaClient;", /Prisma/],
+    ["import { runSeeds } from '@/prisma/runner';\nexport const x = runSeeds;", /Prisma/],
     ["import { x } from './sibling';\nexport const y = x;", /@\/ path alias/],
     ["import { readFile } from 'node:fs';\nexport const x = readFile;", /Node-only/i],
     ["import { headers } from 'next/headers';\nexport const x = headers;", /framework-agnostic/],

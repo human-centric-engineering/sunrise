@@ -184,4 +184,32 @@ ${upsertSeed('isActive: true')}`
       { file: '908-scopes.ts', expr: 'def' },
     ]);
   });
+
+  it('does not read a destructuring as a shorthand definition', () => {
+    write(
+      '909-destructure.ts',
+      `const DEF = { name: 'destructured', parameters: {} };
+for (const { functionDefinition } of [{ functionDefinition: DEF }]) {
+  ${upsertSeed('functionDefinition').trim()}
+}`
+    );
+    const scan = scanCapabilitySeeds(dir);
+    expect(scan.definedNames).toEqual(['destructured']);
+    expect(scan.opaqueDefinitions.filter((o) => o.expr === 'functionDefinition')).toEqual([
+      { file: '909-destructure.ts', expr: 'functionDefinition' },
+      { file: '909-destructure.ts', expr: 'functionDefinition' },
+    ]);
+  });
+
+  it('does not split an identifier that merely ends in `as`', () => {
+    write(
+      '910-suffix.ts',
+      `const foo = { name: 'wrong_one', parameters: {} };
+const IMPL = { executionType: 'internal', functionDefinition: fooas.def };
+${upsertSeed('...IMPL')}`
+    );
+    const scan = scanCapabilitySeeds(dir);
+    expect(scan.definedNames).toEqual([]);
+    expect(scan.opaqueDefinitions).toEqual([{ file: '910-suffix.ts', expr: 'fooas.def' }]);
+  });
 });

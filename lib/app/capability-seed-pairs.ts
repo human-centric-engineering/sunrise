@@ -33,11 +33,11 @@
  * capabilities. Set `seedFile` on the pairs for such a seed; leave it off
  * otherwise.
  *
- * **A declaration covers the file, not each capability in it** — the reader
- * cannot say which of those definitions lacks a pair, which is why it could
- * not name them. So for such a seed, export the list it seeds and add your own
- * test that every entry has a pair, as Sunrise does for
- * `019-cleanup-capabilities` ("pairs every capability 019 seeds").
+ * **Such a seed must export what it seeds.** A declaration covers the file,
+ * and the reader cannot say which of its definitions lacks a pair — so the
+ * test imports every declared seed and requires each definition it exports
+ * (directly, in an array, or one level down, like 019's `{ capability }`
+ * entries) to have a pair. A declared seed that exports none fails.
  *
  * Imports: your entries import your seed constants and capability classes.
  * The `lib/app/**` boundary bans Prisma imports, and its `'prisma'` pattern

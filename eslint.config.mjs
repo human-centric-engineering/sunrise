@@ -288,8 +288,10 @@ export default tseslint.config(
           // banned by an anchored regex instead.
           patterns: APP_BOUNDARY_PATTERNS.map((p) => {
             if (!p.group.includes('@prisma/*')) return p;
+            // Bans what the group did — the packages, and every `@/prisma/…`
+            // module — except `@/prisma/seeds/…`.
             return {
-              regex: '^(?:prisma(?:/.*)?|@prisma/.+)$',
+              regex: '^(?:prisma(?:/.*)?|@prisma/.+|@/prisma/(?!seeds/).*)$',
               allowTypeImports: p.allowTypeImports,
               message: p.message,
             };

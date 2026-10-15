@@ -180,7 +180,7 @@ function literalName(raw: string, masked: string, open: number): string | null |
     else if (depth === 0 && /^name\s*:/.test(masked.slice(i, i + 12))) {
       if (i > open + 1 && /[\w$.]/.test(masked[i - 1])) continue;
       const after = i + /^name\s*:/.exec(masked.slice(i, i + 12))![0].length;
-      const lit = /^\s*['"]([^'"]+)['"]/.exec(raw.slice(after));
+      const lit = /^\s*['"]([^'"]+)['"]/.exec(raw.slice(after, after + 200));
       return lit ? lit[1] : null;
     }
   }
@@ -274,7 +274,12 @@ export function scanCapabilitySeeds(seedDir: string = SEED_DIR): SeedScan {
       if (colon) {
         at = f.index + f[0].length + colon[0].length;
         value = types.slice(at, at + 200);
-      } else if (/[{,]\s*$/.test(before) && /^\s*[,}]/.test(after)) {
+      } else if (
+        /[{,]\s*$/.test(before) &&
+        /^\s*[,}]/.test(after) &&
+        // `const { functionDefinition } = def` destructures; it does not define.
+        !/\b(?:const|let|var)\s*\{[^}]*$/.test(before)
+      ) {
         // Shorthand `{ functionDefinition }` — the binding of the same name.
         at = f.index;
         value = 'functionDefinition';
@@ -297,7 +302,8 @@ export function scanCapabilitySeeds(seedDir: string = SEED_DIR): SeedScan {
 
       // An identifier: resolve it to a same-file `const x = { … }`.
       // A trailing `as T` / `satisfies T` changes nothing about which const it is.
-      const ident = /^([A-Za-z_$][\w$]*)\s*(?=[,}\n;]|$|(?:as|satisfies)\b)/.exec(value);
+      // `\s+` before the keyword, or backtracking splits `fooas.def` into `foo`.
+      const ident = /^([A-Za-z_$][\w$]*)(?=\s*(?:[,}\n;]|$)|\s+(?:as|satisfies)\b)/.exec(value);
       if (!value.startsWith('{') && ident) {
         const decl = new RegExp(`\\bconst\\s+${ident$(ident[1])}\\s*(?::[^=]+)?=\\s*\\{`, 'g');
         const all = [...types.matchAll(decl)];
