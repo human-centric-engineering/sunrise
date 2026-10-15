@@ -13,7 +13,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentType } from 'react';
 
-import { AdminSidebar } from '@/components/admin/admin-sidebar';
+import { AdminSidebar, sectionsForViewer } from '@/components/admin/admin-sidebar';
 import { registerNavSection, __resetNavRegistryForTests } from '@/lib/admin-nav/registry';
 
 const pathnameMock = vi.fn(() => '/admin/overview');
@@ -56,7 +56,7 @@ describe('AdminSidebar', () => {
   });
 
   it('renders all four top-level sections', () => {
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
     expect(screen.getByText('Overview')).toBeInTheDocument();
     expect(screen.getByText('Management')).toBeInTheDocument();
     expect(screen.getByText('AI Orchestration')).toBeInTheDocument();
@@ -64,7 +64,7 @@ describe('AdminSidebar', () => {
   });
 
   it('renders the canonical orchestration items with correct hrefs', () => {
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     const expected: Array<{ label: string; href: string }> = [
       { label: 'Dashboard', href: '/admin/orchestration' },
@@ -89,7 +89,7 @@ describe('AdminSidebar', () => {
 
   it('lists Organisations under Management, active on an org page (§120 t-745)', () => {
     pathnameMock.mockReturnValue('/admin/orgs/cmorg00000000000000grant');
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     const link = screen.getByRole('link', { name: /^organisations$/i });
     expect(link).toHaveAttribute('href', '/admin/orgs');
@@ -98,7 +98,7 @@ describe('AdminSidebar', () => {
 
   it('highlights the Agents item when on a nested agents route', () => {
     pathnameMock.mockReturnValue('/admin/orchestration/agents/abc123');
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     const agentsLink = screen.getByRole('link', { name: /^agents$/i });
     expect(agentsLink).toHaveAttribute('aria-current', 'page');
@@ -115,7 +115,7 @@ describe('AdminSidebar', () => {
 
   it('highlights the orchestration Dashboard on exact match', () => {
     pathnameMock.mockReturnValue('/admin/orchestration');
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     const dashboardLinks = screen.getAllByRole('link', { name: /^dashboard$/i });
     const orchestrationDashboard = dashboardLinks.find(
@@ -127,7 +127,7 @@ describe('AdminSidebar', () => {
 
   it('collapse toggle hides labels but keeps icons', async () => {
     const user = userEvent.setup();
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     expect(screen.getByText('AI Orchestration')).toBeInTheDocument();
 
@@ -146,7 +146,7 @@ describe('AdminSidebar', () => {
   it('shows approval badge when pending approvals exist', async () => {
     mockFetch.mockResolvedValue(countsResponse({ paused_for_approval: 3, pending: 0, running: 0 }));
 
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     await waitFor(() => {
       expect(screen.getByText('3')).toBeInTheDocument();
@@ -156,7 +156,7 @@ describe('AdminSidebar', () => {
   it('sums pending + running for the executions badge', async () => {
     mockFetch.mockResolvedValue(countsResponse({ paused_for_approval: 0, pending: 2, running: 4 }));
 
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     // 2 + 4 = 6 — proves the call site sums the two statuses rather than
     // displaying either alone.
@@ -168,7 +168,7 @@ describe('AdminSidebar', () => {
   it('does not show approval badge when count is zero', async () => {
     mockFetch.mockResolvedValue(countsResponse(ZERO_COUNTS));
 
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalled();
@@ -179,7 +179,7 @@ describe('AdminSidebar', () => {
   it('issues a single counts request per poll (not one per status)', async () => {
     mockFetch.mockResolvedValue(countsResponse(ZERO_COUNTS));
 
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     // The previous implementation fanned out 3 list-endpoint calls per tick
     // (one per status). The new endpoint collapses them — anything > 1 call
@@ -208,7 +208,7 @@ describe('AdminSidebar', () => {
     mockFetch.mockRejectedValue(new Error('Network error'));
 
     // Act
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     // Assert: fetch was attempted, sidebar still renders, no badge appears
     await waitFor(() => {
@@ -223,7 +223,7 @@ describe('AdminSidebar', () => {
     mockFetch.mockResolvedValue(new Response(null, { status: 429 }));
 
     // Act
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     // Assert: fetch was called, but no numeric badge is rendered
     await waitFor(() => {
@@ -245,7 +245,7 @@ describe('AdminSidebar', () => {
     );
 
     // Act
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     // Assert: fetch was called, the garbage value must never appear, sidebar
     // keeps rendering normally.
@@ -302,7 +302,7 @@ describe('AdminSidebar – nav registry integration (Seam 4)', () => {
     });
 
     // Act
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     // Assert — the section heading is present.
     expect(screen.getByText('My App')).toBeInTheDocument();
@@ -326,7 +326,7 @@ describe('AdminSidebar – nav registry integration (Seam 4)', () => {
     });
 
     // Act
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     // Assert — the "System" heading (last core section) must come before the
     // "App Section" heading in DOM order.
@@ -357,7 +357,7 @@ describe('AdminSidebar – nav registry integration (Seam 4)', () => {
       ],
     });
 
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     expect(screen.getByTestId('wordmark')).toBeInTheDocument();
     // The literal title text is not rendered — the node replaced it …
@@ -375,10 +375,115 @@ describe('AdminSidebar – nav registry integration (Seam 4)', () => {
       items: [{ href: '/admin/plain', label: 'Plain Page', icon: StubIcon, description: 'Plain' }],
     });
 
-    render(<AdminSidebar />);
+    render(<AdminSidebar viewerTier="platform" />);
 
     const heading = screen.getByRole('heading', { name: 'Plain Section' });
     expect(heading.className).toContain('uppercase');
     expect(heading).not.toHaveAttribute('aria-label');
+  });
+});
+
+// Admin tiers (§111 t-810): an org viewer sees the items marked `tier: 'org'`
+// and nothing else; a platform viewer sees every item, as before.
+describe('AdminSidebar — what an org viewer sees', () => {
+  const Icon: ComponentType<{ className?: string }> = () => null;
+
+  beforeEach(() => {
+    pathnameMock.mockReturnValue('/admin/overview');
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(countsResponse(ZERO_COUNTS)));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    __resetNavRegistryForTests();
+  });
+
+  function registerMixedSection() {
+    registerNavSection({
+      title: 'Fork Console',
+      items: [
+        {
+          href: '/admin/fork/org-thing',
+          label: 'Org Thing',
+          icon: Icon,
+          description: 'org',
+          tier: 'org',
+        },
+        {
+          href: '/admin/fork/platform-thing',
+          label: 'Platform Thing',
+          icon: Icon,
+          description: 'p',
+        },
+      ],
+    });
+  }
+
+  it('shows an org viewer only the org-tier items, and no section left empty', () => {
+    registerMixedSection();
+    render(<AdminSidebar viewerTier="org" />);
+
+    expect(screen.getByRole('link', { name: /Org Thing/ })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Platform Thing/ })).not.toBeInTheDocument();
+    // No core item is marked yet, so no core section survives — including the
+    // Users and Providers links an org admin must never be offered.
+    expect(screen.queryByRole('link', { name: /Users/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Providers/ })).not.toBeInTheDocument();
+    expect(screen.queryByText('System')).not.toBeInTheDocument();
+    expect(screen.getByText('Fork Console')).toBeInTheDocument();
+  });
+
+  it('does not poll the platform-only execution counts for an org viewer', () => {
+    const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(countsResponse(ZERO_COUNTS));
+    vi.stubGlobal('fetch', fetchSpy);
+    render(<AdminSidebar viewerTier="org" />);
+    expect(fetchSpy).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+
+    render(<AdminSidebar viewerTier="platform" />);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('control: a platform viewer sees both, and every core section', () => {
+    registerMixedSection();
+    render(<AdminSidebar viewerTier="platform" />);
+
+    expect(screen.getByRole('link', { name: /Org Thing/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Platform Thing/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Users/ })).toBeInTheDocument();
+  });
+});
+
+describe('sectionsForViewer', () => {
+  const Icon: ComponentType<{ className?: string }> = () => null;
+  const item = (href: string, tier?: 'org') => ({
+    href,
+    label: href,
+    icon: Icon,
+    description: '',
+    tier,
+  });
+
+  it('returns the very array it was given for a platform viewer', () => {
+    const sections = [{ title: 'A', items: [item('/a')] }];
+    expect(sectionsForViewer(sections, 'platform')).toBe(sections);
+  });
+
+  it('filters subgroups too, dropping a subgroup with nothing left in it', () => {
+    const sections = [
+      {
+        title: 'Orchestration',
+        subgroups: [
+          { label: 'Build', items: [item('/agents', 'org'), item('/providers')] },
+          { label: 'Ops', items: [item('/settings')] },
+        ],
+      },
+    ];
+    expect(sectionsForViewer(sections, 'org')).toEqual([
+      {
+        title: 'Orchestration',
+        items: undefined,
+        subgroups: [{ label: 'Build', items: [item('/agents', 'org')] }],
+      },
+    ]);
   });
 });

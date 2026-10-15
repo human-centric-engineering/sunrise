@@ -12,6 +12,10 @@
  *   - every tenant-owned read the admin list endpoints sit on answers A's
  *     rows and none of B's — after asserting the population is non-empty,
  *     since an absence assertion passes for free on an empty set;
+ *   - the agent comparison (t-688): as a narrowed org admin of A, A's agent
+ *     reads exactly A's spend, calls, conversations and evaluations — every
+ *     owner's in A, none of a cost row B holds against A's agent — and B's
+ *     agent is not found, which the route answers with a 404;
  *   - the budget caps (§110 t-788): the global spend total, asked from A,
  *     counts B's cost row, and an org cap stops A's agent and not B's;
  *   - the raw-SQL paths: vector search (`searchKnowledge`), cost reports
@@ -199,6 +203,7 @@ import { subjectScope, type AuthorizationPrincipal } from '@/lib/auth/authorizat
 import { resolveUnattributedReads } from '@/lib/auth/orphan-reads';
 import { runAcrossOwners, runAsSubject } from '@/lib/auth/subject-context';
 import { ReadUserMemoryCapability } from '@/lib/orchestration/capabilities/built-in/user-memory';
+import { getAgentComparisonStats } from '@/lib/orchestration/agents/agent-comparison';
 
 const PREFIX = 'smoke-iso';
 const stamp = Date.now();
@@ -707,6 +712,172 @@ async function main(): Promise<void> {
       seenByB.supportAgents.length === 1 && seenByB.supportAgents[0] === b.agentId,
       "B's `support` is the only `support` B can see"
     );
+
+    // ── The agent comparison: one org's figures, every owner's (t-688) ─────
+    // `GET /agents/compare` sums spend, tokens and calls and counts
+    // conversations and evaluations per agent with no org clause and no owner
+    // clause. Row isolation is what bounds it to the caller's org; inside the
+    // org it crosses owners by decision. Driven as the guard drives it: the
+    // org entered from a session, then a narrowed org admin — who owns none of
+    // the rows counted — as the subject.
+    console.log("\n[3b] the agent comparison: A's figures for A's agent, and no B");
+    for (const f of [a, b]) {
+      await runAsOrg(f.orgId, () =>
+        prisma.aiEvaluationSession.createMany({
+          data: [
+            { userId: f.ownerId, agentId: f.agentId, title: `${PREFIX} eval`, status: 'draft' },
+            {
+              userId: f.ownerId,
+              agentId: f.agentId,
+              title: `${PREFIX} eval`,
+              status: 'completed',
+            },
+          ],
+        })
+      );
+    }
+    // A row the schema cannot stop: a cost log in B naming A's agent. The
+    // foreign key checks the agent exists, not which org it is in, so only the
+    // policy keeps this out of A's total — the assertion that fails if the
+    // bound were the agent id rather than the org.
+    const strayCostLog = await runAsOrg(b.orgId, () =>
+      prisma.aiCostLog.create({
+        data: {
+          agentId: a.agentId,
+          model: 'smoke-model',
+          provider: 'smoke',
+          operation: 'chat',
+          inputTokens: 1000,
+          outputTokens: 1000,
+          inputCostUsd: 5,
+          outputCostUsd: 5,
+          totalCostUsd: 10,
+        },
+      })
+    );
+    try {
+      // What each agent has, in its own org — the population is non-empty (fp6).
+      // Read past the policy with the org named as a clause, so the truth does
+      // not lean on the bound the comparison is being tested for: a policy that
+      // leaked B's rows into A would move the comparison and not this.
+      const truthOf = (f: OrgFixture) =>
+        runAsSystem('smoke: an agent’s figures in its own org', async () => {
+          const where = { agentId: f.agentId, orgId: f.orgId };
+          const cost = await prisma.aiCostLog.aggregate({
+            where,
+            _sum: { totalCostUsd: true },
+            _count: true,
+          });
+          return {
+            costUsd: cost._sum.totalCostUsd ?? 0,
+            calls: cost._count,
+            conversations: await prisma.aiConversation.count({ where }),
+            evaluations: await prisma.aiEvaluationSession.count({ where }),
+            completed: await prisma.aiEvaluationSession.count({
+              where: { ...where, status: 'completed' },
+            }),
+          };
+        });
+      const truthA = await truthOf(a);
+      const truthB = await truthOf(b);
+      check(
+        truthB.costUsd > 0 && truthB.conversations > 0 && truthB.evaluations === 2,
+        `B has spend, conversations and evaluations of its own (${JSON.stringify(truthB)})`
+      );
+      const stray = await runAsSystem('smoke: the stray cost row exists', () =>
+        prisma.aiCostLog.findUnique({
+          where: { id: strayCostLog.id },
+          select: { orgId: true, agentId: true },
+        })
+      );
+      check(
+        stray?.orgId === b.orgId && stray.agentId === a.agentId,
+        `the stray cost row names A's agent and was stamped with B's org (${JSON.stringify(stray)})`
+      );
+      // Bounded by agent id alone, A's total would take the stray row in.
+      const unboundedCostA = await runAsSystem('smoke: A’s agent’s spend in every org', () =>
+        prisma.aiCostLog.aggregate({ where: { agentId: a.agentId }, _sum: { totalCostUsd: true } })
+      );
+      check(
+        Math.abs((unboundedCostA._sum.totalCostUsd ?? 0) - (truthA.costUsd + 10)) < 1e-9,
+        "the stray row is the only spend on A's agent outside A"
+      );
+
+      const cmpAdminUser = await prisma.user.create({
+        data: {
+          name: `${PREFIX} compare admin`,
+          email: `${PREFIX}-cmpadmin-${stamp}@example.com`,
+        },
+      });
+      await prisma.orgMembership.create({
+        data: { orgId: a.orgId, userId: cmpAdminUser.id, role: ORG_ADMIN_ROLE },
+      });
+      const cmpAdmin: AuthorizationPrincipal = {
+        userId: cmpAdminUser.id,
+        role: DEFAULT_USER_ROLE,
+        credential: 'session',
+        orgId: a.orgId,
+        orgRole: ORG_ADMIN_ROLE,
+      };
+      const compareAsA = (agentId: string) =>
+        runAsOrg(a.orgId, () => asPrincipal(cmpAdmin, () => getAgentComparisonStats(agentId)), {
+          source: 'session',
+          role: ORG_ADMIN_ROLE,
+        });
+
+      const own = await compareAsA(a.agentId);
+      check(
+        own !== null &&
+          Math.abs(own.totalCostUsd - truthA.costUsd) < 1e-9 &&
+          own.llmCallCount === truthA.calls &&
+          own.conversationCount === truthA.conversations &&
+          own.evaluations.total === truthA.evaluations &&
+          own.evaluations.completed === truthA.completed,
+        `A's org admin reads A's agent's figures, exactly A's (${JSON.stringify(own && { cost: own.totalCostUsd, calls: own.llmCallCount, conversations: own.conversationCount, evaluations: own.evaluations })} vs ${JSON.stringify(truthA)})`
+      );
+      check(
+        own !== null && own.conversationCount > 0 && own.evaluations.total === 2,
+        'the counts cross owners inside A: the org admin owns none of the conversations or evaluations counted'
+      );
+      // The control for the line above: the same principal, the same org, the
+      // same counts without `runAcrossOwners` — refused. So the owner layer is
+      // in force for this caller, and the counts above are the crossing's.
+      const refusedCount = /Refused Ai(Conversation|EvaluationSession)\.count/;
+      await rejects(
+        () =>
+          runAsOrg(
+            a.orgId,
+            () =>
+              asPrincipal(cmpAdmin, () =>
+                prisma.aiConversation.count({ where: { agentId: a.agentId } })
+              ),
+            { source: 'session', role: ORG_ADMIN_ROLE }
+          ),
+        refusedCount,
+        'the same org admin is refused the conversation count outside the crossing'
+      );
+      await rejects(
+        () =>
+          runAsOrg(
+            a.orgId,
+            () =>
+              asPrincipal(cmpAdmin, () =>
+                prisma.aiEvaluationSession.count({ where: { agentId: a.agentId } })
+              ),
+            { source: 'session', role: ORG_ADMIN_ROLE }
+          ),
+        refusedCount,
+        'the same org admin is refused the evaluation count outside the crossing'
+      );
+      check(
+        (await compareAsA(b.agentId)) === null,
+        "B's agent is not found from A, so the route answers 404"
+      );
+    } finally {
+      await runAsSystem('smoke: remove the stray cost row', () =>
+        prisma.aiCostLog.deleteMany({ where: { id: strayCostLog.id } })
+      );
+    }
 
     // ── The raw-SQL read paths ─────────────────────────────────────────────
     console.log('\n[4] as org A: the raw-SQL paths');

@@ -16,7 +16,7 @@
  * rather than asserted by sentence. And `checkOwnerlessReachability` over a
  * roster that now includes an org admin: no kind closes.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
   DEFAULT_AUTHORIZATION_POLICY,
   SAFE_MODE_POLICY,
@@ -31,6 +31,7 @@ import {
 } from '@/lib/auth/authorization';
 import { checkOwnerlessReachability, UNATTRIBUTED_READ_KINDS } from '@/lib/auth/orphan-reads';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { env } from '@/lib/env';
 
 vi.mock('@/lib/logging', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -131,6 +132,105 @@ describe('canAdminister — the org arm', () => {
     await expect(policy.canRead(adminKey, readTargetFor(ORG_ROW), { org: ORG })).resolves.toBe(
       true
     );
+  });
+});
+
+describe('canAdminister — the tier arm (§111 t-810)', () => {
+  // The arm opens an org-tier surface to an org OWNER/ADMIN of the entered
+  // org, at `multi` only. Every case below is asked with a null resource,
+  // which is what an admin route without a resolver and the admin layout
+  // pass, so the org arm (`administersOrgOf`) cannot be what answers.
+  const ORG_TIER = { org: ORG, tier: 'org' };
+  let previousMode: typeof env.TENANCY_MODE;
+  beforeEach(() => {
+    previousMode = env.TENANCY_MODE;
+    env.TENANCY_MODE = 'multi';
+  });
+  afterEach(() => {
+    env.TENANCY_MODE = previousMode;
+  });
+
+  it('admits an org OWNER and an org ADMIN of the entered org to an org-tier surface', async () => {
+    await expect(policy.canAdminister(ORG_OWNER, null, ORG_TIER)).resolves.toBe(true);
+    await expect(policy.canAdminister(ORG_ADMIN, null, ORG_TIER)).resolves.toBe(true);
+  });
+
+  it('admits them nowhere else: the same principals on an undeclared surface are refused', async () => {
+    // The control for the case above, and the test that fails if the tier
+    // check is removed: without it the arm would admit an org admin to every
+    // platform surface.
+    await expect(policy.canAdminister(ORG_OWNER, null, { org: ORG })).resolves.toBe(false);
+    await expect(policy.canAdminister(ORG_ADMIN, null, {})).resolves.toBe(false);
+    // A tier the default policy does not know is not the org tier.
+    await expect(policy.canAdminister(ORG_OWNER, null, { org: ORG, tier: 'team' })).resolves.toBe(
+      false
+    );
+  });
+
+  it('refuses a MEMBER, a principal with no role in the entered org, and one with no org facts', async () => {
+    await expect(policy.canAdminister(ORG_MEMBER, null, ORG_TIER)).resolves.toBe(false);
+    // An admin of another org acting here holds no role here: the guard's
+    // entry either refuses them (not a member) or projects their role here.
+    await expect(policy.canAdminister(ORG_NONE, null, ORG_TIER)).resolves.toBe(false);
+    const noOrgFacts: AuthorizationPrincipal = {
+      userId: 'oadmin-2',
+      role: 'USER',
+      credential: 'session',
+    };
+    await expect(policy.canAdminister(noOrgFacts, null, ORG_TIER)).resolves.toBe(false);
+  });
+
+  it('refuses a resource that names another org, whatever the tier says', async () => {
+    // The tier opens a surface, not every row its resolver can name: an
+    // `/orgs/[id]`-shaped route must not admit org A's admin to org B's row.
+    await expect(policy.canAdminister(ORG_OWNER, OTHER_ORG_ROW, ORG_TIER)).resolves.toBe(false);
+    // Their own org's row, and a row placed in no org, are the surface's.
+    await expect(policy.canAdminister(ORG_OWNER, ORG_ROW, ORG_TIER)).resolves.toBe(true);
+    await expect(policy.canAdminister(ORG_ADMIN, ORGLESS_ROW, ORG_TIER)).resolves.toBe(true);
+    // A platform admin is not narrowed by it.
+    await expect(policy.canAdminister(PLATFORM_ADMIN, OTHER_ORG_ROW, ORG_TIER)).resolves.toBe(true);
+  });
+
+  it('refuses an org-bound API key, whatever org role rode in on it', async () => {
+    const key: AuthorizationPrincipal = { ...ORG_OWNER, credential: 'api-key', scopes: ['chat'] };
+    await expect(policy.canAdminister(key, null, ORG_TIER)).resolves.toBe(false);
+    // An `admin` key is a platform credential and is admitted as one.
+    await expect(policy.canAdminister({ ...key, scopes: ['admin'] }, null, ORG_TIER)).resolves.toBe(
+      true
+    );
+  });
+
+  it('admits nobody new at single, where no row isolation bounds what the surface reads', async () => {
+    env.TENANCY_MODE = 'single';
+    // The case that makes this a rule rather than an assumption: an OWNER of
+    // a non-install org, which a session can act in at `single`.
+    await expect(policy.canAdminister(ORG_OWNER, null, ORG_TIER)).resolves.toBe(false);
+    await expect(policy.canAdminister(PLATFORM_ADMIN, null, ORG_TIER)).resolves.toBe(true);
+  });
+
+  it('a platform admin is admitted with or without a tier, and safe mode admits nobody', async () => {
+    await expect(policy.canAdminister(PLATFORM_ADMIN, null, ORG_TIER)).resolves.toBe(true);
+    await expect(policy.canAdminister(PLATFORM_ADMIN, null, {})).resolves.toBe(true);
+    await expect(SAFE_MODE_POLICY.canAdminister(ORG_OWNER, null, ORG_TIER)).resolves.toBe(false);
+  });
+
+  it('leaves the read faces in parity for an org admin asked about an org-tier surface', async () => {
+    await expect(
+      checkAuthorizationParity(policy, [
+        {
+          label: 'org owner, org tier',
+          viewer: ORG_OWNER,
+          subjects: ['owner-1', 'member-1'],
+          scope: ORG_TIER,
+        },
+        {
+          label: 'org admin, org tier',
+          viewer: ORG_ADMIN,
+          subjects: ['oadmin-1', 'owner-1'],
+          scope: ORG_TIER,
+        },
+      ])
+    ).resolves.toEqual([]);
   });
 });
 
@@ -245,6 +345,25 @@ describe('byte-identical: with no org-carrying resource, org facts change no ans
     }
     // The sweep is only evidence if it asked something.
     expect(asked).toBeGreaterThan(100);
+  });
+
+  it('at single, declaring the org tier changes no answer for any principal (§111 t-810)', async () => {
+    // With org-tier surfaces declared, the layout and the guards ask with
+    // `tier: 'org'` where they asked with no tier. At `single` that must not
+    // move a single answer, with org facts on the principal or without.
+    expect(env.TENANCY_MODE).toBe('single');
+    let asked = 0;
+    for (const principal of [...bare, ...bare.map(withOrg)]) {
+      for (const resource of resources) {
+        for (const scope of scopes) {
+          expect(await policy.canAdminister(principal, resource, { ...scope, tier: 'org' })).toBe(
+            await policy.canAdminister(principal, resource, scope)
+          );
+          asked++;
+        }
+      }
+    }
+    expect(asked).toBeGreaterThan(50);
   });
 
   it('control: the sweep sees a difference the moment a resource carries an org', async () => {

@@ -154,12 +154,13 @@ export const OWNERLESS_SURFACE_EXCEPTIONS: readonly OwnerlessSurfaceException[] 
       'neither shared nor ownerless threads and has nothing to ask the helper.',
   },
   {
-    path: 'app/api/v1/admin/orchestration/agents/compare/route.ts',
+    path: 'lib/orchestration/agents/agent-comparison.ts',
     disposition: 'by-design',
     reason:
-      'one `aiConversation.count({ agentId })` among five per-agent aggregates, no row ' +
-      'content; its own header defers narrowing all four owner-bearing aggregates to ' +
-      'the customer tier together (§106), and a count is not a read surface for a thread.',
+      'one `aiConversation.count({ agentId })` among five per-agent aggregates for the ' +
+      'compare route, no row content; row isolation bounds it to the caller’s org and it ' +
+      'crosses owners inside it by decision (t-682, t-688), so a count is not a read ' +
+      'surface for a thread.',
   },
 
   // ── Consumer routes, self-scoped by construction ──────────────────────────

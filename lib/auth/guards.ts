@@ -51,6 +51,7 @@ import {
   type SubjectFilter,
 } from '@/lib/auth/authorization';
 import { resolveUnattributedReads, type UnattributedReads } from '@/lib/auth/orphan-reads';
+import type { AdminTier } from '@/lib/auth/admin-tier';
 import { env } from '@/lib/env';
 import { runAsOrg } from '@/lib/tenancy/context';
 import { runAsSubject } from '@/lib/auth/subject-context';
@@ -394,6 +395,21 @@ export interface WithAdminAuthOptions<TParams = Record<string, string>> {
    * fails naming any route that writes one of those models without it.
    */
   writesSharedSettings?: true;
+  /**
+   * This route is part of an org-tier surface: the customer's, not the
+   * platform's (§111 t-810). Passed to the policy as `scope.tier`, where the
+   * default policy admits an org OWNER/ADMIN of the entered org as well as a
+   * platform admin. Absent — every route that has not opted in, a fork's
+   * included — the route stays platform-only.
+   *
+   * Opening a route is a reviewed diff in two places: here, and
+   * `ORG_TIER_ADMIN_ROUTES` in `lib/auth/admin-tier.ts`, which
+   * `tests/unit/scripts/ci/admin-tier-roster.test.ts` holds to the tree. It
+   * widens admission only: the handler still runs in the entered org, so what
+   * it reads is that org's by row isolation, and `writesSharedSettings` still
+   * refuses a shared-settings write from outside the install org.
+   */
+  tier?: AdminTier;
 }
 
 /**
@@ -1339,7 +1355,10 @@ export function withAdminAuth(
         // and look at their key would send them to the one place that is fine.
         if (
           resource === UNRESOLVED ||
-          !(await canAdminister(principal, resource, orgScope(entry)))
+          !(await canAdminister(principal, resource, {
+            ...orgScope(entry),
+            ...(options?.tier ? { tier: options.tier } : {}),
+          }))
         ) {
           // Same reason as the `canRead` refusal above: the guard owns the
           // decision, so it owns the record of refusing.

@@ -244,23 +244,27 @@ describe('Agent Comparison', () => {
   });
 
   /**
-   * t-682. Three of the six aggregates read models that ARE owner-scoped
+   * t-682, t-688. Three of the six aggregates read models that ARE owner-scoped
    * everywhere else — conversations via `adminCanViewConversation`, and
-   * evaluation sessions via the evaluations routes. Here they are deliberately
-   * install-wide, because the screen compares two SHARED agents and
-   * `better="higher"` would otherwise rank them by how much the viewer happened
-   * to use them.
+   * evaluation sessions via the evaluations routes. Here they count every
+   * owner's rows in the caller's org on purpose, because the screen compares two
+   * agents and `better="higher"` would otherwise rank them by how much the
+   * viewer happened to use them.
    *
-   * These assertions exist so that stays a decision. Someone "tidying" this
-   * route to match its neighbours would change what an operator reads off the
-   * comparison, and should have to delete a test that says why not.
+   * The org boundary is not a `where` clause and is not tested here: row
+   * isolation applies it, and `scripts/smoke/tenancy-isolation.ts` ([3b]) proves
+   * it against real Postgres with two orgs. So the right `where` is still the
+   * agent alone — an `orgId` clause would be a redundant copy of the policy, and
+   * an owner clause would change what an operator reads off the comparison.
+   * Someone "tidying" this to match its neighbours should have to change a test
+   * that says why not.
    */
-  describe('the figures are install-wide on purpose', () => {
+  describe('the figures count every owner in the org on purpose, so the where is the agent alone', () => {
     it('aggregates cost for the agent without an owner clause', async () => {
       // The sharpest of the four: `AiCostLog` carries an indexed `userId` and
       // is read owner-scoped for Art. 15, so spend is the figure most obviously
-      // narrowable — and under a customer tier the one that would report
-      // another tenant's bill for a shared agent.
+      // narrowable. Another org's bill cannot reach it — row isolation, the
+      // smoke's [3b] — and narrowing it to the viewer would rank agents by them.
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       setupAgentMocks();
 

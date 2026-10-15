@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
 import { getServerSession } from '@/lib/auth/utils';
 import { AdminSidebar } from '@/components/admin/admin-sidebar';
 import { AdminHeader } from '@/components/admin/admin-header';
@@ -7,7 +8,16 @@ import { InFlightExecutionBanner } from '@/components/admin/orchestration/in-fli
 import { BRAND } from '@/lib/brand';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { canAdminister } from '@/lib/auth/authorization';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { sessionPrincipal } from '@/lib/auth/session-principal';
+import {
+  ADMIN_PATHNAME_HEADER,
+  adminPageTier,
+  type AdminTier,
+  type AdminViewerTier,
+} from '@/lib/auth/admin-tier';
+import type { AuthSession } from '@/lib/auth/guards';
+import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
+import { AdminTierGate } from '@/components/admin/admin-tier-gate';
 import { getSharedSettingsAccess } from '@/lib/tenancy/shared-settings-access';
 import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
@@ -20,11 +30,37 @@ export const metadata: Metadata = {
 };
 
 /**
+ * Who this session is to the admin console on this page: `'platform'` (every
+ * surface), `'org'` (the org-tier ones), or `null` (none of this one).
+ *
+ * The principal is the one the guards build, from the same org entry
+ * (`sessionPrincipal`), so a policy that reads `viewer.orgRole` answers the
+ * layout as it answers the routes for every admitted caller. One difference
+ * is deliberate: where a guard refuses a session whose org entry is refused,
+ * this asks with no org facts, so a platform admin still reaches the console
+ * to switch org — see `lib/auth/session-principal.ts`.
+ */
+async function adminViewerTier(
+  session: AuthSession,
+  headerOrgId: string | null,
+  pageTier: AdminTier | null
+): Promise<AdminViewerTier | null> {
+  const { principal, scope } = await sessionPrincipal(session, headerOrgId);
+  if (await canAdminister(principal, null, scope)) return 'platform';
+  if (pageTier === 'org' && (await canAdminister(principal, null, { ...scope, tier: 'org' }))) {
+    return 'org';
+  }
+  return null;
+}
+
+/**
  * Admin Layout (Phase 4.4)
  *
  * Layout for all admin routes.
- * Requires ADMIN role - non-admins are redirected to dashboard.
- * Unauthenticated users are redirected to login.
+ * Admits whoever the authorization policy says may use the page: a platform
+ * admin anywhere, an org OWNER/ADMIN on an org-tier page (§111 t-810).
+ * Everyone else is redirected to the landing route; unauthenticated users to
+ * login.
  */
 export default async function AdminLayout({
   children,
@@ -38,34 +74,33 @@ export default async function AdminLayout({
     redirect('/login');
   }
 
-  // Redirect to dashboard if the authorization policy says this principal does
-  // not administer. The third of the three places Sunrise asks the question —
-  // the guards cover the API, this covers the admin tree's own shell. A cookie
-  // session is the only way to reach a layout, so the credential is not in
-  // doubt here.
-  //
-  // The org (§106) is passed as the session recorded it, and no org ROLE:
-  // this asks with `resource: null`, where the policy's org arm grants nothing
-  // by design (a null resource is a platform-ops surface), so a membership
-  // read here would be a query that cannot change the answer.
-  //
   // Shared settings are read-only outside the install org at `multi` (§107
   // t-753); every page below asks the provider rather than working it out.
   // Started now so its one membership read runs alongside the policy's
   // instead of after it. It never throws.
   const sharedSettingsRead = getSharedSettingsAccess(session);
-  if (
-    !(await canAdminister(
-      {
-        userId: session.user.id,
-        role: session.user.role,
-        credential: 'session',
-        orgId: session.session.activeOrgId ?? INSTALL_ORG_ID,
-      },
-      null,
-      { org: session.session.activeOrgId ?? INSTALL_ORG_ID }
-    ))
-  ) {
+
+  // Redirect to the landing route if the authorization policy says this
+  // principal may not use this page. The third of the places Sunrise asks the
+  // question — the guards cover the API, this covers the admin tree's own
+  // shell. A cookie session is the only way to reach a layout, so the
+  // credential is not in doubt here.
+  //
+  // Asked once for the platform tier and, for whoever that refuses, once for
+  // the org tier (§111 t-810): an org OWNER/ADMIN may open a page listed in
+  // `ORG_TIER_ADMIN_PAGES`, and no other. The page comes from the proxy's
+  // header, because a layout is not handed a pathname; no header is no page,
+  // and no page is the platform's. This runs on a full load only — Next.js
+  // does not re-render a layout on in-app navigation — so `AdminTierGate`
+  // below re-checks each navigation for the reader, and every API route the
+  // page calls checks for itself.
+  const requestHeaders = await headers();
+  const viewerTier = await adminViewerTier(
+    session,
+    requestHeaders.get(TENANT_HEADER_NAME) || null,
+    adminPageTier(requestHeaders.get(ADMIN_PATHNAME_HEADER))
+  );
+  if (!viewerTier) {
     redirect(AUTH_LANDING_ROUTE);
   }
 
@@ -73,7 +108,7 @@ export default async function AdminLayout({
 
   return (
     <div className="bg-background flex h-screen overflow-hidden">
-      <AdminSidebar />
+      <AdminSidebar viewerTier={viewerTier} />
       <div className="flex flex-1 flex-col overflow-hidden">
         <AdminHeader />
         <InFlightExecutionBanner />
@@ -85,7 +120,7 @@ export default async function AdminLayout({
               installOrgMember={sharedSettings.installOrgMember}
               isInstallOrg={sharedSettings.isInstallOrg}
             >
-              {children}
+              <AdminTierGate viewerTier={viewerTier}>{children}</AdminTierGate>
             </SharedSettingsAccessProvider>
           </div>
         </main>

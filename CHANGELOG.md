@@ -21,21 +21,36 @@ release process.
 - **`AiAgent.bindingOwner` records who decides a platform agent's provider
   and model** (t-798; migration `20261015120000_ai_agent_binding_owner`). It
   applies only to a platform agent whose definition picks its binding
-  (`defaultBinding`); every other agent keeps `null`. It is `'platform'` while
-  the agent follows the platform's pick, `'org'` once an admin sets either
-  field, or `null` until classified. Agents from before this change are
-  classified on their next reconcile, partly from their version history.
-  `PATCH /api/v1/admin/orchestration/agents/:id` sets `'org'` when it changes
+  (`defaultBinding`, with no starting provider or model of its own); every
+  other agent keeps `null`. It is `'platform'` while the agent follows the
+  platform's pick, `'org'` once an admin sets either field, or `null` until
+  classified. Agents from before this change are classified on their next
+  reconcile, partly from their version history. `PATCH
+  /api/v1/admin/orchestration/agents/:id` sets `'org'` when it changes
   provider or model, and so does version restore. The PATCH body also accepts
-  `bindingOwner` (`'platform'` hands the binding back and reconciles the org at
-  once, `'org'` takes it), and an unchanged or `null` echo of it is ignored. Forks: a route of yours that writes such an
-  agent's provider or model should call `bindingOwnerAfterWrite`
-  (`lib/orchestration/agents/binding-owner.ts`, with `picksOwnBinding` from
-  `platform-agent-guard.ts`), or the platform will keep moving a binding your
-  admin chose. The column is not
-  agent config: the field registry lists it as a non-config scalar, so the
-  agent form, agent export and backup bundles, and version snapshots leave it
-  out. The org data export, which takes whole rows, includes it.
+  `bindingOwner`: `'platform'` hands the binding back and reconciles the org at
+  once, `'org'` takes it, and an unchanged or `null` echo is ignored. Forks: a
+  route of yours that writes such an agent's provider or model should call
+  `bindingOwnerAfterWrite` (`lib/orchestration/agents/binding-owner.ts`, with
+  `picksOwnBinding` from `platform-agent-guard.ts`), or the platform will keep
+  moving a binding your admin chose. The column is not agent config: the field
+  registry lists it as a non-config scalar, so the agent form, agent export
+  and backup bundles, and version snapshots leave it out. The org data export,
+  which takes whole rows, includes it.
+- **Admin tiers: a surface can declare it is the org's** (§111 t-810). New
+  `tier` option on `withAdminAuth()` (`{ tier: 'org' }`), passed to the policy
+  as `scope.tier`. New `lib/auth/admin-tier.ts`: `AdminTier`, the page roster
+  `ORG_TIER_ADMIN_PAGES`, the route roster `ORG_TIER_ADMIN_ROUTES`, and
+  `adminPageTier()`. New optional `NavItem.tier`. The default policy's
+  `canAdminister` now admits an org OWNER/ADMIN of the entered org to a
+  surface that declares `tier: 'org'`, as a session and at `multi` only.
+  Undeclared surfaces stay platform-only, fork surfaces included, and no core
+  surface declares the tier yet. **Forks:** a `canAdminister` you replaced
+  receives `scope.tier`. Ignoring it keeps org admins out (the safe failure),
+  and a policy that admits on `viewer.orgRole` alone admits them everywhere,
+  so gate on the tier. `AdminSidebar` now requires a `viewerTier` prop.
+  `proxy.ts` now sets an `x-sunrise-pathname` request header. See
+  [Authorization → Admin tiers](./.context/auth/authorization.md#admin-tiers).
 - **A fork classifies its own models for the owner layer** (§115 t-807): the
   new `lib/app/owner-classification.ts` seam (`initAppOwnerClassification()`,
   ships empty) and its primitive `registerAppOwnerClassification()` in
@@ -230,7 +245,18 @@ release process.
   still fail closed to "nothing eligible", so a fork resolver that is down
   during a pass does move the clean-up agent to inherit for that pass
   (t-819).
-
+- **The admin layout and the maintenance bypass ask the policy with the
+  guards' verified org facts** (§111 t-810). Both used to pass `orgId` straight
+  from the session's active org, with no `orgRole`. They now share
+  `sessionPrincipal()` (`lib/auth/session-principal.ts`), which enters the org
+  as `withAdminAuth` does (`enterSessionOrg`, resolver header first) and passes
+  `orgId` and `orgRole` from that entry. Where a guard refuses a session whose
+  entry is refused, these two ask with no org facts instead, so a platform
+  admin can still reach the console to switch org. Under Sunrise's default
+  policy nothing changes for a platform admin. **Forks:** a `canAdminister`
+  that reads `viewer.orgRole` now gets it at the layout and the bypass too, so
+  an org admin your policy admits now reaches the page shells, where before the
+  layout sent them away.
 - **`handleAPIError` answers `VALIDATION_ERROR`, not `EMAIL_TAKEN`, for a
   unique violation on any constraint but the user email** (t-796). It
   answered every P2002 with `EMAIL_TAKEN` and "Field already exists", which

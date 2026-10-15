@@ -294,33 +294,14 @@ For admin dashboard pages (users, settings, feature flags).
 
 **File:** `app/admin/layout.tsx`
 
-```tsx
-import { redirect } from 'next/navigation';
-import { getServerSession } from '@/lib/auth/utils';
-import { AdminSidebar } from '@/components/admin/admin-sidebar';
-import { AdminHeader } from '@/components/admin/admin-header';
-
-export default async function AdminLayout({ children }) {
-  const session = await getServerSession();
-
-  if (!session) redirect('/login');
-  if (!isPlatformAdmin(session.user)) redirect('/dashboard');
-
-  return (
-    <div className="flex h-screen overflow-hidden bg-background">
-      <AdminSidebar />
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <AdminHeader />
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
-      </div>
-    </div>
-  );
-}
-```
+The layout asks the authorization policy whether this session may use the
+page, works out the viewer's tier (`'platform'` or `'org'`), and hands it to
+the sidebar and to `AdminTierGate`, which repeats the page check on in-app
+navigation. See [Authorization → Admin tiers](../auth/authorization.md#admin-tiers).
 
 **Features:**
 
-- Server-side role check (requires ADMIN)
+- Server-side policy check: a platform admin anywhere, an org admin on org-tier pages only
 - Fixed sidebar navigation
 - Separate AdminHeader (not AppHeader)
 - Full-height layout with scroll in main area

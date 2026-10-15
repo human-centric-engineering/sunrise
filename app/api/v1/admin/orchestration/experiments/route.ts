@@ -15,10 +15,11 @@
  * parent would list experiments whose results the viewer cannot open.
  *
  * One read of those models sits outside that family and is NOT owner-scoped:
- * `agents/compare/route.ts` counts `AiEvaluationSession` per agent across the
- * install. Correct today (a count, to a platform admin), and named here because
- * a roster of this family assembled by reading the `evaluations/` directory
- * misses it. Tracked as t-682.
+ * `agents/compare/route.ts`, through `lib/orchestration/agents/agent-comparison.ts`,
+ * counts `AiEvaluationSession` per agent across every owner in the caller's org
+ * — by decision (t-682, t-688; that module's header). Named here because a
+ * roster of this family assembled by reading the `evaluations/` directory
+ * misses it.
  *
  * **Ownerless rows are a third case, and they are the policy's to decide.**
  * `createdBy` is `SetNull`, so erasing an admin leaves their experiments with no

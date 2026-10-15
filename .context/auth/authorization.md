@@ -32,7 +32,7 @@ is a new value.
 
 | Axis          | Question                                                           | Supplied by                    | State today                                                                                                                                                                                    |
 | ------------- | ------------------------------------------------------------------ | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Tier**      | Is this principal platform staff, a customer's admin, or a member? | #366                           | `scope.tier` is carried; nothing in core populates it. A fork branches on it in its own policy.                                                                                                |
+| **Tier**      | Is this principal platform staff, a customer's admin, or a member? | #366, §111                     | **Ships the mechanism** (§111 t-810): a surface declares `tier: 'org'` and the guards pass it as `scope.tier`. No core surface declares it yet. See [Admin tiers](#admin-tiers).               |
 | **Ownership** | Within one tenant, over _whose_ rows?                              | #367                           | `scope.ownership` (`'own' \| 'team' \| 'all'`) is carried; `canRead` / `subjectScope` are the faces that answer it.                                                                            |
 | **Org**       | Which tenant's rows exist at all?                                  | Multi-tenancy programme (§106) | **Ships.** The guard enters an org per request; `viewer.orgId` / `viewer.orgRole` carry it and `scope.org` repeats it. Between-tenant isolation is enforced by RLS (§107), not by this policy. |
 
@@ -107,6 +107,79 @@ The comparison is guarded on the resource side explicitly because
 fork seam's docblock warns about. A fork's own org policy must guard it the same
 way.
 
+## Admin tiers
+
+Every admin surface is the **platform's** unless it says otherwise. An org
+`OWNER`/`ADMIN` may use a surface that declares itself the org's, and nothing
+else; a platform admin uses everything, as before. Undeclared means platform,
+fork surfaces included, so an upgrade opens nothing a fork did not opt into,
+and opening a surface is a one-line diff a reviewer sees. The roster lives in
+[`lib/auth/admin-tier.ts`](../../lib/auth/admin-tier.ts) (§111 t-810).
+
+**How a surface declares it:**
+
+| Surface  | Declaration                                                   | Read by                                                               |
+| -------- | ------------------------------------------------------------- | --------------------------------------------------------------------- |
+| API      | `withAdminAuth(handler, { tier: 'org', ownership: … })`       | the guard, which passes `scope.tier: 'org'` to `canAdminister`        |
+| Page     | its route pattern in `ORG_TIER_ADMIN_PAGES` (`/admin/x/[id]`) | the admin layout on a full load; `AdminTierGate` on in-app navigation |
+| Nav item | `tier: 'org'` on the `NavItem` (`lib/admin-nav/registry.ts`)  | the sidebar, which shows an org viewer only those items               |
+
+A page cannot declare itself in its own file, because Next.js refuses unknown
+exports from a `page.tsx`, and a check a page has to remember to call is
+fail-open for every page that forgets. So pages are listed centrally. A pattern
+names one page and not the pages below it.
+
+**What the default policy does with it.** `canAdminister` admits an org
+`OWNER`/`ADMIN` when `scope.tier === 'org'`, as a session, with org facts on
+the principal, **and only at `multi`**. At `single` the arm admits nobody.
+Nothing isolates an org's rows there, and a session can act in a non-install
+org it owns (`POST /api/v1/orgs/switch` is not mode-gated), so admitting that
+owner would hand them every row the surface reads. An API key never takes the
+arm, and `withAdminAuth`'s scope floor refuses a non-`admin` key before the
+policy is asked. A tier the default policy does not know (`'team'`) admits
+nobody.
+
+**Where the refusal actually happens.** The API is the authority. Admin pages
+are shells over `serverFetch` calls, and each call reaches a guard that asks
+the policy with that route's own tier. The admin layout refuses an undeclared
+page on a full load. It learns the page from the `x-sunrise-pathname` header,
+which `proxy.ts` sets on every request and overwrites if a client sent one; a
+missing header counts as a platform page. Next.js does not re-render a layout
+on in-app navigation, so `AdminTierGate` re-checks the pathname on each one and
+sends an org viewer away from a platform page. That is the reader's refusal,
+not a security boundary. A database check in `proxy.ts` would make it one, and
+Next.js advises against database checks in the proxy, because it runs on every
+route, prefetches included.
+
+**What opening a surface costs.** An org admin's rows are narrowed to their own
+(`subjectScope` answers `{ userId }`), so every route that admits them owes an
+`ownership` declaration. The guard refuses an undeclared one under test and
+logs it elsewhere. The roster test enforces the same thing at review time.
+`writesSharedSettings` still refuses a shared-settings write from outside the
+install org, so `tier: 'org'` widens admission only.
+
+**The roster is pinned.** `tests/unit/scripts/ci/admin-tier-roster.test.ts`
+(always-run) pins both lists. It fails when:
+
+- a route declares `tier: 'org'` without being listed in `ORG_TIER_ADMIN_ROUTES`;
+- a route is listed without declaring it;
+- a route passes a `tier` the scanner cannot read as the literal;
+- an org-tier route has no `ownership`;
+- a listed page has no `page.tsx`;
+- a core nav item marked org-tier points at a page that isn't listed.
+
+**If you replace `canAdminister`,** handle `scope.tier`. A policy that ignores
+it admits nobody new: org admins stay locked out of every surface, which is the
+safe failure. The other direction is not safe. A policy that admits on
+`viewer.orgRole` alone (the old `canAdminister: isOrgAdmin` one-liner) admits
+an org admin to every platform surface, roster or not. Gate it on
+`scope.tier === 'org'`.
+
+**Not yet:** a fork cannot list its **own** pages as org-tier without editing
+`ORG_TIER_ADMIN_PAGES`, a core file. Its API routes and nav items declare in
+the fork's own files. Its pages stay platform-only until the roster takes a
+fork seam.
+
 ---
 
 ## The seam
@@ -120,7 +193,7 @@ count** — three ask `canAdminister`, one asks `canRead`:
 | Chokepoint                             | Face            | What it gates                                                                                                                                                                                |
 | -------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `withAdminAuth` (`lib/auth/guards.ts`) | `canAdminister` | 262 handler wrappings across 190 files, 257 of them under `/api/v1/admin`                                                                                                                    |
-| `app/admin/layout.tsx`                 | `canAdminister` | The whole `/admin` page tree                                                                                                                                                                 |
+| `app/admin/layout.tsx`                 | `canAdminister` | The whole `/admin` page tree, asked with `tier: 'org'` on a page listed in `ORG_TIER_ADMIN_PAGES` ([Admin tiers](#admin-tiers))                                                              |
 | `components/maintenance-wrapper.tsx`   | `canAdminister` | The maintenance-mode bypass — an access decision, not chrome, because getting past that page reaches the whole site                                                                          |
 | `withAuth` (`lib/auth/guards.ts`)      | `canRead`       | 23 handler wrappings. Asked on **every** one of them; all but one declare no `resource` resolver, so it is asked about `{ kind: 'nothing' }`. The exception is `app/api/v1/users/[id]` (GET) |
 
@@ -1156,27 +1229,36 @@ shared configuration rather than personal work product — stay admin-global, wh
 is the next section.
 
 **That qualifier is load-bearing here too**, for the same reason it is in the
-webhooks section above: `agents/compare/route.ts` counts `AiEvaluationSession`
+webhooks section above: `agents/compare/route.ts`, through
+`lib/orchestration/agents/agent-comparison.ts`, counts `AiEvaluationSession`
 per agent, twice, with no owner clause. This paragraph first read "every route
 over those three models", and that was false because of exactly that one file,
-two directories away. Twice on one page now: a roster read off a directory
+filed in another tree altogether (`lib/orchestration/agents/`, called from
+`app/api/.../agents/compare/`). Twice on one page now: a roster read off a directory
 misses the call site filed somewhere else.
 
-**Those counts are install-wide on purpose rather than by omission** (t-682). The
-screen compares two _shared_ agents, so the figures are about the agents, not
-about the viewer; narrowing them would rank two agents by how much the caller
-happened to use them. The route declares `{ decidedBy: 'nothing' }` saying so,
-and its tests pin the absence of an owner clause, so a later tidy-up has to
-delete a test that explains why not.
+**Those counts are org-wide, and cross owners inside the org on purpose**
+(t-682, t-688). The org boundary is row isolation, not a clause: every model the
+comparison reads carries `orgId`, so at `multi` the policy bounds each count and
+sum to the caller's org, and another org's agent is a 404. No agent is shared
+between orgs (slugs are per org, t-708; each org has its own platform agents,
+§116), so there is no shared agent whose figures could mix two tenants. Within
+the org the figures count every owner's rows, because the screen compares two
+agents; narrowing them would rank two agents by how much the caller happened to
+use them. The queries live in `lib/orchestration/agents/agent-comparison.ts`,
+whose header carries the reasoning; the route declares `{ decidedBy: 'nothing' }`
+saying so; its tests pin the absence of an owner clause, so a later tidy-up has
+to change a test that explains why not; and `scripts/smoke/tenancy-isolation.ts`
+([3b]) proves the org boundary against real Postgres, reading two orgs' spend,
+conversations and evaluations as a narrowed org admin of one of them.
 
-**And the same route is a third instance of the roster problem, found while
-fixing the second.** It reads four narrowable aggregates, not two: besides the
+**The same route was a third instance of the roster problem, found while fixing
+the second.** It reads four owner-bearing aggregates, not two: besides the
 evaluation counts, `aiConversation.count` and — the one first missed —
-`aiCostLog.aggregate`. `AiCostLog` carries an indexed `userId`, read owner-scoped
-in `lib/privacy/export-sources.ts` for Art. 15, and the comparison sums spend by
-`agentId` alone. Under a customer tier that reports another tenant's spend on a
-shared agent, which is the sharpest of the four. **The missed call site was in
-`lib/privacy/`** — a directory nobody auditing an admin route thinks to read.
+`aiCostLog.aggregate`. `AiCostLog` carries an indexed `userId`, read
+owner-scoped in `lib/privacy/export-sources.ts` for Art. 15, and the comparison
+sums spend by `agentId` alone. **The missed call site was in `lib/privacy/`** —
+a directory nobody auditing an admin route thinks to read.
 
 ### The families that record `createdBy` and never read it
 
@@ -1218,6 +1300,9 @@ the vendor's, and `prompts` is **neither until `McpExposedPrompt` is scoped**,
 because it is served from a process-global cache to every MCP client under a
 global name namespace and a global cap. Do not summarise that page from this
 one; go and read it.
+
+The mechanism that places a surface in a plane is the tier: see
+[Admin tiers](#admin-tiers).
 
 ---
 

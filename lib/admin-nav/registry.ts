@@ -21,6 +21,7 @@
  */
 
 import type { ComponentType, ReactNode } from 'react';
+import type { AdminTier } from '@/lib/auth/admin-tier';
 
 /** A single navigable link in the admin sidebar. */
 export interface NavItem {
@@ -32,6 +33,19 @@ export interface NavItem {
   exact?: boolean;
   /** Optional numeric badge (e.g. pending-approval count). */
   badge?: number;
+  /**
+   * `'org'` when the page this links to is an org-tier surface (§111 t-810),
+   * so the sidebar shows it to an org OWNER/ADMIN as well as a platform admin.
+   * Absent — every item that has not opted in, a fork's included — the item
+   * is the platform's, and an org admin does not see it.
+   *
+   * This decides what the sidebar SHOWS, not what opens: the page must also
+   * be listed in `ORG_TIER_ADMIN_PAGES` (`lib/auth/admin-tier.ts`), and the
+   * routes it calls declared `withAdminAuth(…, { tier: 'org' })`. An item
+   * marked here over a page that is not is a link an org admin follows to a
+   * redirect.
+   */
+  tier?: AdminTier;
 }
 
 /** A collapsible group of items nested inside a section. */

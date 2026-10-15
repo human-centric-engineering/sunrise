@@ -22,7 +22,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest, NextResponse } from 'next/server';
-import { proxy } from '@/proxy';
+import { proxy, config } from '@/proxy';
 
 vi.mock('@/lib/logging/context', () => ({
   generateRequestId: vi.fn(() => 'test-request-id-123'),
@@ -719,6 +719,30 @@ describe('proxy (project root)', () => {
       const request = createMockRequest('/', { cookies: {} });
       const response = await proxy(request);
       expect(response.headers.get('x-middleware-request-x-surface')).toBe('consumer');
+    });
+  });
+
+  describe('Admin pathname header (§111 t-810)', () => {
+    // The admin layout reads the page's tier from this header, so a client
+    // must not be able to name an org-tier path for a platform page.
+    it('forwards the request pathname', async () => {
+      const response = await proxy(createMockRequest('/admin/users', { cookies: {} }));
+      expect(response.headers.get('x-middleware-request-x-sunrise-pathname')).toBe('/admin/users');
+    });
+
+    it('overwrites a spoofed inbound value (proxy is sole writer)', async () => {
+      const request = createMockRequest('/admin/users', {
+        cookies: {},
+        headers: { 'x-sunrise-pathname': '/admin/orchestration/agents' },
+      });
+      const response = await proxy(request);
+      expect(response.headers.get('x-middleware-request-x-sunrise-pathname')).toBe('/admin/users');
+    });
+
+    it('runs on every admin path, including one the static-asset pattern skips', () => {
+      // `/admin/orchestration/agents/logo.png` is a dynamic page, and without
+      // this entry it would reach the layout with a client-sent header intact.
+      expect(config.matcher).toContain('/admin/:path*');
     });
   });
 });

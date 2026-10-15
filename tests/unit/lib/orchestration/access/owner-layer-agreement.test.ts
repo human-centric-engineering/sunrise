@@ -181,9 +181,9 @@ const OWNER_DISPOSITIONS: Record<string, OwnerDisposition> = {
     kind: 'confined',
     because: 'keyed on `userId: session.user.id`.',
   },
-  'app/api/v1/admin/orchestration/agents/compare/route.ts': {
+  'lib/orchestration/agents/agent-comparison.ts': {
     kind: 'admitted',
-    because: 'per-agent counts, install-wide by decision (t-682).',
+    because: 'per-agent counts, org-wide by row isolation, cross-owner by decision (t-682).',
   },
   'app/api/v1/chat/conversations/route.ts': {
     kind: 'confined',
