@@ -12,11 +12,13 @@
  */
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { testProvider } from '@/lib/orchestration/llm/provider-manager';
+import { unapprovedProviders } from '@/lib/orchestration/llm/org-provider-policy';
 import { cuidSchema } from '@/lib/validations/common';
 
 export const POST = withAdminAuth<{ id: string }>(
@@ -31,6 +33,20 @@ export const POST = withAdminAuth<{ id: string }>(
 
     const provider = await prisma.aiProviderConfig.findUnique({ where: { id } });
     if (!provider) throw new NotFoundError(`Provider ${id} not found`);
+
+    // An org admin (§111 t-811) may test only a provider their org is
+    // approved for. The test runs in the org the request entered either way.
+    if (
+      !(await administersPlatform(session.principal)) &&
+      (await unapprovedProviders([provider.slug])).length > 0
+    ) {
+      log.info('Provider test refused — not approved for the org', {
+        providerId: id,
+        slug: provider.slug,
+        adminId: session.user.id,
+      });
+      return successResponse({ ok: false, models: [], error: 'provider_not_approved' });
+    }
 
     try {
       const result = await testProvider(provider.slug);
@@ -65,7 +81,7 @@ export const POST = withAdminAuth<{ id: string }>(
     tier: 'org',
     ownership: {
       decidedBy: 'nothing',
-      because: 'Probes one provider with a fixed prompt; it reads no stored personal rows.',
+      because: 'Asks one provider for its model list; it reads no stored personal rows.',
     },
   }
 );

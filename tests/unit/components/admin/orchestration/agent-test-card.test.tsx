@@ -67,6 +67,35 @@ describe('AgentTestCard', () => {
     expect(screen.getByRole('button', { name: /run check/i })).toBeInTheDocument();
   });
 
+  it('says the provider is not approved for the org, rather than pointing at server logs (§111 t-811)', async () => {
+    const user = userEvent.setup();
+    mockPost.mockResolvedValueOnce({ ok: false, models: [], error: 'provider_not_approved' });
+
+    render(<AgentTestCard providerId="prov-1" model="claude-opus-4-6" />);
+    await user.click(screen.getByRole('button', { name: /run check/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/not approved for your organisation/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/server logs/i)).not.toBeInTheDocument();
+    // The connection step failed, so the model step never ran.
+    expect(mockPost).toHaveBeenCalledTimes(1);
+  });
+
+  it('says the same when only the model test is refused', async () => {
+    const user = userEvent.setup();
+    mockPost
+      .mockResolvedValueOnce({ ok: true, models: ['m1'] })
+      .mockResolvedValueOnce({ ok: false, latencyMs: null, error: 'provider_not_approved' });
+
+    render(<AgentTestCard providerId="prov-1" model="claude-opus-4-6" />);
+    await user.click(screen.getByRole('button', { name: /run check/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/not approved for your organisation/i)).toBeInTheDocument();
+    });
+  });
+
   it('runs both checks successfully', async () => {
     const user = userEvent.setup();
     // ProviderTestResult shape: { ok, models: string[], error? } — agent-test-card

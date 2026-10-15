@@ -13,6 +13,7 @@
 import { z } from 'zod';
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
@@ -21,6 +22,7 @@ import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { runAsOrg } from '@/lib/tenancy/context';
 import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
+import { unapprovedProviders } from '@/lib/orchestration/llm/org-provider-policy';
 import { generateSilentWav } from '@/lib/audio/silent-wav';
 import { deriveParamProfile } from '@/lib/orchestration/llm/model-heuristics';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
@@ -106,23 +108,46 @@ export const POST = withAdminAuth<{ id: string }>(
       });
     }
 
+    // An org admin (§111 t-811) tests a provider as their org would use it:
+    // only one it is approved for, and the vendor call made in their org, so
+    // the call-time gate and a fork's eligibility rule judge it as they judge
+    // the org's agents. Only a platform admin probes as the install org.
+    const platform = await administersPlatform(session.principal);
+    if (!platform && (await unapprovedProviders([providerRow.slug])).length > 0) {
+      log.info('Model test refused — provider not approved for the org', {
+        providerId: id,
+        slug: providerRow.slug,
+        adminId: session.user.id,
+      });
+      return successResponse({
+        ok: false,
+        latencyMs: null,
+        model,
+        capability,
+        error: 'provider_not_approved',
+        message: 'This provider is not approved for your organisation.',
+      });
+    }
+
     try {
       // An admin testing a provider they named is an explicit choice, so the
       // call-time gate (§120 t-741) evaluates it as one.
       //
       // The provider is fetched in the admin's own context, so a fork's
       // credential resolver hands back the key of the org they are acting in —
-      // the key being tested. Each vendor CALL then runs as the install org
-      // (§120 t-742): the probe is a fixed prompt, a fixed word or a silent
-      // clip, so no org's data is sent, and at multi a platform admin must be
-      // able to test a provider before granting it to any org. Under the admin's
-      // active org, a customer org with no grants would refuse every test.
+      // the key being tested. For a platform admin each vendor CALL then runs
+      // as the install org (§120 t-742): the probe is a fixed prompt, a fixed
+      // word or a silent clip, so no org's data is sent, and at multi a
+      // platform admin must be able to test a provider before granting it to
+      // any org. Under the admin's active org, a customer org with no grants
+      // would refuse every test.
       const provider = await getProvider(providerRow.slug, {
         task: capability === 'embedding' ? 'embeddings' : capability === 'audio' ? 'audio' : 'chat',
         source: 'explicit',
         primarySlug: null,
       });
-      const asPlatform = <T>(fn: () => Promise<T>): Promise<T> => runAsOrg(INSTALL_ORG_ID, fn);
+      const asPlatform = <T>(fn: () => Promise<T>): Promise<T> =>
+        platform ? runAsOrg(INSTALL_ORG_ID, fn) : fn();
 
       // Audio: providers opt-in via the optional transcribe() interface
       // member. Guard before timing — a missing method is "this provider
