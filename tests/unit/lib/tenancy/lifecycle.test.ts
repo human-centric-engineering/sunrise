@@ -48,6 +48,7 @@ vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
 import {
   addMember,
   changeMemberRole,
+  checkInvitationInto,
   createOrg,
   OrgLifecycleError,
   removeMember,
@@ -739,4 +740,59 @@ describe('updateOrg — the retention slice (§108 t-713)', () => {
     expect(error.code).toBe('ORG_NOT_FOUND');
     expect(db.org.update).not.toHaveBeenCalled();
   });
+});
+
+describe('checkInvitationInto (§111 t-813)', () => {
+  it('refuses an OWNER invitation without owner standing before any read', async () => {
+    const error = await refusal(() => checkInvitationInto(ORG, ORG_OWNER_ROLE, AS_ADMIN));
+
+    expect(error.code).toBe('OWNER_STANDING');
+    expect(error.status).toBe(403);
+    expect(db.org.findUnique).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a platform admin', AS_PLATFORM],
+    ['an org OWNER', AS_OWNER],
+  ])('lets %s invite an OWNER into an active org', async (_label, actor) => {
+    db.org.findUnique.mockResolvedValue(orgRow());
+
+    await expect(checkInvitationInto(ORG, ORG_OWNER_ROLE, actor)).resolves.toBeUndefined();
+
+    expect(db.org.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: ORG } }));
+  });
+
+  it('refuses the install org before any read', async () => {
+    const error = await refusal(() => checkInvitationInto(INSTALL_ORG_ID, undefined, AS_PLATFORM));
+
+    expect(error.code).toBe('INSTALL_ORG_MEMBERSHIP');
+    expect(error.status).toBe(400);
+    expect(db.org.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('is ORG_NOT_FOUND when the org does not exist', async () => {
+    db.org.findUnique.mockResolvedValue(null);
+
+    const error = await refusal(() => checkInvitationInto(ORG, undefined, AS_PLATFORM));
+
+    expect(error.code).toBe('ORG_NOT_FOUND');
+    expect(error.status).toBe(404);
+  });
+
+  it('refuses a suspended org with ORG_NOT_ACTIVE (400)', async () => {
+    db.org.findUnique.mockResolvedValue(orgRow({ status: 'SUSPENDED' }));
+
+    const error = await refusal(() => checkInvitationInto(ORG, ORG_ADMIN_ROLE, AS_ADMIN));
+
+    expect(error.code).toBe('ORG_NOT_ACTIVE');
+    expect(error.status).toBe(400);
+  });
+
+  it.each([[DEFAULT_ORG_ROLE], [undefined], [ORG_ADMIN_ROLE]])(
+    'lets an org ADMIN invite role %s into an active org',
+    async (role) => {
+      db.org.findUnique.mockResolvedValue(orgRow());
+      await expect(checkInvitationInto(ORG, role, AS_ADMIN)).resolves.toBeUndefined();
+    }
+  );
 });
