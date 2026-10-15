@@ -28,6 +28,7 @@ import { sessionPrincipal } from '@/lib/auth/session-principal';
 import { getServerSession } from '@/lib/auth/utils';
 import type { AdminViewerTier } from '@/lib/auth/admin-tier';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
+import { prisma } from '@/lib/db/client';
 
 /**
  * This request's principal and scope, built from its session and the org it
@@ -60,3 +61,16 @@ export const requestAdministersPlatform = cache(async (): Promise<boolean> => {
 export async function adminPageViewerTier(): Promise<AdminViewerTier> {
   return (await requestAdministersPlatform()) ? 'platform' : 'org';
 }
+
+/**
+ * The org this request acts in, as the guards entered it: its id and name,
+ * or `null` when no org was entered (§111 t-813). Everything on an org-tier
+ * page is this org's, so the console header names it, and the Members page
+ * manages its roster. `Org` is a control-plane model, so reading its name
+ * needs no tenant scope.
+ */
+export const requestActingOrg = cache(async (): Promise<{ id: string; name: string } | null> => {
+  const orgId = (await requestPrincipal())?.principal.orgId;
+  if (!orgId) return null;
+  return prisma.org.findUnique({ where: { id: orgId }, select: { id: true, name: true } });
+});

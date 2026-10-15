@@ -37,6 +37,7 @@ import {
   PlayCircle,
   MessagesSquare,
   UserCog,
+  UsersRound,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { API } from '@/lib/api/endpoints';
@@ -82,6 +83,13 @@ export const coreNavSections: NavSection[] = [
         label: 'Users',
         icon: Users,
         description: 'Manage user accounts',
+      },
+      {
+        href: '/admin/members',
+        tier: 'org',
+        label: 'Members',
+        icon: UsersRound,
+        description: 'People in this organisation',
       },
       {
         href: '/admin/orgs',
@@ -420,6 +428,32 @@ interface AdminSidebarProps {
    * admin the platform's nav.
    */
   viewerTier: AdminViewerTier;
+  /**
+   * The install runs `TENANCY_MODE=multi`. Items that only mean something
+   * with more than one org (`MULTI_TENANT_ONLY`) are hidden otherwise, so the
+   * console at `single` is what it was before them.
+   */
+  multiTenant?: boolean;
+}
+
+/**
+ * Items shown at `multi` only. Members (§111 t-813) manages one org's roster,
+ * and at `single` the only org is the install org, whose roles follow the
+ * platform role and are managed on Users.
+ */
+const MULTI_TENANT_ONLY: ReadonlySet<string> = new Set(['/admin/members']);
+
+/** The sections without the `multi`-only items, when the install is not `multi`. */
+export function sectionsForMode(sections: NavSection[], multiTenant: boolean): NavSection[] {
+  if (multiTenant) return sections;
+  const kept = (items: NavItem[]) => items.filter((item) => !MULTI_TENANT_ONLY.has(item.href));
+  return sections.map((section) => ({
+    ...section,
+    ...(section.items ? { items: kept(section.items) } : {}),
+    ...(section.subgroups
+      ? { subgroups: section.subgroups.map((group) => ({ ...group, items: kept(group.items) })) }
+      : {}),
+  }));
 }
 
 const EXECUTION_BADGE_POLL_MS = 15_000;
@@ -548,7 +582,7 @@ export function sectionsForViewer(
   });
 }
 
-export function AdminSidebar({ className, viewerTier }: AdminSidebarProps) {
+export function AdminSidebar({ className, viewerTier, multiTenant = false }: AdminSidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const counts = useExecutionCounts(BADGE_STATUSES, viewerTier === 'platform');
@@ -560,13 +594,16 @@ export function AdminSidebar({ className, viewerTier }: AdminSidebarProps) {
       // is module-import-time and synchronous, so reading it during render is
       // safe — see lib/admin-nav/registry.ts.
       injectBadges(
-        sectionsForViewer([...coreNavSections, ...getRegisteredNavSections()], viewerTier),
+        sectionsForViewer(
+          sectionsForMode([...coreNavSections, ...getRegisteredNavSections()], multiTenant),
+          viewerTier
+        ),
         {
           '/admin/orchestration/approvals': approvalCount,
           '/admin/orchestration/executions': inProgressCount,
         }
       ),
-    [approvalCount, inProgressCount, viewerTier]
+    [approvalCount, inProgressCount, viewerTier, multiTenant]
   );
 
   return (

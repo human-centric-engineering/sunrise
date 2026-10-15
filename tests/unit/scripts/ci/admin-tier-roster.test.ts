@@ -62,7 +62,7 @@ const TREE: RosterInput = {
 };
 
 describe('the pins', () => {
-  it('opens exactly the customer’s sections and the mixed pages to an org admin (t-811, t-812)', () => {
+  it('opens exactly the customer’s sections and the mixed pages and Members to an org admin (t-811, t-812, t-813)', () => {
     // A page added here is a page every org OWNER/ADMIN can open: add it to
     // ORG_TIER_ADMIN_PAGES and here, in the same diff, and say why in the PR.
     expect(ORG_TIER_ADMIN_PAGES).toEqual([
@@ -104,6 +104,7 @@ describe('the pins', () => {
       '/admin/orchestration/mcp/keys',
       '/admin/orchestration/approvals',
       '/admin/orchestration/executions/[id]',
+      '/admin/members',
     ]);
   });
 

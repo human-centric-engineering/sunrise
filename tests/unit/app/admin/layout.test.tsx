@@ -69,17 +69,29 @@ const membership = vi.hoisted(() => ({
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     orgMembership: { findUnique: vi.fn(() => Promise.resolve(membership.row)) },
+    // The org the header names at `multi` (t-813): the entered org's row.
+    org: {
+      findUnique: vi.fn(({ where }: { where: { id: string } }) =>
+        Promise.resolve({ id: where.id, name: `Org ${where.id}` })
+      ),
+    },
   },
 }));
 
 vi.mock('@/components/admin/admin-sidebar', () => ({
-  AdminSidebar: ({ viewerTier }: { viewerTier: string }) => (
-    <div data-testid="admin-sidebar" data-viewer-tier={viewerTier} />
+  AdminSidebar: ({ viewerTier, multiTenant }: { viewerTier: string; multiTenant?: boolean }) => (
+    <div
+      data-testid="admin-sidebar"
+      data-viewer-tier={viewerTier}
+      data-multi-tenant={String(!!multiTenant)}
+    />
   ),
 }));
 
 vi.mock('@/components/admin/admin-header', () => ({
-  AdminHeader: () => <div data-testid="admin-header" />,
+  AdminHeader: ({ orgName }: { orgName?: string }) => (
+    <div data-testid="admin-header" data-org-name={orgName ?? ''} />
+  ),
 }));
 
 import { redirect } from 'next/navigation';
@@ -269,6 +281,12 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
       expect(redirect).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
       expect(screen.getByTestId('admin-content')).toBeInTheDocument();
       expect(screen.getByTestId('admin-sidebar')).toHaveAttribute('data-viewer-tier', 'org');
+      // t-813: the header names the org being acted in, and the sidebar is told the mode.
+      expect(screen.getByTestId('admin-header')).toHaveAttribute(
+        'data-org-name',
+        `Org ${CUSTOMER}`
+      );
+      expect(screen.getByTestId('admin-sidebar')).toHaveAttribute('data-multi-tenant', 'true');
     }
   );
 
@@ -326,5 +344,20 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
 
     expect(screen.getByTestId('admin-content')).toBeInTheDocument();
     expect(screen.getByTestId('admin-sidebar')).toHaveAttribute('data-viewer-tier', 'platform');
+  });
+
+  it('names no org and hides the multi-only nav at single (t-813)', async () => {
+    env.TENANCY_MODE = 'single';
+    const admin = createMockSession({ user: { role: 'ADMIN' } });
+    vi.mocked(getServerSession).mockResolvedValue({
+      ...admin,
+      session: { ...admin.session, activeOrgId: INSTALL_ORG_ID },
+    });
+    onPage('/admin/users');
+
+    render(await AdminLayout({ children: <div>users</div> }));
+
+    expect(screen.getByTestId('admin-header')).toHaveAttribute('data-org-name', '');
+    expect(screen.getByTestId('admin-sidebar')).toHaveAttribute('data-multi-tenant', 'false');
   });
 });

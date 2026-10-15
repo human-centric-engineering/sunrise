@@ -8,13 +8,18 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ChevronRight, Home } from 'lucide-react';
+import { Building2, ChevronRight, Home } from 'lucide-react';
 import { HeaderActions } from '@/components/layouts/header-actions';
 import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 
 interface AdminHeaderProps {
   title?: string;
   description?: string;
+  /**
+   * The org the admin is acting in, named at `multi` only (§111 t-813):
+   * everything on an org-tier page is that org's. Absent, nothing is shown.
+   */
+  orgName?: string;
 }
 
 // Map route segments to display names
@@ -24,9 +29,10 @@ const segmentLabels: Record<string, string> = {
   users: 'Users',
   logs: 'Logs',
   features: 'Feature Flags',
+  members: 'Members',
 };
 
-export function AdminHeader({ title, description }: AdminHeaderProps) {
+export function AdminHeader({ title, description, orgName }: AdminHeaderProps) {
   const pathname = usePathname();
 
   // Generate breadcrumbs from pathname
@@ -74,8 +80,20 @@ export function AdminHeader({ title, description }: AdminHeaderProps) {
           {description && <p className="text-muted-foreground text-sm">{description}</p>}
         </div>
 
-        {/* User actions */}
-        <HeaderActions />
+        {/* User actions, and at `multi` the org being acted in */}
+        {orgName ? (
+          <div className="flex items-center gap-4">
+            <p className="text-muted-foreground flex items-center gap-1.5 text-sm">
+              <Building2 className="h-4 w-4" aria-hidden="true" />
+              <span>
+                Acting in <span className="text-foreground font-medium">{orgName}</span>
+              </span>
+            </p>
+            <HeaderActions />
+          </div>
+        ) : (
+          <HeaderActions />
+        )}
       </div>
     </header>
   );

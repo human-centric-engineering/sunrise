@@ -72,7 +72,9 @@ export type AdminViewerTier = 'platform' | 'org';
  * behind those panels stay undeclared. Analytics is listed with them but has
  * no platform-ops half: every figure on it is the org's, so it does not ask.
  * `/admin` itself is here so it can send an org admin to the dashboard; the
- * overview it sends a platform admin to is not. The roster test
+ * overview it sends a platform admin to is not. Members (§111 t-813) is the org's
+ * roster, over `/api/v1/orgs/[id]/members`, which the org arm already admits
+ * an org admin to; Users stays the platform's. The roster test
  * pins this list, so widening it fails until the test is updated in the same
  * diff. Frozen, because it is a constant and not a registry: nothing adds to
  * it at runtime (and `lib/tenancy/process-state.ts` would have to vet it if
@@ -117,6 +119,7 @@ export const ORG_TIER_ADMIN_PAGES: readonly string[] = Object.freeze([
   '/admin/orchestration/mcp/keys',
   '/admin/orchestration/approvals',
   '/admin/orchestration/executions/[id]',
+  '/admin/members',
 ]);
 
 /**

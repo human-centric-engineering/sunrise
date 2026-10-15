@@ -8,7 +8,12 @@ import { InFlightExecutionBanner } from '@/components/admin/orchestration/in-fli
 import { BRAND } from '@/lib/brand';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { canAdminister } from '@/lib/auth/authorization';
-import { requestAdministersPlatform, requestPrincipal } from '@/lib/auth/admin-page-viewer';
+import {
+  requestActingOrg,
+  requestAdministersPlatform,
+  requestPrincipal,
+} from '@/lib/auth/admin-page-viewer';
+import { isMultiTenant } from '@/lib/tenancy/context';
 import {
   ADMIN_PATHNAME_HEADER,
   adminPageTier,
@@ -104,11 +109,17 @@ export default async function AdminLayout({
 
   const sharedSettings = await sharedSettingsRead;
 
+  // At `multi` every org-tier page is one org's, so the header names it
+  // (§111 t-813). At `single` there is only the install org, and the header is
+  // as it was.
+  const multiTenant = isMultiTenant();
+  const actingOrg = multiTenant ? await requestActingOrg() : null;
+
   return (
     <div className="bg-background flex h-screen overflow-hidden">
-      <AdminSidebar viewerTier={viewerTier} />
+      <AdminSidebar viewerTier={viewerTier} multiTenant={multiTenant} />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <AdminHeader />
+        <AdminHeader orgName={actingOrg?.name} />
         <InFlightExecutionBanner />
         <main className="flex-1 overflow-y-auto overscroll-contain">
           <div className="p-6">
