@@ -4,7 +4,8 @@
  * Every org has its own instance of each platform agent
  * (`platform-agents.ts`). This is the one writer of those instances. It runs
  * when an org is created (`createOrg`), when an org's provider policy changes
- * (`PUT /admin/orgs/[id]/providers`, t-798), on `npm run db:seed`
+ * (`PUT /admin/orgs/[id]/providers`, t-798), when an admin hands a binding
+ * back to the platform (`PATCH /agents/:id`, t-798), on `npm run db:seed`
  * (`prisma/seeds/021-platform-agents.ts`), and from the maintenance tick for
  * any org whose stored registry digest differs from the running code, or
  * whose platform-picked binding is no longer the pick
@@ -79,6 +80,7 @@ import {
 } from '@/lib/orchestration/agents/agent-versioning';
 import {
   PLATFORM_AGENT_BASELINE,
+  definitionPicksBinding,
   getPlatformAgent,
   platformAgentRegistryHash,
   platformAgentsForOrg,
@@ -190,19 +192,6 @@ function lazyPick(
 }
 
 /**
- * Whether the definition leaves the binding for the platform to pick: it has
- * a `defaultBinding` and sets no starting provider or model of its own. One
- * that does has given the org a value to tune, so that binding is the org's.
- */
-function platformPicksBinding(definition: PlatformAgentDefinition): boolean {
-  return (
-    definition.defaultBinding !== undefined &&
-    !definition.defaults?.provider &&
-    !definition.defaults?.model
-  );
-}
-
-/**
  * Who owns the binding of a platform agent nobody has classified yet — one
  * from before t-798 (`bindingOwner` null). Decided once, by the reconcile,
  * with the same answer {@link createInstance} gives a new agent where it can:
@@ -227,7 +216,7 @@ async function classifyBindingOwner(
   db: TenancyClient,
   serviceAccountId: string
 ): Promise<BindingOwner | null> {
-  if (!platformPicksBinding(definition)) return 'org';
+  if (!definitionPicksBinding(definition)) return 'org';
   if (sameBinding(row, INHERIT)) return 'platform';
   const today = await pick();
   if (today !== PICK_UNAVAILABLE && sameBinding(row, today)) return 'platform';
@@ -439,7 +428,7 @@ export async function reconcilePlatformAgents(
 
       if (!existing) {
         const ownerOfBinding = definition.defaultBinding
-          ? platformPicksBinding(definition)
+          ? definitionPicksBinding(definition)
             ? ('platform' as const)
             : ('org' as const)
           : null;
@@ -619,7 +608,10 @@ export async function reconcilePlatformAgentsIfStale(
   const db = options.db ?? defaultDb;
   if (platformAgentsForOrg(orgId).some((d) => d.defaultBinding)) forgetOrgProviderPolicy(orgId);
   const marker = await loadPlatformAgentsMarker(orgId, db);
-  if (marker?.hash === platformAgentRegistryHash() && !(await platformBindingsDrifted(orgId, db))) {
+  if (
+    marker?.hash === platformAgentRegistryHash() &&
+    !(await platformBindingsDrifted(orgId, db, options.log ?? defaultLogger))
+  ) {
     return { reconciled: false };
   }
   return { reconciled: true, result: await reconcilePlatformAgents(orgId, options) };
@@ -638,7 +630,11 @@ export async function reconcilePlatformAgentsIfStale(
  *
  * A missing or refused agent is left to the digest check.
  */
-async function platformBindingsDrifted(orgId: string, db: TenancyClient): Promise<boolean> {
+async function platformBindingsDrifted(
+  orgId: string,
+  db: TenancyClient,
+  log: Logger
+): Promise<boolean> {
   const definitions = platformAgentsForOrg(orgId).filter((d) => d.defaultBinding);
   if (definitions.length === 0) return false;
   return runAsOrg(orgId, async () => {
@@ -661,7 +657,7 @@ async function platformBindingsDrifted(orgId: string, db: TenancyClient): Promis
         if (!sameBinding(row, await askPick(definition, db))) return true;
       } catch (error) {
         // The reconcile would leave this binding as it is too; ask next pass.
-        defaultLogger.warn('Platform agent binding pick unavailable — drift not checked', {
+        log.warn('Platform agent binding pick unavailable — drift not checked', {
           orgId,
           slug: definition.slug,
           error: error instanceof Error ? error.message : String(error),
@@ -684,6 +680,9 @@ export async function tryReconcilePlatformAgents(orgId: string, trigger: string)
   try {
     const org = await defaultDb.org.findUnique({ where: { id: orgId }, select: { status: true } });
     if (!org || org.status === 'SUSPENDED') return;
+    // As the job does: this process may hold a policy another instance has
+    // since changed, and a pick made from it would undo the change.
+    forgetOrgProviderPolicy(orgId);
     await reconcilePlatformAgents(orgId);
   } catch (err) {
     defaultLogger.error('Platform agents not reconciled; the maintenance job catches up', {
@@ -727,7 +726,7 @@ interface DesiredSets {
 
 /**
  * `binding` is who owns the new agent's provider and model and, while that is
- * the platform, where they start ({@link platformPicksBinding}); with no
+ * the platform, where they start ({@link definitionPicksBinding}); with no
  * target the agent starts on "inherit", as a definition with no pick does.
  */
 async function createInstance(

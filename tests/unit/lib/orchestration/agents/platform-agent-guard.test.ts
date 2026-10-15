@@ -25,6 +25,7 @@ import {
   assertPlatformOwnedFieldsUnchanged,
   bindingOwnerForPatch,
   changedPlatformOwnedFields,
+  picksOwnBinding,
   isReservedAgentSlug,
   platformAgentEditPolicy,
   platformBindingsLocked,
@@ -288,6 +289,33 @@ describe('platformSlugsWhere', () => {
 
   it('adds nothing when no slug is a platform slug', () => {
     expect(platformSlugsWhere(['summarizer', 'triage'])).toEqual({});
+  });
+});
+
+describe('picksOwnBinding (t-798)', () => {
+  it('is true only for a platform agent whose definition leaves the binding to the pick', () => {
+    expect(picksOwnBinding({ isSystem: true, slug: 'cleanup-agent' })).toBe(true);
+    expect(picksOwnBinding({ isSystem: false, slug: 'cleanup-agent' })).toBe(false);
+    expect(picksOwnBinding({ isSystem: true, slug: 'pattern-advisor' })).toBe(false);
+  });
+
+  it('is false for a definition that also sets its own starting binding', () => {
+    registerPlatformAgent({
+      slug: 'fork-picker',
+      audience: 'every-org',
+      agent: {
+        name: 'Picker',
+        description: 'Fork agent',
+        systemInstructions: 'x',
+        temperature: 0.2,
+        maxTokens: 10,
+      },
+      capabilities: [],
+      knowledgeTags: [],
+      defaults: { provider: 'anthropic', model: 'claude' },
+      defaultBinding: async () => ({ provider: 'openai', model: 'gpt-5' }),
+    });
+    expect(picksOwnBinding({ isSystem: true, slug: 'fork-picker' })).toBe(false);
   });
 });
 

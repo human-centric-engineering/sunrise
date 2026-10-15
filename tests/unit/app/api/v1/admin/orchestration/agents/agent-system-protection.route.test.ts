@@ -511,6 +511,21 @@ describe('System agent protection', () => {
       expect(mockTryReconcile).toHaveBeenCalledWith('org-a', 'agent.bindingOwner');
     });
 
+    it('answers a hand-back with where the reconcile put the agent', async () => {
+      mockFindUnique
+        .mockResolvedValueOnce({ ...cleanup(), bindingOwner: 'org', orgId: 'org-a' })
+        .mockResolvedValueOnce({ ...cleanup(), model: 'gpt-5', provider: 'openai' });
+      mockUpdate.mockResolvedValue(cleanup());
+
+      const response = await PATCH(
+        makePatchRequest({ bindingOwner: 'platform' }),
+        makeParams(AGENT_ID)
+      );
+
+      const body = (await response.json()) as { data: { provider: string; model: string } };
+      expect(body.data).toMatchObject({ provider: 'openai', model: 'gpt-5' });
+    });
+
     it('does not reconcile when the binding is taken rather than handed back', async () => {
       mockFindUnique.mockResolvedValue({ ...cleanup(), orgId: 'org-a' });
       mockUpdate.mockResolvedValue(cleanup());

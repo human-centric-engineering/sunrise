@@ -167,7 +167,7 @@ will.
 ## When the reconcile runs
 
 `reconcilePlatformAgents(orgId)` is the only writer of instances. It enters
-the org's own scope itself, and it has four callers:
+the org's own scope itself, and it has five callers:
 
 1. **`createOrg`**, after the org is committed. A new org has its agents
    before the request that made it returns. A failure is logged and never
@@ -177,10 +177,14 @@ the org's own scope itself, and it has four callers:
    clean-up agent moves at once (t-798). It is a shortcut, not the guarantee:
    it skips a suspended org, never throws, and never fails the grant. The
    maintenance job below catches up anything it misses.
-3. **`npm run db:seed`**: the `021-platform-agents` unit reconciles every
+3. **A binding hand-back**: `PATCH /api/v1/admin/orchestration/agents/:id`
+   with `bindingOwner: 'platform'` calls `tryReconcilePlatformAgents` the same
+   way, so the agent lands on the platform's pick before the response, which
+   carries where it landed (t-798).
+4. **`npm run db:seed`**: the `021-platform-agents` unit reconciles every
    active org. Its `hashInputs` include every definition file, the seeder
    and the patterns chunk file, so editing one re-runs it on the next seed.
-4. **The `platformAgents` maintenance job**, every 15 minutes, per org. It
+5. **The `platformAgents` maintenance job**, every 15 minutes, per org. It
    compares the org's stored digest with the running registry's and
    reconciles only an org that is behind: after a deploy changed a
    definition or the patterns knowledge, or after a creation-time reconcile

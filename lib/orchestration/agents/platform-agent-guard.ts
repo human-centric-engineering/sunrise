@@ -33,7 +33,10 @@ import {
   bindingOwnerAfterWrite,
   type BindingOwner,
 } from '@/lib/orchestration/agents/binding-owner';
-import { getPlatformAgent } from '@/lib/orchestration/agents/platform-agents';
+import {
+  definitionPicksBinding,
+  getPlatformAgent,
+} from '@/lib/orchestration/agents/platform-agents';
 import { jsonEquals } from '@/lib/utils/json-equal';
 
 /** The two grant relations, compared as sets: their order means nothing. */
@@ -225,12 +228,15 @@ export function assertAgentSlugNotReserved(slug: string): void {
 }
 
 /**
- * Whether `agent` is a platform agent whose definition picks its own provider
- * and model (`defaultBinding`, t-798) — the only agents with a binding owner.
+ * Whether `agent` is a platform agent whose provider and model the platform
+ * picks (`definitionPicksBinding`, t-798) — the only agents with a binding
+ * owner.
  * Every other agent keeps `bindingOwner` null.
  */
 export function picksOwnBinding(agent: { isSystem: boolean; slug: string }): boolean {
-  return agent.isSystem && getPlatformAgent(agent.slug)?.defaultBinding !== undefined;
+  if (!agent.isSystem) return false;
+  const definition = getPlatformAgent(agent.slug);
+  return definition !== undefined && definitionPicksBinding(definition);
 }
 
 /**

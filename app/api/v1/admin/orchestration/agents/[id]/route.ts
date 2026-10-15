@@ -393,8 +393,12 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
 
     // A hand-back puts the agent on the platform's pick now rather than at
     // the next maintenance pass, which remains the guarantee. Never throws.
+    // The response then carries where it landed, so a client that writes
+    // back what it was given does not take the binding straight back.
+    let responseAgent = agent;
     if (bindingOwner === 'platform' && current.orgId) {
       await tryReconcilePlatformAgents(current.orgId, 'agent.bindingOwner');
+      responseAgent = (await prisma.aiAgent.findUnique({ where: { id } })) ?? agent;
     }
 
     // Shallow diff of before-vs-after. `Object.keys(data)` would over-report —
@@ -475,7 +479,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       void dispatchWebhookEvent('agent_updated', agentUpdatedPayload);
     }
 
-    return successResponse(agent);
+    return successResponse(responseAgent);
   } catch (err) {
     // Disambiguate which unique constraint collided. A slug clash is a real
     // user error; a collision on @@unique([agentId, version]) means two

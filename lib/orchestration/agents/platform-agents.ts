@@ -147,6 +147,21 @@ export interface PlatformAgentDefinition {
 }
 
 /**
+ * Whether the platform picks this definition's provider and model (t-798): it
+ * has a `defaultBinding` and sets no starting provider or model of its own.
+ * One that does has given the org a value to tune, so that binding is the
+ * org's. The one rule for the reconcile and for the routes that set
+ * `AiAgent.bindingOwner`.
+ */
+export function definitionPicksBinding(definition: PlatformAgentDefinition): boolean {
+  return (
+    definition.defaultBinding !== undefined &&
+    !definition.defaults?.provider &&
+    !definition.defaults?.model
+  );
+}
+
+/**
  * The value of every code-owned field a definition leaves out. These are the
  * schema's own defaults, written down once so a reconcile can put a field BACK
  * to its default — a definition that stops setting `persona` must clear the

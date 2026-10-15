@@ -1427,6 +1427,28 @@ describe('a binding the platform picks follows what the org can reach (t-798)', 
     expect(agent('advisor')!.bindingOwner).toBe('platform');
   });
 
+  it('reports a pick the drift check could not get to the caller’s logger', async () => {
+    pick = { provider: 'anthropic', model: 'claude' };
+    await reconcilePlatformAgents('install');
+    registry.definitions = [
+      definition('advisor', {
+        defaultBinding: () => Promise.reject(new Error('policy unreadable')),
+      }),
+      definition('judge'),
+    ];
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+
+    // The registry changed, so this reconciles; a matching digest would not.
+    await reconcilePlatformAgents('install');
+    expect(await reconcilePlatformAgentsIfStale('install', { log: log as never })).toEqual({
+      reconciled: false,
+    });
+    expect(log.warn).toHaveBeenCalledWith(
+      'Platform agent binding pick unavailable — drift not checked',
+      expect.objectContaining({ slug: 'advisor' })
+    );
+  });
+
   it('drops this process’s cached provider policy before the job asks the pick', async () => {
     const order: string[] = [];
     mockForgetPolicy.mockImplementation(() => order.push('forget'));
@@ -1474,9 +1496,10 @@ describe('a binding the platform picks follows what the org can reach (t-798)', 
 });
 
 describe('tryReconcilePlatformAgents (t-798)', () => {
-  it('reconciles an active org', async () => {
+  it('reconciles an active org, after dropping its cached provider policy', async () => {
     await tryReconcilePlatformAgents('install', 'test');
     expect(marker()).toBeDefined();
+    expect(mockForgetPolicy).toHaveBeenCalledWith('install');
   });
 
   it('leaves a suspended org to the job, which reconciles it once reinstated', async () => {
