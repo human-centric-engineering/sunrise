@@ -4,8 +4,8 @@
  * Real `withAdminAuth` and the real `writeOrgProviderPolicy`, over a mocked
  * Prisma whose `$transaction` runs the callback against the same mock. Pins:
  * platform-admin only, the replace semantics (other `settings` keys kept), the
- * audit row with its before and after, the install-org refusal, and the
- * unknown-slug refusal.
+ * audit row with its before and after, the install-org refusal, the
+ * unknown-slug refusal, and the platform-agent reconcile after a grant (t-798).
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
@@ -39,6 +39,11 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 const mockForgetOrgProviderPolicy = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/orchestration/llm/org-provider-policy', () => ({
   forgetOrgProviderPolicy: mockForgetOrgProviderPolicy,
+}));
+
+const mockTryReconcilePlatformAgents = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
+  tryReconcilePlatformAgents: mockTryReconcilePlatformAgents,
 }));
 
 const mockLog = vi.hoisted(() => ({
@@ -106,6 +111,7 @@ beforeEach(() => {
     org: { status: 'ACTIVE' },
   });
   mockPrisma.org.update.mockResolvedValue({});
+  mockTryReconcilePlatformAgents.mockResolvedValue(undefined);
   // Provider rows: each slug's id is `id-<slug>`, and `nope` has no row.
   mockPrisma.aiProviderConfig.findMany.mockImplementation(
     async (args: { where: { slug?: { in: string[] }; id?: { in: string[] } } }) => {
@@ -211,6 +217,45 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
     expect(mockForgetOrgProviderPolicy).toHaveBeenCalledWith(OTHER);
   });
 
+  it("reconciles the org's platform agents after the forget, so the clean-up agent moves at once (t-798)", async () => {
+    const res = await put({ approved: ['openai'], jurisdictions: null });
+
+    expect(res.status).toBe(200);
+    expect(mockTryReconcilePlatformAgents).toHaveBeenCalledWith(OTHER, 'org.providers.replace');
+    // The pick reads the org's policy: after the forget it sees the new grant.
+    expect(mockForgetOrgProviderPolicy.mock.invocationCallOrder[0]).toBeLessThan(
+      mockTryReconcilePlatformAgents.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('reconciles on a revocation too, which moves a pin off the revoked provider', async () => {
+    await put({ approved: [], jurisdictions: null });
+    expect(mockTryReconcilePlatformAgents).toHaveBeenCalledWith(OTHER, 'org.providers.replace');
+  });
+
+  it('skips the reconcile when the policy is re-saved unchanged', async () => {
+    // The stored policy is `approved: ['id-anthropic']` with no jurisdictions.
+    const res = await put({ approved: ['anthropic'], jurisdictions: null });
+
+    expect(res.status).toBe(200);
+    expect(mockTryReconcilePlatformAgents).not.toHaveBeenCalled();
+  });
+
+  it('still answers the grant when the reconcile module cannot be loaded, and logs it', async () => {
+    mockTryReconcilePlatformAgents.mockRejectedValueOnce(new Error('module failed to load'));
+
+    const res = await put({ approved: ['openai'], jurisdictions: null });
+
+    expect(res.status).toBe(200);
+    expect((await json(res)).data).toMatchObject({
+      approved: [{ id: 'id-openai', slug: 'openai' }],
+    });
+    expect(mockLog.error).toHaveBeenCalledWith(
+      'Platform agents not reconciled; the maintenance job catches up',
+      { orgId: OTHER, error: 'module failed to load' }
+    );
+  });
+
   it('answers a clash with a concurrent settings write with a 409, and audits nothing', async () => {
     const { Prisma } = await import('@prisma/client');
     mockPrisma.$transaction.mockRejectedValueOnce(
@@ -226,6 +271,7 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
     expect((await json(res)).error?.code).toBe('CONFLICT');
     expect(mockLogAdminAction).not.toHaveBeenCalled();
     expect(mockForgetOrgProviderPolicy).not.toHaveBeenCalled();
+    expect(mockTryReconcilePlatformAgents).not.toHaveBeenCalled();
   });
 
   it('lets any other write failure through as a 500', async () => {
@@ -249,6 +295,7 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
     expect(mockPrisma.org.update).not.toHaveBeenCalled();
     expect(mockLogAdminAction).not.toHaveBeenCalled();
     expect(mockForgetOrgProviderPolicy).not.toHaveBeenCalled();
+    expect(mockTryReconcilePlatformAgents).not.toHaveBeenCalled();
   });
 
   it('refuses the install org, which is unrestricted by rule', async () => {

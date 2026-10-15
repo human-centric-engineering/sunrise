@@ -29,7 +29,14 @@
  */
 import { ForbiddenError, ValidationError } from '@/lib/api/errors';
 import { platformAgentFieldNames } from '@/lib/orchestration/agents/agent-field-registry';
-import { getPlatformAgent } from '@/lib/orchestration/agents/platform-agents';
+import {
+  bindingOwnerAfterWrite,
+  type BindingOwner,
+} from '@/lib/orchestration/agents/binding-owner';
+import {
+  definitionPicksBinding,
+  getPlatformAgent,
+} from '@/lib/orchestration/agents/platform-agents';
 import { jsonEquals } from '@/lib/utils/json-equal';
 
 /** The two grant relations, compared as sets: their order means nothing. */
@@ -218,4 +225,65 @@ export function assertAgentSlugNotReserved(slug: string): void {
   if (!isReservedAgentSlug(slug)) return;
   const message = reservedAgentSlugMessage(slug);
   throw new ValidationError(message, { slug: [message] });
+}
+
+/**
+ * Whether `agent` is a platform agent whose provider and model the platform
+ * picks (`definitionPicksBinding`, t-798) — the only agents with a binding
+ * owner.
+ * Every other agent keeps `bindingOwner` null.
+ */
+export function picksOwnBinding(agent: { isSystem: boolean; slug: string }): boolean {
+  if (!agent.isSystem) return false;
+  const definition = getPlatformAgent(agent.slug);
+  return definition !== undefined && definitionPicksBinding(definition);
+}
+
+/**
+ * The `bindingOwner` an agent PATCH writes, or `undefined` for none (t-798).
+ *
+ * Only an agent that {@link picksOwnBinding} has an owner. There, a change to
+ * provider or model makes the binding the org's, and `bindingOwner` in the
+ * body sets it outright: `'platform'` hands it back, so the next maintenance
+ * pass puts it on the platform's pick; `'org'` takes it as it stands — the
+ * way to keep the agent on inherit, since the API cannot set provider or model
+ * to empty. A hand-back cannot also change the binding: which would win is
+ * not the caller's to guess.
+ *
+ * Compared by value, like every platform-agent rule: a client echoing back
+ * what GET returned — `bindingOwner` included — asks for nothing by it. A
+ * `null` always reads as an echo, even a stale one read before the reconcile
+ * classified the row: an owner cannot be cleared, so `null` can only mean
+ * the client is sending back what it was given.
+ */
+export function bindingOwnerForPatch(
+  current: {
+    isSystem: boolean;
+    slug: string;
+    provider: string;
+    model: string;
+    bindingOwner: string | null;
+  },
+  next: { provider?: string; model?: string; bindingOwner?: BindingOwner | null }
+): BindingOwner | undefined {
+  const requested =
+    next.bindingOwner === undefined ||
+    next.bindingOwner === null ||
+    next.bindingOwner === current.bindingOwner
+      ? undefined
+      : next.bindingOwner;
+  if (!picksOwnBinding(current)) {
+    if (requested === undefined) return undefined;
+    throw new ValidationError('This agent has no platform-picked provider and model to hand over', {
+      bindingOwner: ['Only a platform agent that picks its own provider and model has an owner'],
+    });
+  }
+  const written = bindingOwnerAfterWrite(current, next);
+  if (requested === undefined) return written;
+  if (requested === 'platform' && written) {
+    throw new ValidationError('Hand the provider and model back to the platform, or change them', {
+      bindingOwner: ['Cannot hand the binding back in the same request that changes it'],
+    });
+  }
+  return requested;
 }

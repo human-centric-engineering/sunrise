@@ -82,22 +82,27 @@ const CLEANUP_CAPABILITY_SLUGS = [
  *  - a fork's eligibility rule, asked as the gate will ask it of a pinned
  *    provider (`source: 'explicit'`).
  * With nothing eligible this returns null and the agent inherits, choosing per
- * turn among what the org may use. The reconcile asks again while the agent is
- * still unpinned, but a grant does not by itself start a reconcile: one runs
- * when the platform-agent registry changes or the org has no marker. Until
- * then an org admin can pick the agent's provider.
+ * turn among what the org may use. While the agent's binding is the
+ * platform's, the maintenance job
+ * asks again every pass and moves it when the answer changes: a provider
+ * granted, revoked, switched on, its key set, a strong model added (t-798).
+ * Once an org admin sets provider or model, the binding is theirs
+ * (`AiAgent.bindingOwner`) and this is not asked for that agent again.
  *
  * A policy that cannot be read THROWS rather than answering "nothing": the
- * reconcile then fails and leaves the org unmarked, so the maintenance job
- * retries it, where an answer of null would have been recorded as done. At
+ * reconcile then leaves this agent's binding as it is and the org unmarked,
+ * so the maintenance job asks again, where an answer of null would have moved
+ * the agent to inherit and been recorded as done. At
  * `single`, and for the install org, neither rule narrows anything unless a
  * fork's rule does.
  *
  * Preference order: worker tier before thinking tier (a whole-document rewrite
  * on a thinking-tier model is expensive and no better at choosing a regex),
- * then deepest reasoning, then model id for a stable tie-break. Returns null
- * when nothing qualifies, in which case the agent keeps the empty-string
- * inherit-at-runtime behaviour.
+ * then deepest reasoning, then model id, then provider slug — a total order,
+ * so two providers offering the same model never trade places between
+ * passes and move the agent back and forth (t-798). Returns null
+ * when nothing qualifies, in which case the agent is left on (or put back to)
+ * the empty-string inherit-at-runtime behaviour.
  */
 export async function pickCleanupBinding(
   prisma: TenancyClient
@@ -149,10 +154,18 @@ export async function pickCleanupBinding(
     const reasoning =
       (REASONING_RANK[a.reasoningDepth] ?? 9) - (REASONING_RANK[b.reasoningDepth] ?? 9);
     if (reasoning !== 0) return reasoning;
-    return a.modelId.localeCompare(b.modelId);
+    // Code-unit order, not `localeCompare`: two instances with different
+    // locales must agree, or each pass would undo the other's pick.
+    const model = compareCodeUnits(a.modelId, b.modelId);
+    if (model !== 0) return model;
+    return compareCodeUnits(a.providerSlug, b.providerSlug);
   });
   const best = ranked[0];
   return { provider: best.providerSlug, model: best.modelId };
+}
+
+function compareCodeUnits(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 export const CLEANUP_AGENT: PlatformAgentDefinition = {

@@ -131,6 +131,7 @@ const NON_CONFIG_SCALARS = [
   'createdBy',
   'isSystem',
   'systemInstructionsHistory',
+  'bindingOwner', // t-798: who decides a platform agent's provider and model — set by the reconcile and as a side effect of a provider/model write
   'orgId', // tenancy (§107): set by the data layer, never a form field
 ];
 
@@ -235,6 +236,11 @@ describe('agent-field-registry — parity with the validation schemas', () => {
   //  - kind: set at create, immutable thereafter (create-only)
   //  - widgetConfig: managed via its own endpoint, not the agent PATCH body
   const PATCH_OMITTED = new Set(['kind', 'widgetConfig']);
+  // Fields the PATCH schema has that are not config, so have no descriptor:
+  //  - bindingOwner (t-798): hands a platform agent's provider and model back
+  //    to the platform, or takes them; a non-config column the route handles
+  //    explicitly, which no form, bundle or version carries
+  const PATCH_ONLY_NON_CONFIG = new Set(['bindingOwner']);
 
   it('every versioned scalar field exists on updateAgentObjectSchema (so restore can validate it)', () => {
     const updateKeys = new Set(Object.keys(updateAgentObjectSchema.shape));
@@ -258,7 +264,13 @@ describe('agent-field-registry — parity with the validation schemas', () => {
     // Every PATCH field is registered — catches a schema field with no
     // descriptor (the silent-gap this whole registry exists to prevent).
     for (const key of updateKeys) {
+      if (PATCH_ONLY_NON_CONFIG.has(key)) continue;
       expect(registryNames.has(key)).toBe(true);
+    }
+    // And each exception really is outside the registry, not a stale entry.
+    for (const key of PATCH_ONLY_NON_CONFIG) {
+      expect(updateKeys.has(key)).toBe(true);
+      expect(NON_CONFIG_SCALARS).toContain(key);
     }
   });
 

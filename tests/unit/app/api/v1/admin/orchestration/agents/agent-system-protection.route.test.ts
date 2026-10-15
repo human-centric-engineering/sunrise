@@ -81,6 +81,11 @@ vi.mock('@/lib/orchestration/hooks/registry', () => ({
   emitHookEvent: vi.fn(),
 }));
 
+const mockTryReconcile = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
+  tryReconcilePlatformAgents: mockTryReconcile,
+}));
+
 vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
 }));
@@ -459,6 +464,102 @@ describe('System agent protection', () => {
       const response = await PATCH(makePatchRequest({ temperature: 0.1 }), makeParams(AGENT_ID));
 
       expect(response.status).toBe(200);
+    });
+  });
+
+  describe('PATCH — who decides provider and model (t-798)', () => {
+    const cleanup = () =>
+      makeSystemAgent({ slug: 'cleanup-agent', name: 'Clean Up', bindingOwner: 'platform' });
+
+    it('makes the binding the org’s when the admin changes provider or model', async () => {
+      mockFindUnique.mockResolvedValue(cleanup());
+      mockUpdate.mockResolvedValue(cleanup());
+
+      const response = await PATCH(makePatchRequest({ provider: 'openai' }), makeParams(AGENT_ID));
+
+      expect(response.status).toBe(200);
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ bindingOwner: 'org' }) })
+      );
+    });
+
+    it('leaves the owner alone on a save that keeps provider and model as they were', async () => {
+      mockFindUnique.mockResolvedValue(cleanup());
+      mockUpdate.mockResolvedValue(cleanup());
+
+      await PATCH(
+        makePatchRequest({ provider: 'anthropic', model: 'claude-sonnet-4-6', rateLimitRpm: 30 }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(mockUpdate.mock.calls[0][0].data).not.toHaveProperty('bindingOwner');
+    });
+
+    it('hands the binding back to the platform, and reconciles the org at once', async () => {
+      mockFindUnique.mockResolvedValue({ ...cleanup(), bindingOwner: 'org', orgId: 'org-a' });
+      mockUpdate.mockResolvedValue(cleanup());
+
+      const response = await PATCH(
+        makePatchRequest({ bindingOwner: 'platform' }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ bindingOwner: 'platform' }) })
+      );
+      expect(mockTryReconcile).toHaveBeenCalledWith('org-a', 'agent.bindingOwner');
+    });
+
+    it('answers a hand-back with where the reconcile put the agent', async () => {
+      mockFindUnique
+        .mockResolvedValueOnce({ ...cleanup(), bindingOwner: 'org', orgId: 'org-a' })
+        .mockResolvedValueOnce({ ...cleanup(), model: 'gpt-5', provider: 'openai' });
+      mockUpdate.mockResolvedValue(cleanup());
+
+      const response = await PATCH(
+        makePatchRequest({ bindingOwner: 'platform' }),
+        makeParams(AGENT_ID)
+      );
+
+      const body = (await response.json()) as { data: { provider: string; model: string } };
+      expect(body.data).toMatchObject({ provider: 'openai', model: 'gpt-5' });
+    });
+
+    it('does not reconcile when the binding is taken rather than handed back', async () => {
+      mockFindUnique.mockResolvedValue({ ...cleanup(), orgId: 'org-a' });
+      mockUpdate.mockResolvedValue(cleanup());
+
+      await PATCH(makePatchRequest({ provider: 'openai' }), makeParams(AGENT_ID));
+
+      expect(mockTryReconcile).not.toHaveBeenCalled();
+    });
+
+    it('accepts an echo of what GET returned, owner included, on any agent', async () => {
+      const mine = makeCustomAgent({ bindingOwner: null, rateLimitRpm: null });
+      mockFindUnique.mockResolvedValue(mine);
+      mockUpdate.mockResolvedValue(mine);
+
+      const response = await PATCH(
+        makePatchRequest({ bindingOwner: null, model: 'gpt-5', rateLimitRpm: 30 }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(200);
+      // An org's own agent has no binding owner, even when its model changes.
+      expect(mockUpdate.mock.calls[0][0].data).not.toHaveProperty('bindingOwner');
+    });
+
+    it('refuses a hand-back that also changes the binding, writing nothing', async () => {
+      mockFindUnique.mockResolvedValue({ ...cleanup(), bindingOwner: 'org' });
+
+      const response = await PATCH(
+        makePatchRequest({ bindingOwner: 'platform', provider: 'openai' }),
+        makeParams(AGENT_ID)
+      );
+
+      expect(response.status).toBe(400);
+      expect(mockUpdate).not.toHaveBeenCalled();
     });
   });
 

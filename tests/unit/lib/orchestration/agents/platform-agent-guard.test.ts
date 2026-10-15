@@ -23,7 +23,9 @@ import {
   assertBindingFieldsUnchanged,
   assertBindingsEditable,
   assertPlatformOwnedFieldsUnchanged,
+  bindingOwnerForPatch,
   changedPlatformOwnedFields,
+  picksOwnBinding,
   isReservedAgentSlug,
   platformAgentEditPolicy,
   platformBindingsLocked,
@@ -287,5 +289,100 @@ describe('platformSlugsWhere', () => {
 
   it('adds nothing when no slug is a platform slug', () => {
     expect(platformSlugsWhere(['summarizer', 'triage'])).toEqual({});
+  });
+});
+
+describe('picksOwnBinding (t-798)', () => {
+  it('is true only for a platform agent whose definition leaves the binding to the pick', () => {
+    expect(picksOwnBinding({ isSystem: true, slug: 'cleanup-agent' })).toBe(true);
+    expect(picksOwnBinding({ isSystem: false, slug: 'cleanup-agent' })).toBe(false);
+    expect(picksOwnBinding({ isSystem: true, slug: 'pattern-advisor' })).toBe(false);
+  });
+
+  it('is false for a definition that also sets its own starting binding', () => {
+    registerPlatformAgent({
+      slug: 'fork-picker',
+      audience: 'every-org',
+      agent: {
+        name: 'Picker',
+        description: 'Fork agent',
+        systemInstructions: 'x',
+        temperature: 0.2,
+        maxTokens: 10,
+      },
+      capabilities: [],
+      knowledgeTags: [],
+      defaults: { provider: 'anthropic', model: 'claude' },
+      defaultBinding: async () => ({ provider: 'openai', model: 'gpt-5' }),
+    });
+    expect(picksOwnBinding({ isSystem: true, slug: 'fork-picker' })).toBe(false);
+  });
+});
+
+describe('bindingOwnerForPatch (t-798)', () => {
+  // The clean-up agent picks its own binding; the Pattern Advisor does not.
+  const cleanup = {
+    isSystem: true,
+    slug: 'cleanup-agent',
+    provider: 'anthropic',
+    model: 'claude',
+    bindingOwner: 'platform',
+  };
+
+  it('makes the binding the org’s on a change, and leaves it alone otherwise', () => {
+    expect(bindingOwnerForPatch(cleanup, { provider: 'openai' })).toBe('org');
+    expect(bindingOwnerForPatch(cleanup, { provider: 'anthropic', model: 'claude' })).toBe(
+      undefined
+    );
+    // Every other agent keeps no owner, whatever it writes.
+    expect(
+      bindingOwnerForPatch({ ...cleanup, isSystem: false, slug: 'mine' }, { model: 'x' })
+    ).toBe(undefined);
+  });
+
+  it('hands the binding back, or takes it as it stands, when the body says so', () => {
+    expect(
+      bindingOwnerForPatch({ ...cleanup, bindingOwner: 'org' }, { bindingOwner: 'platform' })
+    ).toBe('platform');
+    expect(bindingOwnerForPatch(cleanup, { bindingOwner: 'org' })).toBe('org');
+    // Already so: nothing to write.
+    expect(bindingOwnerForPatch(cleanup, { bindingOwner: 'platform' })).toBe(undefined);
+    // Taking it while changing it is consistent, so allowed.
+    expect(bindingOwnerForPatch(cleanup, { bindingOwner: 'org', provider: 'openai' })).toBe('org');
+  });
+
+  it('ignores an echo of the stored owner, on any agent', () => {
+    const mine = { ...cleanup, isSystem: false, slug: 'mine', bindingOwner: null };
+    expect(bindingOwnerForPatch(mine, { bindingOwner: null })).toBe(undefined);
+    expect(bindingOwnerForPatch(cleanup, { bindingOwner: 'platform' })).toBe(undefined);
+  });
+
+  it('reads a null owner as an echo, even one read before the row was classified', () => {
+    expect(bindingOwnerForPatch(cleanup, { bindingOwner: null })).toBe(undefined);
+    expect(bindingOwnerForPatch(cleanup, { bindingOwner: null, provider: 'openai' })).toBe('org');
+  });
+
+  it('refuses a hand-back in the same request that changes the binding', () => {
+    expect(() =>
+      bindingOwnerForPatch(
+        { ...cleanup, bindingOwner: 'org' },
+        { bindingOwner: 'platform', provider: 'openai' }
+      )
+    ).toThrow(ValidationError);
+  });
+
+  it('refuses an owner on an agent the platform does not pick a binding for', () => {
+    expect(() =>
+      bindingOwnerForPatch(
+        { ...cleanup, slug: 'pattern-advisor', bindingOwner: null },
+        { bindingOwner: 'platform' }
+      )
+    ).toThrow(ValidationError);
+    expect(() =>
+      bindingOwnerForPatch(
+        { ...cleanup, isSystem: false, bindingOwner: null },
+        { bindingOwner: 'platform' }
+      )
+    ).toThrow(ValidationError);
   });
 });

@@ -129,12 +129,36 @@ export interface PlatformAgentDefinition {
    */
   defaults?: Partial<Pick<AiAgent, Exclude<PlatformAgentOrgTunableField, 'providerConfig'>>>;
   /**
-   * A provider and model to pin while the org has chosen neither. Consulted
-   * when the instance is created, and on each reconcile while BOTH are still
-   * empty (the "inherit at runtime" contract of `agent-resolver.ts`) — so an
-   * org's own choice is never overwritten. Returns `null` to keep inheriting.
+   * The provider and model the platform keeps the instance on while it owns
+   * the binding (`AiAgent.bindingOwner`, t-798). Asked when the instance is
+   * created and, while the binding is the platform's, by the maintenance job
+   * every pass: the agent moves whenever the answer changes, and `null` puts
+   * it on "inherit at runtime" (`agent-resolver.ts`). Never asked once the org
+   * owns the binding, so an org's own choice is never overwritten.
+   *
+   * So it must be deterministic — a total order with no locale-dependent
+   * comparison, or the agent moves back and forth between passes — and cheap,
+   * and it must THROW when it cannot answer: `null` means "nothing
+   * qualifies" and moves the agent, where a throw leaves it as it is and is
+   * asked again next pass. A definition that also sets `defaults.provider` or
+   * `defaults.model` gives the org that starting binding instead.
    */
   defaultBinding?: (db: TenancyClient) => Promise<PlatformAgentBinding | null>;
+}
+
+/**
+ * Whether the platform picks this definition's provider and model (t-798): it
+ * has a `defaultBinding` and sets no starting provider or model of its own.
+ * One that does has given the org a value to tune, so that binding is the
+ * org's. The one rule for the reconcile and for the routes that set
+ * `AiAgent.bindingOwner`.
+ */
+export function definitionPicksBinding(definition: PlatformAgentDefinition): boolean {
+  return (
+    definition.defaultBinding !== undefined &&
+    !definition.defaults?.provider &&
+    !definition.defaults?.model
+  );
 }
 
 /**
