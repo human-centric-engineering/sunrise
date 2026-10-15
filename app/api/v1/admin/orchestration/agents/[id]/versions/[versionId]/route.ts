@@ -39,5 +39,13 @@ export const GET = withAdminAuth<{ id: string; versionId: string }>(
     if (!version) throw new NotFoundError('Version not found');
 
     return successResponse(version);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
 );

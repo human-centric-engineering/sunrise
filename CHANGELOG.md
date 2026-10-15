@@ -71,8 +71,8 @@ release process.
   `adminPageTier()`. New optional `NavItem.tier`. The default policy's
   `canAdminister` now admits an org OWNER/ADMIN of the entered org to a
   surface that declares `tier: 'org'`, as a session and at `multi` only.
-  Undeclared surfaces stay platform-only, fork surfaces included, and no core
-  surface declares the tier yet. **Forks:** a `canAdminister` you replaced
+  Undeclared surfaces stay platform-only, fork surfaces included. Which core
+  surfaces declare it is t-811's entry under Changed. **Forks:** a `canAdminister` you replaced
   receives `scope.tier`. Ignoring it keeps org admins out (the safe failure),
   and a policy that admits on `viewer.orgRole` alone admits them everywhere,
   so gate on the tier. `AdminSidebar` now requires a `viewerTier` prop.
@@ -278,6 +278,32 @@ release process.
   timeout, and a test keeps each below the retry claim lease. An email send
   that times out fails as retriable. **Forks:** a delivery channel you add
   needs an entry there.
+- **An org admin now runs their own org's sections of the admin console**
+  (§111 t-811). At `multi`, an org OWNER/ADMIN reaches agents, workflows,
+  triggers, knowledge, conversations, evaluations (with datasets and runs),
+  experiments, event subscriptions, MCP keys and approvals. That covers their
+  pages, their nav items, and every API route those pages call, all listed in
+  `ORG_TIER_ADMIN_PAGES` / `ORG_TIER_ADMIN_ROUTES`, plus one execution's
+  detail page, which the approval queue and a workflow run link to. They also
+  read the capability, agent-profile, provider, provider-model,
+  embedding-model, grader and tag lists, but cannot write any of them. Their
+  provider list omits `baseUrl`, `apiKeyEnvVar` and `metadata`, the
+  usage counts on those lists cover their own org only (another tenant's
+  usage is a platform admin's delete check), and a
+  `rateLimitOverride` they set on an MCP key may lower the server's limit but
+  not raise it (`400` above it). Each opened route now declares an
+  `ownership`. New `actsForPlatform()` in `lib/tenancy/context.ts` answers
+  whether the call stack acts for the platform; `canChangeSharedSettings` now
+  delegates to it. The provider test routes (`providers/[id]/test`,
+  `test-model`) refuse an org admin a provider their org is not approved for
+  (`error: 'provider_not_approved'`) and run their probe in that org. New
+  `administersPlatform()` in `lib/auth/admin-viewer.ts` tells a platform admin
+  from an org admin inside an org-tier route. Platform admins, and every
+  install at `single`, see no change. **Forks:** a route of yours that one of
+  these pages calls stays platform-only until you declare it `tier: 'org'`.
+  The MCP keys page has no nav entry for an org admin until the MCP landing is
+  split. See [Authorization → Admin tiers](./.context/auth/authorization.md#admin-tiers).
+
 - **A platform agent's `defaultBinding` is now asked on every maintenance
   pass, and its answer moves the agent** (t-798). `PlatformAgentDefinition
   .defaultBinding` used to be asked only when an instance was created, or
@@ -635,6 +661,43 @@ release process.
   turns were recorded at $0.
 
 ### Security
+
+- **A URL a customer org chooses can no longer reach the platform's own
+  network** (§111 t-811). With the knowledge URL import and webhook
+  subscriptions open to org admins, `checkSafeProviderUrl` was not enough:
+  it reads the URL's text, so a hostname resolving inside the network
+  (`db`, `169.254.169.254.nip.io`, an attacker's A record) passed, and the
+  imported page could be read back. At `multi`, a fetch made for a
+  non-install org (knowledge URL import, webhook delivery, webhook test, and the allowlisted calls behind `external_call` / `call_external_api`) now
+  connects through `withOutboundDispatcher()` (new
+  `lib/security/safe-dispatcher.ts`). It refuses the connection if the host
+  resolved to any loopback, link-local, private, CGNAT or unique-local
+  address, and connects to the address it checked, so DNS rebinding and
+  redirect hops are covered too. New `checkSafeAddress()` in
+  `lib/security/safe-url.ts` applies the URL rules to a resolved address.
+  `checkSafeProviderUrl` now drops a trailing dot before its denylist (`metadata.google.internal.` was let through), and both checks unwrap the IPv4 address inside a NAT64 (`64:ff9b::/96`) or 6to4 (`2002::/16`) address and refuse `0.0.0.0/8` and site-local `fec0::/10`. A refusal names the host, never the address it resolved to, and for a customer org a refused host and one that does not exist read the same, so a webhook test cannot map the internal DNS; a webhook delivery refused this way is terminal rather than retried. For the allowlisted calls, where no URL check runs first, an IP literal the address rules refuse is refused for a customer org before the fetch (a literal is never looked up). The install org, a system scope and `single` installs connect as before; a call stack with no tenant context at `multi` is pinned. Adds `undici` (7.x, the
+  major Node 24's `fetch` runs on) as a direct dependency.
+
+- **A customer org's configs can no longer read the platform's env vars**
+  (§111 t-811). Opening the agent, workflow and chat routes to org admins let
+  them author the configs that name env vars: `${env:NAME}` templates in
+  `call_external_api`'s `forcedUrl` / `forcedHeaders` and `external_call`'s
+  `url` / `headers`, `auth.secret` / `authSecret`, and the Twilio and WhatsApp
+  `*Env` fields. Naming the session secret or a provider key there, then
+  calling a host they could read, would have handed them the operator's
+  secret. At `multi`, a config acting for a non-install org may now name only
+  env vars starting `ORG_<ORG ID>_` (`orgEnvVarPrefix()` in
+  `lib/orchestration/env-template.ts`). The check runs where the value is
+  read, and before the variable is looked up. A refusal is `invalid_binding`
+  on `call_external_api`, new `env_var_not_available` on `external_call`, and
+  new HTTP error code `auth_secret_not_available`. The install org, a system
+  scope, and `single` installs are unchanged; a call stack with no tenant
+  context at `multi` names no env var at all. The binding-save warning lists a
+  refused name apart from an unset one (`meta.warnings.unavailableEnvVars`,
+  with `envVarPrefix`). **Operators:** a customer org
+  binding that names an unprefixed env var stops working at `multi`. Move its
+  value to `ORG_<ORG ID>_…` and update the binding. See
+  [External calls](./.context/orchestration/external-calls.md).
 
 - **A narrowed caller's read of another member's memory is now refused at the
   query** (§115 t-801). Inside one org, an org OWNER, ADMIN or MEMBER (anyone

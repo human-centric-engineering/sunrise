@@ -63,315 +63,327 @@ type ImportResults = {
   warnings: string[];
 };
 
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, importAgentsSchema);
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, importAgentsSchema);
 
-  const { bundle, conflictMode } = body;
+    const { bundle, conflictMode } = body;
 
-  // Reject bundles that contain duplicate slugs — they would cause a P2002
-  // unique constraint violation partway through the transaction.
-  const slugs = bundle.agents.map((a) => a.slug);
-  const duplicateSlugs = [...new Set(slugs.filter((s, i) => slugs.indexOf(s) !== i))];
-  if (duplicateSlugs.length > 0) {
-    throw new ValidationError(`Duplicate slugs in import bundle: ${duplicateSlugs.join(', ')}`, {
-      bundle: [`Duplicate slugs: ${duplicateSlugs.join(', ')}`],
+    // Reject bundles that contain duplicate slugs — they would cause a P2002
+    // unique constraint violation partway through the transaction.
+    const slugs = bundle.agents.map((a) => a.slug);
+    const duplicateSlugs = [...new Set(slugs.filter((s, i) => slugs.indexOf(s) !== i))];
+    if (duplicateSlugs.length > 0) {
+      throw new ValidationError(`Duplicate slugs in import bundle: ${duplicateSlugs.join(', ')}`, {
+        bundle: [`Duplicate slugs: ${duplicateSlugs.join(', ')}`],
+      });
+    }
+
+    // Resolve capability slugs → ids up front so the transaction is short.
+    const allCapabilitySlugs = Array.from(
+      new Set(bundle.agents.flatMap((a) => a.capabilities.map((c) => c.slug)))
+    );
+    const capabilities = await prisma.aiCapability.findMany({
+      where: { slug: { in: allCapabilitySlugs } },
+      select: { id: true, slug: true },
     });
-  }
+    const capabilityIdBySlug = new Map(capabilities.map((c) => [c.slug, c.id]));
 
-  // Resolve capability slugs → ids up front so the transaction is short.
-  const allCapabilitySlugs = Array.from(
-    new Set(bundle.agents.flatMap((a) => a.capabilities.map((c) => c.slug)))
-  );
-  const capabilities = await prisma.aiCapability.findMany({
-    where: { slug: { in: allCapabilitySlugs } },
-    select: { id: true, slug: true },
-  });
-  const capabilityIdBySlug = new Map(capabilities.map((c) => [c.slug, c.id]));
+    // Resolve profile + knowledge-tag slugs → ids up front too. Unlike
+    // capabilities (which warn-and-skip for superset-env tolerance), a missing
+    // profile or knowledge tag is a HARD failure inside the transaction below:
+    // silently dropping an agent's profile inheritance or knowledge scoping would
+    // change its behaviour, so we fail the whole import with an actionable
+    // message naming the missing reference.
+    const allProfileSlugs = Array.from(
+      new Set(bundle.agents.map((a) => a.profileSlug).filter((s): s is string => Boolean(s)))
+    );
+    const profiles = await prisma.aiAgentProfile.findMany({
+      where: { slug: { in: allProfileSlugs } },
+      select: { id: true, slug: true },
+    });
+    const profileIdBySlug = new Map(profiles.map((p) => [p.slug, p.id]));
 
-  // Resolve profile + knowledge-tag slugs → ids up front too. Unlike
-  // capabilities (which warn-and-skip for superset-env tolerance), a missing
-  // profile or knowledge tag is a HARD failure inside the transaction below:
-  // silently dropping an agent's profile inheritance or knowledge scoping would
-  // change its behaviour, so we fail the whole import with an actionable
-  // message naming the missing reference.
-  const allProfileSlugs = Array.from(
-    new Set(bundle.agents.map((a) => a.profileSlug).filter((s): s is string => Boolean(s)))
-  );
-  const profiles = await prisma.aiAgentProfile.findMany({
-    where: { slug: { in: allProfileSlugs } },
-    select: { id: true, slug: true },
-  });
-  const profileIdBySlug = new Map(profiles.map((p) => [p.slug, p.id]));
+    const allTagSlugs = Array.from(new Set(bundle.agents.flatMap((a) => a.knowledgeTagSlugs)));
+    const tags = await prisma.knowledgeTag.findMany({
+      where: { slug: { in: allTagSlugs } },
+      select: { id: true, slug: true },
+    });
+    const tagIdBySlug = new Map(tags.map((t) => [t.slug, t.id]));
 
-  const allTagSlugs = Array.from(new Set(bundle.agents.flatMap((a) => a.knowledgeTagSlugs)));
-  const tags = await prisma.knowledgeTag.findMany({
-    where: { slug: { in: allTagSlugs } },
-    select: { id: true, slug: true },
-  });
-  const tagIdBySlug = new Map(tags.map((t) => [t.slug, t.id]));
+    const allDocumentSlugs = Array.from(
+      new Set(bundle.agents.flatMap((a) => a.knowledgeDocumentSlugs))
+    );
+    const documents = await prisma.aiKnowledgeDocument.findMany({
+      where: { slug: { in: allDocumentSlugs } },
+      select: { id: true, slug: true },
+    });
+    const documentIdBySlug = new Map(documents.map((d) => [d.slug, d.id]));
 
-  const allDocumentSlugs = Array.from(
-    new Set(bundle.agents.flatMap((a) => a.knowledgeDocumentSlugs))
-  );
-  const documents = await prisma.aiKnowledgeDocument.findMany({
-    where: { slug: { in: allDocumentSlugs } },
-    select: { id: true, slug: true },
-  });
-  const documentIdBySlug = new Map(documents.map((d) => [d.slug, d.id]));
+    const results: ImportResults = {
+      imported: 0,
+      overwritten: 0,
+      skipped: 0,
+      warnings: [],
+    };
 
-  const results: ImportResults = {
-    imported: 0,
-    overwritten: 0,
-    skipped: 0,
-    warnings: [],
-  };
+    // At multi, an agent naming a provider the org is not approved for is
+    // imported and flagged (§120 t-743). Asked once, before the transaction, so
+    // the policy read neither holds its connection nor fails the import.
+    const agentProviders = await importedAgentProviderWarnings(bundle.agents);
+    if (agentProviders.unchecked) results.warnings.push(agentProviders.unchecked);
 
-  // At multi, an agent naming a provider the org is not approved for is
-  // imported and flagged (§120 t-743). Asked once, before the transaction, so
-  // the policy read neither holds its connection nor fails the import.
-  const agentProviders = await importedAgentProviderWarnings(bundle.agents);
-  if (agentProviders.unchecked) results.warnings.push(agentProviders.unchecked);
+    await prisma
+      .$transaction(
+        async (tx) => {
+          for (const bundled of bundle.agents) {
+            const existing = await tx.aiAgent.findFirst({ where: { slug: bundled.slug } });
 
-  await prisma
-    .$transaction(
-      async (tx) => {
-        for (const bundled of bundle.agents) {
-          const existing = await tx.aiAgent.findFirst({ where: { slug: bundled.slug } });
-
-          if (existing && conflictMode === 'skip') {
-            results.skipped += 1;
-            continue;
-          }
-
-          if (existing && existing.isSystem) {
-            results.warnings.push(
-              `Agent '${bundled.slug}': skipped — cannot overwrite system agent`
-            );
-            results.skipped += 1;
-            continue;
-          }
-
-          // A platform agent's slug is never an org's own agent's (§116 t-725):
-          // neither a new one nor an overwrite of one that predates the rule.
-          if (isReservedAgentSlug(bundled.slug)) {
-            results.warnings.push(
-              `Agent '${bundled.slug}': skipped — ${reservedAgentSlugMessage(bundled.slug)}`
-            );
-            results.skipped += 1;
-            continue;
-          }
-
-          // Resolve this agent's capability links, warning on unknown slugs.
-          const pivotCreates: Prisma.AiAgentCapabilityCreateManyAgentInput[] = [];
-          for (const cap of bundled.capabilities) {
-            const capId = capabilityIdBySlug.get(cap.slug);
-            if (!capId) {
-              results.warnings.push(
-                `Agent '${bundled.slug}': capability '${cap.slug}' not found — skipped`
-              );
+            if (existing && conflictMode === 'skip') {
+              results.skipped += 1;
               continue;
             }
-            pivotCreates.push({
-              capabilityId: capId,
-              isEnabled: cap.isEnabled,
-              customConfig: (cap.customConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-              customRateLimit: cap.customRateLimit ?? null,
-            });
-          }
 
-          // Resolve the agent's profile + knowledge-tag references; a miss fails
-          // the whole import (the transaction rolls back) with an actionable error.
-          let profileId: string | null = null;
-          if (bundled.profileSlug) {
-            const resolved = profileIdBySlug.get(bundled.profileSlug);
-            if (!resolved) {
-              throw new ValidationError(
-                `Agent '${bundled.slug}': profile '${bundled.profileSlug}' not found in this environment — create it before importing.`,
-                { bundle: [`Missing profile: ${bundled.profileSlug}`] }
+            if (existing && existing.isSystem) {
+              results.warnings.push(
+                `Agent '${bundled.slug}': skipped — cannot overwrite system agent`
               );
+              results.skipped += 1;
+              continue;
             }
-            profileId = resolved;
-          }
 
-          const tagIds: string[] = [];
-          for (const tagSlug of bundled.knowledgeTagSlugs) {
-            const resolved = tagIdBySlug.get(tagSlug);
-            if (!resolved) {
-              throw new ValidationError(
-                `Agent '${bundled.slug}': knowledge tag '${tagSlug}' not found in this environment — create it before importing.`,
-                { bundle: [`Missing knowledge tag: ${tagSlug}`] }
+            // A platform agent's slug is never an org's own agent's (§116 t-725):
+            // neither a new one nor an overwrite of one that predates the rule.
+            if (isReservedAgentSlug(bundled.slug)) {
+              results.warnings.push(
+                `Agent '${bundled.slug}': skipped — ${reservedAgentSlugMessage(bundled.slug)}`
               );
+              results.skipped += 1;
+              continue;
             }
-            tagIds.push(resolved);
-          }
 
-          const documentIds: string[] = [];
-          for (const docSlug of bundled.knowledgeDocumentSlugs) {
-            const resolved = documentIdBySlug.get(docSlug);
-            if (!resolved) {
-              throw new ValidationError(
-                `Agent '${bundled.slug}': knowledge document '${docSlug}' not found in this environment — ingest it before importing.`,
-                { bundle: [`Missing knowledge document: ${docSlug}`] }
-              );
-            }
-            documentIds.push(resolved);
-          }
-
-          // Imported and flagged, not refused (§120 t-743).
-          const unapproved = agentProviders.bySlug.get(bundled.slug);
-          if (unapproved) results.warnings.push(unapproved);
-
-          const agentData = {
-            name: bundled.name,
-            description: bundled.description,
-            systemInstructions: bundled.systemInstructions,
-            systemInstructionsHistory:
-              bundled.systemInstructionsHistory as unknown as Prisma.InputJsonValue,
-            model: bundled.model,
-            provider: bundled.provider,
-            providerConfig: (bundled.providerConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-            temperature: bundled.temperature,
-            maxTokens: bundled.maxTokens,
-            reasoningEffort: bundled.reasoningEffort ?? null,
-            monthlyBudgetUsd: bundled.monthlyBudgetUsd ?? null,
-            maxCostPerTurnUsd: bundled.maxCostPerTurnUsd ?? null,
-            metadata: (bundled.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-            isActive: bundled.isActive,
-            fallbackProviders: bundled.fallbackProviders ?? [],
-            rateLimitRpm: bundled.rateLimitRpm ?? null,
-            inputGuardMode: bundled.inputGuardMode ?? null,
-            outputGuardMode: bundled.outputGuardMode ?? null,
-            citationGuardMode: bundled.citationGuardMode ?? null,
-            maxHistoryTokens: bundled.maxHistoryTokens ?? null,
-            maxHistoryMessages: bundled.maxHistoryMessages ?? null,
-            retentionDays: bundled.retentionDays ?? null,
-            visibility: bundled.visibility ?? 'internal',
-            // `knowledgeCategories` is dropped in Phase 6 — older bundles still
-            // include it on the wire (the import schema keeps the field optional
-            // for that reason) but we don't write it anywhere.
-            topicBoundaries: bundled.topicBoundaries ?? [],
-            brandVoiceInstructions: bundled.brandVoiceInstructions ?? null,
-            widgetConfig: (bundled.widgetConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-            kind: bundled.kind,
-            knowledgeAccessMode: bundled.knowledgeAccessMode,
-            knowledgeRetrievalMode: bundled.knowledgeRetrievalMode,
-            knowledgeTriggerKeywords: bundled.knowledgeTriggerKeywords,
-            persona: bundled.persona ?? null,
-            guardrails: bundled.guardrails ?? null,
-            personaMode: bundled.personaMode,
-            voiceMode: bundled.voiceMode,
-            guardrailsMode: bundled.guardrailsMode,
-            enableVoiceInput: bundled.enableVoiceInput,
-            enableImageInput: bundled.enableImageInput,
-            enableDocumentInput: bundled.enableDocumentInput,
-            runtimePromptManaged: bundled.runtimePromptManaged,
-            runtimePromptNote: bundled.runtimePromptNote ?? null,
-            profileId,
-          };
-
-          if (existing) {
-            // Overwrite: update the row, drop old pivots, recreate new ones.
-            await ensureBaselineVersion(tx, existing.id, session.user.id);
-            await tx.aiAgent.update({
-              where: { id: existing.id },
-              data: agentData,
-            });
-            await tx.aiAgentCapability.deleteMany({ where: { agentId: existing.id } });
-            if (pivotCreates.length > 0) {
-              await tx.aiAgentCapability.createMany({
-                data: pivotCreates.map((p) => ({ ...p, agentId: existing.id })),
+            // Resolve this agent's capability links, warning on unknown slugs.
+            const pivotCreates: Prisma.AiAgentCapabilityCreateManyAgentInput[] = [];
+            for (const cap of bundled.capabilities) {
+              const capId = capabilityIdBySlug.get(cap.slug);
+              if (!capId) {
+                results.warnings.push(
+                  `Agent '${bundled.slug}': capability '${cap.slug}' not found — skipped`
+                );
+                continue;
+              }
+              pivotCreates.push({
+                capabilityId: capId,
+                isEnabled: cap.isEnabled,
+                customConfig: (cap.customConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+                customRateLimit: cap.customRateLimit ?? null,
               });
             }
-            // Rebuild knowledge-tag grants the same way as capability pivots.
-            await tx.aiAgentKnowledgeTag.deleteMany({ where: { agentId: existing.id } });
-            if (tagIds.length > 0) {
-              await tx.aiAgentKnowledgeTag.createMany({
-                data: tagIds.map((tagId) => ({ agentId: existing.id, tagId })),
-                skipDuplicates: true,
-              });
+
+            // Resolve the agent's profile + knowledge-tag references; a miss fails
+            // the whole import (the transaction rolls back) with an actionable error.
+            let profileId: string | null = null;
+            if (bundled.profileSlug) {
+              const resolved = profileIdBySlug.get(bundled.profileSlug);
+              if (!resolved) {
+                throw new ValidationError(
+                  `Agent '${bundled.slug}': profile '${bundled.profileSlug}' not found in this environment — create it before importing.`,
+                  { bundle: [`Missing profile: ${bundled.profileSlug}`] }
+                );
+              }
+              profileId = resolved;
             }
-            // Rebuild knowledge-document grants the same way.
-            await tx.aiAgentKnowledgeDocument.deleteMany({ where: { agentId: existing.id } });
-            if (documentIds.length > 0) {
-              await tx.aiAgentKnowledgeDocument.createMany({
-                data: documentIds.map((documentId) => ({ agentId: existing.id, documentId })),
-                skipDuplicates: true,
-              });
+
+            const tagIds: string[] = [];
+            for (const tagSlug of bundled.knowledgeTagSlugs) {
+              const resolved = tagIdBySlug.get(tagSlug);
+              if (!resolved) {
+                throw new ValidationError(
+                  `Agent '${bundled.slug}': knowledge tag '${tagSlug}' not found in this environment — create it before importing.`,
+                  { bundle: [`Missing knowledge tag: ${tagSlug}`] }
+                );
+              }
+              tagIds.push(resolved);
             }
-            // The overwrite changed versioned config: save it as the next version
-            // so the newest version equals what the agent now runs.
-            await recordAgentVersion(tx, existing.id, {
-              label: IMPORT_VERSION_LABEL,
-              createdBy: session.user.id,
-            });
-            results.overwritten += 1;
-          } else {
-            const created = await tx.aiAgent.create({
-              data: {
-                ...agentData,
-                slug: bundled.slug,
+
+            const documentIds: string[] = [];
+            for (const docSlug of bundled.knowledgeDocumentSlugs) {
+              const resolved = documentIdBySlug.get(docSlug);
+              if (!resolved) {
+                throw new ValidationError(
+                  `Agent '${bundled.slug}': knowledge document '${docSlug}' not found in this environment — ingest it before importing.`,
+                  { bundle: [`Missing knowledge document: ${docSlug}`] }
+                );
+              }
+              documentIds.push(resolved);
+            }
+
+            // Imported and flagged, not refused (§120 t-743).
+            const unapproved = agentProviders.bySlug.get(bundled.slug);
+            if (unapproved) results.warnings.push(unapproved);
+
+            const agentData = {
+              name: bundled.name,
+              description: bundled.description,
+              systemInstructions: bundled.systemInstructions,
+              systemInstructionsHistory:
+                bundled.systemInstructionsHistory as unknown as Prisma.InputJsonValue,
+              model: bundled.model,
+              provider: bundled.provider,
+              providerConfig: (bundled.providerConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+              temperature: bundled.temperature,
+              maxTokens: bundled.maxTokens,
+              reasoningEffort: bundled.reasoningEffort ?? null,
+              monthlyBudgetUsd: bundled.monthlyBudgetUsd ?? null,
+              maxCostPerTurnUsd: bundled.maxCostPerTurnUsd ?? null,
+              metadata: (bundled.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+              isActive: bundled.isActive,
+              fallbackProviders: bundled.fallbackProviders ?? [],
+              rateLimitRpm: bundled.rateLimitRpm ?? null,
+              inputGuardMode: bundled.inputGuardMode ?? null,
+              outputGuardMode: bundled.outputGuardMode ?? null,
+              citationGuardMode: bundled.citationGuardMode ?? null,
+              maxHistoryTokens: bundled.maxHistoryTokens ?? null,
+              maxHistoryMessages: bundled.maxHistoryMessages ?? null,
+              retentionDays: bundled.retentionDays ?? null,
+              visibility: bundled.visibility ?? 'internal',
+              // `knowledgeCategories` is dropped in Phase 6 — older bundles still
+              // include it on the wire (the import schema keeps the field optional
+              // for that reason) but we don't write it anywhere.
+              topicBoundaries: bundled.topicBoundaries ?? [],
+              brandVoiceInstructions: bundled.brandVoiceInstructions ?? null,
+              widgetConfig: (bundled.widgetConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+              kind: bundled.kind,
+              knowledgeAccessMode: bundled.knowledgeAccessMode,
+              knowledgeRetrievalMode: bundled.knowledgeRetrievalMode,
+              knowledgeTriggerKeywords: bundled.knowledgeTriggerKeywords,
+              persona: bundled.persona ?? null,
+              guardrails: bundled.guardrails ?? null,
+              personaMode: bundled.personaMode,
+              voiceMode: bundled.voiceMode,
+              guardrailsMode: bundled.guardrailsMode,
+              enableVoiceInput: bundled.enableVoiceInput,
+              enableImageInput: bundled.enableImageInput,
+              enableDocumentInput: bundled.enableDocumentInput,
+              runtimePromptManaged: bundled.runtimePromptManaged,
+              runtimePromptNote: bundled.runtimePromptNote ?? null,
+              profileId,
+            };
+
+            if (existing) {
+              // Overwrite: update the row, drop old pivots, recreate new ones.
+              await ensureBaselineVersion(tx, existing.id, session.user.id);
+              await tx.aiAgent.update({
+                where: { id: existing.id },
+                data: agentData,
+              });
+              await tx.aiAgentCapability.deleteMany({ where: { agentId: existing.id } });
+              if (pivotCreates.length > 0) {
+                await tx.aiAgentCapability.createMany({
+                  data: pivotCreates.map((p) => ({ ...p, agentId: existing.id })),
+                });
+              }
+              // Rebuild knowledge-tag grants the same way as capability pivots.
+              await tx.aiAgentKnowledgeTag.deleteMany({ where: { agentId: existing.id } });
+              if (tagIds.length > 0) {
+                await tx.aiAgentKnowledgeTag.createMany({
+                  data: tagIds.map((tagId) => ({ agentId: existing.id, tagId })),
+                  skipDuplicates: true,
+                });
+              }
+              // Rebuild knowledge-document grants the same way.
+              await tx.aiAgentKnowledgeDocument.deleteMany({ where: { agentId: existing.id } });
+              if (documentIds.length > 0) {
+                await tx.aiAgentKnowledgeDocument.createMany({
+                  data: documentIds.map((documentId) => ({ agentId: existing.id, documentId })),
+                  skipDuplicates: true,
+                });
+              }
+              // The overwrite changed versioned config: save it as the next version
+              // so the newest version equals what the agent now runs.
+              await recordAgentVersion(tx, existing.id, {
+                label: IMPORT_VERSION_LABEL,
                 createdBy: session.user.id,
-              },
-            });
-            if (pivotCreates.length > 0) {
-              await tx.aiAgentCapability.createMany({
-                data: pivotCreates.map((p) => ({ ...p, agentId: created.id })),
               });
-            }
-            if (tagIds.length > 0) {
-              await tx.aiAgentKnowledgeTag.createMany({
-                data: tagIds.map((tagId) => ({ agentId: created.id, tagId })),
-                skipDuplicates: true,
+              results.overwritten += 1;
+            } else {
+              const created = await tx.aiAgent.create({
+                data: {
+                  ...agentData,
+                  slug: bundled.slug,
+                  createdBy: session.user.id,
+                },
               });
-            }
-            if (documentIds.length > 0) {
-              await tx.aiAgentKnowledgeDocument.createMany({
-                data: documentIds.map((documentId) => ({ agentId: created.id, documentId })),
-                skipDuplicates: true,
+              if (pivotCreates.length > 0) {
+                await tx.aiAgentCapability.createMany({
+                  data: pivotCreates.map((p) => ({ ...p, agentId: created.id })),
+                });
+              }
+              if (tagIds.length > 0) {
+                await tx.aiAgentKnowledgeTag.createMany({
+                  data: tagIds.map((tagId) => ({ agentId: created.id, tagId })),
+                  skipDuplicates: true,
+                });
+              }
+              if (documentIds.length > 0) {
+                await tx.aiAgentKnowledgeDocument.createMany({
+                  data: documentIds.map((documentId) => ({ agentId: created.id, documentId })),
+                  skipDuplicates: true,
+                });
+              }
+              // A restorable v1, as the create route writes for a new agent.
+              await recordAgentVersion(tx, created.id, {
+                label: INITIAL_VERSION_SUMMARY,
+                createdBy: session.user.id,
               });
+              results.imported += 1;
             }
-            // A restorable v1, as the create route writes for a new agent.
-            await recordAgentVersion(tx, created.id, {
-              label: INITIAL_VERSION_SUMMARY,
-              createdBy: session.user.id,
-            });
-            results.imported += 1;
           }
+        },
+        { timeout: AGENT_BATCH_TRANSACTION_TIMEOUT_MS }
+      )
+      .catch((err: unknown) => {
+        // A concurrent agent edit took a version number this import was about to
+        // write. The transaction rolled back, so the import can be retried. Any
+        // other unique violation is not retryable and goes to the shared API
+        // error handler.
+        if (isAgentVersionConflict(err)) {
+          throw new ConflictError(
+            'Agent import conflicted with a concurrent change. Please retry.'
+          );
         }
-      },
-      { timeout: AGENT_BATCH_TRANSACTION_TIMEOUT_MS }
-    )
-    .catch((err: unknown) => {
-      // A concurrent agent edit took a version number this import was about to
-      // write. The transaction rolled back, so the import can be retried. Any
-      // other unique violation is not retryable and goes to the shared API
-      // error handler.
-      if (isAgentVersionConflict(err)) {
-        throw new ConflictError('Agent import conflicted with a concurrent change. Please retry.');
-      }
-      throw err;
+        throw err;
+      });
+
+    capabilityDispatcher.clearCache();
+
+    log.info('Agents imported', {
+      ...results,
+      conflictMode,
+      adminId: session.user.id,
     });
 
-  capabilityDispatcher.clearCache();
+    logAdminAction({
+      userId: session.user.id,
+      action: 'agent.import',
+      entityType: 'agent',
+      entityId: 'bulk',
+      entityName: `${results.imported} imported, ${results.overwritten} overwritten`,
+      metadata: { ...results, conflictMode },
+      clientIp: clientIP,
+    });
 
-  log.info('Agents imported', {
-    ...results,
-    conflictMode,
-    adminId: session.user.id,
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'agent.import',
-    entityType: 'agent',
-    entityId: 'bulk',
-    entityName: `${results.imported} imported, ${results.overwritten} overwritten`,
-    metadata: { ...results, conflictMode },
-    clientIp: clientIP,
-  });
-
-  return successResponse(results);
-});
+    return successResponse(results);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);

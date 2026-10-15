@@ -12,6 +12,7 @@
 
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse, successResponse } from '@/lib/api/responses';
 import { ConflictError } from '@/lib/api/errors';
@@ -27,121 +28,134 @@ import {
 } from '@/lib/validations/orchestration';
 import { modelAgentUsage, modelUsageKey } from '@/lib/orchestration/admin/global-config-usage';
 
-export const GET = withAdminAuth(async (request, _session) => {
-  const log = await getRouteLogger(request);
+export const GET = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
 
-  const { searchParams } = new URL(request.url);
-  const { page, limit, isActive, tierRole, capability, providerSlug, q } = validateQueryParams(
-    searchParams,
-    listProviderModelsQuerySchema
-  );
-  const skip = (page - 1) * limit;
+    const { searchParams } = new URL(request.url);
+    const { page, limit, isActive, tierRole, capability, providerSlug, q } = validateQueryParams(
+      searchParams,
+      listProviderModelsQuerySchema
+    );
+    const skip = (page - 1) * limit;
 
-  const where: Prisma.AiProviderModelWhereInput = {};
-  if (isActive !== undefined) where.isActive = isActive;
-  if (tierRole) where.tierRole = tierRole;
-  if (providerSlug) where.providerSlug = providerSlug;
-  if (capability) where.capabilities = { has: capability };
-  if (q) {
-    where.OR = [
-      { name: { contains: q, mode: 'insensitive' } },
-      { slug: { contains: q, mode: 'insensitive' } },
-      { providerSlug: { contains: q, mode: 'insensitive' } },
-      { modelId: { contains: q, mode: 'insensitive' } },
-      { description: { contains: q, mode: 'insensitive' } },
-    ];
-  }
+    const where: Prisma.AiProviderModelWhereInput = {};
+    if (isActive !== undefined) where.isActive = isActive;
+    if (tierRole) where.tierRole = tierRole;
+    if (providerSlug) where.providerSlug = providerSlug;
+    if (capability) where.capabilities = { has: capability };
+    if (q) {
+      where.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { slug: { contains: q, mode: 'insensitive' } },
+        { providerSlug: { contains: q, mode: 'insensitive' } },
+        { modelId: { contains: q, mode: 'insensitive' } },
+        { description: { contains: q, mode: 'insensitive' } },
+      ];
+    }
 
-  const [rows, total, providerConfigs, settings] = await Promise.all([
-    prisma.aiProviderModel.findMany({
-      where,
-      orderBy: [{ providerSlug: 'asc' }, { name: 'asc' }],
-      skip,
-      take: limit,
-    }),
-    prisma.aiProviderModel.count({ where }),
-    // Look up which providers have a matching AiProviderConfig
-    prisma.aiProviderConfig.findMany({
-      select: { slug: true, isActive: true },
-    }),
-    // Resolve the effective default-models map so each row can advertise
-    // any TaskType slot it currently fills (routing/chat/reasoning/
-    // embeddings). Agents with empty provider/model fall back to these
-    // defaults at runtime, so a model serving a default is implicitly
-    // in use even when no agent directly names it.
-    getOrchestrationSettings(),
-  ]);
+    const [rows, total, providerConfigs, settings] = await Promise.all([
+      prisma.aiProviderModel.findMany({
+        where,
+        orderBy: [{ providerSlug: 'asc' }, { name: 'asc' }],
+        skip,
+        take: limit,
+      }),
+      prisma.aiProviderModel.count({ where }),
+      // Look up which providers have a matching AiProviderConfig
+      prisma.aiProviderConfig.findMany({
+        select: { slug: true, isActive: true },
+      }),
+      // Resolve the effective default-models map so each row can advertise
+      // any TaskType slot it currently fills (routing/chat/reasoning/
+      // embeddings). Agents with empty provider/model fall back to these
+      // defaults at runtime, so a model serving a default is implicitly
+      // in use even when no agent directly names it.
+      getOrchestrationSettings(),
+    ]);
 
-  // Bound active agents per (provider, modelId) pair, in every org (§107
-  // t-752): the caller's by name, other orgs' counted. Scoped to the slugs
-  // in the current page so a 100-row matrix doesn't drag the entire
-  // AiAgent table across the wire.
-  const usage = await modelAgentUsage(
-    [...new Set(rows.map((r) => r.providerSlug))],
-    [...new Set(rows.map((r) => r.modelId))]
-  );
+    // Bound active agents per (provider, modelId) pair, in every org (§107
+    // t-752): the caller's by name, other orgs' counted. Scoped to the slugs
+    // in the current page so a 100-row matrix doesn't drag the entire
+    // AiAgent table across the wire.
+    // Other orgs' usage is counted for a platform admin's delete check. A
+    // customer org's admin sees only their own org's (§111 t-811): how many
+    // of another tenant's agents use a shared row is not theirs to know.
+    const platform = await administersPlatform(session.principal);
+    const usage = await modelAgentUsage(
+      [...new Set(rows.map((r) => r.providerSlug))],
+      [...new Set(rows.map((r) => r.modelId))]
+    );
 
-  const configBySlug = new Map(providerConfigs.map((c) => [c.slug, c]));
+    const configBySlug = new Map(providerConfigs.map((c) => [c.slug, c]));
 
-  // Per-task matching rule. The `audio` slot stores a
-  // `${providerSlug}::${modelId}` composite (see
-  // `lib/orchestration/llm/audio-default.ts`) because the schema
-  // allows two providers to share a modelId. Every other slot stores
-  // a bare modelId resolved through the registry where ids are
-  // globally unique. Evaluating per-row is O(rows × TASK_TYPES) ≈
-  // O(rows × 5) — trivially fast and keeps the matching rule
-  // co-located instead of split across population + lookup.
-  const data = rows.map((model) => {
-    const config = configBySlug.get(model.providerSlug);
-    const used = usage.get(modelUsageKey(model.providerSlug, model.modelId));
-    const defaultFor: TaskType[] = [];
-    for (const task of TASK_TYPES) {
-      const stored = settings.defaultModels[task];
-      if (!stored) continue;
-      if (task === 'audio') {
-        const parsed = parseAudioDefault(stored);
-        if (!parsed) continue;
-        // Provider-scoped match — if the stored value carries a
-        // provider, both must agree before the badge lights up.
-        // Legacy bare-modelId values fall back to the modelId-only
-        // match (the original ambiguous behaviour) until the operator
-        // re-saves.
-        if (
-          parsed.modelId === model.modelId &&
-          (parsed.providerSlug === null || parsed.providerSlug === model.providerSlug)
-        ) {
+    // Per-task matching rule. The `audio` slot stores a
+    // `${providerSlug}::${modelId}` composite (see
+    // `lib/orchestration/llm/audio-default.ts`) because the schema
+    // allows two providers to share a modelId. Every other slot stores
+    // a bare modelId resolved through the registry where ids are
+    // globally unique. Evaluating per-row is O(rows × TASK_TYPES) ≈
+    // O(rows × 5) — trivially fast and keeps the matching rule
+    // co-located instead of split across population + lookup.
+    const data = rows.map((model) => {
+      const config = configBySlug.get(model.providerSlug);
+      const used = usage.get(modelUsageKey(model.providerSlug, model.modelId));
+      const defaultFor: TaskType[] = [];
+      for (const task of TASK_TYPES) {
+        const stored = settings.defaultModels[task];
+        if (!stored) continue;
+        if (task === 'audio') {
+          const parsed = parseAudioDefault(stored);
+          if (!parsed) continue;
+          // Provider-scoped match — if the stored value carries a
+          // provider, both must agree before the badge lights up.
+          // Legacy bare-modelId values fall back to the modelId-only
+          // match (the original ambiguous behaviour) until the operator
+          // re-saves.
+          if (
+            parsed.modelId === model.modelId &&
+            (parsed.providerSlug === null || parsed.providerSlug === model.providerSlug)
+          ) {
+            defaultFor.push(task);
+          }
+        } else if (stored === model.modelId) {
           defaultFor.push(task);
         }
-      } else if (stored === model.modelId) {
-        defaultFor.push(task);
       }
-    }
-    return {
-      ...model,
-      configured: !!config,
-      configuredActive: config?.isActive ?? false,
-      agents: used?.agents ?? [],
-      // Active agents in other orgs bound to it. Counted, never named; the
-      // delete is refused while this or `agents` is non-zero.
-      otherOrgAgentCount: used?.otherOrgAgents ?? 0,
-      // Task slots this model serves as the effective system default
-      // (routing/chat/reasoning/embeddings/audio). Agents with empty
-      // provider/model inherit these at runtime.
-      defaultFor,
-    };
-  });
+      return {
+        ...model,
+        configured: !!config,
+        configuredActive: config?.isActive ?? false,
+        agents: used?.agents ?? [],
+        // Active agents in other orgs bound to it. Counted, never named; the
+        // delete is refused while this or `agents` is non-zero.
+        otherOrgAgentCount: platform ? (used?.otherOrgAgents ?? 0) : 0,
+        // Task slots this model serves as the effective system default
+        // (routing/chat/reasoning/embeddings/audio). Agents with empty
+        // provider/model inherit these at runtime.
+        defaultFor,
+      };
+    });
 
-  log.info('Provider models listed', {
-    count: rows.length,
-    total,
-    page,
-    limit,
-    modelsInUse: data.filter((m) => m.agents.length + m.otherOrgAgentCount > 0).length,
-    modelsServingDefaults: data.filter((m) => m.defaultFor.length > 0).length,
-  });
+    log.info('Provider models listed', {
+      count: rows.length,
+      total,
+      page,
+      limit,
+      modelsInUse: data.filter((m) => m.agents.length + m.otherOrgAgentCount > 0).length,
+      modelsServingDefaults: data.filter((m) => m.defaultFor.length > 0).length,
+    });
 
-  return paginatedResponse(data, { page, limit, total });
-});
+    return paginatedResponse(data, { page, limit, total });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because: 'Shared configuration every org reads; it holds nobody’s personal rows.',
+    },
+  }
+);
 
 export const POST = withAdminAuth(
   async (request, session) => {

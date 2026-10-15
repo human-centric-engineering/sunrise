@@ -107,229 +107,244 @@ function stepOutputsFromTrace(trace: ExecutionTraceEntry[]): Record<string, unkn
   return out;
 }
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsedId = cuidSchema.safeParse(rawId);
-  if (!parsedId.success) {
-    throw new ValidationError('Invalid execution id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsedId.data;
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsedId = cuidSchema.safeParse(rawId);
+    if (!parsedId.success) {
+      throw new ValidationError('Invalid execution id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsedId.data;
 
-  // Parse the body (empty body is fine — all fields are optional).
-  let body: z.infer<typeof reviewBodySchema>;
-  try {
-    const raw = (await request.json().catch(() => ({}))) as unknown;
-    body = reviewBodySchema.parse(raw);
-  } catch (err) {
-    throw new ValidationError(
-      'Invalid request body',
-      err instanceof z.ZodError ? { _: err.issues.map((i) => i.message) } : { _: ['parse failed'] }
-    );
-  }
-
-  const execution = await prisma.aiWorkflowExecution.findUnique({ where: { id } });
-  if (!execution || !adminCanViewExecution(execution, session)) {
-    throw new NotFoundError(`Execution ${id} not found`);
-  }
-
-  if (!TERMINAL_STATUSES.has(execution.status)) {
-    throw new ConflictError(
-      `Execution is ${execution.status}. Retroactive review is only available on terminal executions.`
-    );
-  }
-
-  // Parse the persisted trace through the validator — drops noise.
-  const trace = executionTraceSchema.parse(execution.executionTrace);
-  // Webhook and API URLs are reduced inside runSupervisorAssessment (t-777).
-  const stepOutputs = stepOutputsFromTrace(trace);
-
-  if (Object.keys(stepOutputs).length === 0) {
-    throw new ConflictError(
-      'Execution trace contains no completed steps to review — there is nothing for the supervisor to audit. This usually means the workflow failed before any step could complete (validation error, immediate budget exhaustion, etc.).'
-    );
-  }
-
-  // Resolve the judge model + provider.
-  // Priority: explicit body override > EVALUATION_JUDGE_MODEL env > system
-  // default chat model. The final fallback ensures a deployment with no
-  // Anthropic provider (the previous hard-coded default) still gets a
-  // working retroactive review using whatever the operator configured.
-  //
-  // Held separately because the eligibility check below turns on WHICH arm
-  // answered, not on what the model is.
-  const operatorChoice = body.modelOverride ?? JUDGE_MODEL ?? null;
-  const modelId = operatorChoice ?? (await getDefaultModelForTask('chat'));
-  await hydrateModelRegistryFromDb();
-  const modelInfo = getModel(modelId);
-  if (!modelInfo) {
-    throw new ValidationError('Unknown model', {
-      modelOverride: [`Model "${modelId}" is not in the model registry`],
-    });
-  }
-
-  // Provider eligibility, on the task-default arm only. A request's
-  // `modelOverride` and the `EVALUATION_JUDGE_MODEL` env var are both an
-  // operator's recorded choice — the same category as an explicit
-  // `agent.provider`, which the seam also leaves alone. The third arm is
-  // Sunrise choosing, and what it sends is the execution's own step outputs.
-  if (operatorChoice === null) {
-    const permitted = await isProviderEligible(modelInfo.provider, {
-      task: 'chat',
-      source: 'primary',
-      primarySlug: null,
-    });
-    if (!permitted) {
-      log.error('Retroactive review blocked: default model resolves to a barred provider', {
-        executionId: id,
-        modelId,
-        providerSlug: modelInfo.provider,
-        fix: 'This provider is not permitted: at TENANCY_MODE=multi, by the org’s approved providers (GET /api/v1/admin/orgs/[id]/providers); or by the rule registered via registerProviderEligibility() in lib/app/llm-providers.ts — by policy, or because it threw (a rule that cannot be evaluated denies). Point the chat task default at a permitted model, set EVALUATION_JUDGE_MODEL, pass modelOverride, or widen the rule.',
-      });
-      // 403 with its own code, matching the enrich-keywords route: the admin is
-      // authorised and nothing is broken — the deployment's own policy bars the
-      // provider the task default resolves to, and the remedy is a settings
-      // change rather than a permission one.
-      return errorResponse(
-        `The default chat model "${modelId}" resolves to provider "${modelInfo.provider}", which is not permitted for retroactive review. Set EVALUATION_JUDGE_MODEL, pass an explicit modelOverride, or point the chat default at a permitted model.`,
-        { code: 'provider_not_permitted', status: 403 }
+    // Parse the body (empty body is fine — all fields are optional).
+    let body: z.infer<typeof reviewBodySchema>;
+    try {
+      const raw = (await request.json().catch(() => ({}))) as unknown;
+      body = reviewBodySchema.parse(raw);
+    } catch (err) {
+      throw new ValidationError(
+        'Invalid request body',
+        err instanceof z.ZodError
+          ? { _: err.issues.map((i) => i.message) }
+          : { _: ['parse failed'] }
       );
     }
-  }
 
-  // The call-time gate (§120 t-741) is told which arm answered, as above.
-  const provider = await getProvider(modelInfo.provider, {
-    task: 'chat',
-    source: operatorChoice === null ? 'primary' : 'explicit',
-    primarySlug: null,
-  });
+    const execution = await prisma.aiWorkflowExecution.findUnique({ where: { id } });
+    if (!execution || !adminCanViewExecution(execution, session)) {
+      throw new NotFoundError(`Execution ${id} not found`);
+    }
 
-  // Provider-agnostic LLM shim. Bills cost per call as a side-effect;
-  // the shared core treats this as opaque.
-  const llmCall: LlmCallShim = async (prompt, opts) => {
-    const response = await provider.chat([{ role: 'user', content: prompt }], {
-      model: modelId,
-      temperature: opts.temperature,
-    });
-    const cost = calculateCost(modelId, response.usage.inputTokens, response.usage.outputTokens);
-    void logCost({
-      workflowExecutionId: id,
-      userId: session.user.id,
-      model: modelId,
-      provider: modelInfo.provider,
-      inputTokens: response.usage.inputTokens,
-      outputTokens: response.usage.outputTokens,
-      operation: CostOperation.EVALUATION,
-      isLocal: cost.isLocal,
-      metadata: { phase: 'retroactive_supervisor' },
-    }).catch((err: unknown) => {
-      log.warn('retroactive supervisor: cost log failed', {
-        executionId: id,
-        error: err instanceof Error ? err.message : String(err),
+    if (!TERMINAL_STATUSES.has(execution.status)) {
+      throw new ConflictError(
+        `Execution is ${execution.status}. Retroactive review is only available on terminal executions.`
+      );
+    }
+
+    // Parse the persisted trace through the validator — drops noise.
+    const trace = executionTraceSchema.parse(execution.executionTrace);
+    // Webhook and API URLs are reduced inside runSupervisorAssessment (t-777).
+    const stepOutputs = stepOutputsFromTrace(trace);
+
+    if (Object.keys(stepOutputs).length === 0) {
+      throw new ConflictError(
+        'Execution trace contains no completed steps to review — there is nothing for the supervisor to audit. This usually means the workflow failed before any step could complete (validation error, immediate budget exhaustion, etc.).'
+      );
+    }
+
+    // Resolve the judge model + provider.
+    // Priority: explicit body override > EVALUATION_JUDGE_MODEL env > system
+    // default chat model. The final fallback ensures a deployment with no
+    // Anthropic provider (the previous hard-coded default) still gets a
+    // working retroactive review using whatever the operator configured.
+    //
+    // Held separately because the eligibility check below turns on WHICH arm
+    // answered, not on what the model is.
+    const operatorChoice = body.modelOverride ?? JUDGE_MODEL ?? null;
+    const modelId = operatorChoice ?? (await getDefaultModelForTask('chat'));
+    await hydrateModelRegistryFromDb();
+    const modelInfo = getModel(modelId);
+    if (!modelInfo) {
+      throw new ValidationError('Unknown model', {
+        modelOverride: [`Model "${modelId}" is not in the model registry`],
       });
-    });
-    return {
-      content: response.content,
-      tokensUsed: response.usage.inputTokens + response.usage.outputTokens,
-      costUsd: cost.totalCostUsd,
-    };
-  };
+    }
 
-  let assessment: Awaited<ReturnType<typeof runSupervisorAssessment>>;
-  try {
-    assessment = await runSupervisorAssessment({
-      stepOutputs,
-      inputData: execution.inputData,
-      outputData: execution.outputData,
-      workflowId: execution.workflowId,
-      executionId: id,
-      assessmentCriteria: body.assessmentCriteria ?? DEFAULT_ASSESSMENT_CRITERIA,
-      redTeamPrompts: body.redTeamPrompts,
-      requireEvidenceCitations: true,
-      minWeaknesses: body.minWeaknesses ?? 1,
-      includeStepOutputs: body.includeStepOutputs ?? 'auto',
-      temperature: 0.2,
-      llmCall,
-      triggeredBy: 'retroactive',
-    });
-  } catch (err) {
-    // The call-time gate (§120 t-741) refused an operator-chosen judge — a
-    // request `modelOverride` or `EVALUATION_JUDGE_MODEL`, which the check
-    // above deliberately leaves to it. Same answer as that check gives the
-    // task-default arm: a policy refusal, not a server fault. Provider errors
-    // bubble out of the assessment unwrapped, so this is the error itself.
-    if (err instanceof ProviderCallRefusedError) {
-      // Only a POLICY refusal is the admin's to fix, by choosing another judge:
-      // 403. One made for want of an org scope (at `multi`) would refuse every
-      // model alike — a server fault, so it answers as one.
-      if (err.reason === 'policy') {
+    // Provider eligibility, on the task-default arm only. A request's
+    // `modelOverride` and the `EVALUATION_JUDGE_MODEL` env var are both an
+    // operator's recorded choice — the same category as an explicit
+    // `agent.provider`, which the seam also leaves alone. The third arm is
+    // Sunrise choosing, and what it sends is the execution's own step outputs.
+    if (operatorChoice === null) {
+      const permitted = await isProviderEligible(modelInfo.provider, {
+        task: 'chat',
+        source: 'primary',
+        primarySlug: null,
+      });
+      if (!permitted) {
+        log.error('Retroactive review blocked: default model resolves to a barred provider', {
+          executionId: id,
+          modelId,
+          providerSlug: modelInfo.provider,
+          fix: 'This provider is not permitted: at TENANCY_MODE=multi, by the org’s approved providers (GET /api/v1/admin/orgs/[id]/providers); or by the rule registered via registerProviderEligibility() in lib/app/llm-providers.ts — by policy, or because it threw (a rule that cannot be evaluated denies). Point the chat task default at a permitted model, set EVALUATION_JUDGE_MODEL, pass modelOverride, or widen the rule.',
+        });
+        // 403 with its own code, matching the enrich-keywords route: the admin is
+        // authorised and nothing is broken — the deployment's own policy bars the
+        // provider the task default resolves to, and the remedy is a settings
+        // change rather than a permission one.
         return errorResponse(
-          `The judge model "${modelId}" resolves to provider "${modelInfo.provider}", which is not permitted for retroactive review. Choose a judge model on a permitted provider.`,
+          `The default chat model "${modelId}" resolves to provider "${modelInfo.provider}", which is not permitted for retroactive review. Set EVALUATION_JUDGE_MODEL, pass an explicit modelOverride, or point the chat default at a permitted model.`,
           { code: 'provider_not_permitted', status: 403 }
         );
       }
-      log.error('Retroactive review judge call ran outside an org scope', { executionId: id });
-      return errorResponse('The review could not run: the judge call had no organisation scope.', {
-        code: 'tenant_scope_missing',
-        status: 500,
-      });
     }
-    throw err;
-  }
 
-  // Archive any prior verdict into supervisorReport.previousVerdicts[] —
-  // operators rerun for a reason; overwriting silently would discard the
-  // history they want to compare against. Validate the prior column
-  // shape so a corrupted Json row can't break the archive lift; on
-  // parse failure we log and skip the archive rather than fail the
-  // rerun (the new verdict still writes through cleanly).
-  const finalReport: SupervisorReport = { ...assessment.report };
-  if (execution.supervisorVerdict && execution.supervisorReport) {
-    const priorParsed = priorSupervisorReportSchema.safeParse(execution.supervisorReport);
-    if (priorParsed.success) {
-      const prior = priorParsed.data;
-      const priorEntry: SupervisorPreviousVerdict = {
-        verdict: prior.verdict,
-        score: typeof prior.score === 'number' ? prior.score : null,
-        reviewedAt: execution.supervisorReviewedAt?.toISOString() ?? new Date(0).toISOString(),
-        triggeredBy: prior.triggeredBy ?? 'in_workflow',
+    // The call-time gate (§120 t-741) is told which arm answered, as above.
+    const provider = await getProvider(modelInfo.provider, {
+      task: 'chat',
+      source: operatorChoice === null ? 'primary' : 'explicit',
+      primarySlug: null,
+    });
+
+    // Provider-agnostic LLM shim. Bills cost per call as a side-effect;
+    // the shared core treats this as opaque.
+    const llmCall: LlmCallShim = async (prompt, opts) => {
+      const response = await provider.chat([{ role: 'user', content: prompt }], {
+        model: modelId,
+        temperature: opts.temperature,
+      });
+      const cost = calculateCost(modelId, response.usage.inputTokens, response.usage.outputTokens);
+      void logCost({
+        workflowExecutionId: id,
+        userId: session.user.id,
+        model: modelId,
+        provider: modelInfo.provider,
+        inputTokens: response.usage.inputTokens,
+        outputTokens: response.usage.outputTokens,
+        operation: CostOperation.EVALUATION,
+        isLocal: cost.isLocal,
+        metadata: { phase: 'retroactive_supervisor' },
+      }).catch((err: unknown) => {
+        log.warn('retroactive supervisor: cost log failed', {
+          executionId: id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+      return {
+        content: response.content,
+        tokensUsed: response.usage.inputTokens + response.usage.outputTokens,
+        costUsd: cost.totalCostUsd,
       };
-      const existing = prior.previousVerdicts ?? [];
-      finalReport.previousVerdicts = [...existing, priorEntry];
-    } else {
-      logger.warn('Prior supervisorReport failed schema validation — archive skipped', {
+    };
+
+    let assessment: Awaited<ReturnType<typeof runSupervisorAssessment>>;
+    try {
+      assessment = await runSupervisorAssessment({
+        stepOutputs,
+        inputData: execution.inputData,
+        outputData: execution.outputData,
+        workflowId: execution.workflowId,
         executionId: id,
-        issues: priorParsed.error.issues.map((i) => i.message),
+        assessmentCriteria: body.assessmentCriteria ?? DEFAULT_ASSESSMENT_CRITERIA,
+        redTeamPrompts: body.redTeamPrompts,
+        requireEvidenceCitations: true,
+        minWeaknesses: body.minWeaknesses ?? 1,
+        includeStepOutputs: body.includeStepOutputs ?? 'auto',
+        temperature: 0.2,
+        llmCall,
+        triggeredBy: 'retroactive',
       });
+    } catch (err) {
+      // The call-time gate (§120 t-741) refused an operator-chosen judge — a
+      // request `modelOverride` or `EVALUATION_JUDGE_MODEL`, which the check
+      // above deliberately leaves to it. Same answer as that check gives the
+      // task-default arm: a policy refusal, not a server fault. Provider errors
+      // bubble out of the assessment unwrapped, so this is the error itself.
+      if (err instanceof ProviderCallRefusedError) {
+        // Only a POLICY refusal is the admin's to fix, by choosing another judge:
+        // 403. One made for want of an org scope (at `multi`) would refuse every
+        // model alike — a server fault, so it answers as one.
+        if (err.reason === 'policy') {
+          return errorResponse(
+            `The judge model "${modelId}" resolves to provider "${modelInfo.provider}", which is not permitted for retroactive review. Choose a judge model on a permitted provider.`,
+            { code: 'provider_not_permitted', status: 403 }
+          );
+        }
+        log.error('Retroactive review judge call ran outside an org scope', { executionId: id });
+        return errorResponse(
+          'The review could not run: the judge call had no organisation scope.',
+          {
+            code: 'tenant_scope_missing',
+            status: 500,
+          }
+        );
+      }
+      throw err;
     }
-  }
 
-  // Confined as the read above was, so the owner layer sees a write it can
-  // check: the row it returns is one this caller may read.
-  await prisma.aiWorkflowExecution.update({
-    where: { id, AND: [executionVisibilityWhere(session)] },
-    data: {
-      supervisorVerdict: finalReport.verdict,
-      supervisorScore: finalReport.score,
-      supervisorReport: finalReport as unknown as Prisma.InputJsonValue,
-      supervisorReviewedAt: new Date(),
+    // Archive any prior verdict into supervisorReport.previousVerdicts[] —
+    // operators rerun for a reason; overwriting silently would discard the
+    // history they want to compare against. Validate the prior column
+    // shape so a corrupted Json row can't break the archive lift; on
+    // parse failure we log and skip the archive rather than fail the
+    // rerun (the new verdict still writes through cleanly).
+    const finalReport: SupervisorReport = { ...assessment.report };
+    if (execution.supervisorVerdict && execution.supervisorReport) {
+      const priorParsed = priorSupervisorReportSchema.safeParse(execution.supervisorReport);
+      if (priorParsed.success) {
+        const prior = priorParsed.data;
+        const priorEntry: SupervisorPreviousVerdict = {
+          verdict: prior.verdict,
+          score: typeof prior.score === 'number' ? prior.score : null,
+          reviewedAt: execution.supervisorReviewedAt?.toISOString() ?? new Date(0).toISOString(),
+          triggeredBy: prior.triggeredBy ?? 'in_workflow',
+        };
+        const existing = prior.previousVerdicts ?? [];
+        finalReport.previousVerdicts = [...existing, priorEntry];
+      } else {
+        logger.warn('Prior supervisorReport failed schema validation — archive skipped', {
+          executionId: id,
+          issues: priorParsed.error.issues.map((i) => i.message),
+        });
+      }
+    }
+
+    // Confined as the read above was, so the owner layer sees a write it can
+    // check: the row it returns is one this caller may read.
+    await prisma.aiWorkflowExecution.update({
+      where: { id, AND: [executionVisibilityWhere(session)] },
+      data: {
+        supervisorVerdict: finalReport.verdict,
+        supervisorScore: finalReport.score,
+        supervisorReport: finalReport as unknown as Prisma.InputJsonValue,
+        supervisorReviewedAt: new Date(),
+      },
+    });
+
+    log.info('Retroactive supervisor review completed', {
+      executionId: id,
+      verdict: finalReport.verdict,
+      score: finalReport.score,
+      tokensUsed: assessment.tokensUsed,
+      costUsd: assessment.costUsd,
+    });
+
+    return successResponse({
+      verdict: finalReport.verdict,
+      score: finalReport.score,
+      summary: finalReport.summary,
+      report: finalReport,
+      tokensUsed: assessment.tokensUsed,
+      costUsd: assessment.costUsd,
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Acts only on executions this caller may see — their own, an ownerless (scheduled or inbound) run where the policy permits it, or one whose trace names them as an approver — keyed on the caller's id.",
     },
-  });
-
-  log.info('Retroactive supervisor review completed', {
-    executionId: id,
-    verdict: finalReport.verdict,
-    score: finalReport.score,
-    tokensUsed: assessment.tokensUsed,
-    costUsd: assessment.costUsd,
-  });
-
-  return successResponse({
-    verdict: finalReport.verdict,
-    score: finalReport.score,
-    summary: finalReport.summary,
-    report: finalReport,
-    tokensUsed: assessment.tokensUsed,
-    costUsd: assessment.costUsd,
-  });
-});
+  }
+);

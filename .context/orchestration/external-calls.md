@@ -129,6 +129,8 @@ Beyond `authSecret`, certain fields whose values may themselves be credentials (
 
 **Resolution order in `external_call`.** Env-template resolution runs on `config.url` **before** workflow-context interpolation, so a workflow input value containing literal `${env:VAR}` text cannot trigger env substitution. This is security-critical: reversing the order would let user-controlled content (a chat message that reaches the URL via `{{input.message}}`) introduce a `${env:SECRET}` token that the resolver would then expand, leaking the secret as a URL path component to allowlisted endpoints. Headers are not interpolated, so order doesn't matter for them. The `call_external_api` capability has no equivalent issue: `forcedUrl` and `forcedHeaders` are admin-only fields that never carry interpolated user content.
 
+**Which env vars an org may name (`multi`, §111 t-811).** The process environment is the platform operator's: the session secret, the database URL, the provider keys. An org OWNER/ADMIN can author bindings and workflows, so in a customer org a `${env:NAME}` template, an `authSecret` / `auth.secret`, or an outbound channel's `*Env` field may name only env vars starting `ORG_<ORG ID>_` (the org's id upper-cased, for example `ORG_CMORG0000000000000000ORGB_SLACK_URL`). To give a customer org a credential, set it under that prefix. The install org, a system scope, and every install at `single` may name any env var, as before. A call stack with no tenant context at `multi` names none. The check runs where the value is read (`resolveEnvTemplate`, `readSecret` in `lib/orchestration/http/auth.ts`), so it covers every write path that stores a config. It also runs before the variable is looked up, so a refusal does not reveal whether the operator's variable is set. The binding-save warning lists a refused name apart from an unset one, with the prefix to rename it under (`meta.warnings.unavailableEnvVars`, `envVarPrefix`), and never looks the refused name up. A refused name fails as `invalid_binding` on `call_external_api` and as `env_var_not_available` on `external_call`.
+
 **Failure mode.** Same fail-closed posture as `readSecret()`:
 
 | Surface              | Missing env var → error                                                      |
@@ -255,22 +257,23 @@ Auth headers and secrets are never logged.
 
 ## Error codes
 
-| Code                         | Retriable | Description                                                                    |
-| ---------------------------- | --------- | ------------------------------------------------------------------------------ |
-| `missing_url`                | Yes       | Step config has no `url`                                                       |
-| `missing_env_var`            | No        | A `${env:VAR}` reference in `url` / `headers` points at an unset env var       |
-| `host_not_allowed`           | No        | Hostname not in `ORCHESTRATION_ALLOWED_HOSTS`                                  |
-| `missing_auth_secret`        | No        | Auth env var is not set                                                        |
-| `multipart_hmac_unsupported` | No        | HMAC auth was paired with a multipart body — disallowed                        |
-| `invalid_base64`             | No        | A multipart file `data` was not valid base64                                   |
-| `body_too_large`             | No        | The multipart total body (files + fields) exceeded `MAX_TOTAL_MULTIPART_BYTES` |
-| `outbound_rate_limited`      | Yes       | Per-host rate limit exceeded                                                   |
-| `request_failed`             | Yes       | Network error or timeout                                                       |
-| `request_aborted`            | No        | Execution's AbortSignal was already triggered                                  |
-| `http_error`                 | No        | Non-retriable HTTP status (4xx except 429)                                     |
-| `http_error_retriable`       | Yes       | Retriable HTTP status (429, 502, 503, 504)                                     |
-| `response_too_large`         | No        | Response body exceeds `maxResponseBytes`                                       |
-| `step_timeout`               | No        | Per-step timeout exceeded (engine-level)                                       |
+| Code                         | Retriable | Description                                                                                                              |
+| ---------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `missing_url`                | Yes       | Step config has no `url`                                                                                                 |
+| `missing_env_var`            | No        | A `${env:VAR}` reference in `url` / `headers` points at an unset env var                                                 |
+| `host_not_allowed`           | No        | Hostname not in `ORCHESTRATION_ALLOWED_HOSTS`                                                                            |
+| `missing_auth_secret`        | No        | Auth env var is not set                                                                                                  |
+| `env_var_not_available`      | No        | A `${env:VAR}` template or the auth env var names a variable outside the customer org's `ORG_<ORG ID>_` prefix (`multi`) |
+| `multipart_hmac_unsupported` | No        | HMAC auth was paired with a multipart body — disallowed                                                                  |
+| `invalid_base64`             | No        | A multipart file `data` was not valid base64                                                                             |
+| `body_too_large`             | No        | The multipart total body (files + fields) exceeded `MAX_TOTAL_MULTIPART_BYTES`                                           |
+| `outbound_rate_limited`      | Yes       | Per-host rate limit exceeded                                                                                             |
+| `request_failed`             | Yes       | Network error or timeout                                                                                                 |
+| `request_aborted`            | No        | Execution's AbortSignal was already triggered                                                                            |
+| `http_error`                 | No        | Non-retriable HTTP status (4xx except 429)                                                                               |
+| `http_error_retriable`       | Yes       | Retriable HTTP status (429, 502, 503, 504)                                                                               |
+| `response_too_large`         | No        | Response body exceeds `maxResponseBytes`                                                                                 |
+| `step_timeout`               | No        | Per-step timeout exceeded (engine-level)                                                                                 |
 
 ## Environment variables
 

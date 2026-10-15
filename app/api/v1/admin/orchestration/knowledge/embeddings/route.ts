@@ -126,32 +126,33 @@ interface RawChunkRow {
   embeddingText: string;
 }
 
-export const GET = withAdminAuth(async (request) => {
-  const log = await getRouteLogger(request);
-  const { searchParams } = new URL(request.url);
-  const { scope, limit, nNeighbors } = validateQueryParams(searchParams, querySchema);
+export const GET = withAdminAuth(
+  async (request) => {
+    const log = await getRouteLogger(request);
+    const { searchParams } = new URL(request.url);
+    const { scope, limit, nNeighbors } = validateQueryParams(searchParams, querySchema);
 
-  // Count embedded chunks first so we can decide whether to sample.
-  // The scope filter joins on the document table; we keep the join in
-  // raw SQL because the chunk table's `embedding` column is pgvector
-  // (Unsupported in the typed Prisma client).
-  const totalEmbeddedRows = await prisma.$queryRaw<Array<{ count: bigint }>>`
+    // Count embedded chunks first so we can decide whether to sample.
+    // The scope filter joins on the document table; we keep the join in
+    // raw SQL because the chunk table's `embedding` column is pgvector
+    // (Unsupported in the typed Prisma client).
+    const totalEmbeddedRows = await prisma.$queryRaw<Array<{ count: bigint }>>`
     SELECT COUNT(c.id)::bigint AS count
       FROM ai_knowledge_chunk c
       JOIN ai_knowledge_document d ON d.id = c."documentId"
      WHERE c.embedding IS NOT NULL
        AND (${scope ?? null}::text IS NULL OR d.scope = ${scope ?? null}::text)
   `;
-  const totalEmbedded = Number(totalEmbeddedRows[0]?.count ?? 0);
-  const truncated = totalEmbedded > limit;
+    const totalEmbedded = Number(totalEmbeddedRows[0]?.count ?? 0);
+    const truncated = totalEmbedded > limit;
 
-  // Uniform sampling: when totalEmbedded > limit, take every (totalEmbedded / limit)-th
-  // chunk by id ordering. We use a window function so the sample stride
-  // is computed inside the query rather than streaming everything to
-  // Node first.
-  const stride = truncated ? Math.ceil(totalEmbedded / limit) : 1;
+    // Uniform sampling: when totalEmbedded > limit, take every (totalEmbedded / limit)-th
+    // chunk by id ordering. We use a window function so the sample stride
+    // is computed inside the query rather than streaming everything to
+    // Node first.
+    const stride = truncated ? Math.ceil(totalEmbedded / limit) : 1;
 
-  const rows = await prisma.$queryRaw<RawChunkRow[]>`
+    const rows = await prisma.$queryRaw<RawChunkRow[]>`
     WITH numbered AS (
       SELECT
         c.id,
@@ -182,88 +183,97 @@ export const GET = withAdminAuth(async (request) => {
      LIMIT ${limit}::int
   `;
 
-  // Parse each pgvector text blob into a number[] and drop rows whose
-  // vector was malformed. A malformed embedding is a data integrity
-  // problem worth surfacing in logs, but we keep going — one bad row
-  // shouldn't deny the whole projection.
-  const parsedChunks: Array<RawChunkRow & { vector: number[] }> = [];
-  let droppedMalformed = 0;
-  for (const row of rows) {
-    const v = parseVector(row.embeddingText);
-    if (!v) {
-      droppedMalformed++;
-      continue;
+    // Parse each pgvector text blob into a number[] and drop rows whose
+    // vector was malformed. A malformed embedding is a data integrity
+    // problem worth surfacing in logs, but we keep going — one bad row
+    // shouldn't deny the whole projection.
+    const parsedChunks: Array<RawChunkRow & { vector: number[] }> = [];
+    let droppedMalformed = 0;
+    for (const row of rows) {
+      const v = parseVector(row.embeddingText);
+      if (!v) {
+        droppedMalformed++;
+        continue;
+      }
+      parsedChunks.push({ ...row, vector: v });
     }
-    parsedChunks.push({ ...row, vector: v });
-  }
-  if (droppedMalformed > 0) {
-    log.warn('Dropped chunks with malformed embedding text during projection', {
-      droppedMalformed,
-      retained: parsedChunks.length,
-    });
-  }
+    if (droppedMalformed > 0) {
+      log.warn('Dropped chunks with malformed embedding text during projection', {
+        droppedMalformed,
+        retained: parsedChunks.length,
+      });
+    }
 
-  // Build the response. Project only when we have enough points to
-  // make UMAP behave sensibly; below the floor the user gets back the
-  // chunks with x=y=0 plus a stats flag the UI can render as a hint.
-  const projectable = parsedChunks.length >= MIN_USEFUL_POINTS;
+    // Build the response. Project only when we have enough points to
+    // make UMAP behave sensibly; below the floor the user gets back the
+    // chunks with x=y=0 plus a stats flag the UI can render as a hint.
+    const projectable = parsedChunks.length >= MIN_USEFUL_POINTS;
 
-  let projection: Array<[number, number]> = [];
-  if (projectable) {
-    // Clamp nNeighbors to (totalPoints - 1). UMAP rejects nNeighbors >=
-    // dataset size (it can't find k+1 neighbours) — we silently lower
-    // rather than 400 the request.
-    const effectiveNeighbors = Math.min(nNeighbors, parsedChunks.length - 1);
-    const umap = new UMAP({
-      nComponents: 2,
-      nNeighbors: effectiveNeighbors,
-      minDist: 0.1,
-      spread: 1,
-      random: seededRandom(PROJECTION_SEED),
-    });
-    const result = umap.fit(parsedChunks.map((c) => c.vector));
-    // umap-js returns number[][] where each inner array has length
-    // `nComponents`. We've fixed that to 2, so destructure to a tuple.
-    projection = result.map((coords): [number, number] => [coords[0] ?? 0, coords[1] ?? 0]);
-  }
+    let projection: Array<[number, number]> = [];
+    if (projectable) {
+      // Clamp nNeighbors to (totalPoints - 1). UMAP rejects nNeighbors >=
+      // dataset size (it can't find k+1 neighbours) — we silently lower
+      // rather than 400 the request.
+      const effectiveNeighbors = Math.min(nNeighbors, parsedChunks.length - 1);
+      const umap = new UMAP({
+        nComponents: 2,
+        nNeighbors: effectiveNeighbors,
+        minDist: 0.1,
+        spread: 1,
+        random: seededRandom(PROJECTION_SEED),
+      });
+      const result = umap.fit(parsedChunks.map((c) => c.vector));
+      // umap-js returns number[][] where each inner array has length
+      // `nComponents`. We've fixed that to 2, so destructure to a tuple.
+      projection = result.map((coords): [number, number] => [coords[0] ?? 0, coords[1] ?? 0]);
+    }
 
-  const chunks = parsedChunks.map((c, i) => ({
-    id: c.id,
-    documentId: c.documentId,
-    documentName: c.documentName,
-    documentStatus: c.documentStatus,
-    chunkType: c.chunkType,
-    patternName: c.patternName,
-    section: c.section,
-    estimatedTokens: c.estimatedTokens ?? 0,
-    contentPreview: c.content.slice(0, 240),
-    embeddingModel: c.embeddingModel,
-    embeddingProvider: c.embeddingProvider,
-    embeddedAt: c.embeddedAt,
-    x: projection[i]?.[0] ?? 0,
-    y: projection[i]?.[1] ?? 0,
-  }));
+    const chunks = parsedChunks.map((c, i) => ({
+      id: c.id,
+      documentId: c.documentId,
+      documentName: c.documentName,
+      documentStatus: c.documentStatus,
+      chunkType: c.chunkType,
+      patternName: c.patternName,
+      section: c.section,
+      estimatedTokens: c.estimatedTokens ?? 0,
+      contentPreview: c.content.slice(0, 240),
+      embeddingModel: c.embeddingModel,
+      embeddingProvider: c.embeddingProvider,
+      embeddedAt: c.embeddedAt,
+      x: projection[i]?.[0] ?? 0,
+      y: projection[i]?.[1] ?? 0,
+    }));
 
-  log.info('Knowledge embedding projection computed', {
-    totalEmbedded,
-    returned: chunks.length,
-    truncated,
-    droppedMalformed,
-    projectable,
-    nNeighbors,
-    scope: scope ?? 'all',
-  });
-
-  return successResponse({
-    chunks,
-    stats: {
+    log.info('Knowledge embedding projection computed', {
       totalEmbedded,
       returned: chunks.length,
       truncated,
       droppedMalformed,
       projectable,
-      maxChunks: limit,
-      minUsefulPoints: MIN_USEFUL_POINTS,
+      nNeighbors,
+      scope: scope ?? 'all',
+    });
+
+    return successResponse({
+      chunks,
+      stats: {
+        totalEmbedded,
+        returned: chunks.length,
+        truncated,
+        droppedMalformed,
+        projectable,
+        maxChunks: limit,
+        minUsefulPoints: MIN_USEFUL_POINTS,
+      },
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
     },
-  });
-});
+  }
+);

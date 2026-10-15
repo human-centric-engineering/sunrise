@@ -28,34 +28,44 @@ const listVersionsQuerySchema = z.object({
   cursor: workflowVersionIdSchema.optional(),
 });
 
-export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, _session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
+
+    // Existence check before listing — avoids returning an empty list for an
+    // ID that doesn't exist (which would leak the difference between a deleted
+    // workflow and one with no versions).
+    const exists = await prisma.aiWorkflow.findUnique({
+      where: { id },
+      select: { id: true, publishedVersionId: true },
+    });
+    if (!exists) throw new NotFoundError(`Workflow ${id} not found`);
+
+    const { searchParams } = new URL(request.url);
+    const opts = validateQueryParams(searchParams, listVersionsQuerySchema);
+
+    const result = await listVersions(id, opts);
+
+    log.info('Workflow versions listed', { workflowId: id, count: result.versions.length });
+
+    return successResponse({
+      versions: result.versions,
+      publishedVersionId: exists.publishedVersionId,
+      nextCursor: result.nextCursor,
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Workflows, their versions, schedules and templates are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-  const id = parsed.data;
-
-  // Existence check before listing — avoids returning an empty list for an
-  // ID that doesn't exist (which would leak the difference between a deleted
-  // workflow and one with no versions).
-  const exists = await prisma.aiWorkflow.findUnique({
-    where: { id },
-    select: { id: true, publishedVersionId: true },
-  });
-  if (!exists) throw new NotFoundError(`Workflow ${id} not found`);
-
-  const { searchParams } = new URL(request.url);
-  const opts = validateQueryParams(searchParams, listVersionsQuerySchema);
-
-  const result = await listVersions(id, opts);
-
-  log.info('Workflow versions listed', { workflowId: id, count: result.versions.length });
-
-  return successResponse({
-    versions: result.versions,
-    publishedVersionId: exists.publishedVersionId,
-    nextCursor: result.nextCursor,
-  });
-});
+);

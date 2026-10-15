@@ -123,5 +123,13 @@ export const POST = withAdminAuth<{ id: string; changeId: string }>(
       changeId,
       newContent: change.afterContent,
     });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
 );

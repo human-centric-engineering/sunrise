@@ -44,109 +44,121 @@ import {
 
 const REVERT_VERSION_LABEL = 'Reverted from instruction history';
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = validatePathParam(rawId, cuidSchema, { label: 'agent id' });
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = validatePathParam(rawId, cuidSchema, { label: 'agent id' });
 
-  const body = await validateRequestBody(request, instructionsRevertSchema);
+    const body = await validateRequestBody(request, instructionsRevertSchema);
 
-  const current = await prisma.aiAgent.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      isSystem: true,
-      systemInstructions: true,
-      systemInstructionsHistory: true,
-    },
-  });
-  if (!current) throw new NotFoundError(`Agent ${id} not found`);
+    const current = await prisma.aiAgent.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        isSystem: true,
+        systemInstructions: true,
+        systemInstructionsHistory: true,
+      },
+    });
+    if (!current) throw new NotFoundError(`Agent ${id} not found`);
 
-  if (current.isSystem) {
-    throw new ForbiddenError('Cannot revert instructions on system agents');
-  }
+    if (current.isSystem) {
+      throw new ForbiddenError('Cannot revert instructions on system agents');
+    }
 
-  const historyParse = systemInstructionsHistorySchema.safeParse(current.systemInstructionsHistory);
-  if (!historyParse.success) {
-    logger.warn('instructions-revert: systemInstructionsHistory malformed, refusing revert', {
+    const historyParse = systemInstructionsHistorySchema.safeParse(
+      current.systemInstructionsHistory
+    );
+    if (!historyParse.success) {
+      logger.warn('instructions-revert: systemInstructionsHistory malformed, refusing revert', {
+        agentId: id,
+        issues: historyParse.error.issues,
+      });
+      throw new ValidationError('Stored instructions history is malformed; cannot revert', {
+        systemInstructionsHistory: ['Malformed history — contact a DBA'],
+      });
+    }
+
+    const history: SystemInstructionsHistoryEntry[] = historyParse.data;
+    if (history.length === 0) {
+      throw new ValidationError('No instruction history available to revert', {
+        versionIndex: ['This agent has no previous instructions to revert to'],
+      });
+    }
+    if (body.versionIndex >= history.length) {
+      throw new ValidationError('versionIndex out of range', {
+        versionIndex: [`Must be between 0 and ${history.length - 1}`],
+      });
+    }
+
+    const target = history[body.versionIndex];
+
+    // Push the value we're reverting *from* onto history so it's recoverable.
+    const nextHistory: SystemInstructionsHistoryEntry[] = [
+      ...history,
+      {
+        instructions: current.systemInstructions,
+        changedAt: new Date().toISOString(),
+        changedBy: session.user.id,
+      },
+    ];
+
+    // Instructions are versioned, so the revert saves a version in the same
+    // transaction: the newest version must equal what the agent now runs, or
+    // every chat turn after it is pinned to a config it did not run.
+    const agent = await prisma
+      .$transaction(async (tx) => {
+        await ensureBaselineVersion(tx, id, session.user.id);
+        const updated = await tx.aiAgent.update({
+          where: { id },
+          data: {
+            systemInstructions: target.instructions,
+            systemInstructionsHistory: nextHistory,
+          },
+        });
+        await recordAgentVersion(tx, id, {
+          label: REVERT_VERSION_LABEL,
+          createdBy: session.user.id,
+        });
+        return updated;
+      })
+      .catch((err: unknown) => {
+        // A concurrent edit to this agent took the version number. The
+        // transaction rolled back, so the revert can be retried.
+        if (isAgentVersionConflict(err)) {
+          throw new ConflictError('Revert conflicted with a concurrent change. Please retry.');
+        }
+        throw err;
+      });
+
+    log.info('Agent systemInstructions reverted', {
       agentId: id,
-      issues: historyParse.error.issues,
+      versionIndex: body.versionIndex,
+      adminId: session.user.id,
+      historyLength: nextHistory.length,
     });
-    throw new ValidationError('Stored instructions history is malformed; cannot revert', {
-      systemInstructionsHistory: ['Malformed history — contact a DBA'],
-    });
-  }
 
-  const history: SystemInstructionsHistoryEntry[] = historyParse.data;
-  if (history.length === 0) {
-    throw new ValidationError('No instruction history available to revert', {
-      versionIndex: ['This agent has no previous instructions to revert to'],
+    logAdminAction({
+      userId: session.user.id,
+      action: 'agent.instructions_revert',
+      entityType: 'agent',
+      entityId: id,
+      entityName: agent.name,
+      metadata: { versionIndex: body.versionIndex, historyLength: nextHistory.length },
+      clientIp: clientIP,
     });
-  }
-  if (body.versionIndex >= history.length) {
-    throw new ValidationError('versionIndex out of range', {
-      versionIndex: [`Must be between 0 and ${history.length - 1}`],
-    });
-  }
 
-  const target = history[body.versionIndex];
-
-  // Push the value we're reverting *from* onto history so it's recoverable.
-  const nextHistory: SystemInstructionsHistoryEntry[] = [
-    ...history,
-    {
-      instructions: current.systemInstructions,
-      changedAt: new Date().toISOString(),
-      changedBy: session.user.id,
+    return successResponse(agent);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
     },
-  ];
-
-  // Instructions are versioned, so the revert saves a version in the same
-  // transaction: the newest version must equal what the agent now runs, or
-  // every chat turn after it is pinned to a config it did not run.
-  const agent = await prisma
-    .$transaction(async (tx) => {
-      await ensureBaselineVersion(tx, id, session.user.id);
-      const updated = await tx.aiAgent.update({
-        where: { id },
-        data: {
-          systemInstructions: target.instructions,
-          systemInstructionsHistory: nextHistory,
-        },
-      });
-      await recordAgentVersion(tx, id, {
-        label: REVERT_VERSION_LABEL,
-        createdBy: session.user.id,
-      });
-      return updated;
-    })
-    .catch((err: unknown) => {
-      // A concurrent edit to this agent took the version number. The
-      // transaction rolled back, so the revert can be retried.
-      if (isAgentVersionConflict(err)) {
-        throw new ConflictError('Revert conflicted with a concurrent change. Please retry.');
-      }
-      throw err;
-    });
-
-  log.info('Agent systemInstructions reverted', {
-    agentId: id,
-    versionIndex: body.versionIndex,
-    adminId: session.user.id,
-    historyLength: nextHistory.length,
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'agent.instructions_revert',
-    entityType: 'agent',
-    entityId: id,
-    entityName: agent.name,
-    metadata: { versionIndex: body.versionIndex, historyLength: nextHistory.length },
-    clientIp: clientIP,
-  });
-
-  return successResponse(agent);
-});
+  }
+);

@@ -25,41 +25,51 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { webhookDeliveryAccessBasis } from '@/lib/orchestration/access/webhook-delivery-access';
 import { auditableDestination } from '@/lib/orchestration/webhooks/destination';
 
-export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
+export const DELETE = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  const { id: rawId } = await params;
-  if (!cuidSchema.safeParse(rawId).success) {
-    throw new ValidationError('Invalid delivery ID format');
-  }
-  const id = rawId;
+    const { id: rawId } = await params;
+    if (!cuidSchema.safeParse(rawId).success) {
+      throw new ValidationError('Invalid delivery ID format');
+    }
+    const id = rawId;
 
-  // Verify ownership before deleting.
-  const delivery = await prisma.aiWebhookDelivery.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      status: true,
-      eventType: true,
-      destination: true,
-      subscription: { select: { createdBy: true } },
+    // Verify ownership before deleting.
+    const delivery = await prisma.aiWebhookDelivery.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        status: true,
+        eventType: true,
+        destination: true,
+        subscription: { select: { createdBy: true } },
+      },
+    });
+    if (!delivery || !webhookDeliveryAccessBasis(delivery, session)) {
+      throw new NotFoundError('Webhook delivery not found');
+    }
+
+    await prisma.aiWebhookDelivery.delete({ where: { id } });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'webhook_delivery.delete',
+      entityType: 'delivery',
+      entityId: id,
+      entityName: auditableDestination(delivery.destination) ?? id,
+      metadata: { status: delivery.status, eventType: delivery.eventType },
+      clientIp: clientIP,
+    });
+
+    return successResponse({ deleted: true, deliveryId: id });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Subscriptions are scoped to the admin who created them and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
     },
-  });
-  if (!delivery || !webhookDeliveryAccessBasis(delivery, session)) {
-    throw new NotFoundError('Webhook delivery not found');
   }
-
-  await prisma.aiWebhookDelivery.delete({ where: { id } });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'webhook_delivery.delete',
-    entityType: 'delivery',
-    entityId: id,
-    entityName: auditableDestination(delivery.destination) ?? id,
-    metadata: { status: delivery.status, eventType: delivery.eventType },
-    clientIp: clientIP,
-  });
-
-  return successResponse({ deleted: true, deliveryId: id });
-});
+);

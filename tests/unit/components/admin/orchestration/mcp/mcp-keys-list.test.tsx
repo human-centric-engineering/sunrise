@@ -48,7 +48,7 @@ vi.mock('@/lib/api/client', () => ({
   },
 }));
 
-import { apiClient } from '@/lib/api/client';
+import { apiClient, APIClientError } from '@/lib/api/client';
 import { McpKeysList } from '@/components/admin/orchestration/mcp/mcp-keys-list';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -262,6 +262,49 @@ describe('McpKeysList', () => {
       });
 
       expect(toolsListCheckbox).not.toBeChecked();
+    });
+
+    it('shows the API’s reason when a create is refused with a 400 — the rate limit cap (§111 t-811)', async () => {
+      vi.mocked(apiClient.post).mockRejectedValueOnce(
+        new APIClientError(
+          "A key's rate limit can be lowered below the server's 60 requests a minute, not raised above it.",
+          'VALIDATION_ERROR',
+          400
+        )
+      );
+      render(<McpKeysList initialKeys={[]} />);
+      const user = userEvent.setup();
+      const body = await openCreateDialog();
+      await user.type(body.getByRole('textbox', { name: /name/i }), 'My Key');
+
+      await act(async () => {
+        fireEvent.click(body.getByRole('button', { name: /create key/i }));
+      });
+
+      await waitFor(() => {
+        expect(within(document.body).getByText(/not raised above it/)).toBeInTheDocument();
+      });
+      expect(
+        within(document.body).queryByText('Failed to create API key.')
+      ).not.toBeInTheDocument();
+    });
+
+    it('control: any other failure still reads as a generic failure', async () => {
+      vi.mocked(apiClient.post).mockRejectedValueOnce(
+        new APIClientError('database exploded', 'INTERNAL_ERROR', 500)
+      );
+      render(<McpKeysList initialKeys={[]} />);
+      const user = userEvent.setup();
+      const body = await openCreateDialog();
+      await user.type(body.getByRole('textbox', { name: /name/i }), 'My Key');
+
+      await act(async () => {
+        fireEvent.click(body.getByRole('button', { name: /create key/i }));
+      });
+
+      await waitFor(() => {
+        expect(within(document.body).getByText('Failed to create API key.')).toBeInTheDocument();
+      });
     });
 
     // ── New: Create happy path ──────────────────────────────────────────────

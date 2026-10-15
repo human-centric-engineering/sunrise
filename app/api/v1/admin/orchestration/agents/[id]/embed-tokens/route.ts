@@ -21,70 +21,90 @@ import { orgForMint } from '@/lib/tenancy/entry';
 
 type Params = { id: string };
 
-export const GET = withAdminAuth<Params>(async (request, _session, { params }) => {
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success)
-    throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
-  const agentId = parsed.data;
-  const log = await getRouteLogger(request);
+export const GET = withAdminAuth<Params>(
+  async (request, _session, { params }) => {
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success)
+      throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
+    const agentId = parsed.data;
+    const log = await getRouteLogger(request);
 
-  const agent = await prisma.aiAgent.findUnique({
-    where: { id: agentId },
-    select: { id: true },
-  });
-  if (!agent) throw new NotFoundError('Agent not found');
+    const agent = await prisma.aiAgent.findUnique({
+      where: { id: agentId },
+      select: { id: true },
+    });
+    if (!agent) throw new NotFoundError('Agent not found');
 
-  const tokens = await prisma.aiAgentEmbedToken.findMany({
-    where: { agentId },
-    orderBy: { createdAt: 'desc' },
-    include: { creator: { select: { id: true, name: true } } },
-  });
+    const tokens = await prisma.aiAgentEmbedToken.findMany({
+      where: { agentId },
+      orderBy: { createdAt: 'desc' },
+      include: { creator: { select: { id: true, name: true } } },
+    });
 
-  log.info('Embed tokens listed', { agentId, count: tokens.length });
-  return successResponse(tokens);
-});
-
-export const POST = withAdminAuth<Params>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
-
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success)
-    throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
-  const agentId = parsed.data;
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, createEmbedTokenSchema);
-
-  const agent = await prisma.aiAgent.findUnique({
-    where: { id: agentId },
-    select: { id: true, name: true },
-  });
-  if (!agent) throw new NotFoundError('Agent not found');
-
-  const token = await prisma.aiAgentEmbedToken.create({
-    data: {
-      agentId,
-      label: body.label ?? null,
-      allowedOrigins: body.allowedOrigins,
-      createdBy: session.user.id,
-      // The org the request acts in (§106, t-673): the widget answers only
-      // there, and `resolveEmbedToken` refuses it once that org is suspended.
-      orgId: orgForMint(),
+    log.info('Embed tokens listed', { agentId, count: tokens.length });
+    return successResponse(tokens);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
     },
-    include: { creator: { select: { id: true, name: true } } },
-  });
+  }
+);
 
-  logAdminAction({
-    userId: session.user.id,
-    action: 'embed_token.create',
-    entityType: 'embed_token',
-    entityId: token.id,
-    entityName: body.label ?? null,
-    metadata: { agentId, agentName: agent.name },
-    clientIp: clientIP,
-  });
+export const POST = withAdminAuth<Params>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  log.info('Embed token created', { agentId, recordId: token.id });
-  return successResponse(token, undefined, { status: 201 });
-});
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success)
+      throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
+    const agentId = parsed.data;
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, createEmbedTokenSchema);
+
+    const agent = await prisma.aiAgent.findUnique({
+      where: { id: agentId },
+      select: { id: true, name: true },
+    });
+    if (!agent) throw new NotFoundError('Agent not found');
+
+    const token = await prisma.aiAgentEmbedToken.create({
+      data: {
+        agentId,
+        label: body.label ?? null,
+        allowedOrigins: body.allowedOrigins,
+        createdBy: session.user.id,
+        // The org the request acts in (§106, t-673): the widget answers only
+        // there, and `resolveEmbedToken` refuses it once that org is suspended.
+        orgId: orgForMint(),
+      },
+      include: { creator: { select: { id: true, name: true } } },
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'embed_token.create',
+      entityType: 'embed_token',
+      entityId: token.id,
+      entityName: body.label ?? null,
+      metadata: { agentId, agentName: agent.name },
+      clientIp: clientIP,
+    });
+
+    log.info('Embed token created', { agentId, recordId: token.id });
+    return successResponse(token, undefined, { status: 201 });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);

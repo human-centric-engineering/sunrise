@@ -14,6 +14,7 @@
 import { Prisma } from '@prisma/client';
 import { knowledgeTagCounts } from '@/lib/orchestration/admin/global-config-usage';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse, successResponse } from '@/lib/api/responses';
 import { ConflictError } from '@/lib/api/errors';
@@ -26,45 +27,61 @@ import {
 } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
-export const GET = withAdminAuth(async (request, _session) => {
-  const log = await getRouteLogger(request);
+export const GET = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
 
-  const { searchParams } = new URL(request.url);
-  const { page, limit, q } = validateQueryParams(searchParams, listKnowledgeTagsQuerySchema);
-  const skip = (page - 1) * limit;
+    const { searchParams } = new URL(request.url);
+    const { page, limit, q } = validateQueryParams(searchParams, listKnowledgeTagsQuerySchema);
+    const skip = (page - 1) * limit;
 
-  const where: Prisma.KnowledgeTagWhereInput = {};
-  if (q) {
-    where.OR = [
-      { slug: { contains: q, mode: 'insensitive' } },
-      { name: { contains: q, mode: 'insensitive' } },
-      { description: { contains: q, mode: 'insensitive' } },
-    ];
+    const where: Prisma.KnowledgeTagWhereInput = {};
+    if (q) {
+      where.OR = [
+        { slug: { contains: q, mode: 'insensitive' } },
+        { name: { contains: q, mode: 'insensitive' } },
+        { description: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    const [rawTags, total] = await Promise.all([
+      prisma.knowledgeTag.findMany({
+        where,
+        orderBy: { name: 'asc' },
+        skip,
+        take: limit,
+      }),
+      prisma.knowledgeTag.count({ where }),
+    ]);
+
+    // Every org's grants and document links (t-731): a tag is global config,
+    // and "unused" (the bulk delete's test) must mean unused by any org.
+    // Other orgs' usage is counted for a platform admin's delete check. A
+    // customer org's admin sees only their own org's (§111 t-811): how many
+    // of another tenant's agents use a shared row is not theirs to know.
+    const platform = await administersPlatform(session.principal);
+    const tagIds = rawTags.map((t) => t.id);
+    const counts = await (platform
+      ? knowledgeTagCounts(tagIds)
+      : knowledgeTagCounts(tagIds, { acrossOrgs: false }));
+    const tags = rawTags.map((tag) => ({
+      ...tag,
+      documentCount: counts.get(tag.id)?.documents ?? 0,
+      agentCount: counts.get(tag.id)?.agents ?? 0,
+    }));
+
+    log.info('Knowledge tags listed', { count: tags.length, total, page, limit });
+
+    return paginatedResponse(tags, { page, limit, total });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because: 'Shared configuration every org reads; it holds nobody’s personal rows.',
+    },
   }
-
-  const [rawTags, total] = await Promise.all([
-    prisma.knowledgeTag.findMany({
-      where,
-      orderBy: { name: 'asc' },
-      skip,
-      take: limit,
-    }),
-    prisma.knowledgeTag.count({ where }),
-  ]);
-
-  // Every org's grants and document links (t-731): a tag is global config,
-  // and "unused" (the bulk delete's test) must mean unused by any org.
-  const counts = await knowledgeTagCounts(rawTags.map((t) => t.id));
-  const tags = rawTags.map((tag) => ({
-    ...tag,
-    documentCount: counts.get(tag.id)?.documents ?? 0,
-    agentCount: counts.get(tag.id)?.agents ?? 0,
-  }));
-
-  log.info('Knowledge tags listed', { count: tags.length, total, page, limit });
-
-  return paginatedResponse(tags, { page, limit, total });
-});
+);
 
 export const POST = withAdminAuth(
   async (request, session) => {

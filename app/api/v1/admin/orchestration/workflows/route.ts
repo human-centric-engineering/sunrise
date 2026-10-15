@@ -25,114 +25,134 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
 import { assertWorkflowProvidersApproved } from '@/lib/orchestration/workflows/semantic-validator';
 
-export const GET = withAdminAuth(async (request, _session) => {
-  const log = await getRouteLogger(request);
+export const GET = withAdminAuth(
+  async (request, _session) => {
+    const log = await getRouteLogger(request);
 
-  const { searchParams } = new URL(request.url);
-  const { page, limit, isActive, isTemplate, isSystem, slug, q } = validateQueryParams(
-    searchParams,
-    listWorkflowsQuerySchema
-  );
-  const skip = (page - 1) * limit;
+    const { searchParams } = new URL(request.url);
+    const { page, limit, isActive, isTemplate, isSystem, slug, q } = validateQueryParams(
+      searchParams,
+      listWorkflowsQuerySchema
+    );
+    const skip = (page - 1) * limit;
 
-  const where: Prisma.AiWorkflowWhereInput = {};
-  if (isActive !== undefined) where.isActive = isActive;
-  if (isTemplate !== undefined) where.isTemplate = isTemplate;
-  if (isSystem !== undefined) where.isSystem = isSystem;
-  if (slug) where.slug = slug;
-  if (q) {
-    where.OR = [
-      { name: { contains: q, mode: 'insensitive' } },
-      { slug: { contains: q, mode: 'insensitive' } },
-      { description: { contains: q, mode: 'insensitive' } },
-    ];
-  }
-
-  const [workflows, total] = await Promise.all([
-    // `_count.executions` is how much the workflow has been run, across every
-    // member — a number per workflow, no run row (as the agents list, t-802).
-    runAcrossOwners('workflow list: a run count per workflow', () =>
-      prisma.aiWorkflow.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-        include: {
-          _count: { select: { executions: true } },
-          // Templates list page hydrates the canvas from the published snapshot;
-          // the regular workflows table doesn't read it but the cost is small.
-          publishedVersion: { select: { id: true, version: true, snapshot: true } },
-        },
-      })
-    ),
-    prisma.aiWorkflow.count({ where }),
-  ]);
-
-  log.info('Workflows listed', { count: workflows.length, total, page, limit });
-  return paginatedResponse(workflows, { page, limit, total });
-});
-
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
-
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, createWorkflowSchema);
-
-  // v1 is published as it is created, without the semantic validation a later
-  // publish runs. At multi, a step overriding to a provider the org is not
-  // approved for would fail every run, so it is refused here (§120 t-743).
-  await assertWorkflowProvidersApproved(body.workflowDefinition);
-
-  try {
-    // Create the workflow row + its v1 version atomically. The workflow is
-    // immediately runnable: the publish/draft model does not require an
-    // explicit publish step on initial creation.
-    const workflow = await prisma.$transaction(async (tx) => {
-      const created = await tx.aiWorkflow.create({
-        data: {
-          name: body.name,
-          slug: body.slug,
-          description: body.description,
-          patternsUsed: body.patternsUsed,
-          isActive: body.isActive,
-          isTemplate: body.isTemplate,
-          maxCostPerExecutionUsd: body.maxCostPerExecutionUsd ?? null,
-          metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-          createdBy: session.user.id,
-        },
-      });
-      await createInitialVersion({
-        tx,
-        workflowId: created.id,
-        definition: body.workflowDefinition,
-        userId: session.user.id,
-      });
-      return tx.aiWorkflow.findUniqueOrThrow({
-        where: { id: created.id },
-        include: { publishedVersion: true },
-      });
-    });
-
-    log.info('Workflow created', {
-      workflowId: workflow.id,
-      slug: workflow.slug,
-      adminId: session.user.id,
-    });
-
-    logAdminAction({
-      userId: session.user.id,
-      action: 'workflow.create',
-      entityType: 'workflow',
-      entityId: workflow.id,
-      entityName: workflow.name,
-      clientIp: clientIP,
-    });
-
-    return successResponse(workflow, undefined, { status: 201 });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      throw new ConflictError(`Workflow with slug '${body.slug}' already exists`);
+    const where: Prisma.AiWorkflowWhereInput = {};
+    if (isActive !== undefined) where.isActive = isActive;
+    if (isTemplate !== undefined) where.isTemplate = isTemplate;
+    if (isSystem !== undefined) where.isSystem = isSystem;
+    if (slug) where.slug = slug;
+    if (q) {
+      where.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { slug: { contains: q, mode: 'insensitive' } },
+        { description: { contains: q, mode: 'insensitive' } },
+      ];
     }
-    throw err;
+
+    const [workflows, total] = await Promise.all([
+      // `_count.executions` is how much the workflow has been run, across every
+      // member — a number per workflow, no run row (as the agents list, t-802).
+      runAcrossOwners('workflow list: a run count per workflow', () =>
+        prisma.aiWorkflow.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take: limit,
+          include: {
+            _count: { select: { executions: true } },
+            // Templates list page hydrates the canvas from the published snapshot;
+            // the regular workflows table doesn't read it but the cost is small.
+            publishedVersion: { select: { id: true, version: true, snapshot: true } },
+          },
+        })
+      ),
+      prisma.aiWorkflow.count({ where }),
+    ]);
+
+    log.info('Workflows listed', { count: workflows.length, total, page, limit });
+    return paginatedResponse(workflows, { page, limit, total });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Workflows, their versions, schedules and templates are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-});
+);
+
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
+
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, createWorkflowSchema);
+
+    // v1 is published as it is created, without the semantic validation a later
+    // publish runs. At multi, a step overriding to a provider the org is not
+    // approved for would fail every run, so it is refused here (§120 t-743).
+    await assertWorkflowProvidersApproved(body.workflowDefinition);
+
+    try {
+      // Create the workflow row + its v1 version atomically. The workflow is
+      // immediately runnable: the publish/draft model does not require an
+      // explicit publish step on initial creation.
+      const workflow = await prisma.$transaction(async (tx) => {
+        const created = await tx.aiWorkflow.create({
+          data: {
+            name: body.name,
+            slug: body.slug,
+            description: body.description,
+            patternsUsed: body.patternsUsed,
+            isActive: body.isActive,
+            isTemplate: body.isTemplate,
+            maxCostPerExecutionUsd: body.maxCostPerExecutionUsd ?? null,
+            metadata: (body.metadata ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+            createdBy: session.user.id,
+          },
+        });
+        await createInitialVersion({
+          tx,
+          workflowId: created.id,
+          definition: body.workflowDefinition,
+          userId: session.user.id,
+        });
+        return tx.aiWorkflow.findUniqueOrThrow({
+          where: { id: created.id },
+          include: { publishedVersion: true },
+        });
+      });
+
+      log.info('Workflow created', {
+        workflowId: workflow.id,
+        slug: workflow.slug,
+        adminId: session.user.id,
+      });
+
+      logAdminAction({
+        userId: session.user.id,
+        action: 'workflow.create',
+        entityType: 'workflow',
+        entityId: workflow.id,
+        entityName: workflow.name,
+        clientIp: clientIP,
+      });
+
+      return successResponse(workflow, undefined, { status: 201 });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictError(`Workflow with slug '${body.slug}' already exists`);
+      }
+      throw err;
+    }
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Workflows, their versions, schedules and templates are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);

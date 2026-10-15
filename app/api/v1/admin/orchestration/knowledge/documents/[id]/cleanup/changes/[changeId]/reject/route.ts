@@ -75,5 +75,13 @@ export const POST = withAdminAuth<{ id: string; changeId: string }>(
     });
 
     return successResponse({ rejected: true, changeId });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
 );

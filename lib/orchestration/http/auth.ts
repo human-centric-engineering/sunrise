@@ -25,6 +25,7 @@
 
 import { createHmac } from 'node:crypto';
 import { HttpError } from '@/lib/orchestration/http/errors';
+import { envVarAvailableHere, envVarNotAvailableMessage } from '@/lib/orchestration/env-template';
 
 export type HttpAuthType = 'none' | 'bearer' | 'api-key' | 'query-param' | 'basic' | 'hmac';
 
@@ -53,6 +54,11 @@ const DEFAULT_HMAC_ALGORITHM: 'sha256' | 'sha512' = 'sha256';
 const DEFAULT_HMAC_BODY_TEMPLATE = '{method}\n{path}\n{body}';
 
 function readSecret(envVar: string): string {
+  // The operator's env vars are not a customer org's to name (§111 t-811):
+  // the rule and its reasoning are in `lib/orchestration/env-template.ts`.
+  if (!envVarAvailableHere(envVar)) {
+    throw new HttpError('auth_secret_not_available', envVarNotAvailableMessage(envVar), false);
+  }
   const value = process.env[envVar];
   if (!value) {
     throw new HttpError(

@@ -47,93 +47,103 @@ function fingerprint(content: string): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
-  const log = await getRouteLogger(request);
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
+    const log = await getRouteLogger(request);
 
-  const { id: rawId } = await params;
-  const parsedId = cuidSchema.safeParse(rawId);
-  if (!parsedId.success) {
-    throw new ValidationError('Invalid document id', { id: ['Must be a valid CUID'] });
-  }
-  const documentId = parsedId.data;
+    const { id: rawId } = await params;
+    const parsedId = cuidSchema.safeParse(rawId);
+    if (!parsedId.success) {
+      throw new ValidationError('Invalid document id', { id: ['Must be a valid CUID'] });
+    }
+    const documentId = parsedId.data;
 
-  const body = await validateRequestBody(request, bodySchema);
+    const body = await validateRequestBody(request, bodySchema);
 
-  // Lock check first.
-  const lockState = await getEditLockState(documentId);
-  if (lockState.active && lockState.heldBy !== session.user.id) {
-    return errorResponse('Document is being edited by another admin', {
-      code: 'LOCK_HELD',
-      status: 423,
-      details: { heldBy: [lockState.heldBy ?? 'unknown'] },
+    // Lock check first.
+    const lockState = await getEditLockState(documentId);
+    if (lockState.active && lockState.heldBy !== session.user.id) {
+      return errorResponse('Document is being edited by another admin', {
+        code: 'LOCK_HELD',
+        status: 423,
+        details: { heldBy: [lockState.heldBy ?? 'unknown'] },
+      });
+    }
+
+    const doc = await prisma.aiKnowledgeDocument.findFirst({
+      where: { id: documentId, uploadedBy: session.user.id, status: 'cleaning' },
+      select: { processedContent: true, originalContent: true, fileName: true },
     });
-  }
+    if (!doc) {
+      throw new ValidationError(
+        'Document not found, not owned by this user, or not in cleaning status'
+      );
+    }
 
-  const doc = await prisma.aiKnowledgeDocument.findFirst({
-    where: { id: documentId, uploadedBy: session.user.id, status: 'cleaning' },
-    select: { processedContent: true, originalContent: true, fileName: true },
-  });
-  if (!doc) {
-    throw new ValidationError(
-      'Document not found, not owned by this user, or not in cleaning status'
-    );
-  }
+    const currentContent = doc.processedContent ?? doc.originalContent ?? '';
+    const sections = detectSections(currentContent);
+    const section = sections.find((s) => s.id === body.sectionId) ?? null;
+    if (!section) {
+      return errorResponse('Section not found', {
+        code: 'SECTION_NOT_FOUND',
+        status: 404,
+        details: { sectionId: [body.sectionId] },
+      });
+    }
 
-  const currentContent = doc.processedContent ?? doc.originalContent ?? '';
-  const sections = detectSections(currentContent);
-  const section = sections.find((s) => s.id === body.sectionId) ?? null;
-  if (!section) {
-    return errorResponse('Section not found', {
-      code: 'SECTION_NOT_FOUND',
-      status: 404,
-      details: { sectionId: [body.sectionId] },
+    const sectionFingerprint = fingerprint(section.body);
+    if (sectionFingerprint !== body.expectedFingerprint) {
+      return errorResponse('Section has changed since edit began', {
+        code: 'CONTENT_MISMATCH',
+        status: 409,
+        details: {
+          currentBody: [section.body],
+          currentFingerprint: [sectionFingerprint],
+        },
+      });
+    }
+
+    const nextContent = spliceSection(currentContent, section, body.content);
+
+    await writeCleanupContent(documentId, nextContent, {
+      source: 'human_section',
+      actorId: session.user.id,
+      sectionMarker: section.marker,
     });
-  }
 
-  const sectionFingerprint = fingerprint(section.body);
-  if (sectionFingerprint !== body.expectedFingerprint) {
-    return errorResponse('Section has changed since edit began', {
-      code: 'CONTENT_MISMATCH',
-      status: 409,
-      details: {
-        currentBody: [section.body],
-        currentFingerprint: [sectionFingerprint],
-      },
+    log.info('Cleanup section edit applied', {
+      documentId,
+      adminId: session.user.id,
+      sectionMarker: section.marker,
+      sectionId: section.id,
+      charsAfter: nextContent.length,
     });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'knowledge_document.cleanup_edit',
+      entityType: 'knowledge_document',
+      entityId: documentId,
+      entityName: doc.fileName,
+      metadata: { scope: 'section', sectionMarker: section.marker },
+      clientIp: clientIP,
+    });
+
+    return successResponse({
+      documentId,
+      sectionId: section.id,
+      sectionMarker: section.marker,
+      fingerprint: fingerprint(body.content),
+      documentFingerprint: fingerprint(nextContent),
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-
-  const nextContent = spliceSection(currentContent, section, body.content);
-
-  await writeCleanupContent(documentId, nextContent, {
-    source: 'human_section',
-    actorId: session.user.id,
-    sectionMarker: section.marker,
-  });
-
-  log.info('Cleanup section edit applied', {
-    documentId,
-    adminId: session.user.id,
-    sectionMarker: section.marker,
-    sectionId: section.id,
-    charsAfter: nextContent.length,
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'knowledge_document.cleanup_edit',
-    entityType: 'knowledge_document',
-    entityId: documentId,
-    entityName: doc.fileName,
-    metadata: { scope: 'section', sectionMarker: section.marker },
-    clientIp: clientIP,
-  });
-
-  return successResponse({
-    documentId,
-    sectionId: section.id,
-    sectionMarker: section.marker,
-    fingerprint: fingerprint(body.content),
-    documentFingerprint: fingerprint(nextContent),
-  });
-});
+);

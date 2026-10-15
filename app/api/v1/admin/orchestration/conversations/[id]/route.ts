@@ -43,136 +43,166 @@ import {
 } from '@/lib/orchestration/access/conversation-access';
 import { logConversationAccess } from '@/lib/orchestration/audit/admin-audit-logger';
 
-export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
 
-  const access = await adminCanViewConversation(id, session);
-  if (!access.ok) throw new NotFoundError(`Conversation ${id} not found`);
+    const access = await adminCanViewConversation(id, session);
+    if (!access.ok) throw new NotFoundError(`Conversation ${id} not found`);
 
-  const conversation = await prisma.aiConversation.findUnique({
-    where: { id, AND: [conversationVisibilityWhere(session)] },
-    include: {
-      agent: { select: { id: true, name: true, slug: true } },
-      _count: { select: { messages: true } },
+    const conversation = await prisma.aiConversation.findUnique({
+      where: { id, AND: [conversationVisibilityWhere(session)] },
+      include: {
+        agent: { select: { id: true, name: true, slug: true } },
+        _count: { select: { messages: true } },
+      },
+    });
+    if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
+
+    log.info('Conversation fetched', { conversationId: id, accessBasis: access.basis });
+
+    logConversationAccess({
+      adminUserId: session.user.id,
+      conversationId: id,
+      conversationTitle: conversation.title,
+      conversationOwnerId: conversation.userId,
+      accessBasis: access.basis,
+      action: 'conversation.metadata_viewed',
+      clientIp: getClientIP(request),
+    });
+
+    return successResponse(conversation);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Reads and writes only conversations this caller may see — their own, one shared with them, or an ownerless (inbound) thread where the policy permits it — keyed on the caller's id. Never another member's.",
     },
-  });
-  if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
-
-  log.info('Conversation fetched', { conversationId: id, accessBasis: access.basis });
-
-  logConversationAccess({
-    adminUserId: session.user.id,
-    conversationId: id,
-    conversationTitle: conversation.title,
-    conversationOwnerId: conversation.userId,
-    accessBasis: access.basis,
-    action: 'conversation.metadata_viewed',
-    clientIp: getClientIP(request),
-  });
-
-  return successResponse(conversation);
-});
-
-export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
   }
-  const id = parsed.data;
+);
 
-  const body: unknown = await request.json();
-  const data = updateConversationSchema.parse(body);
+export const PATCH = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
 
-  // Own it or nobody owns it. A `'shared'` basis is view-only, so it is
-  // rejected here exactly as before.
-  const access = await adminCanViewConversation(id, session);
-  if (access.basis !== 'owner' && access.basis !== 'system') {
-    throw new NotFoundError(`Conversation ${id} not found`);
-  }
+    const body: unknown = await request.json();
+    const data = updateConversationSchema.parse(body);
 
-  // Narrowed to the same two bases the check above admits, so the write's
-  // returned row is confined for the owner layer too.
-  const updated = await prisma.aiConversation.update({
-    where: { id, AND: [conversationVisibilityWhere(session, { excludeShared: true })] },
-    data,
-    include: {
-      agent: { select: { id: true, name: true, slug: true } },
-      _count: { select: { messages: true } },
+    // Own it or nobody owns it. A `'shared'` basis is view-only, so it is
+    // rejected here exactly as before.
+    const access = await adminCanViewConversation(id, session);
+    if (access.basis !== 'owner' && access.basis !== 'system') {
+      throw new NotFoundError(`Conversation ${id} not found`);
+    }
+
+    // Narrowed to the same two bases the check above admits, so the write's
+    // returned row is confined for the owner layer too.
+    const updated = await prisma.aiConversation.update({
+      where: { id, AND: [conversationVisibilityWhere(session, { excludeShared: true })] },
+      data,
+      include: {
+        agent: { select: { id: true, name: true, slug: true } },
+        _count: { select: { messages: true } },
+      },
+    });
+
+    // Renaming or archiving an inbound thread edits a third party's record, so
+    // it leaves the same trail a delete does. Self-edits no-op inside the
+    // helper. `fields` names what changed without copying the values, which for
+    // a `title` would put message content into the audit log.
+    logConversationAccess({
+      adminUserId: session.user.id,
+      conversationId: id,
+      conversationTitle: updated.title,
+      conversationOwnerId: access.ownerId,
+      accessBasis: access.basis,
+      action: 'conversation.updated',
+      extra: { fields: Object.keys(data) },
+      clientIp: getClientIP(request),
+    });
+
+    log.info('Conversation updated', {
+      conversationId: id,
+      fields: Object.keys(data),
+      accessBasis: access.basis,
+    });
+    return successResponse(updated);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Reads and writes only conversations this caller may see — their own, one shared with them, or an ownerless (inbound) thread where the policy permits it — keyed on the caller's id. Never another member's.",
     },
-  });
-
-  // Renaming or archiving an inbound thread edits a third party's record, so
-  // it leaves the same trail a delete does. Self-edits no-op inside the
-  // helper. `fields` names what changed without copying the values, which for
-  // a `title` would put message content into the audit log.
-  logConversationAccess({
-    adminUserId: session.user.id,
-    conversationId: id,
-    conversationTitle: updated.title,
-    conversationOwnerId: access.ownerId,
-    accessBasis: access.basis,
-    action: 'conversation.updated',
-    extra: { fields: Object.keys(data) },
-    clientIp: getClientIP(request),
-  });
-
-  log.info('Conversation updated', {
-    conversationId: id,
-    fields: Object.keys(data),
-    accessBasis: access.basis,
-  });
-  return successResponse(updated);
-});
-
-export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
   }
-  const id = parsed.data;
+);
 
-  // 404 (not 403) if missing, owned by another admin, or merely shared with
-  // this one — a view grant is not a destroy grant.
-  const access = await adminCanViewConversation(id, session);
-  if (access.basis !== 'owner' && access.basis !== 'system') {
-    throw new NotFoundError(`Conversation ${id} not found`);
+export const DELETE = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
+
+    // 404 (not 403) if missing, owned by another admin, or merely shared with
+    // this one — a view grant is not a destroy grant.
+    const access = await adminCanViewConversation(id, session);
+    if (access.basis !== 'owner' && access.basis !== 'system') {
+      throw new NotFoundError(`Conversation ${id} not found`);
+    }
+
+    // Narrowed to the rows this admin may destroy, and returning the title the
+    // audit row needs. A row deleted or reassigned since the check above misses
+    // and throws P2025, which the shared handler renders as 404.
+    const existing = await prisma.aiConversation.delete({
+      where: { id, AND: [conversationVisibilityWhere(session, { excludeShared: true })] },
+      select: { title: true },
+    });
+
+    // Destroying an inbound thread destroys a third party's messages. That is
+    // often the correct answer to their erasure request, but it is never
+    // routine self-service, so it leaves a record naming the admin who did it.
+    logConversationAccess({
+      adminUserId: session.user.id,
+      conversationId: id,
+      conversationTitle: existing.title,
+      conversationOwnerId: access.ownerId,
+      accessBasis: access.basis,
+      action: 'conversation.deleted',
+      clientIp: getClientIP(request),
+    });
+
+    log.info('Conversation deleted', {
+      conversationId: id,
+      userId: session.user.id,
+      accessBasis: access.basis,
+    });
+    return successResponse({ deleted: true });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Reads and writes only conversations this caller may see — their own, one shared with them, or an ownerless (inbound) thread where the policy permits it — keyed on the caller's id. Never another member's.",
+    },
   }
-
-  // Narrowed to the rows this admin may destroy, and returning the title the
-  // audit row needs. A row deleted or reassigned since the check above misses
-  // and throws P2025, which the shared handler renders as 404.
-  const existing = await prisma.aiConversation.delete({
-    where: { id, AND: [conversationVisibilityWhere(session, { excludeShared: true })] },
-    select: { title: true },
-  });
-
-  // Destroying an inbound thread destroys a third party's messages. That is
-  // often the correct answer to their erasure request, but it is never
-  // routine self-service, so it leaves a record naming the admin who did it.
-  logConversationAccess({
-    adminUserId: session.user.id,
-    conversationId: id,
-    conversationTitle: existing.title,
-    conversationOwnerId: access.ownerId,
-    accessBasis: access.basis,
-    action: 'conversation.deleted',
-    clientIp: getClientIP(request),
-  });
-
-  log.info('Conversation deleted', {
-    conversationId: id,
-    userId: session.user.id,
-    accessBasis: access.basis,
-  });
-  return successResponse({ deleted: true });
-});
+);

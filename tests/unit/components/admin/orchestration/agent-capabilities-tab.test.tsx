@@ -387,6 +387,47 @@ describe('AgentCapabilitiesTab', () => {
       });
     });
 
+    it('says a name the org may not use needs renaming under its prefix, not setting (§111 t-811)', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      mockDefaultFetch(vi.mocked(apiClient.get));
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: true,
+            data: {},
+            meta: {
+              warnings: {
+                unavailableEnvVars: ['PARTNER_TOKEN'],
+                envVarPrefix: 'ORG_CMORGB_',
+              },
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      );
+
+      const user = userEvent.setup();
+      render(<AgentCapabilitiesTab agentId={AGENT_ID} />);
+
+      await waitFor(() => expect(screen.getByText('Web Search')).toBeInTheDocument());
+      await user.click(screen.getByRole('button', { name: /configure/i }));
+      await waitFor(() => expect(screen.getByText(/configure web search/i)).toBeInTheDocument());
+
+      const configArea = screen.getByRole('textbox', { name: /custom config/i });
+      await user.clear(configArea);
+      await user.click(configArea);
+      await user.paste('{"forcedUrl":"${env:PARTNER_TOKEN}"}');
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('unavailable-env-vars-warning')).toBeInTheDocument();
+      });
+      const panel = screen.getByTestId('unavailable-env-vars-warning');
+      expect(panel).toHaveTextContent('PARTNER_TOKEN');
+      expect(panel).toHaveTextContent('ORG_CMORGB_');
+      expect(screen.queryByTestId('missing-env-vars-warning')).not.toBeInTheDocument();
+    });
+
     it('shows missing-env-var warning panel when API returns meta.warnings.missingEnvVars', async () => {
       const { apiClient } = await import('@/lib/api/client');
       mockDefaultFetch(vi.mocked(apiClient.get));

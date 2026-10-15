@@ -58,5 +58,13 @@ export const GET = withAdminAuth<{ id: string; changeId: string }>(
     log.info('Cleanup pending change fetched', { documentId, changeId });
 
     return successResponse({ change });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
 );

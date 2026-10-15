@@ -36,6 +36,12 @@
  *     the same string and never resolves anything, so against a hostname
  *     pointing at a private address a second identical check adds nothing.
  *     (An earlier version of this comment claimed otherwise — see #534.)
+ *
+ *     **Closed where a customer chooses the URL** (§111 t-811): a fetch made
+ *     for a customer org at `multi` connects through
+ *     `lib/security/safe-dispatcher.ts`, which applies {@link checkSafeAddress}
+ *     to what the host resolved to, at connect time. Everywhere else the
+ *     URL's author is the operator, and the accepted risk stands.
  *   - **Validation is per-URL, not per-hop.** A caller that follows redirects
  *     presents the guard with only the first target; every subsequent `Location`
  *     is unchecked. Callers must either refuse redirects (`redirect: 'error'`)
@@ -120,11 +126,67 @@ function unwrapIpv4InIpv6(host: string): string {
   if (dotted?.[1]) return dotted[1];
 
   const hex = IPV4_IN_IPV6.exec(host);
-  if (!hex?.[1] || !hex[2]) return host;
+  if (hex?.[1] && hex[2]) return ipv4FromGroups(hex[1], hex[2]);
 
-  const high = Number.parseInt(hex[1], 16);
-  const low = Number.parseInt(hex[2], 16);
+  return unwrapTranslatedIpv4(host) ?? host;
+}
+
+/** Two 16-bit hex groups as a dotted quad. */
+function ipv4FromGroups(highHex: string, lowHex: string): string {
+  const high = Number.parseInt(highHex, 16);
+  const low = Number.parseInt(lowHex, 16);
   return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
+}
+
+/**
+ * Two more IPv6 forms that carry an IPv4 address the network will reach
+ * (§111 t-811). On an IPv6-only network with DNS64, an AAAA record in the
+ * NAT64 prefix (`64:ff9b::/96`, and the local-use `64:ff9b:1::/48`) is
+ * translated by the gateway to the IPv4 address in its last 32 bits; a 6to4
+ * address (`2002::/16`) carries one in bits 16–48. Unwrapped like the mapped
+ * form, so the embedded address meets the IPv4 rules, and a record resolving
+ * to `64:ff9b::a00:5` is refused as `10.0.0.5` would be.
+ *
+ * Read from the address expanded to its eight groups, not by a pattern over
+ * the written form: `::` can stand for any run of zero groups, so
+ * `2002:c0a8::1` and `64:ff9b::5` carry an address a two-group pattern
+ * cannot see.
+ */
+function unwrapTranslatedIpv4(host: string): string | null {
+  const groups = expandIpv6(host);
+  if (!groups) return null;
+  if (groups[0] === 0x64 && groups[1] === 0xff9b) {
+    return ipv4FromGroups(groups[6].toString(16), groups[7].toString(16));
+  }
+  if (groups[0] === 0x2002) {
+    return ipv4FromGroups(groups[1].toString(16), groups[2].toString(16));
+  }
+  return null;
+}
+
+/** An IPv6 address as its eight 16-bit groups, or `null` if it is not one. */
+function expandIpv6(host: string): number[] | null {
+  if (!host.includes(':')) return null;
+  let text = host.replace(/%.*$/, '');
+  // A dotted IPv4 tail stands for the last two groups.
+  const tail = /(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (tail) {
+    const octets = tail.slice(1).map(Number);
+    if (octets.some((o) => o > 255)) return null;
+    text =
+      text.slice(0, tail.index) +
+      `${((octets[0] << 8) | octets[1]).toString(16)}:${((octets[2] << 8) | octets[3]).toString(16)}`;
+  }
+  const halves = text.split('::');
+  if (halves.length > 2) return null;
+  const parse = (part: string) => (part === '' ? [] : part.split(':'));
+  const head = parse(halves[0]);
+  const rest = halves.length === 2 ? parse(halves[1]) : [];
+  const missing = 8 - head.length - rest.length;
+  if (halves.length === 2 ? missing < 1 : missing !== 0) return null;
+  const all = [...head, ...Array<string>(halves.length === 2 ? missing : 0).fill('0'), ...rest];
+  if (!all.every((g) => /^[0-9a-f]{1,4}$/i.test(g))) return null;
+  return all.map((g) => Number.parseInt(g, 16));
 }
 
 export interface SafeUrlCheckOptions {
@@ -208,8 +270,29 @@ export function checkSafeProviderUrl(
   // a single canonical form.
   // Unwrap IPv4-in-IPv6 BEFORE any comparison, so a mapped literal is subject
   // to the identical denylist and range checks as its dotted-quad form (#534).
-  const host = unwrapIpv4InIpv6(stripIpv6Brackets(parsed.hostname.toLowerCase()));
+  // A trailing dot names the same host (`metadata.google.internal.`), so it is
+  // dropped before the denylist is consulted, or the dotted form walks past it.
+  const host = unwrapIpv4InIpv6(
+    stripIpv6Brackets(parsed.hostname.toLowerCase()).replace(/\.+$/, '')
+  );
+  return checkSafeHost(host, options);
+}
 
+/**
+ * Is a resolved address a safe outbound target? The same rules as
+ * {@link checkSafeProviderUrl} applies to an IP literal in a URL, applied to
+ * what a hostname actually resolved to — which is the check the URL form
+ * cannot make (see the module docblock). Used by
+ * `lib/security/safe-dispatcher.ts` at connect time.
+ */
+export function checkSafeAddress(
+  address: string,
+  options: SafeUrlCheckOptions = {}
+): SafeUrlCheckResult {
+  return checkSafeHost(unwrapIpv4InIpv6(stripIpv6Brackets(address.toLowerCase())), options);
+}
+
+function checkSafeHost(host: string, options: SafeUrlCheckOptions): SafeUrlCheckResult {
   if (BLOCKED_HOSTNAMES.has(host)) {
     return {
       ok: false,
@@ -315,6 +398,8 @@ function isPrivateIp(host: string): boolean {
   const octets = parseIpv4(host);
   if (!octets) return false;
   const [a, b] = octets;
+  // 0.0.0.0/8 — "this network"; a connect to it reaches the local host
+  if (a === 0) return true;
   // 10.0.0.0/8
   if (a === 10) return true;
   // 172.16.0.0/12
@@ -337,6 +422,7 @@ function isLinkLocalIp(host: string): boolean {
 }
 
 function isUniqueLocalIpv6(host: string): boolean {
-  // fc00::/7 — IPv6 unique local addresses.
-  return /^f[cd][0-9a-f]{0,2}:/i.test(host);
+  // fc00::/7 — IPv6 unique local addresses — and the deprecated site-local
+  // fec0::/10, which some networks still route internally.
+  return /^f[cd][0-9a-f]{0,2}:/i.test(host) || /^fe[c-f][0-9a-f]?:/i.test(host);
 }

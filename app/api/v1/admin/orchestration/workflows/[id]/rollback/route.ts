@@ -20,37 +20,47 @@ import { rollback } from '@/lib/orchestration/workflows/version-service';
 import { rollbackWorkflowSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
+
+    const body = await validateRequestBody(request, rollbackWorkflowSchema);
+
+    const result = await rollback({
+      workflowId: id,
+      targetVersionId: body.targetVersionId,
+      userId: session.user.id,
+      changeSummary: body.changeSummary,
+      clientIp: clientIP,
+    });
+
+    log.info('Workflow rolled back', {
+      workflowId: id,
+      targetVersionId: body.targetVersionId,
+      newVersionId: result.version.id,
+      newVersion: result.version.version,
+      adminId: session.user.id,
+    });
+
+    return successResponse({
+      workflow: result.workflow,
+      version: result.version,
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Workflows, their versions, schedules and templates are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-  const id = parsed.data;
-
-  const body = await validateRequestBody(request, rollbackWorkflowSchema);
-
-  const result = await rollback({
-    workflowId: id,
-    targetVersionId: body.targetVersionId,
-    userId: session.user.id,
-    changeSummary: body.changeSummary,
-    clientIp: clientIP,
-  });
-
-  log.info('Workflow rolled back', {
-    workflowId: id,
-    targetVersionId: body.targetVersionId,
-    newVersionId: result.version.id,
-    newVersion: result.version.version,
-    adminId: session.user.id,
-  });
-
-  return successResponse({
-    workflow: result.workflow,
-    version: result.version,
-  });
-});
+);

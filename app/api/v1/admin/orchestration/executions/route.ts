@@ -22,79 +22,91 @@ import { listExecutionsQuerySchema } from '@/lib/validations/orchestration';
 import { WorkflowStatus } from '@/types/orchestration';
 import { withDisplayUrls } from '@/lib/orchestration/trace/display-urls';
 
-export const GET = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const { searchParams } = new URL(request.url);
-  const { page, limit, workflowId, status, startDate, endDate } = validateQueryParams(
-    searchParams,
-    listExecutionsQuerySchema
-  );
-  const skip = (page - 1) * limit;
+export const GET = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const { searchParams } = new URL(request.url);
+    const { page, limit, workflowId, status, startDate, endDate } = validateQueryParams(
+      searchParams,
+      listExecutionsQuerySchema
+    );
+    const skip = (page - 1) * limit;
 
-  // Filters go in an AND alongside the visibility clause — assigning them
-  // onto the same object would sit beside its `OR` and widen, not narrow.
-  const filters: Prisma.AiWorkflowExecutionWhereInput = {};
-  if (workflowId) filters.workflowId = workflowId;
-  if (status) filters.status = status;
-  if (startDate || endDate) {
-    filters.createdAt = {};
-    if (startDate) filters.createdAt.gte = startDate;
-    if (endDate) filters.createdAt.lte = endDate;
-  }
+    // Filters go in an AND alongside the visibility clause — assigning them
+    // onto the same object would sit beside its `OR` and widen, not narrow.
+    const filters: Prisma.AiWorkflowExecutionWhereInput = {};
+    if (workflowId) filters.workflowId = workflowId;
+    if (status) filters.status = status;
+    if (startDate || endDate) {
+      filters.createdAt = {};
+      if (startDate) filters.createdAt.gte = startDate;
+      if (endDate) filters.createdAt.lte = endDate;
+    }
 
-  const where: Prisma.AiWorkflowExecutionWhereInput = {
-    AND: [executionVisibilityWhere(session), filters],
-  };
+    const where: Prisma.AiWorkflowExecutionWhereInput = {
+      AND: [executionVisibilityWhere(session), filters],
+    };
 
-  const [executions, total] = await Promise.all([
-    prisma.aiWorkflowExecution.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-      include: {
-        workflow: { select: { id: true, name: true } },
-      },
-    }),
-    prisma.aiWorkflowExecution.count({ where }),
-  ]);
+    const [executions, total] = await Promise.all([
+      prisma.aiWorkflowExecution.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          workflow: { select: { id: true, name: true } },
+        },
+      }),
+      prisma.aiWorkflowExecution.count({ where }),
+    ]);
 
-  // Only running rows can have an in-flight step. Fetching running-step
-  // rows for the whole page in one shot avoids an N+1; the index on
-  // `AiWorkflowRunningStep[executionId]` covers the IN clause. For
-  // parallel fan-out we keep the oldest branch's start time so the
-  // computed age reflects "how long has this been stuck" rather than
-  // the freshest sibling.
-  const runningIds = executions.filter((e) => e.status === WorkflowStatus.RUNNING).map((e) => e.id);
-  const oldestStartByExecution = new Map<string, Date>();
-  if (runningIds.length > 0) {
-    const stepRows = await prisma.aiWorkflowRunningStep.findMany({
-      where: { executionId: { in: runningIds }, completedAt: null },
-      select: { executionId: true, startedAt: true },
-    });
-    for (const row of stepRows) {
-      const existing = oldestStartByExecution.get(row.executionId);
-      if (!existing || row.startedAt < existing) {
-        oldestStartByExecution.set(row.executionId, row.startedAt);
+    // Only running rows can have an in-flight step. Fetching running-step
+    // rows for the whole page in one shot avoids an N+1; the index on
+    // `AiWorkflowRunningStep[executionId]` covers the IN clause. For
+    // parallel fan-out we keep the oldest branch's start time so the
+    // computed age reflects "how long has this been stuck" rather than
+    // the freshest sibling.
+    const runningIds = executions
+      .filter((e) => e.status === WorkflowStatus.RUNNING)
+      .map((e) => e.id);
+    const oldestStartByExecution = new Map<string, Date>();
+    if (runningIds.length > 0) {
+      const stepRows = await prisma.aiWorkflowRunningStep.findMany({
+        where: { executionId: { in: runningIds }, completedAt: null },
+        select: { executionId: true, startedAt: true },
+      });
+      for (const row of stepRows) {
+        const existing = oldestStartByExecution.get(row.executionId);
+        if (!existing || row.startedAt < existing) {
+          oldestStartByExecution.set(row.executionId, row.startedAt);
+        }
       }
     }
+
+    const now = Date.now();
+    const items = executions.map((execution) => {
+      const oldestStart = oldestStartByExecution.get(execution.id);
+      const timeInCurrentStepMs = oldestStart ? now - oldestStart.getTime() : null;
+      // URL-bearing values shortened for display, as on the detail route (t-777).
+      return {
+        ...execution,
+        inputData: withDisplayUrls(execution.inputData),
+        outputData: withDisplayUrls(execution.outputData),
+        executionTrace: withDisplayUrls(execution.executionTrace),
+        timeInCurrentStepMs,
+      };
+    });
+
+    log.info('Executions listed', { count: items.length, total });
+
+    return paginatedResponse(items, { page, limit, total });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Acts only on executions this caller may see — their own, an ownerless (scheduled or inbound) run where the policy permits it, or one whose trace names them as an approver — keyed on the caller's id.",
+    },
   }
-
-  const now = Date.now();
-  const items = executions.map((execution) => {
-    const oldestStart = oldestStartByExecution.get(execution.id);
-    const timeInCurrentStepMs = oldestStart ? now - oldestStart.getTime() : null;
-    // URL-bearing values shortened for display, as on the detail route (t-777).
-    return {
-      ...execution,
-      inputData: withDisplayUrls(execution.inputData),
-      outputData: withDisplayUrls(execution.outputData),
-      executionTrace: withDisplayUrls(execution.executionTrace),
-      timeInCurrentStepMs,
-    };
-  });
-
-  log.info('Executions listed', { count: items.length, total });
-
-  return paginatedResponse(items, { page, limit, total });
-});
+);

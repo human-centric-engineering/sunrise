@@ -74,6 +74,7 @@ export const GET = withAdminAuth<{ id: string }>(
     return successResponse({ dataset, cases });
   },
   {
+    tier: 'org',
     ownership: {
       decidedBy: 'self',
       because:

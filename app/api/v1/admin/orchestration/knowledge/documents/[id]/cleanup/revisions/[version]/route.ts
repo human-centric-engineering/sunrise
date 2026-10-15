@@ -70,5 +70,13 @@ export const GET = withAdminAuth<{ id: string; version: string }>(
       // the document ever had — its predecessor was pruned by retention.
       previousPruned: previous === null && revision.version > 1,
     });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
 );

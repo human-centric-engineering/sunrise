@@ -16,7 +16,6 @@
  */
 
 import { Prisma } from '@prisma/client';
-import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -25,116 +24,108 @@ import { validatePathParam, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
-import { findUnsetEnvVarReferences } from '@/lib/orchestration/env-template';
+import { bindingEnvVarWarnings } from '@/lib/orchestration/env-template';
 import { attachAgentCapabilitySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { assertBindingsEditable } from '@/lib/orchestration/agents/platform-agent-guard';
 
-/**
- * Narrow shape used by `collectMissingEnvVars` to extract the only two
- * fields it scans. The route-layer `customConfig` is `z.record(z.string(),
- * z.unknown())` (capability-specific shape is enforced at execute time),
- * so we validate just the binding-scan-relevant fields here. Malformed
- * values fall through to `safeParse` failure → empty result, which is
- * the right behaviour for a soft warning helper.
- */
-const bindingScanSchema = z
-  .object({
-    forcedUrl: z.string().optional(),
-    forcedHeaders: z.record(z.string(), z.string()).optional(),
-  })
-  .partial();
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, _session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawAgentId } = await params;
+    const agentId = validatePathParam(rawAgentId, cuidSchema, { label: 'agent id' });
 
-/**
- * Scans a customConfig blob for `${env:VAR}` references in known
- * credential-bearing fields and returns the names that are NOT set in
- * the running process. Soft warning surfaced to the admin UI — save
- * still succeeds; an admin may legitimately save a binding before the
- * matching env var has been deployed to the host.
- */
-function collectMissingEnvVars(customConfig: unknown): string[] {
-  const parsed = bindingScanSchema.safeParse(customConfig);
-  if (!parsed.success) return [];
-  return findUnsetEnvVarReferences(parsed.data.forcedUrl, parsed.data.forcedHeaders);
-}
+    const agent = await prisma.aiAgent.findUnique({ where: { id: agentId } });
+    if (!agent) throw new NotFoundError(`Agent ${agentId} not found`);
 
-export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawAgentId } = await params;
-  const agentId = validatePathParam(rawAgentId, cuidSchema, { label: 'agent id' });
+    const links = await prisma.aiAgentCapability.findMany({
+      where: { agentId },
+      include: { capability: true },
+      orderBy: { capability: { name: 'asc' } },
+    });
 
-  const agent = await prisma.aiAgent.findUnique({ where: { id: agentId } });
-  if (!agent) throw new NotFoundError(`Agent ${agentId} not found`);
+    log.info('Agent capabilities listed', { agentId, count: links.length });
+    return successResponse(links);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);
 
-  const links = await prisma.aiAgentCapability.findMany({
-    where: { agentId },
-    include: { capability: true },
-    orderBy: { capability: { name: 'asc' } },
-  });
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  log.info('Agent capabilities listed', { agentId, count: links.length });
-  return successResponse(links);
-});
+    const log = await getRouteLogger(request);
+    const { id: rawAgentId } = await params;
+    const agentId = validatePathParam(rawAgentId, cuidSchema, { label: 'agent id' });
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
+    const agent = await prisma.aiAgent.findUnique({ where: { id: agentId } });
+    if (!agent) throw new NotFoundError(`Agent ${agentId} not found`);
 
-  const log = await getRouteLogger(request);
-  const { id: rawAgentId } = await params;
-  const agentId = validatePathParam(rawAgentId, cuidSchema, { label: 'agent id' });
+    // A platform agent's bindings are the platform's unless its definition
+    // leaves them to the org, as mcp-system's does (§116 t-725).
+    assertBindingsEditable(agent);
 
-  const agent = await prisma.aiAgent.findUnique({ where: { id: agentId } });
-  if (!agent) throw new NotFoundError(`Agent ${agentId} not found`);
+    const body = await validateRequestBody(request, attachAgentCapabilitySchema);
 
-  // A platform agent's bindings are the platform's unless its definition
-  // leaves them to the org, as mcp-system's does (§116 t-725).
-  assertBindingsEditable(agent);
+    const capability = await prisma.aiCapability.findUnique({ where: { id: body.capabilityId } });
+    if (!capability) throw new NotFoundError(`Capability ${body.capabilityId} not found`);
 
-  const body = await validateRequestBody(request, attachAgentCapabilitySchema);
+    try {
+      const link = await prisma.aiAgentCapability.create({
+        data: {
+          agentId,
+          capabilityId: body.capabilityId,
+          isEnabled: body.isEnabled,
+          customConfig: (body.customConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+          customRateLimit: body.customRateLimit ?? null,
+        },
+      });
 
-  const capability = await prisma.aiCapability.findUnique({ where: { id: body.capabilityId } });
-  if (!capability) throw new NotFoundError(`Capability ${body.capabilityId} not found`);
+      capabilityDispatcher.clearCache();
 
-  try {
-    const link = await prisma.aiAgentCapability.create({
-      data: {
+      log.info('Capability attached to agent', {
         agentId,
         capabilityId: body.capabilityId,
-        isEnabled: body.isEnabled,
-        customConfig: (body.customConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-        customRateLimit: body.customRateLimit ?? null,
-      },
-    });
+        linkId: link.id,
+        adminId: session.user.id,
+      });
 
-    capabilityDispatcher.clearCache();
+      logAdminAction({
+        userId: session.user.id,
+        action: 'agent.capability_attach',
+        entityType: 'agent',
+        entityId: agentId,
+        entityName: agent.name,
+        metadata: { capabilityId: body.capabilityId, capabilitySlug: capability.slug },
+        clientIp: clientIP,
+      });
 
-    log.info('Capability attached to agent', {
-      agentId,
-      capabilityId: body.capabilityId,
-      linkId: link.id,
-      adminId: session.user.id,
-    });
-
-    logAdminAction({
-      userId: session.user.id,
-      action: 'agent.capability_attach',
-      entityType: 'agent',
-      entityId: agentId,
-      entityName: agent.name,
-      metadata: { capabilityId: body.capabilityId, capabilitySlug: capability.slug },
-      clientIp: clientIP,
-    });
-
-    const missingEnvVars = collectMissingEnvVars(body.customConfig);
-    const meta = missingEnvVars.length > 0 ? { warnings: { missingEnvVars } } : undefined;
-    return successResponse(link, meta, { status: 201 });
-  } catch (err) {
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      throw new ConflictError(
-        `Capability ${body.capabilityId} is already attached to agent ${agentId}`
-      );
+      const envWarnings = bindingEnvVarWarnings(body.customConfig);
+      const meta = envWarnings ? { warnings: envWarnings } : undefined;
+      return successResponse(link, meta, { status: 201 });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictError(
+          `Capability ${body.capabilityId} is already attached to agent ${agentId}`
+        );
+      }
+      throw err;
     }
-    throw err;
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-});
+);

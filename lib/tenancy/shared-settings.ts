@@ -57,6 +57,10 @@ export const SHARED_SETTINGS_REFUSAL_CODE = 'shared_settings_install_org_only';
  * only inside the install org or a system scope.
  */
 export function canChangeSharedSettings(): boolean {
+  // The same rule as `actsForPlatform` in tenancy/context, held to it by
+  // tests/unit/lib/tenancy/acts-for-platform.test.ts. Spelled out here rather
+  // than delegated so a test that mocks the context module's two readers
+  // keeps this answering (§111 t-811 review).
   if (!isMultiTenant()) return true;
   const context = getTenantContext();
   if (!context) return false;

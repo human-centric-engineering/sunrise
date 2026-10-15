@@ -13,6 +13,7 @@
 import { z } from 'zod';
 
 import { withAdminAuth } from '@/lib/auth/guards';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
@@ -21,6 +22,7 @@ import { getProvider } from '@/lib/orchestration/llm/provider-manager';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { runAsOrg } from '@/lib/tenancy/context';
 import { ProviderCallRefusedError } from '@/lib/orchestration/llm/provider-eligibility';
+import { unapprovedProviders } from '@/lib/orchestration/llm/org-provider-policy';
 import { generateSilentWav } from '@/lib/audio/silent-wav';
 import { deriveParamProfile } from '@/lib/orchestration/llm/model-heuristics';
 import { getModel } from '@/lib/orchestration/llm/model-registry';
@@ -62,78 +64,38 @@ const UNSUPPORTED_TEST_MESSAGES: Record<string, string> = {
   unknown: "Unknown model type — we don't have a test surface for this capability.",
 };
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid provider id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid provider id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
 
-  const body: unknown = await request.json();
-  const bodyResult = bodySchema.safeParse(body);
-  if (!bodyResult.success) {
-    throw new ValidationError('Invalid request body', {
-      model: bodyResult.error.issues.map((i) => i.message),
-    });
-  }
-  const { model, capability = 'chat' } = bodyResult.data;
+    const body: unknown = await request.json();
+    const bodyResult = bodySchema.safeParse(body);
+    if (!bodyResult.success) {
+      throw new ValidationError('Invalid request body', {
+        model: bodyResult.error.issues.map((i) => i.message),
+      });
+    }
+    const { model, capability = 'chat' } = bodyResult.data;
 
-  const providerRow = await prisma.aiProviderConfig.findUnique({ where: { id } });
-  if (!providerRow) throw new NotFoundError(`Provider ${id} not found`);
+    const providerRow = await prisma.aiProviderConfig.findUnique({ where: { id } });
+    if (!providerRow) throw new NotFoundError(`Provider ${id} not found`);
 
-  // Refuse early for capabilities we can't meaningfully test. No SDK
-  // call, no latency measurement — just a structured response so the
-  // panel can render a clear "not supported" affordance instead of
-  // surfacing a chat 404 / SSRF-shaped error.
-  if (capability !== 'chat' && capability !== 'embedding' && capability !== 'audio') {
-    log.info('Model test skipped — unsupported capability', {
-      providerId: id,
-      slug: providerRow.slug,
-      model,
-      capability,
-      adminId: session.user.id,
-    });
-    return successResponse({
-      ok: false,
-      latencyMs: null,
-      model,
-      capability,
-      error: 'unsupported_test_capability',
-      message: UNSUPPORTED_TEST_MESSAGES[capability] ?? UNSUPPORTED_TEST_MESSAGES.unknown,
-    });
-  }
-
-  try {
-    // An admin testing a provider they named is an explicit choice, so the
-    // call-time gate (§120 t-741) evaluates it as one.
-    //
-    // The provider is fetched in the admin's own context, so a fork's
-    // credential resolver hands back the key of the org they are acting in —
-    // the key being tested. Each vendor CALL then runs as the install org
-    // (§120 t-742): the probe is a fixed prompt, a fixed word or a silent
-    // clip, so no org's data is sent, and at multi a platform admin must be
-    // able to test a provider before granting it to any org. Under the admin's
-    // active org, a customer org with no grants would refuse every test.
-    const provider = await getProvider(providerRow.slug, {
-      task: capability === 'embedding' ? 'embeddings' : capability === 'audio' ? 'audio' : 'chat',
-      source: 'explicit',
-      primarySlug: null,
-    });
-    const asPlatform = <T>(fn: () => Promise<T>): Promise<T> => runAsOrg(INSTALL_ORG_ID, fn);
-
-    // Audio: providers opt-in via the optional transcribe() interface
-    // member. Guard before timing — a missing method is "this provider
-    // class doesn't support audio yet", which is configurable state
-    // (e.g. seeded a Deepgram row but the Deepgram provider class has
-    // no transcribe()). Return a friendly diagnosis instead of letting
-    // the call throw a TypeError.
-    if (capability === 'audio' && typeof provider.transcribe !== 'function') {
-      log.info('Audio model test skipped — provider lacks transcribe()', {
+    // Refuse early for capabilities we can't meaningfully test. No SDK
+    // call, no latency measurement — just a structured response so the
+    // panel can render a clear "not supported" affordance instead of
+    // surfacing a chat 404 / SSRF-shaped error.
+    if (capability !== 'chat' && capability !== 'embedding' && capability !== 'audio') {
+      log.info('Model test skipped — unsupported capability', {
         providerId: id,
         slug: providerRow.slug,
         model,
+        capability,
         adminId: session.user.id,
       });
       return successResponse({
@@ -141,116 +103,188 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
         latencyMs: null,
         model,
         capability,
-        error: 'provider_no_audio_support',
-        message:
-          'This provider class does not implement audio transcription. Currently supported: OpenAI-API-compatible providers (OpenAI, Groq, Together, Fireworks).',
+        error: 'unsupported_test_capability',
+        message: UNSUPPORTED_TEST_MESSAGES[capability] ?? UNSUPPORTED_TEST_MESSAGES.unknown,
       });
     }
 
-    const start = Date.now();
+    // An org admin (§111 t-811) tests a provider as their org would use it:
+    // only one it is approved for, and the vendor call made in their org, so
+    // the call-time gate and a fork's eligibility rule judge it as they judge
+    // the org's agents. Only a platform admin probes as the install org.
+    const platform = await administersPlatform(session.principal);
+    if (!platform && (await unapprovedProviders([providerRow.slug])).length > 0) {
+      log.info('Model test refused — provider not approved for the org', {
+        providerId: id,
+        slug: providerRow.slug,
+        adminId: session.user.id,
+      });
+      return successResponse({
+        ok: false,
+        latencyMs: null,
+        model,
+        capability,
+        error: 'provider_not_approved',
+        message: 'This provider is not approved for your organisation.',
+      });
+    }
 
-    if (capability === 'embedding') {
-      // Single-input embedding round-trip. Cheaper than chat and
-      // exercises the same auth + base URL surface. Through `embedMany`
-      // with the model under test, which is what knowledge ingestion calls
-      // (t-740); the deprecated `embed` ignores the model and, on Voyage, the
-      // row's baseUrl, so it could pass while ingestion failed. A class
-      // without `embedMany` is refused, as ingestion refuses it — the audio
-      // branch's shape for a missing `transcribe`.
-      if (!provider.embedMany) {
+    try {
+      // An admin testing a provider they named is an explicit choice, so the
+      // call-time gate (§120 t-741) evaluates it as one.
+      //
+      // The provider is fetched in the admin's own context, so a fork's
+      // credential resolver hands back the key of the org they are acting in —
+      // the key being tested. For a platform admin each vendor CALL then runs
+      // as the install org (§120 t-742): the probe is a fixed prompt, a fixed
+      // word or a silent clip, so no org's data is sent, and at multi a
+      // platform admin must be able to test a provider before granting it to
+      // any org. Under the admin's active org, a customer org with no grants
+      // would refuse every test.
+      const provider = await getProvider(providerRow.slug, {
+        task: capability === 'embedding' ? 'embeddings' : capability === 'audio' ? 'audio' : 'chat',
+        source: 'explicit',
+        primarySlug: null,
+      });
+      const asPlatform = <T>(fn: () => Promise<T>): Promise<T> =>
+        platform ? runAsOrg(INSTALL_ORG_ID, fn) : fn();
+
+      // Audio: providers opt-in via the optional transcribe() interface
+      // member. Guard before timing — a missing method is "this provider
+      // class doesn't support audio yet", which is configurable state
+      // (e.g. seeded a Deepgram row but the Deepgram provider class has
+      // no transcribe()). Return a friendly diagnosis instead of letting
+      // the call throw a TypeError.
+      if (capability === 'audio' && typeof provider.transcribe !== 'function') {
+        log.info('Audio model test skipped — provider lacks transcribe()', {
+          providerId: id,
+          slug: providerRow.slug,
+          model,
+          adminId: session.user.id,
+        });
         return successResponse({
           ok: false,
           latencyMs: null,
           model,
           capability,
-          error: 'provider_no_embedding_support',
+          error: 'provider_no_audio_support',
           message:
-            'This provider class does not implement embedMany, so knowledge embedding cannot use it.',
+            'This provider class does not implement audio transcription. Currently supported: OpenAI-API-compatible providers (OpenAI, Groq, Together, Fireworks).',
         });
       }
-      await asPlatform(() => provider.embedMany!(['hello'], { model }));
-    } else if (capability === 'audio') {
-      // Tiny silent WAV — verifies API key, base URL and model id
-      // without recording a real clip. Most providers return an
-      // empty transcript; the Test button only cares about the
-      // round-trip succeeding.
-      const wav = generateSilentWav();
-      await asPlatform(() => provider.transcribe!(wav, { model, mimeType: 'audio/wav' }));
-    } else {
-      // Reasoning models (gpt-5, o-series) bill `max_completion_tokens`
-      // against reasoning tokens AND visible output combined. A tiny
-      // cap (10) gets burnt entirely on reasoning, the API returns
-      // `finish_reason: 'length'` with empty content, and the
-      // openai-compatible provider throws `truncated_no_output` —
-      // surfacing as "Model did not respond" in the connectivity panel
-      // even though the call actually reached the model. Bump the
-      // cap to 256 for reasoning profiles; the test still costs
-      // pennies but leaves room for the reasoning preamble plus
-      // "Hello." Legacy chat models keep the small cap.
-      const registryEntry = getModel(model);
-      const profile = registryEntry?.paramProfile ?? deriveParamProfile(model, providerRow.slug);
-      const isReasoning = profile === 'openai-reasoning';
-      await asPlatform(() =>
-        provider.chat([{ role: 'user', content: 'Say hello.' }], {
-          model,
-          maxTokens: isReasoning ? 256 : 10,
-          // gpt-5 / o-series reject non-default temperature. The provider
-          // already drops the field for reasoning profiles, but skipping
-          // here keeps the intent legible.
-          ...(isReasoning ? {} : { temperature: 0 }),
-        })
-      );
-    }
-    const latencyMs = Date.now() - start;
 
-    log.info('Model tested', {
-      providerId: id,
-      slug: providerRow.slug,
-      model,
-      capability,
-      latencyMs,
-      adminId: session.user.id,
-    });
+      const start = Date.now();
 
-    return successResponse({ ok: true, latencyMs, model, capability });
-  } catch (err) {
-    // A policy refusal is not a connectivity failure, and reporting it as one
-    // would send the admin to check keys and URLs that are fine. The message is
-    // the error's own, which names no provider.
-    if (err instanceof ProviderCallRefusedError) {
-      log.info('Model test refused by the provider eligibility rule', {
+      if (capability === 'embedding') {
+        // Single-input embedding round-trip. Cheaper than chat and
+        // exercises the same auth + base URL surface. Through `embedMany`
+        // with the model under test, which is what knowledge ingestion calls
+        // (t-740); the deprecated `embed` ignores the model and, on Voyage, the
+        // row's baseUrl, so it could pass while ingestion failed. A class
+        // without `embedMany` is refused, as ingestion refuses it — the audio
+        // branch's shape for a missing `transcribe`.
+        if (!provider.embedMany) {
+          return successResponse({
+            ok: false,
+            latencyMs: null,
+            model,
+            capability,
+            error: 'provider_no_embedding_support',
+            message:
+              'This provider class does not implement embedMany, so knowledge embedding cannot use it.',
+          });
+        }
+        await asPlatform(() => provider.embedMany!(['hello'], { model }));
+      } else if (capability === 'audio') {
+        // Tiny silent WAV — verifies API key, base URL and model id
+        // without recording a real clip. Most providers return an
+        // empty transcript; the Test button only cares about the
+        // round-trip succeeding.
+        const wav = generateSilentWav();
+        await asPlatform(() => provider.transcribe!(wav, { model, mimeType: 'audio/wav' }));
+      } else {
+        // Reasoning models (gpt-5, o-series) bill `max_completion_tokens`
+        // against reasoning tokens AND visible output combined. A tiny
+        // cap (10) gets burnt entirely on reasoning, the API returns
+        // `finish_reason: 'length'` with empty content, and the
+        // openai-compatible provider throws `truncated_no_output` —
+        // surfacing as "Model did not respond" in the connectivity panel
+        // even though the call actually reached the model. Bump the
+        // cap to 256 for reasoning profiles; the test still costs
+        // pennies but leaves room for the reasoning preamble plus
+        // "Hello." Legacy chat models keep the small cap.
+        const registryEntry = getModel(model);
+        const profile = registryEntry?.paramProfile ?? deriveParamProfile(model, providerRow.slug);
+        const isReasoning = profile === 'openai-reasoning';
+        await asPlatform(() =>
+          provider.chat([{ role: 'user', content: 'Say hello.' }], {
+            model,
+            maxTokens: isReasoning ? 256 : 10,
+            // gpt-5 / o-series reject non-default temperature. The provider
+            // already drops the field for reasoning profiles, but skipping
+            // here keeps the intent legible.
+            ...(isReasoning ? {} : { temperature: 0 }),
+          })
+        );
+      }
+      const latencyMs = Date.now() - start;
+
+      log.info('Model tested', {
         providerId: id,
         slug: providerRow.slug,
         model,
         capability,
+        latencyMs,
         adminId: session.user.id,
       });
+
+      return successResponse({ ok: true, latencyMs, model, capability });
+    } catch (err) {
+      // A policy refusal is not a connectivity failure, and reporting it as one
+      // would send the admin to check keys and URLs that are fine. The message is
+      // the error's own, which names no provider.
+      if (err instanceof ProviderCallRefusedError) {
+        log.info('Model test refused by the provider eligibility rule', {
+          providerId: id,
+          slug: providerRow.slug,
+          model,
+          capability,
+          adminId: session.user.id,
+        });
+        return successResponse({
+          ok: false,
+          latencyMs: null,
+          model,
+          capability,
+          error: 'provider_not_permitted',
+          message: err.message,
+        });
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      log.warn('Model test failed', {
+        providerId: id,
+        slug: providerRow.slug,
+        model,
+        capability,
+        error: message,
+      });
+      // The raw SDK error is intentionally NOT forwarded to the client:
+      // in a blind-SSRF scenario the verbatim error leaks information
+      // about the baseUrl target. Log it server-side, return a generic code.
       return successResponse({
         ok: false,
         latencyMs: null,
         model,
         capability,
-        error: 'provider_not_permitted',
-        message: err.message,
+        error: 'model_test_failed',
       });
     }
-    const message = err instanceof Error ? err.message : String(err);
-    log.warn('Model test failed', {
-      providerId: id,
-      slug: providerRow.slug,
-      model,
-      capability,
-      error: message,
-    });
-    // The raw SDK error is intentionally NOT forwarded to the client:
-    // in a blind-SSRF scenario the verbatim error leaks information
-    // about the baseUrl target. Log it server-side, return a generic code.
-    return successResponse({
-      ok: false,
-      latencyMs: null,
-      model,
-      capability,
-      error: 'model_test_failed',
-    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because: 'Probes one provider with a fixed prompt; it reads no stored personal rows.',
+    },
   }
-});
+);

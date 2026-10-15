@@ -54,9 +54,14 @@ describe('adminPageTier', () => {
     expect(adminPageTier('', pages)).toBeNull();
   });
 
-  it('reads the shipped roster by default, which opens nothing', () => {
-    expect(ORG_TIER_ADMIN_PAGES).toEqual([]);
-    expect(adminPageTier('/admin/orchestration/agents')).toBeNull();
+  it('reads the shipped roster by default: the customer’s pages are the org’s, the platform’s are not (t-811)', () => {
+    // What the roster holds is pinned in tests/unit/scripts/ci/admin-tier-roster.test.ts.
+    expect(ORG_TIER_ADMIN_PAGES).toContain('/admin/orchestration/agents/[id]');
+    expect(adminPageTier('/admin/orchestration/agents')).toBe('org');
+    expect(adminPageTier('/admin/orchestration/agents/cmagent00000000000000001')).toBe('org');
+    expect(adminPageTier('/admin/orchestration/providers')).toBeNull();
+    expect(adminPageTier('/admin/orchestration/knowledge/tags')).toBeNull();
+    expect(adminPageTier('/admin/users')).toBeNull();
   });
 });
 

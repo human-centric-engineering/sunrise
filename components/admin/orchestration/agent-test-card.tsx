@@ -24,6 +24,11 @@ export interface AgentTestCardProps {
 
 type StepStatus = 'idle' | 'running' | 'pass' | 'fail';
 
+/** The test routes' answer to an org admin naming a provider their org may not use. */
+const NOT_APPROVED = 'provider_not_approved';
+const NOT_APPROVED_DETAIL =
+  'This provider is not approved for your organisation. Pick an approved one, or ask a platform admin to approve it.';
+
 interface StepState {
   status: StepStatus;
   detail: string | null;
@@ -51,13 +56,16 @@ export function AgentTestCard({ providerId, model }: AgentTestCardProps) {
       // `providerManager.testProvider`. The model count is the length of
       // that array — there's no separate `modelCount` field. Mirrors the
       // working flow in `components/admin/orchestration/provider-test-button.tsx`.
-      const res = await apiClient.post<{ ok: boolean; models?: string[] }>(
+      const res = await apiClient.post<{ ok: boolean; models?: string[]; error?: string }>(
         API.ADMIN.ORCHESTRATION.providerTest(providerId)
       );
       if (!res.ok) {
         setConnection({
           status: 'fail',
-          detail: "Couldn't reach this provider. Check server logs for details.",
+          detail:
+            res.error === NOT_APPROVED
+              ? NOT_APPROVED_DETAIL
+              : "Couldn't reach this provider. Check server logs for details.",
         });
         setRunning(false);
         return;
@@ -82,7 +90,7 @@ export function AgentTestCard({ providerId, model }: AgentTestCardProps) {
 
     setModelTest({ status: 'running', detail: null });
     try {
-      const res = await apiClient.post<{ ok: boolean; latencyMs: number | null }>(
+      const res = await apiClient.post<{ ok: boolean; latencyMs: number | null; error?: string }>(
         API.ADMIN.ORCHESTRATION.providerTestModel(providerId),
         { body: { model } }
       );
@@ -91,7 +99,10 @@ export function AgentTestCard({ providerId, model }: AgentTestCardProps) {
       } else {
         setModelTest({
           status: 'fail',
-          detail: 'Model did not respond. Check server logs for details.',
+          detail:
+            res.error === NOT_APPROVED
+              ? NOT_APPROVED_DETAIL
+              : 'Model did not respond. Check server logs for details.',
         });
       }
     } catch {

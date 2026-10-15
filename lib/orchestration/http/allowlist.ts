@@ -18,9 +18,9 @@
  * | --- | --- | --- |
  * | `external_call` step / `call_external_api` capability | **this allowlist** | per call |
  * | LLM + embedding provider `baseUrl` | `checkSafeProviderUrl` | write and build time |
- * | webhook subscriptions | `checkSafeProviderUrl` in `attemptWebhookDelivery`, plus `isSafeProviderUrl` on create, update, backup import and `/test` | **point of use** + write time |
+ * | webhook subscriptions | `checkSafeProviderUrl` in `attemptWebhookDelivery`, plus `isSafeProviderUrl` on create, update, backup import and `/test`; for a customer org, the resolved address too (`withOutboundDispatcher`) | **point of use** + write time |
  * | event hooks | `isSafeProviderUrl` on the action URL (`hooks/types.ts`) | write **and** dispatch time |
- * | escalation notifier, knowledge URL fetcher | `checkSafeProviderUrl` | write **and** call time |
+ * | escalation notifier, knowledge URL fetcher | `checkSafeProviderUrl`; the URL fetcher, for a customer org, the resolved address too (`withOutboundDispatcher`) | write **and** call time |
  *
  * The LLM row is the one that carries prompts and documents off-box, and the
  * first version of this table omitted it — while asking readers to add a plane

@@ -43,89 +43,99 @@ const querySchema = z.object({
 
 type Variant = 'cleaned' | 'original' | 'chunks';
 
-export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsedId = cuidSchema.safeParse(rawId);
-  if (!parsedId.success) {
-    throw new ValidationError('Invalid document id', { id: ['Must be a valid CUID'] });
-  }
-  const documentId = parsedId.data;
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, _session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsedId = cuidSchema.safeParse(rawId);
+    if (!parsedId.success) {
+      throw new ValidationError('Invalid document id', { id: ['Must be a valid CUID'] });
+    }
+    const documentId = parsedId.data;
 
-  const { searchParams } = new URL(request.url);
-  const { variant: requested } = validateQueryParams(searchParams, querySchema);
+    const { searchParams } = new URL(request.url);
+    const { variant: requested } = validateQueryParams(searchParams, querySchema);
 
-  const doc = await prisma.aiKnowledgeDocument.findUnique({
-    where: { id: documentId },
-    select: {
-      id: true,
-      name: true,
-      fileName: true,
-      slug: true,
-      status: true,
-      originalContent: true,
-      processedContent: true,
-      metadata: true,
-    },
-  });
-  if (!doc) {
-    return errorResponse('Document not found', {
-      code: 'DOCUMENT_NOT_FOUND',
-      status: 404,
-      details: { id: [documentId] },
+    const doc = await prisma.aiKnowledgeDocument.findUnique({
+      where: { id: documentId },
+      select: {
+        id: true,
+        name: true,
+        fileName: true,
+        slug: true,
+        status: true,
+        originalContent: true,
+        processedContent: true,
+        metadata: true,
+      },
     });
-  }
+    if (!doc) {
+      return errorResponse('Document not found', {
+        code: 'DOCUMENT_NOT_FOUND',
+        status: 404,
+        details: { id: [documentId] },
+      });
+    }
 
-  // PDF preview documents have not been written to originalContent yet — the
-  // extracted text lives on metadata until the admin confirms.
-  const previewText = parseDocumentMetadata(doc.metadata)?.extractedText ?? null;
-  const original = doc.originalContent ?? previewText;
+    // PDF preview documents have not been written to originalContent yet — the
+    // extracted text lives on metadata until the admin confirms.
+    const previewText = parseDocumentMetadata(doc.metadata)?.extractedText ?? null;
+    const original = doc.originalContent ?? previewText;
 
-  const resolveAuto = (): Variant =>
-    doc.processedContent !== null ? 'cleaned' : original !== null ? 'original' : 'chunks';
-  const variant: Variant = requested === 'auto' ? resolveAuto() : requested;
+    const resolveAuto = (): Variant =>
+      doc.processedContent !== null ? 'cleaned' : original !== null ? 'original' : 'chunks';
+    const variant: Variant = requested === 'auto' ? resolveAuto() : requested;
 
-  let text: string | null;
-  let chunkCount: number | null = null;
-  if (variant === 'cleaned') {
-    text = doc.processedContent;
-  } else if (variant === 'original') {
-    text = original;
-  } else {
-    const rebuilt = await rebuildTextFromChunks(documentId);
-    text = rebuilt.text;
-    chunkCount = rebuilt.chunkCount;
-  }
+    let text: string | null;
+    let chunkCount: number | null = null;
+    if (variant === 'cleaned') {
+      text = doc.processedContent;
+    } else if (variant === 'original') {
+      text = original;
+    } else {
+      const rebuilt = await rebuildTextFromChunks(documentId);
+      text = rebuilt.text;
+      chunkCount = rebuilt.chunkCount;
+    }
 
-  if (text === null || text.length === 0) {
-    // Not an error state to hide: say which variant was empty and what the
-    // document's status is, because the two together explain why.
-    return errorResponse('No text available for this document in the requested form', {
-      code: 'NO_TEXT_AVAILABLE',
-      status: 404,
-      details: { variant: [variant], status: [doc.status] },
+    if (text === null || text.length === 0) {
+      // Not an error state to hide: say which variant was empty and what the
+      // document's status is, because the two together explain why.
+      return errorResponse('No text available for this document in the requested form', {
+        code: 'NO_TEXT_AVAILABLE',
+        status: 404,
+        details: { variant: [variant], status: [doc.status] },
+      });
+    }
+
+    log.info('Knowledge document text downloaded', {
+      documentId,
+      variant,
+      status: doc.status,
+      bytes: text.length,
+      ...(chunkCount === null ? {} : { chunkCount }),
     });
-  }
 
-  log.info('Knowledge document text downloaded', {
-    documentId,
-    variant,
-    status: doc.status,
-    bytes: text.length,
-    ...(chunkCount === null ? {} : { chunkCount }),
-  });
+    // The slug is already filename-safe (slugify + hash suffix); the display
+    // name is not, and a quote in it would break the header.
+    const filename = `${doc.slug}${variant === 'original' ? '-original' : ''}.md`;
 
-  // The slug is already filename-safe (slugify + hash suffix); the display
-  // name is not, and a quote in it would break the header.
-  const filename = `${doc.slug}${variant === 'original' ? '-original' : ''}.md`;
-
-  return new Response(text, {
-    status: 200,
-    headers: {
-      'Content-Type': 'text/markdown; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-      'X-Document-Variant': variant,
-      'Cache-Control': 'no-store',
+    return new Response(text, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/markdown; charset=utf-8',
+        'Content-Disposition': `attachment; filename="${filename}"`,
+        'X-Document-Variant': variant,
+        'Cache-Control': 'no-store',
+      },
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
     },
-  });
-});
+  }
+);

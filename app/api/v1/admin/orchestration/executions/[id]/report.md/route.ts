@@ -44,75 +44,85 @@ const TERMINAL_STATUSES = new Set<string>([
   WorkflowStatus.CANCELLED,
 ]);
 
-export const GET = withAdminAuth<{ id: string }>(async (_request, session, { params }) => {
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid execution id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
-
-  const execution = await prisma.aiWorkflowExecution.findUnique({
-    where: { id },
-    include: { workflow: { select: { name: true } } },
-  });
-  if (!execution || !adminCanViewExecution(execution, session)) {
-    throw new NotFoundError(`Execution ${id} not found`);
-  }
-
-  if (!TERMINAL_STATUSES.has(execution.status)) {
-    throw new ConflictError(
-      `Execution is ${execution.status}. Reports are only generated for terminal executions (completed, failed, or cancelled).`
-    );
-  }
-
-  // URL-bearing values shortened for display (t-777), as on the detail route.
-  const trace = withDisplayUrls(executionTraceSchema.parse(execution.executionTrace));
-
-  // Validate the persisted supervisorReport JSON against the shared
-  // schema. On parse failure (legacy row, hand-edit, mid-deploy drift)
-  // we log and pass `null` so the renderer omits the supervisor block
-  // rather than crashing on a missing required field.
-  let supervisorReport = null;
-  if (execution.supervisorReport !== null) {
-    const reportParsed = supervisorReportSchema.safeParse(execution.supervisorReport);
-    if (reportParsed.success) {
-      supervisorReport = reportParsed.data;
-    } else {
-      logger.warn('report.md: supervisorReport failed schema validation, omitting block', {
-        executionId: id,
-        issues: reportParsed.error.issues.length,
-      });
+export const GET = withAdminAuth<{ id: string }>(
+  async (_request, session, { params }) => {
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid execution id', { id: ['Must be a valid CUID'] });
     }
-  }
+    const id = parsed.data;
 
-  const renderInfo: RenderExecutionInfo = {
-    id: execution.id,
-    workflowId: execution.workflowId,
-    workflowName: execution.workflow.name,
-    status: execution.status,
-    totalTokensUsed: execution.totalTokensUsed,
-    totalCostUsd: execution.totalCostUsd,
-    startedAt: execution.startedAt?.toISOString() ?? null,
-    completedAt: execution.completedAt?.toISOString() ?? null,
-    createdAt: execution.createdAt.toISOString(),
-    inputData: withDisplayUrls(execution.inputData),
-    outputData: withDisplayUrls(execution.outputData),
-    errorMessage: execution.errorMessage,
-    supervisorVerdict: execution.supervisorVerdict,
-    supervisorScore: execution.supervisorScore,
-    supervisorReport,
-    supervisorReviewedAt: execution.supervisorReviewedAt?.toISOString() ?? null,
-  };
+    const execution = await prisma.aiWorkflowExecution.findUnique({
+      where: { id },
+      include: { workflow: { select: { name: true } } },
+    });
+    if (!execution || !adminCanViewExecution(execution, session)) {
+      throw new NotFoundError(`Execution ${id} not found`);
+    }
 
-  const markdown = renderExecutionMarkdown(renderInfo, trace);
+    if (!TERMINAL_STATUSES.has(execution.status)) {
+      throw new ConflictError(
+        `Execution is ${execution.status}. Reports are only generated for terminal executions (completed, failed, or cancelled).`
+      );
+    }
 
-  return new Response(markdown, {
-    status: 200,
-    headers: {
-      'Content-Type': 'text/markdown; charset=utf-8',
-      'Content-Disposition': `attachment; filename="execution-${id}.md"`,
-      'Cache-Control': 'no-store',
+    // URL-bearing values shortened for display (t-777), as on the detail route.
+    const trace = withDisplayUrls(executionTraceSchema.parse(execution.executionTrace));
+
+    // Validate the persisted supervisorReport JSON against the shared
+    // schema. On parse failure (legacy row, hand-edit, mid-deploy drift)
+    // we log and pass `null` so the renderer omits the supervisor block
+    // rather than crashing on a missing required field.
+    let supervisorReport = null;
+    if (execution.supervisorReport !== null) {
+      const reportParsed = supervisorReportSchema.safeParse(execution.supervisorReport);
+      if (reportParsed.success) {
+        supervisorReport = reportParsed.data;
+      } else {
+        logger.warn('report.md: supervisorReport failed schema validation, omitting block', {
+          executionId: id,
+          issues: reportParsed.error.issues.length,
+        });
+      }
+    }
+
+    const renderInfo: RenderExecutionInfo = {
+      id: execution.id,
+      workflowId: execution.workflowId,
+      workflowName: execution.workflow.name,
+      status: execution.status,
+      totalTokensUsed: execution.totalTokensUsed,
+      totalCostUsd: execution.totalCostUsd,
+      startedAt: execution.startedAt?.toISOString() ?? null,
+      completedAt: execution.completedAt?.toISOString() ?? null,
+      createdAt: execution.createdAt.toISOString(),
+      inputData: withDisplayUrls(execution.inputData),
+      outputData: withDisplayUrls(execution.outputData),
+      errorMessage: execution.errorMessage,
+      supervisorVerdict: execution.supervisorVerdict,
+      supervisorScore: execution.supervisorScore,
+      supervisorReport,
+      supervisorReviewedAt: execution.supervisorReviewedAt?.toISOString() ?? null,
+    };
+
+    const markdown = renderExecutionMarkdown(renderInfo, trace);
+
+    return new Response(markdown, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/markdown; charset=utf-8',
+        'Content-Disposition': `attachment; filename="execution-${id}.md"`,
+        'Cache-Control': 'no-store',
+      },
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Acts only on executions this caller may see — their own, an ownerless (scheduled or inbound) run where the policy permits it, or one whose trace names them as an approver — keyed on the caller's id.",
     },
-  });
-});
+  }
+);

@@ -31,110 +31,120 @@ const saveAsTemplateSchema = z.object({
   description: z.string().min(1).max(5000).trim().optional(),
 });
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success)
-    throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
-  const id = parsed.data;
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success)
+      throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
+    const id = parsed.data;
 
-  const workflow = await prisma.aiWorkflow.findUnique({
-    where: { id },
-    include: { publishedVersion: true },
-  });
-  if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
-  if (!workflow.publishedVersion) {
-    throw new ValidationError(`Workflow ${id} has no published version to save as template`, {
-      publishedVersionId: ['Publish a draft before saving as template'],
+    const workflow = await prisma.aiWorkflow.findUnique({
+      where: { id },
+      include: { publishedVersion: true },
     });
-  }
-  // The published snapshot was Zod-valid when published; re-parse defensively
-  // in case a manual DB edit / future schema change has invalidated it. A
-  // ValidationError surfaces as a 400 rather than the 500 a raw ZodError throw
-  // from `.parse()` would produce.
-  const sourceDefinitionParsed = workflowDefinitionSchema.safeParse(
-    workflow.publishedVersion.snapshot
-  );
-  if (!sourceDefinitionParsed.success) {
-    throw new ValidationError(
-      `Workflow ${id} has a malformed published definition — cannot save as template`,
-      {
-        publishedVersionId: sourceDefinitionParsed.error.issues.map(
-          (i) => `${i.path.join('.')}: ${i.message}`
-        ),
-      }
-    );
-  }
-  const sourceDefinition = sourceDefinitionParsed.data;
-
-  const body = await validateRequestBody(request, saveAsTemplateSchema);
-
-  // The template is a new, runnable workflow whose v1 is published here
-  // without semantic validation — as create's is, so it is checked as create's
-  // is (§120 t-743): every override's provider must be one the org is
-  // approved for, whatever the source workflow was allowed to keep.
-  await assertWorkflowProvidersApproved(sourceDefinition);
-
-  // A slug no org holds: the column is unique across the install, and at
-  // `multi` a plain read cannot see another org's workflows (t-728).
-  const slug = await findFreeWorkflowSlug(`${workflow.slug}-template`);
-
-  // Clone workflow + initial version atomically so the new template is
-  // immediately runnable and has a clean version chain (no inherited history).
-  let template;
-  try {
-    template = await prisma.$transaction(async (tx) => {
-      const created = await tx.aiWorkflow.create({
-        data: {
-          name: body.name ?? `${workflow.name} (Template)`,
-          slug,
-          description: body.description ?? workflow.description,
-          patternsUsed: workflow.patternsUsed,
-          isActive: true,
-          isTemplate: true,
-          templateSource: 'custom',
-          metadata: workflow.metadata as Prisma.InputJsonValue,
-          createdBy: session.user.id,
-        },
-      });
-      await createInitialVersion({
-        tx,
-        workflowId: created.id,
-        definition: sourceDefinition,
-        userId: session.user.id,
-      });
-      return tx.aiWorkflow.findUniqueOrThrow({ where: { id: created.id } });
-    });
-  } catch (err: unknown) {
-    // P2002: unique constraint violation — another workflow took the slug
-    // between findFreeWorkflowSlug's probe and this create.
-    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-      throw new ValidationError('Template slug already exists — please try again', {
-        slug: ['A template with this slug was just created'],
+    if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
+    if (!workflow.publishedVersion) {
+      throw new ValidationError(`Workflow ${id} has no published version to save as template`, {
+        publishedVersionId: ['Publish a draft before saving as template'],
       });
     }
-    throw err;
+    // The published snapshot was Zod-valid when published; re-parse defensively
+    // in case a manual DB edit / future schema change has invalidated it. A
+    // ValidationError surfaces as a 400 rather than the 500 a raw ZodError throw
+    // from `.parse()` would produce.
+    const sourceDefinitionParsed = workflowDefinitionSchema.safeParse(
+      workflow.publishedVersion.snapshot
+    );
+    if (!sourceDefinitionParsed.success) {
+      throw new ValidationError(
+        `Workflow ${id} has a malformed published definition — cannot save as template`,
+        {
+          publishedVersionId: sourceDefinitionParsed.error.issues.map(
+            (i) => `${i.path.join('.')}: ${i.message}`
+          ),
+        }
+      );
+    }
+    const sourceDefinition = sourceDefinitionParsed.data;
+
+    const body = await validateRequestBody(request, saveAsTemplateSchema);
+
+    // The template is a new, runnable workflow whose v1 is published here
+    // without semantic validation — as create's is, so it is checked as create's
+    // is (§120 t-743): every override's provider must be one the org is
+    // approved for, whatever the source workflow was allowed to keep.
+    await assertWorkflowProvidersApproved(sourceDefinition);
+
+    // A slug no org holds: the column is unique across the install, and at
+    // `multi` a plain read cannot see another org's workflows (t-728).
+    const slug = await findFreeWorkflowSlug(`${workflow.slug}-template`);
+
+    // Clone workflow + initial version atomically so the new template is
+    // immediately runnable and has a clean version chain (no inherited history).
+    let template;
+    try {
+      template = await prisma.$transaction(async (tx) => {
+        const created = await tx.aiWorkflow.create({
+          data: {
+            name: body.name ?? `${workflow.name} (Template)`,
+            slug,
+            description: body.description ?? workflow.description,
+            patternsUsed: workflow.patternsUsed,
+            isActive: true,
+            isTemplate: true,
+            templateSource: 'custom',
+            metadata: workflow.metadata as Prisma.InputJsonValue,
+            createdBy: session.user.id,
+          },
+        });
+        await createInitialVersion({
+          tx,
+          workflowId: created.id,
+          definition: sourceDefinition,
+          userId: session.user.id,
+        });
+        return tx.aiWorkflow.findUniqueOrThrow({ where: { id: created.id } });
+      });
+    } catch (err: unknown) {
+      // P2002: unique constraint violation — another workflow took the slug
+      // between findFreeWorkflowSlug's probe and this create.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ValidationError('Template slug already exists — please try again', {
+          slug: ['A template with this slug was just created'],
+        });
+      }
+      throw err;
+    }
+
+    log.info('Workflow saved as template', {
+      sourceWorkflowId: id,
+      templateId: template.id,
+      templateSlug: slug,
+      adminId: session.user.id,
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'workflow.save_as_template',
+      entityType: 'workflow',
+      entityId: template.id,
+      entityName: template.name,
+      metadata: { sourceWorkflowId: id, templateSlug: slug },
+      clientIp: clientIP,
+    });
+
+    return successResponse(template);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Workflows, their versions, schedules and templates are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-
-  log.info('Workflow saved as template', {
-    sourceWorkflowId: id,
-    templateId: template.id,
-    templateSlug: slug,
-    adminId: session.user.id,
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'workflow.save_as_template',
-    entityType: 'workflow',
-    entityId: template.id,
-    entityName: template.name,
-    metadata: { sourceWorkflowId: id, templateSlug: slug },
-    clientIp: clientIP,
-  });
-
-  return successResponse(template);
-});
+);

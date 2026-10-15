@@ -23,8 +23,12 @@ import { render } from '@react-email/render';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { loggableUrl } from '@/lib/logging/redact-path';
-import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
+import {
+  describeOutboundFailure,
+  isUnsafeAddressRefusal,
+  withOutboundDispatcher,
+} from '@/lib/security/safe-dispatcher';
 import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/client';
 import EventNotification from '@/emails/event-notification';
 import { matchesEntityScope } from '@/lib/orchestration/webhooks/event-entity-keys';
@@ -569,29 +573,34 @@ async function attemptWebhookDelivery(
     const timeout = setTimeout(() => controller.abort(), DISPATCH_TIMEOUT_MS.webhook);
 
     try {
-      const res = await fetch(sub.url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Webhook-Signature': signature,
-          'X-Webhook-Event': (() => {
-            const parsed = toJsonRecord(JSON.parse(body));
-            const event = parsed.event;
-            return typeof event === 'string' ? event : '';
-          })(),
-        },
-        body,
-        signal: controller.signal,
-        // Refuse redirects rather than follow them (#534). `fetch` defaults to
-        // 'follow', and `sub.url` is validated by `isSafeProviderUrl` only in
-        // the Zod refine at create/update — never again here. So a redirect is
-        // an unvalidated second target that this request would POST the payload
-        // AND its `X-Webhook-Signature` header to, reaching private space the
-        // guard would have rejected. Erroring is also what GitHub and Stripe do
-        // for outbound webhooks: an endpoint that moved should be re-pointed,
-        // not chased. Non-terminal, so delivery retries as normal.
-        redirect: 'error',
-      });
+      // Pinned to a checked address when acting for a customer org (§111
+      // t-811): the guard above reads the URL's text, not where it resolves.
+      const res = await fetch(
+        sub.url,
+        withOutboundDispatcher({
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Webhook-Signature': signature,
+            'X-Webhook-Event': (() => {
+              const parsed = toJsonRecord(JSON.parse(body));
+              const event = parsed.event;
+              return typeof event === 'string' ? event : '';
+            })(),
+          },
+          body,
+          signal: controller.signal,
+          // Refuse redirects rather than follow them (#534). `fetch` defaults to
+          // 'follow', and `sub.url` is validated by `isSafeProviderUrl` only in
+          // the Zod refine at create/update — never again here. So a redirect is
+          // an unvalidated second target that this request would POST the payload
+          // AND its `X-Webhook-Signature` header to, reaching private space the
+          // guard would have rejected. Erroring is also what GitHub and Stripe do
+          // for outbound webhooks: an endpoint that moved should be re-pointed,
+          // not chased. Non-terminal, so delivery retries as normal.
+          redirect: 'error',
+        })
+      );
 
       if (res.ok) {
         return { delivered: true, statusCode: res.status };
@@ -602,8 +611,14 @@ async function attemptWebhookDelivery(
     }
   } catch (err) {
     // undici renders a refused redirect, a DNS failure and a connection reset
-    // all as a bare "fetch failed"; the reason lives on `cause`.
-    return { delivered: false, error: describeFetchFailure(err) };
+    // all as a bare "fetch failed"; the reason lives on `cause`. A host the
+    // pinned dispatcher refused (§111 t-811) is terminal, as the URL check
+    // above is: no retry changes where a name resolves to an admin's benefit.
+    return {
+      delivered: false,
+      ...(isUnsafeAddressRefusal(err) ? { terminal: true } : {}),
+      error: describeOutboundFailure(err),
+    };
   }
 }
 

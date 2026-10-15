@@ -292,6 +292,10 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
   }, []);
 
   const fetchLastSeededAt = useCallback(async () => {
+    // The seeded timestamp is in the platform's settings, which a customer
+    // org's admin does not read (§111 t-811); the seed control is hidden for
+    // them too, so there is nothing to show it beside.
+    if (readOnly) return;
     try {
       const res = await fetch(API.ADMIN.ORCHESTRATION.SETTINGS);
       if (!res.ok) return;
@@ -300,7 +304,7 @@ export function ManageTab({ documents: initialDocuments, onRefresh, scope }: Man
     } catch {
       // Silently ignore — supplementary info
     }
-  }, []);
+  }, [readOnly]);
 
   useEffect(() => {
     void fetchEmbeddingStatus();

@@ -15,103 +15,125 @@ import { generateApiKey } from '@/lib/orchestration/mcp';
 import { createApiKeySchema, listApiKeysQuerySchema } from '@/lib/validations/mcp';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { orgForMint } from '@/lib/tenancy/entry';
+import { assertKeyRateLimitAllowed } from '@/lib/orchestration/mcp/key-rate-limit';
 
-export const GET = withAdminAuth(async (request) => {
-  const log = await getRouteLogger(request);
-  const { page, limit, isActive } = validateQueryParams(
-    new URL(request.url).searchParams,
-    listApiKeysQuerySchema
-  );
+export const GET = withAdminAuth(
+  async (request) => {
+    const log = await getRouteLogger(request);
+    const { page, limit, isActive } = validateQueryParams(
+      new URL(request.url).searchParams,
+      listApiKeysQuerySchema
+    );
 
-  const where: Record<string, unknown> = {};
-  if (isActive !== undefined) where.isActive = isActive;
+    const where: Record<string, unknown> = {};
+    if (isActive !== undefined) where.isActive = isActive;
 
-  const skip = (page - 1) * limit;
+    const skip = (page - 1) * limit;
 
-  const [items, total] = await Promise.all([
-    prisma.mcpApiKey.findMany({
-      where,
-      skip,
-      take: limit,
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        name: true,
-        keyPrefix: true,
-        scopes: true,
-        scope: true,
-        isActive: true,
-        expiresAt: true,
-        lastUsedAt: true,
-        rateLimitOverride: true,
-        orgId: true,
-        createdBy: true,
-        createdAt: true,
-        updatedAt: true,
-        creator: { select: { name: true, email: true } },
+    const [items, total] = await Promise.all([
+      prisma.mcpApiKey.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          name: true,
+          keyPrefix: true,
+          scopes: true,
+          scope: true,
+          isActive: true,
+          expiresAt: true,
+          lastUsedAt: true,
+          rateLimitOverride: true,
+          orgId: true,
+          createdBy: true,
+          createdAt: true,
+          updatedAt: true,
+          creator: { select: { name: true, email: true } },
+        },
+      }),
+      prisma.mcpApiKey.count({ where }),
+    ]);
+
+    log.info('MCP API keys listed', { count: items.length, total });
+    return paginatedResponse(items, { page, limit, total });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'MCP keys are the org’s integration credentials, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);
+
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
+
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, createApiKeySchema);
+    await assertKeyRateLimitAllowed(session.principal, body.rateLimitOverride);
+
+    const { plaintext, hash, prefix } = generateApiKey();
+
+    const key = await prisma.mcpApiKey.create({
+      data: {
+        name: body.name,
+        keyHash: hash,
+        keyPrefix: prefix,
+        scopes: body.scopes,
+        scope: body.scope ?? undefined,
+        expiresAt: body.expiresAt ?? null,
+        rateLimitOverride: body.rateLimitOverride ?? null,
+        createdBy: session.user.id,
+        // The org the request acts in (§106, t-673). The key outlives its
+        // creator (`createdBy` is SetNull) but not its org (Cascade), and
+        // `authenticateMcpRequest` enters this org for every request it admits.
+        orgId: orgForMint(),
       },
-    }),
-    prisma.mcpApiKey.count({ where }),
-  ]);
+    });
 
-  log.info('MCP API keys listed', { count: items.length, total });
-  return paginatedResponse(items, { page, limit, total });
-});
-
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
-
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, createApiKeySchema);
-
-  const { plaintext, hash, prefix } = generateApiKey();
-
-  const key = await prisma.mcpApiKey.create({
-    data: {
-      name: body.name,
-      keyHash: hash,
+    log.info('MCP API key created', {
+      adminId: session.user.id,
+      keyId: key.id,
       keyPrefix: prefix,
       scopes: body.scopes,
-      scope: body.scope ?? undefined,
-      expiresAt: body.expiresAt ?? null,
-      rateLimitOverride: body.rateLimitOverride ?? null,
-      createdBy: session.user.id,
-      // The org the request acts in (§106, t-673). The key outlives its
-      // creator (`createdBy` is SetNull) but not its org (Cascade), and
-      // `authenticateMcpRequest` enters this org for every request it admits.
-      orgId: orgForMint(),
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'mcp_api_key.create',
+      entityType: 'mcp_api_key',
+      entityId: key.id,
+      entityName: key.name,
+      metadata: { keyPrefix: prefix, scopes: body.scopes },
+      clientIp: clientIP,
+    });
+
+    // Return plaintext once — it cannot be retrieved again
+    return successResponse(
+      {
+        id: key.id,
+        name: key.name,
+        keyPrefix: key.keyPrefix,
+        scopes: key.scopes,
+        scope: key.scope,
+        orgId: key.orgId,
+        plaintext,
+      },
+      undefined,
+      { status: 201 }
+    );
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'MCP keys are the org’s integration credentials, not anyone’s personal rows; row isolation bounds them to the entered org.',
     },
-  });
-
-  log.info('MCP API key created', {
-    adminId: session.user.id,
-    keyId: key.id,
-    keyPrefix: prefix,
-    scopes: body.scopes,
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'mcp_api_key.create',
-    entityType: 'mcp_api_key',
-    entityId: key.id,
-    entityName: key.name,
-    metadata: { keyPrefix: prefix, scopes: body.scopes },
-    clientIp: clientIP,
-  });
-
-  // Return plaintext once — it cannot be retrieved again
-  return successResponse(
-    {
-      id: key.id,
-      name: key.name,
-      keyPrefix: key.keyPrefix,
-      scopes: key.scopes,
-      scope: key.scope,
-      orgId: key.orgId,
-      plaintext,
-    },
-    undefined,
-    { status: 201 }
-  );
-});
+  }
+);

@@ -22,50 +22,60 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 import { webhookDeliveryAccessBasis } from '@/lib/orchestration/access/webhook-delivery-access';
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  const { id: rawId } = await params;
-  if (!cuidSchema.safeParse(rawId).success) {
-    throw new ValidationError('Invalid delivery ID format');
-  }
-  const id = rawId;
+    const { id: rawId } = await params;
+    if (!cuidSchema.safeParse(rawId).success) {
+      throw new ValidationError('Invalid delivery ID format');
+    }
+    const id = rawId;
 
-  // Verify the delivery's parent subscription belongs to the calling admin
-  const delivery = await prisma.aiWebhookDelivery.findUnique({
-    where: { id },
-    select: { stoppedByErasure: true, subscription: { select: { createdBy: true } } },
-  });
-  if (!delivery || !webhookDeliveryAccessBasis(delivery, session)) {
-    throw new NotFoundError('Webhook delivery not found');
-  }
-  if (!delivery.subscription) {
-    throw new ConflictError(
-      'The subscription that sent this delivery was deleted; the delivery is kept as a record and cannot be retried'
-    );
-  }
-  if (delivery.stoppedByErasure) {
-    throw new ConflictError(
-      'This delivery was stopped because the person it concerns was erased; it is kept as a record and cannot be retried'
-    );
-  }
+    // Verify the delivery's parent subscription belongs to the calling admin
+    const delivery = await prisma.aiWebhookDelivery.findUnique({
+      where: { id },
+      select: { stoppedByErasure: true, subscription: { select: { createdBy: true } } },
+    });
+    if (!delivery || !webhookDeliveryAccessBasis(delivery, session)) {
+      throw new NotFoundError('Webhook delivery not found');
+    }
+    if (!delivery.subscription) {
+      throw new ConflictError(
+        'The subscription that sent this delivery was deleted; the delivery is kept as a record and cannot be retried'
+      );
+    }
+    if (delivery.stoppedByErasure) {
+      throw new ConflictError(
+        'This delivery was stopped because the person it concerns was erased; it is kept as a record and cannot be retried'
+      );
+    }
 
-  const ok = await retryDelivery(id);
-  // The row exists (read above) but changed before the retry could reset it:
-  // a retry timer or the maintenance tick claimed it, or an erasure settled it.
-  if (!ok) {
-    throw new ConflictError(
-      'The delivery changed while it was being retried; reload and try again'
-    );
+    const ok = await retryDelivery(id);
+    // The row exists (read above) but changed before the retry could reset it:
+    // a retry timer or the maintenance tick claimed it, or an erasure settled it.
+    if (!ok) {
+      throw new ConflictError(
+        'The delivery changed while it was being retried; reload and try again'
+      );
+    }
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'webhook_delivery.retry',
+      entityType: 'delivery',
+      entityId: id,
+      clientIp: clientIP,
+    });
+
+    return successResponse({ retried: true, deliveryId: id });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Subscriptions are scoped to the admin who created them and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
+    },
   }
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'webhook_delivery.retry',
-    entityType: 'delivery',
-    entityId: id,
-    clientIp: clientIP,
-  });
-
-  return successResponse({ retried: true, deliveryId: id });
-});
+);

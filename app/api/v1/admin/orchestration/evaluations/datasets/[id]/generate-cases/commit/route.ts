@@ -74,6 +74,7 @@ export const POST = withAdminAuth<{ id: string }>(
     return successResponse(result, undefined, { status: 201 });
   },
   {
+    tier: 'org',
     ownership: {
       decidedBy: 'self',
       because:

@@ -8,6 +8,7 @@
 
 import { basename, extname } from 'path';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
+import { withOutboundDispatcher } from '@/lib/security/safe-dispatcher';
 import { logger } from '@/lib/logging';
 import { loggableUrl } from '@/lib/logging/redact-path';
 import { describeFetchFailure } from '@/lib/errors/fetch-error';
@@ -88,7 +89,10 @@ async function fetchRevalidatingRedirects(target: string, init: RequestInit): Pr
 
     let response: Response;
     try {
-      response = await fetch(current, { ...init, redirect: 'manual' });
+      // Pinned to a checked address when acting for a customer org (§111
+      // t-811): the URL check above reads text, and a hostname can resolve
+      // anywhere. Each hop is a new connection, so each is checked.
+      response = await fetch(current, withOutboundDispatcher({ ...init, redirect: 'manual' }));
     } catch (err) {
       // undici quotes the request URL in some messages, and this error reaches
       // the route's error log — rethrow with the URL reduced (#953). The

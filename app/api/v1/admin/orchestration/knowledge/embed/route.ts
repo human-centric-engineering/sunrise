@@ -20,25 +20,35 @@ import { getClientIP } from '@/lib/security/ip';
 import { embedChunks } from '@/lib/orchestration/knowledge/seeder';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
+    const log = await getRouteLogger(request);
 
-  log.info('Embedding generation started', { adminId: session.user.id });
+    log.info('Embedding generation started', { adminId: session.user.id });
 
-  const result = await embedChunks();
+    const result = await embedChunks();
 
-  log.info('Embedding generation completed', { adminId: session.user.id, ...result });
+    log.info('Embedding generation completed', { adminId: session.user.id, ...result });
 
-  logAdminAction({
-    userId: session.user.id,
-    action: 'knowledge_embedding.generate',
-    entityType: 'knowledge_base',
-    entityId: 'knowledge-embed',
-    metadata: result,
-    clientIp: clientIP,
-  });
+    logAdminAction({
+      userId: session.user.id,
+      action: 'knowledge_embedding.generate',
+      entityType: 'knowledge_base',
+      entityId: 'knowledge-embed',
+      metadata: result,
+      clientIp: clientIP,
+    });
 
-  return successResponse(result);
-});
+    return successResponse(result);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);

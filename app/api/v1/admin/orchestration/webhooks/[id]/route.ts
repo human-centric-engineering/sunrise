@@ -41,116 +41,146 @@ const SAFE_SELECT = {
   updatedAt: true,
 } as const;
 
-export const GET = withAdminAuth<{ id: string }>(async (_request, session, { params }) => {
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success)
-    throw new ValidationError('Invalid webhook id', { id: ['Must be a valid CUID'] });
+export const GET = withAdminAuth<{ id: string }>(
+  async (_request, session, { params }) => {
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success)
+      throw new ValidationError('Invalid webhook id', { id: ['Must be a valid CUID'] });
 
-  const webhook = await prisma.aiWebhookSubscription.findFirst({
-    where: { id: parsed.data, createdBy: session.user.id },
-    select: SAFE_SELECT,
-  });
-  if (!webhook) throw new NotFoundError('Webhook not found');
+    const webhook = await prisma.aiWebhookSubscription.findFirst({
+      where: { id: parsed.data, createdBy: session.user.id },
+      select: SAFE_SELECT,
+    });
+    if (!webhook) throw new NotFoundError('Webhook not found');
 
-  return successResponse(webhook);
-});
-
-export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success)
-    throw new ValidationError('Invalid webhook id', { id: ['Must be a valid CUID'] });
-
-  const existing = await prisma.aiWebhookSubscription.findFirst({
-    where: { id: parsed.data, createdBy: session.user.id },
-    select: SAFE_SELECT,
-  });
-  if (!existing) throw new NotFoundError('Webhook not found');
-
-  const body = await validateRequestBody(request, updateWebhookSchema);
-
-  // The Zod union allows any subset of channel-specific fields on PATCH.
-  // Coherence check: if the patch flips the row's channel, the new
-  // channel's destination must be present (either in the patch or
-  // already on the row).
-  const nextChannel = body.channel ?? existing.channel;
-  if (nextChannel === 'webhook') {
-    const nextUrl = 'url' in body ? body.url : existing.url;
-    if (!nextUrl) {
-      throw new ValidationError('Webhook channel requires a url', { url: ['url is required'] });
-    }
-    // Secret is allowed to remain unchanged on PATCH (existing flow:
-    // empty `secret` = keep current). Only enforce presence on a fresh
-    // channel switch from email → webhook where no secret was ever set.
-    if (existing.channel !== 'webhook' && !('secret' in body)) {
-      throw new ValidationError('Switching to webhook channel requires a secret', {
-        secret: ['secret is required when changing channel to webhook'],
-      });
-    }
-  } else if (nextChannel === 'email') {
-    const nextEmail = 'emailAddress' in body ? body.emailAddress : existing.emailAddress;
-    if (!nextEmail) {
-      throw new ValidationError('Email channel requires an emailAddress', {
-        emailAddress: ['emailAddress is required'],
-      });
-    }
+    return successResponse(webhook);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Subscriptions are scoped to the admin who created them and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
+    },
   }
+);
 
-  const webhook = await prisma.aiWebhookSubscription.update({
-    where: { id: parsed.data },
-    data: body,
-    select: SAFE_SELECT,
-  });
+export const PATCH = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success)
+      throw new ValidationError('Invalid webhook id', { id: ['Must be a valid CUID'] });
 
-  log.info('Webhook updated', {
-    webhookId: parsed.data,
-    adminId: session.user.id,
-  });
+    const existing = await prisma.aiWebhookSubscription.findFirst({
+      where: { id: parsed.data, createdBy: session.user.id },
+      select: SAFE_SELECT,
+    });
+    if (!existing) throw new NotFoundError('Webhook not found');
 
-  logAdminAction({
-    userId: session.user.id,
-    action: 'webhook_subscription.update',
-    entityType: 'webhook_subscription',
-    entityId: parsed.data,
-    entityName: auditableSubscriptionName(webhook),
-    changes: auditableSubscriptionChanges(
-      computeChanges(existing, webhook, { ignoreKeys: ['updatedAt', 'createdAt'] })
-    ),
-    clientIp: getClientIP(request),
-  });
+    const body = await validateRequestBody(request, updateWebhookSchema);
 
-  return successResponse(webhook);
-});
+    // The Zod union allows any subset of channel-specific fields on PATCH.
+    // Coherence check: if the patch flips the row's channel, the new
+    // channel's destination must be present (either in the patch or
+    // already on the row).
+    const nextChannel = body.channel ?? existing.channel;
+    if (nextChannel === 'webhook') {
+      const nextUrl = 'url' in body ? body.url : existing.url;
+      if (!nextUrl) {
+        throw new ValidationError('Webhook channel requires a url', { url: ['url is required'] });
+      }
+      // Secret is allowed to remain unchanged on PATCH (existing flow:
+      // empty `secret` = keep current). Only enforce presence on a fresh
+      // channel switch from email → webhook where no secret was ever set.
+      if (existing.channel !== 'webhook' && !('secret' in body)) {
+        throw new ValidationError('Switching to webhook channel requires a secret', {
+          secret: ['secret is required when changing channel to webhook'],
+        });
+      }
+    } else if (nextChannel === 'email') {
+      const nextEmail = 'emailAddress' in body ? body.emailAddress : existing.emailAddress;
+      if (!nextEmail) {
+        throw new ValidationError('Email channel requires an emailAddress', {
+          emailAddress: ['emailAddress is required'],
+        });
+      }
+    }
 
-export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success)
-    throw new ValidationError('Invalid webhook id', { id: ['Must be a valid CUID'] });
+    const webhook = await prisma.aiWebhookSubscription.update({
+      where: { id: parsed.data },
+      data: body,
+      select: SAFE_SELECT,
+    });
 
-  const existing = await prisma.aiWebhookSubscription.findFirst({
-    where: { id: parsed.data, createdBy: session.user.id },
-  });
-  if (!existing) throw new NotFoundError('Webhook not found');
+    log.info('Webhook updated', {
+      webhookId: parsed.data,
+      adminId: session.user.id,
+    });
 
-  await prisma.aiWebhookSubscription.delete({ where: { id: parsed.data } });
+    logAdminAction({
+      userId: session.user.id,
+      action: 'webhook_subscription.update',
+      entityType: 'webhook_subscription',
+      entityId: parsed.data,
+      entityName: auditableSubscriptionName(webhook),
+      changes: auditableSubscriptionChanges(
+        computeChanges(existing, webhook, { ignoreKeys: ['updatedAt', 'createdAt'] })
+      ),
+      clientIp: getClientIP(request),
+    });
 
-  log.info('Webhook deleted', {
-    webhookId: parsed.data,
-    adminId: session.user.id,
-  });
+    return successResponse(webhook);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Subscriptions are scoped to the admin who created them and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
+    },
+  }
+);
 
-  logAdminAction({
-    userId: session.user.id,
-    action: 'webhook_subscription.delete',
-    entityType: 'webhook_subscription',
-    entityId: parsed.data,
-    entityName: auditableSubscriptionName(existing),
-    clientIp: getClientIP(request),
-  });
+export const DELETE = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success)
+      throw new ValidationError('Invalid webhook id', { id: ['Must be a valid CUID'] });
 
-  return successResponse({ deleted: true });
-});
+    const existing = await prisma.aiWebhookSubscription.findFirst({
+      where: { id: parsed.data, createdBy: session.user.id },
+    });
+    if (!existing) throw new NotFoundError('Webhook not found');
+
+    await prisma.aiWebhookSubscription.delete({ where: { id: parsed.data } });
+
+    log.info('Webhook deleted', {
+      webhookId: parsed.data,
+      adminId: session.user.id,
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'webhook_subscription.delete',
+      entityType: 'webhook_subscription',
+      entityId: parsed.data,
+      entityName: auditableSubscriptionName(existing),
+      clientIp: getClientIP(request),
+    });
+
+    return successResponse({ deleted: true });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Subscriptions are scoped to the admin who created them and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
+    },
+  }
+);

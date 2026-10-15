@@ -30,7 +30,7 @@ import {
   type OutboundMessageRequest,
   type OutboundSendResult,
 } from '@/lib/orchestration/outbound/types';
-import { resolveEnvTemplate } from '@/lib/orchestration/env-template';
+import { EnvTemplateError, resolveEnvTemplate } from '@/lib/orchestration/env-template';
 
 const META_BASE_URL = 'https://graph.facebook.com/v20.0';
 
@@ -87,7 +87,11 @@ export class MetaWhatsAppOutboundAdapter implements OutboundAdapter {
     } catch (err) {
       throw new OutboundSendError(
         'config_invalid',
-        `Meta accessToken env var unset: ${(err as Error).message}`
+        // A name the org may not use (§111 t-811) is not an unset one, and
+        // the fix differs: the message says which it is.
+        err instanceof EnvTemplateError && err.code === 'env_var_not_available'
+          ? `Meta accessToken env var not available: ${err.message}`
+          : `Meta accessToken env var unset: ${(err as Error).message}`
       );
     }
     if (!accessToken) {

@@ -95,6 +95,25 @@ export function isMultiTenant(): boolean {
   return env.TENANCY_MODE === 'multi';
 }
 
+/**
+ * Does the current call stack act for the platform, rather than for a
+ * customer org? Always at `single`. At `multi`: inside the install org or a
+ * system scope. A call stack with NO context at `multi` is a bug — a path
+ * nobody taught to enter one — and answers no, so whatever this gates fails
+ * closed rather than treating the bug as the platform.
+ *
+ * The rule behind `canChangeSharedSettings`, and behind what a customer org's
+ * configs may reach: the env vars they may name (`lib/orchestration/env-template.ts`)
+ * and the addresses their outbound fetches may connect to
+ * (`lib/security/safe-dispatcher.ts`, §111 t-811).
+ */
+export function actsForPlatform(): boolean {
+  if (!isMultiTenant()) return true;
+  const context = getTenantContext();
+  if (!context) return false;
+  return context.orgId === null || context.orgId === INSTALL_ORG_ID;
+}
+
 // Teach the admin log buffer whose lines it is holding (§108 t-714).
 //
 // The registration points THIS way — server-only module into the buffer —

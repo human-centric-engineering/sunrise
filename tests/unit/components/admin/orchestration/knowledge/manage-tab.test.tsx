@@ -1577,6 +1577,22 @@ describe('ManageTab', () => {
   // ── Read-only outside the install org ──────────────────────────────────────
 
   describe('read-only outside the install org (§107 t-753)', () => {
+    it('does not read the platform settings for the seeded timestamp (§111 t-811)', async () => {
+      mockFetch.mockClear();
+      await act(async () => {
+        render(
+          <SharedSettingsAccessProvider readOnly canSwitch>
+            <ManageTab documents={[USER_DOC]} onRefresh={vi.fn()} />
+          </SharedSettingsAccessProvider>
+        );
+      });
+
+      // The tab's other mount-time read still went out, so absence below is real.
+      expect(mockFetch).toHaveBeenCalled();
+      const urls = mockFetch.mock.calls.map((call) => String(call[0]));
+      expect(urls.some((url) => /\/orchestration\/settings(\?|$)/.test(url))).toBe(false);
+    });
+
     const EMBED_READY = (url: string) => {
       if (url.includes('/embedding-status')) {
         return Promise.resolve({

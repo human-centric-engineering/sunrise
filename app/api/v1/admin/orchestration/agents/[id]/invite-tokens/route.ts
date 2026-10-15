@@ -21,97 +21,117 @@ import { orgForMint } from '@/lib/tenancy/entry';
 
 type Params = { id: string };
 
-export const GET = withAdminAuth<Params>(async (_request, _session, { params }) => {
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success)
-    throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
+export const GET = withAdminAuth<Params>(
+  async (_request, _session, { params }) => {
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success)
+      throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
 
-  const agent = await prisma.aiAgent.findFirst({
-    where: { id: parsed.data },
-    select: { id: true },
-  });
-  if (!agent) throw new NotFoundError('Agent not found');
-
-  const tokens = await prisma.aiAgentInviteToken.findMany({
-    where: { agentId: agent.id },
-    orderBy: { createdAt: 'desc' },
-    select: {
-      id: true,
-      token: true,
-      label: true,
-      maxUses: true,
-      useCount: true,
-      expiresAt: true,
-      revokedAt: true,
-      orgId: true,
-      createdBy: true,
-      createdAt: true,
-    },
-  });
-
-  return successResponse({ tokens });
-});
-
-export const POST = withAdminAuth<Params>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
-
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success)
-    throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
-
-  const agent = await prisma.aiAgent.findFirst({
-    where: { id: parsed.data },
-    select: { id: true, visibility: true, isActive: true },
-  });
-  if (!agent) throw new NotFoundError('Agent not found');
-
-  if (!agent.isActive) {
-    throw new ValidationError('Cannot create invite tokens for a deactivated agent', {
-      isActive: ['Agent must be active'],
+    const agent = await prisma.aiAgent.findFirst({
+      where: { id: parsed.data },
+      select: { id: true },
     });
-  }
+    if (!agent) throw new NotFoundError('Agent not found');
 
-  if (agent.visibility !== 'invite_only') {
-    throw new ValidationError('Agent must have visibility set to invite_only', {
-      visibility: ['Current visibility: ' + agent.visibility],
+    const tokens = await prisma.aiAgentInviteToken.findMany({
+      where: { agentId: agent.id },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        token: true,
+        label: true,
+        maxUses: true,
+        useCount: true,
+        expiresAt: true,
+        revokedAt: true,
+        orgId: true,
+        createdBy: true,
+        createdAt: true,
+      },
     });
+
+    return successResponse({ tokens });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
+);
 
-  const body = await validateRequestBody(request, createInviteTokenSchema);
+export const POST = withAdminAuth<Params>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  const token = await prisma.aiAgentInviteToken.create({
-    data: {
-      agentId: agent.id,
-      label: body.label ?? null,
-      maxUses: body.maxUses ?? null,
-      expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
-      createdBy: session.user.id,
-      // The org the request acts in (§106, t-673): the token admits callers
-      // acting in that org and no other (`lib/orchestration/invite-tokens.ts`).
-      orgId: orgForMint(),
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success)
+      throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
+
+    const agent = await prisma.aiAgent.findFirst({
+      where: { id: parsed.data },
+      select: { id: true, visibility: true, isActive: true },
+    });
+    if (!agent) throw new NotFoundError('Agent not found');
+
+    if (!agent.isActive) {
+      throw new ValidationError('Cannot create invite tokens for a deactivated agent', {
+        isActive: ['Agent must be active'],
+      });
+    }
+
+    if (agent.visibility !== 'invite_only') {
+      throw new ValidationError('Agent must have visibility set to invite_only', {
+        visibility: ['Current visibility: ' + agent.visibility],
+      });
+    }
+
+    const body = await validateRequestBody(request, createInviteTokenSchema);
+
+    const token = await prisma.aiAgentInviteToken.create({
+      data: {
+        agentId: agent.id,
+        label: body.label ?? null,
+        maxUses: body.maxUses ?? null,
+        expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+        createdBy: session.user.id,
+        // The org the request acts in (§106, t-673): the token admits callers
+        // acting in that org and no other (`lib/orchestration/invite-tokens.ts`).
+        orgId: orgForMint(),
+      },
+      select: {
+        id: true,
+        token: true,
+        label: true,
+        maxUses: true,
+        useCount: true,
+        expiresAt: true,
+        orgId: true,
+        createdAt: true,
+      },
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'agent.invite_token_create',
+      entityType: 'agent',
+      entityId: agent.id,
+      metadata: { tokenId: token.id, label: body.label },
+      clientIp: clientIP,
+    });
+
+    return successResponse({ token }, undefined, { status: 201 });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
     },
-    select: {
-      id: true,
-      token: true,
-      label: true,
-      maxUses: true,
-      useCount: true,
-      expiresAt: true,
-      orgId: true,
-      createdAt: true,
-    },
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'agent.invite_token_create',
-    entityType: 'agent',
-    entityId: agent.id,
-    metadata: { tokenId: token.id, label: body.label },
-    clientIp: clientIP,
-  });
-
-  return successResponse({ token }, undefined, { status: 201 });
-});
+  }
+);

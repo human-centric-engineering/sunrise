@@ -21,6 +21,7 @@ import userEvent from '@testing-library/user-event';
 
 import { PatternPalette } from '@/components/admin/orchestration/workflow-builder/pattern-palette';
 import { STEP_REGISTRY } from '@/lib/orchestration/engine/step-registry';
+import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
 
 // Stub apiClient so PatternLearnMoreDialog's useEffect doesn't fire a real
 // fetch when we click "Learn more" in the dialog-open test below.
@@ -141,6 +142,17 @@ describe('PatternPalette', () => {
       const learnMoreButtons = screen.getAllByRole('button', { name: /learn more/i });
 
       expect(learnMoreButtons.length).toBe(entriesWithPattern.length);
+    });
+
+    it('offers no "Learn more" where shared settings are read-only — a customer org has no patterns (§111 t-811)', () => {
+      render(
+        <SharedSettingsAccessProvider readOnly canSwitch={false}>
+          <PatternPalette />
+        </SharedSettingsAccessProvider>
+      );
+
+      expect(screen.getAllByRole('button').length).toBeGreaterThan(0);
+      expect(screen.queryAllByRole('button', { name: /learn more/i })).toHaveLength(0);
     });
 
     it('each entry with at least one related pattern has a Learn more button in its block', () => {

@@ -31,6 +31,7 @@ import {
   resolveIdempotencyHeader,
   type HttpIdempotencyConfig,
 } from '@/lib/orchestration/http/idempotency';
+import { literalHostRefusedHere, withOutboundDispatcher } from '@/lib/security/safe-dispatcher';
 import {
   applyResponseTransform,
   isRetriableStatus,
@@ -94,6 +95,17 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
       // Reduced: the message reaches the model and step errors, and the URL can
       // carry an interpolated secret in its query or userinfo (#953).
       `Host not in ${ALLOWED_HOSTS_ENV} allowlist: ${loggableUrl(opts.url)}`,
+      false
+    );
+  }
+
+  // A customer org's call to an allowlisted IP literal (§111 t-811): the
+  // pinned dispatcher checks what a NAME resolves to, and a literal is never
+  // looked up, so the address rule is applied to it here.
+  if (literalHostRefusedHere(opts.url)) {
+    throw new HttpError(
+      'host_not_allowed',
+      `Host is a private or internal address: ${loggableUrl(opts.url)}`,
       false
     );
   }
@@ -178,39 +190,46 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
 
   let response: Response;
   try {
-    response = await fetch(authedUrl, {
-      method,
-      headers,
-      body: isBodyless ? undefined : body || undefined,
-      signal: controller.signal,
-      // Refuse redirects (#628). `isHostAllowed` runs ONCE, on the pre-auth URL
-      // at the top of this function, and `safe-url.ts` states the rule that
-      // makes that insufficient: "Validation is per-URL, not per-hop … Callers
-      // must either refuse redirects or re-run this check on each hop." Without
-      // this key undici defaults to 'follow', so every `Location` after the
-      // first was unvalidated — and the response body comes back to the model
-      // via `call_external_api`, making it a read primitive rather than a blind
-      // write. `api-key` auth with a custom header name and `query-param` auth
-      // both travel to the redirect target too; only `Authorization` is stripped
-      // cross-origin by the fetch spec.
-      //
-      // This refuses SAME-ORIGIN redirects too — an apex→www or a trailing-slash
-      // canonicalisation, where hop 2 would still satisfy `isHostAllowed` and
-      // `allowedUrlPrefixes` and nothing is actually unvalidated. That is a
-      // knowing trade, not an oversight: distinguishing them means following
-      // one hop, and a follow-then-decide loop is the machinery this choice
-      // exists to avoid. The cost is that a vendor adding a canonicalising 301
-      // breaks a configured step at runtime rather than at deploy time.
-      //
-      // 'error' rather than the revalidating loop in `knowledge/url-fetcher.ts`,
-      // matching the three siblings #534 fixed (`hooks/registry.ts`,
-      // `webhooks/dispatcher.ts`, `escalation-notifier.ts`). The split is not
-      // arbitrary: url-fetcher follows-and-revalidates because *users paste
-      // shortened links*. Everything reachable here is a **configured**
-      // integration against an operator-set host allowlist, so an endpoint that
-      // moved should be re-pointed in config, not chased at runtime.
-      redirect: 'error',
-    });
+    // Pinned to a checked address when acting for a customer org (§111
+    // t-811): the host allowlist above is install-wide, so an internal host
+    // the operator allowlisted for the platform's own workflows would
+    // otherwise be one a customer org's step can reach.
+    response = await fetch(
+      authedUrl,
+      withOutboundDispatcher({
+        method,
+        headers,
+        body: isBodyless ? undefined : body || undefined,
+        signal: controller.signal,
+        // Refuse redirects (#628). `isHostAllowed` runs ONCE, on the pre-auth URL
+        // at the top of this function, and `safe-url.ts` states the rule that
+        // makes that insufficient: "Validation is per-URL, not per-hop … Callers
+        // must either refuse redirects or re-run this check on each hop." Without
+        // this key undici defaults to 'follow', so every `Location` after the
+        // first was unvalidated — and the response body comes back to the model
+        // via `call_external_api`, making it a read primitive rather than a blind
+        // write. `api-key` auth with a custom header name and `query-param` auth
+        // both travel to the redirect target too; only `Authorization` is stripped
+        // cross-origin by the fetch spec.
+        //
+        // This refuses SAME-ORIGIN redirects too — an apex→www or a trailing-slash
+        // canonicalisation, where hop 2 would still satisfy `isHostAllowed` and
+        // `allowedUrlPrefixes` and nothing is actually unvalidated. That is a
+        // knowing trade, not an oversight: distinguishing them means following
+        // one hop, and a follow-then-decide loop is the machinery this choice
+        // exists to avoid. The cost is that a vendor adding a canonicalising 301
+        // breaks a configured step at runtime rather than at deploy time.
+        //
+        // 'error' rather than the revalidating loop in `knowledge/url-fetcher.ts`,
+        // matching the three siblings #534 fixed (`hooks/registry.ts`,
+        // `webhooks/dispatcher.ts`, `escalation-notifier.ts`). The split is not
+        // arbitrary: url-fetcher follows-and-revalidates because *users paste
+        // shortened links*. Everything reachable here is a **configured**
+        // integration against an operator-set host allowlist, so an endpoint that
+        // moved should be re-pointed in config, not chased at runtime.
+        redirect: 'error',
+      })
+    );
   } catch (err) {
     const isAbort = err instanceof Error && err.name === 'AbortError';
     const code: 'request_timeout' | 'request_failed' = isAbort

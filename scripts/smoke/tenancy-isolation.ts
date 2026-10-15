@@ -16,6 +16,11 @@
  *     reads exactly A's spend, calls, conversations and evaluations — every
  *     owner's in A, none of a cost row B holds against A's agent — and B's
  *     agent is not found, which the route answers with a 404;
+ *   - the customer's sections (§111 t-811): as a narrowed org ADMIN of B,
+ *     the reads behind the agents, knowledge documents and conversations
+ *     lists answer B's rows and none of A's — after establishing A's exist —
+ *     the conversations list only the admin's own thread, and A's agent by
+ *     id is not found, which the route answers with a 404;
  *   - the budget caps (§110 t-788): the global spend total, asked from A,
  *     counts B's cost row, and an org cap stops A's agent and not B's;
  *   - the raw-SQL paths: vector search (`searchKnowledge`), cost reports
@@ -877,6 +882,140 @@ async function main(): Promise<void> {
       await runAsSystem('smoke: remove the stray cost row', () =>
         prisma.aiCostLog.deleteMany({ where: { id: strayCostLog.id } })
       );
+    }
+
+    // ── B's org admin in the customer's sections (§111 t-811) ──────────────
+    // t-811 opens the agents, knowledge and conversations pages, and the
+    // routes behind them, to an org OWNER/ADMIN. What keeps another org out
+    // is not the route: it is row isolation under the org the guard entered,
+    // and the owner layer under the narrowed principal the policy hands an
+    // org admin. So this drives the reads those routes make — the agents
+    // list, the knowledge documents list, the conversations list through
+    // `conversationVisibilityWhere`, and the agent detail's by-id read — as
+    // the guard runs them: B entered from a session, a real narrowed org
+    // ADMIN of B as the subject. The guard itself cannot run here (it reads
+    // Next's request headers); which callers it admits to these routes is
+    // `tests/integration/api/v1/admin/orchestration/org-tier-admission.test.ts`'s.
+    console.log("\n[3c] B's org admin: the customer's sections answer B's rows, and no A");
+    {
+      // A's rows exist first, so the absences below are not free (fp6).
+      const aRows = await runAsSystem('smoke: A’s rows exist', async () => ({
+        agent: await prisma.aiAgent.count({ where: { id: a.agentId, orgId: a.orgId } }),
+        document: await prisma.aiKnowledgeDocument.count({
+          where: { id: a.documentId, orgId: a.orgId },
+        }),
+        conversation: await prisma.aiConversation.count({
+          where: { id: a.conversationId, orgId: a.orgId },
+        }),
+      }));
+      check(
+        aRows.agent === 1 && aRows.document === 1 && aRows.conversation === 1,
+        `A has an agent, a knowledge document and a conversation (${JSON.stringify(aRows)})`
+      );
+
+      const orgAdminUser = await prisma.user.create({
+        data: { name: `${PREFIX} b org admin`, email: `${PREFIX}-borgadmin-${stamp}@example.com` },
+      });
+      await prisma.orgMembership.create({
+        data: { orgId: b.orgId, userId: orgAdminUser.id, role: ORG_ADMIN_ROLE },
+      });
+      const orgAdmin: AuthorizationPrincipal = {
+        userId: orgAdminUser.id,
+        role: DEFAULT_USER_ROLE,
+        credential: 'session',
+        orgId: b.orgId,
+        orgRole: ORG_ADMIN_ROLE,
+      };
+      const asBAdmin = <T>(fn: () => Promise<T>) =>
+        runAsOrg(b.orgId, () => asPrincipal(orgAdmin, fn), {
+          source: 'session',
+          role: ORG_ADMIN_ROLE,
+        });
+      // The org admin's own thread in B, beside the one B's owner holds: the
+      // list must show theirs, and neither B's owner's nor anything of A's.
+      const ownThread = await runAsOrg(b.orgId, () =>
+        prisma.aiConversation.create({
+          data: { userId: orgAdminUser.id, agentId: b.agentId, title: `${PREFIX} b admin thread` },
+          select: { id: true },
+        })
+      );
+
+      try {
+        // GET /agents: its query, with the per-agent conversation count across
+        // owners that the route takes inside `runAcrossOwners`.
+        const agentIds = await asBAdmin(() =>
+          runAcrossOwners('smoke: agent list, a conversation count per agent', () =>
+            prisma.aiAgent.findMany({
+              where: { deletedAt: null },
+              include: { _count: { select: { capabilities: true, conversations: true } } },
+            })
+          )
+        ).then((rows) => rows.map((r) => r.id));
+        check(
+          agentIds.includes(b.agentId) && !agentIds.includes(a.agentId),
+          `B's org admin lists B's agent and not A's (${agentIds.length} agents)`
+        );
+
+        // GET /knowledge/documents: its query, unfiltered.
+        const documentIds = await asBAdmin(() =>
+          prisma.aiKnowledgeDocument.findMany({
+            where: {},
+            include: { _count: { select: { chunks: true } } },
+          })
+        ).then((rows) => rows.map((r) => r.id));
+        check(
+          documentIds.includes(b.documentId) && !documentIds.includes(a.documentId),
+          `B's org admin lists B's knowledge document and not A's (${documentIds.length} documents)`
+        );
+
+        // GET /conversations: the visibility clause the route builds from the
+        // session, with the policy's answer about ownerless threads.
+        const visibility = conversationVisibilityWhere({
+          user: { id: orgAdminUser.id },
+          unattributedReads: await resolveUnattributedReads(orgAdmin),
+        });
+        const threadIds = await asBAdmin(() =>
+          prisma.aiConversation.findMany({
+            where: visibility,
+            include: { _count: { select: { messages: true } } },
+          })
+        ).then((rows) => rows.map((r) => r.id));
+        check(
+          threadIds.includes(ownThread.id) &&
+            !threadIds.includes(b.conversationId) &&
+            !threadIds.includes(a.conversationId),
+          `B's org admin lists their own thread in B, not B's owner's and not A's (${JSON.stringify(threadIds)})`
+        );
+
+        // GET /agents/[id] for A's agent: the route's by-id read finds nothing,
+        // which it answers with a 404.
+        const aAgentFromB = await asBAdmin(() =>
+          prisma.aiAgent.findUnique({
+            where: { id: a.agentId },
+            include: {
+              grantedTags: { select: { tagId: true } },
+              grantedDocuments: { select: { documentId: true } },
+            },
+          })
+        );
+        check(
+          aAgentFromB === null,
+          "A's agent by id is not found from B, so the route answers 404"
+        );
+        // The control: the same read finds B's own agent.
+        const bAgentFromB = await asBAdmin(() =>
+          prisma.aiAgent.findUnique({ where: { id: b.agentId }, select: { id: true } })
+        );
+        check(bAgentFromB?.id === b.agentId, "the same read finds B's own agent");
+      } finally {
+        // Later sections count B's members and rows ([20]'s erasure expects
+        // its one member), so this section leaves B as it found it.
+        await runAsSystem('smoke: remove [3c]’s org admin', async () => {
+          await prisma.aiConversation.deleteMany({ where: { id: ownThread.id } });
+          await prisma.orgMembership.deleteMany({ where: { userId: orgAdminUser.id } });
+          await prisma.user.deleteMany({ where: { id: orgAdminUser.id } });
+        });
+      }
     }
 
     // ── The raw-SQL read paths ─────────────────────────────────────────────

@@ -29,63 +29,73 @@ export interface QuarantinedCapabilityForAgent {
   expiresAt: string | null;
 }
 
-export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
-  }
-  const agentId = parsed.data;
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, _session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
+    }
+    const agentId = parsed.data;
 
-  // Confirm the agent exists so we return a clean 404 rather than an
-  // empty list for a typo'd id.
-  const agent = await prisma.aiAgent.findUnique({
-    where: { id: agentId },
-    select: { id: true },
-  });
-  if (!agent) throw new NotFoundError(`Agent ${agentId} not found`);
+    // Confirm the agent exists so we return a clean 404 rather than an
+    // empty list for a typo'd id.
+    const agent = await prisma.aiAgent.findUnique({
+      where: { id: agentId },
+      select: { id: true },
+    });
+    if (!agent) throw new NotFoundError(`Agent ${agentId} not found`);
 
-  const bindings = await prisma.aiAgentCapability.findMany({
-    where: {
-      agentId,
-      isEnabled: true,
-      capability: { quarantineState: { not: 'active' } },
-    },
-    include: {
-      capability: {
-        select: {
-          id: true,
-          slug: true,
-          name: true,
-          quarantineState: true,
-          quarantineReason: true,
-          quarantineUntil: true,
+    const bindings = await prisma.aiAgentCapability.findMany({
+      where: {
+        agentId,
+        isEnabled: true,
+        capability: { quarantineState: { not: 'active' } },
+      },
+      include: {
+        capability: {
+          select: {
+            id: true,
+            slug: true,
+            name: true,
+            quarantineState: true,
+            quarantineReason: true,
+            quarantineUntil: true,
+          },
         },
       },
+    });
+
+    const items: QuarantinedCapabilityForAgent[] = [];
+    for (const b of bindings) {
+      // resolveQuarantineState accepts the raw `string` column directly —
+      // unknown values fall open to 'active' via the internal guard, no
+      // `as` cast needed.
+      const effective = resolveQuarantineState({
+        quarantineState: b.capability.quarantineState,
+        quarantineUntil: b.capability.quarantineUntil,
+      });
+      if (effective === 'active') continue;
+      items.push({
+        capabilityId: b.capability.id,
+        capabilitySlug: b.capability.slug,
+        capabilityName: b.capability.name,
+        mode: effective,
+        reason: b.capability.quarantineReason,
+        expiresAt: b.capability.quarantineUntil ? b.capability.quarantineUntil.toISOString() : null,
+      });
+    }
+
+    log.info('Agent quarantined-capabilities fetched', { agentId, count: items.length });
+    return successResponse({ items });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
     },
-  });
-
-  const items: QuarantinedCapabilityForAgent[] = [];
-  for (const b of bindings) {
-    // resolveQuarantineState accepts the raw `string` column directly —
-    // unknown values fall open to 'active' via the internal guard, no
-    // `as` cast needed.
-    const effective = resolveQuarantineState({
-      quarantineState: b.capability.quarantineState,
-      quarantineUntil: b.capability.quarantineUntil,
-    });
-    if (effective === 'active') continue;
-    items.push({
-      capabilityId: b.capability.id,
-      capabilitySlug: b.capability.slug,
-      capabilityName: b.capability.name,
-      mode: effective,
-      reason: b.capability.quarantineReason,
-      expiresAt: b.capability.quarantineUntil ? b.capability.quarantineUntil.toISOString() : null,
-    });
   }
-
-  log.info('Agent quarantined-capabilities fetched', { agentId, count: items.length });
-  return successResponse({ items });
-});
+);

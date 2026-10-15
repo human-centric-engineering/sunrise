@@ -14,6 +14,7 @@
 
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse, successResponse } from '@/lib/api/responses';
 import { ConflictError } from '@/lib/api/errors';
@@ -27,57 +28,72 @@ import { getCircuitBreakerStatusForProvider } from '@/lib/orchestration/llm/circ
 import { listProvidersQuerySchema, providerConfigSchema } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
-export const GET = withAdminAuth(async (request, _session) => {
-  const log = await getRouteLogger(request);
+export const GET = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
 
-  const { searchParams } = new URL(request.url);
-  const { page, limit, isActive, providerType, isLocal, q } = validateQueryParams(
-    searchParams,
-    listProvidersQuerySchema
-  );
-  const skip = (page - 1) * limit;
+    const { searchParams } = new URL(request.url);
+    const { page, limit, isActive, providerType, isLocal, q } = validateQueryParams(
+      searchParams,
+      listProvidersQuerySchema
+    );
+    const skip = (page - 1) * limit;
 
-  const where: Prisma.AiProviderConfigWhereInput = {};
-  if (isActive !== undefined) where.isActive = isActive;
-  if (providerType) where.providerType = providerType;
-  if (isLocal !== undefined) where.isLocal = isLocal;
-  if (q) {
-    where.OR = [
-      { name: { contains: q, mode: 'insensitive' } },
-      { slug: { contains: q, mode: 'insensitive' } },
-    ];
-  }
+    const where: Prisma.AiProviderConfigWhereInput = {};
+    if (isActive !== undefined) where.isActive = isActive;
+    if (providerType) where.providerType = providerType;
+    if (isLocal !== undefined) where.isLocal = isLocal;
+    if (q) {
+      where.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { slug: { contains: q, mode: 'insensitive' } },
+      ];
+    }
 
-  const [rows, total] = await Promise.all([
-    prisma.aiProviderConfig.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-    }),
-    prisma.aiProviderConfig.count({ where }),
-  ]);
+    const [rows, total] = await Promise.all([
+      prisma.aiProviderConfig.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.aiProviderConfig.count({ where }),
+    ]);
 
-  // `apiKeyPresent` asks the credential seam (§120 t-744): with a fork
-  // resolver registered the env var may be deliberately empty.
-  const [keyPresent, refused] = await Promise.all([
-    Promise.all(rows.map((config) => hasProviderKey(config))),
-    refusedProvidersOrUnknown(rows.map((config) => config.slug)),
-  ]);
-  const data = rows.map((config, index) => ({
-    ...config,
-    apiKeyPresent: keyPresent[index],
-    approvedForOrg: refused ? !refused.has(config.slug) : null,
-    circuitBreaker: getCircuitBreakerStatusForProvider(config.slug) ?? {
-      state: 'closed' as const,
-      failureCount: 0,
+    // `apiKeyPresent` asks the credential seam (§120 t-744): with a fork
+    // resolver registered the env var may be deliberately empty.
+    const [keyPresent, refused] = await Promise.all([
+      Promise.all(rows.map((config) => hasProviderKey(config))),
+      refusedProvidersOrUnknown(rows.map((config) => config.slug)),
+    ]);
+    // An org admin reads this list for the agent form (§111 t-811): which
+    // providers exist, whether each has a key and is approved for their org.
+    // Where the operator's endpoints live and which env var holds each key is
+    // platform infrastructure, so a caller who does not administer the
+    // platform gets the row without them.
+    const platform = await administersPlatform(session.principal);
+    const data = rows.map((config, index) => ({
+      ...(platform ? config : withoutInfrastructure(config)),
+      apiKeyPresent: keyPresent[index],
+      approvedForOrg: refused ? !refused.has(config.slug) : null,
+      circuitBreaker: getCircuitBreakerStatusForProvider(config.slug) ?? {
+        state: 'closed' as const,
+        failureCount: 0,
+      },
+    }));
+
+    log.info('Providers listed', { count: rows.length, total, page, limit });
+
+    return paginatedResponse(data, { page, limit, total });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because: 'Shared configuration every org reads; it holds nobody’s personal rows.',
     },
-  }));
-
-  log.info('Providers listed', { count: rows.length, total, page, limit });
-
-  return paginatedResponse(data, { page, limit, total });
-});
+  }
+);
 
 export const POST = withAdminAuth(
   async (request, session) => {
@@ -137,3 +153,11 @@ export const POST = withAdminAuth(
   },
   { writesSharedSettings: true }
 );
+
+/** A provider row without where its endpoint lives or which env var holds its key. */
+function withoutInfrastructure<
+  T extends { baseUrl: unknown; apiKeyEnvVar: unknown; metadata: unknown },
+>(config: T): Omit<T, 'baseUrl' | 'apiKeyEnvVar' | 'metadata'> {
+  const { baseUrl: _baseUrl, apiKeyEnvVar: _apiKeyEnvVar, metadata: _metadata, ...rest } = config;
+  return rest;
+}

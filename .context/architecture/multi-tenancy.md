@@ -86,6 +86,12 @@ is on:
   org you create after flipping the mode**, or its agents, workflows and
   knowledge base will refuse to call any vendor. See
   [LLM providers → Per-org approved providers](../orchestration/llm-providers.md#per-org-approved-providers-core-at-multi).
+- **An org's configs cannot read the operator's env vars** (§111 t-811). At
+  `multi`, an outbound call, auth secret or channel credential configured in
+  a customer org may name only env vars under that org's `ORG_<ORG ID>_`
+  prefix. Set a customer's credentials under its prefix. The install org
+  names any. See
+  [External calls](../orchestration/external-calls.md).
 - **Each org can have its own monthly AI budget** (§110 t-788). A platform
   admin in the install org sets `settings.quotas.monthlyBudgetUsd` with
   `PATCH /api/v1/admin/orgs/[id]`, or a fork's billing code calls
@@ -129,11 +135,11 @@ own it have not shipped (the Multi-tenancy phase on the Hub; the design
 record's [target architecture](./multi-tenancy-design.md#target-architecture)
 says which piece each feature lands):
 
-- **The Learn page is the install org's alone, and org admins still see it.** The
-  Pattern Advisor, the Quiz Master and their patterns knowledge help the
-  install's app admins build their app, so they exist only in the install
-  org. Until the console split (§111) hides that page from org admins, it is
-  listed in their console and finds nothing there.
+- **The Learn page is the install org's alone.** The Pattern Advisor, the
+  Quiz Master and their patterns knowledge help the install's app admins
+  build their app, so they exist only in the install org. It is a platform
+  page, so an org admin is not shown it and is refused it (§111). A platform
+  admin switched into a customer org still finds it empty there.
 - **Some process-global state is shared across orgs on purpose.** RLS cannot
   see a Node heap, so every module-level holder in `lib/` is declared in
   [`lib/tenancy/process-state.ts`](../../lib/tenancy/process-state.ts) with
@@ -490,8 +496,10 @@ Everything above is the **data** plane — which rows exist for whom. This
 section is the **control** plane: which _admin surfaces_ a customer runs and
 which stay the vendor's. It stays on this page because its reader is the
 same fork that enables the capability and then has to decide what a customer
-sees; §111 is the platform work that splits the console along it, and until
-then this is the map.
+sees. §111 splits the console along it: a surface is admitted to an org
+admin by declaring itself org-tier, and the declarations are one roster
+([admin tiers](../auth/authorization.md#admin-tiers)). This map is the
+reasoning; the roster is what runs.
 
 **The rule, so the table below does not have to be maintained to stay true:**
 
@@ -528,6 +536,14 @@ group global in v1, with one consequence worth restating: **one embedding
 model per install**, because vector dimension is a schema property.
 
 ### The customer's
+
+These are open to the org's OWNER/ADMIN (§111 t-811). **The source of truth
+for what is open is the roster, not this table:** `ORG_TIER_ADMIN_PAGES` and
+`ORG_TIER_ADMIN_ROUTES` in [`lib/auth/admin-tier.ts`](../../lib/auth/admin-tier.ts),
+pinned by `tests/unit/scripts/ci/admin-tier-roster.test.ts`. The roster also
+lists the shared-config reads these pages need (capabilities, agent profiles,
+providers and models, tags), whose writes stay the install org's. To open a
+fork's own surface, declare it the same way.
 
 | Surface                                             | Backing models                                        |
 | --------------------------------------------------- | ----------------------------------------------------- |

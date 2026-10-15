@@ -23,6 +23,7 @@
 
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { ConflictError, NotFoundError } from '@/lib/api/errors';
@@ -35,59 +36,80 @@ import { computeChanges, logAdminAction } from '@/lib/orchestration/audit/admin-
 import { invalidateAllAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { knowledgeTagUsage } from '@/lib/orchestration/admin/global-config-usage';
 
-export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = validatePathParam(rawId, cuidSchema, { label: 'tag id' });
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = validatePathParam(rawId, cuidSchema, { label: 'tag id' });
 
-  // Return the actual linked documents and agents — drives the drill-down in
-  // the Tags admin so operators can see exactly which docs/agents a tag
-  // covers, not just the count. Capped at 200 each; pagination on this view
-  // can come later if a tag ever spans more than that.
-  // The lists are the caller's org's; the counts are every org's, as the
-  // tag list and the delete check count them (t-731), with the share that is
-  // another org's alongside.
-  const [tag, usage] = await Promise.all([
-    prisma.knowledgeTag.findUnique({
-      where: { id },
-      include: {
-        documents: {
-          include: {
-            document: {
-              select: { id: true, name: true, fileName: true, scope: true, status: true },
+    // Return the actual linked documents and agents — drives the drill-down in
+    // the Tags admin so operators can see exactly which docs/agents a tag
+    // covers, not just the count. Capped at 200 each; pagination on this view
+    // can come later if a tag ever spans more than that.
+    // The lists are the caller's org's; the counts are every org's, as the
+    // tag list and the delete check count them (t-731), with the share that is
+    // another org's alongside.
+    const platform = await administersPlatform(session.principal);
+    const [tag, usage] = await Promise.all([
+      prisma.knowledgeTag.findUnique({
+        where: { id },
+        include: {
+          documents: {
+            include: {
+              document: {
+                select: { id: true, name: true, fileName: true, scope: true, status: true },
+              },
             },
+            orderBy: { createdAt: 'asc' },
+            take: 200,
           },
-          orderBy: { createdAt: 'asc' },
-          take: 200,
-        },
-        agents: {
-          include: {
-            agent: {
-              select: { id: true, name: true, slug: true, isActive: true },
+          agents: {
+            include: {
+              agent: {
+                select: { id: true, name: true, slug: true, isActive: true },
+              },
             },
+            orderBy: { createdAt: 'asc' },
+            take: 200,
           },
-          orderBy: { createdAt: 'asc' },
-          take: 200,
         },
-      },
-    }),
-    knowledgeTagUsage(id),
-  ]);
-  if (!tag) throw new NotFoundError(`Knowledge tag ${id} not found`);
+      }),
+      knowledgeTagUsage(id),
+    ]);
+    if (!tag) throw new NotFoundError(`Knowledge tag ${id} not found`);
 
-  log.info('Knowledge tag fetched', { tagId: id });
+    log.info('Knowledge tag fetched', { tagId: id });
 
-  const { documents, agents, ...rest } = tag;
-  return successResponse({
-    ...rest,
-    documentCount: usage.documentLinks,
-    agentCount: usage.agentGrants,
-    otherOrgDocumentCount: usage.otherOrgDocumentLinks,
-    otherOrgAgentCount: usage.otherOrgAgentGrants,
-    documents: documents.map((d) => d.document),
-    agents: agents.map((a) => a.agent),
-  });
-});
+    const { documents, agents, ...rest } = tag;
+    return successResponse({
+      ...rest,
+      // A customer org's admin gets their own org's share (§111 t-811);
+      // the other orgs' figures are for a platform admin's delete check.
+      ...(platform
+        ? {
+            documentCount: usage.documentLinks,
+            agentCount: usage.agentGrants,
+            otherOrgDocumentCount: usage.otherOrgDocumentLinks,
+            otherOrgAgentCount: usage.otherOrgAgentGrants,
+          }
+        : {
+            documentCount: usage.documentLinks - usage.otherOrgDocumentLinks,
+            agentCount: usage.agentGrants - usage.otherOrgAgentGrants,
+            otherOrgDocumentCount: 0,
+            otherOrgAgentCount: 0,
+          }),
+      documents: documents.map((d) => d.document),
+      agents: agents.map((a) => a.agent),
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because: 'Shared configuration every org reads; it holds nobody’s personal rows.',
+    },
+  }
+);
 
 export const PATCH = withAdminAuth<{ id: string }>(
   async (request, session, { params }) => {

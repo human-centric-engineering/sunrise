@@ -58,7 +58,11 @@ import type { AiAgentCapability, AiCapability } from '@/types/prisma';
 const bindingMetaSchema = z.object({
   warnings: z
     .object({
-      missingEnvVars: z.array(z.string()),
+      missingEnvVars: z.array(z.string()).optional(),
+      // Names a customer org may not use, and the prefix that would make them
+      // usable (§111 t-811). Absent for the install org.
+      unavailableEnvVars: z.array(z.string()).optional(),
+      envVarPrefix: z.string().optional(),
     })
     .optional(),
 });
@@ -451,6 +455,10 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
   // ${env:VAR} reference points at an unset env var. Save still
   // succeeds — admin may legitimately save before deploying the var.
   const [missingEnvVars, setMissingEnvVars] = useState<string[]>([]);
+  const [unavailableEnvVars, setUnavailableEnvVars] = useState<{
+    names: string[];
+    prefix: string | null;
+  }>({ names: [], prefix: null });
 
   useEffect(() => {
     if (link) {
@@ -458,6 +466,7 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
       setRateLimit(link.customRateLimit ? String(link.customRateLimit) : '');
       setError(null);
       setMissingEnvVars([]);
+      setUnavailableEnvVars({ names: [], prefix: null });
     }
   }, [link]);
 
@@ -511,11 +520,16 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
       const parsed = await parseApiResponse<unknown>(response);
       const meta = parsed.success ? bindingMetaSchema.safeParse(parsed.meta) : undefined;
       const missing = meta?.success ? (meta.data.warnings?.missingEnvVars ?? []) : [];
-      if (missing.length > 0) {
+      const unavailable = meta?.success ? (meta.data.warnings?.unavailableEnvVars ?? []) : [];
+      if (missing.length > 0 || unavailable.length > 0) {
         // Keep the dialog open so the admin sees the warning; refresh
         // the parent list in the background so the saved state is
         // visible elsewhere.
         setMissingEnvVars(missing);
+        setUnavailableEnvVars({
+          names: unavailable,
+          prefix: meta?.success ? (meta.data.warnings?.envVarPrefix ?? null) : null,
+        });
         onSaved({ keepDialogOpen: true });
         return;
       }
@@ -570,6 +584,9 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
                 // edits the config — they're either fixing the env
                 // var or changing the binding shape.
                 if (missingEnvVars.length > 0) setMissingEnvVars([]);
+                if (unavailableEnvVars.names.length > 0) {
+                  setUnavailableEnvVars({ names: [], prefix: null });
+                }
               }}
               className="font-mono text-xs"
               placeholder="{}"
@@ -593,6 +610,30 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
             />
           </div>
           {error && <p className="text-destructive text-sm">{error}</p>}
+          {unavailableEnvVars.names.length > 0 && (
+            <div
+              role="status"
+              className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950"
+              data-testid="unavailable-env-vars-warning"
+            >
+              <p className="font-medium text-amber-900 dark:text-amber-100">
+                Saved — but this organisation cannot use{' '}
+                {unavailableEnvVars.names.length === 1 ? 'this env var' : 'these env vars'}:
+              </p>
+              <ul className="mt-1 list-disc pl-5 text-amber-900 dark:text-amber-100">
+                {unavailableEnvVars.names.map((name) => (
+                  <li key={name}>
+                    <code>{name}</code>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-amber-900 dark:text-amber-100">
+                Calls will fail until the binding names an env var starting{' '}
+                <code>{unavailableEnvVars.prefix ?? 'with this organisation’s prefix'}</code>. Ask
+                your platform operator to set the value under that name, then update the binding.
+              </p>
+            </div>
+          )}
           {missingEnvVars.length > 0 && (
             <div
               role="status"
@@ -626,7 +667,7 @@ function ConfigureDialog({ link, agentId, onOpenChange, onSaved }: ConfigureDial
             onClick={() => onOpenChange(false)}
             disabled={saving}
           >
-            {missingEnvVars.length > 0 ? 'Close' : 'Cancel'}
+            {missingEnvVars.length > 0 || unavailableEnvVars.names.length > 0 ? 'Close' : 'Cancel'}
           </Button>
           <Button type="button" onClick={() => void handleSave()} disabled={saving}>
             {saving ? 'Saving…' : 'Save'}

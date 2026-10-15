@@ -31,42 +31,52 @@ const documentMetaSchema = z
   .passthrough()
   .nullable();
 
-export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid document id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, _session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid document id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
 
-  const document = await prisma.aiKnowledgeDocument.findUnique({ where: { id } });
-  if (!document) throw new NotFoundError(`Document ${id} not found`);
+    const document = await prisma.aiKnowledgeDocument.findUnique({ where: { id } });
+    if (!document) throw new NotFoundError(`Document ${id} not found`);
 
-  const chunks = await prisma.aiKnowledgeChunk.findMany({
-    where: { documentId: id },
-    orderBy: { chunkKey: 'asc' },
-    select: {
-      id: true,
-      content: true,
-      chunkType: true,
-      patternNumber: true,
-      patternName: true,
-      section: true,
-      keywords: true,
-      estimatedTokens: true,
+    const chunks = await prisma.aiKnowledgeChunk.findMany({
+      where: { documentId: id },
+      orderBy: { chunkKey: 'asc' },
+      select: {
+        id: true,
+        content: true,
+        chunkType: true,
+        patternNumber: true,
+        patternName: true,
+        section: true,
+        keywords: true,
+        estimatedTokens: true,
+      },
+    });
+
+    // Surface the coverage metric + warnings the chunk pipeline wrote into
+    // `document.metadata` (see lib/orchestration/knowledge/coverage.ts). The
+    // admin Chunks Inspector renders these so the operator can see at a
+    // glance how much of the parsed text actually made it into chunks.
+    const metaParsed = documentMetaSchema.safeParse(document.metadata ?? null);
+    const meta = metaParsed.success ? metaParsed.data : null;
+    const coverage = meta?.coverage ?? null;
+    const warnings = meta?.warnings ?? [];
+
+    log.info('Document chunks fetched', { documentId: id, chunkCount: chunks.length });
+    return successResponse({ chunks, coverage, warnings });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
     },
-  });
-
-  // Surface the coverage metric + warnings the chunk pipeline wrote into
-  // `document.metadata` (see lib/orchestration/knowledge/coverage.ts). The
-  // admin Chunks Inspector renders these so the operator can see at a
-  // glance how much of the parsed text actually made it into chunks.
-  const metaParsed = documentMetaSchema.safeParse(document.metadata ?? null);
-  const meta = metaParsed.success ? metaParsed.data : null;
-  const coverage = meta?.coverage ?? null;
-  const warnings = meta?.warnings ?? [];
-
-  log.info('Document chunks fetched', { documentId: id, chunkCount: chunks.length });
-  return successResponse({ chunks, coverage, warnings });
-});
+  }
+);

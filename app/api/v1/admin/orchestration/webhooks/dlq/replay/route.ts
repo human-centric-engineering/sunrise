@@ -48,52 +48,62 @@ const bodySchema = z.union([
   }),
 ]);
 
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
 
-  const raw = (await request.json().catch(() => null)) as unknown;
-  const parsed = bodySchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid replay request body', {
-      fields: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+    const raw = (await request.json().catch(() => null)) as unknown;
+    const parsed = bodySchema.safeParse(raw);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid replay request body', {
+        fields: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+      });
+    }
+    const body = parsed.data;
+
+    const ids = await resolveTargetIds(body, session);
+
+    const replayed: string[] = [];
+    const skipped: string[] = [];
+
+    for (let i = 0; i < ids.length; i += REPLAY_CONCURRENCY) {
+      const slice = ids.slice(i, i + REPLAY_CONCURRENCY);
+      // `awaitDelivery: true` so the chunked `Promise.all` actually gates the
+      // outbound HTTP — without it, retryDelivery resolves after the DB reset
+      // and the receiver still gets the whole batch in parallel.
+      const results = await Promise.all(
+        slice.map(async (id) => {
+          const ok = await retryDelivery(id, { awaitDelivery: true });
+          return { id, ok };
+        })
+      );
+      for (const { id, ok } of results) (ok ? replayed : skipped).push(id);
+    }
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'webhook_delivery.replay_batch',
+      entityType: 'webhook_subscription',
+      entityId: 'subscriptionId' in body ? body.subscriptionId : 'multi',
+      metadata: { replayed: replayed.length, skipped: skipped.length },
+      clientIp: clientIP,
     });
+
+    return successResponse({
+      replayed: replayed.length,
+      skipped: skipped.length,
+      deliveryIds: replayed,
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Subscriptions are scoped to the admin who created them and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
+    },
   }
-  const body = parsed.data;
-
-  const ids = await resolveTargetIds(body, session);
-
-  const replayed: string[] = [];
-  const skipped: string[] = [];
-
-  for (let i = 0; i < ids.length; i += REPLAY_CONCURRENCY) {
-    const slice = ids.slice(i, i + REPLAY_CONCURRENCY);
-    // `awaitDelivery: true` so the chunked `Promise.all` actually gates the
-    // outbound HTTP — without it, retryDelivery resolves after the DB reset
-    // and the receiver still gets the whole batch in parallel.
-    const results = await Promise.all(
-      slice.map(async (id) => {
-        const ok = await retryDelivery(id, { awaitDelivery: true });
-        return { id, ok };
-      })
-    );
-    for (const { id, ok } of results) (ok ? replayed : skipped).push(id);
-  }
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'webhook_delivery.replay_batch',
-    entityType: 'webhook_subscription',
-    entityId: 'subscriptionId' in body ? body.subscriptionId : 'multi',
-    metadata: { replayed: replayed.length, skipped: skipped.length },
-    clientIp: clientIP,
-  });
-
-  return successResponse({
-    replayed: replayed.length,
-    skipped: skipped.length,
-    deliveryIds: replayed,
-  });
-});
+);
 
 async function resolveTargetIds(
   body: { deliveryIds: string[] } | { subscriptionId: string; before?: Date },
