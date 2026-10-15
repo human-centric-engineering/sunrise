@@ -20,6 +20,13 @@
  * set to replace and a PUT naming it is refused. At `single` the policy is
  * stored and not applied, and the response says which.
  *
+ * A replacement then reconciles the org's platform agents (t-798): an org gets
+ * its agents before it has any grant, so the clean-up assistant starts
+ * unpinned, and the reconcile pins it to the strongest tool-using model the
+ * new grants allow. It only fills an empty binding; an agent already pinned,
+ * or set by the org, is left alone. A failing reconcile is logged and does
+ * not fail the grant: the policy is already written.
+ *
  * Platform-only: providers are platform-ops configuration (design Q3), and an
  * org admin does not decide which vendors their org's data reaches. Every
  * replacement is written to the admin audit log with its before and after.
@@ -31,6 +38,7 @@ import { errorResponse, successResponse } from '@/lib/api/responses';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
+import { reconcilePlatformAgents } from '@/lib/orchestration/agents/reconcile-platform-agents';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { forgetOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
 import { isMultiTenant } from '@/lib/tenancy/context';
@@ -150,6 +158,15 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
   if (!written) throw new OrgLifecycleError('ORG_NOT_FOUND', 'Organisation not found');
   // This process at once; other processes within the policy cache's TTL.
   forgetOrgProviderPolicy(id);
+  // After the forget, so the reconcile's binding pick reads the new grants.
+  try {
+    await reconcilePlatformAgents(id);
+  } catch (err) {
+    log.error('Platform agents not reconciled after a provider grant', {
+      orgId: id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 
   logAdminAction({
     userId: session.user.id,

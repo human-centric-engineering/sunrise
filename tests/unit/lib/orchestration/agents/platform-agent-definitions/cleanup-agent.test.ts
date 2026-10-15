@@ -274,6 +274,24 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
     expect(modelFindMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing usable, so no model read at all
   });
 
+  it('pins once the org is granted providers and its cached policy is forgotten (t-798)', async () => {
+    // The provider-grant route's order: write the grant, forget the cached
+    // policy, then reconcile. A new org has no grant, so its first pick is null.
+    approve();
+    const { client } = reachableBoth();
+    expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toBeNull();
+
+    approve('anthropic');
+    // Still the cached empty policy: reconciling before the forget pins nothing.
+    expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toBeNull();
+
+    forgetOrgProviderPolicy(ORG);
+    expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toEqual({
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+    });
+  });
+
   it('throws when the policy cannot be read, so the reconcile fails and is retried', async () => {
     // Answering null here would be recorded as done: the reconcile writes its
     // marker and never asks again.

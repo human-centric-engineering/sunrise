@@ -66,7 +66,9 @@ Every agent field declares its side (see
   touched again. A definition may give a starting value (the auditor starts
   with a $25 monthly budget), and `cleanup-agent` pins the strongest
   tool-using model the org can reach, among providers the org may use
-  (§120 t-746), while provider and model are both still empty.
+  (§120 t-746), while provider and model are both still empty. A provider
+  grant to the org runs a reconcile, so that pin follows the org's first
+  grant (t-798).
 
 ## What an org's admin can change
 

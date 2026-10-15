@@ -63,10 +63,13 @@ resolver fills them, exactly as before. That is what a new org at `multi` gets,
 since it starts with no approved providers. A policy that cannot be read fails
 the reconcile instead, so the maintenance job retries the org. The pin is applied when the org's
 instance is created, and again on any later reconcile while **both** fields are
-still empty. Granting the org a provider does not by itself start a reconcile
-(one runs when the platform-agent registry changes, or for an org with no
-marker), so until then an org admin picks the cleanup agent's provider. An admin's own choice is never overwritten: provider and model
-belong to the org.
+still empty. Granting the org providers (`PUT /admin/orgs/[id]/providers`)
+runs that reconcile, so a new org's cleanup agent is pinned as soon as it is
+granted a provider that qualifies (t-798); a reconcile failure there is logged
+and does not fail the grant. An admin's own choice is never overwritten:
+provider and model belong to the org. Revoking the provider an agent is pinned
+to does not unpin it; the call-time gate then refuses that provider until an
+admin picks another.
 
 The system prompt tells the agent to read before it acts and verify after,
 states what each tool cannot do, prefers deterministic capabilities, covers the
