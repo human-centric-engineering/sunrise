@@ -1093,7 +1093,7 @@ export class StreamingChatHandler {
       // What the stored text says it may not describe is kept OUT of what the
       // summariser is given and put back by us afterwards, so a model that
       // paraphrases a summary cannot paraphrase the gap away.
-      let stored = splitGapNote(storedSummary ?? '');
+      let stored = storedSummary ? splitGapNote(storedSummary) : { gap: 0, body: '' };
 
       // Catch-up. More than the load limit of rows follow the pin — a long
       // summariser outage, or a run of turns that wrote a great many rows (one
