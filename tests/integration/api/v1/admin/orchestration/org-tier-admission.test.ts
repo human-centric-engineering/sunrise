@@ -95,6 +95,10 @@ vi.mock('@/lib/orchestration/llm/provider-manager', async (importOriginal) => ({
   getProvider: vi.fn(),
   testProvider: vi.fn(),
 }));
+vi.mock('@/lib/orchestration/mcp/config', () => ({
+  getMcpServerConfig: vi.fn().mockResolvedValue({ globalRateLimit: 60 }),
+  invalidateMcpConfigCache: vi.fn(),
+}));
 vi.mock('@/lib/orchestration/llm/org-provider-policy', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-policy')>()),
   unapprovedProviders: vi.fn(),
@@ -112,6 +116,7 @@ import * as tags from '@/app/api/v1/admin/orchestration/knowledge/tags/route';
 import { POST as testConnection } from '@/app/api/v1/admin/orchestration/providers/[id]/test/route';
 import { POST as testModel } from '@/app/api/v1/admin/orchestration/providers/[id]/test-model/route';
 import { POST as testWebhook } from '@/app/api/v1/admin/orchestration/webhooks/[id]/test/route';
+import { POST as createMcpKey } from '@/app/api/v1/admin/orchestration/mcp/keys/route';
 
 const ORG_B = 'cmorg0000000000000000orgb';
 const PROVIDER_ID = 'cmjbv4i3x00003wsloputgwul';
@@ -310,5 +315,81 @@ describe('an ADMIN of a customer org, at multi: testing a webhook (§111 t-811 s
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe('an ADMIN of a customer org, at multi: the provider list (§111 t-811 code review)', () => {
+  const row = {
+    ...PROVIDER_ROW,
+    baseUrl: 'http://10.0.0.7:11434',
+    apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+    metadata: { region: 'internal' },
+    isLocal: false,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  it('gets each provider without its endpoint, its key’s env var name or its metadata', async () => {
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([row] as never);
+    const res = await providers.GET(get('/providers'));
+    const body = (await res.json()) as { data: Record<string, unknown>[] };
+
+    expect(res.status).toBe(200);
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0]).toMatchObject({ slug: 'anthropic', name: 'Anthropic' });
+    expect(body.data[0]).not.toHaveProperty('baseUrl');
+    expect(body.data[0]).not.toHaveProperty('apiKeyEnvVar');
+    expect(body.data[0]).not.toHaveProperty('metadata');
+  });
+
+  it('control: a platform admin still gets the whole row', async () => {
+    signIn('ADMIN', ORG_B);
+    vi.mocked(prisma.aiProviderConfig.findMany).mockResolvedValue([row] as never);
+    const res = await providers.GET(get('/providers'));
+    const body = (await res.json()) as { data: Record<string, unknown>[] };
+
+    expect(body.data[0]).toMatchObject({
+      baseUrl: 'http://10.0.0.7:11434',
+      apiKeyEnvVar: 'ANTHROPIC_API_KEY',
+    });
+  });
+});
+
+describe('an ADMIN of a customer org, at multi: an MCP key’s rate limit (§111 t-811 code review)', () => {
+  beforeEach(() => {
+    vi.mocked(prisma.mcpApiKey.create).mockResolvedValue({
+      id: 'k1',
+      name: 'k',
+      keyPrefix: 'smcp_xx',
+      scopes: [],
+      createdAt: new Date(),
+    } as never);
+  });
+
+  it('is refused an override above the server’s limit, and nothing is created', async () => {
+    const res = await createMcpKey(
+      post('/mcp/keys', { name: 'k', scopes: ['tools:list'], rateLimitOverride: 10000 })
+    );
+
+    expect(res.status).toBe(400);
+    expect(prisma.mcpApiKey.create).not.toHaveBeenCalled();
+  });
+
+  it('may lower a key below the server’s limit', async () => {
+    const res = await createMcpKey(
+      post('/mcp/keys', { name: 'k', scopes: ['tools:list'], rateLimitOverride: 30 })
+    );
+
+    expect(res.status).toBe(201);
+    expect(prisma.mcpApiKey.create).toHaveBeenCalled();
+  });
+
+  it('control: a platform admin may raise it', async () => {
+    signIn('ADMIN', ORG_B);
+    const res = await createMcpKey(
+      post('/mcp/keys', { name: 'k', scopes: ['tools:list'], rateLimitOverride: 10000 })
+    );
+
+    expect(res.status).toBe(201);
   });
 });

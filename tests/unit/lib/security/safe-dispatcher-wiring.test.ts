@@ -2,8 +2,9 @@
  * Tests: the outbound fetches a customer org chooses connect through the safe dispatcher (§111 t-811)
  *
  * `safe-dispatcher.test.ts` proves the dispatcher refuses an unsafe address.
- * This proves the three call sites an org admin can aim — the knowledge URL
- * import, webhook delivery, and the webhook test button — hand it to `fetch`
+ * This proves the call sites an org admin can aim — the knowledge URL import,
+ * webhook delivery, the webhook test button, and the allowlisted outbound call
+ * behind `external_call` / `call_external_api` — hand it to `fetch`
  * when acting for a customer org at `multi`, and leave the fetch as it was
  * for the install org.
  */
@@ -32,6 +33,8 @@ vi.mock('@/lib/db/client', () => ({
 import { prisma } from '@/lib/db/client';
 import { fetchDocumentFromUrl } from '@/lib/orchestration/knowledge/url-fetcher';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
+import { executeHttpRequest } from '@/lib/orchestration/http';
+import { resetAllowlistCache } from '@/lib/orchestration/http/allowlist';
 import { runAsOrg } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
@@ -109,6 +112,35 @@ describe('webhook delivery', () => {
       dispatchWebhookEvent('workflow_failed', { workflowId: 'w1' })
     );
     expect(mockFetch).toHaveBeenCalled();
+    expect(lastHadDispatcher()).toBe(false);
+  });
+});
+
+describe('the allowlisted outbound call (external_call, call_external_api)', () => {
+  beforeEach(() => {
+    process.env.ORCHESTRATION_ALLOWED_HOSTS = 'api.allowed.com';
+    resetAllowlistCache();
+    mockFetch.mockResolvedValue(
+      new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    );
+  });
+  afterEach(() => {
+    delete process.env.ORCHESTRATION_ALLOWED_HOSTS;
+    resetAllowlistCache();
+  });
+
+  it('connects through the dispatcher for a customer org — the allowlist is install-wide', async () => {
+    await runAsOrg(ORG_B, () =>
+      executeHttpRequest({ url: 'https://api.allowed.com/x', method: 'GET' })
+    );
+    expect(mockFetch).toHaveBeenCalled();
+    expect(lastHadDispatcher()).toBe(true);
+  });
+
+  it('control: connects as before for the install org', async () => {
+    await runAsOrg(INSTALL_ORG_ID, () =>
+      executeHttpRequest({ url: 'https://api.allowed.com/x', method: 'GET' })
+    );
     expect(lastHadDispatcher()).toBe(false);
   });
 });

@@ -179,9 +179,15 @@ the reasoning behind it.
 - **Shared configuration is read, never written.** The agent form and the
   knowledge pages need capabilities, agent profiles, providers, provider
   models, embedding models, graders and tags, so those `GET`s are org-tier.
-  Their writes keep `writesSharedSettings` and are not org-tier. The settings
-  singleton, the knowledge seed, the tags page and the patterns knowledge stay
-  platform-only.
+  Their writes keep `writesSharedSettings` and are not org-tier. An org admin's
+  provider list omits each row's `baseUrl`, `apiKeyEnvVar` and `metadata`,
+  which are the operator's infrastructure. The settings singleton, the
+  knowledge seed, the tags page and the patterns knowledge stay platform-only,
+  and their controls are hidden where shared settings are read-only (the seed
+  button, the workflow builder's pattern "Learn more").
+- **An org admin's MCP key may run slower than the server, never faster.**
+  `rateLimitOverride` on a key they create or edit may lower the server's
+  `globalRateLimit`, not raise it (`assertKeyRateLimitAllowed`).
 - **Each opened route declares its ownership.** Routes over a person's rows
   (conversations, evaluations, runs, datasets, experiments, executions, webhook
   subscriptions, the admin chat turn) are keyed on the caller: `'self'`. Routes
@@ -194,11 +200,12 @@ the reasoning behind it.
   the admin layout's platform question. The provider test routes use it: an org
   admin may test only a provider their org is approved for, in their own org,
   while a platform admin keeps the install-org probe.
-- **The mixed pages are not assigned.** The dashboard, costs, analytics,
-  executions and the MCP landing are split per viewer (§111 t-812), not opened.
-  Until then the MCP keys page has no nav entry for an org admin; it is open
-  by URL. The executions routes the approval queue and the workflow builder
-  call are open; the executions page is not.
+- **The mixed pages are not assigned.** The dashboard, costs, analytics, the
+  executions list and the MCP landing are split per viewer (§111 t-812), not
+  opened. Until then the MCP keys page has no nav entry for an org admin; it
+  is open by URL. One execution's detail page (`executions/[id]`) is open, with
+  the routes it calls, because the approval queue and a workflow run link to
+  it; the executions list and the live-engine view are not.
 
 **If you replace `canAdminister`,** handle `scope.tier`. A policy that ignores
 it admits nobody new: org admins stay locked out of every surface, which is the

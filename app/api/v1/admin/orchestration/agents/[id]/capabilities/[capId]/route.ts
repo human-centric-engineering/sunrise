@@ -23,7 +23,11 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
-import { findUnsetEnvVarReferences } from '@/lib/orchestration/env-template';
+import {
+  envVarPrefixHere,
+  findUnavailableEnvVarReferences,
+  findUnsetEnvVarReferences,
+} from '@/lib/orchestration/env-template';
 import { updateAgentCapabilitySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
@@ -34,7 +38,7 @@ import {
 } from '@/lib/orchestration/agents/platform-agent-guard';
 
 /**
- * Narrow shape used by `collectMissingEnvVars`. See the matching
+ * Narrow shape used by `collectEnvVarWarnings`. See the matching
  * schema in the sibling attach route for the rationale.
  */
 const bindingScanSchema = z
@@ -50,10 +54,25 @@ const bindingScanSchema = z
  * the running process. Soft warning — see the matching helper in the
  * sibling attach route.
  */
-function collectMissingEnvVars(customConfig: unknown): string[] {
+function collectEnvVarWarnings(customConfig: unknown): {
+  missingEnvVars?: string[];
+  unavailableEnvVars?: string[];
+  envVarPrefix?: string;
+} | null {
   const parsed = bindingScanSchema.safeParse(customConfig);
-  if (!parsed.success) return [];
-  return findUnsetEnvVarReferences(parsed.data.forcedUrl, parsed.data.forcedHeaders);
+  if (!parsed.success) return null;
+  const { forcedUrl, forcedHeaders } = parsed.data;
+  const missing = findUnsetEnvVarReferences(forcedUrl, forcedHeaders);
+  // Names a customer org may not use (§111 t-811): reported with the prefix
+  // that would make them usable, so the fix named is a rename, not "set it".
+  const unavailable = findUnavailableEnvVarReferences(forcedUrl, forcedHeaders);
+  const prefix = envVarPrefixHere();
+  if (missing.length === 0 && unavailable.length === 0) return null;
+  return {
+    ...(missing.length > 0 ? { missingEnvVars: missing } : {}),
+    ...(unavailable.length > 0 ? { unavailableEnvVars: unavailable } : {}),
+    ...(unavailable.length > 0 && prefix ? { envVarPrefix: prefix } : {}),
+  };
 }
 
 type RouteParams = { id: string; capId: string };
@@ -142,8 +161,8 @@ export const PATCH = withAdminAuth<RouteParams>(
         clientIp: clientIP,
       });
 
-      const missingEnvVars = collectMissingEnvVars(body.customConfig);
-      const meta = missingEnvVars.length > 0 ? { warnings: { missingEnvVars } } : undefined;
+      const envWarnings = collectEnvVarWarnings(body.customConfig);
+      const meta = envWarnings ? { warnings: envWarnings } : undefined;
       return successResponse(link, meta);
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {

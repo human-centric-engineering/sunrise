@@ -29,7 +29,7 @@ import {
   type OutboundMessageRequest,
   type OutboundSendResult,
 } from '@/lib/orchestration/outbound/types';
-import { resolveEnvTemplate } from '@/lib/orchestration/env-template';
+import { EnvTemplateError, resolveEnvTemplate } from '@/lib/orchestration/env-template';
 
 const TWILIO_BASE_URL = 'https://api.twilio.com/2010-04-01/Accounts';
 const WHATSAPP_PREFIX = 'whatsapp:';
@@ -87,7 +87,11 @@ export class TwilioOutboundAdapter implements OutboundAdapter {
     } catch (err) {
       throw new OutboundSendError(
         'config_invalid',
-        `Twilio credential env var unset: ${(err as Error).message}`
+        // A name the org may not use (§111 t-811) is not an unset one, and
+        // the fix differs: the message says which it is.
+        err instanceof EnvTemplateError && err.code === 'env_var_not_available'
+          ? `Twilio credential env var not available: ${err.message}`
+          : `Twilio credential env var unset: ${(err as Error).message}`
       );
     }
     if (!accountSid || !authToken) {

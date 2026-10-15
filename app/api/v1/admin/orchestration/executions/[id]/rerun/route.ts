@@ -66,148 +66,164 @@ import {
   resolveEffectiveExecutionCap,
 } from '@/app/api/v1/admin/orchestration/workflows/[id]/_shared/execute-helpers';
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
 
-  // Short-circuit on a malformed id before any DB lookup. Returning 404
-  // (not 400) matches how cross-user requests are handled — existence
-  // is never leaked through error-code differences.
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new NotFoundError(`Execution ${rawId} not found`);
-  }
-  const originalId = parsed.data;
+    // Short-circuit on a malformed id before any DB lookup. Returning 404
+    // (not 400) matches how cross-user requests are handled — existence
+    // is never leaked through error-code differences.
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new NotFoundError(`Execution ${rawId} not found`);
+    }
+    const originalId = parsed.data;
 
-  const body = await validateRequestBody(request, rerunExecutionBodySchema);
+    const body = await validateRequestBody(request, rerunExecutionBodySchema);
 
-  // Load the original execution. Scope visibility at the query — an id the
-  // caller can't see resolves to null and surfaces as 404, not 403.
-  //
-  // `AND`-composed like every other site rather than spread. The keys do not
-  // collide today, but the widened fragment's key is `OR` and the narrowed
-  // one's is `userId`: a later filter spread in beside them could replace
-  // either, and a visibility clause that a future edit can flatten is the
-  // shape `.context/auth/authorization.md` warns about.
-  const original = await prisma.aiWorkflowExecution.findFirst({
-    where: { AND: [executionVisibilityWhere(session), { id: originalId }] },
-    select: {
-      id: true,
-      workflowId: true,
-      inputData: true,
-      budgetLimitUsd: true,
-      versionId: true,
-      scope: true,
-      userId: true,
-      status: true,
-      replyConversationId: true,
-    },
-  });
-  if (!original) {
-    throw new NotFoundError(`Execution ${originalId} not found`);
-  }
-
-  // Validate the caller-specified versionId before kicking off any work.
-  // The version must belong to THIS workflow — cross-workflow pins are
-  // rejected at `prepareWorkflowExecution`, but catching here gives the
-  // operator a clearer error (versionId on the rerun body vs. "workflow
-  // has no version with id" deep in the helper).
-  if (body.versionId) {
-    const version = await prisma.aiWorkflowVersion.findFirst({
-      where: { id: body.versionId, workflowId: original.workflowId },
-      select: { id: true },
+    // Load the original execution. Scope visibility at the query — an id the
+    // caller can't see resolves to null and surfaces as 404, not 403.
+    //
+    // `AND`-composed like every other site rather than spread. The keys do not
+    // collide today, but the widened fragment's key is `OR` and the narrowed
+    // one's is `userId`: a later filter spread in beside them could replace
+    // either, and a visibility clause that a future edit can flatten is the
+    // shape `.context/auth/authorization.md` warns about.
+    const original = await prisma.aiWorkflowExecution.findFirst({
+      where: { AND: [executionVisibilityWhere(session), { id: originalId }] },
+      select: {
+        id: true,
+        workflowId: true,
+        inputData: true,
+        budgetLimitUsd: true,
+        versionId: true,
+        scope: true,
+        userId: true,
+        status: true,
+        replyConversationId: true,
+      },
     });
-    if (!version) {
-      throw new ValidationError(`Version ${body.versionId} does not belong to this workflow`, {
-        versionId: ['Must reference an AiWorkflowVersion of the same workflow'],
-      });
+    if (!original) {
+      throw new NotFoundError(`Execution ${originalId} not found`);
     }
-  }
 
-  // Shared pre-flight: load + validate the chosen version's snapshot.
-  // When body.versionId is absent, prepareWorkflowExecution falls back
-  // to the workflow's current publishedVersionId.
-  const { workflow, definition, version } = await prepareWorkflowExecution(original.workflowId, {
-    pinnedVersionId: body.versionId ?? null,
-  });
-
-  // `inputData` is `Json` on the row — Prisma's runtime shape for that
-  // column is `JsonValue`. Zod-parse it before handing to the engine so a
-  // stored string / number / array / null surfaces as a clear validation
-  // error instead of an unexpected shape downstream.
-  const inputData = z.record(z.string(), z.unknown()).parse(original.inputData ?? {});
-
-  // Inherit the original's scope carrier so a rerun stays in the same scope
-  // it originally ran under — consistent with inputData / budget / version
-  // inheritance above. Validated like the resume path (`row.scope`); a
-  // malformed stored value is dropped and the rerun proceeds unscoped rather
-  // than failing. Absent/NULL on the original → unscoped rerun (unchanged).
-  let rerunScope: Record<string, string> | undefined;
-  if (original.scope !== null && original.scope !== undefined) {
-    const parsedScope = workflowScopeSchema.safeParse(original.scope);
-    if (parsedScope.success) {
-      rerunScope = parsedScope.data;
-    } else {
-      log.warn('execution rerun: dropped malformed scope from original', {
-        originalExecutionId: original.id,
+    // Validate the caller-specified versionId before kicking off any work.
+    // The version must belong to THIS workflow — cross-workflow pins are
+    // rejected at `prepareWorkflowExecution`, but catching here gives the
+    // operator a clearer error (versionId on the rerun body vs. "workflow
+    // has no version with id" deep in the helper).
+    if (body.versionId) {
+      const version = await prisma.aiWorkflowVersion.findFirst({
+        where: { id: body.versionId, workflowId: original.workflowId },
+        select: { id: true },
       });
+      if (!version) {
+        throw new ValidationError(`Version ${body.versionId} does not belong to this workflow`, {
+          versionId: ['Must reference an AiWorkflowVersion of the same workflow'],
+        });
+      }
     }
+
+    // Shared pre-flight: load + validate the chosen version's snapshot.
+    // When body.versionId is absent, prepareWorkflowExecution falls back
+    // to the workflow's current publishedVersionId.
+    const { workflow, definition, version } = await prepareWorkflowExecution(original.workflowId, {
+      pinnedVersionId: body.versionId ?? null,
+    });
+
+    // `inputData` is `Json` on the row — Prisma's runtime shape for that
+    // column is `JsonValue`. Zod-parse it before handing to the engine so a
+    // stored string / number / array / null surfaces as a clear validation
+    // error instead of an unexpected shape downstream.
+    const inputData = z.record(z.string(), z.unknown()).parse(original.inputData ?? {});
+
+    // Inherit the original's scope carrier so a rerun stays in the same scope
+    // it originally ran under — consistent with inputData / budget / version
+    // inheritance above. Validated like the resume path (`row.scope`); a
+    // malformed stored value is dropped and the rerun proceeds unscoped rather
+    // than failing. Absent/NULL on the original → unscoped rerun (unchanged).
+    let rerunScope: Record<string, string> | undefined;
+    if (original.scope !== null && original.scope !== undefined) {
+      const parsedScope = workflowScopeSchema.safeParse(original.scope);
+      if (parsedScope.success) {
+        rerunScope = parsedScope.data;
+      } else {
+        log.warn('execution rerun: dropped malformed scope from original', {
+          originalExecutionId: original.id,
+        });
+      }
+    }
+
+    // Budget resolution: caller override > original's stamped cap > workflow
+    // default > settings default. Treating the original's cap as a "caller
+    // override" in the resolver chain preserves the historic semantics —
+    // a rerun without arguments reuses the original's ceiling — while
+    // still falling through to the new workflow / settings defaults when
+    // the original ran uncapped.
+    const effectiveBudgetLimitUsd = await resolveEffectiveExecutionCap({
+      callerOverride: body.budgetLimitUsd ?? original.budgetLimitUsd,
+      workflowDefault: workflow.maxCostPerExecutionUsd,
+    });
+
+    log.info('execution rerun started', {
+      workflowId: workflow.id,
+      originalExecutionId: original.id,
+      versionId: version.id,
+      versionNumber: version.version,
+      userId: session.user.id,
+      callerBudgetLimitUsd: body.budgetLimitUsd ?? null,
+      originalBudgetLimitUsd: original.budgetLimitUsd,
+      workflowMaxCostPerExecutionUsd: workflow.maxCostPerExecutionUsd ?? null,
+      effectiveBudgetLimitUsd: effectiveBudgetLimitUsd ?? null,
+      customVersionPin: body.versionId !== undefined,
+    });
+
+    const engine = new OrchestrationEngine();
+    const replyConversationId =
+      original.replyConversationId &&
+      body.resendReply === true &&
+      FINISHED_STATUSES.has(original.status)
+        ? original.replyConversationId
+        : null;
+
+    const events = engine.execute(
+      { id: workflow.id, definition, versionId: version.id },
+      inputData,
+      {
+        // Inherit the original's attribution rather than claiming the rerun for
+        // the admin who clicked. Visibility above allows exactly two cases, so
+        // this is either `session.user.id` (their own run) or `null` (system-
+        // owned). Stamping a system-owned rerun with the admin's id would copy a
+        // third party's inbound payload — `inputData` is reused verbatim — onto a
+        // row attributed to that admin, which is the mis-attribution #502 fixed.
+        // The audit trail for "who pressed rerun" is the route log below.
+        userId: original.userId,
+        ...(effectiveBudgetLimitUsd !== undefined
+          ? { budgetLimitUsd: effectiveBudgetLimitUsd }
+          : {}),
+        ...(rerunScope ? { scope: rerunScope } : {}),
+        signal: request.signal,
+        parentExecutionId: original.id,
+        // A rerun texts the person who wrote in only when the admin asks
+        // (`resendReply`, the dialog's "Send the reply to the person again"), and
+        // only for a finished original (t-770; owner ruling, 2026-10-07). Its
+        // status says nothing reliable about whether they were texted: a run can
+        // send and then fail, or complete without sending. A run still in flight
+        // would reply itself when it resumes, so its rerun never may.
+        ...(replyConversationId ? { replyConversationId } : {}),
+      }
+    );
+
+    // Step outputs shown with their webhook and API URLs reduced (t-777).
+    return sseResponse(withDisplayUrlsStream(events), { signal: request.signal });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Acts only on executions this caller may see — their own, an ownerless (scheduled or inbound) run where the policy permits it, or one whose trace names them as an approver — keyed on the caller's id.",
+    },
   }
-
-  // Budget resolution: caller override > original's stamped cap > workflow
-  // default > settings default. Treating the original's cap as a "caller
-  // override" in the resolver chain preserves the historic semantics —
-  // a rerun without arguments reuses the original's ceiling — while
-  // still falling through to the new workflow / settings defaults when
-  // the original ran uncapped.
-  const effectiveBudgetLimitUsd = await resolveEffectiveExecutionCap({
-    callerOverride: body.budgetLimitUsd ?? original.budgetLimitUsd,
-    workflowDefault: workflow.maxCostPerExecutionUsd,
-  });
-
-  log.info('execution rerun started', {
-    workflowId: workflow.id,
-    originalExecutionId: original.id,
-    versionId: version.id,
-    versionNumber: version.version,
-    userId: session.user.id,
-    callerBudgetLimitUsd: body.budgetLimitUsd ?? null,
-    originalBudgetLimitUsd: original.budgetLimitUsd,
-    workflowMaxCostPerExecutionUsd: workflow.maxCostPerExecutionUsd ?? null,
-    effectiveBudgetLimitUsd: effectiveBudgetLimitUsd ?? null,
-    customVersionPin: body.versionId !== undefined,
-  });
-
-  const engine = new OrchestrationEngine();
-  const replyConversationId =
-    original.replyConversationId &&
-    body.resendReply === true &&
-    FINISHED_STATUSES.has(original.status)
-      ? original.replyConversationId
-      : null;
-
-  const events = engine.execute({ id: workflow.id, definition, versionId: version.id }, inputData, {
-    // Inherit the original's attribution rather than claiming the rerun for
-    // the admin who clicked. Visibility above allows exactly two cases, so
-    // this is either `session.user.id` (their own run) or `null` (system-
-    // owned). Stamping a system-owned rerun with the admin's id would copy a
-    // third party's inbound payload — `inputData` is reused verbatim — onto a
-    // row attributed to that admin, which is the mis-attribution #502 fixed.
-    // The audit trail for "who pressed rerun" is the route log below.
-    userId: original.userId,
-    ...(effectiveBudgetLimitUsd !== undefined ? { budgetLimitUsd: effectiveBudgetLimitUsd } : {}),
-    ...(rerunScope ? { scope: rerunScope } : {}),
-    signal: request.signal,
-    parentExecutionId: original.id,
-    // A rerun texts the person who wrote in only when the admin asks
-    // (`resendReply`, the dialog's "Send the reply to the person again"), and
-    // only for a finished original (t-770; owner ruling, 2026-10-07). Its
-    // status says nothing reliable about whether they were texted: a run can
-    // send and then fail, or complete without sending. A run still in flight
-    // would reply itself when it resumes, so its rerun never may.
-    ...(replyConversationId ? { replyConversationId } : {}),
-  });
-
-  // Step outputs shown with their webhook and API URLs reduced (t-777).
-  return sseResponse(withDisplayUrlsStream(events), { signal: request.signal });
-});
+);

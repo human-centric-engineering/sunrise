@@ -14,6 +14,7 @@
 
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse, successResponse } from '@/lib/api/responses';
 import { ConflictError } from '@/lib/api/errors';
@@ -28,7 +29,7 @@ import { listProvidersQuerySchema, providerConfigSchema } from '@/lib/validation
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const GET = withAdminAuth(
-  async (request, _session) => {
+  async (request, session) => {
     const log = await getRouteLogger(request);
 
     const { searchParams } = new URL(request.url);
@@ -65,8 +66,14 @@ export const GET = withAdminAuth(
       Promise.all(rows.map((config) => hasProviderKey(config))),
       refusedProvidersOrUnknown(rows.map((config) => config.slug)),
     ]);
+    // An org admin reads this list for the agent form (§111 t-811): which
+    // providers exist, whether each has a key and is approved for their org.
+    // Where the operator's endpoints live and which env var holds each key is
+    // platform infrastructure, so a caller who does not administer the
+    // platform gets the row without them.
+    const platform = await administersPlatform(session.principal);
     const data = rows.map((config, index) => ({
-      ...config,
+      ...(platform ? config : withoutInfrastructure(config)),
       apiKeyPresent: keyPresent[index],
       approvedForOrg: refused ? !refused.has(config.slug) : null,
       circuitBreaker: getCircuitBreakerStatusForProvider(config.slug) ?? {
@@ -146,3 +153,11 @@ export const POST = withAdminAuth(
   },
   { writesSharedSettings: true }
 );
+
+/** A provider row without where its endpoint lives or which env var holds its key. */
+function withoutInfrastructure<
+  T extends { baseUrl: unknown; apiKeyEnvVar: unknown; metadata: unknown },
+>(config: T): Omit<T, 'baseUrl' | 'apiKeyEnvVar' | 'metadata'> {
+  const { baseUrl: _baseUrl, apiKeyEnvVar: _apiKeyEnvVar, metadata: _metadata, ...rest } = config;
+  return rest;
+}

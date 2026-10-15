@@ -39,7 +39,7 @@ import {
   type ResolveAll,
 } from '@/lib/security/safe-dispatcher';
 import { checkSafeAddress, checkSafeProviderUrl } from '@/lib/security/safe-url';
-import { runAsOrg } from '@/lib/tenancy/context';
+import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const ORG_B = 'cmorg0000000000000000orgb';
@@ -146,9 +146,13 @@ describe('safeLookup', () => {
       safeLookup({}, fakeResolve)(hostname, { all }, (err, address) => resolve({ err, address }))
     );
 
-  it('refuses a name resolving to cloud metadata', async () => {
+  it('refuses a name resolving to cloud metadata — naming the host, never the address', async () => {
     const { err } = await lookup('metadata.t811.test', false);
     expect(err).toBeInstanceOf(UnsafeResolvedAddressError);
+    // The message reaches an org admin (a webhook test, a delivery's lastError):
+    // naming where an internal name points would map the operator's network.
+    expect((err as Error).message).not.toContain('169.254');
+    expect((err as UnsafeResolvedAddressError).address).toBe('169.254.169.254');
   });
 
   it('refuses a name with one public and one private address — every address is checked', async () => {
@@ -191,6 +195,24 @@ describe('checkSafeAddress', () => {
     expect(checkSafeAddress(address).ok).toBe(false);
   });
 
+  it.each([
+    ['NAT64 wrapping 10.0.0.5', '64:ff9b::a00:5'],
+    ['NAT64 local-use wrapping 127.0.0.1', '64:ff9b:1::7f00:1'],
+    ['NAT64 dotted wrapping 169.254.169.254', '64:ff9b::169.254.169.254'],
+    ['6to4 wrapping 192.168.0.1', '2002:c0a8:1::1'],
+    ['0.0.0.0/8', '0.1.2.3'],
+    ['site-local fec0::/10', 'fec0::1'],
+  ])('refuses %s (%s)', (_label, address) => {
+    expect(checkSafeAddress(address).ok).toBe(false);
+  });
+
+  it.each(['64:ff9b::5db8:d822', '2002:5db8:d822::1'])(
+    'allows %s, which wraps a public address',
+    (address) => {
+      expect(checkSafeAddress(address).ok).toBe(true);
+    }
+  );
+
   it.each(['93.184.216.34', '2606:2800:220:1:248:1893:25c8:1946'])('allows %s', (address) => {
     expect(checkSafeAddress(address).ok).toBe(true);
   });
@@ -213,9 +235,15 @@ describe('outboundDispatcher — who gets one', () => {
     });
   });
 
-  it('the install org, a platform scope, and single installs do not', async () => {
+  it('so does a call stack with no context at all at multi — a bug, pinned rather than trusted', () => {
+    expect(outboundDispatcher()).toBeDefined();
+  });
+
+  it('the install org, a system scope, and single installs do not', async () => {
     await runAsOrg(INSTALL_ORG_ID, async () => expect(outboundDispatcher()).toBeUndefined());
-    expect(outboundDispatcher()).toBeUndefined();
+    await runAsSystem('test: a platform job', async () =>
+      expect(outboundDispatcher()).toBeUndefined()
+    );
     mockEnv.TENANCY_MODE = 'single';
     await runAsOrg(ORG_B, async () => {
       expect(outboundDispatcher()).toBeUndefined();

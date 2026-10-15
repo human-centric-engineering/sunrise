@@ -30,6 +30,7 @@ import { cn } from '@/lib/utils';
 
 import { PatternCoverageDialog } from '@/components/admin/orchestration/workflow-builder/pattern-coverage-dialog';
 import { PatternLearnMoreDialog } from '@/components/admin/orchestration/workflow-builder/pattern-learn-more-dialog';
+import { useSharedSettingsReadOnly } from '@/components/admin/shared-settings-access';
 
 /** Short descriptions shown under each category heading in the palette. */
 const CATEGORY_HINTS: Record<StepCategory, string> = {
@@ -118,6 +119,10 @@ export interface PatternPaletteProps {
 export function PatternPalette({ typeCounts = {} }: PatternPaletteProps) {
   const [coverageOpen, setCoverageOpen] = useState(false);
   const [learnMorePattern, setLearnMorePattern] = useState<number | null>(null);
+  // The patterns knowledge is the install org's alone (§116), so a customer
+  // org's builder — where shared settings are read-only (§111 t-811) — offers
+  // no "Learn more" that would open onto a pattern it does not have.
+  const patternsHere = !useSharedSettingsReadOnly();
 
   const byCategory: Record<StepCategory, StepRegistryEntry[]> = {
     orchestration: [],
@@ -165,7 +170,7 @@ export function PatternPalette({ typeCounts = {} }: PatternPaletteProps) {
                     key={entry.type}
                     entry={entry}
                     usageCount={typeCounts[entry.type] ?? 0}
-                    onLearnMore={setLearnMorePattern}
+                    onLearnMore={patternsHere ? setLearnMorePattern : undefined}
                   />
                 ))}
               </div>

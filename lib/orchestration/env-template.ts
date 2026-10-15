@@ -37,15 +37,14 @@
  * would hand them the operator's secret. So a config acting for a
  * customer org may name only the env vars the operator set aside for
  * that org: names starting {@link orgEnvVarPrefix} (`ORG_<ORG ID>_`).
- * The install org, a platform scope with no org, and every install at
- * `single` name anything, as before. {@link envVarAvailableHere} is the
+ * The install org, a system scope, and every install at `single` name
+ * anything, as before; a call stack with no context at `multi` names nothing. {@link envVarAvailableHere} is the
  * rule; this module and `readSecret` in `lib/orchestration/http/auth.ts`
  * apply it where the value is read, so it holds whichever write path
  * stored the config. Refused before the variable is looked up, so a
  * refusal says nothing about whether the operator's variable is set.
  */
-import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { actsForPlatform, getTenantContext } from '@/lib/tenancy/context';
 
 /**
  * The prefix of the env vars a customer org's configs may name: `ORG_`,
@@ -58,21 +57,25 @@ export function orgEnvVarPrefix(orgId: string): string {
 }
 
 /**
- * May config acting for the org in context name this env var? Yes at
- * `single`, for the install org, and with no org in context (a platform
- * scope); otherwise only a name under that org's {@link orgEnvVarPrefix}.
+ * May config acting for the org in context name this env var? Yes where the
+ * call stack acts for the platform (`actsForPlatform`: `single`, the install
+ * org, a system scope); for a customer org only a name under its
+ * {@link orgEnvVarPrefix}; and none with no context at all at `multi`.
  */
 export function envVarAvailableHere(name: string): boolean {
-  if (!isMultiTenant()) return true;
+  if (actsForPlatform()) return true;
+  // A customer org, or (at `multi`) no context at all — which is a bug, and
+  // gets no env var rather than every one.
   const orgId = getTenantContext()?.orgId ?? null;
-  if (orgId === null || orgId === INSTALL_ORG_ID) return true;
-  return name.startsWith(orgEnvVarPrefix(orgId));
+  return orgId !== null && name.startsWith(orgEnvVarPrefix(orgId));
 }
 
 /** The refusal's wording, shared with `readSecret` so both say the same thing. */
 export function envVarNotAvailableMessage(name: string): string {
-  const orgId = getTenantContext()?.orgId ?? '';
-  return `Env var "${name}" is not available to this organisation. Its configs may name only env vars starting "${orgEnvVarPrefix(orgId)}".`;
+  const orgId = getTenantContext()?.orgId ?? null;
+  return orgId === null
+    ? `Env var "${name}" is not available: no organisation is in context.`
+    : `Env var "${name}" is not available to this organisation. Its configs may name only env vars starting "${orgEnvVarPrefix(orgId)}".`;
 }
 
 export class EnvTemplateError extends Error {
@@ -193,12 +196,43 @@ export function findUnsetEnvVarReferences(
   for (const name of all) {
     if (seen.has(name)) continue;
     seen.add(name);
-    // A name the org may not use is reported missing whatever the host
-    // holds: it will not resolve here, and answering by the operator's env
-    // would let an org admin probe which of its variables are set.
-    if (!envVarAvailableHere(name) || !process.env[name]) {
+    // A name the org may not use is not looked up at all — answering by the
+    // operator's env would let an org admin probe which of its variables are
+    // set. `findUnavailableEnvVarReferences` reports it instead, with the fix.
+    if (!envVarAvailableHere(name)) continue;
+    if (!process.env[name]) {
       missing.push(name);
     }
   }
   return missing;
+}
+
+/**
+ * The `${env:VAR}` names in `values` that config acting for the org in context
+ * may not use at all (§111 t-811) — reported apart from the unset ones, so the
+ * binding-save warning can say the fix is to rename the variable under the
+ * org's prefix rather than to set it.
+ */
+export function findUnavailableEnvVarReferences(
+  ...values: ReadonlyArray<string | Record<string, string> | undefined | null>
+): string[] {
+  const names = new Set<string>();
+  for (const value of values) {
+    if (value == null) continue;
+    const strings = typeof value === 'string' ? [value] : Object.values(value);
+    for (const str of strings) {
+      if (typeof str !== 'string') continue;
+      for (const name of extractEnvTemplateNames(str)) {
+        if (!envVarAvailableHere(name)) names.add(name);
+      }
+    }
+  }
+  return [...names];
+}
+
+/** The env-var prefix of the org in context, or `null` where none applies (the platform). */
+export function envVarPrefixHere(): string | null {
+  if (actsForPlatform()) return null;
+  const orgId = getTenantContext()?.orgId ?? null;
+  return orgId === null ? null : orgEnvVarPrefix(orgId);
 }

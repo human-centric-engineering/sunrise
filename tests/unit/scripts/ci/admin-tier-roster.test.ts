@@ -97,6 +97,7 @@ describe('the pins', () => {
       '/admin/orchestration/event-subscriptions/dlq',
       '/admin/orchestration/mcp/keys',
       '/admin/orchestration/approvals',
+      '/admin/orchestration/executions/[id]',
     ]);
   });
 
@@ -174,8 +175,12 @@ describe('the pins', () => {
       'app/api/v1/admin/orchestration/evaluations/runs/route.ts#POST',
       'app/api/v1/admin/orchestration/executions/[id]/approve/route.ts#POST',
       'app/api/v1/admin/orchestration/executions/[id]/cancel/route.ts#POST',
+      'app/api/v1/admin/orchestration/executions/[id]/live/route.ts#GET',
       'app/api/v1/admin/orchestration/executions/[id]/reject/route.ts#POST',
+      'app/api/v1/admin/orchestration/executions/[id]/report.md/route.ts#GET',
+      'app/api/v1/admin/orchestration/executions/[id]/rerun/route.ts#POST',
       'app/api/v1/admin/orchestration/executions/[id]/retry-step/route.ts#POST',
+      'app/api/v1/admin/orchestration/executions/[id]/review/route.ts#POST',
       'app/api/v1/admin/orchestration/executions/[id]/route.ts#GET',
       'app/api/v1/admin/orchestration/executions/[id]/status/route.ts#GET',
       'app/api/v1/admin/orchestration/executions/route.ts#GET',
@@ -243,6 +248,7 @@ describe('the pins', () => {
       'app/api/v1/admin/orchestration/webhooks/dlq/route.ts#GET',
       'app/api/v1/admin/orchestration/webhooks/route.ts#GET',
       'app/api/v1/admin/orchestration/webhooks/route.ts#POST',
+      'app/api/v1/admin/orchestration/workflows/[id]/cost-estimate/route.ts#GET',
       'app/api/v1/admin/orchestration/workflows/[id]/cost-estimate/route.ts#POST',
       'app/api/v1/admin/orchestration/workflows/[id]/discard-draft/route.ts#POST',
       'app/api/v1/admin/orchestration/workflows/[id]/dry-run/route.ts#POST',

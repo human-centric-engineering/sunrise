@@ -20,9 +20,10 @@
  * is no second lookup for the answer to change between — and it holds on
  * every redirect hop, because each hop is a new connection.
  *
- * **Who is unchanged.** The install org, a platform scope with no org, and
- * every install at `single` get no dispatcher, so their fetches behave as
- * they always have, internal hostnames included. The same split, for the same
+ * **Who is unchanged.** The install org, a system scope, and every install
+ * at `single` get no dispatcher, so their fetches behave as they always
+ * have, internal hostnames included. A call stack with no context at all at
+ * `multi` is a bug, and is pinned. The same split, for the same
  * reason, as the env-var rule in `lib/orchestration/env-template.ts`.
  *
  * Uses the `undici` package at the major Node's own `fetch` runs on, so the
@@ -32,8 +33,7 @@
 import { lookup as dnsLookup, type LookupAddress, type LookupOptions } from 'node:dns';
 import { Agent } from 'undici';
 import { checkSafeAddress, type SafeUrlCheckOptions } from '@/lib/security/safe-url';
-import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { actsForPlatform } from '@/lib/tenancy/context';
 
 /** Raised through the connection when a hostname resolved to an address that is not allowed. */
 export class UnsafeResolvedAddressError extends Error {
@@ -41,11 +41,13 @@ export class UnsafeResolvedAddressError extends Error {
   constructor(
     public readonly hostname: string,
     public readonly address: string,
-    reason: string | undefined
+    public readonly reason: string | undefined
   ) {
-    super(
-      `Refusing to connect: "${hostname}" resolves to ${address}, a ${reason === 'loopback_not_allowed' ? 'loopback' : 'private or internal'} address`
-    );
+    // The address stays on the error for the server's logs, and out of the
+    // message: the message reaches the org admin (a webhook test result, a
+    // delivery's lastError), and naming where an internal hostname points
+    // would map the operator's network for them.
+    super(`Refusing to connect: "${hostname}" resolves to a private or internal address`);
     this.name = 'UnsafeResolvedAddressError';
   }
 }
@@ -111,16 +113,16 @@ let defaultDispatcher: Agent | null = null;
  * The dispatcher a caller-chosen outbound fetch should use here, or
  * `undefined` for none: a pinned, checked one when acting for a customer org
  * at `multi`, and nothing — the fetch as it always was — for the install
- * org, a platform scope and `single`. Pass it as `fetch(url, { dispatcher })`;
+ * org, a system scope and `single`. Pass it as `fetch(url, { dispatcher })`;
  * `undefined` is the global default.
  *
  * Tenancy posture: one process-wide `Agent` holding no org's data — its
  * sockets are keyed by origin and every new one is checked.
  */
 export function outboundDispatcher(): Agent | undefined {
-  if (!isMultiTenant()) return undefined;
-  const orgId = getTenantContext()?.orgId ?? null;
-  if (orgId === null || orgId === INSTALL_ORG_ID) return undefined;
+  // A customer org pins; so does a call stack with no context at `multi`,
+  // which is a bug and gets the closed answer (`actsForPlatform`).
+  if (actsForPlatform()) return undefined;
   defaultDispatcher ??= createSafeDispatcher();
   return defaultDispatcher;
 }

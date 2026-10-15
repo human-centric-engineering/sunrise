@@ -82,52 +82,65 @@ async function resolveEffectiveCap(workflowId: string): Promise<number | null> {
   );
 }
 
-export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const idParsed = cuidSchema.safeParse(rawId);
-  if (!idParsed.success) {
-    throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
-  }
-  const id = idParsed.data;
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, _session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const idParsed = cuidSchema.safeParse(rawId);
+    if (!idParsed.success) {
+      throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
+    }
+    const id = idParsed.data;
 
-  const { searchParams } = new URL(request.url);
-  const queryParsed = querySchema.safeParse({
-    itemCount: searchParams.get('itemCount') ?? undefined,
-    supervisor: searchParams.get('supervisor') ?? undefined,
-  });
-  if (!queryParsed.success) {
-    throw new ValidationError('Invalid query parameters', queryParsed.error.flatten().fieldErrors);
-  }
+    const { searchParams } = new URL(request.url);
+    const queryParsed = querySchema.safeParse({
+      itemCount: searchParams.get('itemCount') ?? undefined,
+      supervisor: searchParams.get('supervisor') ?? undefined,
+    });
+    if (!queryParsed.success) {
+      throw new ValidationError(
+        'Invalid query parameters',
+        queryParsed.error.flatten().fieldErrors
+      );
+    }
 
-  const workflow = await prisma.aiWorkflow.findUnique({
-    where: { id },
-    select: { id: true },
-  });
-  if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
+    const workflow = await prisma.aiWorkflow.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
 
-  const [estimate, effectiveCapUsd] = await Promise.all([
-    estimateWorkflowCost({
+    const [estimate, effectiveCapUsd] = await Promise.all([
+      estimateWorkflowCost({
+        workflowId: id,
+        itemCount: queryParsed.data.itemCount,
+        supervisor: queryParsed.data.supervisor,
+      }),
+      resolveEffectiveCap(id),
+    ]);
+
+    log.info('Workflow cost estimate computed', {
       workflowId: id,
       itemCount: queryParsed.data.itemCount,
       supervisor: queryParsed.data.supervisor,
-    }),
-    resolveEffectiveCap(id),
-  ]);
+      basedOn: estimate.basedOn,
+      sampleSize: estimate.sampleSize,
+      midUsd: estimate.midUsd,
+      effectiveCapUsd,
+    });
 
-  log.info('Workflow cost estimate computed', {
-    workflowId: id,
-    itemCount: queryParsed.data.itemCount,
-    supervisor: queryParsed.data.supervisor,
-    basedOn: estimate.basedOn,
-    sampleSize: estimate.sampleSize,
-    midUsd: estimate.midUsd,
-    effectiveCapUsd,
-  });
-
-  const response: WorkflowCostEstimateResponse = { ...estimate, effectiveCapUsd };
-  return successResponse(response);
-});
+    const response: WorkflowCostEstimateResponse = { ...estimate, effectiveCapUsd };
+    return successResponse(response);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Workflows, their versions, schedules and templates are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);
 
 /**
  * Estimate against an in-memory definition. The workflow builder calls

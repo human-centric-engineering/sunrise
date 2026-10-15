@@ -218,10 +218,16 @@ release process.
   triggers, knowledge, conversations, evaluations (with datasets and runs),
   experiments, event subscriptions, MCP keys and approvals. That covers their
   pages, their nav items, and every API route those pages call, all listed in
-  `ORG_TIER_ADMIN_PAGES` / `ORG_TIER_ADMIN_ROUTES`. They also read the
-  capability, agent-profile, provider, provider-model, embedding-model, grader
-  and tag lists, but cannot write any of them. Each opened route now declares
-  an `ownership`. The provider test routes (`providers/[id]/test`,
+  `ORG_TIER_ADMIN_PAGES` / `ORG_TIER_ADMIN_ROUTES`, plus one execution's
+  detail page, which the approval queue and a workflow run link to. They also
+  read the capability, agent-profile, provider, provider-model,
+  embedding-model, grader and tag lists, but cannot write any of them. Their
+  provider list omits `baseUrl`, `apiKeyEnvVar` and `metadata`, and a
+  `rateLimitOverride` they set on an MCP key may lower the server's limit but
+  not raise it (`400` above it). Each opened route now declares an
+  `ownership`. New `actsForPlatform()` in `lib/tenancy/context.ts` answers
+  whether the call stack acts for the platform; `canChangeSharedSettings` now
+  delegates to it. The provider test routes (`providers/[id]/test`,
   `test-model`) refuse an org admin a provider their org is not approved for
   (`error: 'provider_not_approved'`) and run their probe in that org. New
   `administersPlatform()` in `lib/auth/admin-viewer.ts` tells a platform admin
@@ -561,16 +567,14 @@ release process.
   it reads the URL's text, so a hostname resolving inside the network
   (`db`, `169.254.169.254.nip.io`, an attacker's A record) passed, and the
   imported page could be read back. At `multi`, a fetch made for a
-  non-install org (knowledge URL import, webhook delivery, webhook test) now
+  non-install org (knowledge URL import, webhook delivery, webhook test, and the allowlisted calls behind `external_call` / `call_external_api`) now
   connects through `withOutboundDispatcher()` (new
   `lib/security/safe-dispatcher.ts`). It refuses the connection if the host
   resolved to any loopback, link-local, private, CGNAT or unique-local
   address, and connects to the address it checked, so DNS rebinding and
   redirect hops are covered too. New `checkSafeAddress()` in
   `lib/security/safe-url.ts` applies the URL rules to a resolved address.
-  `checkSafeProviderUrl` now drops a trailing dot before its denylist
-  (`metadata.google.internal.` was let through). The install org, a platform
-  scope and `single` installs connect as before. Adds `undici` (7.x, the
+  `checkSafeProviderUrl` now drops a trailing dot before its denylist (`metadata.google.internal.` was let through), and both checks unwrap the IPv4 address inside a NAT64 (`64:ff9b::/96`) or 6to4 (`2002::/16`) address and refuse `0.0.0.0/8` and site-local `fec0::/10`. A refusal names the host, never the address it resolved to. The install org, a system scope and `single` installs connect as before; a call stack with no tenant context at `multi` is pinned. Adds `undici` (7.x, the
   major Node 24's `fetch` runs on) as a direct dependency.
 
 - **A customer org's configs can no longer read the platform's env vars**
@@ -585,8 +589,11 @@ release process.
   `lib/orchestration/env-template.ts`). The check runs where the value is
   read, and before the variable is looked up. A refusal is `invalid_binding`
   on `call_external_api`, new `env_var_not_available` on `external_call`, and
-  new HTTP error code `auth_secret_not_available`. The install org, a platform
-  scope, and `single` installs are unchanged. **Operators:** a customer org
+  new HTTP error code `auth_secret_not_available`. The install org, a system
+  scope, and `single` installs are unchanged; a call stack with no tenant
+  context at `multi` names no env var at all. The binding-save warning lists a
+  refused name apart from an unset one (`meta.warnings.unavailableEnvVars`,
+  with `envVarPrefix`). **Operators:** a customer org
   binding that names an unprefixed env var stops working at `multi`. Move its
   value to `ORG_<ORG ID>_…` and update the binding. See
   [External calls](./.context/orchestration/external-calls.md).

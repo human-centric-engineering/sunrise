@@ -11,6 +11,7 @@ import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
+import { assertKeyRateLimitAllowed } from '@/lib/orchestration/mcp/key-rate-limit';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { updateApiKeySchema } from '@/lib/validations/mcp';
@@ -26,6 +27,7 @@ export const PATCH = withAdminAuth<{ id: string }>(
 
     const log = await getRouteLogger(request);
     const body = await validateRequestBody(request, updateApiKeySchema);
+    await assertKeyRateLimitAllowed(session.principal, body.rateLimitOverride);
 
     // Audited + client-facing projection. Deliberately excludes `keyHash` (a
     // credential-derived value that must never enter the audit diff) and the

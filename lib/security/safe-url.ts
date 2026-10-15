@@ -122,16 +122,29 @@ const IPV4_IN_IPV6_DOTTED = /^::(?:ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/;
  * works for a local provider addressed as `::ffff:127.0.0.1`.
  */
 function unwrapIpv4InIpv6(host: string): string {
-  const dotted = IPV4_IN_IPV6_DOTTED.exec(host);
+  const dotted = IPV4_IN_IPV6_DOTTED.exec(host) ?? NAT64_DOTTED.exec(host);
   if (dotted?.[1]) return dotted[1];
 
-  const hex = IPV4_IN_IPV6.exec(host);
+  const hex = IPV4_IN_IPV6.exec(host) ?? NAT64.exec(host) ?? SIX_TO_FOUR.exec(host);
   if (!hex?.[1] || !hex[2]) return host;
 
   const high = Number.parseInt(hex[1], 16);
   const low = Number.parseInt(hex[2], 16);
   return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
 }
+
+/**
+ * Two more IPv6 forms that carry an IPv4 address the network will reach
+ * (§111 t-811). On an IPv6-only network with DNS64, an AAAA record in the
+ * NAT64 prefix (`64:ff9b::/96`, and the local-use `64:ff9b:1::/48`) is
+ * translated by the gateway to the IPv4 address in its last 32 bits; a 6to4
+ * address (`2002::/16`) carries one in bits 16–48. Unwrapped like the
+ * mapped form, so the embedded address meets the IPv4 rules, and a record
+ * resolving to `64:ff9b::a00:5` is refused as `10.0.0.5` would be.
+ */
+const NAT64 = /^64:ff9b:(?:1:)?(?:[0-9a-f]{0,4}:)*([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
+const NAT64_DOTTED = /^64:ff9b:(?:1:)?(?:[0-9a-f]{0,4}:)*(\d{1,3}(?:\.\d{1,3}){3})$/;
+const SIX_TO_FOUR = /^2002:([0-9a-f]{1,4}):([0-9a-f]{1,4})(?::|$)/;
 
 export interface SafeUrlCheckOptions {
   /**
@@ -342,6 +355,8 @@ function isPrivateIp(host: string): boolean {
   const octets = parseIpv4(host);
   if (!octets) return false;
   const [a, b] = octets;
+  // 0.0.0.0/8 — "this network"; a connect to it reaches the local host
+  if (a === 0) return true;
   // 10.0.0.0/8
   if (a === 10) return true;
   // 172.16.0.0/12
@@ -364,6 +379,7 @@ function isLinkLocalIp(host: string): boolean {
 }
 
 function isUniqueLocalIpv6(host: string): boolean {
-  // fc00::/7 — IPv6 unique local addresses.
-  return /^f[cd][0-9a-f]{0,2}:/i.test(host);
+  // fc00::/7 — IPv6 unique local addresses — and the deprecated site-local
+  // fec0::/10, which some networks still route internally.
+  return /^f[cd][0-9a-f]{0,2}:/i.test(host) || /^fe[c-f][0-9a-f]?:/i.test(host);
 }

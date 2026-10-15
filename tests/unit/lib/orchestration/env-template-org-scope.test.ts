@@ -33,13 +33,15 @@ vi.mock('@/lib/db/client', () => ({ prisma: { aiAgentCapability: { findFirst: fi
 import {
   EnvTemplateError,
   envVarAvailableHere,
+  envVarPrefixHere,
+  findUnavailableEnvVarReferences,
   findUnsetEnvVarReferences,
   orgEnvVarPrefix,
   resolveEnvTemplate,
 } from '@/lib/orchestration/env-template';
 import { applyAuth } from '@/lib/orchestration/http/auth';
 import { HttpError } from '@/lib/orchestration/http/errors';
-import { runAsOrg } from '@/lib/tenancy/context';
+import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { CallExternalApiCapability } from '@/lib/orchestration/capabilities/built-in/call-external-api';
 import { resetAllowlistCache } from '@/lib/orchestration/http/allowlist';
@@ -114,9 +116,19 @@ describe('who names anything, as before', () => {
     ).resolves.toBe('operator-value');
   });
 
-  it('a platform scope with no org in context at multi', () => {
-    expect(resolveEnvTemplate(`\${env:${PLATFORM_SECRET}}`)).toBe('operator-value');
-    expect(envVarAvailableHere(PLATFORM_SECRET)).toBe(true);
+  it('a system scope at multi', async () => {
+    await expect(
+      runAsSystem('test: a platform job', () =>
+        Promise.resolve(resolveEnvTemplate(`\${env:${PLATFORM_SECRET}}`))
+      )
+    ).resolves.toBe('operator-value');
+  });
+
+  it('but NO context at all at multi names nothing — it is a bug, and fails closed', () => {
+    expect(envVarAvailableHere(PLATFORM_SECRET)).toBe(false);
+    expect(() => resolveEnvTemplate(`\${env:${PLATFORM_SECRET}}`)).toThrow(
+      /no organisation is in context/
+    );
   });
 
   it('any org at single', async () => {
@@ -128,13 +140,37 @@ describe('who names anything, as before', () => {
 });
 
 describe('findUnsetEnvVarReferences — the save-time warning', () => {
-  it('reports a name the org may not use as missing even though the host has it set', async () => {
+  it('never looks up a name the org may not use, set or not — no probing', async () => {
     const missing = await inOrg(ORG_B, () =>
       findUnsetEnvVarReferences(`\${env:${PLATFORM_SECRET}}`, {
         Authorization: `\${env:${B_SECRET}}`,
       })
     );
-    expect(missing).toEqual([PLATFORM_SECRET]);
+    expect(missing).toEqual([]);
+    delete process.env[PLATFORM_SECRET];
+    await expect(
+      inOrg(ORG_B, () => findUnsetEnvVarReferences(`\${env:${PLATFORM_SECRET}}`))
+    ).resolves.toEqual([]);
+  });
+
+  it('reports it as unavailable instead, with the prefix that would fix it', async () => {
+    const [unavailable, prefix] = await inOrg(ORG_B, () => [
+      findUnavailableEnvVarReferences(`\${env:${PLATFORM_SECRET}}`, {
+        Authorization: `\${env:${B_SECRET}}`,
+      }),
+      envVarPrefixHere(),
+    ]);
+    expect(unavailable).toEqual([PLATFORM_SECRET]);
+    expect(prefix).toBe(orgEnvVarPrefix(ORG_B));
+  });
+
+  it('control: the install org has no unavailable names and no prefix', async () => {
+    const [unavailable, prefix] = await inOrg(INSTALL_ORG_ID, () => [
+      findUnavailableEnvVarReferences(`\${env:${PLATFORM_SECRET}}`),
+      envVarPrefixHere(),
+    ]);
+    expect(unavailable).toEqual([]);
+    expect(prefix).toBeNull();
   });
 
   it('control: the install org sees the operator’s variable as set', async () => {

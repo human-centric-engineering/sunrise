@@ -62,127 +62,137 @@ interface CostEntry {
   createdAt: string;
 }
 
-export const GET = withAdminAuth<{ id: string }>(async (_request, session, { params }) => {
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid execution id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
+export const GET = withAdminAuth<{ id: string }>(
+  async (_request, session, { params }) => {
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid execution id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
 
-  const execution = await prisma.aiWorkflowExecution.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      userId: true,
-      status: true,
-      currentStep: true,
-      errorMessage: true,
-      totalTokensUsed: true,
-      totalCostUsd: true,
-      startedAt: true,
-      completedAt: true,
-      createdAt: true,
-      executionTrace: true,
-    },
-  });
-  if (!execution || !adminCanViewExecution(execution, session)) {
-    throw new NotFoundError(`Execution ${id} not found`);
-  }
-
-  // URL-bearing values shortened for display (t-777), as on the detail route.
-  const trace = withDisplayUrls(executionTraceSchema.parse(execution.executionTrace));
-
-  const costLogs = await prisma.aiCostLog.findMany({
-    where: { workflowExecutionId: id },
-    orderBy: { createdAt: 'asc' },
-    select: {
-      model: true,
-      provider: true,
-      inputTokens: true,
-      outputTokens: true,
-      totalCostUsd: true,
-      operation: true,
-      metadata: true,
-      createdAt: true,
-    },
-  });
-
-  const costEntries: CostEntry[] = [];
-  for (const row of costLogs) {
-    const stepId = extractStepId(row.metadata);
-    if (!stepId) continue;
-    const slug = extractSlug(row.metadata);
-    costEntries.push({
-      stepId,
-      ...(slug ? { slug } : {}),
-      model: row.model,
-      provider: row.provider,
-      inputTokens: row.inputTokens,
-      outputTokens: row.outputTokens,
-      totalCostUsd: row.totalCostUsd,
-      operation: row.operation,
-      createdAt: row.createdAt.toISOString(),
+    const execution = await prisma.aiWorkflowExecution.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        userId: true,
+        status: true,
+        currentStep: true,
+        errorMessage: true,
+        totalTokensUsed: true,
+        totalCostUsd: true,
+        startedAt: true,
+        completedAt: true,
+        createdAt: true,
+        executionTrace: true,
+      },
     });
-  }
+    if (!execution || !adminCanViewExecution(execution, session)) {
+      throw new NotFoundError(`Execution ${id} not found`);
+    }
 
-  // Surface every in-flight step on terminal-status-aware reads. During
-  // a `parallel` fan-out each branch lands as its own row, so the array
-  // can carry N entries — the detail view synthesises one "running"
-  // trace row per entry. Empty array on terminal rows.
-  const isTerminal = TERMINAL_STATUSES.has(execution.status);
-  const currentRunningSteps = isTerminal
-    ? []
-    : (
-        await prisma.aiWorkflowRunningStep.findMany({
-          where: { executionId: id },
-          orderBy: { startedAt: 'asc' },
-          select: {
-            stepId: true,
-            label: true,
-            stepType: true,
-            startedAt: true,
-            completedAt: true,
-            turns: true,
-          },
-        })
-      ).map((row) => ({
-        stepId: row.stepId,
-        label: row.label,
-        stepType: row.stepType,
-        startedAt: row.startedAt.toISOString(),
-        // Set on a parallel branch that finished before its siblings.
-        // The detail view uses it to render a coloured processing
-        // portion plus a greyed wait portion on that branch's bar
-        // until the slowest sibling settles and the row is deleted.
-        // Null on still-running branches and on sequential steps.
-        completedAt: row.completedAt ? row.completedAt.toISOString() : null,
-        // Progress indicator for multi-turn steps (`agent_call`,
-        // `orchestrator`, `reflect`). Each `recordTurn` call adds an
-        // entry, so on a long-running agent_call this ticks up as the
-        // model fires more tool iterations — lets the operator see
-        // forward progress instead of staring at a frozen "Running"
-        // badge. Always 0 for single-shot step types.
-        turnCount: Array.isArray(row.turns) ? row.turns.length : 0,
-      }));
+    // URL-bearing values shortened for display (t-777), as on the detail route.
+    const trace = withDisplayUrls(executionTraceSchema.parse(execution.executionTrace));
 
-  return successResponse({
-    snapshot: {
-      id: execution.id,
-      status: execution.status,
-      currentStep: execution.currentStep,
-      errorMessage: execution.errorMessage,
-      totalTokensUsed: execution.totalTokensUsed,
-      totalCostUsd: execution.totalCostUsd,
-      startedAt: execution.startedAt,
-      completedAt: execution.completedAt,
-      createdAt: execution.createdAt,
+    const costLogs = await prisma.aiCostLog.findMany({
+      where: { workflowExecutionId: id },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        model: true,
+        provider: true,
+        inputTokens: true,
+        outputTokens: true,
+        totalCostUsd: true,
+        operation: true,
+        metadata: true,
+        createdAt: true,
+      },
+    });
+
+    const costEntries: CostEntry[] = [];
+    for (const row of costLogs) {
+      const stepId = extractStepId(row.metadata);
+      if (!stepId) continue;
+      const slug = extractSlug(row.metadata);
+      costEntries.push({
+        stepId,
+        ...(slug ? { slug } : {}),
+        model: row.model,
+        provider: row.provider,
+        inputTokens: row.inputTokens,
+        outputTokens: row.outputTokens,
+        totalCostUsd: row.totalCostUsd,
+        operation: row.operation,
+        createdAt: row.createdAt.toISOString(),
+      });
+    }
+
+    // Surface every in-flight step on terminal-status-aware reads. During
+    // a `parallel` fan-out each branch lands as its own row, so the array
+    // can carry N entries — the detail view synthesises one "running"
+    // trace row per entry. Empty array on terminal rows.
+    const isTerminal = TERMINAL_STATUSES.has(execution.status);
+    const currentRunningSteps = isTerminal
+      ? []
+      : (
+          await prisma.aiWorkflowRunningStep.findMany({
+            where: { executionId: id },
+            orderBy: { startedAt: 'asc' },
+            select: {
+              stepId: true,
+              label: true,
+              stepType: true,
+              startedAt: true,
+              completedAt: true,
+              turns: true,
+            },
+          })
+        ).map((row) => ({
+          stepId: row.stepId,
+          label: row.label,
+          stepType: row.stepType,
+          startedAt: row.startedAt.toISOString(),
+          // Set on a parallel branch that finished before its siblings.
+          // The detail view uses it to render a coloured processing
+          // portion plus a greyed wait portion on that branch's bar
+          // until the slowest sibling settles and the row is deleted.
+          // Null on still-running branches and on sequential steps.
+          completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+          // Progress indicator for multi-turn steps (`agent_call`,
+          // `orchestrator`, `reflect`). Each `recordTurn` call adds an
+          // entry, so on a long-running agent_call this ticks up as the
+          // model fires more tool iterations — lets the operator see
+          // forward progress instead of staring at a frozen "Running"
+          // badge. Always 0 for single-shot step types.
+          turnCount: Array.isArray(row.turns) ? row.turns.length : 0,
+        }));
+
+    return successResponse({
+      snapshot: {
+        id: execution.id,
+        status: execution.status,
+        currentStep: execution.currentStep,
+        errorMessage: execution.errorMessage,
+        totalTokensUsed: execution.totalTokensUsed,
+        totalCostUsd: execution.totalCostUsd,
+        startedAt: execution.startedAt,
+        completedAt: execution.completedAt,
+        createdAt: execution.createdAt,
+      },
+      trace,
+      costEntries,
+      currentRunningSteps,
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Acts only on executions this caller may see — their own, an ownerless (scheduled or inbound) run where the policy permits it, or one whose trace names them as an approver — keyed on the caller's id.",
     },
-    trace,
-    costEntries,
-    currentRunningSteps,
-  });
-});
+  }
+);
 
 function extractSlug(metadata: unknown): string | null {
   if (metadata === null || typeof metadata !== 'object') return null;

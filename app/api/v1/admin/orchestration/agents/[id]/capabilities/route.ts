@@ -25,14 +25,18 @@ import { validatePathParam, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
-import { findUnsetEnvVarReferences } from '@/lib/orchestration/env-template';
+import {
+  envVarPrefixHere,
+  findUnavailableEnvVarReferences,
+  findUnsetEnvVarReferences,
+} from '@/lib/orchestration/env-template';
 import { attachAgentCapabilitySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { assertBindingsEditable } from '@/lib/orchestration/agents/platform-agent-guard';
 
 /**
- * Narrow shape used by `collectMissingEnvVars` to extract the only two
+ * Narrow shape used by `collectEnvVarWarnings` to extract the only two
  * fields it scans. The route-layer `customConfig` is `z.record(z.string(),
  * z.unknown())` (capability-specific shape is enforced at execute time),
  * so we validate just the binding-scan-relevant fields here. Malformed
@@ -53,10 +57,25 @@ const bindingScanSchema = z
  * still succeeds; an admin may legitimately save a binding before the
  * matching env var has been deployed to the host.
  */
-function collectMissingEnvVars(customConfig: unknown): string[] {
+function collectEnvVarWarnings(customConfig: unknown): {
+  missingEnvVars?: string[];
+  unavailableEnvVars?: string[];
+  envVarPrefix?: string;
+} | null {
   const parsed = bindingScanSchema.safeParse(customConfig);
-  if (!parsed.success) return [];
-  return findUnsetEnvVarReferences(parsed.data.forcedUrl, parsed.data.forcedHeaders);
+  if (!parsed.success) return null;
+  const { forcedUrl, forcedHeaders } = parsed.data;
+  const missing = findUnsetEnvVarReferences(forcedUrl, forcedHeaders);
+  // Names a customer org may not use (§111 t-811): reported with the prefix
+  // that would make them usable, so the fix named is a rename, not "set it".
+  const unavailable = findUnavailableEnvVarReferences(forcedUrl, forcedHeaders);
+  const prefix = envVarPrefixHere();
+  if (missing.length === 0 && unavailable.length === 0) return null;
+  return {
+    ...(missing.length > 0 ? { missingEnvVars: missing } : {}),
+    ...(unavailable.length > 0 ? { unavailableEnvVars: unavailable } : {}),
+    ...(unavailable.length > 0 && prefix ? { envVarPrefix: prefix } : {}),
+  };
 }
 
 export const GET = withAdminAuth<{ id: string }>(
@@ -137,8 +156,8 @@ export const POST = withAdminAuth<{ id: string }>(
         clientIp: clientIP,
       });
 
-      const missingEnvVars = collectMissingEnvVars(body.customConfig);
-      const meta = missingEnvVars.length > 0 ? { warnings: { missingEnvVars } } : undefined;
+      const envWarnings = collectEnvVarWarnings(body.customConfig);
+      const meta = envWarnings ? { warnings: envWarnings } : undefined;
       return successResponse(link, meta, { status: 201 });
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {

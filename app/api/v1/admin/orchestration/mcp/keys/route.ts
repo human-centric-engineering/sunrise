@@ -15,6 +15,7 @@ import { generateApiKey } from '@/lib/orchestration/mcp';
 import { createApiKeySchema, listApiKeysQuerySchema } from '@/lib/validations/mcp';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { orgForMint } from '@/lib/tenancy/entry';
+import { assertKeyRateLimitAllowed } from '@/lib/orchestration/mcp/key-rate-limit';
 
 export const GET = withAdminAuth(
   async (request) => {
@@ -74,6 +75,7 @@ export const POST = withAdminAuth(
 
     const log = await getRouteLogger(request);
     const body = await validateRequestBody(request, createApiKeySchema);
+    await assertKeyRateLimitAllowed(session.principal, body.rateLimitOverride);
 
     const { plaintext, hash, prefix } = generateApiKey();
 
