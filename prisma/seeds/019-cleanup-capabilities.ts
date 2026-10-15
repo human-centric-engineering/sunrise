@@ -138,8 +138,9 @@ export const CLEANUP_CAPABILITIES: readonly CleanupCap[] = [
 
 // Seeds the Document Clean Up capabilities the Cleanup Agent owns.
 // Idempotent — re-seeding re-applies the code-owned fields and isSystem, so
-// admin edits (name, description, rate limit) survive. Agent binding lives in
-// 020-cleanup-agent.
+// admin edits (name, description, rate limit) survive. The Cleanup Agent's
+// binding lives in lib/orchestration/agents/platform-agent-definitions/
+// cleanup-agent.ts, reconciled by 021-platform-agents.
 //
 // `hashInputs` names every class file, because the definition the seed writes
 // now lives there: editing a class alone must re-run this unit, or the row

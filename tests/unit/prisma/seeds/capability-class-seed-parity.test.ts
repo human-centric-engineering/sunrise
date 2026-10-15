@@ -52,8 +52,24 @@ import { join } from 'node:path';
 
 import { describe, it, expect, vi, beforeAll } from 'vitest';
 
+// The app's own client, for a seed that bypasses the one it is handed: any use
+// throws, so such a seed fails here instead of reaching a configured database.
+vi.mock('@/lib/db/client', () => {
+  const refuse = new Proxy(
+    {},
+    {
+      get: (_target, prop) => {
+        if (prop === 'then') return undefined;
+        throw new Error(`a capability seed used the global Prisma client (.${String(prop)})`);
+      },
+    }
+  );
+  return { prisma: refuse, default: refuse };
+});
+
 import type { SeedContext, SeedUnit } from '@/prisma/runner';
 import { APP_CAPABILITY_PAIRS, type AppCapabilityPair } from '@/lib/app/capability-seed-pairs';
+import { CLEANUP_CAPABILITIES } from '@/prisma/seeds/019-cleanup-capabilities';
 
 import { AddProviderModelsCapability } from '@/lib/orchestration/capabilities/built-in/add-provider-models';
 import { ApplyAuditChangesCapability } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
@@ -65,20 +81,6 @@ import { RunWorkflowCapability } from '@/lib/orchestration/capabilities/built-in
 import { SearchKnowledgeCapability } from '@/lib/orchestration/capabilities/built-in/search-knowledge';
 import { SendMessageToChannelCapability } from '@/lib/orchestration/capabilities/built-in/send-message-to-channel';
 import { UploadToStorageCapability } from '@/lib/orchestration/capabilities/built-in/upload-to-storage';
-import { CollapseWhitespaceCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/collapse-whitespace';
-import { DedupeLinesCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/dedupe-lines';
-import { EstimateSizeCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/estimate-size';
-import { FindInDocumentCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/find-in-document';
-import { JoinWrappedLinesCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/join-wrapped-lines';
-import { NormalisePunctuationCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/normalise-punctuation';
-import { PreviewDiffCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/preview-diff';
-import { ReadDocumentCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/read-document';
-import { RewriteSectionWithLlmCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/rewrite-section-with-llm';
-import { RewriteWithLlmCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/rewrite-with-llm';
-import { StripLinesMatchingCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/strip-lines-matching';
-import { StripMatchesCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/strip-matches';
-import { StripSpeakerLabelsCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/strip-speaker-labels';
-import { StripTimestampsCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/strip-timestamps';
 
 /** Which class goes with which slug. The seeds supply what was written. */
 const PAIRS: readonly AppCapabilityPair[] = [
@@ -92,23 +94,12 @@ const PAIRS: readonly AppCapabilityPair[] = [
   { slug: 'run_workflow', instance: new RunWorkflowCapability() },
   { slug: 'upload_to_storage', instance: new UploadToStorageCapability() },
   { slug: 'send_message_to_channel', instance: new SendMessageToChannelCapability() },
-  // 019 takes these definitions from the classes themselves, so for them the
-  // comparison below holds by construction; the rows still pin which class
-  // each slug is seeded from.
-  { slug: 'collapse_whitespace', instance: new CollapseWhitespaceCapability() },
-  { slug: 'dedupe_lines', instance: new DedupeLinesCapability() },
-  { slug: 'estimate_size', instance: new EstimateSizeCapability() },
-  { slug: 'find_in_document', instance: new FindInDocumentCapability() },
-  { slug: 'join_wrapped_lines', instance: new JoinWrappedLinesCapability() },
-  { slug: 'normalise_punctuation', instance: new NormalisePunctuationCapability() },
-  { slug: 'preview_diff', instance: new PreviewDiffCapability() },
-  { slug: 'read_document', instance: new ReadDocumentCapability() },
-  { slug: 'rewrite_section_with_llm', instance: new RewriteSectionWithLlmCapability() },
-  { slug: 'rewrite_with_llm', instance: new RewriteWithLlmCapability() },
-  { slug: 'strip_lines_matching', instance: new StripLinesMatchingCapability() },
-  { slug: 'strip_matches', instance: new StripMatchesCapability() },
-  { slug: 'strip_speaker_labels', instance: new StripSpeakerLabelsCapability() },
-  { slug: 'strip_timestamps', instance: new StripTimestampsCapability() },
+  // 019 seeds each of these from its class — slug, handler and definition —
+  // so a hand-written row here could only restate the seed's own list.
+  ...CLEANUP_CAPABILITIES.map(({ capability }) => ({
+    slug: capability.slug,
+    instance: capability,
+  })),
   ...APP_CAPABILITY_PAIRS,
 ];
 
@@ -137,11 +128,12 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 /**
  * A client that records `aiCapability` writes and answers everything else
- * with an inert value: a row with an id for single reads and writes (so a seed
- * that looks up its owner proceeds), `[]` for lists, `0` for counts, and
- * `$transaction(fn)` runs `fn` against the same client.
+ * with an inert value: no capability row exists, any other single read or
+ * write returns a row with an id (so a seed that looks up its owner proceeds),
+ * `[]` for lists, `0` for counts, and `$transaction(fn)` runs `fn` against the
+ * same client.
  */
-function recordingClient(file: string, captured: Captured[]): unknown {
+function recordingClient(file: string, captured: Captured[], touched: Set<string>): unknown {
   const record = (method: string, args: unknown): void => {
     if (!isRecord(args)) return;
     const where = isRecord(args.where) ? args.where : {};
@@ -165,7 +157,13 @@ function recordingClient(file: string, captured: Captured[]): unknown {
         get: (_target, method) => {
           if (typeof method !== 'string') return undefined;
           return (args: unknown) => {
-            if (name === 'aiCapability') record(method, args);
+            if (name === 'aiCapability') {
+              touched.add(file);
+              record(method, args);
+              // No capability exists yet, so a seed's create-if-missing
+              // branch runs and is captured rather than skipped.
+              if (/^find/.test(method)) return Promise.resolve(method === 'findMany' ? [] : null);
+            }
             if (method === 'findMany' || method === 'groupBy') return Promise.resolve([]);
             if (method === 'count') return Promise.resolve(0);
             return Promise.resolve({ id: 'parity-mock-id' });
@@ -196,33 +194,38 @@ const isSeedUnit = (value: unknown): value is SeedUnit =>
 /** Seeds that write capabilities, and every capability write they made. */
 let capabilitySeeds: string[] = [];
 const captured: Captured[] = [];
+/** Seeds that called anything on `aiCapability` through the client they were handed. */
+const touched = new Set<string>();
 
 beforeAll(async () => {
-  // A seed that never names `aiCapability` cannot write one through the
+  // A seed that never calls `aiCapability.…(` cannot write one through the
   // client it is handed, and running every seed is not safe: `007` ignores
-  // that client and writes through the app's own, which here would be a real
-  // database if one is configured.
+  // that client and writes through the app's own (stubbed above to throw).
   capabilitySeeds = seedFiles(SEED_DIR).filter((file) =>
-    readFileSync(join(SEED_DIR, file), 'utf8').includes('aiCapability')
+    /\baiCapability\s*\.\s*\w+\s*\(/.test(readFileSync(join(SEED_DIR, file), 'utf8'))
   );
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   for (const file of capabilitySeeds) {
     const mod: unknown = await import(/* @vite-ignore */ join(SEED_DIR, file));
     const unit = isRecord(mod) ? mod.default : undefined;
     if (!isSeedUnit(unit)) throw new Error(`${file} does not default-export a SeedUnit`);
-    await unit.run({ prisma: recordingClient(file, captured), logger } as unknown as SeedContext);
+    await unit.run({
+      prisma: recordingClient(file, captured, touched),
+      logger,
+    } as unknown as SeedContext);
   }
 });
 
 describe('capabilities — seeded definition matches the class (#545, #646)', () => {
-  it('captures a write from every capability seed', () => {
-    // Floor first. A derived expectation needs its own non-emptiness check:
-    // an earlier version read zero names through a regex bug and passed.
-    expect(captured.length).toBeGreaterThanOrEqual(24);
-    // A seed that names `aiCapability` but records nothing wrote through some
-    // other client, so nothing it writes would be checked.
-    const silent = capabilitySeeds.filter((file) => !captured.some((c) => c.file === file));
-    expect(silent).toEqual([]);
+  it('captures the capability seeds through the client they are handed', () => {
+    // Floor first, in distinct capabilities — each upsert records create and
+    // update, so a count of writes would be met by 019 alone. An earlier
+    // version read zero names through a regex bug and passed.
+    expect(new Set(captured.map((c) => c.slug)).size).toBeGreaterThanOrEqual(24);
+    // A seed that calls `aiCapability` in its source but touched nothing here
+    // did it through some other client, so nothing it writes would be checked.
+    // (One that only reads capabilities is fine — it touched the mock.)
+    expect(capabilitySeeds.filter((file) => !touched.has(file))).toEqual([]);
   });
 
   it('pairs every capability the seeds write, and nothing they do not', () => {
