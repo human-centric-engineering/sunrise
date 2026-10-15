@@ -60,113 +60,133 @@ const createTriggerSchema = z
     }
   );
 
-export const GET = withAdminAuth(async (request, _session) => {
-  const log = await getRouteLogger(request);
-  const { searchParams } = new URL(request.url);
-  const page = Math.max(1, Number(searchParams.get('page') ?? 1));
-  const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit') ?? 50)));
-  const channel = searchParams.get('channel') ?? undefined;
-  const workflowId = searchParams.get('workflowId') ?? undefined;
+export const GET = withAdminAuth(
+  async (request, _session) => {
+    const log = await getRouteLogger(request);
+    const { searchParams } = new URL(request.url);
+    const page = Math.max(1, Number(searchParams.get('page') ?? 1));
+    const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit') ?? 50)));
+    const channel = searchParams.get('channel') ?? undefined;
+    const workflowId = searchParams.get('workflowId') ?? undefined;
 
-  const where: Prisma.AiWorkflowTriggerWhereInput = {};
-  if (channel) where.channel = channel;
-  if (workflowId) where.workflowId = workflowId;
+    const where: Prisma.AiWorkflowTriggerWhereInput = {};
+    if (channel) where.channel = channel;
+    if (workflowId) where.workflowId = workflowId;
 
-  const [triggers, total, enabledChannels] = await Promise.all([
-    prisma.aiWorkflowTrigger.findMany({
-      where,
-      orderBy: [{ channel: 'asc' }, { name: 'asc' }],
-      skip: (page - 1) * limit,
-      take: limit,
-      include: {
-        workflow: { select: { id: true, name: true, slug: true, isActive: true } },
-      },
-    }),
-    prisma.aiWorkflowTrigger.count({ where }),
-    Promise.resolve(listInboundChannels()),
-  ]);
+    const [triggers, total, enabledChannels] = await Promise.all([
+      prisma.aiWorkflowTrigger.findMany({
+        where,
+        orderBy: [{ channel: 'asc' }, { name: 'asc' }],
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          workflow: { select: { id: true, name: true, slug: true, isActive: true } },
+        },
+      }),
+      prisma.aiWorkflowTrigger.count({ where }),
+      Promise.resolve(listInboundChannels()),
+    ]);
 
-  log.info('Workflow triggers listed', { count: triggers.length, total, channel });
-  return successResponse(triggers.map(toSafeTrigger), {
-    page,
-    limit,
-    total,
-    totalPages: Math.ceil(total / limit),
-    enabledChannels,
-  });
-});
-
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
-  const log = await getRouteLogger(request);
-
-  const input = await validateRequestBody(request, createTriggerSchema);
-
-  // Workflow must exist; rejecting cleanly here is friendlier than a
-  // Prisma foreign-key error in the response.
-  const workflow = await prisma.aiWorkflow.findUnique({
-    where: { id: input.workflowId },
-    select: { id: true, slug: true },
-  });
-  if (!workflow) {
-    throw new ValidationError('Workflow not found', { workflowId: ['Unknown workflow id'] });
-  }
-
-  // Warn (but don't reject) if the adapter slug isn't currently
-  // registered — the inbound route will 404 until the operator wires
-  // the env vars, but that's a deployment concern, not a config error.
-  const known = listInboundChannels();
-  if (!known.includes(input.channel)) {
-    log.warn('Trigger created for unregistered channel', {
-      channel: input.channel,
-      registered: known,
+    log.info('Workflow triggers listed', { count: triggers.length, total, channel });
+    return successResponse(triggers.map(toSafeTrigger), {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      enabledChannels,
     });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Inbound triggers are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
+);
 
-  let trigger;
-  try {
-    trigger = await prisma.aiWorkflowTrigger.create({
-      data: {
-        workflowId: input.workflowId,
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
+    const log = await getRouteLogger(request);
+
+    const input = await validateRequestBody(request, createTriggerSchema);
+
+    // Workflow must exist; rejecting cleanly here is friendlier than a
+    // Prisma foreign-key error in the response.
+    const workflow = await prisma.aiWorkflow.findUnique({
+      where: { id: input.workflowId },
+      select: { id: true, slug: true },
+    });
+    if (!workflow) {
+      throw new ValidationError('Workflow not found', { workflowId: ['Unknown workflow id'] });
+    }
+
+    // Warn (but don't reject) if the adapter slug isn't currently
+    // registered — the inbound route will 404 until the operator wires
+    // the env vars, but that's a deployment concern, not a config error.
+    const known = listInboundChannels();
+    if (!known.includes(input.channel)) {
+      log.warn('Trigger created for unregistered channel', {
         channel: input.channel,
-        name: input.name,
-        metadata: (input.metadata ?? {}) as Prisma.InputJsonValue,
-        signingSecret: input.signingSecret ?? null,
-        isEnabled: input.isEnabled,
-        ...(input.scope ? { scope: input.scope } : {}),
-        createdBy: session.user.id,
-      },
-      include: {
-        workflow: { select: { id: true, name: true, slug: true, isActive: true } },
-      },
-    });
-  } catch (err) {
-    if (isUniqueViolation(err)) {
-      throw new ValidationError('A trigger already exists for this workflow on this channel', {
-        channel: ['Duplicate (channel, workflowId) — edit the existing trigger instead'],
+        registered: known,
       });
     }
-    throw err;
+
+    let trigger;
+    try {
+      trigger = await prisma.aiWorkflowTrigger.create({
+        data: {
+          workflowId: input.workflowId,
+          channel: input.channel,
+          name: input.name,
+          metadata: (input.metadata ?? {}) as Prisma.InputJsonValue,
+          signingSecret: input.signingSecret ?? null,
+          isEnabled: input.isEnabled,
+          ...(input.scope ? { scope: input.scope } : {}),
+          createdBy: session.user.id,
+        },
+        include: {
+          workflow: { select: { id: true, name: true, slug: true, isActive: true } },
+        },
+      });
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        throw new ValidationError('A trigger already exists for this workflow on this channel', {
+          channel: ['Duplicate (channel, workflowId) — edit the existing trigger instead'],
+        });
+      }
+      throw err;
+    }
+
+    log.info('Workflow trigger created', {
+      triggerId: trigger.id,
+      channel: trigger.channel,
+      workflowId: trigger.workflowId,
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'workflow_trigger.create',
+      entityType: 'workflow_trigger',
+      entityId: trigger.id,
+      entityName: trigger.name,
+      metadata: { channel: trigger.channel, workflowSlug: workflow.slug },
+      clientIp: clientIP,
+    });
+
+    return successResponse(toSafeTrigger(trigger), undefined, { status: 201 });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Inbound triggers are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-
-  log.info('Workflow trigger created', {
-    triggerId: trigger.id,
-    channel: trigger.channel,
-    workflowId: trigger.workflowId,
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'workflow_trigger.create',
-    entityType: 'workflow_trigger',
-    entityId: trigger.id,
-    entityName: trigger.name,
-    metadata: { channel: trigger.channel, workflowSlug: workflow.slug },
-    clientIp: clientIP,
-  });
-
-  return successResponse(toSafeTrigger(trigger), undefined, { status: 201 });
-});
+);
 
 /**
  * Strip the `signingSecret` plaintext from API responses — admins set

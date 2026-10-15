@@ -24,46 +24,56 @@ import { getRouteLogger } from '@/lib/api/context';
 import { generateFromDescriptionCommitSchema } from '@/lib/validations/orchestration-evaluations';
 import { hashParsedCases } from '@/lib/orchestration/evaluations/datasets/hash';
 
-export const POST = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, generateFromDescriptionCommitSchema);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, generateFromDescriptionCommitSchema);
 
-  const contentHash = hashParsedCases(body.cases);
-  const dataset = await prisma.$transaction(async (tx) => {
-    const created = await tx.aiDataset.create({
-      data: {
-        userId: session.user.id,
-        name: body.name,
-        description: body.description ?? null,
-        tags: body.tags ?? [],
-        caseCount: body.cases.length,
-        contentHash,
-        source: 'synthetic',
-      },
+    const contentHash = hashParsedCases(body.cases);
+    const dataset = await prisma.$transaction(async (tx) => {
+      const created = await tx.aiDataset.create({
+        data: {
+          userId: session.user.id,
+          name: body.name,
+          description: body.description ?? null,
+          tags: body.tags ?? [],
+          caseCount: body.cases.length,
+          contentHash,
+          source: 'synthetic',
+        },
+      });
+      await tx.aiDatasetCase.createMany({
+        data: body.cases.map((c, i) => ({
+          datasetId: created.id,
+          position: i,
+          input: c.input as Prisma.InputJsonValue,
+          expectedOutput: c.expectedOutput ?? null,
+          metadata: c.metadata !== undefined ? (c.metadata as Prisma.InputJsonValue) : undefined,
+          referenceCitations:
+            c.referenceCitations !== undefined
+              ? (c.referenceCitations as Prisma.InputJsonValue)
+              : undefined,
+        })),
+      });
+      return created;
     });
-    await tx.aiDatasetCase.createMany({
-      data: body.cases.map((c, i) => ({
-        datasetId: created.id,
-        position: i,
-        input: c.input as Prisma.InputJsonValue,
-        expectedOutput: c.expectedOutput ?? null,
-        metadata: c.metadata !== undefined ? (c.metadata as Prisma.InputJsonValue) : undefined,
-        referenceCitations:
-          c.referenceCitations !== undefined
-            ? (c.referenceCitations as Prisma.InputJsonValue)
-            : undefined,
-      })),
-    });
-    return created;
-  });
 
-  log.info('Committed description-mode dataset', {
-    datasetId: dataset.id,
-    caseCount: body.cases.length,
-  });
-  return successResponse(
-    { datasetId: dataset.id, caseCount: body.cases.length, contentHash, warnings: [] },
-    undefined,
-    { status: 201 }
-  );
-});
+    log.info('Committed description-mode dataset', {
+      datasetId: dataset.id,
+      caseCount: body.cases.length,
+    });
+    return successResponse(
+      { datasetId: dataset.id, caseCount: body.cases.length, contentHash, warnings: [] },
+      undefined,
+      { status: 201 }
+    );
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Scoped to the evaluation sessions, runs and datasets this caller owns — and ownerless datasets where the policy permits them — keyed on the caller's id. Never another member's.",
+    },
+  }
+);

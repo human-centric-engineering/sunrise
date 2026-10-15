@@ -109,61 +109,62 @@ function getExtension(name: string): string {
   return dot >= 0 ? name.slice(dot).toLowerCase() : '';
 }
 
-export const GET = withAdminAuth(async (request, _session) => {
-  const log = await getRouteLogger(request);
-  const { searchParams } = new URL(request.url);
-  const { page, limit, status, scope, q } = validateQueryParams(
-    searchParams,
-    listDocumentsQuerySchema
-  );
-  const skip = (page - 1) * limit;
+export const GET = withAdminAuth(
+  async (request, _session) => {
+    const log = await getRouteLogger(request);
+    const { searchParams } = new URL(request.url);
+    const { page, limit, status, scope, q } = validateQueryParams(
+      searchParams,
+      listDocumentsQuerySchema
+    );
+    const skip = (page - 1) * limit;
 
-  const where: Prisma.AiKnowledgeDocumentWhereInput = {};
-  if (status) where.status = status;
-  if (scope) where.scope = scope;
-  if (q) {
-    where.OR = [
-      { name: { contains: q, mode: 'insensitive' } },
-      { fileName: { contains: q, mode: 'insensitive' } },
-    ];
-  }
+    const where: Prisma.AiKnowledgeDocumentWhereInput = {};
+    if (status) where.status = status;
+    if (scope) where.scope = scope;
+    if (q) {
+      where.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { fileName: { contains: q, mode: 'insensitive' } },
+      ];
+    }
 
-  const [rawDocuments, total] = await Promise.all([
-    prisma.aiKnowledgeDocument.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      skip,
-      take: limit,
-      // Cleanup Text columns and lock bookkeeping are per-document detail,
-      // not list data — a page of cleaning documents would otherwise carry
-      // the full original + processed text of each one. `omit` keeps the
-      // payload in step with KnowledgeDocumentListItem, which declares them
-      // absent.
-      omit: {
-        originalContent: true,
-        processedContent: true,
-        editLockHolder: true,
-        editLockAcquiredAt: true,
-      },
-      include: {
-        _count: { select: { chunks: true } },
-        tags: { include: { tag: { select: { id: true, slug: true, name: true } } } },
-      },
-    }),
-    prisma.aiKnowledgeDocument.count({ where }),
-  ]);
+    const [rawDocuments, total] = await Promise.all([
+      prisma.aiKnowledgeDocument.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        // Cleanup Text columns and lock bookkeeping are per-document detail,
+        // not list data — a page of cleaning documents would otherwise carry
+        // the full original + processed text of each one. `omit` keeps the
+        // payload in step with KnowledgeDocumentListItem, which declares them
+        // absent.
+        omit: {
+          originalContent: true,
+          processedContent: true,
+          editLockHolder: true,
+          editLockAcquiredAt: true,
+        },
+        include: {
+          _count: { select: { chunks: true } },
+          tags: { include: { tag: { select: { id: true, slug: true, name: true } } } },
+        },
+      }),
+      prisma.aiKnowledgeDocument.count({ where }),
+    ]);
 
-  // Distinct BM25 keyword count per document on the current page. Single
-  // raw query: `string_to_array` splits the comma-separated `keywords`
-  // column, `unnest` expands it, and COUNT(DISTINCT) folds duplicates
-  // across chunks. The result powers the table's "BM25 keywords" column —
-  // operators click into the modal to inspect / enrich, so we only need
-  // the count here. Table names are snake_case via `@@map` in the schema
-  // (Prisma model `AiKnowledgeChunk` → DB table `ai_knowledge_chunk`).
-  const documentIds = rawDocuments.map((d) => d.id);
-  const keywordCountMap = new Map<string, number>();
-  if (documentIds.length > 0) {
-    const rows = await prisma.$queryRaw<Array<{ documentId: string; count: bigint }>>`
+    // Distinct BM25 keyword count per document on the current page. Single
+    // raw query: `string_to_array` splits the comma-separated `keywords`
+    // column, `unnest` expands it, and COUNT(DISTINCT) folds duplicates
+    // across chunks. The result powers the table's "BM25 keywords" column —
+    // operators click into the modal to inspect / enrich, so we only need
+    // the count here. Table names are snake_case via `@@map` in the schema
+    // (Prisma model `AiKnowledgeChunk` → DB table `ai_knowledge_chunk`).
+    const documentIds = rawDocuments.map((d) => d.id);
+    const keywordCountMap = new Map<string, number>();
+    if (documentIds.length > 0) {
+      const rows = await prisma.$queryRaw<Array<{ documentId: string; count: bigint }>>`
       SELECT
         c."documentId" AS "documentId",
         COUNT(DISTINCT trim(BOTH FROM kw)) AS count
@@ -173,19 +174,19 @@ export const GET = withAdminAuth(async (request, _session) => {
         AND trim(BOTH FROM kw) <> ''
       GROUP BY c."documentId"
     `;
-    for (const r of rows) keywordCountMap.set(r.documentId, Number(r.count));
-  }
+      for (const r of rows) keywordCountMap.set(r.documentId, Number(r.count));
+    }
 
-  // Count of active agents that can access each document. Mirrors the
-  // access-set built by `resolveAgentDocumentAccess`:
-  //   - every `full`-mode agent has access to every document
-  //   - restricted agents get explicit doc grants, tag-mediated grants, and
-  //     every `scope = 'system'` doc
-  // Duplicates across the four paths are folded with UNION; only active
-  // agents are counted so the column reflects who would actually search.
-  const agentCountMap = new Map<string, number>();
-  if (documentIds.length > 0) {
-    const rows = await prisma.$queryRaw<Array<{ documentId: string; count: bigint }>>`
+    // Count of active agents that can access each document. Mirrors the
+    // access-set built by `resolveAgentDocumentAccess`:
+    //   - every `full`-mode agent has access to every document
+    //   - restricted agents get explicit doc grants, tag-mediated grants, and
+    //     every `scope = 'system'` doc
+    // Duplicates across the four paths are folded with UNION; only active
+    // agents are counted so the column reflects who would actually search.
+    const agentCountMap = new Map<string, number>();
+    if (documentIds.length > 0) {
+      const rows = await prisma.$queryRaw<Array<{ documentId: string; count: bigint }>>`
       SELECT d.id AS "documentId", COUNT(DISTINCT a.id) AS count
       FROM ai_knowledge_document d
       LEFT JOIN ai_agent a ON a."isActive" = true AND a."deletedAt" IS NULL AND (
@@ -205,128 +206,282 @@ export const GET = withAdminAuth(async (request, _session) => {
       WHERE d.id = ANY(${documentIds}::text[])
       GROUP BY d.id
     `;
-    for (const r of rows) agentCountMap.set(r.documentId, Number(r.count));
-  }
+      for (const r of rows) agentCountMap.set(r.documentId, Number(r.count));
+    }
 
-  // Flatten the tag join rows into an inline `tags` array. The doc list page
-  // renders these as chips in the table — agents granted any of these tags
-  // can search this document when running in restricted mode.
-  const documents = rawDocuments.map((d) => {
-    const { tags, ...rest } = d;
-    return {
-      ...rest,
-      tags: tags.map((t) => ({ id: t.tag.id, slug: t.tag.slug, name: t.tag.name })),
-      distinctKeywordCount: keywordCountMap.get(d.id) ?? 0,
-      agentCount: agentCountMap.get(d.id) ?? 0,
-    };
-  });
-
-  log.info('Documents listed', { count: documents.length, total });
-
-  return paginatedResponse(documents, { page, limit, total });
-});
-
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
-
-  const log = await getRouteLogger(request);
-
-  // Pre-parse body-size guard. `request.formData()` materialises the entire
-  // multipart body in memory before the post-parse `file.size` check fires,
-  // so a malicious admin could OOM a self-hosted Node process with a
-  // multi-GB body. The guard reads `Content-Length` and rejects with 413
-  // before any allocation. Same pattern as the transcribe routes and the
-  // MCP transport (`app/api/v1/mcp/route.ts:76-85`).
-  const oversize = enforceContentLengthCap(request, {
-    maxBytes: MAX_REQUEST_BYTES,
-    errorCode: 'FILE_TOO_LARGE',
-    errorMessage: 'File exceeds size limit',
-    details: { file: [`Maximum size is ${MAX_UPLOAD_BYTES} bytes`] },
-  });
-  if (oversize) return oversize;
-
-  let formData: FormData;
-  try {
-    formData = await request.formData();
-  } catch {
-    throw new ValidationError('Expected multipart/form-data body');
-  }
-
-  const file = formData.get('file');
-  if (!(file instanceof File)) {
-    throw new ValidationError('Missing or invalid file field', {
-      file: ['A file must be supplied in the `file` form field'],
+    // Flatten the tag join rows into an inline `tags` array. The doc list page
+    // renders these as chips in the table — agents granted any of these tags
+    // can search this document when running in restricted mode.
+    const documents = rawDocuments.map((d) => {
+      const { tags, ...rest } = d;
+      return {
+        ...rest,
+        tags: tags.map((t) => ({ id: t.tag.id, slug: t.tag.slug, name: t.tag.name })),
+        distinctKeywordCount: keywordCountMap.get(d.id) ?? 0,
+        agentCount: agentCountMap.get(d.id) ?? 0,
+      };
     });
-  }
 
-  if (file.size > MAX_UPLOAD_BYTES) {
-    // Mirrors the pre-parse `Content-Length` guard above: same code, same
-    // status, same envelope shape. The post-parse path catches the case
-    // where the client sent a small/missing Content-Length but a body
-    // that turned out to be oversize after parsing (chunked encoding, or
-    // a lying header).
-    return errorResponse('File exceeds size limit', {
-      code: 'FILE_TOO_LARGE',
-      status: 413,
+    log.info('Documents listed', { count: documents.length, total });
+
+    return paginatedResponse(documents, { page, limit, total });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);
+
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
+
+    const log = await getRouteLogger(request);
+
+    // Pre-parse body-size guard. `request.formData()` materialises the entire
+    // multipart body in memory before the post-parse `file.size` check fires,
+    // so a malicious admin could OOM a self-hosted Node process with a
+    // multi-GB body. The guard reads `Content-Length` and rejects with 413
+    // before any allocation. Same pattern as the transcribe routes and the
+    // MCP transport (`app/api/v1/mcp/route.ts:76-85`).
+    const oversize = enforceContentLengthCap(request, {
+      maxBytes: MAX_REQUEST_BYTES,
+      errorCode: 'FILE_TOO_LARGE',
+      errorMessage: 'File exceeds size limit',
       details: { file: [`Maximum size is ${MAX_UPLOAD_BYTES} bytes`] },
     });
-  }
+    if (oversize) return oversize;
 
-  if (!hasAllowedExtension(file.name)) {
-    return errorResponse('Unsupported file type', {
-      code: 'INVALID_FILE_TYPE',
-      status: 400,
-      details: { file: [`Allowed extensions: ${ALLOWED_EXTENSIONS.join(', ')}`] },
-    });
-  }
-
-  // Optional display name override — when set, replaces the filename-derived
-  // doc name. Trimmed; empty strings fall back to the filename.
-  const nameField = formData.get('name');
-  const displayName =
-    typeof nameField === 'string' && nameField.trim().length > 0 ? nameField.trim() : undefined;
-
-  const tagIds = parseTagIdsFromForm(formData);
-
-  // Opt-in interactive cleanup. When true, parsed text lands in
-  // status='cleaning' (or PDF preview metadata.runCleanup, picked up by the
-  // confirm endpoint) and the response carries a `redirectTo` URL pointing
-  // at the cleanup chat page instead of chunking immediately.
-  const runCleanupField = formData.get('runCleanup');
-  const runCleanup =
-    typeof runCleanupField === 'string' &&
-    ['true', '1', 'on', 'yes'].includes(runCleanupField.toLowerCase());
-
-  const ext = getExtension(file.name);
-
-  // Text-based formats: read as string, apply line-length guards
-  if (TEXT_EXTENSIONS.has(ext)) {
-    const content = await file.text();
-
-    const lines = content.split('\n');
-    if (lines.length > MAX_LINE_COUNT) {
-      throw new ValidationError('Document has too many lines', {
-        file: [`Maximum ${MAX_LINE_COUNT.toLocaleString()} lines allowed`],
-      });
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch {
+      throw new ValidationError('Expected multipart/form-data body');
     }
-    if (lines.some((line) => line.length > MAX_LINE_LENGTH)) {
-      throw new ValidationError('Document contains excessively long lines', {
-        file: [`Maximum ${MAX_LINE_LENGTH.toLocaleString()} characters per line`],
+
+    const file = formData.get('file');
+    if (!(file instanceof File)) {
+      throw new ValidationError('Missing or invalid file field', {
+        file: ['A file must be supplied in the `file` form field'],
       });
     }
 
+    if (file.size > MAX_UPLOAD_BYTES) {
+      // Mirrors the pre-parse `Content-Length` guard above: same code, same
+      // status, same envelope shape. The post-parse path catches the case
+      // where the client sent a small/missing Content-Length but a body
+      // that turned out to be oversize after parsing (chunked encoding, or
+      // a lying header).
+      return errorResponse('File exceeds size limit', {
+        code: 'FILE_TOO_LARGE',
+        status: 413,
+        details: { file: [`Maximum size is ${MAX_UPLOAD_BYTES} bytes`] },
+      });
+    }
+
+    if (!hasAllowedExtension(file.name)) {
+      return errorResponse('Unsupported file type', {
+        code: 'INVALID_FILE_TYPE',
+        status: 400,
+        details: { file: [`Allowed extensions: ${ALLOWED_EXTENSIONS.join(', ')}`] },
+      });
+    }
+
+    // Optional display name override — when set, replaces the filename-derived
+    // doc name. Trimmed; empty strings fall back to the filename.
+    const nameField = formData.get('name');
+    const displayName =
+      typeof nameField === 'string' && nameField.trim().length > 0 ? nameField.trim() : undefined;
+
+    const tagIds = parseTagIdsFromForm(formData);
+
+    // Opt-in interactive cleanup. When true, parsed text lands in
+    // status='cleaning' (or PDF preview metadata.runCleanup, picked up by the
+    // confirm endpoint) and the response carries a `redirectTo` URL pointing
+    // at the cleanup chat page instead of chunking immediately.
+    const runCleanupField = formData.get('runCleanup');
+    const runCleanup =
+      typeof runCleanupField === 'string' &&
+      ['true', '1', 'on', 'yes'].includes(runCleanupField.toLowerCase());
+
+    const ext = getExtension(file.name);
+
+    // Text-based formats: read as string, apply line-length guards
+    if (TEXT_EXTENSIONS.has(ext)) {
+      const content = await file.text();
+
+      const lines = content.split('\n');
+      if (lines.length > MAX_LINE_COUNT) {
+        throw new ValidationError('Document has too many lines', {
+          file: [`Maximum ${MAX_LINE_COUNT.toLocaleString()} lines allowed`],
+        });
+      }
+      if (lines.some((line) => line.length > MAX_LINE_LENGTH)) {
+        throw new ValidationError('Document contains excessively long lines', {
+          file: [`Maximum ${MAX_LINE_LENGTH.toLocaleString()} characters per line`],
+        });
+      }
+
+      if (runCleanup) {
+        const kickoff = await createDocumentForCleanup(
+          content,
+          file.name,
+          session.user.id,
+          displayName
+        );
+        const tagsApplied = await applyDocumentTags(kickoff.document.id, tagIds);
+
+        log.info('Document Clean Up session opened (text)', {
+          documentId: kickoff.document.id,
+          fileName: file.name,
+          sizeBytes: file.size,
+          tagsApplied,
+          adminId: session.user.id,
+        });
+
+        logAdminAction({
+          userId: session.user.id,
+          action: 'knowledge_document.cleanup_start',
+          entityType: 'knowledge_document',
+          entityId: kickoff.document.id,
+          entityName: file.name,
+          clientIp: clientIP,
+        });
+
+        return successResponse(
+          { document: kickoff.document, redirectTo: kickoff.redirectTo },
+          undefined,
+          { status: 201 }
+        );
+      }
+
+      const document = await uploadDocument(
+        content,
+        file.name,
+        session.user.id,
+        undefined,
+        displayName
+      );
+      const tagsApplied = await applyDocumentTags(document.id, tagIds);
+
+      log.info('Document uploaded (text)', {
+        documentId: document.id,
+        fileName: file.name,
+        sizeBytes: file.size,
+        tagsApplied,
+        adminId: session.user.id,
+      });
+
+      logAdminAction({
+        userId: session.user.id,
+        action: 'knowledge_document.create',
+        entityType: 'knowledge_document',
+        entityId: document.id,
+        entityName: file.name,
+        clientIp: clientIP,
+      });
+
+      return successResponse({ document }, undefined, { status: 201 });
+    }
+
+    // Binary formats: read as buffer, route through parser pipeline
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // PDF requires preview step
+    if (requiresPreview(file.name)) {
+      const extractTablesField = formData.get('extractTables');
+      const extractTables =
+        typeof extractTablesField === 'string' &&
+        ['true', '1', 'on', 'yes'].includes(extractTablesField.toLowerCase());
+
+      const preview = await previewDocument(buffer, file.name, session.user.id, { extractTables });
+      // Attach tags eagerly so they survive the preview→confirm round trip. If
+      // the operator rejects the preview, the doc row (and its tag links) are
+      // deleted via the existing reject flow.
+      const tagsApplied = await applyDocumentTags(preview.document.id, tagIds);
+
+      // When the admin asked for cleanup, persist a flag on the doc's metadata
+      // so the confirm endpoint can branch into transitionToCleanup() rather
+      // than chunking. The admin still reviews extracted text in the PDF
+      // preview modal first (low-coverage warnings show there) — they then
+      // confirm INTO the cleanup chat rather than INTO immediate chunking.
+      if (runCleanup) {
+        const existingMeta = parseDocumentMetadata(preview.document.metadata) ?? {};
+        await prisma.aiKnowledgeDocument.update({
+          where: { id: preview.document.id },
+          data: { metadata: { ...existingMeta, runCleanup: true } },
+        });
+      }
+
+      log.info('Document preview created (PDF)', {
+        documentId: preview.document.id,
+        fileName: file.name,
+        sizeBytes: file.size,
+        extractedTextLength: preview.extractedText.length,
+        warnings: preview.warnings.length,
+        extractTables,
+        tagsApplied,
+        adminId: session.user.id,
+      });
+
+      const meta = parseDocumentMetadata(preview.document.metadata);
+      const pages = meta?.pages ?? null;
+
+      return successResponse(
+        {
+          document: preview.document,
+          preview: {
+            extractedText: preview.extractedText,
+            title: preview.title,
+            // DocumentPreview.author is `string | undefined`; JSON serialises
+            // `undefined` as the key being absent. The client Zod schema
+            // declares author `.nullable()` (string | null) and rejects
+            // undefined with "Invalid input: expected string, received
+            // undefined". Coerce here so the wire format matches the
+            // schema's contract.
+            author: preview.author ?? null,
+            sectionCount: preview.sectionCount,
+            warnings: preview.warnings,
+            pages,
+            requiresConfirmation: true,
+          },
+        },
+        undefined,
+        { status: 201 }
+      );
+    }
+
+    // EPUB, DOCX: direct buffer upload
     if (runCleanup) {
+      // CSV cleanup is a degenerate case — each row is already its own chunk,
+      // so there's nothing useful for the cleanup agent to do at the doc level.
+      // Refuse politely instead of silently bypassing cleanup.
+      const parsed = await parseDocument(buffer, file.name);
+      if (parsed.metadata.format === 'csv') {
+        return errorResponse('Document Clean Up is not supported for CSV files', {
+          code: 'CLEANUP_UNSUPPORTED_FORMAT',
+          status: 400,
+          details: { format: ['CSV rows are chunked atomically and bypass cleanup'] },
+        });
+      }
+      const content = ext === '.md' ? buffer.toString('utf-8') : parsed.fullText;
       const kickoff = await createDocumentForCleanup(
         content,
         file.name,
         session.user.id,
-        displayName
+        displayName?.trim() || parsed.title
       );
       const tagsApplied = await applyDocumentTags(kickoff.document.id, tagIds);
 
-      log.info('Document Clean Up session opened (text)', {
+      log.info('Document Clean Up session opened (binary)', {
         documentId: kickoff.document.id,
         fileName: file.name,
+        format: ext,
         sizeBytes: file.size,
         tagsApplied,
         adminId: session.user.id,
@@ -348,8 +503,8 @@ export const POST = withAdminAuth(async (request, session) => {
       );
     }
 
-    const document = await uploadDocument(
-      content,
+    const document = await uploadDocumentFromBuffer(
+      buffer,
       file.name,
       session.user.id,
       undefined,
@@ -357,9 +512,10 @@ export const POST = withAdminAuth(async (request, session) => {
     );
     const tagsApplied = await applyDocumentTags(document.id, tagIds);
 
-    log.info('Document uploaded (text)', {
+    log.info('Document uploaded (binary)', {
       documentId: document.id,
       fileName: file.name,
+      format: ext,
       sizeBytes: file.size,
       tagsApplied,
       adminId: session.user.id,
@@ -375,149 +531,13 @@ export const POST = withAdminAuth(async (request, session) => {
     });
 
     return successResponse({ document }, undefined, { status: 201 });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-
-  // Binary formats: read as buffer, route through parser pipeline
-  const arrayBuffer = await file.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-
-  // PDF requires preview step
-  if (requiresPreview(file.name)) {
-    const extractTablesField = formData.get('extractTables');
-    const extractTables =
-      typeof extractTablesField === 'string' &&
-      ['true', '1', 'on', 'yes'].includes(extractTablesField.toLowerCase());
-
-    const preview = await previewDocument(buffer, file.name, session.user.id, { extractTables });
-    // Attach tags eagerly so they survive the preview→confirm round trip. If
-    // the operator rejects the preview, the doc row (and its tag links) are
-    // deleted via the existing reject flow.
-    const tagsApplied = await applyDocumentTags(preview.document.id, tagIds);
-
-    // When the admin asked for cleanup, persist a flag on the doc's metadata
-    // so the confirm endpoint can branch into transitionToCleanup() rather
-    // than chunking. The admin still reviews extracted text in the PDF
-    // preview modal first (low-coverage warnings show there) — they then
-    // confirm INTO the cleanup chat rather than INTO immediate chunking.
-    if (runCleanup) {
-      const existingMeta = parseDocumentMetadata(preview.document.metadata) ?? {};
-      await prisma.aiKnowledgeDocument.update({
-        where: { id: preview.document.id },
-        data: { metadata: { ...existingMeta, runCleanup: true } },
-      });
-    }
-
-    log.info('Document preview created (PDF)', {
-      documentId: preview.document.id,
-      fileName: file.name,
-      sizeBytes: file.size,
-      extractedTextLength: preview.extractedText.length,
-      warnings: preview.warnings.length,
-      extractTables,
-      tagsApplied,
-      adminId: session.user.id,
-    });
-
-    const meta = parseDocumentMetadata(preview.document.metadata);
-    const pages = meta?.pages ?? null;
-
-    return successResponse(
-      {
-        document: preview.document,
-        preview: {
-          extractedText: preview.extractedText,
-          title: preview.title,
-          // DocumentPreview.author is `string | undefined`; JSON serialises
-          // `undefined` as the key being absent. The client Zod schema
-          // declares author `.nullable()` (string | null) and rejects
-          // undefined with "Invalid input: expected string, received
-          // undefined". Coerce here so the wire format matches the
-          // schema's contract.
-          author: preview.author ?? null,
-          sectionCount: preview.sectionCount,
-          warnings: preview.warnings,
-          pages,
-          requiresConfirmation: true,
-        },
-      },
-      undefined,
-      { status: 201 }
-    );
-  }
-
-  // EPUB, DOCX: direct buffer upload
-  if (runCleanup) {
-    // CSV cleanup is a degenerate case — each row is already its own chunk,
-    // so there's nothing useful for the cleanup agent to do at the doc level.
-    // Refuse politely instead of silently bypassing cleanup.
-    const parsed = await parseDocument(buffer, file.name);
-    if (parsed.metadata.format === 'csv') {
-      return errorResponse('Document Clean Up is not supported for CSV files', {
-        code: 'CLEANUP_UNSUPPORTED_FORMAT',
-        status: 400,
-        details: { format: ['CSV rows are chunked atomically and bypass cleanup'] },
-      });
-    }
-    const content = ext === '.md' ? buffer.toString('utf-8') : parsed.fullText;
-    const kickoff = await createDocumentForCleanup(
-      content,
-      file.name,
-      session.user.id,
-      displayName?.trim() || parsed.title
-    );
-    const tagsApplied = await applyDocumentTags(kickoff.document.id, tagIds);
-
-    log.info('Document Clean Up session opened (binary)', {
-      documentId: kickoff.document.id,
-      fileName: file.name,
-      format: ext,
-      sizeBytes: file.size,
-      tagsApplied,
-      adminId: session.user.id,
-    });
-
-    logAdminAction({
-      userId: session.user.id,
-      action: 'knowledge_document.cleanup_start',
-      entityType: 'knowledge_document',
-      entityId: kickoff.document.id,
-      entityName: file.name,
-      clientIp: clientIP,
-    });
-
-    return successResponse(
-      { document: kickoff.document, redirectTo: kickoff.redirectTo },
-      undefined,
-      { status: 201 }
-    );
-  }
-
-  const document = await uploadDocumentFromBuffer(
-    buffer,
-    file.name,
-    session.user.id,
-    undefined,
-    displayName
-  );
-  const tagsApplied = await applyDocumentTags(document.id, tagIds);
-
-  log.info('Document uploaded (binary)', {
-    documentId: document.id,
-    fileName: file.name,
-    format: ext,
-    sizeBytes: file.size,
-    tagsApplied,
-    adminId: session.user.id,
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'knowledge_document.create',
-    entityType: 'knowledge_document',
-    entityId: document.id,
-    entityName: file.name,
-    clientIp: clientIP,
-  });
-
-  return successResponse({ document }, undefined, { status: 201 });
-});
+);

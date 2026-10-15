@@ -17,37 +17,47 @@ import { searchKnowledge, type SearchFilters } from '@/lib/orchestration/knowled
 import { resolveAgentDocumentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import { knowledgeSearchSchema } from '@/lib/validations/orchestration';
 
-export const POST = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, knowledgeSearchSchema);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, knowledgeSearchSchema);
 
-  const { query, limit, chunkType, patternNumber, scope, agentId } = body;
-  const filters: SearchFilters = { chunkType, patternNumber, scope };
+    const { query, limit, chunkType, patternNumber, scope, agentId } = body;
+    const filters: SearchFilters = { chunkType, patternNumber, scope };
 
-  // Preview-as-agent: route the search through the resolver when `agentId` is
-  // supplied so the admin sees what that agent would see. Without it the
-  // search runs unfiltered — explicit "global view".
-  let agentScope: 'full' | 'restricted' | undefined;
-  if (agentId) {
-    const access = await resolveAgentDocumentAccess(agentId);
-    agentScope = access.mode;
-    if (access.mode === 'restricted') {
-      filters.documentIds = access.documentIds;
-      filters.includeSystemScope = access.includeSystemScope;
+    // Preview-as-agent: route the search through the resolver when `agentId` is
+    // supplied so the admin sees what that agent would see. Without it the
+    // search runs unfiltered — explicit "global view".
+    let agentScope: 'full' | 'restricted' | undefined;
+    if (agentId) {
+      const access = await resolveAgentDocumentAccess(agentId);
+      agentScope = access.mode;
+      if (access.mode === 'restricted') {
+        filters.documentIds = access.documentIds;
+        filters.includeSystemScope = access.includeSystemScope;
+      }
     }
+
+    const results = await searchKnowledge(query, filters, limit, undefined, {
+      userId: session.user.id,
+      metadata: { kind: 'admin_knowledge_search' },
+    });
+
+    log.info('Knowledge search completed', {
+      query,
+      resultCount: results.length,
+      agentId,
+      agentScope,
+    });
+
+    return successResponse({ results, agentScope });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-
-  const results = await searchKnowledge(query, filters, limit, undefined, {
-    userId: session.user.id,
-    metadata: { kind: 'admin_knowledge_search' },
-  });
-
-  log.info('Knowledge search completed', {
-    query,
-    resultCount: results.length,
-    agentId,
-    agentScope,
-  });
-
-  return successResponse({ results, agentScope });
-});
+);

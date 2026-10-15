@@ -22,16 +22,17 @@ interface UsageRow {
   count: number;
 }
 
-export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
-  }
-  const agentId = parsed.data;
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, _session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
+    }
+    const agentId = parsed.data;
 
-  const rows = await prisma.$queryRaw<UsageRow[]>`
+    const rows = await prisma.$queryRaw<UsageRow[]>`
     SELECT metadata->>'slug' AS slug, COUNT(*)::int AS count
     FROM "AiCostLog"
     WHERE "agentId" = ${agentId}
@@ -40,14 +41,23 @@ export const GET = withAdminAuth<{ id: string }>(async (request, _session, { par
     GROUP BY metadata->>'slug'
   `;
 
-  const usage: Record<string, number> = {};
-  for (const row of rows) {
-    if (row.slug) {
-      usage[row.slug] = row.count;
+    const usage: Record<string, number> = {};
+    for (const row of rows) {
+      if (row.slug) {
+        usage[row.slug] = row.count;
+      }
     }
+
+    log.debug('Capability usage fetched', { agentId, slugCount: Object.keys(usage).length });
+
+    return successResponse({ usage });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-
-  log.debug('Capability usage fetched', { agentId, slugCount: Object.keys(usage).length });
-
-  return successResponse({ usage });
-});
+);

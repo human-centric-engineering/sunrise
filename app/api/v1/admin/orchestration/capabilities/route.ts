@@ -26,52 +26,61 @@ import {
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { capabilityAgentUsage } from '@/lib/orchestration/admin/global-config-usage';
 
-export const GET = withAdminAuth(async (request, _session) => {
-  const log = await getRouteLogger(request);
+export const GET = withAdminAuth(
+  async (request, _session) => {
+    const log = await getRouteLogger(request);
 
-  const { searchParams } = new URL(request.url);
-  const { page, limit, isActive, category, executionType, q } = validateQueryParams(
-    searchParams,
-    listCapabilitiesQuerySchema
-  );
-  const skip = (page - 1) * limit;
+    const { searchParams } = new URL(request.url);
+    const { page, limit, isActive, category, executionType, q } = validateQueryParams(
+      searchParams,
+      listCapabilitiesQuerySchema
+    );
+    const skip = (page - 1) * limit;
 
-  const where: Prisma.AiCapabilityWhereInput = {};
-  if (isActive !== undefined) where.isActive = isActive;
-  if (category) where.category = category;
-  if (executionType) where.executionType = executionType;
-  if (q) {
-    where.OR = [
-      { name: { contains: q, mode: 'insensitive' } },
-      { slug: { contains: q, mode: 'insensitive' } },
-      { description: { contains: q, mode: 'insensitive' } },
-    ];
+    const where: Prisma.AiCapabilityWhereInput = {};
+    if (isActive !== undefined) where.isActive = isActive;
+    if (category) where.category = category;
+    if (executionType) where.executionType = executionType;
+    if (q) {
+      where.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { slug: { contains: q, mode: 'insensitive' } },
+        { description: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    const [rawCapabilities, total] = await Promise.all([
+      prisma.aiCapability.findMany({
+        where,
+        orderBy: { category: 'asc' },
+        skip,
+        take: limit,
+      }),
+      prisma.aiCapability.count({ where }),
+    ]);
+
+    // Agents using each capability, in every org (§107 t-752): the caller's
+    // by name in `_agents`, other orgs' as `_otherOrgAgentCount`. A plain
+    // `include` read only the caller's org at `multi`.
+    const usage = await capabilityAgentUsage(rawCapabilities.map((c) => c.id));
+    const capabilities = rawCapabilities.map((capability) => ({
+      ...capability,
+      _agents: usage.get(capability.id)?.agents ?? [],
+      _otherOrgAgentCount: usage.get(capability.id)?.otherOrgAgents ?? 0,
+    }));
+
+    log.info('Capabilities listed', { count: capabilities.length, total, page, limit });
+
+    return paginatedResponse(capabilities, { page, limit, total });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because: 'Shared configuration every org reads; it holds nobody’s personal rows.',
+    },
   }
-
-  const [rawCapabilities, total] = await Promise.all([
-    prisma.aiCapability.findMany({
-      where,
-      orderBy: { category: 'asc' },
-      skip,
-      take: limit,
-    }),
-    prisma.aiCapability.count({ where }),
-  ]);
-
-  // Agents using each capability, in every org (§107 t-752): the caller's
-  // by name in `_agents`, other orgs' as `_otherOrgAgentCount`. A plain
-  // `include` read only the caller's org at `multi`.
-  const usage = await capabilityAgentUsage(rawCapabilities.map((c) => c.id));
-  const capabilities = rawCapabilities.map((capability) => ({
-    ...capability,
-    _agents: usage.get(capability.id)?.agents ?? [],
-    _otherOrgAgentCount: usage.get(capability.id)?.otherOrgAgents ?? 0,
-  }));
-
-  log.info('Capabilities listed', { count: capabilities.length, total, page, limit });
-
-  return paginatedResponse(capabilities, { page, limit, total });
-});
+);
 
 export const POST = withAdminAuth(
   async (request, session) => {

@@ -171,6 +171,7 @@ export const PATCH = withAdminAuth<Params>(
     return successResponse(experiment);
   },
   {
+    tier: 'org',
     ownership: {
       decidedBy: 'self',
       because:
@@ -220,6 +221,7 @@ export const DELETE = withAdminAuth<Params>(
     return successResponse({ deleted: true });
   },
   {
+    tier: 'org',
     ownership: {
       decidedBy: 'self',
       because:

@@ -26,45 +26,54 @@ import {
 } from '@/lib/validations/orchestration';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
-export const GET = withAdminAuth(async (request, _session) => {
-  const log = await getRouteLogger(request);
+export const GET = withAdminAuth(
+  async (request, _session) => {
+    const log = await getRouteLogger(request);
 
-  const { searchParams } = new URL(request.url);
-  const { page, limit, q } = validateQueryParams(searchParams, listKnowledgeTagsQuerySchema);
-  const skip = (page - 1) * limit;
+    const { searchParams } = new URL(request.url);
+    const { page, limit, q } = validateQueryParams(searchParams, listKnowledgeTagsQuerySchema);
+    const skip = (page - 1) * limit;
 
-  const where: Prisma.KnowledgeTagWhereInput = {};
-  if (q) {
-    where.OR = [
-      { slug: { contains: q, mode: 'insensitive' } },
-      { name: { contains: q, mode: 'insensitive' } },
-      { description: { contains: q, mode: 'insensitive' } },
-    ];
+    const where: Prisma.KnowledgeTagWhereInput = {};
+    if (q) {
+      where.OR = [
+        { slug: { contains: q, mode: 'insensitive' } },
+        { name: { contains: q, mode: 'insensitive' } },
+        { description: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    const [rawTags, total] = await Promise.all([
+      prisma.knowledgeTag.findMany({
+        where,
+        orderBy: { name: 'asc' },
+        skip,
+        take: limit,
+      }),
+      prisma.knowledgeTag.count({ where }),
+    ]);
+
+    // Every org's grants and document links (t-731): a tag is global config,
+    // and "unused" (the bulk delete's test) must mean unused by any org.
+    const counts = await knowledgeTagCounts(rawTags.map((t) => t.id));
+    const tags = rawTags.map((tag) => ({
+      ...tag,
+      documentCount: counts.get(tag.id)?.documents ?? 0,
+      agentCount: counts.get(tag.id)?.agents ?? 0,
+    }));
+
+    log.info('Knowledge tags listed', { count: tags.length, total, page, limit });
+
+    return paginatedResponse(tags, { page, limit, total });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because: 'Shared configuration every org reads; it holds nobody’s personal rows.',
+    },
   }
-
-  const [rawTags, total] = await Promise.all([
-    prisma.knowledgeTag.findMany({
-      where,
-      orderBy: { name: 'asc' },
-      skip,
-      take: limit,
-    }),
-    prisma.knowledgeTag.count({ where }),
-  ]);
-
-  // Every org's grants and document links (t-731): a tag is global config,
-  // and "unused" (the bulk delete's test) must mean unused by any org.
-  const counts = await knowledgeTagCounts(rawTags.map((t) => t.id));
-  const tags = rawTags.map((tag) => ({
-    ...tag,
-    documentCount: counts.get(tag.id)?.documents ?? 0,
-    agentCount: counts.get(tag.id)?.agents ?? 0,
-  }));
-
-  log.info('Knowledge tags listed', { count: tags.length, total, page, limit });
-
-  return paginatedResponse(tags, { page, limit, total });
-});
+);
 
 export const POST = withAdminAuth(
   async (request, session) => {

@@ -45,108 +45,138 @@ function resolveTriggerId(rawId: string): string {
   return parsed.data;
 }
 
-export const GET = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = resolveTriggerId(rawId);
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, _session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = resolveTriggerId(rawId);
 
-  const trigger = await prisma.aiWorkflowTrigger.findUnique({
-    where: { id },
-    include: {
-      workflow: { select: { id: true, name: true, slug: true, isActive: true } },
-    },
-  });
-  if (!trigger) throw new NotFoundError(`Trigger ${id} not found`);
-
-  log.info('Workflow trigger fetched', { triggerId: id });
-  return successResponse(toSafeTrigger(trigger));
-});
-
-export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = resolveTriggerId(rawId);
-
-  const existing = await prisma.aiWorkflowTrigger.findUnique({
-    where: { id },
-    include: {
-      workflow: { select: { id: true, name: true, slug: true, isActive: true } },
-    },
-  });
-  if (!existing) throw new NotFoundError(`Trigger ${id} not found`);
-
-  const input = await validateRequestBody(request, updateTriggerSchema);
-
-  // HMAC channels require a secret. Reject clearing the secret on an
-  // existing hmac trigger.
-  if (existing.channel === 'hmac' && input.signingSecret === null) {
-    throw new ValidationError('HMAC triggers must keep a signingSecret', {
-      signingSecret: ['Cannot clear the signing secret on an hmac trigger'],
+    const trigger = await prisma.aiWorkflowTrigger.findUnique({
+      where: { id },
+      include: {
+        workflow: { select: { id: true, name: true, slug: true, isActive: true } },
+      },
     });
-  }
+    if (!trigger) throw new NotFoundError(`Trigger ${id} not found`);
 
-  const data: Record<string, unknown> = {};
-  if (input.name !== undefined) data.name = input.name;
-  if (input.metadata !== undefined) data.metadata = input.metadata;
-  if (input.signingSecret !== undefined) data.signingSecret = input.signingSecret;
-  if (input.isEnabled !== undefined) data.isEnabled = input.isEnabled;
-  // `scope` is a `Json?` column: JS `null` can't clear it (Prisma needs the
-  // `DbNull` sentinel), and `undefined` leaves it untouched.
-  if (input.scope !== undefined) data.scope = input.scope === null ? Prisma.DbNull : input.scope;
-
-  const updated = await prisma.aiWorkflowTrigger.update({
-    where: { id },
-    data,
-    include: {
-      workflow: { select: { id: true, name: true, slug: true, isActive: true } },
+    log.info('Workflow trigger fetched', { triggerId: id });
+    return successResponse(toSafeTrigger(trigger));
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Inbound triggers are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
     },
-  });
+  }
+);
 
-  log.info('Workflow trigger updated', { triggerId: id });
+export const PATCH = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = resolveTriggerId(rawId);
 
-  logAdminAction({
-    userId: session.user.id,
-    action: 'workflow_trigger.update',
-    entityType: 'workflow_trigger',
-    entityId: id,
-    entityName: updated.name,
-    changes: computeChanges(
-      // Don't leak the rotated/cleared signing secret into the audit
-      // diff — its presence is recorded via `hasSigningSecret`.
-      redactSecrets(existing),
-      redactSecrets(updated),
-      { ignoreKeys: ['updatedAt', 'createdAt'] }
-    ),
-    clientIp: getClientIP(request),
-  });
+    const existing = await prisma.aiWorkflowTrigger.findUnique({
+      where: { id },
+      include: {
+        workflow: { select: { id: true, name: true, slug: true, isActive: true } },
+      },
+    });
+    if (!existing) throw new NotFoundError(`Trigger ${id} not found`);
 
-  return successResponse(toSafeTrigger(updated));
-});
+    const input = await validateRequestBody(request, updateTriggerSchema);
 
-export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = resolveTriggerId(rawId);
+    // HMAC channels require a secret. Reject clearing the secret on an
+    // existing hmac trigger.
+    if (existing.channel === 'hmac' && input.signingSecret === null) {
+      throw new ValidationError('HMAC triggers must keep a signingSecret', {
+        signingSecret: ['Cannot clear the signing secret on an hmac trigger'],
+      });
+    }
 
-  const existing = await prisma.aiWorkflowTrigger.findUnique({ where: { id } });
-  if (!existing) throw new NotFoundError(`Trigger ${id} not found`);
+    const data: Record<string, unknown> = {};
+    if (input.name !== undefined) data.name = input.name;
+    if (input.metadata !== undefined) data.metadata = input.metadata;
+    if (input.signingSecret !== undefined) data.signingSecret = input.signingSecret;
+    if (input.isEnabled !== undefined) data.isEnabled = input.isEnabled;
+    // `scope` is a `Json?` column: JS `null` can't clear it (Prisma needs the
+    // `DbNull` sentinel), and `undefined` leaves it untouched.
+    if (input.scope !== undefined) data.scope = input.scope === null ? Prisma.DbNull : input.scope;
 
-  await prisma.aiWorkflowTrigger.delete({ where: { id } });
+    const updated = await prisma.aiWorkflowTrigger.update({
+      where: { id },
+      data,
+      include: {
+        workflow: { select: { id: true, name: true, slug: true, isActive: true } },
+      },
+    });
 
-  log.info('Workflow trigger deleted', { triggerId: id });
+    log.info('Workflow trigger updated', { triggerId: id });
 
-  logAdminAction({
-    userId: session.user.id,
-    action: 'workflow_trigger.delete',
-    entityType: 'workflow_trigger',
-    entityId: id,
-    entityName: existing.name,
-    metadata: { channel: existing.channel },
-    clientIp: getClientIP(request),
-  });
+    logAdminAction({
+      userId: session.user.id,
+      action: 'workflow_trigger.update',
+      entityType: 'workflow_trigger',
+      entityId: id,
+      entityName: updated.name,
+      changes: computeChanges(
+        // Don't leak the rotated/cleared signing secret into the audit
+        // diff — its presence is recorded via `hasSigningSecret`.
+        redactSecrets(existing),
+        redactSecrets(updated),
+        { ignoreKeys: ['updatedAt', 'createdAt'] }
+      ),
+      clientIp: getClientIP(request),
+    });
 
-  return successResponse({ deleted: true });
-});
+    return successResponse(toSafeTrigger(updated));
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Inbound triggers are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);
+
+export const DELETE = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = resolveTriggerId(rawId);
+
+    const existing = await prisma.aiWorkflowTrigger.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundError(`Trigger ${id} not found`);
+
+    await prisma.aiWorkflowTrigger.delete({ where: { id } });
+
+    log.info('Workflow trigger deleted', { triggerId: id });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'workflow_trigger.delete',
+      entityType: 'workflow_trigger',
+      entityId: id,
+      entityName: existing.name,
+      metadata: { channel: existing.channel },
+      clientIp: getClientIP(request),
+    });
+
+    return successResponse({ deleted: true });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Inbound triggers are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);
 
 function toSafeTrigger<T extends { signingSecret: string | null } & Record<string, unknown>>(
   row: T

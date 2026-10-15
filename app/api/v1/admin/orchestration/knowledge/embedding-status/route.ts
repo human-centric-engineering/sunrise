@@ -22,33 +22,43 @@ import { successResponse } from '@/lib/api/responses';
 import { prisma } from '@/lib/db/client';
 import { resolveEmbeddingAvailability } from '@/lib/orchestration/knowledge/embedder';
 
-export const GET = withAdminAuth(async (_request) => {
-  const [total, embeddedRows, providerState] = await Promise.all([
-    prisma.aiKnowledgeChunk.count(),
-    prisma.$queryRaw<[{ count: bigint }]>`
+export const GET = withAdminAuth(
+  async (_request) => {
+    const [total, embeddedRows, providerState] = await Promise.all([
+      prisma.aiKnowledgeChunk.count(),
+      prisma.$queryRaw<[{ count: bigint }]>`
       SELECT COUNT(*) as count FROM ai_knowledge_chunk WHERE embedding IS NOT NULL
     `,
-    // Ask the resolver, not the row count. This used to be
-    // `!!activeProviderRow || !!process.env.OPENAI_API_KEY`, which answered
-    // "does a provider exist?" — the same question as "can we embed?" only
-    // until the embedding chain started consulting the provider-eligibility
-    // rule. On a fork whose rule refuses every arm, the row check reports
-    // `true` and the admin UI enables "Generate Embeddings" for a run that
-    // cannot succeed.
-    resolveEmbeddingAvailability(),
-  ]);
+      // Ask the resolver, not the row count. This used to be
+      // `!!activeProviderRow || !!process.env.OPENAI_API_KEY`, which answered
+      // "does a provider exist?" — the same question as "can we embed?" only
+      // until the embedding chain started consulting the provider-eligibility
+      // rule. On a fork whose rule refuses every arm, the row check reports
+      // `true` and the admin UI enables "Generate Embeddings" for a run that
+      // cannot succeed.
+      resolveEmbeddingAvailability(),
+    ]);
 
-  const embedded = Number(embeddedRows[0]?.count ?? 0);
+    const embedded = Number(embeddedRows[0]?.count ?? 0);
 
-  return successResponse({
-    total,
-    embedded,
-    pending: total - embedded,
-    // Kept, and kept meaning "embedding will run" — every existing consumer
-    // gates an affordance on it. `providerState` is additive and carries the
-    // WHY, because "no provider is set up" and "your policy refuses the ones
-    // that are" need opposite remedies and the boolean prints only the first.
-    hasActiveProvider: providerState === 'ok',
-    providerState,
-  });
-});
+    return successResponse({
+      total,
+      embedded,
+      pending: total - embedded,
+      // Kept, and kept meaning "embedding will run" — every existing consumer
+      // gates an affordance on it. `providerState` is additive and carries the
+      // WHY, because "no provider is set up" and "your policy refuses the ones
+      // that are" need opposite remedies and the boolean prints only the first.
+      hasActiveProvider: providerState === 'ok',
+      providerState,
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);

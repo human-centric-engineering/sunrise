@@ -27,33 +27,43 @@ import { cuidSchema } from '@/lib/validations/common';
 import { completeEvaluationBodySchema } from '@/lib/validations/orchestration';
 import { completeEvaluationSession } from '@/lib/orchestration/evaluations';
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid evaluation id', { id: ['Must be a valid CUID'] });
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid evaluation id', { id: ['Must be a valid CUID'] });
+    }
+    const sessionId = parsed.data;
+
+    // Tolerate an empty or missing body — the schema already accepts `{}`.
+    // Clone the request so we can safely attempt to read the body; if the
+    // body is empty or unparseable JSON, fall through with defaults.
+    const cloned = request.clone();
+    const rawText = await cloned.text();
+    if (rawText.trim().length > 0) {
+      await validateRequestBody(request, completeEvaluationBodySchema);
+    }
+
+    const result = await completeEvaluationSession({
+      sessionId,
+      userId: session.user.id,
+    });
+
+    log.info('Evaluation session completed', {
+      sessionId,
+      usage: result.tokenUsage,
+    });
+
+    return successResponse({ session: result });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Scoped to the evaluation sessions, runs and datasets this caller owns — and ownerless datasets where the policy permits them — keyed on the caller's id. Never another member's.",
+    },
   }
-  const sessionId = parsed.data;
-
-  // Tolerate an empty or missing body — the schema already accepts `{}`.
-  // Clone the request so we can safely attempt to read the body; if the
-  // body is empty or unparseable JSON, fall through with defaults.
-  const cloned = request.clone();
-  const rawText = await cloned.text();
-  if (rawText.trim().length > 0) {
-    await validateRequestBody(request, completeEvaluationBodySchema);
-  }
-
-  const result = await completeEvaluationSession({
-    sessionId,
-    userId: session.user.id,
-  });
-
-  log.info('Evaluation session completed', {
-    sessionId,
-    usage: result.tokenUsage,
-  });
-
-  return successResponse({ session: result });
-});
+);

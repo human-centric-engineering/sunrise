@@ -26,39 +26,49 @@ import { getRouteLogger } from '@/lib/api/context';
 import { cuidSchema } from '@/lib/validations/common';
 import { evaluationLogsQuerySchema } from '@/lib/validations/orchestration';
 
-export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid evaluation id', { id: ['Must be a valid CUID'] });
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid evaluation id', { id: ['Must be a valid CUID'] });
+    }
+    const sessionId = parsed.data;
+
+    // Ownership check on the parent session.
+    const parent = await prisma.aiEvaluationSession.findFirst({
+      where: { id: sessionId, userId: session.user.id },
+      select: { id: true },
+    });
+    if (!parent) throw new NotFoundError(`Evaluation session ${sessionId} not found`);
+
+    const { searchParams } = new URL(request.url);
+    const { limit, before } = validateQueryParams(searchParams, evaluationLogsQuerySchema);
+
+    // The session checked above, named again so the owner layer sees the read
+    // is confined to the caller's session.
+    const where: Prisma.AiEvaluationLogWhereInput = {
+      sessionId,
+      session: { userId: session.user.id },
+    };
+    if (before !== undefined) where.sequenceNumber = { lt: before };
+
+    const logs = await prisma.aiEvaluationLog.findMany({
+      where,
+      orderBy: { sequenceNumber: 'asc' },
+      take: limit,
+    });
+
+    log.info('Evaluation logs fetched', { sessionId, count: logs.length });
+    return successResponse({ logs });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Scoped to the evaluation sessions, runs and datasets this caller owns — and ownerless datasets where the policy permits them — keyed on the caller's id. Never another member's.",
+    },
   }
-  const sessionId = parsed.data;
-
-  // Ownership check on the parent session.
-  const parent = await prisma.aiEvaluationSession.findFirst({
-    where: { id: sessionId, userId: session.user.id },
-    select: { id: true },
-  });
-  if (!parent) throw new NotFoundError(`Evaluation session ${sessionId} not found`);
-
-  const { searchParams } = new URL(request.url);
-  const { limit, before } = validateQueryParams(searchParams, evaluationLogsQuerySchema);
-
-  // The session checked above, named again so the owner layer sees the read
-  // is confined to the caller's session.
-  const where: Prisma.AiEvaluationLogWhereInput = {
-    sessionId,
-    session: { userId: session.user.id },
-  };
-  if (before !== undefined) where.sequenceNumber = { lt: before };
-
-  const logs = await prisma.aiEvaluationLog.findMany({
-    where,
-    orderBy: { sequenceNumber: 'asc' },
-    take: limit,
-  });
-
-  log.info('Evaluation logs fetched', { sessionId, count: logs.length });
-  return successResponse({ logs });
-});
+);

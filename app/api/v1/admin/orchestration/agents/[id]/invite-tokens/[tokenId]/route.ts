@@ -17,41 +17,51 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 type Params = { id: string; tokenId: string };
 
-export const DELETE = withAdminAuth<Params>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
+export const DELETE = withAdminAuth<Params>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  const { id: rawAgentId, tokenId: rawTokenId } = await params;
+    const { id: rawAgentId, tokenId: rawTokenId } = await params;
 
-  const agentId = cuidSchema.safeParse(rawAgentId);
-  if (!agentId.success)
-    throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
+    const agentId = cuidSchema.safeParse(rawAgentId);
+    if (!agentId.success)
+      throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
 
-  const tokenId = cuidSchema.safeParse(rawTokenId);
-  if (!tokenId.success)
-    throw new ValidationError('Invalid token id', { tokenId: ['Must be a valid CUID'] });
+    const tokenId = cuidSchema.safeParse(rawTokenId);
+    if (!tokenId.success)
+      throw new ValidationError('Invalid token id', { tokenId: ['Must be a valid CUID'] });
 
-  const token = await prisma.aiAgentInviteToken.findFirst({
-    where: { id: tokenId.data, agentId: agentId.data },
-  });
-  if (!token) throw new NotFoundError('Invite token not found');
+    const token = await prisma.aiAgentInviteToken.findFirst({
+      where: { id: tokenId.data, agentId: agentId.data },
+    });
+    if (!token) throw new NotFoundError('Invite token not found');
 
-  if (token.revokedAt) {
-    return successResponse({ message: 'Token already revoked' });
+    if (token.revokedAt) {
+      return successResponse({ message: 'Token already revoked' });
+    }
+
+    await prisma.aiAgentInviteToken.update({
+      where: { id: token.id },
+      data: { revokedAt: new Date() },
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'agent.invite_token_revoke',
+      entityType: 'agent',
+      entityId: agentId.data,
+      metadata: { tokenId: tokenId.data, label: token.label },
+      clientIp: clientIP,
+    });
+
+    return successResponse({ message: 'Token revoked' });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-
-  await prisma.aiAgentInviteToken.update({
-    where: { id: token.id },
-    data: { revokedAt: new Date() },
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'agent.invite_token_revoke',
-    entityType: 'agent',
-    entityId: agentId.data,
-    metadata: { tokenId: tokenId.data, label: token.label },
-    clientIp: clientIP,
-  });
-
-  return successResponse({ message: 'Token revoked' });
-});
+);

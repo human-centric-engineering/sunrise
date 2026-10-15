@@ -32,74 +32,84 @@ const fetchUrlSchema = z.object({
   tagIds: z.array(cuidSchema).max(50).optional(),
 });
 
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, fetchUrlSchema);
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, fetchUrlSchema);
 
-  const fetched = await fetchDocumentFromUrl(body.url);
+    const fetched = await fetchDocumentFromUrl(body.url);
 
-  let document;
-  const isText =
-    fetched.fileName.endsWith('.md') ||
-    fetched.fileName.endsWith('.markdown') ||
-    fetched.fileName.endsWith('.txt');
+    let document;
+    const isText =
+      fetched.fileName.endsWith('.md') ||
+      fetched.fileName.endsWith('.markdown') ||
+      fetched.fileName.endsWith('.txt');
 
-  if (requiresPreview(fetched.fileName)) {
-    const ext = fetched.fileName.split('.').pop()?.toUpperCase() ?? 'This file';
-    return errorResponse(
-      `${ext} files require the preview step. Download the file and upload it via the document upload form.`,
-      { code: 'PREVIEW_REQUIRED', status: 422 }
-    );
-  } else if (isText) {
-    const content = fetched.content.toString('utf-8');
-    // Record the source URL; let the document name derive from the content
-    // (or filename) rather than passing the URL as the display name.
-    document = await uploadDocument(content, fetched.fileName, session.user.id, body.url);
-  } else {
-    document = await uploadDocumentFromBuffer(
-      fetched.content,
-      fetched.fileName,
-      session.user.id,
-      body.url
-    );
-  }
-
-  // Apply tag grants (best-effort: a tag deleted mid-upload doesn't fail the
-  // import — operator can re-tag from the chunks modal).
-  const tagIds = body.tagIds ?? [];
-  let tagsApplied = 0;
-  if (tagIds.length > 0) {
-    try {
-      const result = await prisma.aiKnowledgeDocumentTag.createMany({
-        data: tagIds.map((tagId) => ({ documentId: document.id, tagId })),
-        skipDuplicates: true,
-      });
-      tagsApplied = result.count;
-      invalidateAllAgentAccess();
-    } catch {
-      // Non-fatal.
+    if (requiresPreview(fetched.fileName)) {
+      const ext = fetched.fileName.split('.').pop()?.toUpperCase() ?? 'This file';
+      return errorResponse(
+        `${ext} files require the preview step. Download the file and upload it via the document upload form.`,
+        { code: 'PREVIEW_REQUIRED', status: 422 }
+      );
+    } else if (isText) {
+      const content = fetched.content.toString('utf-8');
+      // Record the source URL; let the document name derive from the content
+      // (or filename) rather than passing the URL as the display name.
+      document = await uploadDocument(content, fetched.fileName, session.user.id, body.url);
+    } else {
+      document = await uploadDocumentFromBuffer(
+        fetched.content,
+        fetched.fileName,
+        session.user.id,
+        body.url
+      );
     }
+
+    // Apply tag grants (best-effort: a tag deleted mid-upload doesn't fail the
+    // import — operator can re-tag from the chunks modal).
+    const tagIds = body.tagIds ?? [];
+    let tagsApplied = 0;
+    if (tagIds.length > 0) {
+      try {
+        const result = await prisma.aiKnowledgeDocumentTag.createMany({
+          data: tagIds.map((tagId) => ({ documentId: document.id, tagId })),
+          skipDuplicates: true,
+        });
+        tagsApplied = result.count;
+        invalidateAllAgentAccess();
+      } catch {
+        // Non-fatal.
+      }
+    }
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'knowledge_document.create',
+      entityType: 'knowledge_document',
+      entityId: document.id,
+      entityName: document.name,
+      // The fetched URL may carry a token in its path or query (t-777).
+      metadata: { sourceUrl: loggableUrl(body.url), fileName: fetched.fileName, tagsApplied },
+      clientIp: clientIP,
+    });
+
+    log.info('Document fetched from URL', {
+      url: loggableUrl(body.url),
+      documentId: document.id,
+      fileName: fetched.fileName,
+      tagsApplied,
+    });
+
+    return successResponse(document, undefined, { status: 201 });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'knowledge_document.create',
-    entityType: 'knowledge_document',
-    entityId: document.id,
-    entityName: document.name,
-    // The fetched URL may carry a token in its path or query (t-777).
-    metadata: { sourceUrl: loggableUrl(body.url), fileName: fetched.fileName, tagsApplied },
-    clientIp: clientIP,
-  });
-
-  log.info('Document fetched from URL', {
-    url: loggableUrl(body.url),
-    documentId: document.id,
-    fileName: fetched.fileName,
-    tagsApplied,
-  });
-
-  return successResponse(document, undefined, { status: 201 });
-});
+);

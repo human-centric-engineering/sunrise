@@ -23,32 +23,42 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { cuidSchema } from '@/lib/validations/common';
 import { adminCanViewExecution } from '@/lib/orchestration/access/execution-access';
 
-export const GET = withAdminAuth<{ id: string }>(async (_request, session, { params }) => {
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid execution id', { id: ['Must be a valid CUID'] });
-  }
+export const GET = withAdminAuth<{ id: string }>(
+  async (_request, session, { params }) => {
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid execution id', { id: ['Must be a valid CUID'] });
+    }
 
-  const execution = await prisma.aiWorkflowExecution.findUnique({
-    where: { id: parsed.data },
-    select: {
-      id: true,
-      status: true,
-      currentStep: true,
-      errorMessage: true,
-      totalTokensUsed: true,
-      totalCostUsd: true,
-      startedAt: true,
-      completedAt: true,
-      createdAt: true,
-      userId: true,
+    const execution = await prisma.aiWorkflowExecution.findUnique({
+      where: { id: parsed.data },
+      select: {
+        id: true,
+        status: true,
+        currentStep: true,
+        errorMessage: true,
+        totalTokensUsed: true,
+        totalCostUsd: true,
+        startedAt: true,
+        completedAt: true,
+        createdAt: true,
+        userId: true,
+      },
+    });
+    if (!execution || !adminCanViewExecution(execution, session)) {
+      throw new NotFoundError(`Execution ${parsed.data} not found`);
+    }
+
+    const { userId: _userId, ...payload } = execution;
+    return successResponse(payload);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Acts only on executions this caller may see — their own, an ownerless (scheduled or inbound) run where the policy permits it, or one whose trace names them as an approver — keyed on the caller's id.",
     },
-  });
-  if (!execution || !adminCanViewExecution(execution, session)) {
-    throw new NotFoundError(`Execution ${parsed.data} not found`);
   }
-
-  const { userId: _userId, ...payload } = execution;
-  return successResponse(payload);
-});
+);

@@ -30,24 +30,33 @@ const embeddingModelsQuerySchema = z.object({
     .optional(),
 });
 
-export const GET = withAdminAuth(async (request) => {
-  const { searchParams } = new URL(request.url);
-  const { schemaCompatibleOnly, hasFreeTier, local } = validateQueryParams(
-    searchParams,
-    embeddingModelsQuerySchema
-  );
+export const GET = withAdminAuth(
+  async (request) => {
+    const { searchParams } = new URL(request.url);
+    const { schemaCompatibleOnly, hasFreeTier, local } = validateQueryParams(
+      searchParams,
+      embeddingModelsQuerySchema
+    );
 
-  let models = await getEmbeddingModels();
+    let models = await getEmbeddingModels();
 
-  if (schemaCompatibleOnly) {
-    models = models.filter((m) => m.schemaCompatible);
-  }
-  if (hasFreeTier) {
-    models = models.filter((m) => m.hasFreeTier);
-  }
-  if (local !== undefined) {
-    models = models.filter((m) => m.local === local);
-  }
+    if (schemaCompatibleOnly) {
+      models = models.filter((m) => m.schemaCompatible);
+    }
+    if (hasFreeTier) {
+      models = models.filter((m) => m.hasFreeTier);
+    }
+    if (local !== undefined) {
+      models = models.filter((m) => m.local === local);
+    }
 
-  return successResponse(models);
-});
+    return successResponse(models);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because: 'Shared configuration every org reads; it holds nobody’s personal rows.',
+    },
+  }
+);

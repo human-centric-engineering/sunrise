@@ -41,54 +41,64 @@ const SAFE_SELECT = {
   updatedAt: true,
 } as const;
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const { id } = await params;
-  cuidSchema.parse(id);
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const { id } = await params;
+    cuidSchema.parse(id);
 
-  const clientIP = getClientIP(request);
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
+    const log = await getRouteLogger(request);
 
-  const existing = await prisma.mcpApiKey.findUnique({ where: { id } });
-  if (!existing) throw new NotFoundError('API key not found');
+    const existing = await prisma.mcpApiKey.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundError('API key not found');
 
-  const body = await validateRequestBody(request, mcpApiKeyRotateSchema);
-  const { plaintext, hash, prefix } = generateApiKey();
+    const body = await validateRequestBody(request, mcpApiKeyRotateSchema);
+    const { plaintext, hash, prefix } = generateApiKey();
 
-  const updateData: Prisma.McpApiKeyUpdateInput = {
-    keyHash: hash,
-    keyPrefix: prefix,
-  };
-  if (body.expiresAt !== undefined) {
-    updateData.expiresAt = body.expiresAt;
+    const updateData: Prisma.McpApiKeyUpdateInput = {
+      keyHash: hash,
+      keyPrefix: prefix,
+    };
+    if (body.expiresAt !== undefined) {
+      updateData.expiresAt = body.expiresAt;
+    }
+
+    const updated = await prisma.mcpApiKey.update({
+      where: { id },
+      data: updateData,
+      select: SAFE_SELECT,
+    });
+
+    log.info('MCP API key rotated', {
+      adminId: session.user.id,
+      keyId: id,
+      previousPrefix: existing.keyPrefix,
+      newPrefix: prefix,
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'mcp_api_key.rotate',
+      entityType: 'mcp_api_key',
+      entityId: id,
+      entityName: existing.name,
+      metadata: { previousPrefix: existing.keyPrefix, newPrefix: prefix },
+      clientIp: clientIP,
+    });
+
+    // plaintext is returned once only — never stored or logged
+    return successResponse({
+      ...updated,
+      plaintextKey: plaintext,
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'MCP keys are the org’s integration credentials, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-
-  const updated = await prisma.mcpApiKey.update({
-    where: { id },
-    data: updateData,
-    select: SAFE_SELECT,
-  });
-
-  log.info('MCP API key rotated', {
-    adminId: session.user.id,
-    keyId: id,
-    previousPrefix: existing.keyPrefix,
-    newPrefix: prefix,
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'mcp_api_key.rotate',
-    entityType: 'mcp_api_key',
-    entityId: id,
-    entityName: existing.name,
-    metadata: { previousPrefix: existing.keyPrefix, newPrefix: prefix },
-    clientIp: clientIP,
-  });
-
-  // plaintext is returned once only — never stored or logged
-  return successResponse({
-    ...updated,
-    plaintextKey: plaintext,
-  });
-});
+);

@@ -49,241 +49,251 @@ const graphQuerySchema = z.object({
   view: z.enum(['structure', 'embedded']).default('structure'),
 });
 
-export const GET = withAdminAuth(async (request) => {
-  const log = await getRouteLogger(request);
-  const { searchParams } = new URL(request.url);
+export const GET = withAdminAuth(
+  async (request) => {
+    const log = await getRouteLogger(request);
+    const { searchParams } = new URL(request.url);
 
-  const { scope, view } = validateQueryParams(searchParams, graphQuerySchema);
-  const embeddedOnly = view === 'embedded';
+    const { scope, view } = validateQueryParams(searchParams, graphQuerySchema);
+    const embeddedOnly = view === 'embedded';
 
-  // Build document filter
-  const docWhere: Prisma.AiKnowledgeDocumentWhereInput = {};
-  if (scope) docWhere.scope = scope;
+    // Build document filter
+    const docWhere: Prisma.AiKnowledgeDocumentWhereInput = {};
+    if (scope) docWhere.scope = scope;
 
-  // Fetch documents with chunk counts
-  const documents = await prisma.aiKnowledgeDocument.findMany({
-    where: docWhere,
-    include: { _count: { select: { chunks: true } } },
-  });
+    // Fetch documents with chunk counts
+    const documents = await prisma.aiKnowledgeDocument.findMany({
+      where: docWhere,
+      include: { _count: { select: { chunks: true } } },
+    });
 
-  const documentIds = documents.map((d) => d.id);
+    const documentIds = documents.map((d) => d.id);
 
-  // Build chunk filter
-  const chunkWhere: Prisma.AiKnowledgeChunkWhereInput = {
-    documentId: { in: documentIds },
-  };
-  if (embeddedOnly) {
-    // pgvector Unsupported columns can't be filtered via Prisma directly,
-    // so we use a raw query for embedded-only aggregate stats
-  }
+    // Build chunk filter
+    const chunkWhere: Prisma.AiKnowledgeChunkWhereInput = {
+      documentId: { in: documentIds },
+    };
+    if (embeddedOnly) {
+      // pgvector Unsupported columns can't be filtered via Prisma directly,
+      // so we use a raw query for embedded-only aggregate stats
+    }
 
-  // Aggregate chunk stats per document
-  // For embedded view, we only count chunks that have embeddings
-  interface ChunkAggregate {
-    documentId: string;
-    _sum: { estimatedTokens: number | null };
-    _count: { id: number };
-  }
+    // Aggregate chunk stats per document
+    // For embedded view, we only count chunks that have embeddings
+    interface ChunkAggregate {
+      documentId: string;
+      _sum: { estimatedTokens: number | null };
+      _count: { id: number };
+    }
 
-  let chunkAggregates: ChunkAggregate[];
+    let chunkAggregates: ChunkAggregate[];
 
-  if (embeddedOnly) {
-    // Raw query because Prisma can't filter on Unsupported("vector") columns
-    const rawAggs = await prisma.$queryRaw<
-      Array<{ documentId: string; chunk_count: bigint; total_tokens: bigint }>
-    >`
+    if (embeddedOnly) {
+      // Raw query because Prisma can't filter on Unsupported("vector") columns
+      const rawAggs = await prisma.$queryRaw<
+        Array<{ documentId: string; chunk_count: bigint; total_tokens: bigint }>
+      >`
       SELECT "documentId", COUNT(id) AS chunk_count, COALESCE(SUM("estimatedTokens"), 0) AS total_tokens
        FROM ai_knowledge_chunk
        WHERE "documentId" = ANY(${documentIds}::text[]) AND embedding IS NOT NULL
        GROUP BY "documentId"
     `;
-    chunkAggregates = rawAggs.map((r) => ({
-      documentId: r.documentId,
-      _sum: { estimatedTokens: Number(r.total_tokens) },
-      _count: { id: Number(r.chunk_count) },
-    }));
-  } else {
-    const results = await prisma.aiKnowledgeChunk.groupBy({
-      by: ['documentId'],
-      where: chunkWhere,
-      _sum: { estimatedTokens: true },
-      _count: { id: true },
-    });
-    chunkAggregates = results.map((r) => ({
-      documentId: r.documentId,
-      _sum: { estimatedTokens: r._sum.estimatedTokens },
-      _count: { id: r._count.id },
-    }));
-  }
+      chunkAggregates = rawAggs.map((r) => ({
+        documentId: r.documentId,
+        _sum: { estimatedTokens: Number(r.total_tokens) },
+        _count: { id: Number(r.chunk_count) },
+      }));
+    } else {
+      const results = await prisma.aiKnowledgeChunk.groupBy({
+        by: ['documentId'],
+        where: chunkWhere,
+        _sum: { estimatedTokens: true },
+        _count: { id: true },
+      });
+      chunkAggregates = results.map((r) => ({
+        documentId: r.documentId,
+        _sum: { estimatedTokens: r._sum.estimatedTokens },
+        _count: { id: r._count.id },
+      }));
+    }
 
-  const chunkStatsByDoc = new Map(
-    chunkAggregates.map((agg) => [
-      agg.documentId,
-      {
-        chunkCount: agg._count.id,
-        totalTokens: agg._sum.estimatedTokens ?? 0,
-      },
-    ])
-  );
+    const chunkStatsByDoc = new Map(
+      chunkAggregates.map((agg) => [
+        agg.documentId,
+        {
+          chunkCount: agg._count.id,
+          totalTokens: agg._sum.estimatedTokens ?? 0,
+        },
+      ])
+    );
 
-  // For embedded view, filter out documents with zero embedded chunks
-  const filteredDocuments = embeddedOnly
-    ? documents.filter((d) => (chunkStatsByDoc.get(d.id)?.chunkCount ?? 0) > 0)
-    : documents;
+    // For embedded view, filter out documents with zero embedded chunks
+    const filteredDocuments = embeddedOnly
+      ? documents.filter((d) => (chunkStatsByDoc.get(d.id)?.chunkCount ?? 0) > 0)
+      : documents;
 
-  // Compute stats
-  const totalChunks = chunkAggregates.reduce((sum, agg) => sum + agg._count.id, 0);
-  const totalTokens = chunkAggregates.reduce(
-    (sum, agg) => sum + (agg._sum.estimatedTokens ?? 0),
-    0
-  );
-  const completedCount = filteredDocuments.filter((d) => d.status === 'ready').length;
+    // Compute stats
+    const totalChunks = chunkAggregates.reduce((sum, agg) => sum + agg._count.id, 0);
+    const totalTokens = chunkAggregates.reduce(
+      (sum, agg) => sum + (agg._sum.estimatedTokens ?? 0),
+      0
+    );
+    const completedCount = filteredDocuments.filter((d) => d.status === 'ready').length;
 
-  const stats: GraphStats = {
-    documentCount: filteredDocuments.length,
-    completedCount,
-    chunkCount: totalChunks,
-    totalTokens,
-  };
-
-  const showChunks = totalChunks <= CHUNK_NODE_THRESHOLD;
-
-  // Build nodes
-  const nodes: GraphNode[] = [];
-  const links: GraphLink[] = [];
-
-  // Central KB node
-  nodes.push({
-    id: 'kb',
-    name: 'Knowledge Base',
-    type: 'kb',
-    value: 60,
-    category: 0,
-    metadata: {
-      documents: filteredDocuments.length,
-      chunks: totalChunks,
+    const stats: GraphStats = {
+      documentCount: filteredDocuments.length,
+      completedCount,
+      chunkCount: totalChunks,
       totalTokens,
-      scope: scope ?? 'all',
-      view,
-    },
-  });
+    };
 
-  // Document nodes
-  for (const doc of filteredDocuments) {
-    const docStats = chunkStatsByDoc.get(doc.id);
-    const chunkCount = docStats?.chunkCount ?? doc._count.chunks;
-    const symbolSize = Math.min(20 + chunkCount * 2, 50);
+    const showChunks = totalChunks <= CHUNK_NODE_THRESHOLD;
 
+    // Build nodes
+    const nodes: GraphNode[] = [];
+    const links: GraphLink[] = [];
+
+    // Central KB node
     nodes.push({
-      id: doc.id,
-      name: doc.name,
-      type: 'document',
-      value: symbolSize,
-      status: doc.status,
-      category: documentCategoryIndex(doc.status),
+      id: 'kb',
+      name: 'Knowledge Base',
+      type: 'kb',
+      value: 60,
+      category: 0,
       metadata: {
-        fileName: doc.fileName,
-        status: doc.status,
-        scope: doc.scope,
-        chunkCount,
-        totalTokens: docStats?.totalTokens ?? 0,
-        createdAt: doc.createdAt,
-        ...(doc.errorMessage ? { errorMessage: doc.errorMessage } : {}),
+        documents: filteredDocuments.length,
+        chunks: totalChunks,
+        totalTokens,
+        scope: scope ?? 'all',
+        view,
       },
     });
 
-    links.push({
-      source: 'kb',
-      target: doc.id,
-      label: chunkCount > 0 ? `contains (${chunkCount} chunks)` : 'contains',
-    });
-  }
+    // Document nodes
+    for (const doc of filteredDocuments) {
+      const docStats = chunkStatsByDoc.get(doc.id);
+      const chunkCount = docStats?.chunkCount ?? doc._count.chunks;
+      const symbolSize = Math.min(20 + chunkCount * 2, 50);
 
-  // Chunk nodes (only if below threshold)
-  if (showChunks) {
-    const filteredDocIds = filteredDocuments.map((d) => d.id);
+      nodes.push({
+        id: doc.id,
+        name: doc.name,
+        type: 'document',
+        value: symbolSize,
+        status: doc.status,
+        category: documentCategoryIndex(doc.status),
+        metadata: {
+          fileName: doc.fileName,
+          status: doc.status,
+          scope: doc.scope,
+          chunkCount,
+          totalTokens: docStats?.totalTokens ?? 0,
+          createdAt: doc.createdAt,
+          ...(doc.errorMessage ? { errorMessage: doc.errorMessage } : {}),
+        },
+      });
 
-    let chunks: Array<{
-      id: string;
-      chunkKey: string;
-      documentId: string;
-      chunkType: string;
-      patternName: string | null;
-      section: string | null;
-      estimatedTokens: number | null;
-      content: string;
-      embeddingModel: string | null;
-      embeddingProvider: string | null;
-      embeddedAt: Date | null;
-    }>;
+      links.push({
+        source: 'kb',
+        target: doc.id,
+        label: chunkCount > 0 ? `contains (${chunkCount} chunks)` : 'contains',
+      });
+    }
 
-    if (embeddedOnly) {
-      chunks = await prisma.$queryRaw<typeof chunks>`
+    // Chunk nodes (only if below threshold)
+    if (showChunks) {
+      const filteredDocIds = filteredDocuments.map((d) => d.id);
+
+      let chunks: Array<{
+        id: string;
+        chunkKey: string;
+        documentId: string;
+        chunkType: string;
+        patternName: string | null;
+        section: string | null;
+        estimatedTokens: number | null;
+        content: string;
+        embeddingModel: string | null;
+        embeddingProvider: string | null;
+        embeddedAt: Date | null;
+      }>;
+
+      if (embeddedOnly) {
+        chunks = await prisma.$queryRaw<typeof chunks>`
         SELECT id, "chunkKey", "documentId", "chunkType", "patternName", section,
                "estimatedTokens", content, "embeddingModel", "embeddingProvider", "embeddedAt"
          FROM ai_knowledge_chunk
          WHERE "documentId" = ANY(${filteredDocIds}::text[]) AND embedding IS NOT NULL
       `;
-    } else {
-      chunks = await prisma.aiKnowledgeChunk.findMany({
-        where: { documentId: { in: filteredDocIds } },
-        select: {
-          id: true,
-          chunkKey: true,
-          documentId: true,
-          chunkType: true,
-          patternName: true,
-          section: true,
-          estimatedTokens: true,
-          content: true,
-          embeddingModel: true,
-          embeddingProvider: true,
-          embeddedAt: true,
-        },
-      });
+      } else {
+        chunks = await prisma.aiKnowledgeChunk.findMany({
+          where: { documentId: { in: filteredDocIds } },
+          select: {
+            id: true,
+            chunkKey: true,
+            documentId: true,
+            chunkType: true,
+            patternName: true,
+            section: true,
+            estimatedTokens: true,
+            content: true,
+            embeddingModel: true,
+            embeddingProvider: true,
+            embeddedAt: true,
+          },
+        });
+      }
+
+      for (const chunk of chunks) {
+        const tokens = chunk.estimatedTokens ?? 0;
+        const symbolSize = Math.min(8 + tokens / 100, 25);
+
+        nodes.push({
+          id: chunk.id,
+          name: chunk.section ?? chunk.chunkType,
+          type: 'chunk',
+          value: symbolSize,
+          category: 4,
+          metadata: {
+            chunkType: chunk.chunkType,
+            patternName: chunk.patternName,
+            section: chunk.section,
+            estimatedTokens: tokens,
+            contentPreview: chunk.content,
+            ...(chunk.embeddingModel ? { embeddingModel: chunk.embeddingModel } : {}),
+            ...(chunk.embeddingProvider ? { embeddingProvider: chunk.embeddingProvider } : {}),
+            ...(chunk.embeddedAt ? { embeddedAt: chunk.embeddedAt } : {}),
+          },
+        });
+
+        const edgeLabel =
+          chunk.chunkType === 'pattern_overview'
+            ? 'overview'
+            : chunk.chunkType === 'pattern_section'
+              ? `section${chunk.section ? `: ${chunk.section}` : ''}`
+              : chunk.chunkType === 'glossary'
+                ? 'glossary'
+                : chunk.chunkType.replace(/_/g, ' ');
+        links.push({ source: chunk.documentId, target: chunk.id, label: edgeLabel });
+      }
     }
 
-    for (const chunk of chunks) {
-      const tokens = chunk.estimatedTokens ?? 0;
-      const symbolSize = Math.min(8 + tokens / 100, 25);
+    log.info('Knowledge graph built', {
+      nodeCount: nodes.length,
+      linkCount: links.length,
+      showChunks,
+      scope: scope ?? 'all',
+      view,
+    });
 
-      nodes.push({
-        id: chunk.id,
-        name: chunk.section ?? chunk.chunkType,
-        type: 'chunk',
-        value: symbolSize,
-        category: 4,
-        metadata: {
-          chunkType: chunk.chunkType,
-          patternName: chunk.patternName,
-          section: chunk.section,
-          estimatedTokens: tokens,
-          contentPreview: chunk.content,
-          ...(chunk.embeddingModel ? { embeddingModel: chunk.embeddingModel } : {}),
-          ...(chunk.embeddingProvider ? { embeddingProvider: chunk.embeddingProvider } : {}),
-          ...(chunk.embeddedAt ? { embeddedAt: chunk.embeddedAt } : {}),
-        },
-      });
-
-      const edgeLabel =
-        chunk.chunkType === 'pattern_overview'
-          ? 'overview'
-          : chunk.chunkType === 'pattern_section'
-            ? `section${chunk.section ? `: ${chunk.section}` : ''}`
-            : chunk.chunkType === 'glossary'
-              ? 'glossary'
-              : chunk.chunkType.replace(/_/g, ' ');
-      links.push({ source: chunk.documentId, target: chunk.id, label: edgeLabel });
-    }
+    return successResponse({ nodes, links, categories: CATEGORIES, stats });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-
-  log.info('Knowledge graph built', {
-    nodeCount: nodes.length,
-    linkCount: links.length,
-    showChunks,
-    scope: scope ?? 'all',
-    view,
-  });
-
-  return successResponse({ nodes, links, categories: CATEGORIES, stats });
-});
+);

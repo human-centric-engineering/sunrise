@@ -40,129 +40,138 @@ const MAX_EXECUTIONS_SCANNED = 1000;
 /** Hard cap on CSV export rows to prevent runaway downloads. */
 const MAX_CSV_ROWS = 5000;
 
-export const GET = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const { searchParams } = new URL(request.url);
+export const GET = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const { searchParams } = new URL(request.url);
 
-  const query = approvalHistoryQuerySchema.parse({
-    page: searchParams.get('page') ?? undefined,
-    limit: searchParams.get('limit') ?? undefined,
-    decision: searchParams.get('decision') ?? undefined,
-    medium: searchParams.get('medium') ?? undefined,
-    q: searchParams.get('q') ?? undefined,
-    dateFrom: searchParams.get('dateFrom') ?? undefined,
-    dateTo: searchParams.get('dateTo') ?? undefined,
-    format: searchParams.get('format') ?? undefined,
-  });
-
-  // Caller-scoped. Pull the smallest reasonable set of executions —
-  // anything in a decidable post-pause state — and let the in-memory pass
-  // do the JSON walk + decision/medium/date filtering. Prisma JSON
-  // filters can't usefully match nested step shapes, so the SQL stage
-  // just trims by ownership + status; the in-memory pass does the rest,
-  // bounded by `MAX_EXECUTIONS_SCANNED`.
-  const where: Prisma.AiWorkflowExecutionWhereInput = {
-    userId: session.user.id,
-    status: { not: 'paused_for_approval' },
-  };
-
-  const executions = await prisma.aiWorkflowExecution.findMany({
-    where,
-    orderBy: { updatedAt: 'desc' },
-    take: MAX_EXECUTIONS_SCANNED,
-    select: {
-      id: true,
-      workflowId: true,
-      executionTrace: true,
-      workflow: { select: { name: true } },
-    },
-  });
-
-  // Collect actor user ids up-front so we can hydrate names in one query
-  // instead of N. We only resolve `admin:<userId>` actors — token decisions
-  // intentionally surface their medium label without a human identity.
-  const rows: ApprovalHistoryEntry[] = [];
-  const adminUserIds = new Set<string>();
-
-  for (const exec of executions) {
-    const parsed = executionTraceSchema.safeParse(exec.executionTrace);
-    if (!parsed.success) continue;
-    for (const entry of parsed.data as ExecutionTraceEntry[]) {
-      if (entry.stepType !== 'human_approval') continue;
-      const row = buildHistoryRow(entry, exec.id, exec.workflowId, exec.workflow?.name ?? '—');
-      if (!row) continue;
-      if (row.medium === 'admin' && row.approverUserId) {
-        adminUserIds.add(row.approverUserId);
-      }
-      rows.push(row);
-    }
-  }
-
-  // Hydrate approver names for admin decisions. Token decisions stay
-  // anonymous by design — the medium chip is the identity.
-  const userNameById = new Map<string, string>();
-  if (adminUserIds.size > 0) {
-    const users = await prisma.user.findMany({
-      where: { id: { in: Array.from(adminUserIds) } },
-      select: { id: true, name: true, email: true },
+    const query = approvalHistoryQuerySchema.parse({
+      page: searchParams.get('page') ?? undefined,
+      limit: searchParams.get('limit') ?? undefined,
+      decision: searchParams.get('decision') ?? undefined,
+      medium: searchParams.get('medium') ?? undefined,
+      q: searchParams.get('q') ?? undefined,
+      dateFrom: searchParams.get('dateFrom') ?? undefined,
+      dateTo: searchParams.get('dateTo') ?? undefined,
+      format: searchParams.get('format') ?? undefined,
     });
-    for (const u of users) {
-      userNameById.set(u.id, u.name ?? u.email ?? u.id);
+
+    // Caller-scoped. Pull the smallest reasonable set of executions —
+    // anything in a decidable post-pause state — and let the in-memory pass
+    // do the JSON walk + decision/medium/date filtering. Prisma JSON
+    // filters can't usefully match nested step shapes, so the SQL stage
+    // just trims by ownership + status; the in-memory pass does the rest,
+    // bounded by `MAX_EXECUTIONS_SCANNED`.
+    const where: Prisma.AiWorkflowExecutionWhereInput = {
+      userId: session.user.id,
+      status: { not: 'paused_for_approval' },
+    };
+
+    const executions = await prisma.aiWorkflowExecution.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      take: MAX_EXECUTIONS_SCANNED,
+      select: {
+        id: true,
+        workflowId: true,
+        executionTrace: true,
+        workflow: { select: { name: true } },
+      },
+    });
+
+    // Collect actor user ids up-front so we can hydrate names in one query
+    // instead of N. We only resolve `admin:<userId>` actors — token decisions
+    // intentionally surface their medium label without a human identity.
+    const rows: ApprovalHistoryEntry[] = [];
+    const adminUserIds = new Set<string>();
+
+    for (const exec of executions) {
+      const parsed = executionTraceSchema.safeParse(exec.executionTrace);
+      if (!parsed.success) continue;
+      for (const entry of parsed.data as ExecutionTraceEntry[]) {
+        if (entry.stepType !== 'human_approval') continue;
+        const row = buildHistoryRow(entry, exec.id, exec.workflowId, exec.workflow?.name ?? '—');
+        if (!row) continue;
+        if (row.medium === 'admin' && row.approverUserId) {
+          adminUserIds.add(row.approverUserId);
+        }
+        rows.push(row);
+      }
     }
-  }
-  for (const row of rows) {
-    if (row.medium === 'admin' && row.approverUserId) {
-      row.approverName = userNameById.get(row.approverUserId) ?? null;
+
+    // Hydrate approver names for admin decisions. Token decisions stay
+    // anonymous by design — the medium chip is the identity.
+    const userNameById = new Map<string, string>();
+    if (adminUserIds.size > 0) {
+      const users = await prisma.user.findMany({
+        where: { id: { in: Array.from(adminUserIds) } },
+        select: { id: true, name: true, email: true },
+      });
+      for (const u of users) {
+        userNameById.set(u.id, u.name ?? u.email ?? u.id);
+      }
     }
-  }
+    for (const row of rows) {
+      if (row.medium === 'admin' && row.approverUserId) {
+        row.approverName = userNameById.get(row.approverUserId) ?? null;
+      }
+    }
 
-  // Apply filters after derivation (decision, medium, q, date range).
-  let filtered = rows;
-  if (query.decision) filtered = filtered.filter((r) => r.decision === query.decision);
-  if (query.medium === 'admin') {
-    filtered = filtered.filter((r) => r.medium === 'admin');
-  } else if (query.medium === 'token') {
-    filtered = filtered.filter((r) => r.medium.startsWith('token-'));
-  }
-  if (query.q) {
-    const needle = query.q.toLowerCase();
-    filtered = filtered.filter(
-      (r) =>
-        r.workflowName.toLowerCase().includes(needle) ||
-        r.stepLabel.toLowerCase().includes(needle) ||
-        (r.approverName?.toLowerCase().includes(needle) ?? false)
-    );
-  }
-  if (query.dateFrom) {
-    const from = query.dateFrom.toISOString();
-    filtered = filtered.filter((r) => r.decidedAt >= from);
-  }
-  if (query.dateTo) {
-    const to = query.dateTo.toISOString();
-    filtered = filtered.filter((r) => r.decidedAt <= to);
-  }
-  // Newest decision first; stable per id within the same millisecond.
-  filtered.sort((a, b) => {
-    if (a.decidedAt === b.decidedAt) return a.id < b.id ? 1 : -1;
-    return a.decidedAt < b.decidedAt ? 1 : -1;
-  });
+    // Apply filters after derivation (decision, medium, q, date range).
+    let filtered = rows;
+    if (query.decision) filtered = filtered.filter((r) => r.decision === query.decision);
+    if (query.medium === 'admin') {
+      filtered = filtered.filter((r) => r.medium === 'admin');
+    } else if (query.medium === 'token') {
+      filtered = filtered.filter((r) => r.medium.startsWith('token-'));
+    }
+    if (query.q) {
+      const needle = query.q.toLowerCase();
+      filtered = filtered.filter(
+        (r) =>
+          r.workflowName.toLowerCase().includes(needle) ||
+          r.stepLabel.toLowerCase().includes(needle) ||
+          (r.approverName?.toLowerCase().includes(needle) ?? false)
+      );
+    }
+    if (query.dateFrom) {
+      const from = query.dateFrom.toISOString();
+      filtered = filtered.filter((r) => r.decidedAt >= from);
+    }
+    if (query.dateTo) {
+      const to = query.dateTo.toISOString();
+      filtered = filtered.filter((r) => r.decidedAt <= to);
+    }
+    // Newest decision first; stable per id within the same millisecond.
+    filtered.sort((a, b) => {
+      if (a.decidedAt === b.decidedAt) return a.id < b.id ? 1 : -1;
+      return a.decidedAt < b.decidedAt ? 1 : -1;
+    });
 
-  log.info('Approval history fetched', {
-    format: query.format ?? 'json',
-    scanned: executions.length,
-    matched: filtered.length,
-  });
+    log.info('Approval history fetched', {
+      format: query.format ?? 'json',
+      scanned: executions.length,
+      matched: filtered.length,
+    });
 
-  if (query.format === 'csv') {
-    const capped = filtered.slice(0, MAX_CSV_ROWS);
-    return csvResponse(capped);
+    if (query.format === 'csv') {
+      const capped = filtered.slice(0, MAX_CSV_ROWS);
+      return csvResponse(capped);
+    }
+
+    const total = filtered.length;
+    const start = (query.page - 1) * query.limit;
+    const page = filtered.slice(start, start + query.limit);
+    return paginatedResponse(page, { page: query.page, limit: query.limit, total });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because: 'Lists only decisions on executions this caller owns, keyed on their id.',
+    },
   }
-
-  const total = filtered.length;
-  const start = (query.page - 1) * query.limit;
-  const page = filtered.slice(start, start + query.limit);
-  return paginatedResponse(page, { page: query.page, limit: query.limit, total });
-});
+);
 
 /**
  * Build a single history row from a `human_approval` trace entry, or

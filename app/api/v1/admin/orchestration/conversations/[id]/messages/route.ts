@@ -33,59 +33,69 @@ import {
 } from '@/lib/orchestration/access/conversation-access';
 import { logConversationAccess } from '@/lib/orchestration/audit/admin-audit-logger';
 
-export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
 
-  const access = await adminCanViewConversation(id, session);
-  if (!access.ok) throw new NotFoundError(`Conversation ${id} not found`);
+    const access = await adminCanViewConversation(id, session);
+    if (!access.ok) throw new NotFoundError(`Conversation ${id} not found`);
 
-  // We still need the agentId + title for the response payload + audit
-  // entry. Fetch them now that authorization has passed.
-  const conversation = await prisma.aiConversation.findUnique({
-    where: { id, AND: [conversationVisibilityWhere(session)] },
-    select: { id: true, userId: true, agentId: true, title: true },
-  });
-  // `access.ok` guaranteed it exists; the cast keeps TS happy without
-  // a second throw path.
-  if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
+    // We still need the agentId + title for the response payload + audit
+    // entry. Fetch them now that authorization has passed.
+    const conversation = await prisma.aiConversation.findUnique({
+      where: { id, AND: [conversationVisibilityWhere(session)] },
+      select: { id: true, userId: true, agentId: true, title: true },
+    });
+    // `access.ok` guaranteed it exists; the cast keeps TS happy without
+    // a second throw path.
+    if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
 
-  const messages = await prisma.aiMessage.findMany({
-    where: { conversationId: id, conversation: conversationVisibilityWhere(session) },
-    orderBy: { createdAt: 'asc' },
-  });
+    const messages = await prisma.aiMessage.findMany({
+      where: { conversationId: id, conversation: conversationVisibilityWhere(session) },
+      orderBy: { createdAt: 'asc' },
+    });
 
-  log.info('Admin conversation messages fetched', {
-    conversationId: id,
-    count: messages.length,
-    userId: conversation.userId,
-    accessBasis: access.basis,
-  });
-
-  // Audit-of-audits for cross-user reads. Owner reads skip via the
-  // helper's early-return on basis === 'owner'.
-  logConversationAccess({
-    adminUserId: session.user.id,
-    conversationId: id,
-    conversationTitle: conversation.title,
-    conversationOwnerId: conversation.userId,
-    accessBasis: access.basis,
-    action: 'conversation.messages_viewed',
-    extra: { messageCount: messages.length },
-    clientIp: getClientIP(request),
-  });
-
-  return successResponse({
-    conversation: {
-      id: conversation.id,
+    log.info('Admin conversation messages fetched', {
+      conversationId: id,
+      count: messages.length,
       userId: conversation.userId,
-      agentId: conversation.agentId,
+      accessBasis: access.basis,
+    });
+
+    // Audit-of-audits for cross-user reads. Owner reads skip via the
+    // helper's early-return on basis === 'owner'.
+    logConversationAccess({
+      adminUserId: session.user.id,
+      conversationId: id,
+      conversationTitle: conversation.title,
+      conversationOwnerId: conversation.userId,
+      accessBasis: access.basis,
+      action: 'conversation.messages_viewed',
+      extra: { messageCount: messages.length },
+      clientIp: getClientIP(request),
+    });
+
+    return successResponse({
+      conversation: {
+        id: conversation.id,
+        userId: conversation.userId,
+        agentId: conversation.agentId,
+      },
+      messages,
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Reads and writes only conversations this caller may see — their own, one shared with them, or an ownerless (inbound) thread where the policy permits it — keyed on the caller's id. Never another member's.",
     },
-    messages,
-  });
-});
+  }
+);

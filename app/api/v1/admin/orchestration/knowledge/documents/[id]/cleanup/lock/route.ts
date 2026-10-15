@@ -33,63 +33,93 @@ function parseDocumentId(raw: string): string {
   return parsed.data;
 }
 
-export const GET = withAdminAuth<{ id: string }>(async (_request, _session, { params }) => {
-  const { id: rawId } = await params;
-  const documentId = parseDocumentId(rawId);
-  const state = await getEditLockState(documentId);
-  return successResponse({
-    heldBy: state.heldBy,
-    acquiredAt: state.acquiredAt,
-    active: state.active,
-    ttlMs: LOCK_TTL_MS,
-  });
-});
-
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const documentId = parseDocumentId(rawId);
-
-  // Only the document's own uploader may acquire (or refresh) its lock —
-  // otherwise any admin could grab and perpetually renew the lock on a
-  // document they'll never actually be able to save an edit to, locking
-  // out the real owner.
-  const doc = await prisma.aiKnowledgeDocument.findFirst({
-    where: { id: documentId, uploadedBy: session.user.id, status: 'cleaning' },
-    select: { id: true },
-  });
-  if (!doc) {
-    throw new ValidationError(
-      'Document not found, not owned by this user, or not in cleaning status'
-    );
-  }
-
-  const result = await acquireEditLock(documentId, session.user.id);
-  if (!result.acquired) {
-    return errorResponse('Document is being edited by another admin', {
-      code: 'LOCK_HELD',
-      status: 423,
-      details: { heldBy: [result.heldBy ?? 'unknown'] },
+export const GET = withAdminAuth<{ id: string }>(
+  async (_request, _session, { params }) => {
+    const { id: rawId } = await params;
+    const documentId = parseDocumentId(rawId);
+    const state = await getEditLockState(documentId);
+    return successResponse({
+      heldBy: state.heldBy,
+      acquiredAt: state.acquiredAt,
+      active: state.active,
+      ttlMs: LOCK_TTL_MS,
     });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
+);
 
-  log.info('Cleanup edit lock acquired', { documentId, adminId: session.user.id });
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const documentId = parseDocumentId(rawId);
 
-  return successResponse({
-    acquired: true,
-    heldBy: session.user.id,
-    acquiredAt: result.acquiredAt,
-    ttlMs: LOCK_TTL_MS,
-  });
-});
+    // Only the document's own uploader may acquire (or refresh) its lock —
+    // otherwise any admin could grab and perpetually renew the lock on a
+    // document they'll never actually be able to save an edit to, locking
+    // out the real owner.
+    const doc = await prisma.aiKnowledgeDocument.findFirst({
+      where: { id: documentId, uploadedBy: session.user.id, status: 'cleaning' },
+      select: { id: true },
+    });
+    if (!doc) {
+      throw new ValidationError(
+        'Document not found, not owned by this user, or not in cleaning status'
+      );
+    }
 
-export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const documentId = parseDocumentId(rawId);
+    const result = await acquireEditLock(documentId, session.user.id);
+    if (!result.acquired) {
+      return errorResponse('Document is being edited by another admin', {
+        code: 'LOCK_HELD',
+        status: 423,
+        details: { heldBy: [result.heldBy ?? 'unknown'] },
+      });
+    }
 
-  await releaseEditLock(documentId, session.user.id);
-  log.info('Cleanup edit lock released', { documentId, adminId: session.user.id });
+    log.info('Cleanup edit lock acquired', { documentId, adminId: session.user.id });
 
-  return successResponse({ released: true });
-});
+    return successResponse({
+      acquired: true,
+      heldBy: session.user.id,
+      acquiredAt: result.acquiredAt,
+      ttlMs: LOCK_TTL_MS,
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);
+
+export const DELETE = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const documentId = parseDocumentId(rawId);
+
+    await releaseEditLock(documentId, session.user.id);
+    log.info('Cleanup edit lock released', { documentId, adminId: session.user.id });
+
+    return successResponse({ released: true });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);

@@ -36,44 +36,64 @@ async function loadSession(id: string, userId: string) {
   return session;
 }
 
-export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = validatePathParam(rawId, cuidSchema, { label: 'evaluation id' });
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = validatePathParam(rawId, cuidSchema, { label: 'evaluation id' });
 
-  const row = await loadSession(id, session.user.id);
-  log.info('Evaluation fetched', { sessionId: id });
-  return successResponse(row);
-});
-
-export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const id = validatePathParam(rawId, cuidSchema, { label: 'evaluation id' });
-
-  const body = await validateRequestBody(request, updateEvaluationSchema);
-
-  // Ownership check before update. Preserves 404-on-cross-user.
-  await loadSession(id, session.user.id);
-
-  const data: Prisma.AiEvaluationSessionUpdateInput = {};
-  if (body.title !== undefined) data.title = body.title;
-  if (body.description !== undefined) data.description = body.description;
-  if (body.status !== undefined) data.status = body.status;
-  if (body.startedAt !== undefined) data.startedAt = new Date(body.startedAt);
-  if (body.metadata !== undefined) {
-    data.metadata = body.metadata;
-  }
-
-  const updated = await prisma.aiEvaluationSession.update({
-    where: { id, userId: session.user.id },
-    data,
-    include: {
-      agent: { select: { id: true, name: true, slug: true } },
-      _count: { select: { logs: true } },
+    const row = await loadSession(id, session.user.id);
+    log.info('Evaluation fetched', { sessionId: id });
+    return successResponse(row);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Scoped to the evaluation sessions, runs and datasets this caller owns — and ownerless datasets where the policy permits them — keyed on the caller's id. Never another member's.",
     },
-  });
+  }
+);
 
-  log.info('Evaluation updated', { sessionId: id, fields: Object.keys(data) });
-  return successResponse(updated);
-});
+export const PATCH = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const id = validatePathParam(rawId, cuidSchema, { label: 'evaluation id' });
+
+    const body = await validateRequestBody(request, updateEvaluationSchema);
+
+    // Ownership check before update. Preserves 404-on-cross-user.
+    await loadSession(id, session.user.id);
+
+    const data: Prisma.AiEvaluationSessionUpdateInput = {};
+    if (body.title !== undefined) data.title = body.title;
+    if (body.description !== undefined) data.description = body.description;
+    if (body.status !== undefined) data.status = body.status;
+    if (body.startedAt !== undefined) data.startedAt = new Date(body.startedAt);
+    if (body.metadata !== undefined) {
+      data.metadata = body.metadata;
+    }
+
+    const updated = await prisma.aiEvaluationSession.update({
+      where: { id, userId: session.user.id },
+      data,
+      include: {
+        agent: { select: { id: true, name: true, slug: true } },
+        _count: { select: { logs: true } },
+      },
+    });
+
+    log.info('Evaluation updated', { sessionId: id, fields: Object.keys(data) });
+    return successResponse(updated);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Scoped to the evaluation sessions, runs and datasets this caller owns — and ownerless datasets where the policy permits them — keyed on the caller's id. Never another member's.",
+    },
+  }
+);

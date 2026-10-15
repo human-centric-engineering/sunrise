@@ -22,71 +22,91 @@ import {
   listEvaluationsQuerySchema,
 } from '@/lib/validations/orchestration';
 
-export const GET = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const { searchParams } = new URL(request.url);
-  const { page, limit, agentId, status, q } = validateQueryParams(
-    searchParams,
-    listEvaluationsQuerySchema
-  );
-  const skip = (page - 1) * limit;
+export const GET = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const { searchParams } = new URL(request.url);
+    const { page, limit, agentId, status, q } = validateQueryParams(
+      searchParams,
+      listEvaluationsQuerySchema
+    );
+    const skip = (page - 1) * limit;
 
-  const where: Prisma.AiEvaluationSessionWhereInput = {
-    userId: session.user.id,
-  };
-  if (agentId) where.agentId = agentId;
-  if (status) where.status = status;
-  if (q) where.title = { contains: q, mode: 'insensitive' };
-
-  const [evaluations, total] = await Promise.all([
-    prisma.aiEvaluationSession.findMany({
-      where,
-      orderBy: { updatedAt: 'desc' },
-      skip,
-      take: limit,
-      include: {
-        agent: { select: { id: true, name: true, slug: true } },
-        _count: { select: { logs: true } },
-      },
-    }),
-    prisma.aiEvaluationSession.count({ where }),
-  ]);
-
-  log.info('Evaluations listed', { count: evaluations.length, total });
-
-  return paginatedResponse(evaluations, { page, limit, total });
-});
-
-export const POST = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, createEvaluationSchema);
-
-  // Verify the agent exists before creating the session. We don't
-  // restrict to agents the caller owns — agents are shared admin-wide.
-  const agent = await prisma.aiAgent.findUnique({
-    where: { id: body.agentId },
-    select: { id: true },
-  });
-  if (!agent) {
-    throw new NotFoundError(`Agent ${body.agentId} not found`);
-  }
-
-  const created = await prisma.aiEvaluationSession.create({
-    data: {
+    const where: Prisma.AiEvaluationSessionWhereInput = {
       userId: session.user.id,
-      agentId: body.agentId,
-      title: body.title,
-      description: body.description ?? null,
-      status: 'draft',
-      metadata: body.metadata ?? undefined,
+    };
+    if (agentId) where.agentId = agentId;
+    if (status) where.status = status;
+    if (q) where.title = { contains: q, mode: 'insensitive' };
+
+    const [evaluations, total] = await Promise.all([
+      prisma.aiEvaluationSession.findMany({
+        where,
+        orderBy: { updatedAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          agent: { select: { id: true, name: true, slug: true } },
+          _count: { select: { logs: true } },
+        },
+      }),
+      prisma.aiEvaluationSession.count({ where }),
+    ]);
+
+    log.info('Evaluations listed', { count: evaluations.length, total });
+
+    return paginatedResponse(evaluations, { page, limit, total });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Scoped to the evaluation sessions, runs and datasets this caller owns — and ownerless datasets where the policy permits them — keyed on the caller's id. Never another member's.",
     },
-  });
+  }
+);
 
-  log.info('Evaluation session created', {
-    sessionId: created.id,
-    agentId: created.agentId,
-    userId: session.user.id,
-  });
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, createEvaluationSchema);
 
-  return successResponse(created, undefined, { status: 201 });
-});
+    // Verify the agent exists before creating the session. We don't
+    // restrict to agents the caller owns — agents are shared admin-wide.
+    const agent = await prisma.aiAgent.findUnique({
+      where: { id: body.agentId },
+      select: { id: true },
+    });
+    if (!agent) {
+      throw new NotFoundError(`Agent ${body.agentId} not found`);
+    }
+
+    const created = await prisma.aiEvaluationSession.create({
+      data: {
+        userId: session.user.id,
+        agentId: body.agentId,
+        title: body.title,
+        description: body.description ?? null,
+        status: 'draft',
+        metadata: body.metadata ?? undefined,
+      },
+    });
+
+    log.info('Evaluation session created', {
+      sessionId: created.id,
+      agentId: created.agentId,
+      userId: session.user.id,
+    });
+
+    return successResponse(created, undefined, { status: 201 });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Scoped to the evaluation sessions, runs and datasets this caller owns — and ownerless datasets where the policy permits them — keyed on the caller's id. Never another member's.",
+    },
+  }
+);

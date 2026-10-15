@@ -24,27 +24,37 @@ import { cuidSchema } from '@/lib/validations/common';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const idParsed = cuidSchema.safeParse(rawId);
-  if (!idParsed.success) {
-    throw new ValidationError('Invalid run id', { id: ['Must be a valid CUID'] });
-  }
-  const id = idParsed.data;
-  const run = await prisma.aiEvaluationRun.findFirst({
-    where: { id, userId: session.user.id },
-    select: { id: true, status: true },
-  });
-  if (!run) throw new NotFoundError(`Run ${id} not found`);
-  if (TERMINAL.has(run.status)) {
-    throw new ConflictError(`Run is already ${run.status}`);
-  }
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const idParsed = cuidSchema.safeParse(rawId);
+    if (!idParsed.success) {
+      throw new ValidationError('Invalid run id', { id: ['Must be a valid CUID'] });
+    }
+    const id = idParsed.data;
+    const run = await prisma.aiEvaluationRun.findFirst({
+      where: { id, userId: session.user.id },
+      select: { id: true, status: true },
+    });
+    if (!run) throw new NotFoundError(`Run ${id} not found`);
+    if (TERMINAL.has(run.status)) {
+      throw new ConflictError(`Run is already ${run.status}`);
+    }
 
-  const cancelled = await prisma.aiEvaluationRun.update({
-    where: { id, userId: session.user.id },
-    data: { status: 'cancelled', completedAt: new Date(), lockedBy: null, lockedAt: null },
-  });
-  log.info('Run cancelled', { runId: id, priorStatus: run.status });
-  return successResponse(cancelled);
-});
+    const cancelled = await prisma.aiEvaluationRun.update({
+      where: { id, userId: session.user.id },
+      data: { status: 'cancelled', completedAt: new Date(), lockedBy: null, lockedAt: null },
+    });
+    log.info('Run cancelled', { runId: id, priorStatus: run.status });
+    return successResponse(cancelled);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Scoped to the evaluation sessions, runs and datasets this caller owns — and ownerless datasets where the policy permits them — keyed on the caller's id. Never another member's.",
+    },
+  }
+);

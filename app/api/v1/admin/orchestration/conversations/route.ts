@@ -27,56 +27,66 @@ import { validateQueryParams } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { listConversationsQuerySchema } from '@/lib/validations/orchestration';
 
-export const GET = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const { searchParams } = new URL(request.url);
-  const { page, limit, agentId, isActive, q, messageSearch, tag, dateFrom, dateTo } =
-    validateQueryParams(searchParams, listConversationsQuerySchema);
-  const skip = (page - 1) * limit;
+export const GET = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const { searchParams } = new URL(request.url);
+    const { page, limit, agentId, isActive, q, messageSearch, tag, dateFrom, dateTo } =
+      validateQueryParams(searchParams, listConversationsQuerySchema);
+    const skip = (page - 1) * limit;
 
-  // One definition, shared with the detail route's `adminCanViewConversation`
-  // so this list and the rows it links to cannot disagree. It used to be spelled
-  // out here as well, which is how the list came to admit inbound threads a
-  // narrowing policy would refuse on the detail route.
-  const visibilityClause = conversationVisibilityWhere(session);
+    // One definition, shared with the detail route's `adminCanViewConversation`
+    // so this list and the rows it links to cannot disagree. It used to be spelled
+    // out here as well, which is how the list came to admit inbound threads a
+    // narrowing policy would refuse on the detail route.
+    const visibilityClause = conversationVisibilityWhere(session);
 
-  const filterClauses: Prisma.AiConversationWhereInput[] = [];
-  if (agentId) filterClauses.push({ agentId });
-  if (isActive !== undefined) filterClauses.push({ isActive });
-  if (q) filterClauses.push({ title: { contains: q, mode: 'insensitive' } });
-  if (messageSearch) {
-    filterClauses.push({
-      messages: { some: { content: { contains: messageSearch, mode: 'insensitive' } } },
-    });
+    const filterClauses: Prisma.AiConversationWhereInput[] = [];
+    if (agentId) filterClauses.push({ agentId });
+    if (isActive !== undefined) filterClauses.push({ isActive });
+    if (q) filterClauses.push({ title: { contains: q, mode: 'insensitive' } });
+    if (messageSearch) {
+      filterClauses.push({
+        messages: { some: { content: { contains: messageSearch, mode: 'insensitive' } } },
+      });
+    }
+    if (tag) filterClauses.push({ tags: { has: tag } });
+    if (dateFrom || dateTo) {
+      filterClauses.push({
+        updatedAt: {
+          ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+          ...(dateTo ? { lte: new Date(dateTo) } : {}),
+        },
+      });
+    }
+
+    const where: Prisma.AiConversationWhereInput =
+      filterClauses.length > 0 ? { AND: [visibilityClause, ...filterClauses] } : visibilityClause;
+
+    const [conversations, total] = await Promise.all([
+      prisma.aiConversation.findMany({
+        where,
+        orderBy: { updatedAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          agent: { select: { id: true, name: true, slug: true } },
+          _count: { select: { messages: true } },
+        },
+      }),
+      prisma.aiConversation.count({ where }),
+    ]);
+
+    log.info('Conversations listed', { count: conversations.length, total });
+
+    return paginatedResponse(conversations, { page, limit, total });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Reads and writes only conversations this caller may see — their own, one shared with them, or an ownerless (inbound) thread where the policy permits it — keyed on the caller's id. Never another member's.",
+    },
   }
-  if (tag) filterClauses.push({ tags: { has: tag } });
-  if (dateFrom || dateTo) {
-    filterClauses.push({
-      updatedAt: {
-        ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
-        ...(dateTo ? { lte: new Date(dateTo) } : {}),
-      },
-    });
-  }
-
-  const where: Prisma.AiConversationWhereInput =
-    filterClauses.length > 0 ? { AND: [visibilityClause, ...filterClauses] } : visibilityClause;
-
-  const [conversations, total] = await Promise.all([
-    prisma.aiConversation.findMany({
-      where,
-      orderBy: { updatedAt: 'desc' },
-      skip,
-      take: limit,
-      include: {
-        agent: { select: { id: true, name: true, slug: true } },
-        _count: { select: { messages: true } },
-      },
-    }),
-    prisma.aiConversation.count({ where }),
-  ]);
-
-  log.info('Conversations listed', { count: conversations.length, total });
-
-  return paginatedResponse(conversations, { page, limit, total });
-});
+);

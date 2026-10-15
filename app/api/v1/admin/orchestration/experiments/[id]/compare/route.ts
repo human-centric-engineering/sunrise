@@ -195,6 +195,7 @@ export const GET = withAdminAuth<Params>(
     return successResponse(payload);
   },
   {
+    tier: 'org',
     ownership: {
       decidedBy: 'self',
       because:

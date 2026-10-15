@@ -34,78 +34,88 @@ const CANCELLABLE_STATUSES = new Set<string>([
   WorkflowStatus.PAUSED_FOR_APPROVAL,
 ]);
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid execution id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
-
-  // Read across owners: a delegated approver's nomination is in the trace,
-  // so their run is one the owner layer would otherwise refuse them
-  // (`acrossOwnersForApproval`). Only what the checks below need.
-  const execution = await acrossOwnersForApproval(() =>
-    prisma.aiWorkflowExecution.findUnique({
-      where: { id },
-      select: { userId: true, status: true, executionTrace: true },
-    })
-  );
-  if (!execution) {
-    throw new NotFoundError(`Execution ${id} not found`);
-  }
-
-  // Ownership + approver scoping: delegated approvers can cancel paused
-  // executions only. `adminCanViewExecution` also admits system-owned runs
-  // (`userId = null`), so a runaway scheduled or inbound run stays
-  // cancellable by any admin (#502).
-  const canAct = adminCanViewExecution(execution, session);
-  const isApprover =
-    !canAct &&
-    execution.status === WorkflowStatus.PAUSED_FOR_APPROVAL &&
-    isApproverInTrace(execution.executionTrace, session.user.id);
-  if (!canAct && !isApprover) {
-    throw new NotFoundError(`Execution ${id} not found`);
-  }
-  if (!CANCELLABLE_STATUSES.has(execution.status)) {
-    throw new ValidationError('Execution cannot be cancelled', {
-      status: [`Expected "running" or "paused_for_approval", got "${execution.status}"`],
-    });
-  }
-
-  // Status flip and running-step sweep in one transaction. The engine's
-  // `finalize` may not run here (cancel races the lease) so the route
-  // takes responsibility for clearing the in-flight rows directly. The
-  // delete is conditional on the status guard matching so a no-op
-  // cancellation doesn't sweep rows still being driven by another path.
-  const result = await prisma.$transaction(async (tx) => {
-    const updated = await tx.aiWorkflowExecution.updateMany({
-      where: { id, status: { in: [...CANCELLABLE_STATUSES] } },
-      data: {
-        status: WorkflowStatus.CANCELLED,
-        completedAt: new Date(),
-        errorMessage: 'Cancelled by user',
-      },
-    });
-    if (updated.count > 0) {
-      await tx.aiWorkflowRunningStep.deleteMany({ where: { executionId: id } });
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid execution id', { id: ['Must be a valid CUID'] });
     }
-    return updated;
-  });
+    const id = parsed.data;
 
-  if (result.count === 0) {
-    throw new ConflictError('Execution status changed before cancellation could complete');
+    // Read across owners: a delegated approver's nomination is in the trace,
+    // so their run is one the owner layer would otherwise refuse them
+    // (`acrossOwnersForApproval`). Only what the checks below need.
+    const execution = await acrossOwnersForApproval(() =>
+      prisma.aiWorkflowExecution.findUnique({
+        where: { id },
+        select: { userId: true, status: true, executionTrace: true },
+      })
+    );
+    if (!execution) {
+      throw new NotFoundError(`Execution ${id} not found`);
+    }
+
+    // Ownership + approver scoping: delegated approvers can cancel paused
+    // executions only. `adminCanViewExecution` also admits system-owned runs
+    // (`userId = null`), so a runaway scheduled or inbound run stays
+    // cancellable by any admin (#502).
+    const canAct = adminCanViewExecution(execution, session);
+    const isApprover =
+      !canAct &&
+      execution.status === WorkflowStatus.PAUSED_FOR_APPROVAL &&
+      isApproverInTrace(execution.executionTrace, session.user.id);
+    if (!canAct && !isApprover) {
+      throw new NotFoundError(`Execution ${id} not found`);
+    }
+    if (!CANCELLABLE_STATUSES.has(execution.status)) {
+      throw new ValidationError('Execution cannot be cancelled', {
+        status: [`Expected "running" or "paused_for_approval", got "${execution.status}"`],
+      });
+    }
+
+    // Status flip and running-step sweep in one transaction. The engine's
+    // `finalize` may not run here (cancel races the lease) so the route
+    // takes responsibility for clearing the in-flight rows directly. The
+    // delete is conditional on the status guard matching so a no-op
+    // cancellation doesn't sweep rows still being driven by another path.
+    const result = await prisma.$transaction(async (tx) => {
+      const updated = await tx.aiWorkflowExecution.updateMany({
+        where: { id, status: { in: [...CANCELLABLE_STATUSES] } },
+        data: {
+          status: WorkflowStatus.CANCELLED,
+          completedAt: new Date(),
+          errorMessage: 'Cancelled by user',
+        },
+      });
+      if (updated.count > 0) {
+        await tx.aiWorkflowRunningStep.deleteMany({ where: { executionId: id } });
+      }
+      return updated;
+    });
+
+    if (result.count === 0) {
+      throw new ConflictError('Execution status changed before cancellation could complete');
+    }
+
+    log.info('execution cancelled', {
+      executionId: id,
+      userId: session.user.id,
+      previousStatus: execution.status,
+    });
+
+    return successResponse({
+      success: true,
+      executionId: id,
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Acts only on executions this caller may see — their own, an ownerless (scheduled or inbound) run where the policy permits it, or one whose trace names them as an approver — keyed on the caller's id.",
+    },
   }
-
-  log.info('execution cancelled', {
-    executionId: id,
-    userId: session.user.id,
-    previousStatus: execution.status,
-  });
-
-  return successResponse({
-    success: true,
-    executionId: id,
-  });
-});
+);

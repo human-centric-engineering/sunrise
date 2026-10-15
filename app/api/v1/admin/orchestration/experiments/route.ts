@@ -131,6 +131,7 @@ export const GET = withAdminAuth(
     return paginatedResponse(experiments, { page, limit, total });
   },
   {
+    tier: 'org',
     ownership: {
       decidedBy: 'self',
       because:
@@ -205,6 +206,7 @@ export const POST = withAdminAuth(
     return successResponse(experiment, undefined, { status: 201 });
   },
   {
+    tier: 'org',
     ownership: {
       decidedBy: 'self',
       because:

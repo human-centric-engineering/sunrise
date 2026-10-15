@@ -30,43 +30,52 @@ import {
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { agentProfileUsage } from '@/lib/orchestration/admin/global-config-usage';
 
-export const GET = withAdminAuth(async (request, _session) => {
-  const log = await getRouteLogger(request);
+export const GET = withAdminAuth(
+  async (request, _session) => {
+    const log = await getRouteLogger(request);
 
-  const { searchParams } = new URL(request.url);
-  const { page, limit, q } = validateQueryParams(searchParams, listAgentProfilesQuerySchema);
-  const skip = (page - 1) * limit;
+    const { searchParams } = new URL(request.url);
+    const { page, limit, q } = validateQueryParams(searchParams, listAgentProfilesQuerySchema);
+    const skip = (page - 1) * limit;
 
-  const where: Prisma.AiAgentProfileWhereInput = {};
-  if (q) {
-    where.OR = [
-      { name: { contains: q, mode: 'insensitive' } },
-      { slug: { contains: q, mode: 'insensitive' } },
-    ];
+    const where: Prisma.AiAgentProfileWhereInput = {};
+    if (q) {
+      where.OR = [
+        { name: { contains: q, mode: 'insensitive' } },
+        { slug: { contains: q, mode: 'insensitive' } },
+      ];
+    }
+
+    const [rows, total] = await Promise.all([
+      prisma.aiAgentProfile.findMany({
+        where,
+        orderBy: { updatedAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      prisma.aiAgentProfile.count({ where }),
+    ]);
+
+    // Attached agents in every org (t-731): a profile is global config, and a
+    // plain `_count` at `multi` would count only the caller's org's agents.
+    const attached = await agentProfileUsage(rows.map((r) => r.id));
+    const data = rows.map((profile) => ({
+      ...profile,
+      agentCount: attached.get(profile.id) ?? 0,
+    }));
+
+    log.info('Agent profiles listed', { count: rows.length, total, page, limit });
+
+    return paginatedResponse(data, { page, limit, total });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because: 'Shared configuration every org reads; it holds nobody’s personal rows.',
+    },
   }
-
-  const [rows, total] = await Promise.all([
-    prisma.aiAgentProfile.findMany({
-      where,
-      orderBy: { updatedAt: 'desc' },
-      skip,
-      take: limit,
-    }),
-    prisma.aiAgentProfile.count({ where }),
-  ]);
-
-  // Attached agents in every org (t-731): a profile is global config, and a
-  // plain `_count` at `multi` would count only the caller's org's agents.
-  const attached = await agentProfileUsage(rows.map((r) => r.id));
-  const data = rows.map((profile) => ({
-    ...profile,
-    agentCount: attached.get(profile.id) ?? 0,
-  }));
-
-  log.info('Agent profiles listed', { count: rows.length, total, page, limit });
-
-  return paginatedResponse(data, { page, limit, total });
-});
+);
 
 export const POST = withAdminAuth(
   async (request, session) => {

@@ -118,6 +118,7 @@ export const coreNavSections: NavSection[] = [
         items: [
           {
             href: '/admin/orchestration/agents',
+            tier: 'org',
             label: 'Agents',
             icon: Users,
             description: 'Manage AI agents',
@@ -142,6 +143,7 @@ export const coreNavSections: NavSection[] = [
           },
           {
             href: '/admin/orchestration/workflows',
+            tier: 'org',
             label: 'Workflows',
             icon: GitBranch,
             description: 'Multi-step flows',
@@ -160,6 +162,7 @@ export const coreNavSections: NavSection[] = [
         items: [
           {
             href: '/admin/orchestration/knowledge',
+            tier: 'org',
             label: 'Knowledge Base',
             icon: BookOpen,
             description: 'Docs and patterns',
@@ -172,30 +175,35 @@ export const coreNavSections: NavSection[] = [
           },
           {
             href: '/admin/orchestration/conversations',
+            tier: 'org',
             label: 'Conversations',
             icon: MessagesSquare,
             description: 'Chat history + audit',
           },
           {
             href: '/admin/orchestration/approvals',
+            tier: 'org',
             label: 'Approval Queue',
             icon: ShieldCheck,
             description: 'Pending approvals',
           },
           {
             href: '/admin/orchestration/triggers',
+            tier: 'org',
             label: 'Inbound Triggers',
             icon: Webhook,
             description: 'Webhook URLs that fire workflows',
           },
           {
             href: '/admin/orchestration/event-subscriptions',
+            tier: 'org',
             label: 'Event Subscriptions',
             icon: Webhook,
             description: 'Outbound webhook notifications',
           },
           {
             href: '/admin/orchestration/evaluations',
+            tier: 'org',
             label: 'Testing',
             icon: ClipboardCheck,
             description: 'Evaluations & experiments',

@@ -33,97 +33,107 @@ import {
   conversationVisibilityWhere,
 } from '@/lib/orchestration/access/conversation-access';
 
-export const GET = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
-
-  // Consent-gated access: owner OR active share. Cross-user without
-  // a share returns 404 — never confirms the row's existence.
-  const access = await adminCanViewConversation(id, session);
-  if (!access.ok) throw new NotFoundError(`Conversation ${id} not found`);
-
-  const conversation = await prisma.aiConversation.findUnique({
-    where: { id, AND: [conversationVisibilityWhere(session)] },
-    include: {
-      agent: { select: { id: true, slug: true, name: true } },
-      messages: {
-        orderBy: { createdAt: 'asc' },
-      },
-    },
-  });
-  if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
-
-  // Validate every persisted provenance JSON before returning. Failure
-  // is non-fatal: a row with malformed provenance returns null in the
-  // payload, the caller's renderer / UI degrades gracefully, and the
-  // bundle as a whole still lands.
-  const messages = conversation.messages.map((msg) => {
-    let provenance = null;
-    if (msg.provenance !== null) {
-      const result = messageProvenanceSchema.safeParse(msg.provenance);
-      if (result.success) {
-        provenance = result.data;
-      } else {
-        log.warn('Provenance JSON failed validation, omitting from bundle', {
-          conversationId: id,
-          messageId: msg.id,
-          issues: result.error.issues.length,
-        });
-      }
+export const GET = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid conversation id', { id: ['Must be a valid CUID'] });
     }
-    return {
-      id: msg.id,
-      role: msg.role,
-      content: msg.content,
-      capabilitySlug: msg.capabilitySlug,
-      toolCallId: msg.toolCallId,
-      createdAt: msg.createdAt.toISOString(),
-      agentVersionId: msg.agentVersionId,
-      workflowExecutionId: msg.workflowExecutionId,
-      workflowVersionId: msg.workflowVersionId,
-      modelId: msg.modelId,
-      providerSlug: msg.providerSlug,
-      provenance,
-    };
-  });
+    const id = parsed.data;
 
-  log.info('Conversation provenance bundle fetched', {
-    conversationId: id,
-    messageCount: messages.length,
-  });
+    // Consent-gated access: owner OR active share. Cross-user without
+    // a share returns 404 — never confirms the row's existence.
+    const access = await adminCanViewConversation(id, session);
+    if (!access.ok) throw new NotFoundError(`Conversation ${id} not found`);
 
-  // Audit-of-audits: every cross-user (shared-basis) provenance
-  // download writes an audit row with conversationOwnerId so compliance
-  // can trace exports across users. Owner-basis downloads skip logging
-  // by convention (logConversationAccess no-ops on basis === 'owner').
-  logConversationAccess({
-    adminUserId: session.user.id,
-    conversationId: id,
-    conversationTitle: conversation.title,
-    conversationOwnerId: conversation.userId,
-    accessBasis: access.basis,
-    action: 'conversation.provenance_export',
-    extra: { format: 'json', messageCount: messages.length },
-    clientIp: getClientIP(request),
-  });
+    const conversation = await prisma.aiConversation.findUnique({
+      where: { id, AND: [conversationVisibilityWhere(session)] },
+      include: {
+        agent: { select: { id: true, slug: true, name: true } },
+        messages: {
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+    if (!conversation) throw new NotFoundError(`Conversation ${id} not found`);
 
-  return successResponse({
-    conversation: {
-      id: conversation.id,
-      title: conversation.title,
-      userId: conversation.userId,
-      agentId: conversation.agentId,
-      agentSlug: conversation.agent?.slug ?? null,
-      agentName: conversation.agent?.name ?? null,
-      isActive: conversation.isActive,
-      createdAt: conversation.createdAt.toISOString(),
-      updatedAt: conversation.updatedAt.toISOString(),
+    // Validate every persisted provenance JSON before returning. Failure
+    // is non-fatal: a row with malformed provenance returns null in the
+    // payload, the caller's renderer / UI degrades gracefully, and the
+    // bundle as a whole still lands.
+    const messages = conversation.messages.map((msg) => {
+      let provenance = null;
+      if (msg.provenance !== null) {
+        const result = messageProvenanceSchema.safeParse(msg.provenance);
+        if (result.success) {
+          provenance = result.data;
+        } else {
+          log.warn('Provenance JSON failed validation, omitting from bundle', {
+            conversationId: id,
+            messageId: msg.id,
+            issues: result.error.issues.length,
+          });
+        }
+      }
+      return {
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        capabilitySlug: msg.capabilitySlug,
+        toolCallId: msg.toolCallId,
+        createdAt: msg.createdAt.toISOString(),
+        agentVersionId: msg.agentVersionId,
+        workflowExecutionId: msg.workflowExecutionId,
+        workflowVersionId: msg.workflowVersionId,
+        modelId: msg.modelId,
+        providerSlug: msg.providerSlug,
+        provenance,
+      };
+    });
+
+    log.info('Conversation provenance bundle fetched', {
+      conversationId: id,
+      messageCount: messages.length,
+    });
+
+    // Audit-of-audits: every cross-user (shared-basis) provenance
+    // download writes an audit row with conversationOwnerId so compliance
+    // can trace exports across users. Owner-basis downloads skip logging
+    // by convention (logConversationAccess no-ops on basis === 'owner').
+    logConversationAccess({
+      adminUserId: session.user.id,
+      conversationId: id,
+      conversationTitle: conversation.title,
+      conversationOwnerId: conversation.userId,
+      accessBasis: access.basis,
+      action: 'conversation.provenance_export',
+      extra: { format: 'json', messageCount: messages.length },
+      clientIp: getClientIP(request),
+    });
+
+    return successResponse({
+      conversation: {
+        id: conversation.id,
+        title: conversation.title,
+        userId: conversation.userId,
+        agentId: conversation.agentId,
+        agentSlug: conversation.agent?.slug ?? null,
+        agentName: conversation.agent?.name ?? null,
+        isActive: conversation.isActive,
+        createdAt: conversation.createdAt.toISOString(),
+        updatedAt: conversation.updatedAt.toISOString(),
+      },
+      messages,
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Reads and writes only conversations this caller may see — their own, one shared with them, or an ownerless (inbound) thread where the policy permits it — keyed on the caller's id. Never another member's.",
     },
-    messages,
-  });
-});
+  }
+);

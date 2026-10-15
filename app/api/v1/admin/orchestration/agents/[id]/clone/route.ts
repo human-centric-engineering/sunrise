@@ -35,176 +35,188 @@ import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { assertAgentProvidersApproved } from '@/lib/orchestration/agents/provider-approval';
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
-
-  // Parse optional body (empty body is valid)
-  let body: { name?: string; slug?: string } = {};
-  try {
-    const raw: unknown = await request.json();
-    const bodyParsed = cloneAgentBodySchema.safeParse(raw);
-    if (!bodyParsed.success) {
-      throw new ValidationError('Invalid clone body', {
-        body: bodyParsed.error.issues.map((i) => i.message),
-      });
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
     }
-    body = bodyParsed.data;
-  } catch (err) {
-    // Empty body or non-JSON is fine — use defaults
-    if (err instanceof ValidationError) throw err;
-  }
+    const id = parsed.data;
 
-  const source = await prisma.aiAgent.findUnique({
-    where: { id },
-    include: {
-      capabilities: true,
-      grantedTags: { select: { tagId: true } },
-      grantedDocuments: { select: { documentId: true } },
-    },
-  });
-  if (!source || source.deletedAt !== null) throw new NotFoundError(`Agent ${id} not found`);
-
-  const sourceTagIds = (source.grantedTags ?? []).map((g) => g.tagId);
-  const sourceDocumentIds = (source.grantedDocuments ?? []).map((g) => g.documentId);
-
-  // Cloning a system agent is allowed — the clone gets isSystem: false
-  // (set explicitly below), so it's a safe copy with no special privileges.
-
-  const name = body.name ?? `${source.name} (Copy)`;
-  // A slug the caller chose is refused outright if a platform agent holds it;
-  // a generated one just moves on to its next variant (§116 t-725).
-  if (body.slug !== undefined) assertAgentSlugNotReserved(body.slug);
-  const baseSlug = body.slug ?? `${source.slug}-copy`;
-
-  // A clone is a new agent, so everything it copies is new to it: at multi, the
-  // source's providers must be ones the org is approved for (§120 t-743).
-  await assertAgentProvidersApproved({
-    provider: source.provider,
-    fallbackProviders: source.fallbackProviders,
-  });
-
-  // Attempt slug with collision retry
-  const MAX_SLUG_ATTEMPTS = 5;
-  let newAgent: Awaited<ReturnType<typeof prisma.aiAgent.create>> | null = null;
-
-  for (let attempt = 0; attempt < MAX_SLUG_ATTEMPTS; attempt++) {
-    const slug = attempt === 0 ? baseSlug : `${baseSlug}-${attempt + 1}`;
-    if (isReservedAgentSlug(slug)) continue;
-
+    // Parse optional body (empty body is valid)
+    let body: { name?: string; slug?: string } = {};
     try {
-      newAgent = await prisma.$transaction(async (tx) => {
-        // Fields the clone sets explicitly: fresh name/slug, reset active flag
-        // and history, new owner. Every other scalar is copied from the source
-        // via the registry, so a new agent field is cloned automatically.
-        const cloneData: Record<string, unknown> = {
-          name,
-          slug,
-          isActive: false,
-          systemInstructionsHistory: [],
-          createdBy: session.user.id,
-        };
-        const sourceRecord = source as unknown as Record<string, unknown>;
-        for (const { name: field, json } of cloneCopiedScalarFields()) {
-          cloneData[field] = json ? (sourceRecord[field] ?? Prisma.JsonNull) : sourceRecord[field];
-        }
-        const agent = await tx.aiAgent.create({
-          data: cloneData as Prisma.AiAgentUncheckedCreateInput,
+      const raw: unknown = await request.json();
+      const bodyParsed = cloneAgentBodySchema.safeParse(raw);
+      if (!bodyParsed.success) {
+        throw new ValidationError('Invalid clone body', {
+          body: bodyParsed.error.issues.map((i) => i.message),
         });
-
-        if (source.capabilities.length > 0) {
-          await tx.aiAgentCapability.createMany({
-            data: source.capabilities.map((cap) => ({
-              agentId: agent.id,
-              capabilityId: cap.capabilityId,
-              isEnabled: cap.isEnabled,
-              customConfig: (cap.customConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
-              customRateLimit: cap.customRateLimit,
-            })),
-          });
-        }
-
-        // Carry over the source's knowledge-access grants so the clone is
-        // immediately usable with the same scope. If the operator wants
-        // different grants they can edit the clone afterwards.
-        if (sourceTagIds.length > 0) {
-          await tx.aiAgentKnowledgeTag.createMany({
-            data: sourceTagIds.map((tagId) => ({ agentId: agent.id, tagId })),
-            skipDuplicates: true,
-          });
-        }
-        if (sourceDocumentIds.length > 0) {
-          await tx.aiAgentKnowledgeDocument.createMany({
-            data: sourceDocumentIds.map((documentId) => ({ agentId: agent.id, documentId })),
-            skipDuplicates: true,
-          });
-        }
-
-        // Point-in-time versioning: capture the clone's starting config as its
-        // own v1 ("Initial configuration"), incl. the carried-over grants, so it
-        // has a restorable original like any freshly-created agent.
-        await tx.aiAgentVersion.create({
-          data: {
-            agentId: agent.id,
-            version: 1,
-            snapshot: asSnapshotJson(
-              buildAgentSnapshot(agent, {
-                grantedTagIds: sourceTagIds,
-                grantedDocumentIds: sourceDocumentIds,
-              })
-            ),
-            changeSummary: INITIAL_VERSION_SUMMARY,
-            createdBy: session.user.id,
-          },
-        });
-
-        return agent;
-      });
-
-      break; // Success — exit retry loop
+      }
+      body = bodyParsed.data;
     } catch (err) {
-      // Only a slug collision is fixed by the next suffix; any other unique
-      // violation fails the same way every time (t-796). Running out of
-      // suffixes falls through to the ConflictError below.
-      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.agentSlug)) continue;
-      throw err;
+      // Empty body or non-JSON is fine — use defaults
+      if (err instanceof ValidationError) throw err;
     }
-  }
 
-  if (!newAgent) {
-    throw new ConflictError(
-      `Could not generate a unique slug for clone (tried ${MAX_SLUG_ATTEMPTS} variants of "${baseSlug}")`
-    );
-  }
+    const source = await prisma.aiAgent.findUnique({
+      where: { id },
+      include: {
+        capabilities: true,
+        grantedTags: { select: { tagId: true } },
+        grantedDocuments: { select: { documentId: true } },
+      },
+    });
+    if (!source || source.deletedAt !== null) throw new NotFoundError(`Agent ${id} not found`);
 
-  log.info('Agent cloned', {
-    sourceId: id,
-    newAgentId: newAgent.id,
-    slug: newAgent.slug,
-    capabilitiesCloned: source.capabilities.length,
-    adminId: session.user.id,
-  });
+    const sourceTagIds = (source.grantedTags ?? []).map((g) => g.tagId);
+    const sourceDocumentIds = (source.grantedDocuments ?? []).map((g) => g.documentId);
 
-  logAdminAction({
-    userId: session.user.id,
-    action: 'agent.clone',
-    entityType: 'agent',
-    entityId: newAgent.id,
-    entityName: newAgent.name,
-    metadata: {
+    // Cloning a system agent is allowed — the clone gets isSystem: false
+    // (set explicitly below), so it's a safe copy with no special privileges.
+
+    const name = body.name ?? `${source.name} (Copy)`;
+    // A slug the caller chose is refused outright if a platform agent holds it;
+    // a generated one just moves on to its next variant (§116 t-725).
+    if (body.slug !== undefined) assertAgentSlugNotReserved(body.slug);
+    const baseSlug = body.slug ?? `${source.slug}-copy`;
+
+    // A clone is a new agent, so everything it copies is new to it: at multi, the
+    // source's providers must be ones the org is approved for (§120 t-743).
+    await assertAgentProvidersApproved({
+      provider: source.provider,
+      fallbackProviders: source.fallbackProviders,
+    });
+
+    // Attempt slug with collision retry
+    const MAX_SLUG_ATTEMPTS = 5;
+    let newAgent: Awaited<ReturnType<typeof prisma.aiAgent.create>> | null = null;
+
+    for (let attempt = 0; attempt < MAX_SLUG_ATTEMPTS; attempt++) {
+      const slug = attempt === 0 ? baseSlug : `${baseSlug}-${attempt + 1}`;
+      if (isReservedAgentSlug(slug)) continue;
+
+      try {
+        newAgent = await prisma.$transaction(async (tx) => {
+          // Fields the clone sets explicitly: fresh name/slug, reset active flag
+          // and history, new owner. Every other scalar is copied from the source
+          // via the registry, so a new agent field is cloned automatically.
+          const cloneData: Record<string, unknown> = {
+            name,
+            slug,
+            isActive: false,
+            systemInstructionsHistory: [],
+            createdBy: session.user.id,
+          };
+          const sourceRecord = source as unknown as Record<string, unknown>;
+          for (const { name: field, json } of cloneCopiedScalarFields()) {
+            cloneData[field] = json
+              ? (sourceRecord[field] ?? Prisma.JsonNull)
+              : sourceRecord[field];
+          }
+          const agent = await tx.aiAgent.create({
+            data: cloneData as Prisma.AiAgentUncheckedCreateInput,
+          });
+
+          if (source.capabilities.length > 0) {
+            await tx.aiAgentCapability.createMany({
+              data: source.capabilities.map((cap) => ({
+                agentId: agent.id,
+                capabilityId: cap.capabilityId,
+                isEnabled: cap.isEnabled,
+                customConfig: (cap.customConfig ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+                customRateLimit: cap.customRateLimit,
+              })),
+            });
+          }
+
+          // Carry over the source's knowledge-access grants so the clone is
+          // immediately usable with the same scope. If the operator wants
+          // different grants they can edit the clone afterwards.
+          if (sourceTagIds.length > 0) {
+            await tx.aiAgentKnowledgeTag.createMany({
+              data: sourceTagIds.map((tagId) => ({ agentId: agent.id, tagId })),
+              skipDuplicates: true,
+            });
+          }
+          if (sourceDocumentIds.length > 0) {
+            await tx.aiAgentKnowledgeDocument.createMany({
+              data: sourceDocumentIds.map((documentId) => ({ agentId: agent.id, documentId })),
+              skipDuplicates: true,
+            });
+          }
+
+          // Point-in-time versioning: capture the clone's starting config as its
+          // own v1 ("Initial configuration"), incl. the carried-over grants, so it
+          // has a restorable original like any freshly-created agent.
+          await tx.aiAgentVersion.create({
+            data: {
+              agentId: agent.id,
+              version: 1,
+              snapshot: asSnapshotJson(
+                buildAgentSnapshot(agent, {
+                  grantedTagIds: sourceTagIds,
+                  grantedDocumentIds: sourceDocumentIds,
+                })
+              ),
+              changeSummary: INITIAL_VERSION_SUMMARY,
+              createdBy: session.user.id,
+            },
+          });
+
+          return agent;
+        });
+
+        break; // Success — exit retry loop
+      } catch (err) {
+        // Only a slug collision is fixed by the next suffix; any other unique
+        // violation fails the same way every time (t-796). Running out of
+        // suffixes falls through to the ConflictError below.
+        if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.agentSlug)) continue;
+        throw err;
+      }
+    }
+
+    if (!newAgent) {
+      throw new ConflictError(
+        `Could not generate a unique slug for clone (tried ${MAX_SLUG_ATTEMPTS} variants of "${baseSlug}")`
+      );
+    }
+
+    log.info('Agent cloned', {
       sourceId: id,
-      sourceSlug: source.slug,
+      newAgentId: newAgent.id,
+      slug: newAgent.slug,
       capabilitiesCloned: source.capabilities.length,
-    },
-    clientIp: clientIP,
-  });
+      adminId: session.user.id,
+    });
 
-  return successResponse(newAgent, undefined, { status: 201 });
-});
+    logAdminAction({
+      userId: session.user.id,
+      action: 'agent.clone',
+      entityType: 'agent',
+      entityId: newAgent.id,
+      entityName: newAgent.name,
+      metadata: {
+        sourceId: id,
+        sourceSlug: source.slug,
+        capabilitiesCloned: source.capabilities.length,
+      },
+      clientIp: clientIP,
+    });
+
+    return successResponse(newAgent, undefined, { status: 201 });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);

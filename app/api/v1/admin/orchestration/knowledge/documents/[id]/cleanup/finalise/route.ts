@@ -29,85 +29,95 @@ const bodySchema = z.object({
   action: z.enum(['commit', 'use-original', 'delete']),
 });
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
-  const log = await getRouteLogger(request);
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
+    const log = await getRouteLogger(request);
 
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid document id', { id: ['Must be a valid CUID'] });
-  }
-  const documentId = parsed.data;
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid document id', { id: ['Must be a valid CUID'] });
+    }
+    const documentId = parsed.data;
 
-  const body = await validateRequestBody(request, bodySchema);
+    const body = await validateRequestBody(request, bodySchema);
 
-  // Lock check — finalise commits or deletes the document, so it must not
-  // run out from under an admin with an in-progress section edit, same
-  // guard every other mutating cleanup route applies.
-  const lockState = await getEditLockState(documentId);
-  if (lockState.active && lockState.heldBy !== session.user.id) {
-    return errorResponse('Document is being edited by another admin', {
-      code: 'LOCK_HELD',
-      status: 423,
-      details: { heldBy: [lockState.heldBy ?? 'unknown'] },
-    });
-  }
-
-  if (body.action === 'delete') {
-    // Cascade-delete the cleanup conversation via Prisma's onDelete=Cascade
-    // on AiAgentKnowledgeDocument and AiKnowledgeDocumentTag; the
-    // AiConversation row is dropped separately because contextType/contextId
-    // is a soft pointer, not a FK.
-    const existing = await prisma.aiKnowledgeDocument.findFirst({
-      where: { id: documentId, uploadedBy: session.user.id, status: 'cleaning' },
-      select: { fileName: true, name: true },
-    });
-    if (!existing) {
-      throw new ValidationError(
-        'Document not found, not owned by this user, or not in cleaning status'
-      );
+    // Lock check — finalise commits or deletes the document, so it must not
+    // run out from under an admin with an in-progress section edit, same
+    // guard every other mutating cleanup route applies.
+    const lockState = await getEditLockState(documentId);
+    if (lockState.active && lockState.heldBy !== session.user.id) {
+      return errorResponse('Document is being edited by another admin', {
+        code: 'LOCK_HELD',
+        status: 423,
+        details: { heldBy: [lockState.heldBy ?? 'unknown'] },
+      });
     }
 
-    await prisma.$transaction([
-      prisma.aiConversation.deleteMany({
-        where: { contextType: 'knowledge_document', contextId: documentId },
-      }),
-      prisma.aiKnowledgeDocument.delete({ where: { id: documentId } }),
-    ]);
+    if (body.action === 'delete') {
+      // Cascade-delete the cleanup conversation via Prisma's onDelete=Cascade
+      // on AiAgentKnowledgeDocument and AiKnowledgeDocumentTag; the
+      // AiConversation row is dropped separately because contextType/contextId
+      // is a soft pointer, not a FK.
+      const existing = await prisma.aiKnowledgeDocument.findFirst({
+        where: { id: documentId, uploadedBy: session.user.id, status: 'cleaning' },
+        select: { fileName: true, name: true },
+      });
+      if (!existing) {
+        throw new ValidationError(
+          'Document not found, not owned by this user, or not in cleaning status'
+        );
+      }
 
-    log.info('Cleanup session deleted', { documentId, adminId: session.user.id });
+      await prisma.$transaction([
+        prisma.aiConversation.deleteMany({
+          where: { contextType: 'knowledge_document', contextId: documentId },
+        }),
+        prisma.aiKnowledgeDocument.delete({ where: { id: documentId } }),
+      ]);
+
+      log.info('Cleanup session deleted', { documentId, adminId: session.user.id });
+
+      logAdminAction({
+        userId: session.user.id,
+        action: 'knowledge_document.cleanup_delete',
+        entityType: 'knowledge_document',
+        entityId: documentId,
+        entityName: existing.fileName,
+        clientIp: clientIP,
+      });
+
+      return successResponse({ deleted: true });
+    }
+
+    const document = await commitCleanupAndChunk(documentId, session.user.id, body.action);
+
+    log.info('Cleanup finalised', {
+      documentId: document.id,
+      action: body.action,
+      chunkCount: document.chunkCount,
+      adminId: session.user.id,
+    });
 
     logAdminAction({
       userId: session.user.id,
-      action: 'knowledge_document.cleanup_delete',
+      action: 'knowledge_document.cleanup_commit',
       entityType: 'knowledge_document',
-      entityId: documentId,
-      entityName: existing.fileName,
+      entityId: document.id,
+      entityName: document.fileName,
+      metadata: { mode: body.action, chunkCount: document.chunkCount },
       clientIp: clientIP,
     });
 
-    return successResponse({ deleted: true });
+    return successResponse({ document });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        'Acts only on a document the caller uploaded and is cleaning, holding its edit lock; the cleanup conversation it reads or discards is the one that clean-up started.',
+    },
   }
-
-  const document = await commitCleanupAndChunk(documentId, session.user.id, body.action);
-
-  log.info('Cleanup finalised', {
-    documentId: document.id,
-    action: body.action,
-    chunkCount: document.chunkCount,
-    adminId: session.user.id,
-  });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'knowledge_document.cleanup_commit',
-    entityType: 'knowledge_document',
-    entityId: document.id,
-    entityName: document.fileName,
-    metadata: { mode: body.action, chunkCount: document.chunkCount },
-    clientIp: clientIP,
-  });
-
-  return successResponse({ document });
-});
+);

@@ -69,5 +69,13 @@ export const GET = withAdminAuth<{ id: string }>(
       limit: query.pageSize,
       total,
     });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Subscriptions are scoped to the admin who created them and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
+    },
   }
 );

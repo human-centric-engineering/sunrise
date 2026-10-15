@@ -19,44 +19,53 @@ import { getRouteLogger } from '@/lib/api/context';
 import { testProvider } from '@/lib/orchestration/llm/provider-manager';
 import { cuidSchema } from '@/lib/validations/common';
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid provider id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid provider id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
 
-  const provider = await prisma.aiProviderConfig.findUnique({ where: { id } });
-  if (!provider) throw new NotFoundError(`Provider ${id} not found`);
+    const provider = await prisma.aiProviderConfig.findUnique({ where: { id } });
+    if (!provider) throw new NotFoundError(`Provider ${id} not found`);
 
-  try {
-    const result = await testProvider(provider.slug);
-    log.info('Provider tested', {
-      providerId: id,
-      slug: provider.slug,
-      ok: result.ok,
-      adminId: session.user.id,
-    });
-    return successResponse(result);
-  } catch (err) {
-    // testProvider can throw ProviderError when the config itself is
-    // broken (missing API key, unknown provider type, etc). Return the
-    // same shape as a failed test rather than a 500 so the UI has one
-    // consistent error-rendering path.
-    //
-    // The raw SDK error is intentionally NOT forwarded to the client: in
-    // a blind-SSRF scenario the verbatim fetch error message leaks
-    // information about the baseUrl target (connection refused on a
-    // private IP vs. TLS error on a public one). Log it server-side
-    // for operators, return a generic code to the caller.
-    const message = err instanceof Error ? err.message : String(err);
-    log.warn('Provider test threw', { providerId: id, slug: provider.slug, error: message });
-    return successResponse({
-      ok: false,
-      models: [],
-      error: 'connection_failed',
-    });
+    try {
+      const result = await testProvider(provider.slug);
+      log.info('Provider tested', {
+        providerId: id,
+        slug: provider.slug,
+        ok: result.ok,
+        adminId: session.user.id,
+      });
+      return successResponse(result);
+    } catch (err) {
+      // testProvider can throw ProviderError when the config itself is
+      // broken (missing API key, unknown provider type, etc). Return the
+      // same shape as a failed test rather than a 500 so the UI has one
+      // consistent error-rendering path.
+      //
+      // The raw SDK error is intentionally NOT forwarded to the client: in
+      // a blind-SSRF scenario the verbatim fetch error message leaks
+      // information about the baseUrl target (connection refused on a
+      // private IP vs. TLS error on a public one). Log it server-side
+      // for operators, return a generic code to the caller.
+      const message = err instanceof Error ? err.message : String(err);
+      log.warn('Provider test threw', { providerId: id, slug: provider.slug, error: message });
+      return successResponse({
+        ok: false,
+        models: [],
+        error: 'connection_failed',
+      });
+    }
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because: 'Probes one provider with a fixed prompt; it reads no stored personal rows.',
+    },
   }
-});
+);

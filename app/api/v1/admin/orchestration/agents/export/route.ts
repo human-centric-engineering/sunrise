@@ -44,112 +44,122 @@ const knowledgeRetrievalModeSchema = z
   .catch('model');
 const inheritanceModeSchema = z.enum(['override', 'append']).catch('override');
 
-export const POST = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, exportAgentsSchema);
-  const uniqueIds = [...new Set(body.agentIds)];
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, exportAgentsSchema);
+    const uniqueIds = [...new Set(body.agentIds)];
 
-  const agents = await prisma.aiAgent.findMany({
-    where: { id: { in: uniqueIds } },
-    include: {
-      capabilities: {
-        include: {
-          capability: { select: { slug: true } },
+    const agents = await prisma.aiAgent.findMany({
+      where: { id: { in: uniqueIds } },
+      include: {
+        capabilities: {
+          include: {
+            capability: { select: { slug: true } },
+          },
         },
+        profile: { select: { slug: true } },
+        grantedTags: { select: { tag: { select: { slug: true } } } },
+        grantedDocuments: { select: { document: { select: { slug: true } } } },
       },
-      profile: { select: { slug: true } },
-      grantedTags: { select: { tag: { select: { slug: true } } } },
-      grantedDocuments: { select: { document: { select: { slug: true } } } },
+    });
+
+    if (agents.length !== uniqueIds.length) {
+      const foundIds = new Set(agents.map((a) => a.id));
+      const missing = uniqueIds.filter((id) => !foundIds.has(id));
+      throw new NotFoundError(`Agents not found: ${missing.join(', ')}`);
+    }
+
+    const bundle: AgentBundle = {
+      version: '1',
+      exportedAt: new Date().toISOString(),
+      agents: agents.map((agent) => {
+        const historyParse = systemInstructionsHistorySchema.safeParse(
+          agent.systemInstructionsHistory
+        );
+        const history: SystemInstructionsHistoryEntry[] = historyParse.success
+          ? historyParse.data
+          : [];
+        if (!historyParse.success) {
+          logger.warn('export: systemInstructionsHistory malformed, exporting empty array', {
+            agentId: agent.id,
+            issues: historyParse.error.issues,
+          });
+        }
+
+        return {
+          name: agent.name,
+          slug: agent.slug,
+          isSystem: agent.isSystem,
+          description: agent.description,
+          systemInstructions: agent.systemInstructions,
+          systemInstructionsHistory: history,
+          model: agent.model,
+          provider: agent.provider,
+          providerConfig: jsonRecord.parse(agent.providerConfig),
+          temperature: agent.temperature,
+          maxTokens: agent.maxTokens,
+          reasoningEffort: reasoningEffortSchema.parse(agent.reasoningEffort),
+          monthlyBudgetUsd: agent.monthlyBudgetUsd,
+          maxCostPerTurnUsd: agent.maxCostPerTurnUsd,
+          metadata: jsonRecord.parse(agent.metadata),
+          isActive: agent.isActive,
+          fallbackProviders: agent.fallbackProviders,
+          rateLimitRpm: agent.rateLimitRpm,
+          inputGuardMode: guardModeSchema.parse(agent.inputGuardMode),
+          outputGuardMode: guardModeSchema.parse(agent.outputGuardMode),
+          citationGuardMode: guardModeSchema.parse(agent.citationGuardMode),
+          maxHistoryTokens: agent.maxHistoryTokens,
+          maxHistoryMessages: agent.maxHistoryMessages,
+          retentionDays: agent.retentionDays,
+          visibility: visibilitySchema.parse(agent.visibility),
+          topicBoundaries: agent.topicBoundaries,
+          brandVoiceInstructions: agent.brandVoiceInstructions,
+          widgetConfig: jsonRecord.parse(agent.widgetConfig),
+          kind: kindSchema.parse(agent.kind),
+          knowledgeAccessMode: knowledgeAccessModeSchema.parse(agent.knowledgeAccessMode),
+          knowledgeRetrievalMode: knowledgeRetrievalModeSchema.parse(agent.knowledgeRetrievalMode),
+          knowledgeTriggerKeywords: agent.knowledgeTriggerKeywords,
+          persona: agent.persona,
+          guardrails: agent.guardrails,
+          personaMode: inheritanceModeSchema.parse(agent.personaMode),
+          voiceMode: inheritanceModeSchema.parse(agent.voiceMode),
+          guardrailsMode: inheritanceModeSchema.parse(agent.guardrailsMode),
+          enableVoiceInput: agent.enableVoiceInput,
+          enableImageInput: agent.enableImageInput,
+          enableDocumentInput: agent.enableDocumentInput,
+          runtimePromptManaged: agent.runtimePromptManaged,
+          runtimePromptNote: agent.runtimePromptNote,
+          // Cross-environment relations by stable reference (slug); re-linked on import.
+          profileSlug: agent.profile?.slug ?? null,
+          knowledgeTagSlugs: agent.grantedTags.map((g) => g.tag.slug),
+          knowledgeDocumentSlugs: agent.grantedDocuments.map((g) => g.document.slug),
+          capabilities: agent.capabilities.map((link) => ({
+            slug: link.capability.slug,
+            isEnabled: link.isEnabled,
+            customConfig: jsonRecord.parse(link.customConfig),
+            customRateLimit: link.customRateLimit,
+          })),
+        };
+      }),
+    };
+
+    log.info('Agents exported', {
+      count: bundle.agents.length,
+      adminId: session.user.id,
+    });
+
+    const filename = `agents-export-${bundle.exportedAt.replace(/:/g, '-')}.json`;
+    return successResponse(bundle, undefined, {
+      headers: { 'Content-Disposition': `attachment; filename="${filename}"` },
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
     },
-  });
-
-  if (agents.length !== uniqueIds.length) {
-    const foundIds = new Set(agents.map((a) => a.id));
-    const missing = uniqueIds.filter((id) => !foundIds.has(id));
-    throw new NotFoundError(`Agents not found: ${missing.join(', ')}`);
   }
-
-  const bundle: AgentBundle = {
-    version: '1',
-    exportedAt: new Date().toISOString(),
-    agents: agents.map((agent) => {
-      const historyParse = systemInstructionsHistorySchema.safeParse(
-        agent.systemInstructionsHistory
-      );
-      const history: SystemInstructionsHistoryEntry[] = historyParse.success
-        ? historyParse.data
-        : [];
-      if (!historyParse.success) {
-        logger.warn('export: systemInstructionsHistory malformed, exporting empty array', {
-          agentId: agent.id,
-          issues: historyParse.error.issues,
-        });
-      }
-
-      return {
-        name: agent.name,
-        slug: agent.slug,
-        isSystem: agent.isSystem,
-        description: agent.description,
-        systemInstructions: agent.systemInstructions,
-        systemInstructionsHistory: history,
-        model: agent.model,
-        provider: agent.provider,
-        providerConfig: jsonRecord.parse(agent.providerConfig),
-        temperature: agent.temperature,
-        maxTokens: agent.maxTokens,
-        reasoningEffort: reasoningEffortSchema.parse(agent.reasoningEffort),
-        monthlyBudgetUsd: agent.monthlyBudgetUsd,
-        maxCostPerTurnUsd: agent.maxCostPerTurnUsd,
-        metadata: jsonRecord.parse(agent.metadata),
-        isActive: agent.isActive,
-        fallbackProviders: agent.fallbackProviders,
-        rateLimitRpm: agent.rateLimitRpm,
-        inputGuardMode: guardModeSchema.parse(agent.inputGuardMode),
-        outputGuardMode: guardModeSchema.parse(agent.outputGuardMode),
-        citationGuardMode: guardModeSchema.parse(agent.citationGuardMode),
-        maxHistoryTokens: agent.maxHistoryTokens,
-        maxHistoryMessages: agent.maxHistoryMessages,
-        retentionDays: agent.retentionDays,
-        visibility: visibilitySchema.parse(agent.visibility),
-        topicBoundaries: agent.topicBoundaries,
-        brandVoiceInstructions: agent.brandVoiceInstructions,
-        widgetConfig: jsonRecord.parse(agent.widgetConfig),
-        kind: kindSchema.parse(agent.kind),
-        knowledgeAccessMode: knowledgeAccessModeSchema.parse(agent.knowledgeAccessMode),
-        knowledgeRetrievalMode: knowledgeRetrievalModeSchema.parse(agent.knowledgeRetrievalMode),
-        knowledgeTriggerKeywords: agent.knowledgeTriggerKeywords,
-        persona: agent.persona,
-        guardrails: agent.guardrails,
-        personaMode: inheritanceModeSchema.parse(agent.personaMode),
-        voiceMode: inheritanceModeSchema.parse(agent.voiceMode),
-        guardrailsMode: inheritanceModeSchema.parse(agent.guardrailsMode),
-        enableVoiceInput: agent.enableVoiceInput,
-        enableImageInput: agent.enableImageInput,
-        enableDocumentInput: agent.enableDocumentInput,
-        runtimePromptManaged: agent.runtimePromptManaged,
-        runtimePromptNote: agent.runtimePromptNote,
-        // Cross-environment relations by stable reference (slug); re-linked on import.
-        profileSlug: agent.profile?.slug ?? null,
-        knowledgeTagSlugs: agent.grantedTags.map((g) => g.tag.slug),
-        knowledgeDocumentSlugs: agent.grantedDocuments.map((g) => g.document.slug),
-        capabilities: agent.capabilities.map((link) => ({
-          slug: link.capability.slug,
-          isEnabled: link.isEnabled,
-          customConfig: jsonRecord.parse(link.customConfig),
-          customRateLimit: link.customRateLimit,
-        })),
-      };
-    }),
-  };
-
-  log.info('Agents exported', {
-    count: bundle.agents.length,
-    adminId: session.user.id,
-  });
-
-  const filename = `agents-export-${bundle.exportedAt.replace(/:/g, '-')}.json`;
-  return successResponse(bundle, undefined, {
-    headers: { 'Content-Disposition': `attachment; filename="${filename}"` },
-  });
-});
+);

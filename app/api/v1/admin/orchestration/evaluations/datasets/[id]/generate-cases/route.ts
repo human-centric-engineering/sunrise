@@ -113,6 +113,7 @@ export const POST = withAdminAuth<{ id: string }>(
     });
   },
   {
+    tier: 'org',
     ownership: {
       decidedBy: 'self',
       because:

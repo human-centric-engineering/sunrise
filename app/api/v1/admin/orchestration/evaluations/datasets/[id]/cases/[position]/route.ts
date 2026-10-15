@@ -149,6 +149,7 @@ export const PATCH = withAdminAuth<{ id: string; position: string }>(
     return successResponse({ case: updatedCase, contentHash: newHash });
   },
   {
+    tier: 'org',
     ownership: {
       decidedBy: 'self',
       because:

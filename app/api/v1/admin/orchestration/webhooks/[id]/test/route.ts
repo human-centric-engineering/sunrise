@@ -26,204 +26,214 @@ import EventNotification from '@/emails/event-notification';
 import { render } from '@react-email/render';
 import crypto from 'crypto';
 
-export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success)
-    throw new ValidationError('Invalid webhook id', { id: ['Must be a valid CUID'] });
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success)
+      throw new ValidationError('Invalid webhook id', { id: ['Must be a valid CUID'] });
 
-  const webhook = await prisma.aiWebhookSubscription.findFirst({
-    where: { id: parsed.data, createdBy: session.user.id },
-  });
-  if (!webhook) throw new NotFoundError('Webhook not found');
+    const webhook = await prisma.aiWebhookSubscription.findFirst({
+      where: { id: parsed.data, createdBy: session.user.id },
+    });
+    if (!webhook) throw new NotFoundError('Webhook not found');
 
-  const pingData = { message: 'Test event from Sunrise webhook configuration.' };
-  const pingTimestamp = new Date().toISOString();
+    const pingData = { message: 'Test event from Sunrise webhook configuration.' };
+    const pingTimestamp = new Date().toISOString();
 
-  // ── Email channel ────────────────────────────────────────────────────────
-  if (webhook.channel === 'email') {
-    if (!webhook.emailAddress) {
-      return successResponse({
-        success: false,
-        statusCode: null,
-        durationMs: 0,
-        error: 'Email subscription has no destination address.',
-      });
-    }
-    if (!isEmailEnabled()) {
-      return successResponse({
-        success: false,
-        statusCode: null,
-        durationMs: 0,
-        error: 'Email sending is not configured. Set RESEND_API_KEY and EMAIL_FROM.',
-      });
-    }
-
-    const start = Date.now();
-    try {
-      const resend = getResendClient();
-      if (!resend) throw new Error('Resend client unavailable');
-      const html = await render(
-        EventNotification({ event: 'ping', timestamp: pingTimestamp, data: pingData })
-      );
-      const result = await resend.emails.send({
-        from: getDefaultSender(),
-        to: webhook.emailAddress,
-        subject: `[${BRAND.name}] Test event`,
-        html,
-      });
-      const durationMs = Date.now() - start;
-      if (result.error) {
-        log.warn('Webhook test (email) rejected', {
-          webhookId: parsed.data,
-          error: result.error.message,
+    // ── Email channel ────────────────────────────────────────────────────────
+    if (webhook.channel === 'email') {
+      if (!webhook.emailAddress) {
+        return successResponse({
+          success: false,
+          statusCode: null,
+          durationMs: 0,
+          error: 'Email subscription has no destination address.',
         });
+      }
+      if (!isEmailEnabled()) {
+        return successResponse({
+          success: false,
+          statusCode: null,
+          durationMs: 0,
+          error: 'Email sending is not configured. Set RESEND_API_KEY and EMAIL_FROM.',
+        });
+      }
+
+      const start = Date.now();
+      try {
+        const resend = getResendClient();
+        if (!resend) throw new Error('Resend client unavailable');
+        const html = await render(
+          EventNotification({ event: 'ping', timestamp: pingTimestamp, data: pingData })
+        );
+        const result = await resend.emails.send({
+          from: getDefaultSender(),
+          to: webhook.emailAddress,
+          subject: `[${BRAND.name}] Test event`,
+          html,
+        });
+        const durationMs = Date.now() - start;
+        if (result.error) {
+          log.warn('Webhook test (email) rejected', {
+            webhookId: parsed.data,
+            error: result.error.message,
+          });
+          return successResponse({
+            success: false,
+            statusCode: null,
+            durationMs,
+            error: result.error.message ?? 'Resend rejected the email',
+          });
+        }
+        log.info('Webhook test sent (email)', {
+          webhookId: parsed.data,
+          durationMs,
+        });
+        return successResponse({ success: true, statusCode: null, durationMs, error: null });
+      } catch (err) {
+        const durationMs = Date.now() - start;
         return successResponse({
           success: false,
           statusCode: null,
           durationMs,
-          error: result.error.message ?? 'Resend rejected the email',
+          error: err instanceof Error ? err.message : 'Unknown error',
         });
       }
-      log.info('Webhook test sent (email)', {
-        webhookId: parsed.data,
-        durationMs,
-      });
-      return successResponse({ success: true, statusCode: null, durationMs, error: null });
-    } catch (err) {
-      const durationMs = Date.now() - start;
+    }
+
+    // ── Webhook channel ──────────────────────────────────────────────────────
+    if (!webhook.secret) {
       return successResponse({
         success: false,
         statusCode: null,
-        durationMs,
-        error: err instanceof Error ? err.message : 'Unknown error',
+        durationMs: 0,
+        error: 'Webhook has no signing secret. Set a secret before testing.',
       });
     }
-  }
+    if (!webhook.url) {
+      return successResponse({
+        success: false,
+        statusCode: null,
+        durationMs: 0,
+        error: 'Webhook has no destination URL.',
+      });
+    }
 
-  // ── Webhook channel ──────────────────────────────────────────────────────
-  if (!webhook.secret) {
-    return successResponse({
-      success: false,
-      statusCode: null,
-      durationMs: 0,
-      error: 'Webhook has no signing secret. Set a secret before testing.',
+    // Revalidate the STORED destination. This route is the one outbound caller on
+    // this plane that reads persisted state and takes no write path, and it does
+    // not require `isActive` — only a secret and a url. That made it the easiest
+    // way to reach an unsafe destination: `PATCH { secret }` on a legacy row, then
+    // press Test. Depending on a write-path invariant this route cannot see was
+    // the mistake; checking here is cheap and independent of every other guard.
+    const targetCheck = checkSafeProviderUrl(webhook.url);
+    if (!targetCheck.ok) {
+      return successResponse({
+        success: false,
+        statusCode: null,
+        durationMs: 0,
+        error: `Destination is not allowed: ${targetCheck.message}`,
+      });
+    }
+
+    const payload = JSON.stringify({
+      event: 'ping',
+      timestamp: pingTimestamp,
+      data: pingData,
     });
-  }
-  if (!webhook.url) {
-    return successResponse({
-      success: false,
-      statusCode: null,
-      durationMs: 0,
-      error: 'Webhook has no destination URL.',
-    });
-  }
 
-  // Revalidate the STORED destination. This route is the one outbound caller on
-  // this plane that reads persisted state and takes no write path, and it does
-  // not require `isActive` — only a secret and a url. That made it the easiest
-  // way to reach an unsafe destination: `PATCH { secret }` on a legacy row, then
-  // press Test. Depending on a write-path invariant this route cannot see was
-  // the mistake; checking here is cheap and independent of every other guard.
-  const targetCheck = checkSafeProviderUrl(webhook.url);
-  if (!targetCheck.ok) {
-    return successResponse({
-      success: false,
-      statusCode: null,
-      durationMs: 0,
-      error: `Destination is not allowed: ${targetCheck.message}`,
-    });
-  }
+    const signature = crypto.createHmac('sha256', webhook.secret).update(payload).digest('hex');
 
-  const payload = JSON.stringify({
-    event: 'ping',
-    timestamp: pingTimestamp,
-    data: pingData,
-  });
+    const start = Date.now();
+    let statusCode: number | null = null;
+    let error: string | null = null;
 
-  const signature = crypto.createHmac('sha256', webhook.secret).update(payload).digest('hex');
+    // Declared outside the `try` so `finally` can clear the timer. It used to be
+    // cleared on the success line only, which `redirect: 'error'` turns from an
+    // edge case into a routine one: a redirecting endpoint would leave the timer
+    // armed to fire `controller.abort()` on a settled controller five seconds
+    // after the response went out, once per click.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
 
-  const start = Date.now();
-  let statusCode: number | null = null;
-  let error: string | null = null;
+    try {
+      const res = await fetch(webhook.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Webhook-Signature': signature,
+          'X-Webhook-Event': 'ping',
+        },
+        body: payload,
+        signal: controller.signal,
+        // Refuse redirects, matching `webhooks/dispatcher.ts` on the SAME value
+        // (#635). `webhook.url` is validated at create, at update when the patch
+        // carries one, when a patch ACTIVATES the subscription, and on backup
+        // import — but never here, and never per dispatch. A redirect TARGET is a
+        // second address none of those ever saw, so it is unvalidated — and
+        // `X-Webhook-Signature` is a CUSTOM header name, which the fetch spec
+        // does not strip cross-origin the way it strips `Authorization`. The HMAC
+        // would travel.
+        //
+        // The divergence also made this button lie: following a redirect reports
+        // the final hop's status as the endpoint's, so an endpoint that moved
+        // read as healthy here while production delivery refused it.
+        redirect: 'error',
+      });
 
-  // Declared outside the `try` so `finally` can clear the timer. It used to be
-  // cleared on the success line only, which `redirect: 'error'` turns from an
-  // edge case into a routine one: a redirecting endpoint would leave the timer
-  // armed to fire `controller.abort()` on a settled controller five seconds
-  // after the response went out, once per click.
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
-
-  try {
-    const res = await fetch(webhook.url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Webhook-Signature': signature,
-        'X-Webhook-Event': 'ping',
-      },
-      body: payload,
-      signal: controller.signal,
-      // Refuse redirects, matching `webhooks/dispatcher.ts` on the SAME value
-      // (#635). `webhook.url` is validated at create, at update when the patch
-      // carries one, when a patch ACTIVATES the subscription, and on backup
-      // import — but never here, and never per dispatch. A redirect TARGET is a
-      // second address none of those ever saw, so it is unvalidated — and
-      // `X-Webhook-Signature` is a CUSTOM header name, which the fetch spec
-      // does not strip cross-origin the way it strips `Authorization`. The HMAC
-      // would travel.
+      statusCode = res.status;
+    } catch (err) {
+      // undici renders a refused redirect, a DNS failure and a connection reset
+      // all as a bare "fetch failed"; the reason lives on `cause`. This string is
+      // the operator's ONLY signal — it is rendered straight into the test-result
+      // panel — so without unwrapping, the redirect refusal added above would
+      // report "fetch failed" and read as the endpoint being down.
       //
-      // The divergence also made this button lie: following a redirect reports
-      // the final hop's status as the endpoint's, so an endpoint that moved
-      // read as healthy here while production delivery refused it.
-      redirect: 'error',
+      // Applied to `Error` only, keeping "Unknown error" for anything else.
+      // `describeFetchFailure` falls back to `String(err)`, which renders a
+      // thrown object as "[object Object]" — worse in this panel than saying
+      // nothing, and a change to behaviour this issue did not ask for. Two
+      // existing tests caught the difference.
+      error =
+        err instanceof Error && err.name === 'AbortError'
+          ? 'Request timed out after 5 seconds'
+          : err instanceof Error
+            ? describeFetchFailure(err)
+            : 'Unknown error';
+    } finally {
+      // In `finally`, not after the `await` — `redirect: 'error'` makes the throw
+      // path routine rather than exceptional, and a timer left armed there fires
+      // `controller.abort()` on a settled controller five seconds after the
+      // response has gone out. One live handle per click on a redirecting
+      // endpoint. `webhooks/dispatcher.ts` already clears its timer this way.
+      clearTimeout(timeout);
+    }
+
+    const durationMs = Date.now() - start;
+    const success = statusCode !== null && statusCode >= 200 && statusCode < 300;
+
+    log.info('Webhook test sent', {
+      webhookId: parsed.data,
+      url: loggableUrl(webhook.url),
+      statusCode,
+      durationMs,
+      success,
     });
 
-    statusCode = res.status;
-  } catch (err) {
-    // undici renders a refused redirect, a DNS failure and a connection reset
-    // all as a bare "fetch failed"; the reason lives on `cause`. This string is
-    // the operator's ONLY signal — it is rendered straight into the test-result
-    // panel — so without unwrapping, the redirect refusal added above would
-    // report "fetch failed" and read as the endpoint being down.
-    //
-    // Applied to `Error` only, keeping "Unknown error" for anything else.
-    // `describeFetchFailure` falls back to `String(err)`, which renders a
-    // thrown object as "[object Object]" — worse in this panel than saying
-    // nothing, and a change to behaviour this issue did not ask for. Two
-    // existing tests caught the difference.
-    error =
-      err instanceof Error && err.name === 'AbortError'
-        ? 'Request timed out after 5 seconds'
-        : err instanceof Error
-          ? describeFetchFailure(err)
-          : 'Unknown error';
-  } finally {
-    // In `finally`, not after the `await` — `redirect: 'error'` makes the throw
-    // path routine rather than exceptional, and a timer left armed there fires
-    // `controller.abort()` on a settled controller five seconds after the
-    // response has gone out. One live handle per click on a redirecting
-    // endpoint. `webhooks/dispatcher.ts` already clears its timer this way.
-    clearTimeout(timeout);
+    return successResponse({
+      success,
+      statusCode,
+      durationMs,
+      error,
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Subscriptions are scoped to the admin who created them and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
+    },
   }
-
-  const durationMs = Date.now() - start;
-  const success = statusCode !== null && statusCode >= 200 && statusCode < 300;
-
-  log.info('Webhook test sent', {
-    webhookId: parsed.data,
-    url: loggableUrl(webhook.url),
-    statusCode,
-    durationMs,
-    success,
-  });
-
-  return successResponse({
-    success,
-    statusCode,
-    durationMs,
-    error,
-  });
-});
+);

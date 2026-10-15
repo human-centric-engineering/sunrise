@@ -26,48 +26,58 @@ import { generateFromDescriptionPreviewSchema } from '@/lib/validations/orchestr
 import { generateCases } from '@/lib/orchestration/evaluations/synthesis/case-generator';
 import { synthesisLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 
-export const POST = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
 
-  const rl = synthesisLimiter.check(session.user.id);
-  if (!rl.success) {
-    log.warn('Synthesis rate limit exceeded (generate-from-description)', {
-      userId: session.user.id,
-      remaining: rl.remaining,
-      reset: rl.reset,
+    const rl = synthesisLimiter.check(session.user.id);
+    if (!rl.success) {
+      log.warn('Synthesis rate limit exceeded (generate-from-description)', {
+        userId: session.user.id,
+        remaining: rl.remaining,
+        reset: rl.reset,
+      });
+      return createRateLimitResponse(rl);
+    }
+
+    const body = await validateRequestBody(request, generateFromDescriptionPreviewSchema);
+
+    // Subject-agent existence check — the generator agent will be invoked
+    // with the description; the subject agent is the one cases will run
+    // against later, so the operator should pick a real id.
+    const agent = await prisma.aiAgent.findUnique({
+      where: { id: body.agentId },
+      select: { id: true },
     });
-    return createRateLimitResponse(rl);
+    if (!agent) throw new NotFoundError(`Agent ${body.agentId} not found`);
+
+    const result = await generateCases({
+      agentId: body.agentId,
+      userId: session.user.id,
+      mode: 'description',
+      count: body.count,
+      domainPrompt: body.domainPrompt,
+      ...(body.seedInputs && body.seedInputs.length > 0 ? { seedInputs: body.seedInputs } : {}),
+    });
+
+    log.info('Generated description-mode case proposals', {
+      agentId: body.agentId,
+      requested: body.count,
+      proposed: result.cases.length,
+      costUsd: result.costUsd,
+    });
+    return successResponse({
+      cases: result.cases,
+      costUsd: result.costUsd,
+      tokenUsage: result.tokenUsage,
+    });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Scoped to the evaluation sessions, runs and datasets this caller owns — and ownerless datasets where the policy permits them — keyed on the caller's id. Never another member's.",
+    },
   }
-
-  const body = await validateRequestBody(request, generateFromDescriptionPreviewSchema);
-
-  // Subject-agent existence check — the generator agent will be invoked
-  // with the description; the subject agent is the one cases will run
-  // against later, so the operator should pick a real id.
-  const agent = await prisma.aiAgent.findUnique({
-    where: { id: body.agentId },
-    select: { id: true },
-  });
-  if (!agent) throw new NotFoundError(`Agent ${body.agentId} not found`);
-
-  const result = await generateCases({
-    agentId: body.agentId,
-    userId: session.user.id,
-    mode: 'description',
-    count: body.count,
-    domainPrompt: body.domainPrompt,
-    ...(body.seedInputs && body.seedInputs.length > 0 ? { seedInputs: body.seedInputs } : {}),
-  });
-
-  log.info('Generated description-mode case proposals', {
-    agentId: body.agentId,
-    requested: body.count,
-    proposed: result.cases.length,
-    costUsd: result.costUsd,
-  });
-  return successResponse({
-    cases: result.cases,
-    costUsd: result.costUsd,
-    tokenUsage: result.tokenUsage,
-  });
-});
+);

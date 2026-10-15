@@ -299,5 +299,13 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
       restoredFromVersion: version.version,
       newVersion: nextVersion,
     });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
 );

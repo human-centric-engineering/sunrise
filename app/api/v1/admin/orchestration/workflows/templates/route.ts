@@ -22,8 +22,18 @@ const querySchema = z.object({
   source: z.enum(['builtin', 'custom']).optional(),
 });
 
-export const GET = withAdminAuth(async (request) => {
-  const { source } = validateQueryParams(new URL(request.url).searchParams, querySchema);
-  const { templates, customTruncated } = await listWorkflowTemplates(source);
-  return successResponse(templates, { customTruncated });
-});
+export const GET = withAdminAuth(
+  async (request) => {
+    const { source } = validateQueryParams(new URL(request.url).searchParams, querySchema);
+    const { templates, customTruncated } = await listWorkflowTemplates(source);
+    return successResponse(templates, { customTruncated });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Workflows, their versions, schedules and templates are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);

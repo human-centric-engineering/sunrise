@@ -49,140 +49,154 @@ interface FileResult {
   error?: string;
 }
 
-export const POST = withAdminAuth(async (request, session) => {
-  const clientIP = getClientIP(request);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const clientIP = getClientIP(request);
 
-  const log = await getRouteLogger(request);
+    const log = await getRouteLogger(request);
 
-  let formData: FormData;
-  try {
-    formData = await request.formData();
-  } catch {
-    throw new ValidationError('Expected multipart/form-data body');
-  }
-
-  const files = formData.getAll('files').filter((f): f is File => f instanceof File);
-  if (files.length === 0) {
-    throw new ValidationError('No files provided', {
-      files: ['At least one file must be supplied in the `files` form field'],
-    });
-  }
-
-  if (files.length > MAX_FILES_PER_BATCH) {
-    throw new ValidationError(`Maximum ${MAX_FILES_PER_BATCH} files per batch`, {
-      files: [`Received ${files.length} files, limit is ${MAX_FILES_PER_BATCH}`],
-    });
-  }
-
-  // Repeated `tagIds` form fields — same multipart shape as the single-file
-  // upload route. Unknown ids are dropped silently.
-  const tagIdsRaw = formData.getAll('tagIds');
-  const tagIds: string[] = [];
-  for (const v of tagIdsRaw) {
-    if (typeof v !== 'string') continue;
-    const parsed = cuidSchema.safeParse(v);
-    if (parsed.success && !tagIds.includes(parsed.data)) tagIds.push(parsed.data);
-  }
-
-  async function attachTagsTo(documentId: string): Promise<void> {
-    if (tagIds.length === 0) return;
+    let formData: FormData;
     try {
-      await prisma.aiKnowledgeDocumentTag.createMany({
-        data: tagIds.map((tagId) => ({ documentId, tagId })),
-        skipDuplicates: true,
-      });
+      formData = await request.formData();
     } catch {
-      // Non-fatal — operator can re-tag from the chunks modal.
-    }
-  }
-
-  const results: FileResult[] = [];
-
-  for (const file of files) {
-    if (file.size > MAX_UPLOAD_BYTES) {
-      results.push({ fileName: file.name, status: 'error', error: 'File too large (50 MB max)' });
-      continue;
+      throw new ValidationError('Expected multipart/form-data body');
     }
 
-    if (!hasAllowedExtension(file.name)) {
-      results.push({
-        fileName: file.name,
-        status: 'error',
-        error: `Unsupported extension. Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`,
+    const files = formData.getAll('files').filter((f): f is File => f instanceof File);
+    if (files.length === 0) {
+      throw new ValidationError('No files provided', {
+        files: ['At least one file must be supplied in the `files` form field'],
       });
-      continue;
     }
 
-    try {
-      if (isTextFile(file.name)) {
-        const content = await file.text();
-        const lines = content.split('\n');
-        if (lines.length > MAX_TEXT_LINES) {
-          results.push({ fileName: file.name, status: 'error', error: 'File has too many lines' });
-          continue;
-        }
-        if (lines.some((l) => l.length > MAX_LINE_LENGTH)) {
-          results.push({
-            fileName: file.name,
-            status: 'error',
-            error: 'File contains lines exceeding max length',
-          });
-          continue;
-        }
+    if (files.length > MAX_FILES_PER_BATCH) {
+      throw new ValidationError(`Maximum ${MAX_FILES_PER_BATCH} files per batch`, {
+        files: [`Received ${files.length} files, limit is ${MAX_FILES_PER_BATCH}`],
+      });
+    }
 
-        const doc = await uploadDocument(content, file.name, session.user.id, undefined);
-        await attachTagsTo(doc.id);
-        results.push({ fileName: file.name, status: 'success', documentId: doc.id });
-      } else if (requiresPreview(file.name)) {
-        // PDFs need preview flow — skip in bulk, return status so UI can handle individually
-        results.push({ fileName: file.name, status: 'skipped_pdf' });
-      } else {
-        // EPUB, DOCX
-        const buffer = Buffer.from(await file.arrayBuffer());
-        const doc = await uploadDocumentFromBuffer(buffer, file.name, session.user.id, undefined);
-        await attachTagsTo(doc.id);
-        results.push({ fileName: file.name, status: 'success', documentId: doc.id });
+    // Repeated `tagIds` form fields — same multipart shape as the single-file
+    // upload route. Unknown ids are dropped silently.
+    const tagIdsRaw = formData.getAll('tagIds');
+    const tagIds: string[] = [];
+    for (const v of tagIdsRaw) {
+      if (typeof v !== 'string') continue;
+      const parsed = cuidSchema.safeParse(v);
+      if (parsed.success && !tagIds.includes(parsed.data)) tagIds.push(parsed.data);
+    }
+
+    async function attachTagsTo(documentId: string): Promise<void> {
+      if (tagIds.length === 0) return;
+      try {
+        await prisma.aiKnowledgeDocumentTag.createMany({
+          data: tagIds.map((tagId) => ({ documentId, tagId })),
+          skipDuplicates: true,
+        });
+      } catch {
+        // Non-fatal — operator can re-tag from the chunks modal.
       }
-    } catch (err) {
-      logger.error('Bulk upload: file processing failed', {
-        fileName: file.name,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      results.push({
-        fileName: file.name,
-        status: 'error',
-        error: err instanceof Error ? err.message : 'Upload failed',
+    }
+
+    const results: FileResult[] = [];
+
+    for (const file of files) {
+      if (file.size > MAX_UPLOAD_BYTES) {
+        results.push({ fileName: file.name, status: 'error', error: 'File too large (50 MB max)' });
+        continue;
+      }
+
+      if (!hasAllowedExtension(file.name)) {
+        results.push({
+          fileName: file.name,
+          status: 'error',
+          error: `Unsupported extension. Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`,
+        });
+        continue;
+      }
+
+      try {
+        if (isTextFile(file.name)) {
+          const content = await file.text();
+          const lines = content.split('\n');
+          if (lines.length > MAX_TEXT_LINES) {
+            results.push({
+              fileName: file.name,
+              status: 'error',
+              error: 'File has too many lines',
+            });
+            continue;
+          }
+          if (lines.some((l) => l.length > MAX_LINE_LENGTH)) {
+            results.push({
+              fileName: file.name,
+              status: 'error',
+              error: 'File contains lines exceeding max length',
+            });
+            continue;
+          }
+
+          const doc = await uploadDocument(content, file.name, session.user.id, undefined);
+          await attachTagsTo(doc.id);
+          results.push({ fileName: file.name, status: 'success', documentId: doc.id });
+        } else if (requiresPreview(file.name)) {
+          // PDFs need preview flow — skip in bulk, return status so UI can handle individually
+          results.push({ fileName: file.name, status: 'skipped_pdf' });
+        } else {
+          // EPUB, DOCX
+          const buffer = Buffer.from(await file.arrayBuffer());
+          const doc = await uploadDocumentFromBuffer(buffer, file.name, session.user.id, undefined);
+          await attachTagsTo(doc.id);
+          results.push({ fileName: file.name, status: 'success', documentId: doc.id });
+        }
+      } catch (err) {
+        logger.error('Bulk upload: file processing failed', {
+          fileName: file.name,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        results.push({
+          fileName: file.name,
+          status: 'error',
+          error: err instanceof Error ? err.message : 'Upload failed',
+        });
+      }
+    }
+
+    const successCount = results.filter((r) => r.status === 'success').length;
+    if (successCount > 0 && tagIds.length > 0) {
+      invalidateAllAgentAccess();
+    }
+
+    log.info('Bulk document upload', {
+      total: files.length,
+      success: successCount,
+      errors: results.filter((r) => r.status === 'error').length,
+      skippedPdf: results.filter((r) => r.status === 'skipped_pdf').length,
+      tagsApplied: tagIds.length,
+      adminId: session.user.id,
+    });
+
+    if (successCount > 0) {
+      logAdminAction({
+        userId: session.user.id,
+        action: 'knowledge_document.bulk_create',
+        entityType: 'knowledge_document',
+        metadata: {
+          fileCount: files.length,
+          successCount,
+          fileNames: results.filter((r) => r.status === 'success').map((r) => r.fileName),
+        },
+        clientIp: clientIP,
       });
     }
+
+    return successResponse({ results }, undefined, { status: 201 });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Knowledge documents, their chunks and embeddings are the org’s, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-
-  const successCount = results.filter((r) => r.status === 'success').length;
-  if (successCount > 0 && tagIds.length > 0) {
-    invalidateAllAgentAccess();
-  }
-
-  log.info('Bulk document upload', {
-    total: files.length,
-    success: successCount,
-    errors: results.filter((r) => r.status === 'error').length,
-    skippedPdf: results.filter((r) => r.status === 'skipped_pdf').length,
-    tagsApplied: tagIds.length,
-    adminId: session.user.id,
-  });
-
-  if (successCount > 0) {
-    logAdminAction({
-      userId: session.user.id,
-      action: 'knowledge_document.bulk_create',
-      entityType: 'knowledge_document',
-      metadata: {
-        fileCount: files.length,
-        successCount,
-        fileNames: results.filter((r) => r.status === 'success').map((r) => r.fileName),
-      },
-      clientIp: clientIP,
-    });
-  }
-
-  return successResponse({ results }, undefined, { status: 201 });
-});
+);

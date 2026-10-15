@@ -31,86 +31,96 @@ import {
   dryRunWorkflowBodySchema,
 } from '@/lib/validations/orchestration';
 
-export const POST = withAdminAuth<{ id: string }>(async (request, _session, { params }) => {
-  const log = await getRouteLogger(request);
-  const { id: rawId } = await params;
-  const parsed = cuidSchema.safeParse(rawId);
-  if (!parsed.success) {
-    throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
-  }
-  const id = parsed.data;
+export const POST = withAdminAuth<{ id: string }>(
+  async (request, _session, { params }) => {
+    const log = await getRouteLogger(request);
+    const { id: rawId } = await params;
+    const parsed = cuidSchema.safeParse(rawId);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid workflow id', { id: ['Must be a valid CUID'] });
+    }
+    const id = parsed.data;
 
-  const body = await validateRequestBody(request, dryRunWorkflowBodySchema);
+    const body = await validateRequestBody(request, dryRunWorkflowBodySchema);
 
-  const workflow = await prisma.aiWorkflow.findUnique({
-    where: { id },
-    include: { publishedVersion: true },
-  });
-  if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
+    const workflow = await prisma.aiWorkflow.findUnique({
+      where: { id },
+      include: { publishedVersion: true },
+    });
+    if (!workflow) throw new NotFoundError(`Workflow ${id} not found`);
 
-  // Pick the snapshot to dry-run against per the requested target.
-  let rawDefinition: unknown;
-  if (body.target === 'draft') {
-    if (workflow.draftDefinition === null || workflow.draftDefinition === undefined) {
-      throw new ValidationError(`Workflow ${id} has no draft to dry-run`, {
-        draftDefinition: ['Workflow has no draft'],
+    // Pick the snapshot to dry-run against per the requested target.
+    let rawDefinition: unknown;
+    if (body.target === 'draft') {
+      if (workflow.draftDefinition === null || workflow.draftDefinition === undefined) {
+        throw new ValidationError(`Workflow ${id} has no draft to dry-run`, {
+          draftDefinition: ['Workflow has no draft'],
+        });
+      }
+      rawDefinition = workflow.draftDefinition;
+    } else if (body.target === 'version') {
+      const versionRow = await prisma.aiWorkflowVersion.findUnique({
+        where: { id: body.versionId! },
+      });
+      if (!versionRow || versionRow.workflowId !== id) {
+        throw new NotFoundError(`Workflow ${id} has no version ${body.versionId}`);
+      }
+      rawDefinition = versionRow.snapshot;
+    } else {
+      if (!workflow.publishedVersion) {
+        throw new ValidationError(`Workflow ${id} has no published version`, {
+          publishedVersionId: ['Publish a draft before dry-running'],
+        });
+      }
+      rawDefinition = workflow.publishedVersion.snapshot;
+    }
+
+    const defParsed = workflowDefinitionSchema.safeParse(rawDefinition);
+    if (!defParsed.success) {
+      throw new ValidationError(`Workflow ${id} has a malformed definition`, {
+        workflowDefinition: defParsed.error.issues.map((i) => i.message),
       });
     }
-    rawDefinition = workflow.draftDefinition;
-  } else if (body.target === 'version') {
-    const versionRow = await prisma.aiWorkflowVersion.findUnique({
-      where: { id: body.versionId! },
+    const definition = defParsed.data;
+
+    // Run structural + semantic validation
+    const structural = validateWorkflow(definition);
+    const semantic = await semanticValidateWorkflow(definition);
+    const errors = [...structural.errors, ...semantic.errors];
+
+    // Extract template variables and check against provided input
+    const extractedVariables = extractTemplateVariables(definition);
+    const providedKeys = new Set(Object.keys(body.inputData));
+
+    const warnings: string[] = [];
+    for (const variable of extractedVariables) {
+      if (variable === '__whole__') continue; // bare {{input}} — any inputData satisfies this
+      if (!providedKeys.has(variable)) {
+        warnings.push(`Template variable "{{input.${variable}}}" is not provided in inputData`);
+      }
+    }
+
+    log.info('Workflow dry-run completed', {
+      workflowId: id,
+      ok: errors.length === 0,
+      errorCount: errors.length,
+      warningCount: warnings.length,
+      variableCount: extractedVariables.length,
     });
-    if (!versionRow || versionRow.workflowId !== id) {
-      throw new NotFoundError(`Workflow ${id} has no version ${body.versionId}`);
-    }
-    rawDefinition = versionRow.snapshot;
-  } else {
-    if (!workflow.publishedVersion) {
-      throw new ValidationError(`Workflow ${id} has no published version`, {
-        publishedVersionId: ['Publish a draft before dry-running'],
-      });
-    }
-    rawDefinition = workflow.publishedVersion.snapshot;
-  }
 
-  const defParsed = workflowDefinitionSchema.safeParse(rawDefinition);
-  if (!defParsed.success) {
-    throw new ValidationError(`Workflow ${id} has a malformed definition`, {
-      workflowDefinition: defParsed.error.issues.map((i) => i.message),
+    return successResponse({
+      ok: errors.length === 0,
+      errors,
+      warnings,
+      extractedVariables,
     });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Workflows, their versions, schedules and templates are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
   }
-  const definition = defParsed.data;
-
-  // Run structural + semantic validation
-  const structural = validateWorkflow(definition);
-  const semantic = await semanticValidateWorkflow(definition);
-  const errors = [...structural.errors, ...semantic.errors];
-
-  // Extract template variables and check against provided input
-  const extractedVariables = extractTemplateVariables(definition);
-  const providedKeys = new Set(Object.keys(body.inputData));
-
-  const warnings: string[] = [];
-  for (const variable of extractedVariables) {
-    if (variable === '__whole__') continue; // bare {{input}} — any inputData satisfies this
-    if (!providedKeys.has(variable)) {
-      warnings.push(`Template variable "{{input.${variable}}}" is not provided in inputData`);
-    }
-  }
-
-  log.info('Workflow dry-run completed', {
-    workflowId: id,
-    ok: errors.length === 0,
-    errorCount: errors.length,
-    warningCount: warnings.length,
-    variableCount: extractedVariables.length,
-  });
-
-  return successResponse({
-    ok: errors.length === 0,
-    errors,
-    warnings,
-    extractedVariables,
-  });
-});
+);

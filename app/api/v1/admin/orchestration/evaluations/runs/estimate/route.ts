@@ -23,35 +23,45 @@ import { getRouteLogger } from '@/lib/api/context';
 import { estimateRunCostSchema } from '@/lib/validations/orchestration-evaluations';
 import { estimateEvaluationRunCost } from '@/lib/orchestration/cost-estimation/evaluation-cost';
 
-export const POST = withAdminAuth(async (request, session) => {
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, estimateRunCostSchema);
+export const POST = withAdminAuth(
+  async (request, session) => {
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, estimateRunCostSchema);
 
-  // Dataset visibility — same posture as the run-create route.
-  const dataset = await prisma.aiDataset.findFirst({
-    where: { AND: [datasetVisibilityWhere(session), { id: body.datasetId }] },
-    select: { id: true },
-  });
-  if (!dataset) throw new NotFoundError(`Dataset ${body.datasetId} not found`);
+    // Dataset visibility — same posture as the run-create route.
+    const dataset = await prisma.aiDataset.findFirst({
+      where: { AND: [datasetVisibilityWhere(session), { id: body.datasetId }] },
+      select: { id: true },
+    });
+    if (!dataset) throw new NotFoundError(`Dataset ${body.datasetId} not found`);
 
-  const estimate = await estimateEvaluationRunCost({
-    subjectKind: body.subjectKind,
-    ...(body.agentId ? { agentId: body.agentId } : {}),
-    ...(body.workflowId ? { workflowId: body.workflowId } : {}),
-    userId: session.user.id,
-    judgeAgentSlugs: body.judgeAgentSlugs,
-    datasetId: body.datasetId,
-    ...(body.caseCount !== undefined ? { caseCount: body.caseCount } : {}),
-  });
+    const estimate = await estimateEvaluationRunCost({
+      subjectKind: body.subjectKind,
+      ...(body.agentId ? { agentId: body.agentId } : {}),
+      ...(body.workflowId ? { workflowId: body.workflowId } : {}),
+      userId: session.user.id,
+      judgeAgentSlugs: body.judgeAgentSlugs,
+      datasetId: body.datasetId,
+      ...(body.caseCount !== undefined ? { caseCount: body.caseCount } : {}),
+    });
 
-  log.info('Eval run cost estimated', {
-    subjectKind: body.subjectKind,
-    agentId: body.agentId,
-    workflowId: body.workflowId,
-    datasetId: body.datasetId,
-    judgeCount: body.judgeAgentSlugs.length,
-    basedOn: estimate.basedOn,
-    midUsd: estimate.midUsd,
-  });
-  return successResponse(estimate);
-});
+    log.info('Eval run cost estimated', {
+      subjectKind: body.subjectKind,
+      agentId: body.agentId,
+      workflowId: body.workflowId,
+      datasetId: body.datasetId,
+      judgeCount: body.judgeAgentSlugs.length,
+      basedOn: estimate.basedOn,
+      midUsd: estimate.midUsd,
+    });
+    return successResponse(estimate);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'self',
+      because:
+        "Scoped to the evaluation sessions, runs and datasets this caller owns — and ownerless datasets where the policy permits them — keyed on the caller's id. Never another member's.",
+    },
+  }
+);

@@ -57,6 +57,7 @@ export const GET = withAdminAuth(
     return successResponse({ agents: [agentA, agentB] });
   },
   {
+    tier: 'org',
     ownership: {
       decidedBy: 'nothing',
       because:

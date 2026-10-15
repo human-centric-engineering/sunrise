@@ -26,77 +26,97 @@ async function findToken(agentId: string, tokenId: string) {
   });
 }
 
-export const PATCH = withAdminAuth<Params>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
+export const PATCH = withAdminAuth<Params>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  const { id: rawAgentId, tokenId: rawTokenId } = await params;
-  const agentIdParsed = cuidSchema.safeParse(rawAgentId);
-  if (!agentIdParsed.success)
-    throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
-  const tokenIdParsed = cuidSchema.safeParse(rawTokenId);
-  if (!tokenIdParsed.success)
-    throw new ValidationError('Invalid token id', { tokenId: ['Must be a valid CUID'] });
-  const agentId = agentIdParsed.data;
-  const tokenId = tokenIdParsed.data;
-  const log = await getRouteLogger(request);
-  const body = await validateRequestBody(request, updateEmbedTokenSchema);
+    const { id: rawAgentId, tokenId: rawTokenId } = await params;
+    const agentIdParsed = cuidSchema.safeParse(rawAgentId);
+    if (!agentIdParsed.success)
+      throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
+    const tokenIdParsed = cuidSchema.safeParse(rawTokenId);
+    if (!tokenIdParsed.success)
+      throw new ValidationError('Invalid token id', { tokenId: ['Must be a valid CUID'] });
+    const agentId = agentIdParsed.data;
+    const tokenId = tokenIdParsed.data;
+    const log = await getRouteLogger(request);
+    const body = await validateRequestBody(request, updateEmbedTokenSchema);
 
-  const existing = await findToken(agentId, tokenId);
-  if (!existing) throw new NotFoundError('Embed token not found');
+    const existing = await findToken(agentId, tokenId);
+    if (!existing) throw new NotFoundError('Embed token not found');
 
-  const updated = await prisma.aiAgentEmbedToken.update({
-    where: { id: tokenId },
-    data: {
-      ...(body.label !== undefined ? { label: body.label } : {}),
-      ...(body.allowedOrigins !== undefined ? { allowedOrigins: body.allowedOrigins } : {}),
-      ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+    const updated = await prisma.aiAgentEmbedToken.update({
+      where: { id: tokenId },
+      data: {
+        ...(body.label !== undefined ? { label: body.label } : {}),
+        ...(body.allowedOrigins !== undefined ? { allowedOrigins: body.allowedOrigins } : {}),
+        ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+      },
+      include: { creator: { select: { id: true, name: true } } },
+    });
+
+    logAdminAction({
+      userId: session.user.id,
+      action: 'embed_token.update',
+      entityType: 'embed_token',
+      entityId: tokenId,
+      entityName: updated.label,
+      metadata: { agentId, changedKeys: Object.keys(body) },
+      clientIp: clientIP,
+    });
+
+    log.info('Embed token updated', { agentId, recordId: tokenId, changedKeys: Object.keys(body) });
+    return successResponse(updated);
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
     },
-    include: { creator: { select: { id: true, name: true } } },
-  });
+  }
+);
 
-  logAdminAction({
-    userId: session.user.id,
-    action: 'embed_token.update',
-    entityType: 'embed_token',
-    entityId: tokenId,
-    entityName: updated.label,
-    metadata: { agentId, changedKeys: Object.keys(body) },
-    clientIp: clientIP,
-  });
+export const DELETE = withAdminAuth<Params>(
+  async (request, session, { params }) => {
+    const clientIP = getClientIP(request);
 
-  log.info('Embed token updated', { agentId, recordId: tokenId, changedKeys: Object.keys(body) });
-  return successResponse(updated);
-});
+    const { id: rawAgentId, tokenId: rawTokenId } = await params;
+    const agentIdParsed = cuidSchema.safeParse(rawAgentId);
+    if (!agentIdParsed.success)
+      throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
+    const tokenIdParsed = cuidSchema.safeParse(rawTokenId);
+    if (!tokenIdParsed.success)
+      throw new ValidationError('Invalid token id', { tokenId: ['Must be a valid CUID'] });
+    const agentId = agentIdParsed.data;
+    const tokenId = tokenIdParsed.data;
+    const log = await getRouteLogger(request);
 
-export const DELETE = withAdminAuth<Params>(async (request, session, { params }) => {
-  const clientIP = getClientIP(request);
+    const existing = await findToken(agentId, tokenId);
+    if (!existing) throw new NotFoundError('Embed token not found');
 
-  const { id: rawAgentId, tokenId: rawTokenId } = await params;
-  const agentIdParsed = cuidSchema.safeParse(rawAgentId);
-  if (!agentIdParsed.success)
-    throw new ValidationError('Invalid agent id', { id: ['Must be a valid CUID'] });
-  const tokenIdParsed = cuidSchema.safeParse(rawTokenId);
-  if (!tokenIdParsed.success)
-    throw new ValidationError('Invalid token id', { tokenId: ['Must be a valid CUID'] });
-  const agentId = agentIdParsed.data;
-  const tokenId = tokenIdParsed.data;
-  const log = await getRouteLogger(request);
+    await prisma.aiAgentEmbedToken.delete({ where: { id: tokenId } });
 
-  const existing = await findToken(agentId, tokenId);
-  if (!existing) throw new NotFoundError('Embed token not found');
+    logAdminAction({
+      userId: session.user.id,
+      action: 'embed_token.delete',
+      entityType: 'embed_token',
+      entityId: tokenId,
+      entityName: existing.label,
+      metadata: { agentId },
+      clientIp: clientIP,
+    });
 
-  await prisma.aiAgentEmbedToken.delete({ where: { id: tokenId } });
-
-  logAdminAction({
-    userId: session.user.id,
-    action: 'embed_token.delete',
-    entityType: 'embed_token',
-    entityId: tokenId,
-    entityName: existing.label,
-    metadata: { agentId },
-    clientIp: clientIP,
-  });
-
-  log.info('Embed token deleted', { agentId, recordId: tokenId });
-  return successResponse({ deleted: true });
-});
+    log.info('Embed token deleted', { agentId, recordId: tokenId });
+    return successResponse({ deleted: true });
+  },
+  {
+    tier: 'org',
+    ownership: {
+      decidedBy: 'nothing',
+      because:
+        'Agents and what hangs off them (capabilities, tokens, versions, widget config) are the org’s configuration, not anyone’s personal rows; row isolation bounds them to the entered org.',
+    },
+  }
+);
