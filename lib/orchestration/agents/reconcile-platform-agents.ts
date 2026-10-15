@@ -25,10 +25,10 @@
  *    split is the agent field registry's (`platformAgent`). Provider, model,
  *    spend, rate and retention are set once, when the instance is created —
  *    except a provider and model the definition picks (`defaultBinding`):
- *    while they are empty or still what the platform last placed (the
- *    marker's `autoBindings`), they follow the pick, so they move when what
- *    the org can reach changes. Once the org sets them they are the org's
- *    (t-798).
+ *    while they are empty or still what the platform last placed (recorded
+ *    in `Org.settings.platformAgentBindings`, in the same transaction as the
+ *    write), they follow the pick, so they move when what the org can reach
+ *    changes. Once the org sets them they are the org's (t-798).
  *  - **Bindings and knowledge grants are set to the declared set** — added,
  *    re-enabled or removed. Document grants are always empty. The one
  *    exception is a definition whose bindings are the org's
@@ -92,10 +92,13 @@ import {
 } from '@/lib/orchestration/knowledge/seeder';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant, runAsOrg } from '@/lib/tenancy/context';
+import { forgetOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
 import {
-  loadPlatformAgentsMarker,
+  isSettingsWriteConflict,
+  loadPlatformAgentsState,
+  recordPlatformAgentBinding,
   writePlatformAgentsMarker,
-  type PlatformAgentsMarker,
+  type PlatformAgentBindings,
 } from '@/lib/tenancy/org-settings';
 
 /** Why an org's own row was left alone. */
@@ -148,7 +151,7 @@ function sameBinding(a: Binding, b: Binding): boolean {
 
 /**
  * Whether the platform still owns an agent's provider and model (t-798): it is
- * empty, or still what the platform last placed (`recorded`, from the marker).
+ * empty, or still what the platform last placed (`recorded`).
  * Anything else was chosen by the org, and is never touched again — unless the
  * org sets it back to empty, which hands it back.
  */
@@ -157,6 +160,27 @@ function platformOwnsBinding(current: Binding, recorded: Binding | undefined): b
     sameBinding(current, INHERIT) || (recorded !== undefined && sameBinding(current, recorded))
   );
 }
+
+/**
+ * What one run does with an agent's provider and model, and with its record of
+ * them: follow the pick while the platform owns the binding, or drop a record
+ * the org's own choice has made stale — so that, should the org later set the
+ * platform's old pick again, that choice stays theirs.
+ */
+type BindingPlan =
+  { follow: Binding; recorded: Binding | undefined } | { release: true } | undefined;
+
+/**
+ * The record write that leaves `recorded` describing `placed`: an entry for a
+ * pinned binding, none for "inherit". `undefined` when it already does.
+ */
+function recordUpdate(recorded: Binding | undefined, placed: Binding): Binding | null | undefined {
+  if (sameBinding(placed, INHERIT)) return recorded === undefined ? undefined : null;
+  return recorded !== undefined && sameBinding(recorded, placed) ? undefined : placed;
+}
+
+/** Thrown inside an agent's transaction when its binding changed after it was read. */
+class BindingChangedConcurrently extends Error {}
 
 /** What the platform would place now: the definition's pick, or "inherit" when nothing qualifies. */
 async function desiredBinding(
@@ -185,6 +209,19 @@ function writeData(values: Record<string, unknown>): Record<string, unknown> {
 
 function isUniqueViolation(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+}
+
+/**
+ * A write another run or request got to first: a unique-key race, a
+ * SERIALIZABLE clash on the binding record, or a binding an admin changed
+ * after this run read it. Each rolled its agent's transaction back whole.
+ */
+function isConcurrentWrite(err: unknown): boolean {
+  return (
+    isUniqueViolation(err) ||
+    isSettingsWriteConflict(err) ||
+    err instanceof BindingChangedConcurrently
+  );
 }
 
 function sameSet(a: readonly string[], b: readonly string[]): boolean {
@@ -223,7 +260,9 @@ export async function reconcilePlatformAgents(
   return runAsOrg(orgId, async () => {
     const definitions = platformAgentsForOrg(orgId);
     const hash = platformAgentRegistryHash();
-    const previous = await loadPlatformAgentsMarker(orgId, db);
+    const state = await loadPlatformAgentsState(orgId, db);
+    const previous = state?.marker ?? null;
+    const recordedBindings: PlatformAgentBindings = state?.bindings ?? {};
 
     const owner = await db.user.findFirst({ where: serviceAccountWhere, select: { id: true } });
     if (!owner) {
@@ -277,7 +316,6 @@ export async function reconcilePlatformAgents(
     }
 
     const placed: string[] = [];
-    const autoBindings: Record<string, Binding> = {};
     let bindingsChanged = false;
     /** False when a concurrent run got there first: leave the marker, so the next run records it. */
     let complete = true;
@@ -310,18 +348,22 @@ export async function reconcilePlatformAgents(
         continue;
       }
 
-      // Asked once per run, before any write: a policy that cannot be read
-      // throws here, and the run is retried with nothing half-done.
-      const autoBinding = await desiredBinding(definition, db);
+      // The pick is asked only where its answer is used — a new instance, or
+      // a binding the platform still owns — and before any write for that
+      // agent: a policy that cannot be read throws here, and the run is
+      // retried. An org that chose its own provider never depends on it.
+      const recorded = recordedBindings[definition.slug];
+      const owned = !existing || platformOwnsBinding(existing, recorded);
+      const pick =
+        definition.defaultBinding && owned ? await desiredBinding(definition, db) : undefined;
 
       if (!existing) {
         try {
-          const placedBinding = await createInstance(db, definition, autoBinding, {
+          await createInstance(db, orgId, definition, pick && { follow: pick, recorded }, {
             ownerId: owner.id,
             capabilityIds: desiredCapabilityIds,
             tagIds: desiredTagIds,
           });
-          if (placedBinding) autoBindings[definition.slug] = placedBinding;
         } catch (err) {
           // Two reconciles of one org at once — the seed beside the job, or
           // two instances each serving a tick — both find the agent missing,
@@ -329,7 +371,7 @@ export async function reconcilePlatformAgents(
           // either way; the next run reconciles whatever it holds, or refuses
           // it if an org's own agent took the slug in between — and the
           // marker is not written, so that next run happens.
-          if (!isUniqueViolation(err)) throw err;
+          if (!isConcurrentWrite(err)) throw err;
           complete = false;
           log.info('Platform agent created concurrently — left to the next run', {
             orgId,
@@ -350,19 +392,23 @@ export async function reconcilePlatformAgents(
       try {
         outcome = await updateInstance(
           db,
+          orgId,
           definition,
           existing,
-          autoBinding && {
-            desired: autoBinding,
-            recorded: previous?.autoBindings?.[definition.slug],
-          },
+          pick
+            ? { follow: pick, recorded }
+            : recorded !== undefined && !owned
+              ? { release: true }
+              : undefined,
           { ownerId: owner.id, capabilityIds: desiredCapabilityIds, tagIds: desiredTagIds }
         );
       } catch (err) {
         // The same race on an existing agent: two runs number the same
         // version, and the second insert meets `(agentId, version)`. Its
         // whole transaction rolled back; the winner wrote the same change.
-        if (!isUniqueViolation(err)) throw err;
+        // Or an admin set the binding after this run read it: theirs stands,
+        // and the next run sees it as theirs.
+        if (!isConcurrentWrite(err)) throw err;
         complete = false;
         log.info('Platform agent updated concurrently — left to the next run', {
           orgId,
@@ -371,7 +417,6 @@ export async function reconcilePlatformAgents(
         result.unchanged.push(definition.slug);
         continue;
       }
-      if (outcome.placedBinding) autoBindings[definition.slug] = outcome.placedBinding;
       bindingsChanged ||= outcome.bindingsChanged;
       if (outcome.accessChanged) invalidateAgentAccess(existing.id);
       (outcome.changed ? result.updated : result.unchanged).push(definition.slug);
@@ -420,18 +465,9 @@ export async function reconcilePlatformAgents(
 
     if (bindingsChanged) capabilityDispatcher.clearCache();
 
-    const marker: PlatformAgentsMarker = {
-      hash,
-      slugs: [...placed, ...retired].sort(),
-      // Only when some agent's binding is the platform's, so the marker of an
-      // org with none is unchanged.
-      ...(Object.keys(autoBindings).length > 0 ? { autoBindings } : {}),
-    };
+    const marker = { hash, slugs: [...placed, ...retired].sort() };
     const markerChanged =
-      !previous ||
-      previous.hash !== marker.hash ||
-      !sameSet(previous.slugs, marker.slugs) ||
-      !isDeepStrictEqual(previous.autoBindings, marker.autoBindings);
+      !previous || previous.hash !== marker.hash || !sameSet(previous.slugs, marker.slugs);
     // A declared capability or tag with no row yet leaves the org short of its
     // definition. Recording the current digest would stop the job from ever
     // coming back for it, so the marker waits until nothing is missing.
@@ -463,11 +499,15 @@ export async function reconcilePlatformAgents(
 
 /**
  * Reconcile the org if it is behind: its stored digest differs from the
- * running registry's, or an agent whose binding the platform owns is no longer
- * on what the platform would pick now ({@link platformBindingsDrifted}). The
- * maintenance job's entry point. When nothing changed it costs one `Org` read,
- * plus, for an org with an agent that picks its own binding, the agents'
- * bindings and the pick's provider and model reads.
+ * running registry's, or an agent's binding is not where the platform would
+ * put it now ({@link platformBindingsDrifted}). The maintenance job's entry
+ * point. When nothing changed it costs one `Org` read, plus, for an org with
+ * an agent that picks its own binding, the agents' bindings, the org's
+ * provider policy and the pick's provider and model reads.
+ *
+ * The org's cached provider policy is dropped first. This process may have
+ * cached it before a grant or revocation served by another instance, and a
+ * pick made from it would put a binding back where the org can no longer go.
  */
 export async function reconcilePlatformAgentsIfStale(
   orgId: string,
@@ -475,10 +515,11 @@ export async function reconcilePlatformAgentsIfStale(
 ): Promise<{ reconciled: boolean; result?: PlatformAgentReconcileResult }> {
   if (!isMultiTenant() && orgId !== INSTALL_ORG_ID) return { reconciled: false };
   const db = options.db ?? defaultDb;
-  const marker = await loadPlatformAgentsMarker(orgId, db);
+  forgetOrgProviderPolicy(orgId);
+  const state = await loadPlatformAgentsState(orgId, db);
   if (
-    marker?.hash === platformAgentRegistryHash() &&
-    !(await platformBindingsDrifted(orgId, marker, db))
+    state?.marker?.hash === platformAgentRegistryHash() &&
+    !(await platformBindingsDrifted(orgId, state.bindings, db))
   ) {
     return { reconciled: false };
   }
@@ -493,13 +534,15 @@ export async function reconcilePlatformAgentsIfStale(
  * those has one write a hook could catch — an env var or a fork's resolver
  * has none at all — so the job asks the question itself, every pass.
  *
- * An agent the org has set is the org's, and is skipped. A missing or refused
- * agent is left to the digest check. Throws when the pick cannot read the
- * org's policy, so the job logs the org and asks again next pass.
+ * An agent the org has set is the org's, and its pick is not asked; it counts
+ * as drift only while a record of the platform's old pick remains, so a run
+ * drops it. A missing or refused agent is left to the digest check. Throws
+ * when the pick cannot read the org's policy, so the job logs the org and
+ * asks again next pass.
  */
 async function platformBindingsDrifted(
   orgId: string,
-  marker: PlatformAgentsMarker,
+  recordedBindings: PlatformAgentBindings,
   db: TenancyClient
 ): Promise<boolean> {
   const definitions = platformAgentsForOrg(orgId).filter((d) => d.defaultBinding);
@@ -516,9 +559,19 @@ async function platformBindingsDrifted(
     });
     for (const definition of definitions) {
       const row = rows.find((r) => r.slug === definition.slug);
-      if (!row || !platformOwnsBinding(row, marker.autoBindings?.[definition.slug])) continue;
+      if (!row) continue;
+      const recorded = recordedBindings[definition.slug];
+      if (!platformOwnsBinding(row, recorded)) {
+        if (recorded !== undefined) return true;
+        continue;
+      }
       const desired = await desiredBinding(definition, db);
-      if (desired && !sameBinding(row, desired)) return true;
+      if (
+        desired &&
+        (!sameBinding(row, desired) || recordUpdate(recorded, desired) !== undefined)
+      ) {
+        return true;
+      }
     }
     return false;
   });
@@ -577,16 +630,29 @@ interface DesiredSets {
   tagIds: string[];
 }
 
-/** Returns the binding the platform placed, when it placed one (see `autoBindings`). */
+/**
+ * The isolation an agent's transaction runs at: SERIALIZABLE when it also
+ * writes the binding record, so that read-modify-write of `Org.settings`
+ * cannot lose a concurrent write of another slice.
+ */
+function isolationFor(record: Binding | null | undefined) {
+  return record === undefined
+    ? undefined
+    : { isolationLevel: Prisma.TransactionIsolationLevel.Serializable };
+}
+
 async function createInstance(
   db: TenancyClient,
+  orgId: string,
   definition: PlatformAgentDefinition,
-  autoBinding: Binding | undefined,
+  plan: { follow: Binding; recorded: Binding | undefined } | undefined,
   desired: DesiredSets
-): Promise<Binding | undefined> {
+): Promise<void> {
   const starting = { provider: '', model: '', ...definition.defaults };
-  const placedBinding = autoBinding && sameBinding(starting, INHERIT) ? autoBinding : undefined;
+  // A definition that sets its own default binding owns it outright.
+  const placedBinding = plan && sameBinding(starting, INHERIT) ? plan.follow : undefined;
   if (placedBinding) Object.assign(starting, placedBinding);
+  const record = placedBinding && recordUpdate(plan?.recorded, placedBinding);
 
   await db.$transaction(async (tx) => {
     const created = await tx.aiAgent.create({
@@ -626,38 +692,38 @@ async function createInstance(
         createdBy: desired.ownerId,
       },
     });
-  });
-  return placedBinding;
+    if (record !== undefined) {
+      await recordPlatformAgentBinding(tx, orgId, definition.slug, record);
+    }
+  }, isolationFor(record));
 }
 
 /**
- * `autoBinding` is the definition's pick (`desired`) beside what the platform
- * last placed (`recorded`). While the platform owns the binding it is moved to
- * the pick — onto a model newly reachable, off a provider the org lost, or
- * back to "inherit" when nothing qualifies — and `placedBinding` reports it.
+ * `plan` (see {@link BindingPlan}) says what happens to the binding: while the
+ * platform owns it, it is moved to the pick — onto a model newly reachable,
+ * off a provider the org lost, or back to "inherit" when nothing qualifies —
+ * and the record moves with it, in the same transaction.
  */
 async function updateInstance(
   db: TenancyClient,
+  orgId: string,
   definition: PlatformAgentDefinition,
   existing: ExistingAgent,
-  autoBinding: { desired: Binding; recorded: Binding | undefined } | undefined,
+  plan: BindingPlan,
   desired: DesiredSets
-): Promise<{
-  changed: boolean;
-  bindingsChanged: boolean;
-  accessChanged: boolean;
-  placedBinding?: Binding;
-}> {
+): Promise<{ changed: boolean; bindingsChanged: boolean; accessChanged: boolean }> {
   const current: Record<string, unknown> = existing;
   const changes: Record<string, unknown> = {};
   for (const [field, value] of Object.entries(codeOwnedValues(definition))) {
     if (!isDeepStrictEqual(current[field], value)) changes[field] = value;
   }
-  const placedBinding =
-    autoBinding && platformOwnsBinding(existing, autoBinding.recorded)
-      ? autoBinding.desired
-      : undefined;
-  if (placedBinding && !sameBinding(existing, placedBinding)) Object.assign(changes, placedBinding);
+  const moveBinding = plan && 'follow' in plan && !sameBinding(existing, plan.follow);
+  if (moveBinding) Object.assign(changes, plan.follow);
+  const record = !plan
+    ? undefined
+    : 'release' in plan
+      ? null
+      : recordUpdate(plan.recorded, plan.follow);
 
   const currentTagIds = existing.grantedTags.map((g) => g.tagId);
   const currentDocumentIds = existing.grantedDocuments.map((g) => g.documentId);
@@ -689,8 +755,9 @@ async function updateInstance(
     ...(documentsChanged ? ['grantedDocumentIds'] : []),
   ];
 
-  if (changedFields.length === 0 && !tagsChanged && !documentsChanged && !bindingsChanged) {
-    return { changed: false, bindingsChanged: false, accessChanged: false, placedBinding };
+  const changed = changedFields.length > 0 || tagsChanged || documentsChanged || bindingsChanged;
+  if (!changed && record === undefined) {
+    return { changed: false, bindingsChanged: false, accessChanged: false };
   }
 
   await db.$transaction(async (tx) => {
@@ -750,13 +817,22 @@ async function updateInstance(
       await tx.aiAgentKnowledgeDocument.deleteMany({ where: { agentId: existing.id } });
     }
 
-    const updated =
-      changedFields.length > 0
-        ? await tx.aiAgent.update({
-            where: { id: existing.id },
-            data: writeData(changes),
-          })
-        : existing;
+    let updated: Prisma.AiAgentGetPayload<object> = existing;
+    if (moveBinding) {
+      // Only while the binding is still what this run read: an admin's choice
+      // saved since then is theirs, and nothing of this run's is written.
+      const { count } = await tx.aiAgent.updateMany({
+        where: { id: existing.id, provider: existing.provider, model: existing.model },
+        data: writeData(changes),
+      });
+      if (count === 0) throw new BindingChangedConcurrently();
+      updated = await tx.aiAgent.findUniqueOrThrow({ where: { id: existing.id } });
+    } else if (changedFields.length > 0) {
+      updated = await tx.aiAgent.update({ where: { id: existing.id }, data: writeData(changes) });
+    }
+    if (record !== undefined) {
+      await recordPlatformAgentBinding(tx, orgId, definition.slug, record);
+    }
 
     if (versionedChanges.length > 0) {
       await tx.aiAgentVersion.create({
@@ -771,13 +847,12 @@ async function updateInstance(
         },
       });
     }
-  });
+  }, isolationFor(record));
 
   return {
-    changed: true,
+    changed,
     bindingsChanged,
     accessChanged: tagsChanged || documentsChanged || 'knowledgeAccessMode' in changes,
-    placedBinding,
   };
 }
 

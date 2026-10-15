@@ -397,7 +397,7 @@ release process.
   the default chat model until a registry change triggered a reconcile; a pin
   to a provider later revoked was refused on every call. While the agent's
   provider and model are the platform's — empty, or still what it last
-  placed, now recorded in the marker's `autoBindings` — the `platformAgents`
+  placed, now recorded in `Org.settings.platformAgentBindings` — the `platformAgents`
   maintenance job re-picks them every pass and moves them when the pick
   changes: a grant, a revocation (back to inherit if nothing qualifies), a
   provider switched on, a key set, a strong model added.

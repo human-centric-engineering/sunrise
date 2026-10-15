@@ -67,12 +67,19 @@ Every agent field declares its side (see
   with a $25 monthly budget), and `cleanup-agent` pins the strongest
   tool-using model the org can reach, among providers the org may use
   (§120 t-746). That pin is the one exception to "set once": while provider
-  and model are empty or still what the platform last placed (the marker's
-  `autoBindings`), every reconcile moves them to the current pick — onto a
-  model newly reachable, off a provider the org lost, or back to "inherit"
-  when nothing qualifies. Once the org sets them, they are the org's, and
-  setting them back to empty hands them back (t-798). A marker written before
-  t-798 has no `autoBindings`, so a pin placed then is treated as the org's.
+  and model are empty or still what the platform last placed, every
+  reconcile moves them to the current pick — onto a model newly reachable,
+  off a provider the org lost, or back to "inherit" when nothing qualifies.
+  What it placed is recorded in `Org.settings.platformAgentBindings`, in the
+  same SERIALIZABLE transaction as the binding write, so a run that stops
+  part-way never leaves a pin it cannot recognise as its own. The write only
+  lands while the binding is still what the run read, so an admin's save in
+  between stands. Once the org sets them, they are the org's: the next pass
+  drops the record, so setting the platform's old pick again later stays the
+  org's choice too. Setting them back to empty hands them back (t-798). A pin
+  placed before t-798 has no record, so it is treated as the org's. The pick
+  is asked only for a binding the platform owns, so a policy that cannot be
+  read never stops the reconcile of an org that chose its own provider.
 
 ## What an org's admin can change
 
@@ -157,9 +164,11 @@ the org's own scope itself, and it has four callers:
    grant or revocation, a provider switched on, a key set, a strong model
    added, a fork's eligibility rule — and some of those (an env var, a fork's
    credential resolver) have no write a hook could catch. So the job asks,
-   every pass. Otherwise it is one `Org` read per org, plus, where an agent
-   picks its own binding, that agent's binding and the pick's provider and
-   model reads.
+   every pass, after dropping this process's cached copy of the org's
+   provider policy, which may predate a grant or revocation another instance
+   served. Otherwise it is one `Org` read per org, plus, where an agent picks
+   its own binding, that agent's binding, the org's provider policy and the
+   pick's provider and model reads.
 
 The digest covers every definition, the baseline, and the patterns
 document's slug (`PATTERNS_DOCUMENT_SLUG` in

@@ -39,6 +39,10 @@ import {
   loadOrgQuotas,
   loadOrgRetention,
   loadPlatformAgentsMarker,
+  loadPlatformAgentsState,
+  recordPlatformAgentBinding,
+  readPlatformAgentBindings,
+  ORG_PLATFORM_AGENT_BINDINGS_KEY,
   readOrgRetention,
   isSettingsWriteConflict,
   readOrgProviderPolicy,
@@ -244,18 +248,6 @@ describe('the platform-agents marker (§116 t-724)', () => {
     expect(readPlatformAgentsMarker(['platformAgents'])).toBeNull();
   });
 
-  it('reads the platform-placed bindings, and drops them rather than the marker when malformed (t-798)', () => {
-    const autoBindings = { 'cleanup-agent': { provider: 'openai', model: 'gpt-4.1' } };
-    expect(readPlatformAgentsMarker({ platformAgents: { ...marker, autoBindings } })).toEqual({
-      ...marker,
-      autoBindings,
-    });
-    // Losing `slugs` would stop a retired agent being deactivated.
-    expect(
-      readPlatformAgentsMarker({ platformAgents: { ...marker, autoBindings: { x: 'openai' } } })
-    ).toEqual(marker);
-  });
-
   it('loads one org’s marker, or null for an org that does not exist', async () => {
     mockFindUnique.mockResolvedValueOnce({ settings: { platformAgents: marker } });
     expect(await loadPlatformAgentsMarker('org_a')).toEqual(marker);
@@ -322,6 +314,86 @@ describe('the platform-agents marker (§116 t-724)', () => {
   });
 });
 
+describe('the platform-placed bindings (t-798)', () => {
+  const placed = { 'cleanup-agent': { provider: 'openai', model: 'gpt-4.1' } };
+
+  it('reads well-formed bindings; absent or malformed is none, so nothing reads as the platform’s', () => {
+    expect(ORG_PLATFORM_AGENT_BINDINGS_KEY).toBe('platformAgentBindings');
+    expect(readPlatformAgentBindings({ platformAgentBindings: placed })).toEqual(placed);
+    expect(readPlatformAgentBindings(null)).toEqual({});
+    expect(readPlatformAgentBindings({ retention: {} })).toEqual({});
+    expect(readPlatformAgentBindings({ platformAgentBindings: { x: 'openai' } })).toEqual({});
+    expect(readPlatformAgentBindings(['platformAgentBindings'])).toEqual({});
+  });
+
+  it('loads the marker and the bindings from one read, or null for an org that does not exist', async () => {
+    const marker = { hash: 'abc123', slugs: ['cleanup-agent'] };
+    mockFindUnique.mockResolvedValueOnce({
+      settings: { platformAgents: marker, platformAgentBindings: placed },
+    });
+    expect(await loadPlatformAgentsState('org_a')).toEqual({ marker, bindings: placed });
+    expect(mockFindUnique).toHaveBeenCalledTimes(1);
+
+    mockFindUnique.mockResolvedValueOnce(null);
+    expect(await loadPlatformAgentsState('gone')).toBeNull();
+  });
+
+  it('records one slug in the caller’s transaction, keeping every other key and slug', async () => {
+    const tx = {
+      org: {
+        findUnique: vi.fn().mockResolvedValue({
+          settings: { branding: { logo: 'x' }, platformAgentBindings: placed },
+        }),
+        update: vi.fn(),
+      },
+    };
+
+    await recordPlatformAgentBinding(tx as never, 'org_a', 'judge', {
+      provider: 'anthropic',
+      model: 'claude',
+    });
+
+    expect(tx.org.update).toHaveBeenCalledWith({
+      where: { id: 'org_a' },
+      data: {
+        settings: {
+          branding: { logo: 'x' },
+          platformAgentBindings: { ...placed, judge: { provider: 'anthropic', model: 'claude' } },
+        },
+      },
+    });
+  });
+
+  it('clears a slug, dropping the key and then the column when nothing is left', async () => {
+    const tx = {
+      org: {
+        findUnique: vi
+          .fn()
+          .mockResolvedValueOnce({ settings: { branding: {}, platformAgentBindings: placed } })
+          .mockResolvedValueOnce({ settings: { platformAgentBindings: placed } }),
+        update: vi.fn(),
+      },
+    };
+
+    await recordPlatformAgentBinding(tx as never, 'org_a', 'cleanup-agent', null);
+    await recordPlatformAgentBinding(tx as never, 'org_a', 'cleanup-agent', null);
+
+    expect(tx.org.update).toHaveBeenNthCalledWith(1, {
+      where: { id: 'org_a' },
+      data: { settings: { branding: {} } },
+    });
+    expect(tx.org.update).toHaveBeenNthCalledWith(2, {
+      where: { id: 'org_a' },
+      data: { settings: Prisma.DbNull },
+    });
+  });
+
+  it('writes nothing for an org that is gone', async () => {
+    const tx = { org: { findUnique: vi.fn().mockResolvedValue(null), update: vi.fn() } };
+    await recordPlatformAgentBinding(tx as never, 'gone', 'cleanup-agent', null);
+    expect(tx.org.update).not.toHaveBeenCalled();
+  });
+});
 describe('the provider policy (§120 t-742)', () => {
   it('reads a stored policy', () => {
     expect(
