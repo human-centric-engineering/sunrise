@@ -41,7 +41,7 @@ export interface SeedScan {
 const SEED_DIR = join(process.cwd(), 'prisma', 'seeds');
 
 /** Blank out string literals, template literals and comments, preserving length. */
-function maskLiterals(src: string): string {
+export function maskLiterals(src: string): string {
   const out = src.split('');
   let i = 0;
   while (i < src.length) {

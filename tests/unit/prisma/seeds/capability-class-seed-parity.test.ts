@@ -45,12 +45,13 @@
  *    another model's nested write.
  *  - A seed that uses the app's own client (`@/lib/db/client`) at all, even if
  *    it catches the error.
+ *  - A seed whose source writes `aiCapability` by name but was seen writing
+ *    none: its writes sit behind a path the mock did not drive.
  *
  * A seed this cannot run — raw SQL, the app client — goes in
  * `APP_UNCHECKED_SEEDS` (same file) with the reason it writes no capability;
- * the first two rules then skip it. Do not put a capability seed there.
- *  - A seed whose source writes `aiCapability` by name but was seen writing
- *    none: its writes sit behind a path the mock did not drive.
+ * the first two rules then skip it. One whose source writes `aiCapability` by
+ * name fails if listed there.
  *
  * @see .context/database/seeding.md — the seed ownership rule
  * @see lib/app/capability-seed-pairs.ts — where a fork's pairs go
@@ -88,6 +89,7 @@ vi.mock('@/lib/db/client', () => {
 
 import { discoverSeedFiles, type SeedContext, type SeedUnit } from '@/prisma/runner';
 import { isRecord } from '@/lib/utils';
+import { maskLiterals } from '@/tests/helpers/seed-capabilities';
 import {
   APP_CAPABILITY_PAIRS,
   APP_UNCHECKED_SEEDS,
@@ -244,7 +246,7 @@ function strictClient(
       // An update by id names the slug only through the row it looked up.
       const byId =
         typeof where.id === 'string' && where.id.startsWith(ID_PREFIX)
-          ? where.id.slice(ID_PREFIX.length)
+          ? where.id.slice(ID_PREFIX.length) || undefined
           : undefined;
       captured.push({
         file,
@@ -342,24 +344,30 @@ beforeAll(async () => {
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   for (const file of (await discoverSeedFiles(SEED_DIR, SEED_DIR)).sort()) {
     globalClient.current = file;
-    const code = readFileSync(join(SEED_DIR, file), 'utf8')
-      .replace(/\/\*[\s\S]*?\*\//g, '')
-      .replace(/\/\/.*$/gm, '');
-    if (NAMED_CAPABILITY_WRITE.test(code)) {
+    // Comments and string contents blanked, so neither a mention nor a
+    // `'image/*'` in a description decides this.
+    if (NAMED_CAPABILITY_WRITE.test(maskLiterals(readFileSync(join(SEED_DIR, file), 'utf8')))) {
       namingCapabilityWrite.push(file);
     }
-    try {
-      const mod: unknown = await import(/* @vite-ignore */ join(SEED_DIR, file));
-      const unit = isRecord(mod) ? mod.default : undefined;
-      if (!isSeedUnit(unit)) throw new Error('does not default-export a SeedUnit');
-      for (const capabilities of ['absent', 'present'] as const) {
+    const mod: unknown = await import(/* @vite-ignore */ join(SEED_DIR, file)).catch(
+      (err: unknown) => err
+    );
+    const unit = isRecord(mod) ? mod.default : undefined;
+    if (!isSeedUnit(unit)) {
+      failed.push({ file, error: 'does not default-export a SeedUnit' });
+      continue;
+    }
+    // Each mode on its own: an 'absent' run that stops at a not-found must
+    // not keep the 'present' run from reaching the update behind it.
+    for (const capabilities of ['absent', 'present'] as const) {
+      try {
         await unit.run({
           prisma: strictClient(file, captured, capabilities),
           logger,
         } as unknown as SeedContext);
+      } catch (err) {
+        failed.push({ file, error: err instanceof Error ? err.message : String(err) });
       }
-    } catch (err) {
-      failed.push({ file, error: err instanceof Error ? err.message : String(err) });
     }
   }
 }, 60_000);
@@ -384,9 +392,10 @@ describe('capabilities — seeded definition matches the class (#545, #646)', ()
     // loop calling a helper whose source, not the seed's, names the write.
     // (Any write counts: one that only retires or renames a capability has no
     // definition to check, but it did run.)
-    expect(
-      namingCapabilityWrite.filter((file) => checked(file) && !wroteCapability.has(file))
-    ).toEqual([]);
+    // An unchecked seed is held to this too: one that writes a capability by
+    // name does not belong on that list.
+    expect(namingCapabilityWrite.filter((file) => !wroteCapability.has(file))).toEqual([]);
+    expect(namingCapabilityWrite.filter((file) => UNCHECKED_SEEDS.has(file))).toEqual([]);
   });
 
   it('pairs every capability the seeds write, and nothing they do not', () => {
