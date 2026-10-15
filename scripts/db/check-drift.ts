@@ -145,6 +145,21 @@ const DRIFT_OBJECTS: DriftObject[] = [
     probe: constraintExists('ai_provider_model_price_pair'),
   },
   {
+    // A storage option, not an object: Prisma models the index but not its
+    // `WITH (...)`, so a migration that recreated it would drop the option
+    // silently, and a heavy erasure would again depend on autovacuum (t-806).
+    name: 'A11 ai_webhook_delivery_payload_idx (fastupdate=off)',
+    kind: 'GIN index storage option',
+    table: 'ai_webhook_delivery',
+    probe: indexExists('ai_webhook_delivery_payload_idx', 'fastupdate=off'),
+  },
+  {
+    name: 'A12 ai_event_hook_delivery_payload_idx (fastupdate=off)',
+    kind: 'GIN index storage option',
+    table: 'ai_event_hook_delivery',
+    probe: indexExists('ai_event_hook_delivery_payload_idx', 'fastupdate=off'),
+  },
+  {
     name: "Postgres 'english' tsearch configuration",
     kind: 'pg_ts_config row',
     table: '—',

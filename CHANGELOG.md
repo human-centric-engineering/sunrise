@@ -243,6 +243,26 @@ release process.
 
 ### Changed
 
+- **`eraseUser()` redacts a person's delivery payloads before its
+  transaction** (t-806; owner ruling 2026-10-15). Once its callers' checks
+  have passed, it redacts every webhook and event-hook delivery naming the
+  person in committed 5,000-row chunks (`preRedactSubjectFromDeliveries` in
+  `lib/privacy/delivery-payloads.ts`), then runs the transaction, whose own
+  pass writes only rows that still need it. A heavy history used to time the
+  60 s transaction out (around 600,000 rows), and an erasure that times out
+  erases nothing. **What changes for a caller:** if the transaction fails after
+  that step, the person's delivery payloads are already anonymised and their
+  retries stopped while the account still exists; a retried erasure completes
+  the rest. Run your own refusal checks before calling `eraseUser()`, as the
+  core routes do. The delivery payload GIN indexes now carry
+  `fastupdate = off` (migration `20261015160000_delivery_payload_gin_no_fastupdate`,
+  probed by `db:drift-check` as A11 and A12), so the transaction's match does
+  not slow down until a vacuum.
+- **Email delivery sends are bounded at 15 s** (t-808). `DISPATCH_TIMEOUT_MS`
+  in `lib/orchestration/webhooks/not-retried.ts` holds every channel's send
+  timeout, and a test keeps each below the retry claim lease. An email send
+  that times out fails as retriable. **Forks:** a delivery channel you add
+  needs an entry there.
 - **A platform agent's `defaultBinding` is now asked on every maintenance
   pass, and its answer moves the agent** (t-798). `PlatformAgentDefinition
   .defaultBinding` used to be asked only when an instance was created, or

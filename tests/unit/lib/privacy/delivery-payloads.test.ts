@@ -777,7 +777,7 @@ describe('preRedactSubjectFromDeliveries', () => {
 
   it('rewrites in committed chunks of 5,000, each from the row as it is, and sums what changed', async () => {
     const { client, queryRaw, executeRaw } = makeClient([]);
-    queryRaw.mockResolvedValueOnce(matchedIds(10_001));
+    queryRaw.mockResolvedValueOnce(matchedIds(10_001) as unknown as RawRow[]);
     executeRaw.mockResolvedValueOnce(5_000).mockResolvedValueOnce(4_999).mockResolvedValueOnce(1);
 
     const changed = await preRedactSubjectFromDeliveries(client, 'hook', SUBJECT);

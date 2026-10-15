@@ -3,10 +3,15 @@
  * `eraseUser()` takes when the person's events fill the webhook and event-hook
  * delivery tables. Measurement, not a check.
  *
- * `eraseSubjectFromDeliveries` matches, redacts and rewrites in one SQL
- * statement per table (t-806; before it, every payload went through Node),
- * inside the erasure transaction, which has `ERASURE_TRANSACTION_TIMEOUT_MS`
- * (60 s). This seeds, per size:
+ * Since t-806 `eraseUser()` redacts the deliveries in committed chunks before
+ * its transaction (`preRedactSubjectFromDeliveries`, no time limit), and the
+ * transaction's own pass, which has `ERASURE_TRANSACTION_TIMEOUT_MS` (60 s),
+ * then writes only what that missed. The spike runs the pre-pass itself first
+ * and times it, then times `eraseUser()`. That second figure is an upper
+ * bound on the transaction: it also includes `eraseUser()`'s own pre-pass,
+ * which here only re-matches, since there is nothing left to change. The
+ * transaction itself fitted if the erasure did not throw. This seeds, per
+ * size:
  *
  *   - one subject with `size / 10` conversations;
  *   - `size` deliveries in EACH table naming them: a `message.created`-shaped
@@ -27,7 +32,10 @@
 import { performance } from 'node:perf_hooks';
 import { prisma } from '@/lib/db/client';
 import { eraseUser } from '@/lib/privacy/erase-user';
-import { deliveriesNamingSubject } from '@/lib/privacy/delivery-payloads';
+import {
+  deliveriesNamingSubject,
+  preRedactSubjectFromDeliveries,
+} from '@/lib/privacy/delivery-payloads';
 import { ERASURE_TRANSACTION_TIMEOUT_MS } from '@/lib/privacy/erase-user';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -158,6 +166,13 @@ async function measure(size: number): Promise<void> {
     }
     const readMs = performance.now() - readStart;
 
+    const preStart = performance.now();
+    let preRedacted = 0;
+    for (const table of ['webhook', 'hook'] as const) {
+      preRedacted += await preRedactSubjectFromDeliveries(prisma, table, subject.id);
+    }
+    const preMs = performance.now() - preStart;
+
     const start = performance.now();
     const result = await eraseUser({
       userId: subject.id,
@@ -184,7 +199,8 @@ async function measure(size: number): Promise<void> {
       [
         `size ${size.toLocaleString()} per table`,
         `(${(size * 2).toLocaleString()} rows naming the subject, ${conversationCount.toLocaleString()} conversations)`,
-        `erase ${(eraseMs / 1000).toFixed(2)} s = ${share.toFixed(1)}% of the timeout`,
+        `pre-pass ${(preMs / 1000).toFixed(2)} s for ${preRedacted.toLocaleString()} rows`,
+        `then erase ${(eraseMs / 1000).toFixed(2)} s = ${share.toFixed(1)}% of the timeout`,
         `read alone ${(readMs / 1000).toFixed(2)} s for ${matched.toLocaleString()} rows`,
         `redacted webhook ${redacted[0].toLocaleString()}, hook ${redacted[1].toLocaleString()}`,
         `(seed ${(seedMs / 1000).toFixed(1)} s)`,

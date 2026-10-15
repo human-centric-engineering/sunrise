@@ -327,29 +327,41 @@ transaction):
    - In both, their id becomes `null`, their display name goes, and they leave
      `approverUserIds`. Other people's ids are untouched.
 
-   Written in bulk (500 rows a statement), so a person with years of chat
-   events costs a few statements, not a round trip each, and the transaction
-   is given 60 s (`ERASURE_TRANSACTION_TIMEOUT_MS`) rather than Prisma's 5 s
-   default. **Measured limit** (t-793,
-   `scripts/spikes/erasure-delivery-scale.ts`, local Postgres on a loaded dev
-   machine, vacuumed tables):
+   **Two passes** (t-806; owner ruling 2026-10-15). Before the transaction,
+   once nothing will refuse the erasure (where the avatars go),
+   `preRedactSubjectFromDeliveries` matches the person's rows once and
+   rewrites them in committed chunks of 5,000, each one `UPDATE` in Postgres
+   with no payload passing through Node. Then the transaction's own pass,
+   `eraseSubjectFromDeliveries`, matches again and writes only rows that still
+   need it: a delivery written since, or everything if the pre-pass failed
+   (logged, not fatal). The transaction has 60 s
+   (`ERASURE_TRANSACTION_TIMEOUT_MS`) rather than Prisma's 5 s default.
+   **Accepted:** if the transaction fails after the pre-pass, the person's
+   delivery payloads are already anonymised and their retries stopped while
+   the account still exists. Redaction is idempotent, and a retried erasure
+   completes the rest.
 
-   | Rows naming the person (both tables) | Erasure | Share of the 60 s timeout |
-   | ------------------------------------ | ------- | ------------------------- |
-   | 50,000                               | 3.0 s   | 5%                        |
-   | 200,000                              | 18.9 s  | 32%                       |
-   | 400,000                              | 39.3 s  | 66%                       |
+   **Measured** (`scripts/spikes/erasure-delivery-scale.ts`, local Postgres on
+   a loaded dev machine, vacuumed before seeding):
 
-   That is about 0.1 ms a row, mostly the read-back-and-rewrite of each
-   payload; the matching read is a small part of it (7.6 s at 400,000).
-   Somewhere around 600,000 rows the transaction times out, rolls back, and
-   the person cannot be erased until their history shrinks. Rows inserted
-   since the last vacuum cost more: GIN's pending list (up to
-   `gin_pending_list_limit`, 4 MB by default) is scanned on every match, and
-   a table bulk-loaded and not yet vacuumed doubled the time. Delivery rows
-   are kept for ever unless `webhookRetentionDays` is set. An install whose
-   users generate deliveries at that scale should set it. Moving the rewrite
-   into SQL (one `UPDATE … FROM`) is filed as t-806. Every core event about a conversation or workflow run names its
+   | Rows naming the person (both tables) | Pre-pass (no limit) | Then `eraseUser()` | Share of the 60 s |
+   | ------------------------------------ | ------------------- | ------------------ | ----------------- |
+   | 100,000                              | 13.6 s              | 5.9 s              | 10%               |
+   | 400,000                              | 33.1 s              | 16.5 s             | 28%               |
+   | 1,000,000                            | 93.0 s              | 57.6 s             | 96%               |
+
+   The last column overstates the transaction: it includes `eraseUser()`'s
+   own pre-pass, which in the spike only re-matches. A million rows fit;
+   beyond that the transaction's match (16.5 s alone at a million) is what
+   grows. Before t-806 a single in-transaction rewrite timed out near 600,000
+   rows. Two things made the difference, both measured: each SQL redaction
+   step is fenced (`OFFSET 0`), since an inlined step re-ran its `jsonb_each`
+   per reference (9.9 s against 0.6 s for 50,000 rows), and the payload GIN
+   indexes have no pending list (`fastupdate = off`), since every probe of the
+   transaction's match otherwise scanned the entries the pre-pass had just
+   added (29.6 s against 4.7 s for 200,000 rows). Delivery rows are kept for
+   ever unless `webhookRetentionDays` is set; an install whose users generate
+   deliveries at that scale should set it. Every core event about a conversation or workflow run names its
    owner on the payload itself (`userId`, or `embedVisitorId` for a visitor),
    so the match does not depend on the conversation or run still existing
    (t-792). **Known limit:** rows written before that change by
