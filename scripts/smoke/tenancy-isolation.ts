@@ -21,6 +21,11 @@
  *     lists answer B's rows and none of A's — after establishing A's exist —
  *     the conversations list only the admin's own thread, and A's agent by
  *     id is not found, which the route answers with a 404;
+ *   - the mixed pages (§111 t-812): as a narrowed org ADMIN of B, after
+ *     establishing A's figures are non-zero, the reads behind the dashboard,
+ *     costs, analytics and executions pages answer B's figures and none of
+ *     A's — spend, budget alerts, today's request count, conversation counts
+ *     and quoted questions, and the execution list;
  *   - the budget caps (§110 t-788): the global spend total, asked from A,
  *     counts B's cost row, and an org cap stops A's agent and not B's;
  *   - the raw-SQL paths: vector search (`searchKnowledge`), cost reports
@@ -162,7 +167,13 @@ import { BUILTIN_WORKFLOW_TEMPLATES } from '@/prisma/seeds/data/templates';
 import { searchKnowledge } from '@/lib/orchestration/knowledge/search';
 import { backfillMissingEmbeddings } from '@/lib/orchestration/chat/message-embedder';
 import { searchConversationEmbeddings } from '@/lib/orchestration/chat/conversation-semantic-search';
-import { getCostBreakdown, getCostSummary } from '@/lib/orchestration/llm/cost-reports';
+import {
+  getBudgetAlerts,
+  getCostBreakdown,
+  getCostSummary,
+} from '@/lib/orchestration/llm/cost-reports';
+import { getEngagementMetrics, getPopularTopics } from '@/lib/orchestration/analytics';
+import type { AuthenticatedSession } from '@/lib/auth/guards';
 import { checkBudget, getMonthToDateGlobalSpend } from '@/lib/orchestration/llm/cost-tracker';
 import {
   assertWithinSpendCaps,
@@ -200,7 +211,10 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { exportOrchestrationConfig } from '@/lib/orchestration/backup/exporter';
 import { importOrchestrationConfig } from '@/lib/orchestration/backup/importer';
 import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
-import { conversationVisibilityWhere } from '@/lib/orchestration/access/conversation-access';
+import {
+  conversationVisibilityWhere,
+  deploymentWideConversationWhere,
+} from '@/lib/orchestration/access/conversation-access';
 import { executionVisibilityWhere } from '@/lib/orchestration/access/execution-access';
 import { runScopedJob } from '@/lib/orchestration/maintenance/job-scope';
 import { DEFAULT_USER_ROLE, PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
@@ -1011,6 +1025,209 @@ async function main(): Promise<void> {
         // Later sections count B's members and rows ([20]'s erasure expects
         // its one member), so this section leaves B as it found it.
         await runAsSystem('smoke: remove [3c]’s org admin', async () => {
+          await prisma.aiConversation.deleteMany({ where: { id: ownThread.id } });
+          await prisma.orgMembership.deleteMany({ where: { userId: orgAdminUser.id } });
+          await prisma.user.deleteMany({ where: { id: orgAdminUser.id } });
+        });
+      }
+    }
+
+    // ── B's org admin on the mixed pages (§111 t-812) ──────────────────────
+    // The dashboard, costs, analytics and executions pages open to an org
+    // admin with their org's half. Their routes run in the org the guard
+    // entered, so what keeps A's figures off B's pages is row isolation under
+    // that org and the owner layer under the narrowed principal. So this
+    // drives each page's reads as the guard runs them: B entered from a
+    // session, a real narrowed org ADMIN of B as the subject. Which routes
+    // admit them, and which refuse them, is
+    // `tests/integration/api/v1/admin/orchestration/org-tier-admission.test.ts`'s.
+    console.log("\n[3d] B's org admin on the mixed pages: B's figures, none of A's");
+    {
+      const monthStart = new Date();
+      monthStart.setUTCDate(1);
+      monthStart.setUTCHours(0, 0, 0, 0);
+      const todayStart = new Date();
+      todayStart.setUTCHours(0, 0, 0, 0);
+      // Each org's own figures, read in the system scope, so a page that
+      // reads B's answers B's and one that leaks A's answers more (fp6).
+      const figures = (orgId: string, agentId: string) =>
+        runAsSystem('smoke: an org’s own figures', async () => ({
+          agentMonthSpend:
+            (
+              await prisma.aiCostLog.aggregate({
+                where: { orgId, agentId, createdAt: { gte: monthStart } },
+                _sum: { totalCostUsd: true },
+              })
+            )._sum.totalCostUsd ?? 0,
+          requestsToday: await prisma.aiCostLog.count({
+            where: { orgId, createdAt: { gte: todayStart } },
+          }),
+          executions: await prisma.aiWorkflowExecution.count({ where: { orgId } }),
+          conversations: await prisma.aiConversation.count({ where: { orgId } }),
+        }));
+      const aFigures = await figures(a.orgId, a.agentId);
+      check(
+        aFigures.agentMonthSpend > 0 &&
+          aFigures.requestsToday > 0 &&
+          aFigures.executions > 0 &&
+          aFigures.conversations > 0,
+        `A's spend, requests, executions and conversations are non-zero (${JSON.stringify(aFigures)})`
+      );
+
+      const orgAdminUser = await prisma.user.create({
+        data: { name: `${PREFIX} b mixed admin`, email: `${PREFIX}-bmixed-${stamp}@example.com` },
+      });
+      await prisma.orgMembership.create({
+        data: { orgId: b.orgId, userId: orgAdminUser.id, role: ORG_ADMIN_ROLE },
+      });
+      const orgAdmin: AuthorizationPrincipal = {
+        userId: orgAdminUser.id,
+        role: DEFAULT_USER_ROLE,
+        credential: 'session',
+        orgId: b.orgId,
+        orgRole: ORG_ADMIN_ROLE,
+      };
+      const asBAdmin = <T>(fn: () => Promise<T>) =>
+        runAsOrg(b.orgId, () => asPrincipal(orgAdmin, fn), {
+          source: 'session',
+          role: ORG_ADMIN_ROLE,
+        });
+      // The fields the analytics and visibility readers take from the guard's
+      // session; nothing else of it is read on these paths.
+      const viewer = {
+        user: { id: orgAdminUser.id },
+        principal: orgAdmin,
+        unattributedReads: await resolveUnattributedReads(orgAdmin),
+      };
+      const analyticsSession = viewer as unknown as AuthenticatedSession;
+      // A thread and a run of the admin's own in B, so the reads that show
+      // only what the caller may open have something of B's to show.
+      const ownTopic = `${PREFIX} charlie chinchilla charter ${stamp}`;
+      const ownThread = await runAsOrg(b.orgId, () =>
+        prisma.aiConversation.create({
+          data: {
+            userId: orgAdminUser.id,
+            agentId: b.agentId,
+            title: `${PREFIX} b mixed admin thread`,
+            messages: { create: [{ role: 'user', content: ownTopic }] },
+          },
+          select: { id: true },
+        })
+      );
+      const ownRun = await runAsOrg(b.orgId, () =>
+        prisma.aiWorkflowExecution.create({
+          data: {
+            workflowId: b.workflowId,
+            status: 'completed',
+            inputData: {},
+            executionTrace: [],
+            userId: orgAdminUser.id,
+          },
+          select: { id: true },
+        })
+      );
+      // Both agents over budget, so the alerts have one of each org's to show.
+      const budgets = await runAsSystem('smoke: [3d] agents’ budgets before', () =>
+        prisma.aiAgent.findMany({
+          where: { id: { in: [a.agentId, b.agentId] } },
+          select: { id: true, monthlyBudgetUsd: true },
+        })
+      );
+      await runAsSystem('smoke: [3d] both agents over budget', () =>
+        prisma.aiAgent.updateMany({
+          where: { id: { in: [a.agentId, b.agentId] } },
+          data: { monthlyBudgetUsd: 0.000001 },
+        })
+      );
+
+      try {
+        const bFigures = await figures(b.orgId, b.agentId);
+
+        // Costs page and dashboard spend: the summary and the per-agent breakdown.
+        const summary = await asBAdmin(() => getCostSummary());
+        const summaryAgents = summary.byAgent.map((row) => row.agentId);
+        check(
+          summaryAgents.includes(b.agentId) && !summaryAgents.includes(a.agentId),
+          `the cost summary lists B's agent and not A's (${summaryAgents.length} agents)`
+        );
+        const bRow = summary.byAgent.find((row) => row.agentId === b.agentId);
+        check(
+          Math.abs((bRow?.monthSpend ?? 0) - bFigures.agentMonthSpend) < 1e-9,
+          `B's agent's month spend is B's own (${bRow?.monthSpend} = ${bFigures.agentMonthSpend})`
+        );
+        const breakdown = await asBAdmin(() =>
+          getCostBreakdown({ dateFrom: monthStart, dateTo: new Date(), groupBy: 'agent' })
+        );
+        const breakdownAgents = breakdown.rows.map((row) => row.key);
+        check(
+          breakdownAgents.includes(b.agentId) && !breakdownAgents.includes(a.agentId),
+          "the per-agent cost breakdown holds B's agent and not A's"
+        );
+
+        // Budget alerts, on the dashboard and the costs page.
+        const alerts = await asBAdmin(() => getBudgetAlerts());
+        const alertAgents = alerts.map((alert) => alert.agentId);
+        check(
+          alertAgents.includes(b.agentId) && !alertAgents.includes(a.agentId),
+          "B's org admin is alerted about B's over-budget agent and not A's"
+        );
+
+        // Dashboard stats: today's request count, and the runs it counts.
+        const requestsToday = await asBAdmin(() =>
+          prisma.aiCostLog.count({ where: { createdAt: { gte: todayStart } } })
+        );
+        check(
+          requestsToday === bFigures.requestsToday,
+          `today's request count is B's (${requestsToday} = ${bFigures.requestsToday}, A has ${aFigures.requestsToday})`
+        );
+
+        // Executions page: the list's read, with the guard's visibility clause.
+        const runIds = await asBAdmin(() =>
+          prisma.aiWorkflowExecution.findMany({
+            where: executionVisibilityWhere(viewer),
+            select: { id: true },
+          })
+        ).then((rows) => rows.map((r) => r.id));
+        check(
+          runIds.includes(ownRun.id) && !runIds.includes(a.executionId),
+          `the executions list holds the admin's run in B and not A's (${runIds.length} runs)`
+        );
+
+        // Analytics: a figure across B's members, and words from the admin's own threads.
+        const engagement = await asBAdmin(() => getEngagementMetrics({}, analyticsSession));
+        const bConversations = await runAsSystem(
+          'smoke: B’s conversations, as analytics counts',
+          () =>
+            prisma.aiConversation.count({
+              where: {
+                orgId: b.orgId,
+                createdAt: { gte: new Date(Date.now() - 31 * 86_400_000) },
+                ...deploymentWideConversationWhere(analyticsSession),
+              },
+            })
+        );
+        check(
+          engagement.totalConversations === bConversations,
+          `analytics counts B's conversations across its members (${engagement.totalConversations} = ${bConversations}, A has ${aFigures.conversations})`
+        );
+        const topics = await asBAdmin(() => getPopularTopics({}, analyticsSession));
+        const quoted = topics.map((t) => t.content.toLowerCase());
+        check(
+          quoted.some((q) => q.includes('charlie chinchilla')) &&
+            !quoted.some((q) => q.includes(a.topic)),
+          `popular topics quote the admin's own question in B and nothing of A's (${quoted.length} topics)`
+        );
+      } finally {
+        // Later sections count B's members and rows, and read the agents'
+        // budgets, so this section leaves both orgs as it found them.
+        await runAsSystem('smoke: remove [3d]’s org admin and restore budgets', async () => {
+          for (const agent of budgets) {
+            await prisma.aiAgent.update({
+              where: { id: agent.id },
+              data: { monthlyBudgetUsd: agent.monthlyBudgetUsd },
+            });
+          }
+          await prisma.aiWorkflowExecution.deleteMany({ where: { id: ownRun.id } });
           await prisma.aiConversation.deleteMany({ where: { id: ownThread.id } });
           await prisma.orgMembership.deleteMany({ where: { userId: orgAdminUser.id } });
           await prisma.user.deleteMany({ where: { id: orgAdminUser.id } });
