@@ -15,6 +15,10 @@
  * what these tests are for; which ROWS an org admin gets is
  * `scripts/smoke/tenancy-isolation.ts`'s, against Postgres with RLS.
  *
+ * And the mixed pages (§111 t-812): the routes behind an org admin's half of
+ * the dashboard, costs, analytics and executions answer them, and the routes
+ * behind the platform-ops half refuse them before reaching any table.
+ *
  * @see lib/auth/admin-tier.ts — the roster
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -105,6 +109,14 @@ vi.mock('@/lib/orchestration/mcp/config', () => ({
   getMcpServerConfig: vi.fn().mockResolvedValue({ globalRateLimit: 60 }),
   invalidateMcpConfigCache: vi.fn(),
 }));
+vi.mock('@/lib/orchestration/llm/model-registry', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/llm/model-registry')>()),
+  refreshFromOpenRouter: vi.fn(() => Promise.resolve()),
+}));
+vi.mock('@/lib/orchestration/llm/spend-caps', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/llm/spend-caps')>()),
+  getGlobalCapState: vi.fn(),
+}));
 vi.mock('@/lib/orchestration/llm/org-provider-policy', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/orchestration/llm/org-provider-policy')>()),
   unapprovedProviders: vi.fn(),
@@ -123,6 +135,30 @@ import { POST as testConnection } from '@/app/api/v1/admin/orchestration/provide
 import { POST as testModel } from '@/app/api/v1/admin/orchestration/providers/[id]/test-model/route';
 import { POST as testWebhook } from '@/app/api/v1/admin/orchestration/webhooks/[id]/test/route';
 import { POST as createMcpKey } from '@/app/api/v1/admin/orchestration/mcp/keys/route';
+import { refreshFromOpenRouter } from '@/lib/orchestration/llm/model-registry';
+import { getGlobalCapState } from '@/lib/orchestration/llm/spend-caps';
+import { GET as costBreakdown } from '@/app/api/v1/admin/orchestration/costs/route';
+import { GET as costSummary } from '@/app/api/v1/admin/orchestration/costs/summary/route';
+import { GET as costAlerts } from '@/app/api/v1/admin/orchestration/costs/alerts/route';
+import { GET as costOrgs } from '@/app/api/v1/admin/orchestration/costs/orgs/route';
+import { GET as modelList } from '@/app/api/v1/admin/orchestration/models/route';
+import { GET as dashboardStats } from '@/app/api/v1/admin/orchestration/observability/dashboard-stats/route';
+import { GET as activeQuarantines } from '@/app/api/v1/admin/orchestration/observability/active-quarantines/route';
+import { GET as contentGaps } from '@/app/api/v1/admin/orchestration/analytics/content-gaps/route';
+import { GET as engagement } from '@/app/api/v1/admin/orchestration/analytics/engagement/route';
+import { GET as feedback } from '@/app/api/v1/admin/orchestration/analytics/feedback/route';
+import { GET as topics } from '@/app/api/v1/admin/orchestration/analytics/topics/route';
+import { GET as unanswered } from '@/app/api/v1/admin/orchestration/analytics/unanswered/route';
+import { GET as liveEngine } from '@/app/api/v1/admin/orchestration/executions/live/route';
+import { GET as executionCounts } from '@/app/api/v1/admin/orchestration/executions/counts/route';
+import { GET as executionLease } from '@/app/api/v1/admin/orchestration/executions/[id]/lease/route';
+import { POST as forceFail } from '@/app/api/v1/admin/orchestration/executions/[id]/force-fail/route';
+import * as mcpSettings from '@/app/api/v1/admin/orchestration/mcp/settings/route';
+import { GET as mcpTools } from '@/app/api/v1/admin/orchestration/mcp/tools/route';
+import { GET as mcpResources } from '@/app/api/v1/admin/orchestration/mcp/resources/route';
+import { GET as mcpPrompts } from '@/app/api/v1/admin/orchestration/mcp/prompts/route';
+import { GET as orchestrationSettings } from '@/app/api/v1/admin/orchestration/settings/route';
+import { GET as adminStats } from '@/app/api/v1/admin/stats/route';
 import {
   agentProfileUsage,
   capabilityAgentUsage,
@@ -461,5 +497,135 @@ describe('an ADMIN of a customer org, at multi: other orgs’ usage of shared ro
     // Called as before this task: every org, the default.
     expect(knowledgeTagCounts).toHaveBeenCalledWith(['tag-1']);
     expect(agentProfileUsage).toHaveBeenCalledWith(['prof-1']);
+  });
+});
+
+describe('an ADMIN of a customer org, at multi: the mixed pages (§111 t-812)', () => {
+  const ADMIN_BASE = 'http://localhost:3000/api/v1/admin';
+  const RANGE = 'dateFrom=2026-10-01&dateTo=2026-10-15&groupBy=model';
+  const execParams = { params: Promise.resolve({ id: PROVIDER_ID }) };
+
+  beforeEach(() => {
+    vi.mocked(getGlobalCapState).mockResolvedValue({ cap: 500, spent: 120, exceeded: true });
+  });
+
+  /** The routes behind the org's half of the dashboard, costs and analytics. */
+  const ORG_HALF = [
+    { name: 'cost breakdown', call: () => costBreakdown(get(`/costs?${RANGE}`)) },
+    { name: 'cost summary', call: () => costSummary(get('/costs/summary')) },
+    { name: 'budget alerts', call: () => costAlerts(get('/costs/alerts')) },
+    { name: 'model catalogue', call: () => modelList(get('/models')) },
+    {
+      name: 'dashboard stats',
+      call: () => dashboardStats(get('/observability/dashboard-stats')),
+    },
+    { name: 'analytics content gaps', call: () => contentGaps(get('/analytics/content-gaps')) },
+    { name: 'analytics engagement', call: () => engagement(get('/analytics/engagement')) },
+    { name: 'analytics feedback', call: () => feedback(get('/analytics/feedback')) },
+    { name: 'analytics topics', call: () => topics(get('/analytics/topics')) },
+    { name: 'analytics unanswered', call: () => unanswered(get('/analytics/unanswered')) },
+  ];
+
+  /** The routes behind the platform-ops half: none declares a tier. */
+  const PLATFORM_HALF = [
+    { name: 'each org’s usage', call: () => costOrgs(get('/costs/orgs')) },
+    {
+      name: 'capability quarantines',
+      call: () => activeQuarantines(get('/observability/active-quarantines')),
+    },
+    { name: 'live engine snapshot', call: () => liveEngine(get('/executions/live')) },
+    { name: 'execution counts', call: () => executionCounts(get('/executions/counts')) },
+    {
+      name: 'lease inspector',
+      call: () => executionLease(get(`/executions/${PROVIDER_ID}/lease`), execParams),
+    },
+    {
+      name: 'force-fail',
+      call: () => forceFail(post(`/executions/${PROVIDER_ID}/force-fail`, {}), execParams),
+    },
+    { name: 'MCP settings', call: () => mcpSettings.GET(get('/mcp/settings')) },
+    {
+      name: 'MCP server toggle',
+      call: () =>
+        mcpSettings.PATCH(
+          new NextRequest(`${BASE}/mcp/settings`, {
+            method: 'PATCH',
+            body: JSON.stringify({ isEnabled: false }),
+            headers: { 'Content-Type': 'application/json' },
+          })
+        ),
+    },
+    { name: 'MCP tools', call: () => mcpTools(get('/mcp/tools')) },
+    { name: 'MCP resources', call: () => mcpResources(get('/mcp/resources')) },
+    { name: 'MCP prompts', call: () => mcpPrompts(get('/mcp/prompts')) },
+    { name: 'orchestration settings', call: () => orchestrationSettings(get('/settings')) },
+    {
+      name: 'the overview’s stats',
+      call: () => adminStats(new NextRequest(`${ADMIN_BASE}/stats`)),
+    },
+  ];
+
+  it.each(ORG_HALF)('reads the $name', async ({ call }) => {
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { success: boolean }).success).toBe(true);
+  });
+
+  it.each(PLATFORM_HALF)('is refused the $name, which never reaches a table', async ({ call }) => {
+    const res = await call();
+
+    expect(res.status).toBe(403);
+    // The only read is the guard's own membership lookup.
+    expect(calls.filter((c) => !c.startsWith('orgMembership.'))).toEqual([]);
+  });
+
+  it('control: a platform admin in the install org reaches the platform-ops half', async () => {
+    // The install org: in a customer org a platform admin is refused each
+    // org's usage and shared-settings writes too, by rules older than this.
+    signIn('ADMIN', INSTALL_ORG_ID);
+    for (const { call } of PLATFORM_HALF) {
+      expect((await call()).status).not.toBe(403);
+    }
+  });
+
+  it('control: a MEMBER of the same org is refused the org’s half too', async () => {
+    membership.role = 'MEMBER';
+    for (const { call } of ORG_HALF) {
+      expect((await call()).status).toBe(403);
+    }
+  });
+
+  it('is told the global cap is exceeded, and neither the cap nor anyone’s spend', async () => {
+    const body = (await (await costAlerts(get('/costs/alerts'))).json()) as {
+      data: { globalCap: { cap: number | null; spent: number | null; exceeded: boolean } };
+    };
+
+    expect(body.data.globalCap).toEqual({ cap: null, spent: null, exceeded: true });
+  });
+
+  it('control: a platform admin in the same org is given the cap', async () => {
+    signIn('ADMIN', ORG_B);
+    const body = (await (await costAlerts(get('/costs/alerts'))).json()) as {
+      data: { globalCap: { cap: number | null; exceeded: boolean } };
+    };
+
+    // The spend stays the install org's to see (`getGlobalCapStatus`); the cap is theirs.
+    expect(body.data.globalCap).toMatchObject({ cap: 500, exceeded: true });
+  });
+
+  it('is refused a forced refresh of the model catalogue, which never calls out', async () => {
+    const res = await modelList(get('/models?refresh=true'));
+
+    expect(res.status).toBe(403);
+    expect(refreshFromOpenRouter).not.toHaveBeenCalled();
+  });
+
+  it('control: a platform admin may force one', async () => {
+    signIn('ADMIN', ORG_B);
+    const res = await modelList(get('/models?refresh=true'));
+
+    expect(res.status).toBe(200);
+    expect(refreshFromOpenRouter).toHaveBeenCalledWith({ force: true });
   });
 });
