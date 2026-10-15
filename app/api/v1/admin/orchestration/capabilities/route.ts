@@ -12,6 +12,7 @@
 
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse, successResponse } from '@/lib/api/responses';
 import { ConflictError } from '@/lib/api/errors';
@@ -27,7 +28,7 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { capabilityAgentUsage } from '@/lib/orchestration/admin/global-config-usage';
 
 export const GET = withAdminAuth(
-  async (request, _session) => {
+  async (request, session) => {
     const log = await getRouteLogger(request);
 
     const { searchParams } = new URL(request.url);
@@ -62,11 +63,15 @@ export const GET = withAdminAuth(
     // Agents using each capability, in every org (§107 t-752): the caller's
     // by name in `_agents`, other orgs' as `_otherOrgAgentCount`. A plain
     // `include` read only the caller's org at `multi`.
+    // Other orgs' usage is counted for a platform admin's delete check. A
+    // customer org's admin sees only their own org's (§111 t-811): how many
+    // of another tenant's agents use a shared row is not theirs to know.
+    const platform = await administersPlatform(session.principal);
     const usage = await capabilityAgentUsage(rawCapabilities.map((c) => c.id));
     const capabilities = rawCapabilities.map((capability) => ({
       ...capability,
       _agents: usage.get(capability.id)?.agents ?? [],
-      _otherOrgAgentCount: usage.get(capability.id)?.otherOrgAgents ?? 0,
+      _otherOrgAgentCount: platform ? (usage.get(capability.id)?.otherOrgAgents ?? 0) : 0,
     }));
 
     log.info('Capabilities listed', { count: capabilities.length, total, page, limit });

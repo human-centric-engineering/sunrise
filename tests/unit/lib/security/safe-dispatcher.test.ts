@@ -32,6 +32,9 @@ vi.mock('@/lib/logging', () => {
 
 import {
   createSafeDispatcher,
+  describeOutboundFailure,
+  isUnsafeAddressRefusal,
+  literalHostRefusedHere,
   outboundDispatcher,
   safeLookup,
   UnsafeResolvedAddressError,
@@ -202,6 +205,9 @@ describe('checkSafeAddress', () => {
     ['6to4 wrapping 192.168.0.1', '2002:c0a8:1::1'],
     ['0.0.0.0/8', '0.1.2.3'],
     ['site-local fec0::/10', 'fec0::1'],
+    ['6to4, zero-compressed, wrapping 192.168.0.0', '2002:c0a8::1'],
+    ['6to4, zero-compressed, wrapping 10.0.0.0', '2002:a00::5'],
+    ['NAT64, zero-compressed, wrapping 0.0.0.5', '64:ff9b::5'],
   ])('refuses %s (%s)', (_label, address) => {
     expect(checkSafeAddress(address).ok).toBe(false);
   });
@@ -248,6 +254,66 @@ describe('outboundDispatcher — who gets one', () => {
     await runAsOrg(ORG_B, async () => {
       expect(outboundDispatcher()).toBeUndefined();
       expect(withOutboundDispatcher({ method: 'GET' })).toEqual({ method: 'GET' });
+    });
+  });
+});
+
+describe('literalHostRefusedHere — an IP literal is never looked up', () => {
+  it('refuses a private or metadata literal for a customer org', async () => {
+    await runAsOrg(ORG_B, async () => {
+      expect(literalHostRefusedHere('http://10.0.0.12/x')).toBe(true);
+      expect(literalHostRefusedHere('http://169.254.169.254/latest')).toBe(true);
+      expect(literalHostRefusedHere('http://[::ffff:7f00:1]/')).toBe(true);
+    });
+  });
+
+  it('passes a public literal and any hostname (the dispatcher checks names)', async () => {
+    await runAsOrg(ORG_B, async () => {
+      expect(literalHostRefusedHere('https://93.184.216.34/')).toBe(false);
+      expect(literalHostRefusedHere('https://internal.example/')).toBe(false);
+      expect(literalHostRefusedHere('not a url')).toBe(false);
+    });
+  });
+
+  it('control: refuses nothing for the install org', async () => {
+    await runAsOrg(INSTALL_ORG_ID, async () =>
+      expect(literalHostRefusedHere('http://10.0.0.12/x')).toBe(false)
+    );
+  });
+});
+
+describe('describing a failed fetch to whoever chose the URL', () => {
+  const refused = new TypeError('fetch failed', {
+    cause: new UnsafeResolvedAddressError('db', '10.0.3.4', 'private_ip'),
+  });
+  const missing = Object.assign(new Error('getaddrinfo ENOTFOUND nope'), { code: 'ENOTFOUND' });
+  const notFound = new TypeError('fetch failed', { cause: missing });
+  const reset = new TypeError('fetch failed', {
+    cause: Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }),
+  });
+
+  it('knows a dispatcher refusal anywhere along the cause chain, including inside an AggregateError', () => {
+    expect(isUnsafeAddressRefusal(refused)).toBe(true);
+    expect(
+      isUnsafeAddressRefusal(
+        new TypeError('fetch failed', { cause: new AggregateError([refused]) })
+      )
+    ).toBe(true);
+    expect(isUnsafeAddressRefusal(notFound)).toBe(false);
+  });
+
+  it('reads a refused host and a missing one the same for a customer org — no map of the internal DNS', async () => {
+    await runAsOrg(ORG_B, async () => {
+      expect(describeOutboundFailure(refused)).toBe(describeOutboundFailure(notFound));
+      expect(describeOutboundFailure(refused)).not.toContain('db');
+      // Anything else keeps its detail.
+      expect(describeOutboundFailure(reset)).toContain('socket hang up');
+    });
+  });
+
+  it('control: the install org gets the detail', async () => {
+    await runAsOrg(INSTALL_ORG_ID, async () => {
+      expect(describeOutboundFailure(notFound)).toContain('ENOTFOUND');
     });
   });
 });

@@ -14,6 +14,7 @@
 import { Prisma } from '@prisma/client';
 import { knowledgeTagCounts } from '@/lib/orchestration/admin/global-config-usage';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse, successResponse } from '@/lib/api/responses';
 import { ConflictError } from '@/lib/api/errors';
@@ -27,7 +28,7 @@ import {
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 export const GET = withAdminAuth(
-  async (request, _session) => {
+  async (request, session) => {
     const log = await getRouteLogger(request);
 
     const { searchParams } = new URL(request.url);
@@ -55,7 +56,14 @@ export const GET = withAdminAuth(
 
     // Every org's grants and document links (t-731): a tag is global config,
     // and "unused" (the bulk delete's test) must mean unused by any org.
-    const counts = await knowledgeTagCounts(rawTags.map((t) => t.id));
+    // Other orgs' usage is counted for a platform admin's delete check. A
+    // customer org's admin sees only their own org's (§111 t-811): how many
+    // of another tenant's agents use a shared row is not theirs to know.
+    const platform = await administersPlatform(session.principal);
+    const tagIds = rawTags.map((t) => t.id);
+    const counts = await (platform
+      ? knowledgeTagCounts(tagIds)
+      : knowledgeTagCounts(tagIds, { acrossOrgs: false }));
     const tags = rawTags.map((tag) => ({
       ...tag,
       documentCount: counts.get(tag.id)?.documents ?? 0,

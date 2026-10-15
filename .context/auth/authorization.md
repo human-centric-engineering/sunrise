@@ -181,7 +181,10 @@ the reasoning behind it.
   models, embedding models, graders and tags, so those `GET`s are org-tier.
   Their writes keep `writesSharedSettings` and are not org-tier. An org admin's
   provider list omits each row's `baseUrl`, `apiKeyEnvVar` and `metadata`,
-  which are the operator's infrastructure. The settings singleton, the
+  which are the operator's infrastructure. The usage counts on these lists
+  (agents per capability, model, tag or profile) cover their own org only:
+  how many of another tenant's agents use a shared row is a platform admin's
+  delete check, not theirs to know. The settings singleton, the
   knowledge seed, the tags page and the patterns knowledge stay platform-only,
   and their controls are hidden where shared settings are read-only (the seed
   button, the workflow builder's pattern "Learn more").

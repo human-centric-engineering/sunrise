@@ -31,7 +31,9 @@
  * `fetch` forwards the option).
  */
 import { lookup as dnsLookup, type LookupAddress, type LookupOptions } from 'node:dns';
+import { isIP } from 'node:net';
 import { Agent } from 'undici';
+import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import { checkSafeAddress, type SafeUrlCheckOptions } from '@/lib/security/safe-url';
 import { actsForPlatform } from '@/lib/tenancy/context';
 
@@ -134,4 +136,72 @@ export function outboundDispatcher(): Agent | undefined {
 export function withOutboundDispatcher<T extends RequestInit>(init: T): T & { dispatcher?: Agent } {
   const dispatcher = outboundDispatcher();
   return dispatcher ? { ...init, dispatcher } : init;
+}
+
+/**
+ * Does the address rule refuse this URL's host as an IP literal, for the
+ * caller here? `net.connect` never calls `lookup` for an IP literal, so the
+ * dispatcher cannot see one; a caller whose only other check is a host
+ * allowlist — `executeHttpRequest`, behind `external_call` and
+ * `call_external_api` — asks this before the fetch. `false` wherever
+ * {@link outboundDispatcher} gives no dispatcher, and for any hostname.
+ */
+export function literalHostRefusedHere(url: string, options: SafeUrlCheckOptions = {}): boolean {
+  if (outboundDispatcher() === undefined) return false;
+  let host: string;
+  try {
+    host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+  } catch {
+    return false;
+  }
+  return isIP(host) !== 0 && !checkSafeAddress(host, options).ok;
+}
+
+/** The errors along a fetch failure's `cause` chain, an `AggregateError`'s members included. */
+function failureChain(err: unknown): unknown[] {
+  const out: unknown[] = [];
+  const visit = (e: unknown, depth: number): void => {
+    if (depth > 8 || e === null || e === undefined) return;
+    out.push(e);
+    if (e instanceof AggregateError) for (const inner of e.errors) visit(inner, depth + 1);
+    if (e instanceof Error) visit(e.cause, depth + 1);
+  };
+  visit(err, 0);
+  return out;
+}
+
+/**
+ * Was this fetch refused by {@link safeLookup}? No retry can change that —
+ * only a new destination can — so a caller that retries treats it as
+ * terminal, as it treats the URL-text refusal.
+ */
+export function isUnsafeAddressRefusal(err: unknown): boolean {
+  return failureChain(err).some((e) => e instanceof UnsafeResolvedAddressError);
+}
+
+const NAME_NOT_FOUND = new Set(['ENOTFOUND', 'EAI_AGAIN', 'EAI_NONAME', 'EAI_NODATA']);
+
+/**
+ * A failed outbound fetch, in words for whoever chose the URL.
+ *
+ * For a customer org (where {@link outboundDispatcher} pins), "that name
+ * resolves inside the network" and "that name does not exist" read the same:
+ * otherwise a webhook test, or a delivery's `lastError`, tells an org admin
+ * which internal hostnames the operator's DNS answers, which maps the network
+ * the dispatcher is there to keep them out of. Everyone else gets
+ * `describeFetchFailure`'s detail, as before.
+ */
+export function describeOutboundFailure(err: unknown): string {
+  if (outboundDispatcher() !== undefined) {
+    const chain = failureChain(err);
+    const hidden = chain.some(
+      (e) =>
+        e instanceof UnsafeResolvedAddressError ||
+        (e instanceof Error &&
+          typeof (e as NodeJS.ErrnoException).code === 'string' &&
+          NAME_NOT_FOUND.has((e as NodeJS.ErrnoException).code as string))
+    );
+    if (hidden) return 'Could not reach the destination: its host is not allowed or does not exist';
+  }
+  return describeFetchFailure(err);
 }

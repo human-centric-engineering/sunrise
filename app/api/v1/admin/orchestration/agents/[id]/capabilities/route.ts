@@ -16,7 +16,6 @@
  */
 
 import { Prisma } from '@prisma/client';
-import { z } from 'zod';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -25,58 +24,11 @@ import { validatePathParam, validateRequestBody } from '@/lib/api/validation';
 import { getRouteLogger } from '@/lib/api/context';
 import { getClientIP } from '@/lib/security/ip';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
-import {
-  envVarPrefixHere,
-  findUnavailableEnvVarReferences,
-  findUnsetEnvVarReferences,
-} from '@/lib/orchestration/env-template';
+import { bindingEnvVarWarnings } from '@/lib/orchestration/env-template';
 import { attachAgentCapabilitySchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { assertBindingsEditable } from '@/lib/orchestration/agents/platform-agent-guard';
-
-/**
- * Narrow shape used by `collectEnvVarWarnings` to extract the only two
- * fields it scans. The route-layer `customConfig` is `z.record(z.string(),
- * z.unknown())` (capability-specific shape is enforced at execute time),
- * so we validate just the binding-scan-relevant fields here. Malformed
- * values fall through to `safeParse` failure → empty result, which is
- * the right behaviour for a soft warning helper.
- */
-const bindingScanSchema = z
-  .object({
-    forcedUrl: z.string().optional(),
-    forcedHeaders: z.record(z.string(), z.string()).optional(),
-  })
-  .partial();
-
-/**
- * Scans a customConfig blob for `${env:VAR}` references in known
- * credential-bearing fields and returns the names that are NOT set in
- * the running process. Soft warning surfaced to the admin UI — save
- * still succeeds; an admin may legitimately save a binding before the
- * matching env var has been deployed to the host.
- */
-function collectEnvVarWarnings(customConfig: unknown): {
-  missingEnvVars?: string[];
-  unavailableEnvVars?: string[];
-  envVarPrefix?: string;
-} | null {
-  const parsed = bindingScanSchema.safeParse(customConfig);
-  if (!parsed.success) return null;
-  const { forcedUrl, forcedHeaders } = parsed.data;
-  const missing = findUnsetEnvVarReferences(forcedUrl, forcedHeaders);
-  // Names a customer org may not use (§111 t-811): reported with the prefix
-  // that would make them usable, so the fix named is a rename, not "set it".
-  const unavailable = findUnavailableEnvVarReferences(forcedUrl, forcedHeaders);
-  const prefix = envVarPrefixHere();
-  if (missing.length === 0 && unavailable.length === 0) return null;
-  return {
-    ...(missing.length > 0 ? { missingEnvVars: missing } : {}),
-    ...(unavailable.length > 0 ? { unavailableEnvVars: unavailable } : {}),
-    ...(unavailable.length > 0 && prefix ? { envVarPrefix: prefix } : {}),
-  };
-}
 
 export const GET = withAdminAuth<{ id: string }>(
   async (request, _session, { params }) => {
@@ -156,7 +108,7 @@ export const POST = withAdminAuth<{ id: string }>(
         clientIp: clientIP,
       });
 
-      const envWarnings = collectEnvVarWarnings(body.customConfig);
+      const envWarnings = bindingEnvVarWarnings(body.customConfig);
       const meta = envWarnings ? { warnings: envWarnings } : undefined;
       return successResponse(link, meta, { status: 201 });
     } catch (err) {

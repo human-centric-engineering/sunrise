@@ -240,7 +240,9 @@ release process.
   detail page, which the approval queue and a workflow run link to. They also
   read the capability, agent-profile, provider, provider-model,
   embedding-model, grader and tag lists, but cannot write any of them. Their
-  provider list omits `baseUrl`, `apiKeyEnvVar` and `metadata`, and a
+  provider list omits `baseUrl`, `apiKeyEnvVar` and `metadata`, the
+  usage counts on those lists cover their own org only (another tenant's
+  usage is a platform admin's delete check), and a
   `rateLimitOverride` they set on an MCP key may lower the server's limit but
   not raise it (`400` above it). Each opened route now declares an
   `ownership`. New `actsForPlatform()` in `lib/tenancy/context.ts` answers
@@ -618,7 +620,7 @@ release process.
   address, and connects to the address it checked, so DNS rebinding and
   redirect hops are covered too. New `checkSafeAddress()` in
   `lib/security/safe-url.ts` applies the URL rules to a resolved address.
-  `checkSafeProviderUrl` now drops a trailing dot before its denylist (`metadata.google.internal.` was let through), and both checks unwrap the IPv4 address inside a NAT64 (`64:ff9b::/96`) or 6to4 (`2002::/16`) address and refuse `0.0.0.0/8` and site-local `fec0::/10`. A refusal names the host, never the address it resolved to. The install org, a system scope and `single` installs connect as before; a call stack with no tenant context at `multi` is pinned. Adds `undici` (7.x, the
+  `checkSafeProviderUrl` now drops a trailing dot before its denylist (`metadata.google.internal.` was let through), and both checks unwrap the IPv4 address inside a NAT64 (`64:ff9b::/96`) or 6to4 (`2002::/16`) address and refuse `0.0.0.0/8` and site-local `fec0::/10`. A refusal names the host, never the address it resolved to, and for a customer org a refused host and one that does not exist read the same, so a webhook test cannot map the internal DNS; a webhook delivery refused this way is terminal rather than retried. For the allowlisted calls, where no URL check runs first, an IP literal the address rules refuse is refused for a customer org before the fetch (a literal is never looked up). The install org, a system scope and `single` installs connect as before; a call stack with no tenant context at `multi` is pinned. Adds `undici` (7.x, the
   major Node 24's `fetch` runs on) as a direct dependency.
 
 - **A customer org's configs can no longer read the platform's env vars**

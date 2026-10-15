@@ -499,6 +499,30 @@ describe('knowledgeTagCounts', () => {
   });
 });
 
+describe('a list’s counts in the caller’s own org only (§111 t-811)', () => {
+  it('knowledgeTagCounts with acrossOrgs: false counts in the entered org, not the system scope', async () => {
+    db.aiAgentKnowledgeTag.groupBy.mockImplementation(answering([]));
+    db.aiKnowledgeDocumentTag.groupBy.mockImplementation(
+      answering([{ tagId: 't1', _count: { _all: 2 } }])
+    );
+
+    const counts = await runAsOrg(ORG_A, () => knowledgeTagCounts(['t1'], { acrossOrgs: false }));
+
+    expect([...counts]).toEqual([['t1', { agents: 0, documents: 2 }]]);
+    // The org ORG_A was entered as (runAsOrg's default source), not the system scope.
+    expect(scopes.seen).toEqual(['job', 'job']);
+  });
+
+  it('agentProfileUsage with acrossOrgs: false likewise', async () => {
+    db.aiAgent.groupBy.mockImplementation(answering([{ profileId: 'p1', _count: { _all: 1 } }]));
+
+    const counts = await runAsOrg(ORG_A, () => agentProfileUsage(['p1'], { acrossOrgs: false }));
+
+    expect([...counts]).toEqual([['p1', 1]]);
+    expect(scopes.seen).toEqual(['job']);
+  });
+});
+
 describe('agentProfileUsage', () => {
   it('maps each profile to its attached agents in every org, under the system scope', async () => {
     db.aiAgent.groupBy.mockImplementation(

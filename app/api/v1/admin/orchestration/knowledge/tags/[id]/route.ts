@@ -23,6 +23,7 @@
 
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
 import { ConflictError, NotFoundError } from '@/lib/api/errors';
@@ -36,7 +37,7 @@ import { invalidateAllAgentAccess } from '@/lib/orchestration/knowledge/resolveA
 import { knowledgeTagUsage } from '@/lib/orchestration/admin/global-config-usage';
 
 export const GET = withAdminAuth<{ id: string }>(
-  async (request, _session, { params }) => {
+  async (request, session, { params }) => {
     const log = await getRouteLogger(request);
     const { id: rawId } = await params;
     const id = validatePathParam(rawId, cuidSchema, { label: 'tag id' });
@@ -48,6 +49,7 @@ export const GET = withAdminAuth<{ id: string }>(
     // The lists are the caller's org's; the counts are every org's, as the
     // tag list and the delete check count them (t-731), with the share that is
     // another org's alongside.
+    const platform = await administersPlatform(session.principal);
     const [tag, usage] = await Promise.all([
       prisma.knowledgeTag.findUnique({
         where: { id },
@@ -81,10 +83,21 @@ export const GET = withAdminAuth<{ id: string }>(
     const { documents, agents, ...rest } = tag;
     return successResponse({
       ...rest,
-      documentCount: usage.documentLinks,
-      agentCount: usage.agentGrants,
-      otherOrgDocumentCount: usage.otherOrgDocumentLinks,
-      otherOrgAgentCount: usage.otherOrgAgentGrants,
+      // A customer org's admin gets their own org's share (§111 t-811);
+      // the other orgs' figures are for a platform admin's delete check.
+      ...(platform
+        ? {
+            documentCount: usage.documentLinks,
+            agentCount: usage.agentGrants,
+            otherOrgDocumentCount: usage.otherOrgDocumentLinks,
+            otherOrgAgentCount: usage.otherOrgAgentGrants,
+          }
+        : {
+            documentCount: usage.documentLinks - usage.otherOrgDocumentLinks,
+            agentCount: usage.agentGrants - usage.otherOrgAgentGrants,
+            otherOrgDocumentCount: 0,
+            otherOrgAgentCount: 0,
+          }),
       documents: documents.map((d) => d.document),
       agents: agents.map((a) => a.agent),
     });

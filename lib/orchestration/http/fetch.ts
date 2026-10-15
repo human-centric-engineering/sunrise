@@ -31,7 +31,7 @@ import {
   resolveIdempotencyHeader,
   type HttpIdempotencyConfig,
 } from '@/lib/orchestration/http/idempotency';
-import { withOutboundDispatcher } from '@/lib/security/safe-dispatcher';
+import { literalHostRefusedHere, withOutboundDispatcher } from '@/lib/security/safe-dispatcher';
 import {
   applyResponseTransform,
   isRetriableStatus,
@@ -95,6 +95,17 @@ export async function executeHttpRequest(opts: HttpRequestOptions): Promise<Http
       // Reduced: the message reaches the model and step errors, and the URL can
       // carry an interpolated secret in its query or userinfo (#953).
       `Host not in ${ALLOWED_HOSTS_ENV} allowlist: ${loggableUrl(opts.url)}`,
+      false
+    );
+  }
+
+  // A customer org's call to an allowlisted IP literal (§111 t-811): the
+  // pinned dispatcher checks what a NAME resolves to, and a literal is never
+  // looked up, so the address rule is applied to it here.
+  if (literalHostRefusedHere(opts.url)) {
+    throw new HttpError(
+      'host_not_allowed',
+      `Host is a private or internal address: ${loggableUrl(opts.url)}`,
       false
     );
   }

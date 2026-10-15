@@ -95,6 +95,12 @@ vi.mock('@/lib/orchestration/llm/provider-manager', async (importOriginal) => ({
   getProvider: vi.fn(),
   testProvider: vi.fn(),
 }));
+vi.mock('@/lib/orchestration/admin/global-config-usage', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/admin/global-config-usage')>()),
+  capabilityAgentUsage: vi.fn(),
+  knowledgeTagCounts: vi.fn(),
+  agentProfileUsage: vi.fn(),
+}));
 vi.mock('@/lib/orchestration/mcp/config', () => ({
   getMcpServerConfig: vi.fn().mockResolvedValue({ globalRateLimit: 60 }),
   invalidateMcpConfigCache: vi.fn(),
@@ -117,6 +123,11 @@ import { POST as testConnection } from '@/app/api/v1/admin/orchestration/provide
 import { POST as testModel } from '@/app/api/v1/admin/orchestration/providers/[id]/test-model/route';
 import { POST as testWebhook } from '@/app/api/v1/admin/orchestration/webhooks/[id]/test/route';
 import { POST as createMcpKey } from '@/app/api/v1/admin/orchestration/mcp/keys/route';
+import {
+  agentProfileUsage,
+  capabilityAgentUsage,
+  knowledgeTagCounts,
+} from '@/lib/orchestration/admin/global-config-usage';
 
 const ORG_B = 'cmorg0000000000000000orgb';
 const PROVIDER_ID = 'cmjbv4i3x00003wsloputgwul';
@@ -193,6 +204,9 @@ const PROVIDER_ROW = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(capabilityAgentUsage).mockResolvedValue(new Map());
+  vi.mocked(knowledgeTagCounts).mockResolvedValue(new Map());
+  vi.mocked(agentProfileUsage).mockResolvedValue(new Map());
   calls.length = 0;
   membership.role = ORG_ADMIN_ROLE;
   signIn('USER', ORG_B);
@@ -391,5 +405,61 @@ describe('an ADMIN of a customer org, at multi: an MCP key’s rate limit (§111
     );
 
     expect(res.status).toBe(201);
+  });
+});
+
+describe('an ADMIN of a customer org, at multi: other orgs’ usage of shared rows (§111 t-811 code review)', () => {
+  const CAP = { id: 'cap-1', name: 'Search', slug: 'search', isActive: true };
+
+  it('sees no other org’s agent count on a capability, though other orgs use it', async () => {
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([CAP] as never);
+    vi.mocked(capabilityAgentUsage).mockResolvedValue(
+      new Map([['cap-1', { agents: [], otherOrgAgents: 7 }]])
+    );
+
+    const body = (await (await capabilities.GET(get('/capabilities'))).json()) as {
+      data: { _otherOrgAgentCount: number }[];
+    };
+
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0]._otherOrgAgentCount).toBe(0);
+  });
+
+  it('control: a platform admin sees it', async () => {
+    signIn('ADMIN', ORG_B);
+    vi.mocked(prisma.aiCapability.findMany).mockResolvedValue([CAP] as never);
+    vi.mocked(capabilityAgentUsage).mockResolvedValue(
+      new Map([['cap-1', { agents: [], otherOrgAgents: 7 }]])
+    );
+
+    const body = (await (await capabilities.GET(get('/capabilities'))).json()) as {
+      data: { _otherOrgAgentCount: number }[];
+    };
+
+    expect(body.data[0]._otherOrgAgentCount).toBe(7);
+  });
+
+  it('has the tag and profile lists counted in their own org only', async () => {
+    vi.mocked(prisma.knowledgeTag.findMany).mockResolvedValue([{ id: 'tag-1' }] as never);
+    vi.mocked(prisma.aiAgentProfile.findMany).mockResolvedValue([{ id: 'prof-1' }] as never);
+
+    await tags.GET(get('/knowledge/tags'));
+    await agentProfiles.GET(get('/agent-profiles'));
+
+    expect(knowledgeTagCounts).toHaveBeenCalledWith(['tag-1'], { acrossOrgs: false });
+    expect(agentProfileUsage).toHaveBeenCalledWith(['prof-1'], { acrossOrgs: false });
+  });
+
+  it('control: a platform admin’s lists count every org', async () => {
+    signIn('ADMIN', ORG_B);
+    vi.mocked(prisma.knowledgeTag.findMany).mockResolvedValue([{ id: 'tag-1' }] as never);
+    vi.mocked(prisma.aiAgentProfile.findMany).mockResolvedValue([{ id: 'prof-1' }] as never);
+
+    await tags.GET(get('/knowledge/tags'));
+    await agentProfiles.GET(get('/agent-profiles'));
+
+    // Called as before this task: every org, the default.
+    expect(knowledgeTagCounts).toHaveBeenCalledWith(['tag-1']);
+    expect(agentProfileUsage).toHaveBeenCalledWith(['prof-1']);
   });
 });

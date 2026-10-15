@@ -42,7 +42,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { FieldHelp } from '@/components/ui/field-help';
 import { Tip } from '@/components/ui/tooltip';
-import { apiClient } from '@/lib/api/client';
+import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
 import { McpScope, ALL_MCP_SCOPES } from '@/types/mcp';
 import { apiKeyRowSchema, type ApiKeyRow } from '@/lib/validations/mcp';
@@ -104,8 +104,13 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
       setNewKeyScopes([McpScope.TOOLS_LIST, McpScope.TOOLS_EXECUTE]);
       setNewKeyExpiry('');
       setNewKeyRateLimit('');
-    } catch {
-      setError('Failed to create API key.');
+    } catch (err) {
+      // A refused rate limit (§111 t-811) says what the limit is; show it.
+      setError(
+        err instanceof APIClientError && err.status === 400
+          ? err.message
+          : 'Failed to create API key.'
+      );
     } finally {
       setCreating(false);
     }

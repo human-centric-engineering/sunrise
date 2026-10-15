@@ -13,14 +13,13 @@
 
 import { withAdminAuth } from '@/lib/auth/guards';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
-import { withOutboundDispatcher } from '@/lib/security/safe-dispatcher';
+import { describeOutboundFailure, withOutboundDispatcher } from '@/lib/security/safe-dispatcher';
 import { prisma } from '@/lib/db/client';
 import { BRAND } from '@/lib/brand';
 import { successResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { getRouteLogger } from '@/lib/api/context';
 import { loggableUrl } from '@/lib/logging/redact-path';
-import { describeFetchFailure } from '@/lib/errors/fetch-error';
 import { cuidSchema } from '@/lib/validations/common';
 import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/client';
 import EventNotification from '@/emails/event-notification';
@@ -205,7 +204,9 @@ export const POST = withAdminAuth<{ id: string }>(
         err instanceof Error && err.name === 'AbortError'
           ? 'Request timed out after 5 seconds'
           : err instanceof Error
-            ? describeFetchFailure(err)
+            ? // For a customer org, a refused host and a missing one read
+              // the same (§111 t-811); see `describeOutboundFailure`.
+              describeOutboundFailure(err)
             : 'Unknown error';
     } finally {
       // In `finally`, not after the `await` — `redirect: 'error'` makes the throw

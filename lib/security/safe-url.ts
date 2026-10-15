@@ -122,14 +122,19 @@ const IPV4_IN_IPV6_DOTTED = /^::(?:ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/;
  * works for a local provider addressed as `::ffff:127.0.0.1`.
  */
 function unwrapIpv4InIpv6(host: string): string {
-  const dotted = IPV4_IN_IPV6_DOTTED.exec(host) ?? NAT64_DOTTED.exec(host);
+  const dotted = IPV4_IN_IPV6_DOTTED.exec(host);
   if (dotted?.[1]) return dotted[1];
 
-  const hex = IPV4_IN_IPV6.exec(host) ?? NAT64.exec(host) ?? SIX_TO_FOUR.exec(host);
-  if (!hex?.[1] || !hex[2]) return host;
+  const hex = IPV4_IN_IPV6.exec(host);
+  if (hex?.[1] && hex[2]) return ipv4FromGroups(hex[1], hex[2]);
 
-  const high = Number.parseInt(hex[1], 16);
-  const low = Number.parseInt(hex[2], 16);
+  return unwrapTranslatedIpv4(host) ?? host;
+}
+
+/** Two 16-bit hex groups as a dotted quad. */
+function ipv4FromGroups(highHex: string, lowHex: string): string {
+  const high = Number.parseInt(highHex, 16);
+  const low = Number.parseInt(lowHex, 16);
   return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
 }
 
@@ -138,13 +143,51 @@ function unwrapIpv4InIpv6(host: string): string {
  * (§111 t-811). On an IPv6-only network with DNS64, an AAAA record in the
  * NAT64 prefix (`64:ff9b::/96`, and the local-use `64:ff9b:1::/48`) is
  * translated by the gateway to the IPv4 address in its last 32 bits; a 6to4
- * address (`2002::/16`) carries one in bits 16–48. Unwrapped like the
- * mapped form, so the embedded address meets the IPv4 rules, and a record
- * resolving to `64:ff9b::a00:5` is refused as `10.0.0.5` would be.
+ * address (`2002::/16`) carries one in bits 16–48. Unwrapped like the mapped
+ * form, so the embedded address meets the IPv4 rules, and a record resolving
+ * to `64:ff9b::a00:5` is refused as `10.0.0.5` would be.
+ *
+ * Read from the address expanded to its eight groups, not by a pattern over
+ * the written form: `::` can stand for any run of zero groups, so
+ * `2002:c0a8::1` and `64:ff9b::5` carry an address a two-group pattern
+ * cannot see.
  */
-const NAT64 = /^64:ff9b:(?:1:)?(?:[0-9a-f]{0,4}:)*([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
-const NAT64_DOTTED = /^64:ff9b:(?:1:)?(?:[0-9a-f]{0,4}:)*(\d{1,3}(?:\.\d{1,3}){3})$/;
-const SIX_TO_FOUR = /^2002:([0-9a-f]{1,4}):([0-9a-f]{1,4})(?::|$)/;
+function unwrapTranslatedIpv4(host: string): string | null {
+  const groups = expandIpv6(host);
+  if (!groups) return null;
+  if (groups[0] === 0x64 && groups[1] === 0xff9b) {
+    return ipv4FromGroups(groups[6].toString(16), groups[7].toString(16));
+  }
+  if (groups[0] === 0x2002) {
+    return ipv4FromGroups(groups[1].toString(16), groups[2].toString(16));
+  }
+  return null;
+}
+
+/** An IPv6 address as its eight 16-bit groups, or `null` if it is not one. */
+function expandIpv6(host: string): number[] | null {
+  if (!host.includes(':')) return null;
+  let text = host.replace(/%.*$/, '');
+  // A dotted IPv4 tail stands for the last two groups.
+  const tail = /(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (tail) {
+    const octets = tail.slice(1).map(Number);
+    if (octets.some((o) => o > 255)) return null;
+    text =
+      text.slice(0, tail.index) +
+      `${((octets[0] << 8) | octets[1]).toString(16)}:${((octets[2] << 8) | octets[3]).toString(16)}`;
+  }
+  const halves = text.split('::');
+  if (halves.length > 2) return null;
+  const parse = (part: string) => (part === '' ? [] : part.split(':'));
+  const head = parse(halves[0]);
+  const rest = halves.length === 2 ? parse(halves[1]) : [];
+  const missing = 8 - head.length - rest.length;
+  if (halves.length === 2 ? missing < 1 : missing !== 0) return null;
+  const all = [...head, ...Array<string>(halves.length === 2 ? missing : 0).fill('0'), ...rest];
+  if (!all.every((g) => /^[0-9a-f]{1,4}$/i.test(g))) return null;
+  return all.map((g) => Number.parseInt(g, 16));
+}
 
 export interface SafeUrlCheckOptions {
   /**

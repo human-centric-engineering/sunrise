@@ -23,6 +23,7 @@ vi.mock('@/lib/db/client', () => ({
     aiWebhookSubscription: { findMany: vi.fn() },
     aiWebhookDelivery: {
       create: vi.fn(),
+      findUnique: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(),
       updateManyAndReturn: vi.fn(),
@@ -107,6 +108,25 @@ describe('webhook delivery', () => {
     expect(lastHadDispatcher()).toBe(true);
   });
 
+  it('marks a delivery the dispatcher refused as terminal, worded without the host', async () => {
+    const { UnsafeResolvedAddressError } = await import('@/lib/security/safe-dispatcher');
+    mockFetch.mockRejectedValue(
+      new TypeError('fetch failed', {
+        cause: new UnsafeResolvedAddressError('hooks.example.com', '10.0.0.5', 'private_ip'),
+      })
+    );
+    vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValue({ attempts: 0 } as never);
+    await runAsOrg(ORG_B, () => dispatchWebhookEvent('workflow_failed', { workflowId: 'w1' }));
+    const writes = [
+      ...vi.mocked(prisma.aiWebhookDelivery.update).mock.calls,
+      ...vi.mocked(prisma.aiWebhookDelivery.updateMany).mock.calls,
+    ].map((c) => JSON.stringify(c[0]));
+    expect(writes.some((w) => w.includes('"status":"exhausted"') || w.includes('"failed"'))).toBe(
+      true
+    );
+    expect(writes.some((w) => w.includes('10.0.0.5'))).toBe(false);
+  });
+
   it('control: delivers as before for the install org', async () => {
     await runAsOrg(INSTALL_ORG_ID, () =>
       dispatchWebhookEvent('workflow_failed', { workflowId: 'w1' })
@@ -142,5 +162,23 @@ describe('the allowlisted outbound call (external_call, call_external_api)', () 
       executeHttpRequest({ url: 'https://api.allowed.com/x', method: 'GET' })
     );
     expect(lastHadDispatcher()).toBe(false);
+  });
+
+  it('refuses an allowlisted private IP literal for a customer org, before any fetch', async () => {
+    process.env.ORCHESTRATION_ALLOWED_HOSTS = '10.0.0.12';
+    resetAllowlistCache();
+    await expect(
+      runAsOrg(ORG_B, () => executeHttpRequest({ url: 'http://10.0.0.12/x', method: 'GET' }))
+    ).rejects.toMatchObject({ code: 'host_not_allowed' });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('control: the install org still reaches the allowlisted literal', async () => {
+    process.env.ORCHESTRATION_ALLOWED_HOSTS = '10.0.0.12';
+    resetAllowlistCache();
+    await runAsOrg(INSTALL_ORG_ID, () =>
+      executeHttpRequest({ url: 'http://10.0.0.12/x', method: 'GET' })
+    );
+    expect(mockFetch).toHaveBeenCalled();
   });
 });

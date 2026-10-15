@@ -30,7 +30,8 @@
  *
  * @see lib/tenancy/classification.ts — GLOBAL_CONFIG_MODELS
  */
-import { actsForPlatform } from '@/lib/tenancy/context';
+import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 /** The words an admin sees on the route's 403. */
 export const SHARED_SETTINGS_REFUSAL =
@@ -56,5 +57,12 @@ export const SHARED_SETTINGS_REFUSAL_CODE = 'shared_settings_install_org_only';
  * only inside the install org or a system scope.
  */
 export function canChangeSharedSettings(): boolean {
-  return actsForPlatform();
+  // The same rule as `actsForPlatform` in tenancy/context, held to it by
+  // tests/unit/lib/tenancy/acts-for-platform.test.ts. Spelled out here rather
+  // than delegated so a test that mocks the context module's two readers
+  // keeps this answering (§111 t-811 review).
+  if (!isMultiTenant()) return true;
+  const context = getTenantContext();
+  if (!context) return false;
+  return context.orgId === null || context.orgId === INSTALL_ORG_ID;
 }

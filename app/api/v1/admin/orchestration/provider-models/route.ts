@@ -12,6 +12,7 @@
 
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse, successResponse } from '@/lib/api/responses';
 import { ConflictError } from '@/lib/api/errors';
@@ -28,7 +29,7 @@ import {
 import { modelAgentUsage, modelUsageKey } from '@/lib/orchestration/admin/global-config-usage';
 
 export const GET = withAdminAuth(
-  async (request, _session) => {
+  async (request, session) => {
     const log = await getRouteLogger(request);
 
     const { searchParams } = new URL(request.url);
@@ -77,6 +78,10 @@ export const GET = withAdminAuth(
     // t-752): the caller's by name, other orgs' counted. Scoped to the slugs
     // in the current page so a 100-row matrix doesn't drag the entire
     // AiAgent table across the wire.
+    // Other orgs' usage is counted for a platform admin's delete check. A
+    // customer org's admin sees only their own org's (§111 t-811): how many
+    // of another tenant's agents use a shared row is not theirs to know.
+    const platform = await administersPlatform(session.principal);
     const usage = await modelAgentUsage(
       [...new Set(rows.map((r) => r.providerSlug))],
       [...new Set(rows.map((r) => r.modelId))]
@@ -124,7 +129,7 @@ export const GET = withAdminAuth(
         agents: used?.agents ?? [],
         // Active agents in other orgs bound to it. Counted, never named; the
         // delete is refused while this or `agents` is non-zero.
-        otherOrgAgentCount: used?.otherOrgAgents ?? 0,
+        otherOrgAgentCount: platform ? (used?.otherOrgAgents ?? 0) : 0,
         // Task slots this model serves as the effective system default
         // (routing/chat/reasoning/embeddings/audio). Agents with empty
         // provider/model inherit these at runtime.

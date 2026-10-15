@@ -17,6 +17,7 @@
 
 import { Prisma } from '@prisma/client';
 import { withAdminAuth } from '@/lib/auth/guards';
+import { administersPlatform } from '@/lib/auth/admin-viewer';
 import { prisma } from '@/lib/db/client';
 import { paginatedResponse, successResponse } from '@/lib/api/responses';
 import { ConflictError } from '@/lib/api/errors';
@@ -31,7 +32,7 @@ import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { agentProfileUsage } from '@/lib/orchestration/admin/global-config-usage';
 
 export const GET = withAdminAuth(
-  async (request, _session) => {
+  async (request, session) => {
     const log = await getRouteLogger(request);
 
     const { searchParams } = new URL(request.url);
@@ -58,7 +59,14 @@ export const GET = withAdminAuth(
 
     // Attached agents in every org (t-731): a profile is global config, and a
     // plain `_count` at `multi` would count only the caller's org's agents.
-    const attached = await agentProfileUsage(rows.map((r) => r.id));
+    // Other orgs' usage is counted for a platform admin's delete check. A
+    // customer org's admin sees only their own org's (§111 t-811): how many
+    // of another tenant's agents use a shared row is not theirs to know.
+    const platform = await administersPlatform(session.principal);
+    const profileIds = rows.map((r) => r.id);
+    const attached = await (platform
+      ? agentProfileUsage(profileIds)
+      : agentProfileUsage(profileIds, { acrossOrgs: false }));
     const data = rows.map((profile) => ({
       ...profile,
       agentCount: attached.get(profile.id) ?? 0,

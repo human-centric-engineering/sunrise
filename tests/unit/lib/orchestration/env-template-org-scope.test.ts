@@ -33,8 +33,8 @@ vi.mock('@/lib/db/client', () => ({ prisma: { aiAgentCapability: { findFirst: fi
 import {
   EnvTemplateError,
   envVarAvailableHere,
-  envVarPrefixHere,
-  findUnavailableEnvVarReferences,
+  bindingEnvVarWarnings,
+  classifyEnvVarReferences,
   findUnsetEnvVarReferences,
   orgEnvVarPrefix,
   resolveEnvTemplate,
@@ -154,23 +154,41 @@ describe('findUnsetEnvVarReferences — the save-time warning', () => {
   });
 
   it('reports it as unavailable instead, with the prefix that would fix it', async () => {
-    const [unavailable, prefix] = await inOrg(ORG_B, () => [
-      findUnavailableEnvVarReferences(`\${env:${PLATFORM_SECRET}}`, {
+    const classes = await inOrg(ORG_B, () =>
+      classifyEnvVarReferences(`\${env:${PLATFORM_SECRET}}`, {
         Authorization: `\${env:${B_SECRET}}`,
-      }),
-      envVarPrefixHere(),
-    ]);
-    expect(unavailable).toEqual([PLATFORM_SECRET]);
-    expect(prefix).toBe(orgEnvVarPrefix(ORG_B));
+      })
+    );
+    expect(classes).toEqual({
+      missing: [],
+      unavailable: [PLATFORM_SECRET],
+      prefix: orgEnvVarPrefix(ORG_B),
+    });
   });
 
   it('control: the install org has no unavailable names and no prefix', async () => {
-    const [unavailable, prefix] = await inOrg(INSTALL_ORG_ID, () => [
-      findUnavailableEnvVarReferences(`\${env:${PLATFORM_SECRET}}`),
-      envVarPrefixHere(),
-    ]);
-    expect(unavailable).toEqual([]);
-    expect(prefix).toBeNull();
+    const classes = await inOrg(INSTALL_ORG_ID, () =>
+      classifyEnvVarReferences(`\${env:${PLATFORM_SECRET}}`, '${env:T811_NOT_SET}')
+    );
+    expect(classes).toEqual({ missing: ['T811_NOT_SET'], unavailable: [], prefix: null });
+  });
+
+  it('bindingEnvVarWarnings — the save warning: both lists, the prefix, or nothing', async () => {
+    const warn = await inOrg(ORG_B, () =>
+      bindingEnvVarWarnings({
+        forcedUrl: `https://h.example/\${env:${PLATFORM_SECRET}}`,
+        forcedHeaders: { 'X-A': `\${env:${orgEnvVarPrefix(ORG_B)}UNSET}` },
+      })
+    );
+    expect(warn).toEqual({
+      missingEnvVars: [`${orgEnvVarPrefix(ORG_B)}UNSET`],
+      unavailableEnvVars: [PLATFORM_SECRET],
+      envVarPrefix: orgEnvVarPrefix(ORG_B),
+    });
+    expect(
+      await inOrg(ORG_B, () => bindingEnvVarWarnings({ forcedUrl: 'https://h.example/' }))
+    ).toBeNull();
+    expect(bindingEnvVarWarnings({ forcedUrl: 42 })).toBeNull();
   });
 
   it('control: the install org sees the operator’s variable as set', async () => {

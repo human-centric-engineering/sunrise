@@ -44,6 +44,7 @@
  * stored the config. Refused before the variable is looked up, so a
  * refusal says nothing about whether the operator's variable is set.
  */
+import { z } from 'zod';
 import { actsForPlatform, getTenantContext } from '@/lib/tenancy/context';
 
 /**
@@ -178,61 +179,76 @@ export function resolveEnvTemplatesInRecord(
 export function findUnsetEnvVarReferences(
   ...values: ReadonlyArray<string | Record<string, string> | undefined | null>
 ): string[] {
-  const all: string[] = [];
-  for (const value of values) {
-    if (value == null) continue;
-    if (typeof value === 'string') {
-      all.push(...extractEnvTemplateNames(value));
-    } else {
-      for (const inner of Object.values(value)) {
-        if (typeof inner === 'string') {
-          all.push(...extractEnvTemplateNames(inner));
-        }
-      }
-    }
-  }
-  const seen = new Set<string>();
-  const missing: string[] = [];
-  for (const name of all) {
-    if (seen.has(name)) continue;
-    seen.add(name);
-    // A name the org may not use is not looked up at all — answering by the
-    // operator's env would let an org admin probe which of its variables are
-    // set. `findUnavailableEnvVarReferences` reports it instead, with the fix.
-    if (!envVarAvailableHere(name)) continue;
-    if (!process.env[name]) {
-      missing.push(name);
-    }
-  }
-  return missing;
+  return classifyEnvVarReferences(...values).missing;
+}
+
+/** What a config's `${env:VAR}` references come to, for the org in context. */
+export interface EnvVarReferenceClasses {
+  /** Usable here but not set on the host. Presence check only. */
+  missing: string[];
+  /**
+   * Not usable here at all (§111 t-811), never looked up — so the list says
+   * nothing about the operator's env. Empty for the platform.
+   */
+  unavailable: string[];
+  /** The prefix that would make an unavailable name usable; `null` for the platform. */
+  prefix: string | null;
 }
 
 /**
- * The `${env:VAR}` names in `values` that config acting for the org in context
- * may not use at all (§111 t-811) — reported apart from the unset ones, so the
- * binding-save warning can say the fix is to rename the variable under the
- * org's prefix rather than to set it.
+ * Sort every distinct `${env:VAR}` name in `values` into what will not
+ * resolve here and why, in one pass: unset on the host, or a name this org
+ * may not use. A name the org may not use is never looked up.
  */
-export function findUnavailableEnvVarReferences(
+export function classifyEnvVarReferences(
   ...values: ReadonlyArray<string | Record<string, string> | undefined | null>
-): string[] {
+): EnvVarReferenceClasses {
   const names = new Set<string>();
   for (const value of values) {
     if (value == null) continue;
-    const strings = typeof value === 'string' ? [value] : Object.values(value);
-    for (const str of strings) {
-      if (typeof str !== 'string') continue;
-      for (const name of extractEnvTemplateNames(str)) {
-        if (!envVarAvailableHere(name)) names.add(name);
-      }
+    for (const str of typeof value === 'string' ? [value] : Object.values(value)) {
+      if (typeof str === 'string') for (const name of extractEnvTemplateNames(str)) names.add(name);
     }
   }
-  return [...names];
+  const missing: string[] = [];
+  const unavailable: string[] = [];
+  for (const name of names) {
+    if (!envVarAvailableHere(name)) unavailable.push(name);
+    else if (!process.env[name]) missing.push(name);
+  }
+  const orgId = actsForPlatform() ? null : (getTenantContext()?.orgId ?? null);
+  return { missing, unavailable, prefix: orgId === null ? null : orgEnvVarPrefix(orgId) };
 }
 
-/** The env-var prefix of the org in context, or `null` where none applies (the platform). */
-export function envVarPrefixHere(): string | null {
-  if (actsForPlatform()) return null;
-  const orgId = getTenantContext()?.orgId ?? null;
-  return orgId === null ? null : orgEnvVarPrefix(orgId);
+/**
+ * The capability-binding save warning (`meta.warnings`) for a `customConfig`,
+ * or `null` when there is nothing to warn about. Scans the two fields that
+ * take templates — `forcedUrl` and `forcedHeaders`; the route-layer config is
+ * an open record, so a malformed shape warns about nothing rather than
+ * failing the save.
+ */
+export function bindingEnvVarWarnings(customConfig: unknown): {
+  missingEnvVars?: string[];
+  unavailableEnvVars?: string[];
+  envVarPrefix?: string;
+} | null {
+  const parsed = bindingScanSchema.safeParse(customConfig);
+  if (!parsed.success) return null;
+  const { missing, unavailable, prefix } = classifyEnvVarReferences(
+    parsed.data.forcedUrl,
+    parsed.data.forcedHeaders
+  );
+  if (missing.length === 0 && unavailable.length === 0) return null;
+  return {
+    ...(missing.length > 0 ? { missingEnvVars: missing } : {}),
+    ...(unavailable.length > 0 ? { unavailableEnvVars: unavailable } : {}),
+    ...(unavailable.length > 0 && prefix ? { envVarPrefix: prefix } : {}),
+  };
 }
+
+const bindingScanSchema = z
+  .object({
+    forcedUrl: z.string().optional(),
+    forcedHeaders: z.record(z.string(), z.string()).optional(),
+  })
+  .partial();

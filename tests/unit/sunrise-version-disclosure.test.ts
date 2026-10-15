@@ -140,6 +140,7 @@ const ALLOWED_ROUTES: readonly string[] = [
   'app/api/v1/admin/orchestration/capabilities/[id]/route.ts',
   'app/api/v1/admin/orchestration/maintenance/tick/route.ts',
   'app/api/v1/admin/orchestration/mcp/audit/route.ts',
+  'app/api/v1/admin/orchestration/mcp/keys/[id]/route.ts',
   'app/api/v1/admin/orchestration/mcp/keys/route.ts',
   'app/api/v1/admin/orchestration/mcp/prompts/[id]/route.ts',
   'app/api/v1/admin/orchestration/mcp/prompts/route.ts',
