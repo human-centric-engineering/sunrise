@@ -140,6 +140,7 @@ import {
 } from '@/lib/orchestration/tracing';
 import {
   MAX_HISTORY_MESSAGES,
+  HISTORY_LOAD_LIMIT,
   SUMMARY_LOOKAHEAD_MESSAGES,
   MAX_TOOL_ITERATIONS,
   type ChatRequest,
@@ -923,12 +924,18 @@ export class StreamingChatHandler {
       // respect the cap. Zero means the whole history fits and the summary — if
       // one is stored — is simply not needed this turn.
       //
-      // Note this keys on the CAP, not on the load window, so an agent whose
-      // `maxHistoryMessages` is >= the 200 rows `loadHistory` returns never
-      // summarises at all and loses everything past 200 silently. Pre-existing,
-      // unchanged here, and filed as #655 — the trigger wants to be
-      // `min(cap, loadLimit)`.
-      const requiredDrop = Math.max(0, historyRows.length - effectiveMessageCap);
+      // The window is the agent's cap, but never wider than what `loadHistory`
+      // can return less one lookahead. A cap at or above the load limit would
+      // otherwise make `requiredDrop` zero forever, and everything older than
+      // the loaded rows would leave the prompt with no summary standing in for
+      // it (#655). Holding back one lookahead means the summary starts while
+      // the oldest loaded row is still visible, so it can cover the lookahead
+      // and be reused for several turns like any other.
+      const summaryWindow = Math.min(
+        effectiveMessageCap,
+        HISTORY_LOAD_LIMIT - SUMMARY_LOOKAHEAD_MESSAGES
+      );
+      const requiredDrop = Math.max(0, historyRows.length - summaryWindow);
 
       if (requiredDrop > 0) {
         // A pin with no text behind it covers nothing, whatever it says — and
@@ -982,10 +989,7 @@ export class StreamingChatHandler {
           // the price — each call now folds ~2 new messages into the stored
           // text instead of re-deriving the whole prefix. Do not read the
           // "one call serves ~5 turns" figure as covering these agents.
-          const lookahead = Math.min(
-            SUMMARY_LOOKAHEAD_MESSAGES,
-            Math.floor(effectiveMessageCap / 2)
-          );
+          const lookahead = Math.min(SUMMARY_LOOKAHEAD_MESSAGES, Math.floor(summaryWindow / 2));
           const targetIdx = Math.min(requiredDrop - 1 + lookahead, historyRows.length - 1);
           const newlyCovered = historyRows.slice(coveredIdx + 1, targetIdx + 1);
 
@@ -2947,7 +2951,7 @@ export class StreamingChatHandler {
     const messages = await prisma.aiMessage.findMany({
       where: { conversationId, conversation: conversationOwner(userId) },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: 200,
+      take: HISTORY_LOAD_LIMIT,
     });
     // Drop error markers. They exist so the CLIENT can show a failed turn
     // instead of an unanswered question; this history is only ever used to

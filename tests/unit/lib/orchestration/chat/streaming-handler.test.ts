@@ -4931,6 +4931,39 @@ describe('rolling conversation summarization', () => {
     );
   });
 
+  it.each([200, 250, 500])(
+    'summarises what the 200-row load window cuts off when maxHistoryMessages is %i (#655)',
+    async (cap) => {
+      // `loadHistory` returns at most 200 rows, so `rows - cap` is never
+      // positive at a cap of 200+ and the summary never ran: everything older
+      // than the window left the prompt with nothing standing in for it.
+      mockSummariser();
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ maxHistoryMessages: cap })
+      );
+
+      const turn = await runTurn(`conv-high-cap-${cap}`, makeHistoryMessages(200), NO_SUMMARY);
+
+      expect(turn.calls).toBe(1);
+      expect(turn.persisted).toBeDefined();
+      expect(turn.prompt.some((m) => m.content.includes('summary-text'))).toBe(true);
+      // The newest rows are still verbatim.
+      expect(verbatimHistory(turn.prompt).has('Message 199')).toBe(true);
+    }
+  );
+
+  it('does not summarise a high-cap conversation that still fits the load window (#655)', async () => {
+    mockSummariser();
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxHistoryMessages: 250 })
+    );
+
+    const turn = await runTurn('conv-high-cap-fits', makeHistoryMessages(150), NO_SUMMARY);
+
+    expect(turn.calls).toBe(0);
+    expect(verbatimHistory(turn.prompt).size).toBe(150);
+  });
+
   it('never summarises away more than half a small agent window', async () => {
     // Found by /code-review. `maxHistoryMessages` is validated `min(0).max(500)`,
     // so a cap below the lookahead is a supported configuration — and with a

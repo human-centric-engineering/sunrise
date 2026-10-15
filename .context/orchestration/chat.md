@@ -577,7 +577,9 @@ export function initAppGuardEventContributors(): void {
 
 ## Rolling Conversation Summary
 
-When conversation history exceeds the effective message-count cap (`AiAgent.maxHistoryMessages ?? MAX_HISTORY_MESSAGES`, default 50), the streaming handler represents the messages that fall out with a concise LLM summary instead of silently truncating them. This preserves the original problem, key decisions, and important context across long conversations.
+When conversation history exceeds the summary window — `min(cap, HISTORY_LOAD_LIMIT - SUMMARY_LOOKAHEAD_MESSAGES)`, where `cap` is `AiAgent.maxHistoryMessages ?? MAX_HISTORY_MESSAGES` (default 50) — the streaming handler represents the messages that fall out with a concise LLM summary instead of silently truncating them. This preserves the original problem, key decisions, and important context across long conversations.
+
+**The trigger is the load window as well as the cap.** `loadHistory` reads at most `HISTORY_LOAD_LIMIT` (200) rows, so a cap of 190 or more could never be exceeded by the loaded rows and an agent configured that high (the field allows up to 500) silently lost everything older than 200 messages (#655). The window is therefore clamped to `HISTORY_LOAD_LIMIT - SUMMARY_LOOKAHEAD_MESSAGES` (190): at any cap from 190 to 500 the summary starts once the conversation outgrows 190 loaded rows and covers what the load window cuts off. Verbatim history for those agents tops out at about 190 messages, not the configured cap.
 
 Agents that set `maxHistoryMessages` to a smaller value see summarisation kick in earlier; agents that set it to `0` get a pure-summary view of all prior turns (no verbatim history on any turn).
 
@@ -683,7 +685,7 @@ Three internal modules under `lib/orchestration/chat/` are not exported from the
 
 - Primary export: `summarizeMessages(messages, providerSlug, fallbackSlugs, options?)` returning a `SummarizeResult`.
 - `options.previousSummary` switches it from _summarise_ to **extend**: the prior text and the delta go to the model together, under a prompt that requires the earlier content to be carried forward rather than replaced. `options.agentId` / `options.conversationId` attribute the cost row.
-- Called by the handler from the [Rolling Conversation Summary](#rolling-conversation-summary) flow once `history.length > effectiveCap` (where `effectiveCap = agent.maxHistoryMessages ?? MAX_HISTORY_MESSAGES`).
+- Called by the handler from the [Rolling Conversation Summary](#rolling-conversation-summary) flow once `history.length` exceeds the summary window (`min(agent.maxHistoryMessages ?? MAX_HISTORY_MESSAGES, HISTORY_LOAD_LIMIT - SUMMARY_LOOKAHEAD_MESSAGES)`).
 - Runs on the **`routing` task-type model** (budget tier, e.g. Haiku) resolved via `getDefaultModelForTask('routing')` in the LLM settings resolver. Capped at `maxTokens: 500`.
 - Logs cost as a `CostOperation.CHAT` row against the caller's real agent and conversation, tagged `metadata.kind = 'conversation_summary'`. Both columns are foreign keys — pass a real row id or pass nothing; a placeholder is rejected and swallowed (#654).
 - **Never throws.** Any failure (provider down, LLM error, empty response) returns `fellBack: true` with `previousSummary` if there is one, and `FALLBACK_MESSAGE = '[Summary unavailable — earlier messages omitted]'` otherwise, so the chat turn keeps moving and a good summary is never destroyed by a bad call.

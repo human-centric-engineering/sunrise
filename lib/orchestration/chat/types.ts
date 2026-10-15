@@ -132,6 +132,14 @@ export const MAX_TOOL_ITERATIONS = 5;
 export const MAX_HISTORY_MESSAGES = 50;
 
 /**
+ * How many of the most recent messages `loadHistory` reads from the database.
+ * Anything older is invisible to the prompt builder, so the rolling summary has
+ * to take over before a conversation outgrows this window — whatever the
+ * agent's own `maxHistoryMessages` is (#655).
+ */
+export const HISTORY_LOAD_LIMIT = 200;
+
+/**
  * How far **past** the current drop boundary a summarisation run extends.
  *
  * The rolling summary covers a prefix of the conversation, and the prefix has
