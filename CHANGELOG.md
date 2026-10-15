@@ -396,9 +396,10 @@ release process.
   any provider grant, so the clean-up agent started unpinned and ran on the
   default chat model until a registry change triggered a reconcile.
   `PUT /api/v1/admin/orgs/[id]/providers` now reconciles the org's platform
-  agents after the write, which pins an unpinned agent to the strongest
-  tool-using model the grants allow. A reconcile failure is logged and does
-  not fail the grant.
+  agents after a write that approves anything, which pins an unpinned agent
+  to the strongest tool-using model the grants allow. A reconcile failure, or
+  a suspended org, never fails the grant: `markPlatformAgentsStale()` marks
+  the org so the maintenance job reconciles it.
 - **Code that handles a particular unique violation recognises it again**
   (t-796). Under Prisma 7's driver adapter a P2002 carries no `meta.target`,
   so every reader of it missed. An inbound trigger replay answered `500`

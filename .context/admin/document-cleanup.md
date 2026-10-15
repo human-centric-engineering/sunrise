@@ -65,8 +65,11 @@ the reconcile instead, so the maintenance job retries the org. The pin is applie
 instance is created, and again on any later reconcile while **both** fields are
 still empty. Granting the org providers (`PUT /admin/orgs/[id]/providers`)
 runs that reconcile, so a new org's cleanup agent is pinned as soon as it is
-granted a provider that qualifies (t-798); a reconcile failure there is logged
-and does not fail the grant. An admin's own choice is never overwritten:
+granted a provider that qualifies (t-798). A reconcile failure there, or a
+suspended org, never fails the grant: it marks the org for the maintenance job,
+which reconciles it on its next pass (a suspended org once reinstated). Other
+changes that would let it pin, such as switching an approved provider on or
+adding its key, do not start a reconcile. An admin's own choice is never overwritten:
 provider and model belong to the org. Revoking the provider an agent is pinned
 to does not unpin it; the call-time gate then refuses that provider until an
 admin picks another.

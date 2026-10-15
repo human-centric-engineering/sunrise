@@ -42,8 +42,10 @@ vi.mock('@/lib/orchestration/llm/org-provider-policy', () => ({
 }));
 
 const mockReconcilePlatformAgents = vi.hoisted(() => vi.fn());
+const mockMarkPlatformAgentsStale = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
   reconcilePlatformAgents: mockReconcilePlatformAgents,
+  markPlatformAgentsStale: mockMarkPlatformAgentsStale,
 }));
 
 const mockLog = vi.hoisted(() => ({
@@ -112,6 +114,7 @@ beforeEach(() => {
   });
   mockPrisma.org.update.mockResolvedValue({});
   mockReconcilePlatformAgents.mockResolvedValue({});
+  mockMarkPlatformAgentsStale.mockResolvedValue(undefined);
   // Provider rows: each slug's id is `id-<slug>`, and `nope` has no row.
   mockPrisma.aiProviderConfig.findMany.mockImplementation(
     async (args: { where: { slug?: { in: string[] }; id?: { in: string[] } } }) => {
@@ -217,18 +220,20 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
     expect(mockForgetOrgProviderPolicy).toHaveBeenCalledWith(OTHER);
   });
 
-  it("reconciles the org's platform agents after the forget, so a fresh org's cleanup agent is pinned (t-798)", async () => {
+  it("reconciles the org's platform agents after the forget and the audit row, so a fresh org's cleanup agent is pinned (t-798)", async () => {
     const res = await put({ approved: ['openai'], jurisdictions: null });
 
     expect(res.status).toBe(200);
     expect(mockReconcilePlatformAgents).toHaveBeenCalledWith(OTHER);
     // The pick reads the org's policy: after the forget it sees the new grant.
-    expect(mockForgetOrgProviderPolicy.mock.invocationCallOrder[0]).toBeLessThan(
-      mockReconcilePlatformAgents.mock.invocationCallOrder[0]
-    );
+    const reconciledAt = mockReconcilePlatformAgents.mock.invocationCallOrder[0];
+    expect(mockForgetOrgProviderPolicy.mock.invocationCallOrder[0]).toBeLessThan(reconciledAt);
+    // A slow reconcile must not hold up the audit row of a committed write.
+    expect(mockLogAdminAction.mock.invocationCallOrder[0]).toBeLessThan(reconciledAt);
+    expect(mockMarkPlatformAgentsStale).not.toHaveBeenCalled();
   });
 
-  it('still answers the grant when the reconcile fails, and logs it', async () => {
+  it('still answers the grant when the reconcile fails, and leaves the org to the maintenance job', async () => {
     mockReconcilePlatformAgents.mockRejectedValueOnce(new Error('no service account'));
 
     const res = await put({ approved: ['openai'], jurisdictions: null });
@@ -241,9 +246,45 @@ describe('PUT /api/v1/admin/orgs/[id]/providers', () => {
       expect.objectContaining({ action: 'org.providers.replace' })
     );
     expect(mockLog.error).toHaveBeenCalledWith(
-      'Platform agents not reconciled after a provider grant',
+      'Platform agents not reconciled after a provider grant; the maintenance job retries',
       { orgId: OTHER, error: 'no service account' }
     );
+    // The org's marker already holds the current digest, so without this the
+    // job would never come back for it.
+    expect(mockMarkPlatformAgentsStale).toHaveBeenCalledWith(OTHER);
+  });
+
+  it('still answers the grant when the org cannot be marked either, and logs that', async () => {
+    mockReconcilePlatformAgents.mockRejectedValueOnce(new Error('no service account'));
+    mockMarkPlatformAgentsStale.mockRejectedValueOnce(new Error('serialization failure'));
+
+    const res = await put({ approved: ['openai'], jurisdictions: null });
+
+    expect(res.status).toBe(200);
+    expect(mockLog.error).toHaveBeenCalledWith(
+      'Platform agents not marked for the maintenance job after a provider grant',
+      { orgId: OTHER, error: 'serialization failure' }
+    );
+  });
+
+  it('does not reconcile a suspended org, and marks it for the job to reconcile once reinstated', async () => {
+    mockPrisma.org.findUnique.mockImplementation(async (args: { select: Record<string, true> }) =>
+      args.select.status ? { status: 'SUSPENDED' } : { settings: { providers: { approved: [] } } }
+    );
+
+    const res = await put({ approved: ['openai'], jurisdictions: null });
+
+    expect(res.status).toBe(200);
+    expect(mockReconcilePlatformAgents).not.toHaveBeenCalled();
+    expect(mockMarkPlatformAgentsStale).toHaveBeenCalledWith(OTHER);
+  });
+
+  it('skips the reconcile for a revocation to nothing, which can pin nothing', async () => {
+    const res = await put({ approved: [], jurisdictions: null });
+
+    expect(res.status).toBe(200);
+    expect(mockReconcilePlatformAgents).not.toHaveBeenCalled();
+    expect(mockMarkPlatformAgentsStale).not.toHaveBeenCalled();
   });
 
   it('answers a clash with a concurrent settings write with a 409, and audits nothing', async () => {

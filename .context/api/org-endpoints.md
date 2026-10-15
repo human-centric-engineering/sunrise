@@ -389,9 +389,10 @@ Which AI providers the org may use at `TENANCY_MODE=multi` (§120 t-742). A
 `PUT` replaces the whole policy, `{ approved: string[], jurisdictions: string[] | null }`
 (`jurisdictions` is required: `null` lifts the restriction, and leaving it out is a 400),
 and writes an `org.providers.replace` audit row. `[]` revokes every grant.
-A successful `PUT` then reconciles the org's platform agents, which pins an
-unpinned clean-up agent to a model the new grants allow (t-798); a reconcile
-failure is logged and the `PUT` still succeeds.
+A successful `PUT` that approves anything then reconciles the org's platform
+agents, which pins an unpinned clean-up agent to a model the new grants allow
+(t-798). A reconcile failure, or a suspended org, marks the org for the
+maintenance job instead; either way the `PUT` succeeds.
 Both return `{ orgId, unrestricted, enforced, approved, jurisdictions }`, each
 grant in `approved` as `{ id, slug }`: the grant is stored as the provider row's
 id, so it survives a rename, and `slug` is `null` if the row was deleted. See

@@ -253,7 +253,9 @@ vi.mock('@/lib/orchestration/knowledge/seeder', async () => {
 
 import {
   reconcilePlatformAgents,
+  markPlatformAgentsStale,
   reconcilePlatformAgentsIfStale,
+  STALE_PLATFORM_AGENTS_HASH,
 } from '@/lib/orchestration/agents/reconcile-platform-agents';
 import {
   CORE_PLATFORM_AGENTS,
@@ -949,5 +951,31 @@ describe('reconcilePlatformAgentsIfStale', () => {
 
   it('at single, never reconciles a non-install org', async () => {
     expect(await reconcilePlatformAgentsIfStale(ORG_B)).toEqual({ reconciled: false });
+  });
+});
+
+describe('markPlatformAgentsStale (t-798)', () => {
+  it('makes the job reconcile a current org again, keeping the slugs it placed', async () => {
+    await reconcilePlatformAgentsIfStale('install');
+    const placed = marker()!.slugs;
+    expect(placed.length).toBeGreaterThan(0);
+
+    await markPlatformAgentsStale('install');
+
+    expect(marker()).toEqual({ hash: STALE_PLATFORM_AGENTS_HASH, slugs: placed });
+    const next = await reconcilePlatformAgentsIfStale('install');
+    expect(next.reconciled).toBe(true);
+    // The reconcile records the real digest again, so the job stops.
+    expect(marker()!.hash).not.toBe(STALE_PLATFORM_AGENTS_HASH);
+    expect(await reconcilePlatformAgentsIfStale('install')).toEqual({ reconciled: false });
+  });
+
+  it('writes nothing for an org with no marker, which the job reconciles already', async () => {
+    fake.state.writes = [];
+
+    await markPlatformAgentsStale('install');
+
+    expect(marker()).toBeUndefined();
+    expect(fake.state.writes).toEqual([]);
   });
 });

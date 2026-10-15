@@ -83,9 +83,10 @@ const CLEANUP_CAPABILITY_SLUGS = [
  *    provider (`source: 'explicit'`).
  * With nothing eligible this returns null and the agent inherits, choosing per
  * turn among what the org may use. The reconcile asks again while the agent is
- * still unpinned, but a grant does not by itself start a reconcile: one runs
- * when the platform-agent registry changes or the org has no marker. Until
- * then an org admin can pick the agent's provider.
+ * still unpinned, and a provider grant to the org runs one (t-798). Other
+ * changes that would let it pin (a provider switched on, a key or a strong
+ * model added) do not; until a reconcile runs, an org admin can pick the
+ * agent's provider.
  *
  * A policy that cannot be read THROWS rather than answering "nothing": the
  * reconcile then fails and leaves the org unmarked, so the maintenance job

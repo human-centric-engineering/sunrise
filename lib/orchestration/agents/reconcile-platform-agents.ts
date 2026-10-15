@@ -3,7 +3,8 @@
  *
  * Every org has its own instance of each platform agent
  * (`platform-agents.ts`). This is the one writer of those instances. It runs
- * when an org is created (`createOrg`), on `npm run db:seed`
+ * when an org is created (`createOrg`), when an org is granted providers
+ * (`PUT /admin/orgs/[id]/providers`, t-798), on `npm run db:seed`
  * (`prisma/seeds/021-platform-agents.ts`), and from the maintenance tick for
  * any org whose stored registry digest differs from the running code
  * ({@link reconcilePlatformAgentsIfStale}).
@@ -416,6 +417,27 @@ export async function reconcilePlatformAgentsIfStale(
   const marker = await loadPlatformAgentsMarker(orgId, options.db ?? defaultDb);
   if (marker?.hash === platformAgentRegistryHash()) return { reconciled: false };
   return { reconciled: true, result: await reconcilePlatformAgents(orgId, options) };
+}
+
+/** A marker hash no registry digest equals, so {@link reconcilePlatformAgentsIfStale} runs. */
+export const STALE_PLATFORM_AGENTS_HASH = 'stale';
+
+/**
+ * Have the maintenance job reconcile this org on its next pass, for a caller
+ * that could not reconcile it now (t-798: a provider grant whose reconcile
+ * failed, or a suspended org, which the job reaches once it is reinstated).
+ *
+ * Only the hash changes. The marker's `slugs` are what the reconcile placed,
+ * and dropping them would stop it deactivating an agent the registry
+ * retires. An org with no marker is reconciled by the job already.
+ */
+export async function markPlatformAgentsStale(
+  orgId: string,
+  db: TenancyClient = defaultDb
+): Promise<void> {
+  const previous = await loadPlatformAgentsMarker(orgId, db);
+  if (!previous) return;
+  await writePlatformAgentsMarker(orgId, { ...previous, hash: STALE_PLATFORM_AGENTS_HASH }, db);
 }
 
 /**
