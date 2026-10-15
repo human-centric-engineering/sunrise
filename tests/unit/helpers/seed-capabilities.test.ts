@@ -212,4 +212,39 @@ ${upsertSeed('...IMPL')}`
     expect(scan.definedNames).toEqual([]);
     expect(scan.opaqueDefinitions).toEqual([{ file: '910-suffix.ts', expr: 'fooas.def' }]);
   });
+
+  it.each([
+    ['an arrow parameter', 'rows.map(({ functionDefinition }) => functionDefinition);'],
+    [
+      'a long multi-line destructuring',
+      `const {
+  slug,
+  name,
+  description,
+  executionType,
+  executionHandler,
+  category,
+  functionDefinition,
+} = row;`,
+    ],
+    ['a renaming destructuring', 'const { functionDefinition: fd } = row;'],
+    [
+      'a query select',
+      'prisma.aiCapability.findMany({ select: { slug: true, functionDefinition: true } });',
+    ],
+    [
+      'a query filter',
+      'prisma.aiCapability.findMany({ where: { functionDefinition: Prisma.JsonNull } });',
+    ],
+  ])('does not read %s as a definition', (_label, code) => {
+    write(
+      '911-reads.ts',
+      `const IMPL = { executionType: 'internal', functionDefinition: { name: 'only_one', parameters: {} } };
+${code}
+${upsertSeed('...IMPL')}`
+    );
+    const scan = scanCapabilitySeeds(dir);
+    expect(scan.definedNames).toEqual(['only_one']);
+    expect(scan.opaqueDefinitions).toEqual([]);
+  });
 });

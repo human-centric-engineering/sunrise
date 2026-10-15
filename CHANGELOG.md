@@ -27,7 +27,7 @@ release process.
   and reports one it cannot name (imported, read off an instance) instead of
   dropping it. `eslint.config.mjs` lets that one seam file import
   `@/prisma/seeds/**` (the `lib/app/**` boundary otherwise matches it as a
-  Prisma import); `@prisma/*` and every other `@/prisma/…` module stay banned there. **Forks:** a capability seed
+  Prisma import); `@prisma/*` and every other `prisma` path stay banned there. **Forks:** a capability seed
   written that way was invisible to the completeness check and now fails it
   until you pair it here; a pair for a seed the reader cannot name also sets
   `seedFile`, and that seed must export the definitions it writes.

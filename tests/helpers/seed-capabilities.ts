@@ -164,6 +164,34 @@ function maskTypeBodies(masked: string): string {
 }
 
 /**
+ * Whether the key at `at` sits in an object PATTERN — `const { k } = x`,
+ * `({ k }) => …`, `for (const { k } of xs)` — rather than an object literal.
+ * Finds the enclosing brace (within a bounded look-back) and reads what
+ * surrounds it: a declaration keyword before, or `=`, `) =>`, `of`, `in` or a
+ * type annotation after.
+ */
+function inDestructuringPattern(masked: string, at: number): boolean {
+  let depth = 0;
+  let open = -1;
+  for (let i = at - 1; i >= Math.max(0, at - 2000); i--) {
+    const ch = masked[i];
+    if (ch === '}' || ch === ']' || ch === ')') depth++;
+    else if (ch === '{' || ch === '[' || ch === '(') {
+      if (depth === 0) {
+        if (ch === '{') open = i;
+        break;
+      }
+      depth--;
+    }
+  }
+  if (open === -1) return false;
+  if (/\b(?:const|let|var)\s*$/.test(masked.slice(Math.max(0, open - 16), open))) return true;
+  const close = objectEnd(masked, open);
+  if (close === -1) return false;
+  return /^\s*(?:=(?![=>])|\)\s*(?:=>|\{)|:|of\b|in\b)/.test(masked.slice(close + 1, close + 40));
+}
+
+/**
  * The first TOP-LEVEL `name:` string literal of the object opening at `open`.
  * `null` when there is none (or it is not a literal); `undefined` when the
  * object is unbalanced. A nested `properties: { name: {...} }` is deeper, and
@@ -274,16 +302,19 @@ export function scanCapabilitySeeds(seedDir: string = SEED_DIR): SeedScan {
       if (colon) {
         at = f.index + f[0].length + colon[0].length;
         value = types.slice(at, at + 200);
-      } else if (
-        /[{,]\s*$/.test(before) &&
-        /^\s*[,}]/.test(after) &&
-        // `const { functionDefinition } = def` destructures; it does not define.
-        !/\b(?:const|let|var)\s*\{[^}]*$/.test(before)
-      ) {
+      } else if (/[{,]\s*$/.test(before) && /^\s*[,}]/.test(after)) {
         // Shorthand `{ functionDefinition }` — the binding of the same name.
         at = f.index;
         value = 'functionDefinition';
       } else {
+        continue;
+      }
+
+      // A destructuring pattern binds the key; it does not define a capability.
+      if (inDestructuringPattern(types, f.index)) continue;
+      // `select: { functionDefinition: true }`, `where: { … : Prisma.JsonNull }`:
+      // a query flag or filter, not a definition.
+      if (/^(?:true|false|null|undefined|Prisma\.(?:JsonNull|DbNull|AnyNull))\b/.test(value)) {
         continue;
       }
 
