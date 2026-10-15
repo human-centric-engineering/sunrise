@@ -22,6 +22,9 @@
  *      does not hold the address. A subscription to anyone else is untouched.
  *   4. An unverified account's address leaves a colleague's subscription to
  *      it untouched: it may be a stranger's inbox.
+ *   6. Two erasures over one row do not undo each other: while one
+ *      person's redaction holds the row uncommitted, another's pre-pass
+ *      waits for it and redacts the row as it was left (t-806).
  *   5. The t-809 migration's backfill sets `stoppedByErasure` on a row whose
  *      `lastError` carries an erasure's wording, and on no other (run inside a
  *      transaction that is rolled back).
@@ -53,7 +56,9 @@ import { eraseUser } from '@/lib/privacy/erase-user';
 import { SUBJECT_DATA_SOURCES } from '@/lib/privacy/export-sources';
 import {
   deliveriesNamingSubject,
+  eraseSubjectFromDeliveries,
   erasedPayload,
+  preRedactSubjectFromDeliveries,
   type SubjectDelivery,
 } from '@/lib/privacy/delivery-payloads';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
@@ -747,6 +752,47 @@ async function main(): Promise<void> {
         isDeepStrictEqual(held.marked.webhook, expected) &&
         isDeepStrictEqual(held.marked.hook, expected),
       'the backfill marks both erasure wordings, whole or as a suffix, and nothing else, in both tables'
+    );
+
+    // ── 6. Two erasures over one row do not undo each other (t-806) ──
+    console.log('Two erasures over one row:');
+    const personX = `${PREFIX}-x-${stamp}`;
+    const personY = `${PREFIX}-y-${stamp}`;
+    const shared = await webhook('approval_required', {
+      workflowId: workflow.id,
+      approverUserIds: [personX, personY, colleague.id],
+    });
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let xRedacted: () => void = () => undefined;
+    const xHolds = new Promise<void>((resolve) => {
+      xRedacted = resolve;
+    });
+    // X's erasure redacts the row and holds it, uncommitted, until released.
+    const xErasure = prisma.$transaction(
+      async (tx) => {
+        await eraseSubjectFromDeliveries(tx, 'webhook', personX);
+        xRedacted();
+        await gate;
+      },
+      { timeout: 30_000 }
+    );
+    await xHolds;
+    // Y's pre-pass starts while X's write is uncommitted: it must wait for it
+    // and redact the row as X left it, not as it read it before.
+    const yPrePass = preRedactSubjectFromDeliveries(prisma, 'webhook', personY);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    release();
+    await xErasure;
+    await yPrePass;
+    const sharedAfter = await prisma.aiWebhookDelivery.findUniqueOrThrow({
+      where: { id: shared.id },
+    });
+    check(
+      isDeepStrictEqual(dataOf(sharedAfter.payload).approverUserIds, [colleague.id]),
+      'the second erasure redacts the row as the first left it: neither person comes back'
     );
 
     console.log('\nsmoke:erasure-deliveries passed');

@@ -472,13 +472,32 @@ function redactUpdate(table: DeliveryTable, userId: string, source: Prisma.Sql):
   `;
 }
 
-/** Every row in `table` naming `userId`, once each, with its payload and basis. */
+/**
+ * Every row in `table` naming `userId`, once each, with its basis, and its
+ * payload read under a row lock: see {@link LOCKED_LATEST}.
+ */
 function matchedRowsSql(table: DeliveryTable, userId: string): Prisma.Sql {
   return Prisma.sql`
-    SELECT DISTINCT ON (id) id, payload, activity
-      FROM (${matchArms(table, userId, Prisma.sql`d.id, d.payload`)}) matched
-     ORDER BY id, activity DESC`;
+    SELECT d.id, d.payload, m.activity
+      FROM (
+        SELECT DISTINCT ON (id) id, activity
+          FROM (${matchArms(table, userId, Prisma.sql`d.id`)}) arms
+         ORDER BY id, activity DESC
+      ) m
+      JOIN ${TABLES[table]} d ON d.id = m.id
+     ${LOCKED_LATEST}`;
 }
+
+/**
+ * Ends the row source of every redaction `UPDATE`. The redacted payload is
+ * computed from the payload the source read, so without a lock two erasures
+ * of people named on one row could each compute from the row before the
+ * other's write, and the second write would put the first person back. Under
+ * a row lock, a source that waits on another erasure's write reads the row
+ * as that write left it. Locked in id order, so two erasures over the same
+ * rows queue rather than deadlock.
+ */
+const LOCKED_LATEST = Prisma.sql`ORDER BY d.id FOR UPDATE OF d`;
 
 /**
  * Redact the subject from every delivery in `table` that names them, stop
@@ -542,7 +561,8 @@ export async function preRedactSubjectFromDeliveries(
       SELECT d.id, d.payload, w.activity
         FROM unnest(${chunk.map((m) => m.id)}::text[], ${chunk.map((m) => m.activity)}::boolean[])
              AS w(id, activity)
-        JOIN ${t} d ON d.id = w.id`;
+        JOIN ${t} d ON d.id = w.id
+       ${LOCKED_LATEST}`;
     changed += await client.$executeRaw(redactUpdate(table, userId, source));
   }
   return changed;
