@@ -1001,13 +1001,7 @@ export class StreamingChatHandler {
           // the price — each call now folds ~2 new messages into the stored
           // text instead of re-deriving the whole prefix. Do not read the
           // "one call serves ~5 turns" figure as covering these agents.
-          const lookahead = Math.min(
-            SUMMARY_LOOKAHEAD_MESSAGES,
-            Math.floor(summaryWindow / 2),
-            // And never more than half of what stays verbatim. Equal to the
-            // clamp above except when a truncated load left few rows.
-            Math.floor((historyRows.length - requiredDrop) / 2)
-          );
+          const lookahead = Math.min(SUMMARY_LOOKAHEAD_MESSAGES, Math.floor(keep / 2));
           const targetIdx = Math.min(requiredDrop - 1 + lookahead, historyRows.length - 1);
           const newlyCovered = historyRows.slice(coveredIdx + 1, targetIdx + 1);
 
@@ -1044,9 +1038,9 @@ export class StreamingChatHandler {
             // error. Keep what is stored, drop only what the cap demands, and
             // let the next turn try again.
             //
-            // Drop only what the cap demands, and never less than the stored
-            // summary already covers (those rows would otherwise be in the
-            // prompt twice). NOT `requiredDrop`: that is the SUMMARY window,
+            // Drop only what the stored summary already covers (those rows would
+            // otherwise be in the prompt twice); the builder applies the cap's
+            // own drop on top. NOT `requiredDrop`: that is the SUMMARY window,
             // which at caps near the load limit is narrower than the cap, and
             // rows the cap has room for must not be thrown away because a
             // provider is down.
@@ -1059,10 +1053,7 @@ export class StreamingChatHandler {
             // permanently instead of for one turn. It is also strictly better
             // than the behaviour it replaces, which represented *every* dropped
             // message with `[Summary unavailable]` and then wrote that down.
-            historyDropCount = Math.max(
-              Math.max(0, historyRows.length - effectiveMessageCap),
-              coveredIdx + 1
-            );
+            historyDropCount = coveredIdx + 1;
             // The stored summary still only covers what it always did, which is
             // LESS than we are about to drop. Say so, rather than letting the
             // prompt claim the gap is summarised.
