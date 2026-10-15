@@ -250,7 +250,7 @@ describe('an ADMIN of a customer org, at multi: testing a provider from the agen
 
   it('tests an approved provider, and the vendor call runs in their org, not the install org', async () => {
     vi.mocked(unapprovedProviders).mockResolvedValue([]);
-    const ranIn: (string | undefined)[] = [];
+    const ranIn: (string | null | undefined)[] = [];
     vi.mocked(getProvider).mockResolvedValue({
       chat: vi.fn(() => {
         ranIn.push(getTenantContext()?.orgId);
@@ -269,7 +269,7 @@ describe('an ADMIN of a customer org, at multi: testing a provider from the agen
 
   it('control: a platform admin in the same org skips the approval check and probes as the install org', async () => {
     signIn('ADMIN', ORG_B);
-    const ranIn: (string | undefined)[] = [];
+    const ranIn: (string | null | undefined)[] = [];
     vi.mocked(getProvider).mockResolvedValue({
       chat: vi.fn(() => {
         ranIn.push(getTenantContext()?.orgId);
