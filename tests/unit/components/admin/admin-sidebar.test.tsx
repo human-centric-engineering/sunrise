@@ -13,7 +13,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ComponentType } from 'react';
 
-import { AdminSidebar, sectionsForViewer } from '@/components/admin/admin-sidebar';
+import { AdminSidebar, sectionsForViewer, sectionsForMode } from '@/components/admin/admin-sidebar';
 import { registerNavSection, __resetNavRegistryForTests } from '@/lib/admin-nav/registry';
 
 const pathnameMock = vi.fn(() => '/admin/overview');
@@ -516,5 +516,96 @@ describe('sectionsForViewer', () => {
         subgroups: [{ label: 'Build', items: [item('/agents', 'org')] }],
       },
     ]);
+  });
+});
+
+// Members (§111 t-813) is shown at `multi` only; at `single` the console is
+// what it was before it.
+describe('AdminSidebar — Members at multi (t-813)', () => {
+  beforeEach(() => {
+    pathnameMock.mockReturnValue('/admin/overview');
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockResolvedValue(countsResponse(ZERO_COUNTS)));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    __resetNavRegistryForTests();
+  });
+
+  const hrefsOf = () =>
+    screen
+      .getAllByRole('link')
+      .map((link) => link.getAttribute('href'))
+      .filter((href): href is string => href !== null);
+
+  it('hides Members for a platform viewer when the prop is omitted', () => {
+    render(<AdminSidebar viewerTier="platform" />);
+    expect(screen.queryByRole('link', { name: /Members/ })).not.toBeInTheDocument();
+    expect(hrefsOf()).not.toContain('/admin/members');
+  });
+
+  it('shows Members for a platform viewer at multi, and every other link is unchanged', () => {
+    const { unmount } = render(<AdminSidebar viewerTier="platform" />);
+    const single = hrefsOf();
+    unmount();
+
+    render(<AdminSidebar viewerTier="platform" multiTenant />);
+    const multi = hrefsOf();
+
+    const members = screen.getByRole('link', { name: /Members/ });
+    expect(members).toHaveAttribute('href', '/admin/members');
+    expect(multi.filter((h) => h !== '/admin/members')).toEqual(single);
+  });
+
+  it('shows an org viewer Members at multi but not Users or Organisations', () => {
+    render(<AdminSidebar viewerTier="org" multiTenant />);
+
+    expect(screen.getByRole('link', { name: /Members/ })).toHaveAttribute('href', '/admin/members');
+    expect(screen.queryByRole('link', { name: /^Users/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Organisations/ })).not.toBeInTheDocument();
+  });
+
+  it('shows an org viewer no Members at single', () => {
+    render(<AdminSidebar viewerTier="org" multiTenant={false} />);
+    expect(screen.queryByRole('link', { name: /Members/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('sectionsForMode', () => {
+  const Icon: ComponentType<{ className?: string }> = () => null;
+  const item = (href: string) => ({ href, label: href, icon: Icon, description: '' });
+  const sections = [
+    { title: 'Management', items: [item('/admin/users'), item('/admin/members'), item('/o')] },
+    {
+      title: 'Grouped',
+      subgroups: [{ label: 'G', items: [item('/admin/members'), item('/g')] }],
+    },
+  ];
+
+  it('returns the very array it was given at multi', () => {
+    expect(sectionsForMode(sections, true)).toBe(sections);
+  });
+
+  it('removes /admin/members, from items and subgroups, and leaves everything else', () => {
+    const result = sectionsForMode(sections, false);
+
+    expect(result).toEqual([
+      { title: 'Management', items: [item('/admin/users'), item('/o')] },
+      { title: 'Grouped', subgroups: [{ label: 'G', items: [item('/g')] }] },
+    ]);
+    // The input is not mutated.
+    expect(sections[0].items).toHaveLength(3);
+  });
+
+  it('removes only the Members item from the real core sections at single', async () => {
+    const { coreNavSections } = await import('@/components/admin/admin-sidebar');
+    const flat = (secs: typeof coreNavSections) =>
+      secs.flatMap((s) => [...(s.items ?? []), ...(s.subgroups?.flatMap((g) => g.items) ?? [])]);
+
+    const before = flat(coreNavSections).map((i) => i.href);
+    const after = flat(sectionsForMode(coreNavSections, false)).map((i) => i.href);
+
+    expect(before).toContain('/admin/members');
+    expect(after).toEqual(before.filter((h) => h !== '/admin/members'));
   });
 });
