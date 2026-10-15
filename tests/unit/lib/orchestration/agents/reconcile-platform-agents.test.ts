@@ -1177,6 +1177,59 @@ describe('a binding the platform picks follows what the org can reach (t-798)', 
       });
     });
 
+    it('goes by who set the binding last, when it left and came back', async () => {
+      // The platform pinned anthropic (v1); an admin moved off it and later
+      // back onto it. The latest arrival is the admin's, so it is theirs.
+      pick = { provider: 'anthropic', model: 'claude' };
+      await reconcilePlatformAgents('install');
+      const row = agent('advisor')!;
+      legacy('anthropic', 'claude');
+      for (const [version, provider, model] of [
+        [2, 'mistral', 'large'],
+        [3, 'anthropic', 'claude'],
+      ] as const) {
+        fake.state.versions.push({
+          id: `v-admin-${version}`,
+          agentId: row.id,
+          version,
+          snapshot: { provider, model },
+          createdBy: 'an-admin',
+        });
+      }
+      pick = { provider: 'openai', model: 'gpt-4.1' };
+
+      await reconcilePlatformAgentsIfStale('install');
+      expect(agent('advisor')).toMatchObject({
+        provider: 'anthropic',
+        model: 'claude',
+        bindingOwner: 'org',
+      });
+    });
+
+    it('is the org’s when its binding was written with no version to say by whom', async () => {
+      // The platform pinned anthropic (v1), an admin's v2 moved it to mistral,
+      // and the row holds anthropic again with no version recording it.
+      pick = { provider: 'anthropic', model: 'claude' };
+      await reconcilePlatformAgents('install');
+      const row = agent('advisor')!;
+      legacy('anthropic', 'claude');
+      fake.state.versions.push({
+        id: 'v-admin-2',
+        agentId: row.id,
+        version: 2,
+        snapshot: { provider: 'mistral', model: 'large' },
+        createdBy: 'an-admin',
+      });
+      pick = { provider: 'openai', model: 'gpt-4.1' };
+
+      await reconcilePlatformAgentsIfStale('install');
+      expect(agent('advisor')).toMatchObject({
+        provider: 'anthropic',
+        model: 'claude',
+        bindingOwner: 'org',
+      });
+    });
+
     it('is the org’s when it holds anything else, and is never moved', async () => {
       pick = { provider: 'anthropic', model: 'claude' };
       await reconcilePlatformAgents('install');
