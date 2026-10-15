@@ -5088,7 +5088,9 @@ describe('rolling conversation summarization', () => {
       expect(verbatimHistory(turn.prompt).has('Message 250')).toBe(true);
     });
 
-    it('survives an overflow made entirely of error markers', async () => {
+    it('moves the pin past an overflow made entirely of error markers', async () => {
+      // 201 consecutive markers after the pin: nothing to summarise, nothing to
+      // lose, but the pin must advance or every later turn is stuck behind them.
       mockSummariser();
       capAgent(500);
       const rows = makeHistoryMessages(450);
@@ -5098,7 +5100,33 @@ describe('rolling conversation summarization', () => {
       const turn = await runTurn('conv-all-markers', rows, STORED);
 
       expect(turn.calls).toBe(0);
+      const pins = (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => (c[0] as { data?: { summaryUpToMessageId?: string } }).data)
+        .filter((d) => d?.summaryUpToMessageId)
+        .map((d) => d!.summaryUpToMessageId);
+      expect(pins).toEqual(['hist-msg-300']);
       expect(turn.prompt.some((m) => m.content.includes('old-summary'))).toBe(true);
+      expect(verbatimHistory(turn.prompt).has('Message 449')).toBe(true);
+      expect(turn.prompt.some((m) => m.content.includes('omitted'))).toBe(false);
+    });
+
+    it('stops after a bounded number of catch-up passes and announces the rest', async () => {
+      // 1,000 rows after the pin would be ten passes. One turn runs three, keeps
+      // each persisted, and says what is left; the next turn carries on.
+      mockSummariser();
+      capAgent(500);
+
+      const turn = await runTurn('conv-bounded', makeHistoryMessages(1101), STORED);
+
+      expect(turn.calls).toBe(3);
+      const pins = (prisma.aiConversation.update as ReturnType<typeof vi.fn>).mock.calls
+        .map((c: unknown[]) => (c[0] as { data?: { summaryUpToMessageId?: string } }).data)
+        .filter((d) => d?.summaryUpToMessageId)
+        .map((d) => d!.summaryUpToMessageId);
+      expect(pins).toEqual(['hist-msg-200', 'hist-msg-300', 'hist-msg-400']);
+      // 1100 - 400 = 700 rows follow the last pin; the newest 200 are shown.
+      expect(verbatimHistory(turn.prompt).size).toBe(200);
+      expect(turn.prompt.some((m) => m.content.includes('500 older messages omitted'))).toBe(true);
     });
 
     it.each([200, 500])(
@@ -5141,9 +5169,10 @@ describe('rolling conversation summarization', () => {
       const turn = await runTurn('conv-no-pin-down', makeHistoryMessages(300), NO_SUMMARY);
 
       expect(turn.persisted).toBeUndefined();
-      // The 100 never-read rows, plus the one row the forced summary was meant to
-      // fold and could not.
-      expect(turn.prompt.some((m) => m.content.includes('101 older messages omitted'))).toBe(true);
+      // The 100 never-read rows; the cap (500) has room for all 200 that were read,
+      // so the forced summary failing costs no verbatim row.
+      expect(turn.prompt.some((m) => m.content.includes('100 older messages omitted'))).toBe(true);
+      expect(verbatimHistory(turn.prompt).size).toBe(200);
     });
 
     it('counts the gap from the pin it already moved to when a later catch-up pass fails', async () => {
@@ -5171,8 +5200,10 @@ describe('rolling conversation summarization', () => {
         summaryUpToMessageId: 'hist-msg-gone',
       });
 
-      expect(turn.calls).toBe(0);
-      expect(turn.prompt.some((m) => m.content.includes('old-summary'))).toBe(true);
+      // Not claiming a count: what the stored text covers cannot be told apart
+      // from what it does not. The summary is carried forward as it stands.
+      expect(turn.calls).toBe(1);
+      expect(turn.options?.previousSummary).toBe('old-summary');
       expect(turn.prompt.some((m) => m.content.includes('omitted'))).toBe(false);
     });
 

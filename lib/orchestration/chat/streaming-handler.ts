@@ -142,6 +142,7 @@ import {
   MAX_HISTORY_MESSAGES,
   HISTORY_LOAD_LIMIT,
   SUMMARY_CATCHUP_MESSAGES,
+  SUMMARY_CATCHUP_MAX_PASSES,
   SUMMARY_LOOKAHEAD_MESSAGES,
   MAX_TOOL_ITERATIONS,
   type ChatRequest,
@@ -341,6 +342,8 @@ interface LoadedHistory {
   overflow: boolean;
   /** Rows the read did not reach that nothing describes. */
   omitted: number;
+  /** The last row fetched, error markers included — what to advance a pin past. */
+  lastFetched: HistoryPin | null;
 }
 
 interface PersistMessageParams {
@@ -747,19 +750,10 @@ export class StreamingChatHandler {
       const summaryPin = summaryPinId
         ? await this.resolvePin(conversation.id, request.userId, summaryPinId)
         : null;
-      let {
-        rows: history,
-        overflow: historyOverflow,
-        omitted: omittedBeforeHistory,
-      } = summaryPin
+      const firstRead = summaryPin
         ? await this.loadHistoryFromPin(conversation.id, request.userId, summaryPin)
         : await this.loadNewestHistory(conversation.id, request.userId, null);
-      if (summaryPinId && !summaryPin) {
-        // The pin's row is gone (a retention purge, a deletion). What the stored
-        // summary covers can no longer be told apart from what it does not, so no
-        // count is claimed: the summary is taken to describe the older rows.
-        omittedBeforeHistory = 0;
-      }
+      let { rows: history, overflow: historyOverflow, omitted: omittedBeforeHistory } = firstRead;
 
       // Enforce message-per-conversation cap using actual DB count
       // (loadHistory returns at most HISTORY_LOAD_LIMIT rows, so
@@ -934,11 +928,13 @@ export class StreamingChatHandler {
       //
       // The summary covers a **prefix** of the conversation, and
       // `conversation.summaryUpToMessageId` names the newest message inside it.
-      // Reuse therefore asks *"does that prefix already include everything this
-      // turn has to drop?"* — not *"is the boundary identical?"*. The boundary
-      // is the edge of a sliding window and moves by about two messages a turn,
-      // so the equality check this replaced could never hold and every turn past
-      // the window paid for a fresh summarisation (#654).
+      // History is read from that pin onward (#655), so the rows loaded are
+      // exactly the ones the summary does not describe. After a summarisation the
+      // pin sits a lookahead past what the turn needed, so the next few turns'
+      // rows stay within the cap and nothing runs — which is what the equality
+      // check this replaced could never achieve: the boundary of a sliding window
+      // moves by about two messages a turn, so every turn past the window paid
+      // for a fresh summarisation (#654).
       //
       // `historyDropCount` is then handed to the message builder so the prompt
       // drops exactly what the summary covers. Two boundaries that have to agree
@@ -1023,12 +1019,39 @@ export class StreamingChatHandler {
       // summary always covers a contiguous prefix (#655).
       let catchUpFailed = false;
       let currentPin = summaryPin;
-      while (historyOverflow && storedSummary) {
+      let lastFetched = firstRead.lastFetched;
+      let passes = 0;
+      const advanceTo = async (pin: HistoryPin, data: { summary?: string }): Promise<void> => {
+        summaryPinId = pin.id;
+        currentPin = pin;
+        await prisma.aiConversation.update({
+          where: { id: conversation.id, ...conversationOwner(request.userId) },
+          data: { ...data, summaryUpToMessageId: pin.id },
+        });
+        const next = await this.loadHistoryFromPin(conversation.id, request.userId, pin);
+        ({ rows: history, overflow: historyOverflow, omitted: omittedBeforeHistory } = next);
+        lastFetched = next.lastFetched;
+      };
+
+      while (historyOverflow && storedSummary && currentPin) {
         const chunk = history.slice(0, SUMMARY_CATCHUP_MESSAGES);
         if (chunk.length === 0) {
+          // Everything read was an error marker: nothing to summarise, nothing
+          // to lose. Move the pin past them so the next read gets further.
+          if (!lastFetched) {
+            catchUpFailed = true;
+            break;
+          }
+          await advanceTo(lastFetched, {});
+          continue;
+        }
+        if (passes >= SUMMARY_CATCHUP_MAX_PASSES) {
+          // Bounded per turn: each pass is a summariser call the user waits
+          // behind. What is done is persisted; the next turn carries on.
           catchUpFailed = true;
           break;
         }
+        passes += 1;
         yield { type: 'status', message: 'Summarizing conversation history...' };
         const folded = await runSummariser(chunk.map(toHistoryRow), storedSummary);
         if (folded.fellBack) {
@@ -1037,14 +1060,8 @@ export class StreamingChatHandler {
         }
         recordSummariserCall(folded);
         storedSummary = folded.summary;
-        summaryPinId = chunk[chunk.length - 1].id;
-        await prisma.aiConversation.update({
-          where: { id: conversation.id, ...conversationOwner(request.userId) },
-          data: { summary: storedSummary, summaryUpToMessageId: summaryPinId },
-        });
-        currentPin = { id: summaryPinId, createdAt: chunk[chunk.length - 1].createdAt };
-        const next = await this.loadHistoryFromPin(conversation.id, request.userId, currentPin);
-        ({ rows: history, overflow: historyOverflow, omitted: omittedBeforeHistory } = next);
+        const last = chunk[chunk.length - 1];
+        await advanceTo({ id: last.id, createdAt: last.createdAt }, { summary: storedSummary });
       }
       if (catchUpFailed) {
         // The summariser could not run. Keep the stored summary exactly as it is
@@ -1090,8 +1107,8 @@ export class StreamingChatHandler {
         // so it is labelled without a count.
         conversationSummary = storedSummary ?? undefined;
       } else {
-        // Extend the prefix past what this turn needs, so the next few turns
-        // take the branch above instead of paying for another call.
+        // Extend the prefix past what this turn needs, so the next few turns'
+        // rows still fit the cap and no call is needed.
         // The lookahead never takes more than half the agent's window.
         // Unclamped, a small `maxHistoryMessages` loses everything: at a cap
         // of 4, a fixed 10-message lookahead summarises all 5 loaded rows and
@@ -1122,7 +1139,7 @@ export class StreamingChatHandler {
         // everything up to its pin. Say so in the text itself, so the gap is
         // carried forward rather than forgotten.
         const gapNote =
-          omittedBeforeHistory > 0
+          omittedBeforeHistory > 0 && !storedSummary
             ? `(${omittedBeforeHistory} earlier messages were never summarised and are not described here.)`
             : null;
         const previousSummary = [storedSummary, gapNote].filter(Boolean).join('\n\n') || undefined;
@@ -1138,7 +1155,8 @@ export class StreamingChatHandler {
           // error. Keep what is stored, drop only what the cap demands, and
           // let the next turn try again.
           //
-          // `requiredDrop` is the cap's own drop: the rows past the cap leave
+          // The cap's own drop (not `requiredDrop`, which may have been forced up
+          // by rows the read never reached): the rows past the cap leave
           // this one turn's prompt with nothing standing in for them. It is the
           // least-bad of three
           // options — keeping them would breach the agent's configured cap,
@@ -1146,7 +1164,7 @@ export class StreamingChatHandler {
           // permanently instead of for one turn. It is also strictly better
           // than the behaviour it replaces, which represented *every* dropped
           // message with `[Summary unavailable]` and then wrote that down.
-          historyDropCount = requiredDrop;
+          historyDropCount = Math.max(0, historyRows.length - effectiveMessageCap);
           // The stored summary describes only rows older than anything loaded, so
           // it covers none of what is being dropped *here*. Say so, rather than
           // letting the prompt claim the gap is summarised: the builder labels it
@@ -3092,10 +3110,13 @@ export class StreamingChatHandler {
       // One extra row, so exactly the limit is not mistaken for an overflow.
       take: HISTORY_LOAD_LIMIT + 1,
     });
+    const kept = fetched.slice(0, HISTORY_LOAD_LIMIT);
+    const last = kept[kept.length - 1];
     return {
-      rows: this.withoutErrorMarkers(fetched.slice(0, HISTORY_LOAD_LIMIT)),
+      rows: this.withoutErrorMarkers(kept),
       overflow: fetched.length > HISTORY_LOAD_LIMIT,
       omitted: 0,
+      lastFetched: last ? { id: last.id, createdAt: last.createdAt } : null,
     };
   }
 
@@ -3135,6 +3156,7 @@ export class StreamingChatHandler {
       rows: this.withoutErrorMarkers(fetched.slice(0, HISTORY_LOAD_LIMIT)).reverse(),
       overflow: false,
       omitted,
+      lastFetched: null,
     };
   }
 

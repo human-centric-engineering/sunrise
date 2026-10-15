@@ -132,7 +132,7 @@ export const MAX_TOOL_ITERATIONS = 5;
 export const MAX_HISTORY_MESSAGES = 50;
 
 /**
- * The most messages `loadHistory` reads in one go. It reads from the stored
+ * The most messages one history read returns. It reads from the stored
  * summary's pin onward (or the newest rows when there is no pin), so every row
  * after the point the summary covers is seen — and a conversation that has
  * more than this after the pin is folded forward in catch-up passes rather
@@ -148,6 +148,14 @@ export const HISTORY_LOAD_LIMIT = 200;
  * about as many rows verbatim afterwards. (#655)
  */
 export const SUMMARY_CATCHUP_MESSAGES = HISTORY_LOAD_LIMIT / 2;
+
+/**
+ * Catch-up passes one turn will run before it stops and shows the newest rows
+ * with the remainder announced as omitted. Each pass is a summariser call the
+ * user is waiting behind; progress is persisted per pass, so the next turn
+ * resumes where this one stopped. (#655)
+ */
+export const SUMMARY_CATCHUP_MAX_PASSES = 3;
 
 /**
  * How far **past** the current drop boundary a summarisation run extends.

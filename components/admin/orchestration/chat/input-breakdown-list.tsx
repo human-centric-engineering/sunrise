@@ -14,10 +14,10 @@
  * schemas.
  */
 
-import { HISTORY_LOAD_LIMIT } from '@/lib/orchestration/chat/types';
 import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
+import { HISTORY_LOAD_LIMIT } from '@/lib/orchestration/chat/types';
 import { cn } from '@/lib/utils';
 import type {
   InputBreakdown,
