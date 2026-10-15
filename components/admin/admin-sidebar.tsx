@@ -48,6 +48,7 @@ import {
   type NavSubgroup,
 } from '@/lib/admin-nav/registry';
 import { initAppNav } from '@/lib/app/admin-nav';
+import { viewerReaches, type AdminViewerTier } from '@/lib/auth/admin-tier';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 
@@ -60,7 +61,8 @@ import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route
 // is wired here rather than in a shared server bootstrap. Idempotent by title.
 initAppNav();
 
-const coreNavSections: NavSection[] = [
+/** Exported for the admin-tier roster test, which holds each core item's `tier` to the page roster. */
+export const coreNavSections: NavSection[] = [
   {
     title: 'Overview',
     items: [
@@ -398,6 +400,13 @@ function CollapsibleSubgroup({
 
 interface AdminSidebarProps {
   className?: string;
+  /**
+   * Who the layout worked out this viewer is to the console (§111 t-810). A
+   * platform viewer sees every item; an org viewer only the items marked
+   * `tier: 'org'`. Required, so no render site can forget it and show an org
+   * admin the platform's nav.
+   */
+  viewerTier: AdminViewerTier;
 }
 
 const EXECUTION_BADGE_POLL_MS = 15_000;
@@ -411,11 +420,18 @@ const EXECUTION_BADGE_POLL_MS = 15_000;
  * visibilitychange listener already cover refresh; refetching on every
  * admin nav click amplified the request burst that motivated this hook.
  */
-function useExecutionCounts(statuses: readonly string[]): Record<string, number> | undefined {
+function useExecutionCounts(
+  statuses: readonly string[],
+  enabled: boolean
+): Record<string, number> | undefined {
   const [counts, setCounts] = useState<Record<string, number> | undefined>();
   const key = statuses.join(',');
 
   useEffect(() => {
+    // The counts endpoint is a platform surface. An org viewer would be
+    // refused it every poll, logging a 403 each time, for badges on items
+    // they are not shown.
+    if (!enabled) return;
     let cancelled = false;
     let controller: AbortController | null = null;
 
@@ -455,7 +471,7 @@ function useExecutionCounts(statuses: readonly string[]): Record<string, number>
       clearInterval(intervalId);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [key]);
+  }, [key, enabled]);
 
   return counts;
 }
@@ -491,10 +507,38 @@ function injectBadges(
   });
 }
 
-export function AdminSidebar({ className }: AdminSidebarProps) {
+/**
+ * The sections an org viewer may see: the items marked `tier: 'org'`, and the
+ * subgroups and sections that still hold one. A platform viewer gets the same
+ * array back, untouched.
+ */
+export function sectionsForViewer(
+  sections: NavSection[],
+  viewerTier: AdminViewerTier
+): NavSection[] {
+  if (viewerTier === 'platform') return sections;
+  const reachable = (items: NavItem[]) =>
+    items.filter((item) => viewerReaches(viewerTier, item.tier));
+  return sections.flatMap((section) => {
+    const items = section.items ? reachable(section.items) : undefined;
+    const subgroups = section.subgroups
+      ?.map((group) => ({ ...group, items: reachable(group.items) }))
+      .filter((group) => group.items.length > 0);
+    if (!items?.length && !subgroups?.length) return [];
+    return [
+      {
+        ...section,
+        items: items?.length ? items : undefined,
+        subgroups: subgroups?.length ? subgroups : undefined,
+      },
+    ];
+  });
+}
+
+export function AdminSidebar({ className, viewerTier }: AdminSidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
-  const counts = useExecutionCounts(BADGE_STATUSES);
+  const counts = useExecutionCounts(BADGE_STATUSES, viewerTier === 'platform');
   const approvalCount = sumCounts(counts, APPROVAL_STATUSES);
   const inProgressCount = sumCounts(counts, IN_PROGRESS_STATUSES);
   const sections = useMemo(
@@ -502,11 +546,14 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
       // Core sections first, then any app-registered sections. Registration
       // is module-import-time and synchronous, so reading it during render is
       // safe — see lib/admin-nav/registry.ts.
-      injectBadges([...coreNavSections, ...getRegisteredNavSections()], {
-        '/admin/orchestration/approvals': approvalCount,
-        '/admin/orchestration/executions': inProgressCount,
-      }),
-    [approvalCount, inProgressCount]
+      injectBadges(
+        sectionsForViewer([...coreNavSections, ...getRegisteredNavSections()], viewerTier),
+        {
+          '/admin/orchestration/approvals': approvalCount,
+          '/admin/orchestration/executions': inProgressCount,
+        }
+      ),
+    [approvalCount, inProgressCount, viewerTier]
   );
 
   return (

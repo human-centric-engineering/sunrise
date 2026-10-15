@@ -25,7 +25,8 @@ import { prisma } from '@/lib/db/client';
 import { MaintenancePage } from '@/components/maintenance-page';
 import { logger } from '@/lib/logging';
 import { canAdminister } from '@/lib/auth/authorization';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { sessionPrincipal } from '@/lib/auth/session-principal';
+import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 
 interface MaintenanceWrapperProps {
   children: React.ReactNode;
@@ -82,21 +83,16 @@ export async function MaintenanceWrapper({ children }: MaintenanceWrapperProps) 
     // the same seam as the guards — otherwise a fork that narrows
     // `canAdminister` still lets every stored `role: 'ADMIN'` past here, and
     // safe mode would close the admin console while leaving this open.
-    // The org (§106) as the session recorded it, and no org role: this asks
-    // with `resource: null`, where the org arm grants nothing by design, so a
-    // membership read could not change the answer.
-    isAdmin = session
-      ? await canAdminister(
-          {
-            userId: session.user.id,
-            role: session.user.role,
-            credential: 'session',
-            orgId: session.session.activeOrgId ?? INSTALL_ORG_ID,
-          },
-          null,
-          { org: session.session.activeOrgId ?? INSTALL_ORG_ID }
-        )
-      : false;
+    // The principal the guards and the admin layout build — the entered
+    // org and the caller's verified role in it (§111 t-810) — so a policy
+    // that reads `viewer.orgRole` answers the bypass as it answers the console.
+    if (session) {
+      const { principal, scope } = await sessionPrincipal(
+        session,
+        requestHeaders.get(TENANT_HEADER_NAME) || null
+      );
+      isAdmin = await canAdminister(principal, null, scope);
+    }
   } catch {
     // If session check fails, show maintenance page for safety
   }
@@ -141,21 +137,16 @@ export async function MaintenanceWrapperWithAdminNotice({ children }: Maintenanc
     // the same seam as the guards — otherwise a fork that narrows
     // `canAdminister` still lets every stored `role: 'ADMIN'` past here, and
     // safe mode would close the admin console while leaving this open.
-    // The org (§106) as the session recorded it, and no org role: this asks
-    // with `resource: null`, where the org arm grants nothing by design, so a
-    // membership read could not change the answer.
-    isAdmin = session
-      ? await canAdminister(
-          {
-            userId: session.user.id,
-            role: session.user.role,
-            credential: 'session',
-            orgId: session.session.activeOrgId ?? INSTALL_ORG_ID,
-          },
-          null,
-          { org: session.session.activeOrgId ?? INSTALL_ORG_ID }
-        )
-      : false;
+    // The principal the guards and the admin layout build — the entered
+    // org and the caller's verified role in it (§111 t-810) — so a policy
+    // that reads `viewer.orgRole` answers the bypass as it answers the console.
+    if (session) {
+      const { principal, scope } = await sessionPrincipal(
+        session,
+        requestHeaders.get(TENANT_HEADER_NAME) || null
+      );
+      isAdmin = await canAdminister(principal, null, scope);
+    }
   } catch {
     // If session check fails, show maintenance page for safety
   }

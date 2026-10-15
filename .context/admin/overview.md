@@ -30,19 +30,20 @@ app/admin/
 
 ## Access Control
 
-The admin layout (`app/admin/layout.tsx`) enforces role-based access:
+The admin layout (`app/admin/layout.tsx`) asks the authorization policy
+(`canAdminister`, `lib/auth/authorization.ts`) whether the session may use the
+page:
 
-```typescript
-const session = await getServerSession();
+- unauthenticated → `/login`;
+- a platform admin → every page;
+- an org OWNER/ADMIN at `multi` → only the pages listed in
+  `ORG_TIER_ADMIN_PAGES` (`lib/auth/admin-tier.ts`). That list ships empty, so
+  today this is nobody;
+- everyone else → the auth landing route.
 
-if (!session) {
-  redirect('/login'); // Unauthenticated -> login
-}
-
-if (!isPlatformAdmin(session.user)) {
-  redirect('/dashboard'); // Non-admin -> dashboard
-}
-```
+The layout runs on a full page load only, so `AdminTierGate` repeats the page
+check on in-app navigation. See
+[Authorization → Admin tiers](../auth/authorization.md#admin-tiers).
 
 All admin API endpoints (`/api/v1/admin/*`) use `withAdminAuth()` from `lib/auth/guards.ts`, providing defense-in-depth security.
 
@@ -62,6 +63,7 @@ Client component (`components/admin/admin-sidebar.tsx`) providing navigation:
 
 - **Collapsible**: Toggle between expanded (256px) and collapsed (64px) states
 - **Active state**: Highlights current route based on pathname matching
+- **Viewer tier**: takes a required `viewerTier` from the layout; an org viewer sees only items marked `tier: 'org'`
 - **Sections**:
   - Overview: Dashboard
   - Management: Users, Feature Flags

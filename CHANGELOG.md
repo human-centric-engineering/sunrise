@@ -30,6 +30,21 @@ release process.
   class) now fails the test until you pair it here, and a seed must write
   through the `prisma` it is handed for its capabilities to be captured.
 
+- **Admin tiers: a surface can declare it is the org's** (§111 t-810). New
+  `tier` option on `withAdminAuth()` (`{ tier: 'org' }`), passed to the policy
+  as `scope.tier`. New `lib/auth/admin-tier.ts`: `AdminTier`, the page roster
+  `ORG_TIER_ADMIN_PAGES`, the route roster `ORG_TIER_ADMIN_ROUTES`, and
+  `adminPageTier()`. New optional `NavItem.tier`. The default policy's
+  `canAdminister` now admits an org OWNER/ADMIN of the entered org to a
+  surface that declares `tier: 'org'`, as a session and at `multi` only.
+  Undeclared surfaces stay platform-only, fork surfaces included, and no core
+  surface declares the tier yet. **Forks:** a `canAdminister` you replaced
+  receives `scope.tier`. Ignoring it keeps org admins out (the safe failure),
+  and a policy that admits on `viewer.orgRole` alone admits them everywhere,
+  so gate on the tier. `AdminSidebar` now requires a `viewerTier` prop.
+  `proxy.ts` now sets an `x-sunrise-pathname` request header. See
+  [Authorization → Admin tiers](./.context/auth/authorization.md#admin-tiers).
+
 - **A fork classifies its own models for the owner layer** (§115 t-807): the
   new `lib/app/owner-classification.ts` seam (`initAppOwnerClassification()`,
   ships empty) and its primitive `registerAppOwnerClassification()` in
@@ -209,6 +224,19 @@ release process.
   version of the system audit workflow.
 
 ### Changed
+
+- **The admin layout and the maintenance bypass ask the policy with the
+  guards' verified org facts** (§111 t-810). Both used to pass `orgId` straight
+  from the session's active org, with no `orgRole`. They now share
+  `sessionPrincipal()` (`lib/auth/session-principal.ts`), which enters the org
+  as `withAdminAuth` does (`enterSessionOrg`, resolver header first) and passes
+  `orgId` and `orgRole` from that entry. Where a guard refuses a session whose
+  entry is refused, these two ask with no org facts instead, so a platform
+  admin can still reach the console to switch org. Under Sunrise's default
+  policy nothing changes for a platform admin. **Forks:** a `canAdminister`
+  that reads `viewer.orgRole` now gets it at the layout and the bypass too, so
+  an org admin your policy admits now reaches the page shells, where before the
+  layout sent them away.
 
 - **`handleAPIError` answers `VALIDATION_ERROR`, not `EMAIL_TAKEN`, for a
   unique violation on any constraint but the user email** (t-796). It

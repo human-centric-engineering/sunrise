@@ -734,7 +734,10 @@ imports only — no server code). Use a `title` distinct from the core sections.
 To render your own brand lockup as the section header instead of the default
 uppercase label, pass `titleNode` (any `ReactNode`); `title` stays required and
 remains the React key, the registry's dedupe key, and the heading's accessible
-name, so a wordmark image can't cost you the label.
+name, so a wordmark image can't cost you the label. An item is shown to platform admins
+only unless it carries `tier: 'org'`, which also shows it to an org OWNER/ADMIN
+at `multi`. Mark it only when the page and the routes behind it are org-tier
+too (see [Authorization → Admin tiers](./.context/auth/authorization.md#admin-tiers)).
 
 **API-key scopes — `lib/app/api-key-scopes.ts`.** `AiApiKey.scopes` is a
 `String[]` in the schema, but the two places that decided what may go in it were
