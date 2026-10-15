@@ -81,6 +81,11 @@ vi.mock('@/lib/orchestration/hooks/registry', () => ({
   emitHookEvent: vi.fn(),
 }));
 
+const mockTryReconcile = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/orchestration/agents/reconcile-platform-agents', () => ({
+  tryReconcilePlatformAgents: mockTryReconcile,
+}));
+
 vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
   dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
 }));
@@ -490,8 +495,8 @@ describe('System agent protection', () => {
       expect(mockUpdate.mock.calls[0][0].data).not.toHaveProperty('bindingOwner');
     });
 
-    it('hands the binding back to the platform', async () => {
-      mockFindUnique.mockResolvedValue({ ...cleanup(), bindingOwner: 'org' });
+    it('hands the binding back to the platform, and reconciles the org at once', async () => {
+      mockFindUnique.mockResolvedValue({ ...cleanup(), bindingOwner: 'org', orgId: 'org-a' });
       mockUpdate.mockResolvedValue(cleanup());
 
       const response = await PATCH(
@@ -503,6 +508,16 @@ describe('System agent protection', () => {
       expect(mockUpdate).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ bindingOwner: 'platform' }) })
       );
+      expect(mockTryReconcile).toHaveBeenCalledWith('org-a', 'agent.bindingOwner');
+    });
+
+    it('does not reconcile when the binding is taken rather than handed back', async () => {
+      mockFindUnique.mockResolvedValue({ ...cleanup(), orgId: 'org-a' });
+      mockUpdate.mockResolvedValue(cleanup());
+
+      await PATCH(makePatchRequest({ provider: 'openai' }), makeParams(AGENT_ID));
+
+      expect(mockTryReconcile).not.toHaveBeenCalled();
     });
 
     it('accepts an echo of what GET returned, owner included, on any agent', async () => {

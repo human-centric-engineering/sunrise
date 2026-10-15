@@ -245,8 +245,10 @@ export function picksOwnBinding(agent: { isSystem: boolean; slug: string }): boo
  * not the caller's to guess.
  *
  * Compared by value, like every platform-agent rule: a client echoing back
- * what GET returned — `bindingOwner` included, null on most agents — asks
- * for nothing by it.
+ * what GET returned — `bindingOwner` included — asks for nothing by it. A
+ * `null` always reads as an echo, even a stale one read before the reconcile
+ * classified the row: an owner cannot be cleared, so `null` can only mean
+ * the client is sending back what it was given.
  */
 export function bindingOwnerForPatch(
   current: {
@@ -259,7 +261,9 @@ export function bindingOwnerForPatch(
   next: { provider?: string; model?: string; bindingOwner?: BindingOwner | null }
 ): BindingOwner | undefined {
   const requested =
-    next.bindingOwner === undefined || next.bindingOwner === current.bindingOwner
+    next.bindingOwner === undefined ||
+    next.bindingOwner === null ||
+    next.bindingOwner === current.bindingOwner
       ? undefined
       : next.bindingOwner;
   if (!picksOwnBinding(current)) {
@@ -270,11 +274,6 @@ export function bindingOwnerForPatch(
   }
   const written = bindingOwnerAfterWrite(current, next);
   if (requested === undefined) return written;
-  if (requested === null) {
-    throw new ValidationError('A binding owner cannot be cleared', {
-      bindingOwner: ["Set 'platform' or 'org'"],
-    });
-  }
   if (requested === 'platform' && written) {
     throw new ValidationError('Hand the provider and model back to the platform, or change them', {
       bindingOwner: ['Cannot hand the binding back in the same request that changes it'],

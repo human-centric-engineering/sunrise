@@ -90,8 +90,9 @@ const CLEANUP_CAPABILITY_SLUGS = [
  * (`AiAgent.bindingOwner`) and this is not asked for that agent again.
  *
  * A policy that cannot be read THROWS rather than answering "nothing": the
- * reconcile then fails and leaves the org unmarked, so the maintenance job
- * retries it, where an answer of null would have been recorded as done. At
+ * reconcile then leaves this agent's binding as it is and the org unmarked,
+ * so the maintenance job asks again, where an answer of null would have moved
+ * the agent to inherit and been recorded as done. At
  * `single`, and for the install org, neither rule narrows anything unless a
  * fork's rule does.
  *

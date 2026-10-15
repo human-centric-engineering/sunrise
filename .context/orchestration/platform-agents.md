@@ -75,25 +75,33 @@ Every agent field declares its side (see
     owner are still what the run read, so an admin's save in between stands.
   - **`'org'`**: never moved. `PATCH /agents/:id` and version restore set it
     whenever they change provider or model. `bindingOwner: 'platform'` in a
-    PATCH body hands the binding back. `'org'` takes it as it stands, which is
-    how an admin keeps the agent on inherit, since the API cannot set
-    provider or model to empty.
+    PATCH body hands the binding back and reconciles the org at once. `'org'`
+    takes it as it stands, which is how an admin keeps the agent on inherit,
+    since the API cannot set provider or model to empty.
   - **`null`**: not yet classified, which covers every agent from before
-    t-798. The next reconcile classifies it once, as the platform's when it
-    is on inherit or on the platform's current pick, or when the service
-    account wrote the version where its current binding began (so a pin the
-    platform placed on a provider since revoked moves). Otherwise it becomes
-    the org's, as it does when there's no history to go on, because moving
-    an admin's choice is worse than leaving a pin the platform placed.
+    t-798. The next reconcile classifies it once:
+    - the org's, when the definition sets its own starting binding, as a new
+      instance would;
+    - the platform's, when it is on inherit, on the platform's current pick,
+      or when the service account wrote the version where its current
+      binding began, so a pin the platform placed on a since-revoked provider
+      moves. A first version backfilled long after the agent was created
+      doesn't count: it records who backfilled it, not who chose the binding;
+    - otherwise the org's, as when there's no history to go on, because
+      moving an admin's choice is worse than leaving a pin the platform
+      placed.
 
   Only a platform agent whose definition picks its binding has an owner;
-  every other agent's `bindingOwner` stays null, and a PATCH that echoes it
-  back unchanged asks for nothing.
+  every other agent's `bindingOwner` stays null. A PATCH that echoes it back
+  unchanged, or as `null`, asks for nothing, because an owner can't be
+  cleared.
 
   Ownership is stored rather than inferred from the values because a value
-  can't say who wrote it. The pick is asked only for a binding the platform
-  owns or has yet to classify, so a policy that cannot be read never stops
-  the reconcile of an org that chose its own provider.
+  can't say who wrote it. The pick is asked at most once per agent per run,
+  and only for a binding the platform owns or has yet to classify. A pick
+  that can't be answered (the org's policy unreadable, say) leaves that
+  agent's binding as it is and holds the org's marker back so the next pass
+  asks again; every other agent is still reconciled.
 
 ## What an org's admin can change
 
@@ -184,11 +192,13 @@ the org's own scope itself, and it has four callers:
    grant or revocation, a provider switched on, a key set, a strong model
    added, a fork's eligibility rule — and some of those (an env var, a fork's
    credential resolver) have no write a hook could catch. So the job asks,
-   every pass, after dropping this process's cached copy of the org's
-   provider policy, which may predate a grant or revocation another instance
-   served. Otherwise it is one `Org` read per org, plus, where an agent picks
-   its own binding, that agent's binding, the org's provider policy and the
-   pick's provider and model reads.
+   every pass. For an org whose agents pick, it first drops this process's
+   cached copy of the org's provider policy, which may predate a grant or
+   revocation another instance served. Cached provider rows (their
+   jurisdiction) keep their 60-second TTL, so a pick made in that minute is
+   corrected next pass. Otherwise it is one `Org` read per org, plus, where
+   an agent picks its own binding, that agent's binding, the org's provider
+   policy and the pick's provider and model reads.
 
 The digest covers every definition, the baseline, and the patterns
 document's slug (`PATTERNS_DOCUMENT_SLUG` in

@@ -49,6 +49,7 @@ import {
   platformAgentEditPolicy,
   sameGrantSet,
 } from '@/lib/orchestration/agents/platform-agent-guard';
+import { tryReconcilePlatformAgents } from '@/lib/orchestration/agents/reconcile-platform-agents';
 import { invalidateAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
 import {
   systemInstructionsHistorySchema,
@@ -388,6 +389,12 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     // Evict the resolver cache so the next chat turn sees the new grants.
     if (grantsChanged || body.knowledgeAccessMode !== undefined) {
       invalidateAgentAccess(id);
+    }
+
+    // A hand-back puts the agent on the platform's pick now rather than at
+    // the next maintenance pass, which remains the guarantee. Never throws.
+    if (bindingOwner === 'platform' && current.orgId) {
+      await tryReconcilePlatformAgents(current.orgId, 'agent.bindingOwner');
     }
 
     // Shallow diff of before-vs-after. `Object.keys(data)` would over-report —

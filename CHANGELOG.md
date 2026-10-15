@@ -27,8 +27,8 @@ release process.
   classified on their next reconcile, partly from their version history.
   `PATCH /api/v1/admin/orchestration/agents/:id` sets `'org'` when it changes
   provider or model, and so does version restore. The PATCH body also accepts
-  `bindingOwner` (`'platform'` hands the binding back, `'org'` takes it), and an
-  unchanged echo of it is ignored. Forks: a route of yours that writes such an
+  `bindingOwner` (`'platform'` hands the binding back and reconciles the org at
+  once, `'org'` takes it), and an unchanged or `null` echo of it is ignored. Forks: a route of yours that writes such an
   agent's provider or model should call `bindingOwnerAfterWrite`
   (`lib/orchestration/agents/binding-owner.ts`, with `picksOwnBinding` from
   `platform-agent-guard.ts`), or the platform will keep moving a binding your

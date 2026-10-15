@@ -329,8 +329,9 @@ describe('bindingOwnerForPatch (t-798)', () => {
     expect(bindingOwnerForPatch(cleanup, { bindingOwner: 'platform' })).toBe(undefined);
   });
 
-  it('refuses clearing the owner of an agent that has one', () => {
-    expect(() => bindingOwnerForPatch(cleanup, { bindingOwner: null })).toThrow(ValidationError);
+  it('reads a null owner as an echo, even one read before the row was classified', () => {
+    expect(bindingOwnerForPatch(cleanup, { bindingOwner: null })).toBe(undefined);
+    expect(bindingOwnerForPatch(cleanup, { bindingOwner: null, provider: 'openai' })).toBe('org');
   });
 
   it('refuses a hand-back in the same request that changes the binding', () => {

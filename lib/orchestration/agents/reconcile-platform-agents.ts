@@ -94,10 +94,7 @@ import {
 } from '@/lib/orchestration/knowledge/seeder';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant, runAsOrg } from '@/lib/tenancy/context';
-import {
-  forgetOrgProviderPolicy,
-  forgetProviderRow,
-} from '@/lib/orchestration/llm/org-provider-policy';
+import { forgetOrgProviderPolicy } from '@/lib/orchestration/llm/org-provider-policy';
 import {
   loadPlatformAgentsMarker,
   writePlatformAgentsMarker,
@@ -158,67 +155,118 @@ function storedOwner(value: string | null): BindingOwner | null {
 }
 
 /**
- * Where a classified agent's provider and model should be after this run
- * (t-798): the one rule both the reconcile and the job's drift check apply,
- * so the two cannot disagree. While the platform owns them they follow the
- * pick — onto a model newly reachable, off a provider the org lost, or back
- * to "inherit" when nothing qualifies. `undefined` when the run leaves them
- * alone: the definition picks nothing, or the org owns them — so the pick is
- * asked only when its answer is used, and a policy that cannot be read never
- * stops the reconcile of an org that chose its own provider.
+ * The definition's pick, or "inherit" when nothing qualifies (t-798): where a
+ * binding the platform owns goes. The one rule both the reconcile and the
+ * job's drift check apply, so the two cannot disagree. Only for a definition
+ * that has a `defaultBinding`.
  */
-async function bindingTarget(
+async function askPick(definition: PlatformAgentDefinition, db: TenancyClient): Promise<Binding> {
+  return (await definition.defaultBinding?.(db)) ?? INHERIT;
+}
+
+/** A pick the run could not get (the org's policy unreadable, say). */
+const PICK_UNAVAILABLE = 'unavailable';
+
+type Pick = Binding | typeof PICK_UNAVAILABLE;
+
+/**
+ * One agent's pick for one run: asked only when something needs it, and at
+ * most once. A pick that throws is reported to `onUnavailable` and answers
+ * {@link PICK_UNAVAILABLE}: that agent's binding is left as it is, and the
+ * caller holds the marker back so the job asks again next pass, while every
+ * other agent in the org is still reconciled.
+ */
+function lazyPick(
   definition: PlatformAgentDefinition,
-  owner: BindingOwner,
-  db: TenancyClient
-): Promise<Binding | undefined> {
-  return owner === 'platform' ? desiredBinding(definition, db) : undefined;
+  db: TenancyClient,
+  onUnavailable: (error: unknown) => void
+): () => Promise<Pick> {
+  let answer: Promise<Pick> | undefined;
+  return () =>
+    (answer ??= askPick(definition, db).catch((error: unknown) => {
+      onUnavailable(error);
+      return PICK_UNAVAILABLE;
+    }));
+}
+
+/**
+ * Whether the definition leaves the binding for the platform to pick: it has
+ * a `defaultBinding` and sets no starting provider or model of its own. One
+ * that does has given the org a value to tune, so that binding is the org's.
+ */
+function platformPicksBinding(definition: PlatformAgentDefinition): boolean {
+  return (
+    definition.defaultBinding !== undefined &&
+    !definition.defaults?.provider &&
+    !definition.defaults?.model
+  );
 }
 
 /**
  * Who owns the binding of a platform agent nobody has classified yet — one
- * from before t-798 (`bindingOwner` null). Decided once, by the reconcile:
+ * from before t-798 (`bindingOwner` null). Decided once, by the reconcile,
+ * with the same answer {@link createInstance} gives a new agent where it can:
  *
+ *  - a definition with its own starting binding: the org's;
  *  - "inherit", or the platform's pick today: the platform's, since that is
  *    what it would have placed;
  *  - otherwise, whoever wrote the binding the row holds: the author of the
- *    version where it took that value. The service account's means the
- *    platform pinned it, and it moves (off a provider since revoked, say);
- *    anyone else's — or no history to tell — means the org's, since moving
- *    an admin's choice is worse than leaving a pin the platform placed.
+ *    version where it took that value ({@link bindingAuthor}). The service
+ *    account's means the platform pinned it, and it moves (off a provider
+ *    since revoked, say); anyone else's — or no history to tell — means the
+ *    org's, since moving an admin's choice is worse than leaving a pin the
+ *    platform placed.
  *
- * A version the PATCH route backfilled (its pre-change state, authored by
- * the admin) reads as the admin's, which errs the same safe way.
+ * `null` — still unclassified — when the pick is unavailable and the history
+ * alone cannot say it is the platform's; the next run asks again.
  */
 async function classifyBindingOwner(
   definition: PlatformAgentDefinition,
-  row: Binding & { id: string },
+  row: Binding & { id: string; createdAt: Date },
+  pick: () => Promise<Pick>,
   db: TenancyClient,
   serviceAccountId: string
-): Promise<BindingOwner> {
-  const pick = await desiredBinding(definition, db);
-  if (sameBinding(row, INHERIT) || (pick && sameBinding(row, pick))) return 'platform';
-  return (await bindingAuthor(db, row)) === serviceAccountId ? 'platform' : 'org';
+): Promise<BindingOwner | null> {
+  if (!platformPicksBinding(definition)) return 'org';
+  if (sameBinding(row, INHERIT)) return 'platform';
+  const today = await pick();
+  if (today !== PICK_UNAVAILABLE && sameBinding(row, today)) return 'platform';
+  if ((await bindingAuthor(db, row)) === serviceAccountId) return 'platform';
+  return today === PICK_UNAVAILABLE ? null : 'org';
 }
 
 const snapshotBindingSchema = z.object({ provider: z.string(), model: z.string() });
 
-/** Who wrote the version where `row`'s current binding began, from its history; `null` if unknown. */
+/** How long after an agent's creation its first version still records who created it. */
+const CREATED_WITH_AGENT_MS = 60_000;
+
+/**
+ * Who wrote the version where `row`'s current binding began, from its
+ * history; `null` if that cannot be told. A first version written well after
+ * the agent was created is a backfill — a later writer saving the PRE-change
+ * state of an agent that had no history (the reconcile and the PATCH route
+ * both do) — so its author is who backfilled it, not who chose the binding,
+ * and it counts as unknown. So does a binding the newest version does not
+ * hold: it was written without one.
+ */
 async function bindingAuthor(
   db: TenancyClient,
-  row: Binding & { id: string }
+  row: Binding & { id: string; createdAt: Date }
 ): Promise<string | null> {
   const versions = await db.aiAgentVersion.findMany({
     where: { agentId: row.id },
     orderBy: { version: 'asc' },
-    select: { snapshot: true, createdBy: true },
+    select: { snapshot: true, createdBy: true, changeSummary: true, createdAt: true },
   });
   let author: string | null = null;
   let held = false;
   for (const version of versions) {
     const parsed = snapshotBindingSchema.safeParse(version.snapshot);
     const holds = parsed.success && sameBinding(parsed.data, row);
-    if (holds && !held) author = version.createdBy;
+    const backfill =
+      version.changeSummary === INITIAL_VERSION_SUMMARY &&
+      version.createdAt.getTime() - row.createdAt.getTime() > CREATED_WITH_AGENT_MS;
+    if (holds && !held) author = backfill ? null : version.createdBy;
     if (!holds) author = null;
     held = holds;
   }
@@ -227,15 +275,6 @@ async function bindingAuthor(
 
 /** Thrown inside an agent's transaction when its binding changed after it was read. */
 class BindingChangedConcurrently extends Error {}
-
-/** What the platform would place now: the definition's pick, or "inherit" when nothing qualifies. */
-async function desiredBinding(
-  definition: PlatformAgentDefinition,
-  db: TenancyClient
-): Promise<Binding | undefined> {
-  if (!definition.defaultBinding) return undefined;
-  return (await definition.defaultBinding(db)) ?? INHERIT;
-}
 
 /** Every code-owned value for one definition: the baseline, overlaid by it. */
 function codeOwnedValues(definition: PlatformAgentDefinition): Record<string, unknown> {
@@ -388,16 +427,37 @@ export async function reconcilePlatformAgents(
         continue;
       }
 
+      // Asked before any write for this agent, and only if needed.
+      const pick = lazyPick(definition, db, (error) => {
+        complete = false;
+        log.warn('Platform agent binding pick unavailable — binding left as it is', {
+          orgId,
+          slug: definition.slug,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+
       if (!existing) {
-        // Asked before any write for this agent: a policy that cannot be read
-        // throws here, and the run is retried.
-        const pick = await desiredBinding(definition, db);
+        const ownerOfBinding = definition.defaultBinding
+          ? platformPicksBinding(definition)
+            ? ('platform' as const)
+            : ('org' as const)
+          : null;
+        const picked = ownerOfBinding === 'platform' ? await pick() : undefined;
         try {
-          await createInstance(db, definition, pick, {
-            ownerId: owner.id,
-            capabilityIds: desiredCapabilityIds,
-            tagIds: desiredTagIds,
-          });
+          await createInstance(
+            db,
+            definition,
+            {
+              owner: ownerOfBinding,
+              target: picked === PICK_UNAVAILABLE ? undefined : picked,
+            },
+            {
+              ownerId: owner.id,
+              capabilityIds: desiredCapabilityIds,
+              tagIds: desiredTagIds,
+            }
+          );
         } catch (err) {
           // Two reconciles of one org at once — the seed beside the job, or
           // two instances each serving a tick — both find the agent missing,
@@ -422,14 +482,15 @@ export async function reconcilePlatformAgents(
 
       placed.push(definition.slug);
 
-      // Before any write for this agent, as on create.
-      const bindingOwner = definition.defaultBinding
-        ? (storedOwner(existing.bindingOwner) ??
-          (await classifyBindingOwner(definition, existing, db, owner.id)))
-        : storedOwner(existing.bindingOwner);
+      const bindingOwner =
+        storedOwner(existing.bindingOwner) ??
+        (definition.defaultBinding
+          ? await classifyBindingOwner(definition, existing, pick, db, owner.id)
+          : null);
+      const picked = bindingOwner === 'platform' ? await pick() : undefined;
       const plan = {
         owner: bindingOwner,
-        target: bindingOwner ? await bindingTarget(definition, bindingOwner, db) : undefined,
+        target: picked === PICK_UNAVAILABLE ? undefined : picked,
       };
       let outcome: Awaited<ReturnType<typeof updateInstance>>;
       try {
@@ -541,11 +602,14 @@ export async function reconcilePlatformAgents(
  * an agent that picks its own binding, the agents' bindings, the org's
  * provider policy and the pick's provider and model reads.
  *
- * The org's cached provider policy, and the provider rows the policy judges
- * (their jurisdiction), are dropped first. This process may have cached them
- * before a grant, a revocation or a jurisdiction change served by another
- * instance, and a pick made from them would put a binding back where the org
- * can no longer go.
+ * For an org whose agents pick a binding, its cached provider policy is
+ * dropped first: this process may have cached it before a grant or revocation
+ * served by another instance, and a pick made from it would put a binding
+ * back where the org can no longer go. The provider rows the policy judges
+ * (their jurisdiction) are left to their 60-second cache — clearing that
+ * process-wide cache once per org per pass would cost every chat call a
+ * re-read — so a jurisdiction change served elsewhere is seen within a
+ * minute, and a pick made in that minute is corrected next pass.
  */
 export async function reconcilePlatformAgentsIfStale(
   orgId: string,
@@ -553,8 +617,7 @@ export async function reconcilePlatformAgentsIfStale(
 ): Promise<{ reconciled: boolean; result?: PlatformAgentReconcileResult }> {
   if (!isMultiTenant() && orgId !== INSTALL_ORG_ID) return { reconciled: false };
   const db = options.db ?? defaultDb;
-  forgetOrgProviderPolicy(orgId);
-  forgetProviderRow();
+  if (platformAgentsForOrg(orgId).some((d) => d.defaultBinding)) forgetOrgProviderPolicy(orgId);
   const marker = await loadPlatformAgentsMarker(orgId, db);
   if (marker?.hash === platformAgentRegistryHash() && !(await platformBindingsDrifted(orgId, db))) {
     return { reconciled: false };
@@ -563,18 +626,17 @@ export async function reconcilePlatformAgentsIfStale(
 }
 
 /**
- * Whether any agent's provider and model are not where {@link bindingTarget}
+ * Whether any agent's provider and model are not where {@link askPick}
  * would put them now (t-798). What the org can reach changes without the
  * registry changing: a provider granted or revoked, switched on or off, its
  * credential set, a tool-using model added, a fork's eligibility rule. None of
  * those has one write a hook could catch — an env var or a fork's resolver
  * has none at all — so the job asks the question itself, every pass. An agent
  * the org owns asks nothing; one nobody has classified yet counts, so a run
- * classifies it.
+ * classifies it. A pick that cannot be answered is logged and skipped, as the
+ * reconcile would leave that binding as it is.
  *
- * A missing or refused agent is left to the digest check. Throws when the pick
- * cannot read the org's policy, so the job logs the org and asks again next
- * pass.
+ * A missing or refused agent is left to the digest check.
  */
 async function platformBindingsDrifted(orgId: string, db: TenancyClient): Promise<boolean> {
   const definitions = platformAgentsForOrg(orgId).filter((d) => d.defaultBinding);
@@ -594,8 +656,17 @@ async function platformBindingsDrifted(orgId: string, db: TenancyClient): Promis
       if (!row) continue;
       const owner = storedOwner(row.bindingOwner);
       if (owner === null) return true;
-      const target = await bindingTarget(definition, owner, db);
-      if (target && !sameBinding(row, target)) return true;
+      if (owner === 'org') continue;
+      try {
+        if (!sameBinding(row, await askPick(definition, db))) return true;
+      } catch (error) {
+        // The reconcile would leave this binding as it is too; ask next pass.
+        defaultLogger.warn('Platform agent binding pick unavailable — drift not checked', {
+          orgId,
+          slug: definition.slug,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     return false;
   });
@@ -655,26 +726,23 @@ interface DesiredSets {
 }
 
 /**
- * `pick` is the definition's binding (see {@link desiredBinding}). The platform
- * owns what it places; a definition that also sets a starting provider or
- * model has given the org a value to tune, so that binding is the org's.
+ * `binding` is who owns the new agent's provider and model and, while that is
+ * the platform, where they start ({@link platformPicksBinding}); with no
+ * target the agent starts on "inherit", as a definition with no pick does.
  */
 async function createInstance(
   db: TenancyClient,
   definition: PlatformAgentDefinition,
-  pick: Binding | undefined,
+  binding: { owner: BindingOwner | null; target: Binding | undefined },
   desired: DesiredSets
 ): Promise<void> {
-  const starting: Record<string, unknown> & Binding = {
+  const starting = {
     provider: '',
     model: '',
     ...definition.defaults,
+    ...binding.target,
+    bindingOwner: binding.owner,
   };
-  if (pick) {
-    const platforms = sameBinding(starting, INHERIT);
-    if (platforms) Object.assign(starting, pick);
-    starting.bindingOwner = platforms ? 'platform' : 'org';
-  }
 
   await db.$transaction(async (tx) => {
     const created = await tx.aiAgent.create({
