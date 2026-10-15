@@ -6,13 +6,14 @@
  * @see components/admin/admin-header.tsx
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 import { AdminHeader } from '@/components/admin/admin-header';
 
+const nav = vi.hoisted(() => ({ pathname: '/admin/members' }));
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/admin/members',
+  usePathname: () => nav.pathname,
 }));
 
 vi.mock('@/components/layouts/header-actions', () => ({
@@ -20,6 +21,10 @@ vi.mock('@/components/layouts/header-actions', () => ({
 }));
 
 describe('AdminHeader', () => {
+  beforeEach(() => {
+    nav.pathname = '/admin/members';
+  });
+
   it('names the org being acted in when orgName is given', () => {
     render(<AdminHeader orgName="Acme Ltd" />);
 
@@ -39,5 +44,21 @@ describe('AdminHeader', () => {
   it('titles the page from the Members breadcrumb segment', () => {
     render(<AdminHeader />);
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Members');
+  });
+
+  it('links each breadcrumb but the last, and labels an unknown segment by its name', () => {
+    nav.pathname = '/admin/orchestration';
+    render(<AdminHeader />);
+
+    expect(screen.getByRole('link', { name: 'Admin' })).toHaveAttribute('href', '/admin');
+    expect(screen.queryByRole('link', { name: 'orchestration' })).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Admin');
+  });
+
+  it('prefers an explicit title and shows a description', () => {
+    render(<AdminHeader title="Custom title" description="What this page is for" />);
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Custom title');
+    expect(screen.getByText('What this page is for')).toBeInTheDocument();
   });
 });
