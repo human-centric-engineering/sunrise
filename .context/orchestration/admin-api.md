@@ -2,7 +2,7 @@
 
 Admin-only HTTP surface for managing agents, capabilities, and their relationships. Every capability here is the entry point the admin dashboard will wrap — build against these endpoints with `curl` first.
 
-**Auth:** All routes require the `ADMIN` role via `withAdminAuth` (`lib/auth/guards.ts`). Non-admins get 403, unauthenticated callers get 401.
+**Auth:** Every route goes through `withAdminAuth` (`lib/auth/guards.ts`). A platform admin (the `ADMIN` role) reaches all of them. At `multi`, an org OWNER/ADMIN also reaches the routes behind the customer's sections, which are the ones listed in `ORG_TIER_ADMIN_ROUTES` (`lib/auth/admin-tier.ts`), and only in their own org; see [Authorization → Admin tiers](../auth/authorization.md#admin-tiers). Anyone else gets 403, and unauthenticated callers get 401.
 
 **Rate limiting:** Every mutating handler (POST / PATCH / DELETE) is gated by `adminLimiter` (30 req/min, `lib/security/rate-limit.ts`), keyed by `getClientIP(request)`. Most GET routes are unlimited; some sub-resource GETs (capabilities list, capabilities usage, embed-tokens list, invite-tokens list, compare) are also rate-limited.
 

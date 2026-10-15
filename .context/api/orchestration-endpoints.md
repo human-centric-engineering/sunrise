@@ -3,7 +3,7 @@
 Consumer-focused HTTP reference for every admin orchestration endpoint, consolidated across Phase 3 sessions 3.1 – 3.4. For architecture and design rationale see the per-domain docs under `.context/orchestration/`.
 
 **Base path:** `/api/v1/admin/orchestration`
-**Authentication:** Every endpoint requires a session with the `ADMIN` role (`withAdminAuth` in `lib/auth/guards.ts`). Non-admins get `403`, unauthenticated callers get `401`.
+**Authentication:** Every route goes through `withAdminAuth` (`lib/auth/guards.ts`). A platform admin (the `ADMIN` role) reaches all of them. At `multi`, an org OWNER/ADMIN also reaches the routes behind the customer's sections, which are the ones listed in `ORG_TIER_ADMIN_ROUTES` (`lib/auth/admin-tier.ts`), and only in their own org; see [Authorization → Admin tiers](../auth/authorization.md#admin-tiers). Anyone else gets 403, and unauthenticated callers get 401.
 **Rate limiting:** Every mutating handler (`POST`, `PATCH`, `DELETE`) is gated by `adminLimiter` (30 req/min per IP, see `lib/security/rate-limit.ts`). Most `GET` routes are unlimited; some sub-resource GETs (capabilities list, capabilities usage, embed-tokens list, invite-tokens list, compare) are also rate-limited.
 **Response envelope:**
 
@@ -347,6 +347,8 @@ Standard CRUD. `PATCH` merges the update and re-runs the SSRF guard in `buildPro
 
 Runs a live `testConnection()`. The response **strips raw SDK / fetch error messages** — success returns the reported models; failure returns a generic `connection_failed` error. The real error is logged server-side only to prevent using the endpoint as a blind-SSRF port scanner.
 
+Org-tier (§111 t-811). An org OWNER/ADMIN who is not a platform admin may test only a provider their org is approved for. Any other provider returns `{ ok: false, models: [], error: 'provider_not_approved' }` with no vendor call.
+
 ### `POST /providers/:id/test-model`
 
 Sends a trivial prompt to a specific provider + model combination and reports round-trip latency.
@@ -358,6 +360,8 @@ Body: `{ model: string, capability?: 'chat' | 'reasoning' | 'embedding' | 'image
 - **`reasoning` / `image` / `audio` / `moderation` / `unknown`** — refused without an SDK call; returns `{ ok: false, error: 'unsupported_test_capability', message: <human-readable reason> }`
 
 Response: HTTP 200 with `{ ok: true, latencyMs: 246, model, capability }` on success. On model failure: `{ ok: false, latencyMs: null, model, capability, error: 'model_test_failed' }`. Raw SDK errors are logged server-side but never forwarded — the panel keys off the stable `error` string to distinguish failure modes from unsupported capabilities.
+
+Org-tier (§111 t-811). For a platform admin the vendor call runs as the install org, so a provider can be tested before any org is granted it. For an org OWNER/ADMIN it runs in their own org, where the call-time provider gate applies. A provider their org is not approved for returns `{ ok: false, latencyMs: null, model, capability, error: 'provider_not_approved', message }` with no vendor call.
 
 ### `GET / POST /providers/:id/health`
 
