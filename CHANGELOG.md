@@ -383,7 +383,9 @@ release process.
   of `400`, a knowledge upload that lost a same-content race failed instead of
   returning the winner, and a revision-number collision was not retried.
   Agent PATCH now answers "please retry" only for a version-number race;
-  another unique violation goes to the shared handler's `400`.
+  another unique violation goes to the shared handler's `400`. Agent clone
+  retries a new slug only on a slug collision, and answers its own `409`
+  "Could not generate a unique slug" when every suffix is taken.
   `isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.<name>)` in
   `lib/db/unique-violation.ts` reads the collided index name; a test checks
   each named constraint against the migrations.
