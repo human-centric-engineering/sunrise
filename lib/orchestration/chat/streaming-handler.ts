@@ -940,11 +940,12 @@ export class StreamingChatHandler {
       );
       // Error markers are dropped AFTER the load limit applies, so a truncated
       // load can come back under the window while older rows are still cut off.
-      // Whenever the load was truncated, at least the oldest row must be
+      // For caps that reach the load window, whenever the load was truncated at least the oldest row must be
       // summarised away.
-      const keep = historyTruncated
-        ? Math.max(0, Math.min(summaryWindow, historyRows.length - 1))
-        : summaryWindow;
+      const keep =
+        historyTruncated && summaryWindow === HISTORY_LOAD_LIMIT - SUMMARY_LOOKAHEAD_MESSAGES
+          ? Math.max(0, Math.min(summaryWindow, historyRows.length - 1))
+          : summaryWindow;
       const requiredDrop = Math.max(0, historyRows.length - keep);
 
       if (requiredDrop > 0) {
