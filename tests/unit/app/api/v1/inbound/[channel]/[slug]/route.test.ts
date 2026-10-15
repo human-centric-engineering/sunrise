@@ -31,6 +31,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { parseJSON } from '@/tests/helpers/assertions';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Hoisted mock refs ────────────────────────────────────────────────────────
 // vi.hoisted() ensures these exist before any vi.mock() factory runs.
@@ -913,16 +914,14 @@ describe('happy path', () => {
 
 describe('dedup', () => {
   it('returns 200 with deduped:true when create throws P2002 on dedupKey', async () => {
-    // Arrange — construct a Prisma P2002 error targeting dedupKey (the route's
-    // computed-per-channel collision key — see route.ts dedupKey assignment).
-    const p2002Error = new Prisma.PrismaClientKnownRequestError(
-      'Unique constraint failed on the fields: (`dedupKey`)',
-      {
-        code: 'P2002',
-        clientVersion: '7.0.0',
-        meta: { target: ['dedupKey'] },
-      }
-    );
+    // Arrange — the P2002 the driver adapter throws on the dedupKey index (the
+    // route's computed-per-channel collision key). It names the index and has
+    // no meta.target, which the route used to read, answering a replay 500 (t-796).
+    const p2002Error = uniqueViolationError({
+      index: 'ai_workflow_execution_dedup_key',
+      modelName: 'AiWorkflowExecution',
+      table: 'ai_workflow_execution',
+    });
     mockExecutionCreate.mockRejectedValue(p2002Error);
 
     // Act
@@ -955,15 +954,11 @@ describe('dedup', () => {
   });
 
   it('returns 500 INTERNAL_ERROR when create throws a P2002 that targets a different field (not dedupKey)', async () => {
-    // Arrange — P2002 on a different constraint (e.g. workflowId + status) must NOT dedup
-    const p2002WrongField = new Prisma.PrismaClientKnownRequestError(
-      'Unique constraint failed on the fields: (`workflowId`,`status`)',
-      {
-        code: 'P2002',
-        clientVersion: '7.0.0',
-        meta: { target: ['workflowId', 'status'] },
-      }
-    );
+    // Arrange — a P2002 on another constraint of the table (its primary key) must NOT dedup
+    const p2002WrongField = uniqueViolationError({
+      index: 'ai_workflow_execution_pkey',
+      modelName: 'AiWorkflowExecution',
+    });
     mockExecutionCreate.mockRejectedValue(p2002WrongField);
 
     // Act

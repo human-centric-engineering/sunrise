@@ -22,7 +22,6 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
 import { NextRequest } from 'next/server';
-import { Prisma } from '@prisma/client';
 import { parseJSON } from '@/tests/helpers/assertions';
 
 // ─── Mocks — declared before module imports ───────────────────────────────────
@@ -102,6 +101,7 @@ import {
   resetBootstrapState,
 } from '@/lib/orchestration/inbound/bootstrap';
 import { signHookPayload } from '@/lib/orchestration/hooks/signing';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Test constants ───────────────────────────────────────────────────────────
 
@@ -754,10 +754,11 @@ describe('Slack channel', () => {
         makeTriggerRow({ id: TRIGGER_ID_SLACK, channel: 'slack' })
       );
 
-      const p2002 = new Prisma.PrismaClientKnownRequestError(
-        'Unique constraint failed on the fields: (`dedupKey`)',
-        { code: 'P2002', clientVersion: '7.0.0', meta: { target: ['dedupKey'] } }
-      );
+      // As the driver adapter throws it: the index name, no meta.target (t-796).
+      const p2002 = uniqueViolationError({
+        index: 'ai_workflow_execution_dedup_key',
+        modelName: 'AiWorkflowExecution',
+      });
       vi.mocked(prisma.aiWorkflowExecution.create).mockRejectedValue(p2002);
 
       const body = {

@@ -143,6 +143,13 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       'the change no import chain connects to this test.',
   },
   {
+    path: 'tests/unit/lib/db/unique-constraints-exist.test.ts',
+    reason:
+      'replays the index DDL in `prisma/migrations/` and fails naming any constraint in ' +
+      '`UNIQUE_CONSTRAINTS` that no longer exists on its columns. A migration that renames ' +
+      'one is the change that breaks P2002 matching, and no import chain reaches this test.',
+  },
+  {
     path: 'tests/unit/lib/tenancy/org-scoped-slugs.test.ts',
     reason:
       'parses `prisma/schema/*.prisma` and fails naming any tenant-owned model whose ' +

@@ -18,6 +18,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -466,11 +467,7 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       // user error; a collision on @@unique([agentId, version]) means two
       // concurrent PATCHes raced for the same version number — surface that as a
       // retryable conflict, not a misleading "slug already in use".
-      const target = err.meta?.target;
-      const onSlug = Array.isArray(target)
-        ? target.includes('slug')
-        : typeof target === 'string' && target.includes('slug');
-      if (onSlug) {
+      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.agentSlug)) {
         throw new ValidationError(`Agent with slug '${body.slug}' already exists`, {
           slug: ['Slug is already in use'],
         });

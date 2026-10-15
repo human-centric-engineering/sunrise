@@ -148,7 +148,7 @@ field:
 // lib/api/errors.ts
 if (error instanceof Prisma.PrismaClientKnownRequestError) {
   if (error.code === 'P2002') {
-    /* 400 EMAIL_TAKEN */
+    /* 400 EMAIL_TAKEN on user_email_key, else 409 CONFLICT */
   }
 }
 ```
@@ -161,13 +161,12 @@ Nothing warns you — `mockRejectedValue` takes anything, and a test asserting o
 ```typescript
 import { Prisma } from '@prisma/client';
 
-// Unique constraint violation (P2002)
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
+
+// Unique constraint violation (P2002), in the shape the driver adapter throws:
+// it names the index and has no meta.target.
 vi.mocked(prisma.user.create).mockRejectedValue(
-  new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-    code: 'P2002',
-    clientVersion: '7.0.0',
-    meta: { target: ['email'] },
-  })
+  uniqueViolationError({ index: 'user_email_key', modelName: 'User' })
 );
 
 // Record not found (P2025)

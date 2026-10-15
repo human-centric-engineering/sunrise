@@ -182,6 +182,12 @@ release process.
 
 ### Changed
 
+- **`handleAPIError` answers `409 CONFLICT` for a unique violation on any
+  constraint but the user email** (t-796). It answered every P2002 with
+  `400 EMAIL_TAKEN` and "Field already exists", which clients render as
+  "This email address is already registered", for a slug clash too. A
+  duplicate email (`user_email_key`) still answers `400 EMAIL_TAKEN`, now
+  with `details.field: 'email'`.
 - **Five events name the person whose conversation or run they report**
   (t-792). `chat_budget_exceeded_per_turn` carries `userId` (`null` plus
   `embedVisitorId` for an embed visitor); `workflow_budget_exceeded` and
@@ -367,6 +373,16 @@ release process.
 
 ### Fixed
 
+- **Code that handles a particular unique violation recognises it again**
+  (t-796). Under Prisma 7's driver adapter a P2002 carries no `meta.target`,
+  so every reader of it missed. An inbound trigger replay answered `500`
+  instead of `200 { deduped: true }` (no second run was created), agent PATCH
+  answered a slug clash with "concurrent change, please retry" (`409`) instead
+  of `400`, a knowledge upload that lost a same-content race failed instead of
+  returning the winner, and a revision-number collision was not retried.
+  `isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.<name>)` in
+  `lib/db/unique-violation.ts` reads the collided index name; a test checks
+  each named constraint against the migrations.
 - **An erasure's stop on a delivery is no longer undone** (t-793). An attempt
   in flight when the erasure commits writes its outcome only to a row still
   waiting to send, and arms no further retry. The manual retry routes answer

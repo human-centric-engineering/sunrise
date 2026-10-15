@@ -177,18 +177,18 @@ export async function POST(request: NextRequest) {
 
 The `handleAPIError` function automatically translates Prisma error codes:
 
-| Prisma Code | API Error        | HTTP Status | Example                          |
-| ----------- | ---------------- | ----------- | -------------------------------- |
-| `P2002`     | EMAIL_TAKEN      | 400         | Unique constraint violation      |
-| `P2025`     | NOT_FOUND        | 404         | Record not found                 |
-| `P2003`     | VALIDATION_ERROR | 400         | Foreign key constraint violation |
-| Other       | INTERNAL_ERROR   | 500         | Generic database error           |
+| Prisma Code | API Error        | HTTP Status | Example                            |
+| ----------- | ---------------- | ----------- | ---------------------------------- |
+| `P2002`     | EMAIL_TAKEN      | 400         | Duplicate email (`user_email_key`) |
+| `P2002`     | CONFLICT         | 409         | Any other unique constraint        |
+| `P2025`     | NOT_FOUND        | 404         | Record not found                   |
+| `P2003`     | VALIDATION_ERROR | 400         | Foreign key constraint violation   |
+| Other       | INTERNAL_ERROR   | 500         | Generic database error             |
 
 **P2002 - Unique Constraint Violation**:
 
 ```typescript
-// When Prisma throws P2002 (e.g., duplicate email)
-// handleAPIError returns:
+// On user_email_key (a duplicate email), handleAPIError returns 400:
 {
   success: false,
   error: {
@@ -197,7 +197,24 @@ The `handleAPIError` function automatically translates Prisma error codes:
     details: { field: "email", constraint: "unique" }
   }
 }
+
+// On any other unique constraint, 409:
+{
+  success: false,
+  error: {
+    code: "CONFLICT",
+    message: "A record with that value already exists",
+    details: { constraint: "unique" }
+  }
+}
 ```
+
+Under Prisma 7's driver adapter a P2002 carries no `meta.target`; it names the
+collided index under `meta.driverAdapterError.cause.constraint`. To tell
+constraints apart, use `isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.<name>)`
+from `lib/db/unique-violation.ts`, and add the constraint to
+`UNIQUE_CONSTRAINTS` if it is not there. A test checks every entry against
+the migrations. Never read `meta.target`: no running code sets it.
 
 **P2025 - Record Not Found**:
 

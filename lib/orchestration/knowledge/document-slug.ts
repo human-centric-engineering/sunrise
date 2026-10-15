@@ -34,7 +34,7 @@
  *     only bites names whose lowercase form differs in its ASCII letters.
  */
 
-import { Prisma } from '@prisma/client';
+import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { slugify } from '@/lib/orchestration/knowledge/chunker';
 
 /** The fallback base when a name slugifies to the empty string. */
@@ -69,13 +69,7 @@ type SlugLookupClient = {
  * and the create that loses the race lands here.
  */
 export function isDuplicateSlugError(err: unknown): boolean {
-  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') {
-    return false;
-  }
-  const target = err.meta?.target;
-  return Array.isArray(target)
-    ? target.includes('slug')
-    : typeof target === 'string' && target.includes('slug');
+  return isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.knowledgeDocumentSlug);
 }
 
 /**

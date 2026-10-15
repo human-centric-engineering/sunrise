@@ -42,7 +42,6 @@ import {
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
-import { Prisma } from '@prisma/client';
 import {
   __resetPlatformAgentsForTests,
   registerPlatformAgent,
@@ -88,6 +87,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -419,23 +419,25 @@ describe('POST /api/v1/admin/orchestration/agents/:id/clone', () => {
       expect(data.error.code).toBe('NOT_FOUND');
     });
 
-    it('returns 400 (unique constraint) when all slug collision attempts are exhausted', async () => {
+    it('returns 409 (unique constraint) when all slug collision attempts are exhausted', async () => {
       // The route retries up to MAX_SLUG_ATTEMPTS (5) times on P2002. On the
       // final attempt it re-throws the raw PrismaClientKnownRequestError, which
-      // handleAPIError maps to 400 (unique constraint). The ConflictError guard
+      // handleAPIError maps to 409 CONFLICT (unique constraint). The ConflictError guard
       // after the loop is unreachable because the last re-throw exits before it.
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeSourceAgent() as never);
-      const slugCollision = new Prisma.PrismaClientKnownRequestError(
-        'Unique constraint failed on field: slug',
-        { code: 'P2002', clientVersion: '7.0.0', meta: { target: ['slug'] } }
-      );
+      const slugCollision = uniqueViolationError({
+        index: 'ai_agent_orgId_slug_key',
+        modelName: 'AiAgent',
+      });
       vi.mocked(prisma.$transaction).mockRejectedValue(slugCollision);
 
       const response = await POST(makePostRequest(), makeParams(AGENT_ID));
 
-      // handleAPIError maps P2002 → 400 with EMAIL_TAKEN code
-      expect(response.status).toBe(400);
+      // handleAPIError maps a non-email P2002 → 409 CONFLICT, never EMAIL_TAKEN (t-796)
+      expect(response.status).toBe(409);
+      const body = (await response.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('CONFLICT');
     });
 
     it('CRITICAL: returns 500 on plain Error but does NOT leak raw error message', async () => {

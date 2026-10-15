@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { prisma } from '@/lib/db/client';
 import { DEFAULT_REVISION_RETENTION } from '@/lib/orchestration/knowledge/revision-retention';
 
@@ -140,13 +140,7 @@ export async function writeRevisionWithin(
 }
 
 function isVersionConflict(err: unknown): boolean {
-  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== 'P2002') {
-    return false;
-  }
-  const target = err.meta?.target;
-  return Array.isArray(target)
-    ? target.includes('version')
-    : typeof target === 'string' && target.includes('version');
+  return isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.knowledgeRevisionVersion);
 }
 
 const MAX_VERSION_ATTEMPTS = 5;

@@ -223,8 +223,8 @@ async function requireSlugFree(slug: string, exceptOrgId: string | null, db: Lif
 /**
  * Create an org, naming its founding OWNER in the same write when one is
  * given. The pre-check on the slug gives a clean 409; a race past it
- * surfaces as Prisma's P2002, which `handleAPIError` already turns into a
- * 400 rather than a 500.
+ * surfaces as Prisma's P2002, which `handleAPIError` turns into a 409
+ * rather than a 500.
  *
  * Once the org is committed it gets its own instances of the platform agents
  * (§116 t-724) — see {@link materialisePlatformAgents}.

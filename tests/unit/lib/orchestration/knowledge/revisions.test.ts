@@ -36,6 +36,7 @@ import {
   nextVersion,
   writeRevision,
 } from '@/lib/orchestration/knowledge/revisions';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 const DOC_ID = 'doc-rev-001';
 
@@ -144,6 +145,40 @@ describe('revisions', () => {
       const call = mockCreate.mock.calls[0][0] as { data: Record<string, unknown> };
       expect(call.data.sectionMarker).toBeUndefined();
       expect(call.data.instructions).toBeUndefined();
+    });
+
+    it('retries a collision on the (documentId, version) index with a fresh version', async () => {
+      // The P2002 the driver adapter throws: the index name, no meta.target (t-796).
+      mockFindFirst.mockResolvedValueOnce({ version: 4 }).mockResolvedValueOnce({ version: 5 });
+      mockCreate
+        .mockRejectedValueOnce(
+          uniqueViolationError({
+            index: 'ai_knowledge_document_revision_documentId_version_key',
+            modelName: 'AiKnowledgeDocumentRevision',
+          })
+        )
+        .mockResolvedValueOnce({});
+
+      await writeRevision({ documentId: DOC_ID, content: 'x', source: 'restore', actorId: null });
+
+      expect(mockTransaction).toHaveBeenCalledTimes(2);
+      expect(
+        mockCreate.mock.calls.map((c) => (c[0] as { data: { version: number } }).data.version)
+      ).toEqual([5, 6]);
+    });
+
+    it('does not retry a unique violation on any other index', async () => {
+      const other = uniqueViolationError({
+        index: 'ai_knowledge_document_revision_pkey',
+        modelName: 'AiKnowledgeDocumentRevision',
+      });
+      mockFindFirst.mockResolvedValue({ version: 4 });
+      mockCreate.mockRejectedValueOnce(other);
+
+      await expect(
+        writeRevision({ documentId: DOC_ID, content: 'x', source: 'restore', actorId: null })
+      ).rejects.toBe(other);
+      expect(mockTransaction).toHaveBeenCalledTimes(1);
     });
   });
 

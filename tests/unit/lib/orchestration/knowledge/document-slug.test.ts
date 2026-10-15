@@ -5,6 +5,7 @@ import {
   generateUniqueDocumentSlug,
   isDuplicateSlugError,
 } from '@/lib/orchestration/knowledge/document-slug';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // A 64-hex SHA-256-shaped string; only the first 8 chars matter for the slug.
 const HASH = 'a3f9c1b2deadbeef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -117,24 +118,16 @@ describe('buildDocumentSlugBase — SQL backfill parity', () => {
 });
 
 describe('isDuplicateSlugError', () => {
-  function p2002(target: string[] | string | undefined) {
-    return new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-      code: 'P2002',
-      clientVersion: 'test',
-      meta: target === undefined ? undefined : { target },
-    });
-  }
+  // The driver adapter's P2002 names the index and carries no meta.target (t-796).
+  const onIndex = (index: string) =>
+    uniqueViolationError({ index, modelName: 'AiKnowledgeDocument' });
 
-  it('is true for a P2002 whose target array includes "slug"', () => {
-    expect(isDuplicateSlugError(p2002(['slug']))).toBe(true);
+  it('is true for a driver-adapter P2002 on the per-org slug index', () => {
+    expect(isDuplicateSlugError(onIndex('ai_knowledge_document_orgId_slug_key'))).toBe(true);
   });
 
-  it('is true for a P2002 whose target is the string "ai_knowledge_document_slug_key"', () => {
-    expect(isDuplicateSlugError(p2002('ai_knowledge_document_slug_key'))).toBe(true);
-  });
-
-  it('is false for a P2002 on a different column (e.g. fileHash)', () => {
-    expect(isDuplicateSlugError(p2002(['fileHash']))).toBe(false);
+  it('is false for a P2002 on another index of the table (the ready-file-hash partial unique)', () => {
+    expect(isDuplicateSlugError(onIndex('idx_knowledge_doc_file_hash_ready'))).toBe(false);
   });
 
   it('is false for a non-P2002 Prisma error and for a plain Error', () => {

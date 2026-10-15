@@ -32,6 +32,7 @@
 
 import type { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
+import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
@@ -466,12 +467,7 @@ async function fireTrigger(
     // must not be allowed to skip past it (#442).
     noteMaintenanceWork('inbound-trigger-execution');
   } catch (err) {
-    if (
-      err instanceof Prisma.PrismaClientKnownRequestError &&
-      err.code === 'P2002' &&
-      Array.isArray(err.meta?.target) &&
-      err.meta.target.includes('dedupKey')
-    ) {
+    if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.workflowExecutionDedupKey)) {
       // Replay — vendor re-sent an event we've already enqueued.
       logger.info('Inbound: replay deduped', { channel, slug, externalId });
       return successResponse({ deduped: true });

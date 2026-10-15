@@ -161,6 +161,7 @@ import {
   DEFAULT_KNOWLEDGE_BASE_ID,
   getOrCreateDefaultKnowledgeBase,
 } from '@/lib/orchestration/knowledge/document-manager';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // --- Helpers ---
 
@@ -303,10 +304,9 @@ describe('uploadDocument', () => {
       .mockResolvedValueOnce(null) // slug generation: base is free
       .mockResolvedValueOnce(winner as never); // catch handler: winner holds the slug
     vi.mocked(prisma.aiKnowledgeDocument.create).mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError('dup', {
-        code: 'P2002',
-        clientVersion: 'test',
-        meta: { target: ['slug'] },
+      uniqueViolationError({
+        index: 'ai_knowledge_document_orgId_slug_key',
+        modelName: 'AiKnowledgeDocument',
       })
     );
 
@@ -1526,10 +1526,9 @@ describe('previewDocument', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(winner as never);
     vi.mocked(prisma.aiKnowledgeDocument.create).mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError('dup', {
-        code: 'P2002',
-        clientVersion: 'test',
-        meta: { target: ['slug'] },
+      uniqueViolationError({
+        index: 'ai_knowledge_document_orgId_slug_key',
+        modelName: 'AiKnowledgeDocument',
       })
     );
 

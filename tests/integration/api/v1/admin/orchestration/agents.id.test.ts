@@ -35,7 +35,6 @@ import {
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
-import { Prisma } from '@prisma/client';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -73,6 +72,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -488,11 +488,11 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
     it('returns 400 for P2002 slug conflict on PATCH', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
-      // A real slug-uniqueness P2002 names the slug column in meta.target.
-      const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: '7.0.0',
-        meta: { target: ['slug'] },
+      // A real slug-uniqueness P2002, as the driver adapter throws it: it names
+      // the index and carries no meta.target (t-796).
+      const p2002 = uniqueViolationError({
+        index: 'ai_agent_orgId_slug_key',
+        modelName: 'AiAgent',
       });
       vi.mocked(prisma.aiAgent.update).mockRejectedValue(p2002);
 
@@ -514,14 +514,10 @@ describe('PATCH /api/v1/admin/orchestration/agents/:id', () => {
       vi.mocked(prisma.aiAgent.findUnique).mockResolvedValue(makeAgent() as never);
       vi.mocked(prisma.aiAgent.update).mockResolvedValue(makeAgent({ temperature: 0.99 }) as never);
       vi.mocked(prisma.aiAgentVersion.findFirst).mockResolvedValue({ version: 1 } as never);
-      const versionCollision = new Prisma.PrismaClientKnownRequestError(
-        'Unique constraint failed',
-        {
-          code: 'P2002',
-          clientVersion: '7.0.0',
-          meta: { target: ['agentId', 'version'] },
-        }
-      );
+      const versionCollision = uniqueViolationError({
+        index: 'ai_agent_version_agentId_version_key',
+        modelName: 'AiAgentVersion',
+      });
       // The post-update version create happens inside the $transaction; reject it.
       vi.mocked(prisma.aiAgentVersion.create).mockRejectedValueOnce(versionCollision);
 
