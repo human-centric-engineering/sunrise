@@ -322,6 +322,18 @@ interface HistoryPin {
   createdAt: Date;
 }
 
+/**
+ * `where` for the rows strictly after `pin` in the conversation's total order
+ * (`createdAt`, then `id`). One definition, shared by the read from the pin and
+ * the count of what a newest-rows read did not reach, so the two cannot
+ * disagree about which rows follow it.
+ */
+function rowsAfterPin(pin: HistoryPin) {
+  return {
+    OR: [{ createdAt: { gt: pin.createdAt } }, { createdAt: pin.createdAt, id: { gt: pin.id } }],
+  };
+}
+
 /** What a history read returns; see `loadHistoryFromPin` / `loadNewestHistory`. */
 interface LoadedHistory {
   rows: AiMessage[];
@@ -742,6 +754,12 @@ export class StreamingChatHandler {
       } = summaryPin
         ? await this.loadHistoryFromPin(conversation.id, request.userId, summaryPin)
         : await this.loadNewestHistory(conversation.id, request.userId, null);
+      if (summaryPinId && !summaryPin) {
+        // The pin's row is gone (a retention purge, a deletion). What the stored
+        // summary covers can no longer be told apart from what it does not, so no
+        // count is claimed: the summary is taken to describe the older rows.
+        omittedBeforeHistory = 0;
+      }
 
       // Enforce message-per-conversation cap using actual DB count
       // (loadHistory returns at most HISTORY_LOAD_LIMIT rows, so
@@ -1004,6 +1022,7 @@ export class StreamingChatHandler {
       // again, until everything after the pin fits. Nothing is ever skipped: the
       // summary always covers a contiguous prefix (#655).
       let catchUpFailed = false;
+      let currentPin = summaryPin;
       while (historyOverflow && storedSummary) {
         const chunk = history.slice(0, SUMMARY_CATCHUP_MESSAGES);
         if (chunk.length === 0) {
@@ -1023,10 +1042,8 @@ export class StreamingChatHandler {
           where: { id: conversation.id, ...conversationOwner(request.userId) },
           data: { summary: storedSummary, summaryUpToMessageId: summaryPinId },
         });
-        const next = await this.loadHistoryFromPin(conversation.id, request.userId, {
-          id: summaryPinId,
-          createdAt: chunk[chunk.length - 1].createdAt,
-        });
+        currentPin = { id: summaryPinId, createdAt: chunk[chunk.length - 1].createdAt };
+        const next = await this.loadHistoryFromPin(conversation.id, request.userId, currentPin);
         ({ rows: history, overflow: historyOverflow, omitted: omittedBeforeHistory } = next);
       }
       if (catchUpFailed) {
@@ -1037,7 +1054,7 @@ export class StreamingChatHandler {
         ({ rows: history, omitted: omittedBeforeHistory } = await this.loadNewestHistory(
           conversation.id,
           request.userId,
-          summaryPin
+          currentPin
         ));
         historyOverflow = false;
       }
@@ -1051,7 +1068,16 @@ export class StreamingChatHandler {
       // The minimum number of leading rows that must leave the prompt for it to
       // respect the cap. Zero means the whole history fits. A stored summary is
       // still rendered then — it describes the rows before the first one loaded.
-      const requiredDrop = Math.max(0, historyRows.length - effectiveMessageCap);
+      //
+      // At least one when the read did not reach everything: rows older than the
+      // newest window are in nothing, and only a summary — pinned inside what was
+      // read, with the gap recorded in its text — makes later turns read from a
+      // pin and stops the gap re-announcing forever. Without it a cap at or above
+      // the load limit never summarises at all (#655).
+      const requiredDrop = Math.max(
+        omittedBeforeHistory > 0 && historyRows.length > 0 ? 1 : 0,
+        historyRows.length - effectiveMessageCap
+      );
 
       if (catchUpFailed || requiredDrop === 0) {
         // Nothing is summarised this turn: either the summariser could not run
@@ -1136,6 +1162,8 @@ export class StreamingChatHandler {
           historyDropCount = targetIdx + 1;
           summaryCoversCount = targetIdx + 1;
           recordSummariserCall(summarizeResult);
+          // The gap, if there was one, is now part of the summary's own text.
+          omittedBeforeHistory = 0;
           // Persist for future turns, pinned to the newest message the
           // summary now covers.
           await prisma.aiConversation.update({
@@ -1239,7 +1267,10 @@ export class StreamingChatHandler {
       const knowledgeSearchEnabled = toolDefinitions.some((t) => t.name === SEARCH_KNOWLEDGE_SLUG);
       // A stored summary means earlier turns exist, even when the rows read from
       // its pin onward hold no user message.
-      const isFirstUserTurn = !storedSummary && !history.some((m) => m.role === 'user');
+      const isFirstUserTurn =
+        !conversationSummary &&
+        omittedBeforeHistory === 0 &&
+        !history.some((m) => m.role === 'user');
       const forcedToolChoice: LlmToolChoice | undefined = !knowledgeSearchEnabled
         ? undefined
         : agent.knowledgeRetrievalMode === 'every_turn'
@@ -3055,10 +3086,7 @@ export class StreamingChatHandler {
       where: {
         conversationId,
         conversation: conversationOwner(userId),
-        OR: [
-          { createdAt: { gt: pin.createdAt } },
-          { createdAt: pin.createdAt, id: { gt: pin.id } },
-        ],
+        ...rowsAfterPin(pin),
       },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       // One extra row, so exactly the limit is not mistaken for an overflow.
@@ -3099,15 +3127,7 @@ export class StreamingChatHandler {
     let omitted = 0;
     if (truncated) {
       const unseen = await prisma.aiMessage.count({
-        where: afterPin
-          ? {
-              ...scope,
-              OR: [
-                { createdAt: { gt: afterPin.createdAt } },
-                { createdAt: afterPin.createdAt, id: { gt: afterPin.id } },
-              ],
-            }
-          : scope,
+        where: afterPin ? { ...scope, ...rowsAfterPin(afterPin) } : scope,
       });
       omitted = Math.max(0, unseen - HISTORY_LOAD_LIMIT);
     }

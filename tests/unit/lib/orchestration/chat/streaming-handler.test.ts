@@ -5101,17 +5101,79 @@ describe('rolling conversation summarization', () => {
       expect(turn.prompt.some((m) => m.content.includes('old-summary'))).toBe(true);
     });
 
-    it('announces rows older than the newest window when there is no summary yet', async () => {
-      // No pin: newest rows. 300 rows, 200 read, 100 never seen by anything — said
-      // so, rather than silently dropped.
+    it.each([200, 500])(
+      'summarises once when 100 rows predate the newest window, even at maxHistoryMessages %i',
+      async (cap) => {
+        // No pin: the newest 200 of 300 rows are read, 100 never seen by anything.
+        // At a cap this high nothing would ever leave the prompt, so without a
+        // forced first summary none would ever be built and the 100 would be
+        // re-announced as omitted on every turn (#655). The gap is recorded in
+        // the summary's own text, so it is announced there rather than twice.
+        mockSummariser();
+        capAgent(cap);
+
+        const turn = await runTurn(`conv-no-pin-${cap}`, makeHistoryMessages(300), NO_SUMMARY);
+
+        expect(turn.calls).toBe(1);
+        expect(turn.options?.previousSummary).toContain(
+          '100 earlier messages were never summarised'
+        );
+        expect(turn.persisted).toBeDefined();
+        expect(turn.prompt.some((m) => m.content.includes('summary-text'))).toBe(true);
+        expect(turn.prompt.some((m) => m.content.includes('older messages omitted'))).toBe(false);
+        // Newest rows stay verbatim.
+        expect(verbatimHistory(turn.prompt).has('Message 299')).toBe(true);
+
+        // And the next turn reads from the pin it set: nothing re-announced.
+        const next = await runTurn(`conv-no-pin-${cap}`, makeHistoryMessages(302), turn.state);
+        expect(next.calls).toBe(0);
+        expect(next.prompt.some((m) => m.content.includes('omitted'))).toBe(false);
+      }
+    );
+
+    it('announces the gap when the first summary cannot be built', async () => {
+      (summarizeMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+        summary: '[Summary unavailable — earlier messages omitted]',
+        fellBack: true,
+      });
+      capAgent(500);
+
+      const turn = await runTurn('conv-no-pin-down', makeHistoryMessages(300), NO_SUMMARY);
+
+      expect(turn.persisted).toBeUndefined();
+      // The 100 never-read rows, plus the one row the forced summary was meant to
+      // fold and could not.
+      expect(turn.prompt.some((m) => m.content.includes('101 older messages omitted'))).toBe(true);
+    });
+
+    it('counts the gap from the pin it already moved to when a later catch-up pass fails', async () => {
+      // Pass 1 folds rows 101-200 and persists the pin; pass 2 fails. Rows 101-200
+      // are in the persisted summary, so only 201..249 — 49 — are unseen, not 149.
+      const summarize = summarizeMessages as ReturnType<typeof vi.fn>;
+      summarize
+        .mockResolvedValueOnce({ summary: 'pass-one', fellBack: false, model: 'm' })
+        .mockResolvedValue({ summary: 'pass-one', fellBack: true });
+      capAgent(500);
+
+      const turn = await runTurn('conv-partial', makeHistoryMessages(450), STORED);
+
+      expect(turn.calls).toBe(2);
+      expect(turn.prompt.some((m) => m.content.includes('49 older messages omitted'))).toBe(true);
+      expect(turn.prompt.some((m) => m.content.includes('pass-one'))).toBe(true);
+    });
+
+    it('claims no gap when the pin row no longer exists', async () => {
       mockSummariser();
       capAgent(500);
 
-      const turn = await runTurn('conv-no-pin', makeHistoryMessages(300), NO_SUMMARY);
+      const turn = await runTurn('conv-pin-deleted', makeHistoryMessages(300), {
+        summary: 'old-summary',
+        summaryUpToMessageId: 'hist-msg-gone',
+      });
 
       expect(turn.calls).toBe(0);
-      expect(turn.prompt.some((m) => m.content.includes('100 older messages omitted'))).toBe(true);
-      expect(verbatimHistory(turn.prompt).size).toBe(200);
+      expect(turn.prompt.some((m) => m.content.includes('old-summary'))).toBe(true);
+      expect(turn.prompt.some((m) => m.content.includes('omitted'))).toBe(false);
     });
 
     it('records the gap in the summary it first builds, so it is not forgotten', async () => {
