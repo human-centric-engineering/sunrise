@@ -942,11 +942,10 @@ export class StreamingChatHandler {
       // load can come back under the window while older rows are still cut off.
       // Whenever the load was truncated, at least the oldest row must be
       // summarised away.
-      const requiredDrop = Math.max(
-        0,
-        historyRows.length -
-          (historyTruncated ? Math.min(summaryWindow, historyRows.length - 1) : summaryWindow)
-      );
+      const keep = historyTruncated
+        ? Math.max(0, Math.min(summaryWindow, historyRows.length - 1))
+        : summaryWindow;
+      const requiredDrop = Math.max(0, historyRows.length - keep);
 
       if (requiredDrop > 0) {
         // A pin with no text behind it covers nothing, whatever it says — and
@@ -2965,7 +2964,9 @@ export class StreamingChatHandler {
     const messages = await prisma.aiMessage.findMany({
       where: { conversationId, conversation: conversationOwner(userId) },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: HISTORY_LOAD_LIMIT,
+      // One extra row, so a conversation of exactly the limit is not mistaken
+      // for a truncated one.
+      take: HISTORY_LOAD_LIMIT + 1,
     });
     // Drop error markers. They exist so the CLIENT can show a failed turn
     // instead of an unanswered question; this history is only ever used to
@@ -2976,8 +2977,9 @@ export class StreamingChatHandler {
     // conversation. Excluded in JS rather than the `where` because the flag
     // lives in a JSON column.
     return {
-      truncated: messages.length >= HISTORY_LOAD_LIMIT,
+      truncated: messages.length > HISTORY_LOAD_LIMIT,
       rows: messages
+        .slice(0, HISTORY_LOAD_LIMIT)
         .filter((m) => {
           const metadata = (m.metadata ?? null) as MessageMetadata | null;
           return metadata?.error !== true;

@@ -4957,7 +4957,7 @@ describe('rolling conversation summarization', () => {
     (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeAgent({ maxHistoryMessages: 300 })
     );
-    const rows = makeHistoryMessages(200);
+    const rows = makeHistoryMessages(201);
     for (let i = 100; i < 115; i++) {
       (rows[i] as { metadata: unknown }).metadata = { error: true };
     }
@@ -4965,6 +4965,36 @@ describe('rolling conversation summarization', () => {
     const turn = await runTurn('conv-high-cap-markers', rows, NO_SUMMARY);
 
     expect(turn.calls).toBe(1);
+    expect(turn.prompt.some((m) => m.content.includes('summary-text'))).toBe(true);
+    expect(verbatimHistory(turn.prompt).has('Message 200')).toBe(true);
+  });
+
+  it('does not treat exactly 200 rows with error markers as truncated (#655)', async () => {
+    mockSummariser();
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxHistoryMessages: 300 })
+    );
+    const rows = makeHistoryMessages(200);
+    for (let i = 100; i < 115; i++) {
+      (rows[i] as { metadata: unknown }).metadata = { error: true };
+    }
+
+    const turn = await runTurn('conv-exact-limit-markers', rows, NO_SUMMARY);
+
+    expect(turn.calls).toBe(0);
+  });
+
+  it('survives a truncated load made entirely of error markers (#655)', async () => {
+    mockSummariser();
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxHistoryMessages: 300 })
+    );
+    const rows = makeHistoryMessages(201);
+    for (const r of rows) (r as { metadata: unknown }).metadata = { error: true };
+
+    const turn = await runTurn('conv-all-markers', rows, NO_SUMMARY);
+
+    expect(turn.calls).toBe(0);
   });
 
   it.each([
