@@ -87,13 +87,14 @@ export default async function ExecutionsListPage({ searchParams }: PageProps) {
   // An org admin (§111 t-812) gets the table alone: the live engine is
   // the platform's, its route refuses them, so its snapshot is not
   // fetched. The threshold still marks stuck-looking rows in their table.
-  const viewerTier = await adminPageViewerTier();
-  const platform = viewerTier === 'platform';
-  const [{ executions, meta }, snapshot, settings] = await Promise.all([
+  const viewerTierRead = adminPageViewerTier();
+  const [viewerTier, { executions, meta }, snapshot, settings] = await Promise.all([
+    viewerTierRead,
     getExecutions(workflowId, initialStatus),
-    platform ? getInitialSnapshot() : EMPTY_SNAPSHOT,
+    viewerTierRead.then((tier) => (tier === 'platform' ? getInitialSnapshot() : EMPTY_SNAPSHOT)),
     getOrchestrationSettings(),
   ]);
+  const platform = viewerTier === 'platform';
 
   return (
     <div className="space-y-6">

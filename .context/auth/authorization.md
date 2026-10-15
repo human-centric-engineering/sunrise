@@ -204,10 +204,12 @@ the reasoning behind it.
   admin may test only a provider their org is approved for, in their own org,
   while a platform admin keeps the install-org probe.
 - **The mixed pages are split per viewer, not assigned** (§111 t-812). The
-  orchestration dashboard, costs, analytics, the executions list and the MCP
-  landing are on the page roster, and each asks `adminPageViewerTier()`
-  (`lib/auth/admin-page-viewer.ts`, the layout's platform question) and
-  renders its platform-ops half for a platform viewer only. An org admin gets
+  orchestration dashboard, costs, the executions list and the MCP landing are
+  on the page roster, and each asks `adminPageViewerTier()`
+  (`lib/auth/admin-page-viewer.ts`, the layout's platform question, cached per
+  request and shared with the layout) and renders its platform-ops half for a
+  platform viewer only. Analytics is on the roster too, but every figure on it
+  is the org's, so it has no half to split and does not ask. An org admin gets
   the org's half; the routes behind it (costs, its summary and alerts, the
   model catalogue, the dashboard stats and the analytics routes) are
   org-tier, and the routes behind the platform-ops half stay undeclared, so

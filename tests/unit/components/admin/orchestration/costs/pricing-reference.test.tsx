@@ -123,4 +123,21 @@ describe('PricingReference', () => {
     // Title badge + one per model row
     expect(liveBadges.length).toBeGreaterThanOrEqual(MOCK_MODELS.length);
   });
+
+  it('tells a platform viewer how to force a refresh', () => {
+    render(<PricingReference models={MOCK_MODELS} fetchedAt={Date.now()} />);
+    fireEvent.click(screen.getByText('Model pricing reference'));
+    expect(screen.getByText('?refresh=true')).toBeInTheDocument();
+  });
+
+  it('does not point an org viewer at a refresh their call is refused (§111 t-812)', () => {
+    render(
+      <PricingReference models={MOCK_MODELS} fetchedAt={Date.now()} canForceRefresh={false} />
+    );
+    fireEvent.click(screen.getByText('Model pricing reference'));
+    expect(screen.queryByText('?refresh=true')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Pricing updates automatically every 24h from OpenRouter.')
+    ).toBeInTheDocument();
+  });
 });

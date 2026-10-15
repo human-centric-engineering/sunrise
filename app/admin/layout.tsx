@@ -8,15 +8,13 @@ import { InFlightExecutionBanner } from '@/components/admin/orchestration/in-fli
 import { BRAND } from '@/lib/brand';
 import { AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
 import { canAdminister } from '@/lib/auth/authorization';
-import { sessionPrincipal } from '@/lib/auth/session-principal';
+import { requestAdministersPlatform, requestPrincipal } from '@/lib/auth/admin-page-viewer';
 import {
   ADMIN_PATHNAME_HEADER,
   adminPageTier,
   type AdminTier,
   type AdminViewerTier,
 } from '@/lib/auth/admin-tier';
-import type { AuthSession } from '@/lib/auth/guards';
-import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import { AdminTierGate } from '@/components/admin/admin-tier-gate';
 import { getSharedSettingsAccess } from '@/lib/tenancy/shared-settings-access';
 import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
@@ -34,20 +32,22 @@ export const metadata: Metadata = {
  * surface), `'org'` (the org-tier ones), or `null` (none of this one).
  *
  * The principal is the one the guards build, from the same org entry
- * (`sessionPrincipal`), so a policy that reads `viewer.orgRole` answers the
- * layout as it answers the routes for every admitted caller. One difference
+ * (`sessionPrincipal`, via `requestPrincipal`), and the platform question is
+ * the one the mixed pages ask (`lib/auth/admin-page-viewer.ts`), so a policy
+ * that reads `viewer.orgRole` answers the layout as it answers the routes for
+ * every admitted caller. One difference
  * is deliberate: where a guard refuses a session whose org entry is refused,
  * this asks with no org facts, so a platform admin still reaches the console
  * to switch org — see `lib/auth/session-principal.ts`.
  */
-async function adminViewerTier(
-  session: AuthSession,
-  headerOrgId: string | null,
-  pageTier: AdminTier | null
-): Promise<AdminViewerTier | null> {
-  const { principal, scope } = await sessionPrincipal(session, headerOrgId);
-  if (await canAdminister(principal, null, scope)) return 'platform';
-  if (pageTier === 'org' && (await canAdminister(principal, null, { ...scope, tier: 'org' }))) {
+async function adminViewerTier(pageTier: AdminTier | null): Promise<AdminViewerTier | null> {
+  if (await requestAdministersPlatform()) return 'platform';
+  const entry = await requestPrincipal();
+  if (
+    pageTier === 'org' &&
+    entry &&
+    (await canAdminister(entry.principal, null, { ...entry.scope, tier: 'org' }))
+  ) {
     return 'org';
   }
   return null;
@@ -96,8 +96,6 @@ export default async function AdminLayout({
   // page calls checks for itself.
   const requestHeaders = await headers();
   const viewerTier = await adminViewerTier(
-    session,
-    requestHeaders.get(TENANT_HEADER_NAME) || null,
     adminPageTier(requestHeaders.get(ADMIN_PATHNAME_HEADER))
   );
   if (!viewerTier) {

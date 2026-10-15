@@ -32,7 +32,7 @@ async function getMcpSettings(): Promise<McpSettingsResponse | null> {
  * The count on each card. An org viewer (§111 t-812) gets the keys count only:
  * the other three lists are the platform's, and their routes refuse them.
  */
-async function getStats(platform: boolean): Promise<{
+async function getStats(platformRead: Promise<boolean>): Promise<{
   tools: number;
   resources: number;
   prompts: number;
@@ -49,12 +49,15 @@ async function getStats(platform: boolean): Promise<{
     const value = (body.meta as Record<string, unknown>).total;
     return typeof value === 'number' ? value : 0;
   };
+  // A platform-only list's total; the keys count does not wait on the tier.
+  const platformTotal = async (path: string): Promise<number> =>
+    total((await platformRead) ? path : null);
 
   try {
     const [tools, resources, prompts, keys] = await Promise.all([
-      total(platform ? API.ADMIN.ORCHESTRATION.MCP_TOOLS : null),
-      total(platform ? API.ADMIN.ORCHESTRATION.MCP_RESOURCES : null),
-      total(platform ? API.ADMIN.ORCHESTRATION.MCP_PROMPTS : null),
+      platformTotal(API.ADMIN.ORCHESTRATION.MCP_TOOLS),
+      platformTotal(API.ADMIN.ORCHESTRATION.MCP_RESOURCES),
+      platformTotal(API.ADMIN.ORCHESTRATION.MCP_PROMPTS),
       total(API.ADMIN.ORCHESTRATION.MCP_KEYS),
     ]);
 
@@ -65,14 +68,16 @@ async function getStats(platform: boolean): Promise<{
 }
 
 export default async function McpDashboardPage() {
-  const viewerTier = await adminPageViewerTier();
-  const platform = viewerTier === 'platform';
+  const viewerTierRead = adminPageViewerTier();
+  const platformRead = viewerTierRead.then((tier) => tier === 'platform');
   // The server's settings are the platform's (§111 t-812): an org viewer's
   // dashboard shows none of them, and the route refuses them.
-  const [settings, stats] = await Promise.all([
-    platform ? getMcpSettings() : null,
-    getStats(platform),
+  const [viewerTier, settings, stats] = await Promise.all([
+    viewerTierRead,
+    platformRead.then((isPlatform) => (isPlatform ? getMcpSettings() : null)),
+    getStats(platformRead),
   ]);
+  const platform = viewerTier === 'platform';
 
   return (
     <div className="space-y-6">
@@ -113,8 +118,10 @@ export default async function McpDashboardPage() {
         </h1>
         <p className="text-muted-foreground text-sm">
           MCP lets external AI clients (Claude Desktop, Cursor, custom agents) discover and use your
-          app&apos;s capabilities. You control exactly what is exposed — nothing is shared until you
-          enable it.
+          app&apos;s capabilities.{' '}
+          {platform
+            ? 'You control exactly what is exposed — nothing is shared until you enable it.'
+            : 'The platform admin decides what the server exposes. Here you manage the API keys your organisation uses to connect.'}
         </p>
       </header>
 

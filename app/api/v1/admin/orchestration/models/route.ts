@@ -14,8 +14,11 @@
  *
  * Org-tier (§111 t-812): an org admin reads the catalogue, which the costs
  * page's pricing and the dashboard's trend chart need (ruling 3: shared config
- * is read-open). Forcing a refresh is an outbound call on the install's
- * behalf, so `?refresh=true` stays a platform admin's.
+ * is read-open). Any viewer's read may warm a stale registry from OpenRouter,
+ * as any page load or chat turn may: the registry's own TTL and backoff bound
+ * that to one outbound call per 24h (5 min after a failure), whoever triggers
+ * it. `?refresh=true` skips those bounds — an outbound call on demand, on the
+ * install's behalf — so forcing a refresh stays a platform admin's.
  *
  * Authentication: Admin role required.
  */

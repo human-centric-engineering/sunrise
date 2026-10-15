@@ -66,10 +66,11 @@ export type AdminViewerTier = 'platform' | 'org';
  * The customer's sections (§111 t-811): the pages the control-plane map in
  * `.context/architecture/multi-tenancy.md` puts on the customer's side. And
  * the mixed pages (§111 t-812) — the orchestration dashboard, costs,
- * analytics, executions and the MCP landing — which an org admin opens to
- * their org's half: each page asks who is viewing
- * (`lib/auth/admin-page-viewer.ts`) and renders its platform-ops panels for a
- * platform viewer only, and the routes behind those panels stay undeclared.
+ * executions and the MCP landing — which an org admin opens to their org's
+ * half: each page asks who is viewing (`lib/auth/admin-page-viewer.ts`) and
+ * renders its platform-ops panels for a platform viewer only, and the routes
+ * behind those panels stay undeclared. Analytics is listed with them but has
+ * no platform-ops half: every figure on it is the org's, so it does not ask.
  * `/admin` itself is here so it can send an org admin to the dashboard; the
  * overview it sends a platform admin to is not. The roster test
  * pins this list, so widening it fails until the test is updated in the same

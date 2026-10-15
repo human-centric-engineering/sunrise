@@ -360,6 +360,15 @@ describe('McpDashboardPage — an org admin’s keys (§111 t-812)', () => {
     expect(dashboard).toHaveAttribute('data-tools', '0');
   });
 
+  it('does not tell them they control what the server exposes', async () => {
+    render(await McpDashboardPage());
+
+    expect(screen.queryByText(/You control exactly what is exposed/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/The platform admin decides what the server exposes/)
+    ).toBeInTheDocument();
+  });
+
   it('control: the platform’s view fetches all five', async () => {
     viewer.tier = 'platform';
 
@@ -369,5 +378,6 @@ describe('McpDashboardPage — an org admin’s keys (§111 t-812)', () => {
     const dashboard = screen.getByTestId('mcp-dashboard');
     expect(dashboard).toHaveAttribute('data-viewer-tier', 'platform');
     expect(dashboard).toHaveAttribute('data-tools', '3');
+    expect(screen.getByText(/You control exactly what is exposed/)).toBeInTheDocument();
   });
 });

@@ -103,7 +103,11 @@ export function CostsView({
 
       <LocalVsCloudPanel summary={summary} models={models} />
 
-      <PricingReference models={models} fetchedAt={registryFetchedAt ?? null} />
+      <PricingReference
+        models={models}
+        fetchedAt={registryFetchedAt ?? null}
+        canForceRefresh={platform}
+      />
 
       <CostMethodology />
 

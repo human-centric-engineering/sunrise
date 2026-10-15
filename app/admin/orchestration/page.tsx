@@ -248,8 +248,10 @@ async function getActivityFeed(
 }
 
 export default async function OrchestrationDashboardPage() {
-  const platform = (await adminPageViewerTier()) === 'platform';
+  // Started alongside the fetches; only the platform-ops two wait on it.
+  const platformRead = adminPageViewerTier().then((tier) => tier === 'platform');
   const [
+    platform,
     costSummary,
     budgetAlerts,
     agentsCount,
@@ -258,6 +260,7 @@ export default async function OrchestrationDashboardPage() {
     setupState,
     activeQuarantines,
   ] = await Promise.all([
+    platformRead,
     getCostSummary(),
     getBudgetAlerts(),
     // The org's own agents: every org also has its platform agents (§116), so
@@ -266,8 +269,8 @@ export default async function OrchestrationDashboardPage() {
     getPaginatedTotal(`${API.ADMIN.ORCHESTRATION.AGENTS}?isSystem=false`),
     getDashboardStats(),
     getModels(),
-    platform ? getSetupState() : null,
-    platform ? getActiveQuarantines() : [],
+    platformRead.then((isPlatform) => (isPlatform ? getSetupState() : null)),
+    platformRead.then((isPlatform) => (isPlatform ? getActiveQuarantines() : [])),
   ]);
 
   const todayCostUsd = costSummary?.totals.today ?? null;

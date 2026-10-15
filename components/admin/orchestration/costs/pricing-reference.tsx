@@ -29,6 +29,11 @@ export interface PricingReferenceProps {
   models: ModelInfo[] | null;
   /** Epoch ms when the registry was last populated from OpenRouter. 0 = static fallback only. */
   fetchedAt: number | null;
+  /**
+   * Whether the viewer may force a registry refresh — a platform admin only
+   * (§111 t-812), so an org viewer is not pointed at a call that refuses them.
+   */
+  canForceRefresh?: boolean;
 }
 
 function tierVariant(tier: string): 'default' | 'secondary' | 'outline' | 'destructive' {
@@ -56,7 +61,11 @@ function formatLastSynced(fetchedAt: number | null): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-export function PricingReference({ models, fetchedAt }: PricingReferenceProps) {
+export function PricingReference({
+  models,
+  fetchedAt,
+  canForceRefresh = true,
+}: PricingReferenceProps) {
   const [expanded, setExpanded] = React.useState(false);
 
   const sorted = React.useMemo(() => {
@@ -171,11 +180,15 @@ export function PricingReference({ models, fetchedAt }: PricingReferenceProps) {
               input tokens and 200–1,000 output tokens. A 10-turn conversation on a frontier model
               (~$15/M input, ~$75/M output) costs roughly $0.08–$0.90 depending on context length.
             </p>
-            <p>
-              Pricing updates automatically every 24h from OpenRouter. Use the{' '}
-              <code className="bg-muted rounded px-1">?refresh=true</code> query on the models
-              endpoint to force a manual refresh.
-            </p>
+            {canForceRefresh ? (
+              <p>
+                Pricing updates automatically every 24h from OpenRouter. Use the{' '}
+                <code className="bg-muted rounded px-1">?refresh=true</code> query on the models
+                endpoint to force a manual refresh.
+              </p>
+            ) : (
+              <p>Pricing updates automatically every 24h from OpenRouter.</p>
+            )}
           </div>
         </CardContent>
       )}
