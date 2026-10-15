@@ -574,8 +574,9 @@ export class StreamingChatHandler {
       //
       // Lazy resolution: most turns have no cap to enforce, and the
       // resolution requires reading the settings singleton. We defer
-      // that I/O until the first LLM cost is recorded, then cache
-      // the result for the rest of the loop. Agents that explicitly
+      // that I/O until the first LLM cost is recorded — or the first
+      // summariser call, which checks its own spend against the cap
+      // before it starts — then cache the result for the rest of the turn. Agents that explicitly
       // set their own cap skip the settings lookup entirely.
       let maxCostPerTurnUsd: number | undefined | null = null; // null = "not yet resolved"
       const resolvePerTurnCap = async (): Promise<number | undefined> => {

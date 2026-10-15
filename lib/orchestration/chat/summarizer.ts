@@ -341,6 +341,10 @@ export async function summarizeMessages(
       }
     );
   } catch (err) {
+    // The caller left: a cancellation, not a provider fault worth a warning.
+    if (options.signal?.aborted) {
+      return { summary: options.previousSummary ?? FALLBACK_MESSAGE, fellBack: true };
+    }
     logger.warn('Conversation summarization failed, using fallback', {
       error: err instanceof Error ? err.message : String(err),
       messageCount: messages.length,

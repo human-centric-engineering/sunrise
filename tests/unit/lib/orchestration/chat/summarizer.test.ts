@@ -391,6 +391,24 @@ describe('summarizeMessages', () => {
   });
 });
 
+describe('a caller abort during summarisation (#655)', () => {
+  it('falls back quietly, without a provider-fault warning', async () => {
+    vi.mocked(getDefaultModelForTask).mockResolvedValue('m');
+    vi.mocked(getProviderWithFallbacks).mockRejectedValue(new Error('aborted'));
+    const controller = new AbortController();
+    controller.abort();
+    vi.mocked(logger.warn).mockClear();
+
+    const result = await summarizeMessages([{ role: 'user', content: 'hi' }], 'p', [], {
+      previousSummary: 'kept',
+      signal: controller.signal,
+    });
+
+    expect(result).toEqual({ summary: 'kept', fellBack: true });
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+});
+
 describe('summary clipping and gap note helpers (#655)', () => {
   it('clips long rows, leaves short ones, and never ends on half a surrogate pair', () => {
     const long = 'a'.repeat(SUMMARY_ROW_MAX_CHARS - 1) + '😀'; // the pair straddles the limit

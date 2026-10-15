@@ -125,9 +125,9 @@ export const MAX_TOOL_ITERATIONS = 5;
 
 /**
  * Fallback message count limit when token-based truncation is not active
- * (i.e., no model context window information is available). Also serves
- * as a hard upper-bound on the number of history messages to load from
- * the database, even when token-based truncation is in use.
+ * (i.e., no model context window information is available). It is the
+ * default for `AiAgent.maxHistoryMessages`; how many rows one history read
+ * returns is {@link HISTORY_LOAD_LIMIT}.
  */
 export const MAX_HISTORY_MESSAGES = 50;
 
