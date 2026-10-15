@@ -270,7 +270,10 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
     }
   }
 
-  if (droppedCount > 0) {
+  // A summary that covers zero of the loaded rows is still rendered when nothing
+  // is dropped: a truncated load can hold a stored summary of rows older than
+  // anything loaded (#655). Without an explicit zero it is ignored, as before.
+  if (droppedCount > 0 || (args.conversationSummary && args.conversationSummaryCovers === 0)) {
     // Split the dropped span into the part the summary describes and the part
     // nothing describes. Equal on every normal path — `summarised` is
     // `droppedCount` and the marker below never renders — so this is the same

@@ -263,8 +263,9 @@ function SideEffectModelsSection({
         These models run alongside the main chat LLM — <strong>embeddings</strong> each time the
         agent calls <code className="font-mono">search_knowledge_base</code>, and the{' '}
         <strong>summariser</strong> when the conversation history grows past the agent&rsquo;s{' '}
-        <code className="font-mono">maxHistoryMessages</code> cap. Their cost is logged separately
-        in <code className="font-mono">AiCostLog</code> and rolls up into the agent&rsquo;s monthly
+        <code className="font-mono">maxHistoryMessages</code> cap (or past the 150-message load
+        window, if that is lower). Their cost is logged separately in{' '}
+        <code className="font-mono">AiCostLog</code> and rolls up into the agent&rsquo;s monthly
         spend; the main cost line above only reflects the chat LLM.
       </p>
     </div>

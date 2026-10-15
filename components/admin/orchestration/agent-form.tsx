@@ -1629,7 +1629,9 @@ export function AgentForm({
                 How many prior messages this agent remembers verbatim per turn. Older messages get
                 rolled into a rolling summary that&apos;s persisted on the conversation row, so
                 older context survives even when dropped from the live history — just in compressed
-                form. Leave blank to use the platform default (50).
+                form. Leave blank to use the platform default (50). Whatever you set, conversation
+                history is read from the most recent 200 messages, so verbatim memory tops out at
+                about 150 even if this is higher; the rolling summary covers the rest.
                 <br />
                 <br />
                 Lower this for stateless or single-turn agents (e.g. classifiers, summarisers); use

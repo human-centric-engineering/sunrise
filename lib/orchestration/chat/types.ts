@@ -140,6 +140,19 @@ export const MAX_HISTORY_MESSAGES = 50;
 export const HISTORY_LOAD_LIMIT = 200;
 
 /**
+ * Rows held back from {@link HISTORY_LOAD_LIMIT} when an agent's cap reaches
+ * the load window, so the stored summary's pin stays inside the loaded rows.
+ *
+ * Once a conversation outgrows the window the oldest loaded row moves forward
+ * by every row a turn writes: the user message, up to `MAX_TOOL_ITERATIONS`
+ * rounds of assistant tool_calls plus one tool row each, and the reply — about
+ * a dozen. A pin that sits less far in than that scrolls out, and the rows
+ * between the old pin and the new first row are then in neither the summary nor
+ * the prompt. Fifty leaves room for several such turns. (#655)
+ */
+export const HISTORY_SUMMARY_HEADROOM = 50;
+
+/**
  * How far **past** the current drop boundary a summarisation run extends.
  *
  * The rolling summary covers a prefix of the conversation, and the prefix has
@@ -156,7 +169,9 @@ export const HISTORY_LOAD_LIMIT = 200;
  * summarised (the summary boundary IS the drop boundary, so nothing is ever in
  * the prompt twice), which means a larger value trades verbatim recall for
  * fewer summariser calls. At 10 the verbatim window sits between
- * `cap - 10` and `cap` messages.
+ * `cap - 10` and `cap` messages — for caps below
+ * `HISTORY_LOAD_LIMIT - HISTORY_SUMMARY_HEADROOM`; at and above that the
+ * window is bound by the load limit instead.
  */
 export const SUMMARY_LOOKAHEAD_MESSAGES = 10;
 

@@ -141,6 +141,7 @@ import {
 import {
   MAX_HISTORY_MESSAGES,
   HISTORY_LOAD_LIMIT,
+  HISTORY_SUMMARY_HEADROOM,
   SUMMARY_LOOKAHEAD_MESSAGES,
   MAX_TOOL_ITERATIONS,
   type ChatRequest,
@@ -708,8 +709,8 @@ export class StreamingChatHandler {
       );
 
       // Enforce message-per-conversation cap using actual DB count
-      // (loadHistory returns at most 200 rows, so history.length can't
-      // detect conversations that exceed 200 messages).
+      // (loadHistory returns at most HISTORY_LOAD_LIMIT rows, so
+      // history.length can't detect conversations that exceed it).
       const maxMessages = capSettings?.maxMessagesPerConversation ?? null;
       if (maxMessages !== null) {
         const messageCount = await prisma.aiMessage.count({
@@ -927,47 +928,45 @@ export class StreamingChatHandler {
       // respect the cap. Zero means the whole history fits and the summary — if
       // one is stored — is simply not needed this turn.
       //
-      // The window is the agent's cap, but never wider than what `loadHistory`
-      // can return less one lookahead. A cap at or above the load limit would
-      // otherwise make `requiredDrop` zero forever, and everything older than
-      // the loaded rows would leave the prompt with no summary standing in for
-      // it (#655). Holding back one lookahead means the summary starts while
-      // the oldest loaded row is still visible, so it can cover the lookahead
-      // and be reused for several turns like any other.
-      const summaryWindow = Math.min(
-        effectiveMessageCap,
-        HISTORY_LOAD_LIMIT - SUMMARY_LOOKAHEAD_MESSAGES
-      );
+      // The window is the agent's cap, but never wider than `loadBoundWindow`:
+      // what `loadHistory` can return less the headroom that keeps the stored
+      // summary's pin inside the loaded rows. A cap at or above the load limit
+      // would otherwise make `requiredDrop` zero forever, and everything older
+      // than the loaded rows would leave the prompt with no summary standing in
+      // for it (#655). See HISTORY_SUMMARY_HEADROOM for why the headroom is as
+      // large as it is.
+      const loadBoundWindow = HISTORY_LOAD_LIMIT - HISTORY_SUMMARY_HEADROOM;
+      const summaryWindow = Math.min(effectiveMessageCap, loadBoundWindow);
       // Error markers are dropped AFTER the load limit applies, so a truncated
       // load can come back under the window while older rows are still cut off.
-      // For caps that reach the load window, whenever the load was truncated at least the oldest row must be
-      // summarised away.
+      // For caps that reach the load-bound window, a truncated load always
+      // summarises at least the oldest row.
       const keep =
-        historyTruncated && summaryWindow === HISTORY_LOAD_LIMIT - SUMMARY_LOOKAHEAD_MESSAGES
+        historyTruncated && effectiveMessageCap >= loadBoundWindow
           ? Math.max(0, Math.min(summaryWindow, historyRows.length - 1))
           : summaryWindow;
       const requiredDrop = Math.max(0, historyRows.length - keep);
 
-      if (requiredDrop > 0) {
-        // A pin with no text behind it covers nothing, whatever it says — and
-        // neither does a pin behind the placeholder. Rows written before #654
-        // persisted `fellBack` results unconditionally, so live conversations
-        // exist whose `summary` IS `[Summary unavailable …]`; folding one
-        // forward would carry the apology into every future summary.
-        const storedSummary = isPlaceholderSummary(conversation.summary)
-          ? null
-          : conversation.summary;
-        // How far into THIS window the stored summary reaches. `-1` means
-        // "nothing in the loaded rows", which covers both no summary at all and
-        // a pin older than the 200 rows `loadHistory` returns. Those need the
-        // same treatment — fold from index 0 — and in the second case the stored
-        // text still has to be carried forward or everything before the window
-        // is lost with the rows.
-        const coveredIdx =
-          storedSummary && conversation.summaryUpToMessageId
-            ? history.findIndex((m) => m.id === conversation.summaryUpToMessageId)
-            : -1;
+      // A pin with no text behind it covers nothing, whatever it says — and
+      // neither does a pin behind the placeholder. Rows written before #654
+      // persisted `fellBack` results unconditionally, so live conversations
+      // exist whose `summary` IS `[Summary unavailable …]`; folding one
+      // forward would carry the apology into every future summary.
+      const storedSummary = isPlaceholderSummary(conversation.summary)
+        ? null
+        : conversation.summary;
+      // How far into THIS window the stored summary reaches. `-1` means
+      // "nothing in the loaded rows", which covers both no summary at all and
+      // a pin older than the rows `loadHistory` returns. Those need the same
+      // treatment — fold from index 0 — and in the second case the stored text
+      // still has to be carried forward or everything before the window is
+      // lost with the rows.
+      const coveredIdx =
+        storedSummary && conversation.summaryUpToMessageId
+          ? history.findIndex((m) => m.id === conversation.summaryUpToMessageId)
+          : -1;
 
+      if (requiredDrop > 0) {
         if (storedSummary && coveredIdx >= requiredDrop - 1) {
           // Already covered — no LLM call. This is the branch #654 could never
           // reach. Drop to the summary's own boundary, not the cap's: the
@@ -1037,27 +1036,32 @@ export class StreamingChatHandler {
             // error. Keep what is stored, drop only what the cap demands, and
             // let the next turn try again.
             //
-            // `requiredDrop` flat, with no `Math.max` against the stored
-            // coverage: reaching this branch at all means the stored summary
-            // covered less than the cap demands, so it could never be the
-            // larger of the two.
+            // Drop only what the cap demands, and never less than the stored
+            // summary already covers (those rows would otherwise be in the
+            // prompt twice). NOT `requiredDrop`: that is the SUMMARY window,
+            // which at caps near the load limit is narrower than the cap, and
+            // rows the cap has room for must not be thrown away because a
+            // provider is down.
             //
             // What that costs, stated plainly: the messages between the stored
-            // summary's boundary and `requiredDrop` leave this one turn's
-            // prompt with nothing standing in for them. It is the least-bad of
-            // three options — keeping them would breach the agent's configured
-            // cap, and persisting the placeholder would lose the good summary
+            // summary's boundary and the drop leave this one turn's prompt with
+            // nothing standing in for them. It is the least-bad of three
+            // options — keeping them would breach the agent's configured cap,
+            // and persisting the placeholder would lose the good summary
             // permanently instead of for one turn. It is also strictly better
             // than the behaviour it replaces, which represented *every* dropped
             // message with `[Summary unavailable]` and then wrote that down.
-            historyDropCount = requiredDrop;
+            historyDropCount = Math.max(
+              Math.max(0, historyRows.length - effectiveMessageCap),
+              coveredIdx + 1
+            );
             // The stored summary still only covers what it always did, which is
             // LESS than we are about to drop. Say so, rather than letting the
             // prompt claim the gap is summarised.
             //
             // `coveredIdx + 1` is 0 in TWO different situations, and they are
             // not the same: there is no stored summary at all, or there is one
-            // whose pin has scrolled out of the 200-row window — the case the
+            // whose pin has scrolled out of the loaded rows — the case the
             // extend branch above goes out of its way to fold forward. In the
             // second, the text is real context describing messages older than
             // anything loaded, so it still belongs in the prompt; it just covers
@@ -1100,6 +1104,17 @@ export class StreamingChatHandler {
             });
           }
         }
+      } else if (historyTruncated && storedSummary) {
+        // Nothing has to leave the prompt, but the load was cut short, so the
+        // stored summary may describe rows older than any that were loaded —
+        // and an error-marker-heavy window can leave `requiredDrop` at zero
+        // while that is true. Keep it in the prompt. If the pin IS inside the
+        // loaded rows, drop to it, as the reuse branch does, so the covered
+        // rows are not in the prompt twice. (#655) A zero `summaryCoversCount`
+        // is what tells the builder to render it with nothing dropped.
+        conversationSummary = storedSummary;
+        historyDropCount = coveredIdx + 1;
+        summaryCoversCount = coveredIdx + 1;
       }
 
       // Three independent reads, none of which depends on the others, and all
@@ -2957,9 +2972,9 @@ export class StreamingChatHandler {
     conversationId: string,
     userId: string
   ): Promise<{ rows: AiMessage[]; truncated: boolean }> {
-    // Fetch the 200 most recent messages (desc) then reverse to
-    // chronological order. Previous `asc + take: 200` loaded the
-    // oldest 200 — wrong for conversations with >200 messages.
+    // Fetch the HISTORY_LOAD_LIMIT most recent messages (desc) then reverse to
+    // chronological order. Previously `asc` loaded the oldest rows — wrong for
+    // conversations longer than the limit.
     // Secondary sort on `id` ensures deterministic ordering for
     // messages persisted in the same millisecond.
     const messages = await prisma.aiMessage.findMany({

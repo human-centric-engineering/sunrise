@@ -4975,7 +4975,7 @@ describe('rolling conversation summarization', () => {
       makeAgent({ maxHistoryMessages: 300 })
     );
     const rows = makeHistoryMessages(200);
-    for (let i = 100; i < 115; i++) {
+    for (let i = 20; i < 80; i++) {
       (rows[i] as { metadata: unknown }).metadata = { error: true };
     }
 
@@ -4998,17 +4998,84 @@ describe('rolling conversation summarization', () => {
   });
 
   it.each([
-    [190, 0],
-    [191, 1],
-  ])('cap 250 with %i untruncated rows: %i summariser calls (#655 boundary)', async (n, calls) => {
-    mockSummariser();
+    [150, 0],
+    [151, 1],
+  ])(
+    'cap 250 with %i untruncated rows: %i summariser calls (#655 boundary at the 150-row summary window)',
+    async (n, calls) => {
+      mockSummariser();
+      (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+        makeAgent({ maxHistoryMessages: 250 })
+      );
+
+      const turn = await runTurn(`conv-boundary-${n}`, makeHistoryMessages(n), NO_SUMMARY);
+
+      expect(turn.calls).toBe(calls);
+    }
+  );
+
+  it('keeps the stored summary reachable when a big turn slides the load window past its pin (#655)', async () => {
+    // A turn can write ~a dozen rows (user, five tool rounds, reply). With the
+    // pin too close to the front of the window, one such turn scrolled it out of
+    // the loaded rows and the span between the old pin and the new first row
+    // was in neither the summary nor the prompt.
+    mockSummariser('first-summary');
     (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeAgent({ maxHistoryMessages: 250 })
+      makeAgent({ maxHistoryMessages: 500 })
     );
 
-    const turn = await runTurn(`conv-boundary-${n}`, makeHistoryMessages(n), NO_SUMMARY);
+    const turn1 = await runTurn('conv-slide', makeHistoryMessages(201).slice(0, 200), NO_SUMMARY);
+    expect(turn1.calls).toBe(1);
+    expect(turn1.persisted).toBeDefined();
+    const pinIdx = Number(turn1.persisted!.summaryUpToMessageId!.replace('hist-msg-', ''));
 
-    expect(turn.calls).toBe(calls);
+    // 40 more rows land before the next turn: far more than one turn writes,
+    // and four times the old 10-row headroom.
+    mockSummariser('second-summary');
+    const slid = makeHistoryMessages(241).slice(40); // 201 rows -> loads ids 41..240
+    const turn2 = await runTurn('conv-slide', slid, turn1.state);
+
+    expect(pinIdx).toBeGreaterThan(41);
+    expect(turn2.calls).toBe(1);
+    expect(turn2.options?.previousSummary).toBe('first-summary');
+    // Folded forward from the row right after the old pin: nothing skipped.
+    expect(turn2.delta![0].content).toBe(`Message ${pinIdx + 1}`);
+  });
+
+  it('keeps a stored summary in the prompt when a truncated load falls under the window (#655)', async () => {
+    mockSummariser();
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxHistoryMessages: 140 })
+    );
+    // 201 rows fetched, 70 of them error markers: 130 survive, under the cap.
+    const rows = makeHistoryMessages(201);
+    for (let i = 100; i < 170; i++) {
+      (rows[i] as { metadata: unknown }).metadata = { error: true };
+    }
+
+    const turn = await runTurn('conv-trunc-stored', rows, {
+      summary: 'older-context',
+      summaryUpToMessageId: 'hist-msg-not-loaded',
+    });
+
+    expect(turn.calls).toBe(0);
+    expect(turn.prompt.some((m) => m.content.includes('older-context'))).toBe(true);
+    expect(verbatimHistory(turn.prompt).has('Message 200')).toBe(true);
+  });
+
+  it('on summariser fallback, keeps the rows a high cap has room for (#655)', async () => {
+    (summarizeMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+      summary: '[Summary unavailable — earlier messages omitted]',
+      fellBack: true,
+    });
+    (prisma.aiAgent.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeAgent({ maxHistoryMessages: 500 })
+    );
+
+    const turn = await runTurn('conv-fallback-high-cap', makeHistoryMessages(200), NO_SUMMARY);
+
+    expect(verbatimHistory(turn.prompt).size).toBe(200);
+    expect(turn.prompt.some((m) => m.content.includes('older messages omitted'))).toBe(false);
   });
 
   it('does not summarise a high-cap conversation that still fits the load window (#655)', async () => {
