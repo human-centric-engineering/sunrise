@@ -213,6 +213,24 @@ release process.
 
 ### Changed
 
+- **An org admin now runs their own org's sections of the admin console**
+  (§111 t-811). At `multi`, an org OWNER/ADMIN reaches agents, workflows,
+  triggers, knowledge, conversations, evaluations (with datasets and runs),
+  experiments, event subscriptions, MCP keys and approvals. That covers their
+  pages, their nav items, and every API route those pages call, all listed in
+  `ORG_TIER_ADMIN_PAGES` / `ORG_TIER_ADMIN_ROUTES`. They also read the
+  capability, agent-profile, provider, provider-model, embedding-model, grader
+  and tag lists, but cannot write any of them. Each opened route now declares
+  an `ownership`. The provider test routes (`providers/[id]/test`,
+  `test-model`) refuse an org admin a provider their org is not approved for
+  (`error: 'provider_not_approved'`) and run their probe in that org. New
+  `administersPlatform()` in `lib/auth/admin-viewer.ts` tells a platform admin
+  from an org admin inside an org-tier route. Platform admins, and every
+  install at `single`, see no change. **Forks:** a route of yours that one of
+  these pages calls stays platform-only until you declare it `tier: 'org'`.
+  The MCP keys page has no nav entry for an org admin until the MCP landing is
+  split. See [Authorization → Admin tiers](./.context/auth/authorization.md#admin-tiers).
+
 - **The admin layout and the maintenance bypass ask the policy with the
   guards' verified org facts** (§111 t-810). Both used to pass `orgId` straight
   from the session's active org, with no `orgRole`. They now share

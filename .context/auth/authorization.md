@@ -168,6 +168,38 @@ install org, so `tier: 'org'` widens admission only.
 - a listed page has no `page.tsx`;
 - a core nav item marked org-tier points at a page that isn't listed.
 
+**What core opens (§111 t-811).** The customer's sections from the
+[control-plane map](../architecture/multi-tenancy.md#the-control-plane-which-admin-surfaces-are-whose):
+agents, workflows, triggers, knowledge, conversations, evaluations (with
+datasets and runs), experiments, event subscriptions, MCP keys and approvals.
+That is their pages, their nav items, and every API route those pages call,
+traced from each page's actual fetches. The roster is the list; the map is
+the reasoning behind it.
+
+- **Shared configuration is read, never written.** The agent form and the
+  knowledge pages need capabilities, agent profiles, providers, provider
+  models, embedding models, graders and tags, so those `GET`s are org-tier.
+  Their writes keep `writesSharedSettings` and are not org-tier. The settings
+  singleton, the knowledge seed, the tags page and the patterns knowledge stay
+  platform-only.
+- **Each opened route declares its ownership.** Routes over a person's rows
+  (conversations, evaluations, runs, datasets, experiments, executions, webhook
+  subscriptions, the admin chat turn) are keyed on the caller: `'self'`. Routes
+  over the org's configuration (agents, workflows, triggers, knowledge
+  documents, MCP keys) and the shared-config reads make no ownership decision:
+  `'nothing'`, with the reason. Row isolation bounds both to the entered org,
+  and the owner layer still checks every enforced personal model below them.
+- **A route that acts beyond the entered org tells its two callers apart.**
+  `administersPlatform(principal)` (`lib/auth/admin-viewer.ts`) asks the policy
+  the admin layout's platform question. The provider test routes use it: an org
+  admin may test only a provider their org is approved for, in their own org,
+  while a platform admin keeps the install-org probe.
+- **The mixed pages are not assigned.** The dashboard, costs, analytics,
+  executions and the MCP landing are split per viewer (§111 t-812), not opened.
+  Until then the MCP keys page has no nav entry for an org admin; it is open
+  by URL. The executions routes the approval queue and the workflow builder
+  call are open; the executions page is not.
+
 **If you replace `canAdminister`,** handle `scope.tier`. A policy that ignores
 it admits nobody new: org admins stay locked out of every surface, which is the
 safe failure. The other direction is not safe. A policy that admits on
