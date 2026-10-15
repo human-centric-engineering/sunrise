@@ -577,7 +577,6 @@ describe('handleAPIError', () => {
         error: {
           message: 'A record with that value already exists',
           code: ErrorCodes.VALIDATION_ERROR,
-          details: { constraint: 'unique' },
         },
       };
 

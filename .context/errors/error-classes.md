@@ -207,8 +207,9 @@ The `handleAPIError` function automatically translates Prisma error codes:
   success: false,
   error: {
     code: "VALIDATION_ERROR",
-    message: "A record with that value already exists",
-    details: { constraint: "unique" }
+    message: "A record with that value already exists"
+    // no details: a VALIDATION_ERROR's details map fields to messages, and
+    // the error does not say which field collided
   }
 }
 ```

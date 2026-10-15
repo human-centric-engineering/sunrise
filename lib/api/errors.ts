@@ -249,10 +249,11 @@ export function handleAPIError(error: unknown): Response {
           details: { field: 'email', constraint: 'unique' },
         });
       }
+      // No `details`: a VALIDATION_ERROR's details are a field → messages
+      // map, and the error does not say which field collided.
       return errorResponse('A record with that value already exists', {
         code: ErrorCodes.VALIDATION_ERROR,
         status: 400,
-        details: { constraint: 'unique' },
       });
     }
 

@@ -187,7 +187,7 @@ release process.
   answered every P2002 with `EMAIL_TAKEN` and "Field already exists", which
   clients render as "This email address is already registered", for a slug
   clash too. The status stays `400`; the message is "A record with that value
-  already exists" and `details` no longer names a field. A duplicate email
+  already exists", with no `details`. A duplicate email
   (`user_email_key`) still answers `400 EMAIL_TAKEN`, now with
   `details.field: 'email'`.
 - **Five events name the person whose conversation or run they report**
