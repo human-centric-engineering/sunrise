@@ -30,8 +30,7 @@ export interface SeedUnit {
   hashInputs?: string[];
 }
 
-/** What makes a file a seed unit. Exported for the capability parity test (#646). */
-export const SEED_FILE_PATTERN = /^\d{3}-[a-z0-9-]+\.ts$/;
+const SEED_FILE_PATTERN = /^\d{3}-[a-z0-9-]+\.ts$/;
 
 /**
  * Recursively discover seed units under `seedsDir`, skip those whose source
@@ -72,8 +71,9 @@ export async function runSeeds(prisma: TenancyClient, seedsDir: string): Promise
  * Walk `dir` recursively, returning the path of every file whose basename
  * matches {@link SEED_FILE_PATTERN}, each expressed relative to `baseDir` with
  * forward slashes so the derived `SeedHistory` key is stable across platforms.
+ * Exported so the capability parity test runs exactly the seeds this does (#646).
  */
-async function discoverSeedFiles(dir: string, baseDir: string): Promise<string[]> {
+export async function discoverSeedFiles(dir: string, baseDir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true });
   const found: string[] = [];
   for (const entry of entries) {

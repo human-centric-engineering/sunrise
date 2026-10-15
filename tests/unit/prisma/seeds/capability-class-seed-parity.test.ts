@@ -48,7 +48,7 @@
  * @see lib/app/capability-seed-pairs.ts — where a fork's pairs go
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, it, expect, vi, beforeAll } from 'vitest';
@@ -68,7 +68,8 @@ vi.mock('@/lib/db/client', () => {
   return { prisma: refuse, default: refuse };
 });
 
-import { SEED_FILE_PATTERN, type SeedContext, type SeedUnit } from '@/prisma/runner';
+import { discoverSeedFiles, type SeedContext, type SeedUnit } from '@/prisma/runner';
+import { isRecord } from '@/lib/utils';
 import { APP_CAPABILITY_PAIRS, type AppCapabilityPair } from '@/lib/app/capability-seed-pairs';
 import { CLEANUP_CAPABILITIES } from '@/prisma/seeds/019-cleanup-capabilities';
 
@@ -106,15 +107,6 @@ const PAIRS: readonly AppCapabilityPair[] = [
 
 const SEED_DIR = join(process.cwd(), 'prisma', 'seeds');
 
-/** Every seed unit, recursively — the runner discovers fork seeds the same way. */
-function seedFiles(dir: string, prefix = ''): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) return seedFiles(join(dir, entry.name), rel);
-    return SEED_FILE_PATTERN.test(entry.name) ? [rel] : [];
-  });
-}
-
 /** One capability write a seed performed. */
 interface Captured {
   file: string;
@@ -122,17 +114,22 @@ interface Captured {
   functionDefinition: unknown;
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null;
-
 /**
  * A client that records `aiCapability` writes and answers everything else
- * with an inert value: no capability row exists, any other single read or
- * write returns a row with an id (so a seed that looks up its owner proceeds),
- * `[]` for lists, `0` for counts, and `$transaction(fn)` runs `fn` against the
- * same client.
+ * with an inert value: any single read or write returns a row with an id (so a
+ * seed that looks up its owner proceeds), `[]` for lists, `0` for counts, and
+ * `$transaction(fn)` runs `fn` against the same client.
+ *
+ * A capability lookup answers as `capabilities` says — `'absent'` so a
+ * create-if-missing branch runs, `'present'` so an update-if-exists one does.
+ * Each seed runs once each way; a write either branch makes is captured.
  */
-function recordingClient(file: string, captured: Captured[], touched: Set<string>): unknown {
+function recordingClient(
+  file: string,
+  captured: Captured[],
+  touched: Set<string>,
+  capabilities: 'absent' | 'present'
+): unknown {
   const record = (method: string, args: unknown): void => {
     if (!isRecord(args)) return;
     const where = isRecord(args.where) ? args.where : {};
@@ -159,11 +156,15 @@ function recordingClient(file: string, captured: Captured[], touched: Set<string
             if (name === 'aiCapability') {
               touched.add(file);
               record(method, args);
-              // No capability exists yet, so a seed's create-if-missing
-              // branch runs and is captured rather than skipped. (`…OrThrow`
-              // asserts the row exists, so it gets one.)
+              // (`…OrThrow` asserts the row exists, so it always gets one.)
               if (method === 'findMany') return Promise.resolve([]);
-              if (/^find(Unique|First)$/.test(method)) return Promise.resolve(null);
+              if (/^find(Unique|First)$/.test(method) && capabilities === 'absent') {
+                return Promise.resolve(null);
+              }
+              if (/^find/.test(method)) {
+                const where = isRecord(args) && isRecord(args.where) ? args.where : {};
+                return Promise.resolve({ id: 'parity-mock-id', slug: where.slug });
+              }
             }
             if (method === 'findMany' || method === 'groupBy') return Promise.resolve([]);
             if (method === 'count') return Promise.resolve(0);
@@ -201,23 +202,27 @@ const failed: { file: string; error: string; namesCapability: boolean }[] = [];
 /** Seeds whose source names `aiCapability` — they are expected to reach it. */
 const namingCapability: string[] = [];
 
+// 60s: this imports every seed's module graph, and the 10s hook default is not
+// enough on a contended runner.
 beforeAll(async () => {
   // EVERY seed runs, not those that look like capability seeds: one that
   // writes through an alias or a helper names no `aiCapability` of its own,
   // and selecting by source text would skip it — the #646 failure again. A
   // seed that reaches for the app's own client hits the stub above and throws.
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
-  for (const file of seedFiles(SEED_DIR)) {
+  for (const file of (await discoverSeedFiles(SEED_DIR, SEED_DIR)).sort()) {
     const namesCapability = readFileSync(join(SEED_DIR, file), 'utf8').includes('aiCapability');
     if (namesCapability) namingCapability.push(file);
     try {
       const mod: unknown = await import(/* @vite-ignore */ join(SEED_DIR, file));
       const unit = isRecord(mod) ? mod.default : undefined;
       if (!isSeedUnit(unit)) throw new Error('does not default-export a SeedUnit');
-      await unit.run({
-        prisma: recordingClient(file, captured, touched),
-        logger,
-      } as unknown as SeedContext);
+      for (const capabilities of ['absent', 'present'] as const) {
+        await unit.run({
+          prisma: recordingClient(file, captured, touched, capabilities),
+          logger,
+        } as unknown as SeedContext);
+      }
     } catch (err) {
       failed.push({
         file,
@@ -226,7 +231,7 @@ beforeAll(async () => {
       });
     }
   }
-});
+}, 60_000);
 
 describe('capabilities — seeded definition matches the class (#545, #646)', () => {
   it('captures the capability seeds through the client they are handed', () => {
