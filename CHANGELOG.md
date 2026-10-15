@@ -18,6 +18,25 @@ release process.
 
 ### Added
 
+- **`AiAgent.bindingOwner` records who decides a platform agent's provider
+  and model** (t-798; migration `20261015120000_ai_agent_binding_owner`). It
+  applies only to a platform agent whose definition picks its binding
+  (`defaultBinding`, with no starting provider or model of its own); every
+  other agent keeps `null`. It is `'platform'` while the agent follows the
+  platform's pick, `'org'` once an admin sets either field, or `null` until
+  classified. Agents from before this change are classified on their next
+  reconcile, partly from their version history. `PATCH
+  /api/v1/admin/orchestration/agents/:id` sets `'org'` when it changes
+  provider or model, and so does version restore. The PATCH body also accepts
+  `bindingOwner`: `'platform'` hands the binding back and reconciles the org at
+  once, `'org'` takes it, and an unchanged or `null` echo is ignored. Forks: a
+  route of yours that writes such an agent's provider or model should call
+  `bindingOwnerAfterWrite` (`lib/orchestration/agents/binding-owner.ts`, with
+  `picksOwnBinding` from `platform-agent-guard.ts`), or the platform will keep
+  moving a binding your admin chose. The column is not agent config: the field
+  registry lists it as a non-config scalar, so the agent form, agent export
+  and backup bundles, and version snapshots leave it out. The org data export,
+  which takes whole rows, includes it.
 - **Admin tiers: a surface can declare it is the org's** (§111 t-810). New
   `tier` option on `withAdminAuth()` (`{ tier: 'org' }`), passed to the policy
   as `scope.tier`. New `lib/auth/admin-tier.ts`: `AdminTier`, the page roster
@@ -32,7 +51,6 @@ release process.
   so gate on the tier. `AdminSidebar` now requires a `viewerTier` prop.
   `proxy.ts` now sets an `x-sunrise-pathname` request header. See
   [Authorization → Admin tiers](./.context/auth/authorization.md#admin-tiers).
-
 - **A fork classifies its own models for the owner layer** (§115 t-807): the
   new `lib/app/owner-classification.ts` seam (`initAppOwnerClassification()`,
   ships empty) and its primitive `registerAppOwnerClassification()` in
@@ -237,6 +255,20 @@ release process.
   The MCP keys page has no nav entry for an org admin until the MCP landing is
   split. See [Authorization → Admin tiers](./.context/auth/authorization.md#admin-tiers).
 
+- **A platform agent's `defaultBinding` is now asked on every maintenance
+  pass, and its answer moves the agent** (t-798). `PlatformAgentDefinition
+  .defaultBinding` used to be asked only when an instance was created, or
+  while its provider and model were empty. Now the `platformAgents` job asks
+  it every 15 minutes for each org whose agent's binding is the platform's,
+  and moves the agent whenever the answer changes; `null` moves it to
+  inherit. A fork that implements one should make it deterministic, with a
+  total order and no locale-dependent comparison, or the agent will move
+  back and forth between passes. It should also be cheap, and should throw
+  when it cannot answer rather than return `null`, which would move the agent
+  to inherit until the next pass. Core's eligibility and credential seams
+  still fail closed to "nothing eligible", so a fork resolver that is down
+  during a pass does move the clean-up agent to inherit for that pass
+  (t-819).
 - **The admin layout and the maintenance bypass ask the policy with the
   guards' verified org facts** (§111 t-810). Both used to pass `orgId` straight
   from the session's active org, with no `orgRole`. They now share
@@ -249,7 +281,6 @@ release process.
   that reads `viewer.orgRole` now gets it at the layout and the bypass too, so
   an org admin your policy admits now reaches the page shells, where before the
   layout sent them away.
-
 - **`handleAPIError` answers `VALIDATION_ERROR`, not `EMAIL_TAKEN`, for a
   unique violation on any constraint but the user email** (t-796). It
   answered every P2002 with `EMAIL_TAKEN` and "Field already exists", which
@@ -443,6 +474,19 @@ release process.
 
 ### Fixed
 
+- **The clean-up agent's provider follows what the org can reach** (t-798).
+  At `TENANCY_MODE=multi` a new org's platform agents are created before it
+  has any provider grant, so the clean-up agent started unpinned and ran on
+  the default chat model until a registry change triggered a reconcile; a pin
+  to a provider later revoked was refused on every call. While the agent's
+  provider and model are the platform's (the new `AiAgent.bindingOwner`, see
+  Added), the `platformAgents` maintenance job re-picks them every pass and
+  moves them when the pick changes: a grant, a revocation (back to inherit if
+  nothing qualifies), a provider switched on, a key set, a strong model added.
+  `PUT /api/v1/admin/orgs/[id]/providers` also reconciles at once on a policy
+  change (`tryReconcilePlatformAgents`, which never fails the grant). A
+  provider or model an org admin set is never moved. The pick's ranking now ends on the provider slug, so two providers
+  offering one model no longer trade places between passes.
 - **Code that handles a particular unique violation recognises it again**
   (t-796). Under Prisma 7's driver adapter a P2002 carries no `meta.target`,
   so every reader of it missed. An inbound trigger replay answered `500`

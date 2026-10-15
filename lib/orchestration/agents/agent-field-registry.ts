@@ -134,6 +134,7 @@ type NonConfigScalar =
   | 'createdBy'
   | 'isSystem'
   | 'systemInstructionsHistory'
+  | 'bindingOwner' // who decides a platform agent's provider and model (t-798) — set by the reconcile and as a side effect of a provider/model write, never a form field
   | 'orgId'; // tenancy: which org owns the agent (§107) — set by the data layer, never a form field
 
 /**

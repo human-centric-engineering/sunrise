@@ -21,6 +21,7 @@ import {
   capabilityScopeSchema,
 } from '@/lib/validations/common';
 import { logger } from '@/lib/logging';
+import { BINDING_OWNERS } from '@/lib/orchestration/agents/binding-owner';
 import { checkSafeProviderUrl, isSafeProviderUrl } from '@/lib/security/safe-url';
 import { KNOWN_STEP_TYPES, TASK_TYPES } from '@/types/orchestration';
 import { validateTaskDefaults } from '@/lib/orchestration/llm/model-registry';
@@ -271,6 +272,14 @@ export const createAgentSchema = createAgentObjectSchema.superRefine((data, ctx)
  * `updateAgentSchema` below wraps it with the keyword-mode refinement.
  */
 export const updateAgentObjectSchema = z.object({
+  /**
+   * Who decides a platform agent's provider and model (t-798): `'platform'`
+   * hands them back to the platform's pick, `'org'` keeps them as they are.
+   * Nullable so an echo of what GET returned validates; the route reads
+   * `null` as no request. Not a registry field — the PATCH route handles it.
+   */
+  bindingOwner: z.enum(BINDING_OWNERS).nullable().optional(),
+
   name: z
     .string()
     .min(1, 'Name cannot be empty')

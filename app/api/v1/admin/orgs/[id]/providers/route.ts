@@ -20,11 +20,21 @@
  * set to replace and a PUT naming it is refused. At `single` the policy is
  * stored and not applied, and the response says which.
  *
+ * A replacement that changes the policy then reconciles the org's platform
+ * agents (t-798), so an agent whose provider the platform picks — the clean-up
+ * assistant — moves at once: onto the strongest tool-using model the new
+ * grants allow, off a provider just revoked, or back to "inherit". An agent
+ * whose provider the org chose is left alone. This only saves the wait: the
+ * `platformAgents` maintenance job re-picks such a binding whenever it is no
+ * longer what the platform would choose, so a failure here, or a suspended
+ * org, is caught up there. It never fails the grant, which is already written.
+ *
  * Platform-only: providers are platform-ops configuration (design Q3), and an
  * org admin does not decide which vendors their org's data reaches. Every
  * replacement is written to the admin audit log with its before and after.
  */
 
+import { isDeepStrictEqual } from 'node:util';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { errorResponse, successResponse } from '@/lib/api/responses';
@@ -162,6 +172,24 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
     metadata: { approvedSlugs: body.approved },
     clientIp: getClientIP(request),
   });
+
+  // After the forget, so the binding pick reads the new policy. A re-save of
+  // the same policy changes nothing an agent can reach. Imported on use, as
+  // `createOrg` does, so a GET does not load the orchestration layer.
+  if (!isDeepStrictEqual(written.previous, written.stored)) {
+    // `tryReconcilePlatformAgents` never throws; the import could, and the
+    // grant is already written, so it must not turn into a 500.
+    await import('@/lib/orchestration/agents/reconcile-platform-agents')
+      .then(({ tryReconcilePlatformAgents }) =>
+        tryReconcilePlatformAgents(id, 'org.providers.replace')
+      )
+      .catch((err: unknown) => {
+        log.error('Platform agents not reconciled; the maintenance job catches up', {
+          orgId: id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
 
   log.info('Org provider policy replaced by admin', {
     orgId: id,

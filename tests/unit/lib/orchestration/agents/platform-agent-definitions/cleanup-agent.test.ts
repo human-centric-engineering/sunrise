@@ -108,6 +108,34 @@ describe('pickCleanupBinding', () => {
     );
   });
 
+  it('gives the same answer whatever order the database returns two providers of one model in (t-798)', async () => {
+    // The job re-asks every pass: an order-dependent answer would move the
+    // agent between the two providers, and version it, every 15 minutes.
+    const providers = [
+      providerRow('openai', 'OPENAI_API_KEY'),
+      providerRow('azure', 'OPENAI_API_KEY'),
+    ];
+    const models = [modelRow('openai', 'gpt-4.1'), modelRow('azure', 'gpt-4.1')];
+
+    expect(await pickCleanupBinding(db(providers, models).client)).toEqual({
+      provider: 'azure',
+      model: 'gpt-4.1',
+    });
+    expect(await pickCleanupBinding(db(providers, [...models].reverse()).client)).toEqual({
+      provider: 'azure',
+      model: 'gpt-4.1',
+    });
+  });
+
+  it('orders model ids by code unit, so every instance agrees whatever its locale', async () => {
+    // `localeCompare` puts 'a…' before 'B…' in most locales; code units do not.
+    const { client } = db(
+      [providerRow('openai', 'OPENAI_API_KEY')],
+      [modelRow('openai', 'a-model'), modelRow('openai', 'B-model')]
+    );
+    expect(await pickCleanupBinding(client)).toEqual({ provider: 'openai', model: 'B-model' });
+  });
+
   it('prefers a worker-tier model over a thinking-tier one', async () => {
     // A whole-document rewrite on a thinking-tier model costs far more and is
     // no better at choosing between two regex tools.
@@ -272,6 +300,24 @@ describe('pickCleanupBinding — the org provider policy (§120 t-746)', () => {
 
     expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toBeNull();
     expect(modelFindMany).not.toHaveBeenCalled(); // test-review:accept no_arg_called — nothing usable, so no model read at all
+  });
+
+  it('pins once the org is granted providers and its cached policy is forgotten (t-798)', async () => {
+    // The provider-grant route's order: write the grant, forget the cached
+    // policy, then reconcile. A new org has no grant, so its first pick is null.
+    approve();
+    const { client } = reachableBoth();
+    expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toBeNull();
+
+    approve('anthropic');
+    // Still the cached empty policy: reconciling before the forget pins nothing.
+    expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toBeNull();
+
+    forgetOrgProviderPolicy(ORG);
+    expect(await runAsOrg(ORG, () => pickCleanupBinding(client))).toEqual({
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+    });
   });
 
   it('throws when the policy cannot be read, so the reconcile fails and is retried', async () => {
