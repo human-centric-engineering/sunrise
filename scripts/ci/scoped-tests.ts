@@ -300,6 +300,12 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
       '`SYSTEM_WORKFLOW_SLUGS`. Nothing imports a seed file, so a new seed never selects it.',
   },
   {
+    path: 'tests/unit/prisma/seeds/capability-class-seed-parity.test.ts',
+    reason:
+      'discovers `prisma/seeds/` off disk and runs every unit against a mock client ' +
+      '(#646). A new seed is exactly what it exists to catch, and nothing imports one.',
+  },
+  {
     path: 'tests/unit/prisma/seeds/provider-models.capabilities.test.ts',
     reason: 'reads `prisma/seeds/009-provider-models.ts` as text to check every row declares caps.',
   },

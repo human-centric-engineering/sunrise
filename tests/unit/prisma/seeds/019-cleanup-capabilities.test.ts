@@ -1,6 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { describe, it, expect, vi } from 'vitest';
 
-import cleanupCapabilitiesSeed from '@/prisma/seeds/019-cleanup-capabilities';
+import cleanupCapabilitiesSeed, {
+  CLEANUP_CAPABILITIES,
+} from '@/prisma/seeds/019-cleanup-capabilities';
 import type { SeedContext } from '@/prisma/runner';
 
 /**
@@ -104,6 +109,20 @@ describe('019-cleanup-capabilities seed', () => {
       executionHandler: 'RewriteWithLlmCapability',
       rateLimit: 6,
     });
+  });
+
+  it('hashes every class file a seeded definition is read from', () => {
+    // The definitions live in the classes, and the runner re-seeds only when
+    // the unit's hash moves. A class missing here could change its schema and
+    // leave every existing row advertising the old one.
+    const seedDir = join(process.cwd(), 'prisma', 'seeds');
+    const hashed = (cleanupCapabilitiesSeed.hashInputs ?? []).map((rel) =>
+      readFileSync(join(seedDir, rel), 'utf8')
+    );
+    const unhashed = CLEANUP_CAPABILITIES.map((cap) => cap.capability.constructor.name).filter(
+      (handler) => !hashed.some((src) => src.includes(`export class ${handler} `))
+    );
+    expect(unhashed).toEqual([]);
   });
 
   it('declares the expected seed unit name', () => {

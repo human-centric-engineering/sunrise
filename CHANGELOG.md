@@ -32,6 +32,19 @@ release process.
   or route of yours that retries or replays a delivery should refuse a row with
   `stoppedByErasure: true`, and one that writes `lastError` no longer needs to
   keep the suffix.
+- **A fork pairs its own capability seeds with their classes** (#646): the new
+  `lib/app/capability-seed-pairs.ts` seam (`APP_CAPABILITY_PAIRS`, ships
+  empty) lists which class goes with which slug, and is spread into
+  `capability-class-seed-parity`'s `PAIRS`, so a fork's capability seeds are
+  held to their classes without editing a Sunrise test. That test now runs
+  every seed against a strict recording mock client instead of reading seed source, so it checks every capability a seed writes,
+  however the seed is written. **Forks:** a capability seed that the old
+  source reader could not see (a hoisted const, a definition taken from the
+  class) now fails the test until you pair it here. A seed must also run
+  under the mock: one that calls a client method it does not model, uses the
+  app's own client, or writes a capability through a nested write fails it,
+  unless you list it in `APP_UNCHECKED_SEEDS` (same file, ships `{}`) with the
+  reason it writes no capability.
 - **`AiAgent.bindingOwner` records who decides a platform agent's provider
   and model** (t-798; migration `20261015120000_ai_agent_binding_owner`). It
   applies only to a platform agent whose definition picks its binding
@@ -483,6 +496,14 @@ release process.
   MAJOR.
 
 ### Fixed
+
+- **The 14 document-cleanup capabilities now seed the schema their classes
+  accept** (#646): `prisma/seeds/019-cleanup-capabilities.ts` wrote a
+  hand-copied `functionDefinition` that had drifted from every class
+  (different tool and parameter descriptions), and the parity test never saw
+  it. The seed now takes each definition from the class instance, so the next
+  deploy rewrites those rows' `functionDefinition` to the class's. Admin-owned
+  `name`, `description`, `rateLimit` and `isActive` are untouched.
 
 - **The clean-up agent's provider follows what the org can reach** (t-798).
   At `TENANCY_MODE=multi` a new org's platform agents are created before it
