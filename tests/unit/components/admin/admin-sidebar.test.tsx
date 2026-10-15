@@ -425,12 +425,38 @@ describe('AdminSidebar — what an org viewer sees', () => {
 
     expect(screen.getByRole('link', { name: /Org Thing/ })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Platform Thing/ })).not.toBeInTheDocument();
-    // No core item is marked yet, so no core section survives — including the
-    // Users and Providers links an org admin must never be offered.
+    // The platform's items do not survive — including the Users and
+    // Providers links an org admin must never be offered.
     expect(screen.queryByRole('link', { name: /Users/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Providers/ })).not.toBeInTheDocument();
     expect(screen.queryByText('System')).not.toBeInTheDocument();
     expect(screen.getByText('Fork Console')).toBeInTheDocument();
+  });
+
+  it('shows an org viewer exactly the customer’s core sections (t-811)', () => {
+    render(<AdminSidebar viewerTier="org" />);
+
+    const hrefs = screen
+      .getAllByRole('link')
+      .map((link) => link.getAttribute('href'))
+      .filter((href): href is string => href?.startsWith('/admin/') ?? false);
+    expect(hrefs).toEqual([
+      '/admin/orchestration/agents',
+      '/admin/orchestration/workflows',
+      '/admin/orchestration/knowledge',
+      '/admin/orchestration/conversations',
+      '/admin/orchestration/approvals',
+      '/admin/orchestration/triggers',
+      '/admin/orchestration/event-subscriptions',
+      '/admin/orchestration/evaluations',
+    ]);
+  });
+
+  it('control: a platform viewer still sees the platform’s items beside them', () => {
+    render(<AdminSidebar viewerTier="platform" />);
+
+    expect(screen.getByRole('link', { name: /Providers/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Agents/ })).toBeInTheDocument();
   });
 
   it('does not poll the platform-only execution counts for an org viewer', () => {
