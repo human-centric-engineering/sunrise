@@ -40,7 +40,16 @@ import { logger } from '@/lib/logging';
 import { getDefaultModelForTask } from '@/lib/orchestration/llm/settings-resolver';
 import { getProviderWithFallbacks } from '@/lib/orchestration/llm/provider-manager';
 import { logCost } from '@/lib/orchestration/llm/cost-tracker';
-import { summarizeMessages, isPlaceholderSummary } from '@/lib/orchestration/chat/summarizer';
+import {
+  summarizeMessages,
+  isPlaceholderSummary,
+  clipForSummary,
+  countWithinChunkBudget,
+  splitGapNote,
+  withGapNote,
+  SUMMARY_ROW_MAX_CHARS,
+  SUMMARY_CHUNK_MAX_CHARS,
+} from '@/lib/orchestration/chat/summarizer';
 import type { HistoryRow } from '@/lib/orchestration/chat/message-builder';
 
 const mockGetModel = vi.mocked(getDefaultModelForTask);
@@ -379,5 +388,39 @@ describe('summarizeMessages', () => {
     // Assert: fallback message is returned (never throws)
     expect(result.summary).toContain('Summary unavailable');
     expect(result.fellBack).toBe(true);
+  });
+});
+
+describe('summary clipping and gap note helpers (#655)', () => {
+  it('clips long rows, leaves short ones, and never ends on half a surrogate pair', () => {
+    const long = 'a'.repeat(SUMMARY_ROW_MAX_CHARS - 1) + '😀'; // the pair straddles the limit
+    const [clipped, short] = clipForSummary([
+      { role: 'tool', content: long },
+      { role: 'user', content: 'hi' },
+    ]);
+    expect(short.content).toBe('hi');
+    expect(clipped.content.length).toBeLessThanOrEqual(SUMMARY_ROW_MAX_CHARS + 1);
+    const last = clipped.content.charCodeAt(clipped.content.length - 2);
+    expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+  });
+
+  it('fits rows to the chunk budget, and always takes at least one', () => {
+    const big = { role: 'tool', content: 'x'.repeat(SUMMARY_ROW_MAX_CHARS * 5) };
+    expect(countWithinChunkBudget([big])).toBe(1);
+    const rows = Array.from({ length: 200 }, () => ({ role: 'tool', content: 'x'.repeat(1500) }));
+    const n = countWithinChunkBudget(rows);
+    expect(n).toBe(Math.floor(SUMMARY_CHUNK_MAX_CHARS / 1500));
+    expect(countWithinChunkBudget([])).toBe(0);
+  });
+
+  it('round-trips a gap note and reads none from ordinary text', () => {
+    expect(splitGapNote('plain summary')).toEqual({ gap: 0, body: 'plain summary' });
+    expect(splitGapNote(withGapNote('body', 12))).toEqual({ gap: 12, body: 'body' });
+    expect(withGapNote('body', 0)).toBe('body');
+    // Only at the head.
+    expect(
+      splitGapNote('body\n\n(up to 5 earlier messages may not be described in this summary.)\n\nx')
+        .gap
+    ).toBe(0);
   });
 });

@@ -169,11 +169,14 @@ export const SUMMARY_CHUNK_MAX_CHARS = 60_000;
 
 /** Clip each row's content for the summariser. Rows are never dropped. */
 export function clipForSummary(rows: HistoryRow[]): HistoryRow[] {
-  return rows.map((m) =>
-    m.content.length > SUMMARY_ROW_MAX_CHARS
-      ? { ...m, content: `${m.content.slice(0, SUMMARY_ROW_MAX_CHARS)}…` }
-      : m
-  );
+  return rows.map((m) => {
+    if (m.content.length <= SUMMARY_ROW_MAX_CHARS) return m;
+    let end = SUMMARY_ROW_MAX_CHARS;
+    // Never end on half of a surrogate pair: some providers reject a lone one.
+    const last = m.content.charCodeAt(end - 1);
+    if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+    return { ...m, content: `${m.content.slice(0, end)}…` };
+  });
 }
 
 /**

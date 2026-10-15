@@ -1116,7 +1116,8 @@ export class StreamingChatHandler {
         lastFetched = next.lastFetched;
         return true;
       };
-      while (historyOverflow && currentPin) {
+      let markerSkips = 0;
+      while (historyOverflow && currentPin && !request.signal?.aborted) {
         // Rows as many as fit one call once clipped, never more than the
         // configured pass size, and at least one so the pin can move.
         const rows = history.map(toHistoryRow);
@@ -1124,7 +1125,15 @@ export class StreamingChatHandler {
         if (take === 0) {
           // Everything read was an error marker: nothing to summarise, nothing to
           // lose. Move the pin past them so the next read gets further.
-          if (!lastFetched || !(await advanceTo(lastFetched, storedSummary ?? ''))) break;
+          // Bounded like the calls are: each skip is a write and a read.
+          markerSkips += 1;
+          if (
+            markerSkips > SUMMARY_MAX_CALLS_PER_TURN * 4 ||
+            !lastFetched ||
+            !(await advanceTo(lastFetched, storedSummary ?? ''))
+          ) {
+            break;
+          }
           continue;
         }
         if (!(await summariserAllowed())) break;
@@ -1132,7 +1141,7 @@ export class StreamingChatHandler {
         const folded = await runSummariser(rows.slice(0, take), stored.body);
         if (folded.fellBack) break;
         const last = history[take - 1];
-        const text = withGapNote(folded.summary, stored.gap);
+        const text = withGapNote(splitGapNote(folded.summary).body, stored.gap);
         if (!(await advanceTo({ id: last.id, createdAt: last.createdAt }, text))) break;
         storedSummary = text;
         stored = splitGapNote(text);
@@ -1218,7 +1227,15 @@ export class StreamingChatHandler {
         // text instead of re-deriving the whole prefix. Do not read the
         // "one call serves ~5 turns" figure as covering these agents.
         const lookahead = Math.min(SUMMARY_LOOKAHEAD_MESSAGES, Math.floor(effectiveMessageCap / 2));
-        const targetIdx = Math.min(requiredDrop - 1 + lookahead, historyRows.length - 1);
+        // And no further than one call's character budget allows: rows already
+        // clipped can still add up to more than a summariser can take, and a call
+        // that always fails is paid for again every turn. Rows past it are left
+        // for the next turn, which reads from the pin this one persists.
+        const targetIdx = Math.min(
+          requiredDrop - 1 + lookahead,
+          historyRows.length - 1,
+          countWithinChunkBudget(historyRows) - 1
+        );
 
         yield { type: 'status', message: 'Summarizing conversation history...' };
         const summarizeResult = await runSummariser(
@@ -1240,7 +1257,10 @@ export class StreamingChatHandler {
           // Rows the read never reached — the stored text's own gap, plus any
           // rows older than the newest window — are written into the saved text
           // by us, at its head, where the next fold leaves them alone.
-          const text = withGapNote(summarizeResult.summary, stored.gap + omittedBeforeHistory);
+          const text = withGapNote(
+            splitGapNote(summarizeResult.summary).body,
+            stored.gap + omittedBeforeHistory
+          );
           conversationSummary = text;
           historyDropCount = targetIdx + 1;
           summaryCoversCount = targetIdx + 1;

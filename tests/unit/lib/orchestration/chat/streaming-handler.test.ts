@@ -5237,6 +5237,56 @@ describe('rolling conversation summarization', () => {
       expect(turn.persisted).toBeUndefined();
     });
 
+    it('bounds the ordinary summarisation by the same character budget', async () => {
+      // No pin, 200 rows of 2,000+ characters at the default cap: the call would
+      // cover 160 rows (~320k characters). One call's budget stops it earlier; the
+      // rest are left for the next turn, which reads from the pin this one sets.
+      mockSummariser();
+      capAgent(50);
+      const rows = makeHistoryMessages(200);
+      for (const r of rows) (r as { content: string }).content = `${'z'.repeat(2500)}`;
+
+      const turn = await runTurn('conv-main-bounded', rows, NO_SUMMARY);
+
+      const summarize = summarizeMessages as ReturnType<typeof vi.fn>;
+      const delta = summarize.mock.calls[0][0] as { content: string }[];
+      const total = delta.reduce((n, m) => n + m.content.length, 0);
+      expect(total).toBeLessThanOrEqual(62_000);
+      expect(delta.length).toBeLessThan(160);
+      expect(turn.persisted?.summaryUpToMessageId).toBe(`hist-msg-${delta.length - 1}`);
+    });
+
+    it('stops skipping error markers once the client has gone', async () => {
+      mockSummariser();
+      capAgent(500);
+      const controller = new AbortController();
+      controller.abort();
+      const rows = makeHistoryMessages(1000);
+      for (let i = 101; i < 900; i++) (rows[i] as { metadata: unknown }).metadata = { error: true };
+
+      const turn = await runTurn('conv-marker-abort', rows, STORED, { signal: controller.signal });
+
+      expect(turn.calls).toBe(0);
+      expect(turn.persisted).toBeUndefined();
+    });
+
+    it('never lets a model echoing the gap sentence double-count the gap', async () => {
+      const echoed =
+        '(up to 999 earlier messages may not be described in this summary.)\n\nbody-text';
+      (summarizeMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+        summary: echoed,
+        fellBack: false,
+        model: 'm',
+      });
+      capAgent(50);
+
+      const turn = await runTurn('conv-echo', makeHistoryMessages(300), NO_SUMMARY);
+
+      expect(turn.persisted?.summary).toBe(
+        '(up to 100 earlier messages may not be described in this summary.)\n\nbody-text'
+      );
+    });
+
     it('hands the request signal to the summariser', async () => {
       mockSummariser();
       capAgent(500);
