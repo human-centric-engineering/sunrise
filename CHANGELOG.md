@@ -391,15 +391,20 @@ release process.
 
 ### Fixed
 
-- **Granting an org providers pins its clean-up agent** (t-798). At
-  `TENANCY_MODE=multi` a new org's platform agents are created before it has
-  any provider grant, so the clean-up agent started unpinned and ran on the
-  default chat model until a registry change triggered a reconcile.
-  `PUT /api/v1/admin/orgs/[id]/providers` now reconciles the org's platform
-  agents after a write that approves anything, which pins an unpinned agent
-  to the strongest tool-using model the grants allow. A reconcile failure, or
-  a suspended org, never fails the grant: `markPlatformAgentsStale()` marks
-  the org so the maintenance job reconciles it.
+- **The clean-up agent's provider follows what the org can reach** (t-798).
+  At `TENANCY_MODE=multi` a new org's platform agents are created before it
+  has any provider grant, so the clean-up agent started unpinned and ran on
+  the default chat model until a registry change triggered a reconcile; a pin
+  to a provider later revoked was refused on every call. While the agent's
+  provider and model are the platform's — empty, or still what it last
+  placed, now recorded in the marker's `autoBindings` — the `platformAgents`
+  maintenance job re-picks them every pass and moves them when the pick
+  changes: a grant, a revocation (back to inherit if nothing qualifies), a
+  provider switched on, a key set, a strong model added.
+  `PUT /api/v1/admin/orgs/[id]/providers` also reconciles at once on a policy
+  change (`tryReconcilePlatformAgents`, which never fails the grant). A
+  provider or model an org admin set is never moved. A pin placed before this
+  change is treated as the admin's.
 - **Code that handles a particular unique violation recognises it again**
   (t-796). Under Prisma 7's driver adapter a P2002 carries no `meta.target`,
   so every reader of it missed. An inbound trigger replay answered `500`

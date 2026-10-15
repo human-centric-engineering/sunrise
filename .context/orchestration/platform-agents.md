@@ -66,9 +66,13 @@ Every agent field declares its side (see
   touched again. A definition may give a starting value (the auditor starts
   with a $25 monthly budget), and `cleanup-agent` pins the strongest
   tool-using model the org can reach, among providers the org may use
-  (§120 t-746), while provider and model are both still empty. A provider
-  grant to the org runs a reconcile, so that pin follows the org's first
-  grant (t-798).
+  (§120 t-746). That pin is the one exception to "set once": while provider
+  and model are empty or still what the platform last placed (the marker's
+  `autoBindings`), every reconcile moves them to the current pick — onto a
+  model newly reachable, off a provider the org lost, or back to "inherit"
+  when nothing qualifies. Once the org sets them, they are the org's, and
+  setting them back to empty hands them back (t-798). A marker written before
+  t-798 has no `autoBindings`, so a pin placed then is treated as the org's.
 
 ## What an org's admin can change
 
@@ -133,12 +137,11 @@ the org's own scope itself, and it has four callers:
 1. **`createOrg`**, after the org is committed. A new org has its agents
    before the request that made it returns. A failure is logged and never
    fails the org's creation.
-2. **A provider grant**: `PUT /api/v1/admin/orgs/[id]/providers` that
-   approves anything reconciles the org after writing the policy, so an
-   unpinned clean-up agent is pinned to a model the grants allow (t-798). A
-   failure, or a suspended org, marks the org's marker stale instead
-   (`markPlatformAgentsStale`, which keeps its `slugs`), so the maintenance
-   job reconciles it; never fails the grant.
+2. **A provider-policy change**: `PUT /api/v1/admin/orgs/[id]/providers`
+   calls `tryReconcilePlatformAgents` after writing a changed policy, so the
+   clean-up agent moves at once (t-798). It is a shortcut, not the guarantee:
+   it skips a suspended org, never throws, and never fails the grant. The
+   maintenance job below catches up anything it misses.
 3. **`npm run db:seed`**: the `021-platform-agents` unit reconciles every
    active org. Its `hashInputs` include every definition file, the seeder
    and the patterns chunk file, so editing one re-runs it on the next seed.
@@ -148,8 +151,15 @@ the org's own scope itself, and it has four callers:
    definition or the patterns knowledge, or after a creation-time reconcile
    failed. An org whose definitions name a capability or tag that has no
    row yet, or whose copy of the patterns knowledge could not be written, is
-   reconciled on every run until it is complete. Otherwise it is one `Org`
-   read per org.
+   reconciled on every run until it is complete. It also reconciles an org
+   whose platform-picked binding is no longer what the platform would pick
+   (t-798): what an org can reach changes without the registry changing — a
+   grant or revocation, a provider switched on, a key set, a strong model
+   added, a fork's eligibility rule — and some of those (an env var, a fork's
+   credential resolver) have no write a hook could catch. So the job asks,
+   every pass. Otherwise it is one `Org` read per org, plus, where an agent
+   picks its own binding, that agent's binding and the pick's provider and
+   model reads.
 
 The digest covers every definition, the baseline, and the patterns
 document's slug (`PATTERNS_DOCUMENT_SLUG` in

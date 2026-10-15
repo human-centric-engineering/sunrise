@@ -244,6 +244,18 @@ describe('the platform-agents marker (§116 t-724)', () => {
     expect(readPlatformAgentsMarker(['platformAgents'])).toBeNull();
   });
 
+  it('reads the platform-placed bindings, and drops them rather than the marker when malformed (t-798)', () => {
+    const autoBindings = { 'cleanup-agent': { provider: 'openai', model: 'gpt-4.1' } };
+    expect(readPlatformAgentsMarker({ platformAgents: { ...marker, autoBindings } })).toEqual({
+      ...marker,
+      autoBindings,
+    });
+    // Losing `slugs` would stop a retired agent being deactivated.
+    expect(
+      readPlatformAgentsMarker({ platformAgents: { ...marker, autoBindings: { x: 'openai' } } })
+    ).toEqual(marker);
+  });
+
   it('loads one org’s marker, or null for an org that does not exist', async () => {
     mockFindUnique.mockResolvedValueOnce({ settings: { platformAgents: marker } });
     expect(await loadPlatformAgentsMarker('org_a')).toEqual(marker);

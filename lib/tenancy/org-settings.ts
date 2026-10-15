@@ -207,9 +207,14 @@ export function applyOrgSettingsPatch(
 /** The key the platform-agent reconcile owns inside `Org.settings`. */
 export const ORG_PLATFORM_AGENTS_KEY = 'platformAgents';
 
+const platformAgentBindingSchema = z.object({ provider: z.string(), model: z.string() });
+
 const platformAgentsMarkerSchema = z.object({
   hash: z.string().min(1),
   slugs: z.array(z.string()),
+  // Optional, and dropped when unreadable rather than failing the marker:
+  // losing `slugs` would stop the reconcile deactivating a retired agent.
+  autoBindings: z.record(z.string(), platformAgentBindingSchema).optional().catch(undefined),
 });
 
 /**
@@ -220,6 +225,11 @@ const platformAgentsMarkerSchema = z.object({
  * `slugs` are the platform agents it materialised there, and they are what
  * lets a later reconcile deactivate an agent the registry dropped while
  * leaving every other `isSystem` agent — a fork's own seeded one — alone.
+ * `autoBindings` is the provider and model the platform last placed on each
+ * agent whose definition picks one (`defaultBinding`), `''`/`''` for
+ * "inherit". An agent whose binding no longer matches its entry was set by the
+ * org, and the platform leaves it alone from then on (t-798). A marker
+ * written before t-798 has none.
  */
 export type PlatformAgentsMarker = z.infer<typeof platformAgentsMarkerSchema>;
 

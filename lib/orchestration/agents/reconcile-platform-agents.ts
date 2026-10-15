@@ -3,10 +3,11 @@
  *
  * Every org has its own instance of each platform agent
  * (`platform-agents.ts`). This is the one writer of those instances. It runs
- * when an org is created (`createOrg`), when an org is granted providers
+ * when an org is created (`createOrg`), when an org's provider policy changes
  * (`PUT /admin/orgs/[id]/providers`, t-798), on `npm run db:seed`
  * (`prisma/seeds/021-platform-agents.ts`), and from the maintenance tick for
- * any org whose stored registry digest differs from the running code
+ * any org whose stored registry digest differs from the running code, or
+ * whose platform-picked binding is no longer the pick
  * ({@link reconcilePlatformAgentsIfStale}).
  *
  * **The properties it holds** (`fp4`), each pinned by a unit test that fails
@@ -22,7 +23,12 @@
  *    it creates is stamped with that org and nothing else is visible to it.
  *  - **Code-owned fields are overwritten; org-tunable ones never are.** The
  *    split is the agent field registry's (`platformAgent`). Provider, model,
- *    spend, rate and retention are set once, when the instance is created.
+ *    spend, rate and retention are set once, when the instance is created —
+ *    except a provider and model the definition picks (`defaultBinding`):
+ *    while they are empty or still what the platform last placed (the
+ *    marker's `autoBindings`), they follow the pick, so they move when what
+ *    the org can reach changes. Once the org sets them they are the org's
+ *    (t-798).
  *  - **Bindings and knowledge grants are set to the declared set** — added,
  *    re-enabled or removed. Document grants are always empty. The one
  *    exception is a definition whose bindings are the org's
@@ -130,6 +136,36 @@ type ExistingAgent = Prisma.AiAgentGetPayload<{
     grantedDocuments: { select: { documentId: true } };
   };
 }>;
+
+/** A provider and model as an agent row stores them; `''`/`''` is "inherit". */
+type Binding = { provider: string; model: string };
+
+const INHERIT: Binding = { provider: '', model: '' };
+
+function sameBinding(a: Binding, b: Binding): boolean {
+  return a.provider === b.provider && a.model === b.model;
+}
+
+/**
+ * Whether the platform still owns an agent's provider and model (t-798): it is
+ * empty, or still what the platform last placed (`recorded`, from the marker).
+ * Anything else was chosen by the org, and is never touched again — unless the
+ * org sets it back to empty, which hands it back.
+ */
+function platformOwnsBinding(current: Binding, recorded: Binding | undefined): boolean {
+  return (
+    sameBinding(current, INHERIT) || (recorded !== undefined && sameBinding(current, recorded))
+  );
+}
+
+/** What the platform would place now: the definition's pick, or "inherit" when nothing qualifies. */
+async function desiredBinding(
+  definition: PlatformAgentDefinition,
+  db: TenancyClient
+): Promise<Binding | undefined> {
+  if (!definition.defaultBinding) return undefined;
+  return (await definition.defaultBinding(db)) ?? INHERIT;
+}
 
 /** Every code-owned value for one definition: the baseline, overlaid by it. */
 function codeOwnedValues(definition: PlatformAgentDefinition): Record<string, unknown> {
@@ -241,6 +277,7 @@ export async function reconcilePlatformAgents(
     }
 
     const placed: string[] = [];
+    const autoBindings: Record<string, Binding> = {};
     let bindingsChanged = false;
     /** False when a concurrent run got there first: leave the marker, so the next run records it. */
     let complete = true;
@@ -273,13 +310,18 @@ export async function reconcilePlatformAgents(
         continue;
       }
 
+      // Asked once per run, before any write: a policy that cannot be read
+      // throws here, and the run is retried with nothing half-done.
+      const autoBinding = await desiredBinding(definition, db);
+
       if (!existing) {
         try {
-          await createInstance(db, definition, {
+          const placedBinding = await createInstance(db, definition, autoBinding, {
             ownerId: owner.id,
             capabilityIds: desiredCapabilityIds,
             tagIds: desiredTagIds,
           });
+          if (placedBinding) autoBindings[definition.slug] = placedBinding;
         } catch (err) {
           // Two reconciles of one org at once — the seed beside the job, or
           // two instances each serving a tick — both find the agent missing,
@@ -306,11 +348,16 @@ export async function reconcilePlatformAgents(
 
       let outcome: Awaited<ReturnType<typeof updateInstance>>;
       try {
-        outcome = await updateInstance(db, definition, existing, {
-          ownerId: owner.id,
-          capabilityIds: desiredCapabilityIds,
-          tagIds: desiredTagIds,
-        });
+        outcome = await updateInstance(
+          db,
+          definition,
+          existing,
+          autoBinding && {
+            desired: autoBinding,
+            recorded: previous?.autoBindings?.[definition.slug],
+          },
+          { ownerId: owner.id, capabilityIds: desiredCapabilityIds, tagIds: desiredTagIds }
+        );
       } catch (err) {
         // The same race on an existing agent: two runs number the same
         // version, and the second insert meets `(agentId, version)`. Its
@@ -324,6 +371,7 @@ export async function reconcilePlatformAgents(
         result.unchanged.push(definition.slug);
         continue;
       }
+      if (outcome.placedBinding) autoBindings[definition.slug] = outcome.placedBinding;
       bindingsChanged ||= outcome.bindingsChanged;
       if (outcome.accessChanged) invalidateAgentAccess(existing.id);
       (outcome.changed ? result.updated : result.unchanged).push(definition.slug);
@@ -372,9 +420,18 @@ export async function reconcilePlatformAgents(
 
     if (bindingsChanged) capabilityDispatcher.clearCache();
 
-    const marker: PlatformAgentsMarker = { hash, slugs: [...placed, ...retired].sort() };
+    const marker: PlatformAgentsMarker = {
+      hash,
+      slugs: [...placed, ...retired].sort(),
+      // Only when some agent's binding is the platform's, so the marker of an
+      // org with none is unchanged.
+      ...(Object.keys(autoBindings).length > 0 ? { autoBindings } : {}),
+    };
     const markerChanged =
-      !previous || previous.hash !== marker.hash || !sameSet(previous.slugs, marker.slugs);
+      !previous ||
+      previous.hash !== marker.hash ||
+      !sameSet(previous.slugs, marker.slugs) ||
+      !isDeepStrictEqual(previous.autoBindings, marker.autoBindings);
     // A declared capability or tag with no row yet leaves the org short of its
     // definition. Recording the current digest would stop the job from ever
     // coming back for it, so the marker waits until nothing is missing.
@@ -405,39 +462,88 @@ export async function reconcilePlatformAgents(
 }
 
 /**
- * Reconcile the org only if its stored digest differs from the running
- * registry's. The maintenance job's entry point: one `Org` read per org when
- * nothing changed.
+ * Reconcile the org if it is behind: its stored digest differs from the
+ * running registry's, or an agent whose binding the platform owns is no longer
+ * on what the platform would pick now ({@link platformBindingsDrifted}). The
+ * maintenance job's entry point. When nothing changed it costs one `Org` read,
+ * plus, for an org with an agent that picks its own binding, the agents'
+ * bindings and the pick's provider and model reads.
  */
 export async function reconcilePlatformAgentsIfStale(
   orgId: string,
   options: ReconcileOptions = {}
 ): Promise<{ reconciled: boolean; result?: PlatformAgentReconcileResult }> {
   if (!isMultiTenant() && orgId !== INSTALL_ORG_ID) return { reconciled: false };
-  const marker = await loadPlatformAgentsMarker(orgId, options.db ?? defaultDb);
-  if (marker?.hash === platformAgentRegistryHash()) return { reconciled: false };
+  const db = options.db ?? defaultDb;
+  const marker = await loadPlatformAgentsMarker(orgId, db);
+  if (
+    marker?.hash === platformAgentRegistryHash() &&
+    !(await platformBindingsDrifted(orgId, marker, db))
+  ) {
+    return { reconciled: false };
+  }
   return { reconciled: true, result: await reconcilePlatformAgents(orgId, options) };
 }
 
-/** A marker hash no registry digest equals, so {@link reconcilePlatformAgentsIfStale} runs. */
-export const STALE_PLATFORM_AGENTS_HASH = 'stale';
+/**
+ * Whether any agent whose provider and model the platform owns is not on what
+ * the platform would pick now (t-798). What the org can reach changes without
+ * the registry changing: a provider granted or revoked, switched on or off, its
+ * credential set, a tool-using model added, a fork's eligibility rule. None of
+ * those has one write a hook could catch — an env var or a fork's resolver
+ * has none at all — so the job asks the question itself, every pass.
+ *
+ * An agent the org has set is the org's, and is skipped. A missing or refused
+ * agent is left to the digest check. Throws when the pick cannot read the
+ * org's policy, so the job logs the org and asks again next pass.
+ */
+async function platformBindingsDrifted(
+  orgId: string,
+  marker: PlatformAgentsMarker,
+  db: TenancyClient
+): Promise<boolean> {
+  const definitions = platformAgentsForOrg(orgId).filter((d) => d.defaultBinding);
+  if (definitions.length === 0) return false;
+  return runAsOrg(orgId, async () => {
+    const rows = await db.aiAgent.findMany({
+      where: {
+        orgId,
+        slug: { in: definitions.map((d) => d.slug) },
+        isSystem: true,
+        deletedAt: null,
+      },
+      select: { slug: true, provider: true, model: true },
+    });
+    for (const definition of definitions) {
+      const row = rows.find((r) => r.slug === definition.slug);
+      if (!row || !platformOwnsBinding(row, marker.autoBindings?.[definition.slug])) continue;
+      const desired = await desiredBinding(definition, db);
+      if (desired && !sameBinding(row, desired)) return true;
+    }
+    return false;
+  });
+}
 
 /**
- * Have the maintenance job reconcile this org on its next pass, for a caller
- * that could not reconcile it now (t-798: a provider grant whose reconcile
- * failed, or a suspended org, which the job reaches once it is reinstated).
- *
- * Only the hash changes. The marker's `slugs` are what the reconcile placed,
- * and dropping them would stop it deactivating an agent the registry
- * retires. An org with no marker is reconciled by the job already.
+ * Reconcile the org now, for a request that just changed what its agents can
+ * use (a provider grant), and never throw. The maintenance job is what
+ * guarantees the result: anything this misses — a failure, or a suspended org,
+ * which only the job reconciles once it is reinstated — it catches up, since a
+ * binding the platform owns that is not on its pick makes the org stale. This
+ * only saves the wait for the next pass.
  */
-export async function markPlatformAgentsStale(
-  orgId: string,
-  db: TenancyClient = defaultDb
-): Promise<void> {
-  const previous = await loadPlatformAgentsMarker(orgId, db);
-  if (!previous) return;
-  await writePlatformAgentsMarker(orgId, { ...previous, hash: STALE_PLATFORM_AGENTS_HASH }, db);
+export async function tryReconcilePlatformAgents(orgId: string, trigger: string): Promise<void> {
+  try {
+    const org = await defaultDb.org.findUnique({ where: { id: orgId }, select: { status: true } });
+    if (!org || org.status === 'SUSPENDED') return;
+    await reconcilePlatformAgents(orgId);
+  } catch (err) {
+    defaultLogger.error('Platform agents not reconciled; the maintenance job catches up', {
+      orgId,
+      trigger,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
@@ -471,16 +577,16 @@ interface DesiredSets {
   tagIds: string[];
 }
 
+/** Returns the binding the platform placed, when it placed one (see `autoBindings`). */
 async function createInstance(
   db: TenancyClient,
   definition: PlatformAgentDefinition,
+  autoBinding: Binding | undefined,
   desired: DesiredSets
-): Promise<void> {
+): Promise<Binding | undefined> {
   const starting = { provider: '', model: '', ...definition.defaults };
-  if (definition.defaultBinding && starting.provider === '' && starting.model === '') {
-    const binding = await definition.defaultBinding(db);
-    if (binding) Object.assign(starting, binding);
-  }
+  const placedBinding = autoBinding && sameBinding(starting, INHERIT) ? autoBinding : undefined;
+  if (placedBinding) Object.assign(starting, placedBinding);
 
   await db.$transaction(async (tx) => {
     const created = await tx.aiAgent.create({
@@ -521,23 +627,37 @@ async function createInstance(
       },
     });
   });
+  return placedBinding;
 }
 
+/**
+ * `autoBinding` is the definition's pick (`desired`) beside what the platform
+ * last placed (`recorded`). While the platform owns the binding it is moved to
+ * the pick — onto a model newly reachable, off a provider the org lost, or
+ * back to "inherit" when nothing qualifies — and `placedBinding` reports it.
+ */
 async function updateInstance(
   db: TenancyClient,
   definition: PlatformAgentDefinition,
   existing: ExistingAgent,
+  autoBinding: { desired: Binding; recorded: Binding | undefined } | undefined,
   desired: DesiredSets
-): Promise<{ changed: boolean; bindingsChanged: boolean; accessChanged: boolean }> {
+): Promise<{
+  changed: boolean;
+  bindingsChanged: boolean;
+  accessChanged: boolean;
+  placedBinding?: Binding;
+}> {
   const current: Record<string, unknown> = existing;
   const changes: Record<string, unknown> = {};
   for (const [field, value] of Object.entries(codeOwnedValues(definition))) {
     if (!isDeepStrictEqual(current[field], value)) changes[field] = value;
   }
-  if (definition.defaultBinding && existing.provider === '' && existing.model === '') {
-    const binding = await definition.defaultBinding(db);
-    if (binding) Object.assign(changes, binding);
-  }
+  const placedBinding =
+    autoBinding && platformOwnsBinding(existing, autoBinding.recorded)
+      ? autoBinding.desired
+      : undefined;
+  if (placedBinding && !sameBinding(existing, placedBinding)) Object.assign(changes, placedBinding);
 
   const currentTagIds = existing.grantedTags.map((g) => g.tagId);
   const currentDocumentIds = existing.grantedDocuments.map((g) => g.documentId);
@@ -570,7 +690,7 @@ async function updateInstance(
   ];
 
   if (changedFields.length === 0 && !tagsChanged && !documentsChanged && !bindingsChanged) {
-    return { changed: false, bindingsChanged: false, accessChanged: false };
+    return { changed: false, bindingsChanged: false, accessChanged: false, placedBinding };
   }
 
   await db.$transaction(async (tx) => {
@@ -657,6 +777,7 @@ async function updateInstance(
     changed: true,
     bindingsChanged,
     accessChanged: tagsChanged || documentsChanged || 'knowledgeAccessMode' in changes,
+    placedBinding,
   };
 }
 

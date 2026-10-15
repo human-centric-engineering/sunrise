@@ -67,7 +67,7 @@ const fake = vi.hoisted(() => {
   type Row = Record<string, unknown> & { id: string };
   const state = {
     seq: 0,
-    orgs: new Map<string, { id: string; settings: unknown }>(),
+    orgs: new Map<string, { id: string; settings: unknown; status?: string }>(),
     agents: [] as Row[],
     bindings: [] as Row[],
     tagGrants: [] as Row[],
@@ -116,9 +116,19 @@ const fake = vi.hoisted(() => {
       },
     },
     aiAgent: {
-      findMany: async ({ where }: { where: { orgId: string; slug: { in: string[] } } }) =>
+      findMany: async ({
+        where,
+      }: {
+        where: { orgId: string; slug: { in: string[] }; isSystem?: boolean; deletedAt?: null };
+      }) =>
         state.agents
-          .filter((a) => a.orgId === where.orgId && where.slug.in.includes(a.slug as string))
+          .filter(
+            (a) =>
+              a.orgId === where.orgId &&
+              where.slug.in.includes(a.slug as string) &&
+              (where.isSystem === undefined || a.isSystem === where.isSystem) &&
+              (where.deletedAt === undefined || a.deletedAt === where.deletedAt)
+          )
           .map((a) => ({
             ...a,
             capabilities: state.bindings
@@ -253,9 +263,8 @@ vi.mock('@/lib/orchestration/knowledge/seeder', async () => {
 
 import {
   reconcilePlatformAgents,
-  markPlatformAgentsStale,
   reconcilePlatformAgentsIfStale,
-  STALE_PLATFORM_AGENTS_HASH,
+  tryReconcilePlatformAgents,
 } from '@/lib/orchestration/agents/reconcile-platform-agents';
 import {
   CORE_PLATFORM_AGENTS,
@@ -293,7 +302,14 @@ function agent(slug: string, orgId = 'install') {
 
 function marker(orgId = 'install') {
   const settings = fake.state.orgs.get(orgId)?.settings as
-    { platformAgents?: { hash: string; slugs: string[] } } | undefined;
+    | {
+        platformAgents?: {
+          hash: string;
+          slugs: string[];
+          autoBindings?: Record<string, { provider: string; model: string }>;
+        };
+      }
+    | undefined;
   return settings?.platformAgents;
 }
 
@@ -954,28 +970,103 @@ describe('reconcilePlatformAgentsIfStale', () => {
   });
 });
 
-describe('markPlatformAgentsStale (t-798)', () => {
-  it('makes the job reconcile a current org again, keeping the slugs it placed', async () => {
+describe('a binding the platform picks follows what the org can reach (t-798)', () => {
+  // The pick the definition would make now; a test moves it to stand for a
+  // grant, a revocation, a provider switched on, and so on.
+  let pick: { provider: string; model: string } | null;
+  beforeEach(() => {
+    pick = null;
+    registry.definitions = [
+      definition('advisor', { defaultBinding: async () => pick }),
+      definition('judge'),
+    ];
+  });
+  const binding = () => {
+    const row = agent('advisor')!;
+    return { provider: row.provider, model: row.model };
+  };
+
+  it('pins an agent created unpinned once the org can reach a model, on the next job pass', async () => {
     await reconcilePlatformAgentsIfStale('install');
-    const placed = marker()!.slugs;
-    expect(placed.length).toBeGreaterThan(0);
+    expect(binding()).toEqual({ provider: '', model: '' });
+    expect(await reconcilePlatformAgentsIfStale('install')).toEqual({ reconciled: false });
 
-    await markPlatformAgentsStale('install');
+    // e.g. a provider switched on, or its key set: no write the job could hook.
+    pick = { provider: 'openai', model: 'gpt-4.1' };
+    expect((await reconcilePlatformAgentsIfStale('install')).reconciled).toBe(true);
 
-    expect(marker()).toEqual({ hash: STALE_PLATFORM_AGENTS_HASH, slugs: placed });
-    const next = await reconcilePlatformAgentsIfStale('install');
-    expect(next.reconciled).toBe(true);
-    // The reconcile records the real digest again, so the job stops.
-    expect(marker()!.hash).not.toBe(STALE_PLATFORM_AGENTS_HASH);
+    expect(binding()).toEqual({ provider: 'openai', model: 'gpt-4.1' });
+    expect(marker()?.autoBindings?.advisor).toEqual({ provider: 'openai', model: 'gpt-4.1' });
     expect(await reconcilePlatformAgentsIfStale('install')).toEqual({ reconciled: false });
   });
 
-  it('writes nothing for an org with no marker, which the job reconciles already', async () => {
+  it('moves the platform’s pin when the org loses its provider, or clears it to inherit', async () => {
+    pick = { provider: 'anthropic', model: 'claude' };
+    await reconcilePlatformAgentsIfStale('install');
+
+    pick = { provider: 'openai', model: 'gpt-4.1' };
+    await reconcilePlatformAgentsIfStale('install');
+    expect(binding()).toEqual({ provider: 'openai', model: 'gpt-4.1' });
+
+    // Nothing left to pick: "inherit" works; a refused provider fails every call.
+    pick = null;
+    await reconcilePlatformAgentsIfStale('install');
+    expect(binding()).toEqual({ provider: '', model: '' });
+  });
+
+  it('never moves a binding the org set, and does not keep reconciling over it', async () => {
+    pick = { provider: 'anthropic', model: 'claude' };
+    await reconcilePlatformAgentsIfStale('install');
+    Object.assign(agent('advisor')!, { provider: 'mistral', model: 'large' });
+
+    pick = { provider: 'openai', model: 'gpt-4.1' };
+    expect((await reconcilePlatformAgentsIfStale('install')).reconciled).toBe(false);
+    await reconcilePlatformAgents('install');
+
+    expect(binding()).toEqual({ provider: 'mistral', model: 'large' });
+    expect(marker()?.autoBindings?.advisor).toBeUndefined();
+    expect(await reconcilePlatformAgentsIfStale('install')).toEqual({ reconciled: false });
+  });
+
+  it('treats a pinned agent under a marker from before t-798 as the org’s', async () => {
+    pick = { provider: 'anthropic', model: 'claude' };
+    await reconcilePlatformAgents('install');
+    const { autoBindings: _dropped, ...legacy } = marker()!;
+    (fake.state.orgs.get('install')!.settings as Record<string, unknown>).platformAgents = legacy;
+
+    pick = { provider: 'openai', model: 'gpt-4.1' };
+    expect((await reconcilePlatformAgentsIfStale('install')).reconciled).toBe(false);
+    await reconcilePlatformAgents('install');
+
+    // The platform cannot tell its old pin from an admin's choice, so it keeps it.
+    expect(binding()).toEqual({ provider: 'anthropic', model: 'claude' });
+  });
+
+  it('asks nothing of an org whose agents pick no binding', async () => {
+    registry.definitions = [definition('advisor'), definition('judge')];
+    await reconcilePlatformAgentsIfStale('install');
     fake.state.writes = [];
 
-    await markPlatformAgentsStale('install');
-
-    expect(marker()).toBeUndefined();
+    expect(await reconcilePlatformAgentsIfStale('install')).toEqual({ reconciled: false });
     expect(fake.state.writes).toEqual([]);
+  });
+});
+
+describe('tryReconcilePlatformAgents (t-798)', () => {
+  it('reconciles an active org', async () => {
+    await tryReconcilePlatformAgents('install', 'test');
+    expect(marker()).toBeDefined();
+  });
+
+  it('leaves a suspended org to the job, which reconciles it once reinstated', async () => {
+    fake.state.orgs.get('install')!.status = 'SUSPENDED';
+    await tryReconcilePlatformAgents('install', 'test');
+    expect(fake.state.agents).toEqual([]);
+  });
+
+  it('never throws: a failure is logged for the job to catch up', async () => {
+    fake.state.failOn = 'aiAgentVersion.create';
+    await expect(tryReconcilePlatformAgents('install', 'test')).resolves.toBeUndefined();
+    expect(marker()).toBeUndefined();
   });
 });

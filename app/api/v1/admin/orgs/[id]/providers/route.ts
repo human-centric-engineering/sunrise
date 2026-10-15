@@ -20,20 +20,21 @@
  * set to replace and a PUT naming it is refused. At `single` the policy is
  * stored and not applied, and the response says which.
  *
- * A replacement that grants anything then reconciles the org's platform
- * agents (t-798): an org gets its agents before it has any grant, so the
- * clean-up assistant starts unpinned, and the reconcile pins it to the
- * strongest tool-using model the new grants allow. It only fills an empty
- * binding; an agent already pinned, or set by the org, is left alone. It
- * never fails the grant, which is already written: a failing reconcile, or a
- * suspended org (which only the maintenance job reconciles, once reinstated),
- * marks the org's platform agents stale so the job reconciles them.
+ * A replacement that changes the policy then reconciles the org's platform
+ * agents (t-798), so an agent whose provider the platform picks — the clean-up
+ * assistant — moves at once: onto the strongest tool-using model the new
+ * grants allow, off a provider just revoked, or back to "inherit". An agent
+ * whose provider the org chose is left alone. This only saves the wait: the
+ * `platformAgents` maintenance job re-picks such a binding whenever it is no
+ * longer what the platform would choose, so a failure here, or a suspended
+ * org, is caught up there. It never fails the grant, which is already written.
  *
  * Platform-only: providers are platform-ops configuration (design Q3), and an
  * org admin does not decide which vendors their org's data reaches. Every
  * replacement is written to the admin audit log with its before and after.
  */
 
+import { isDeepStrictEqual } from 'node:util';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { errorResponse, successResponse } from '@/lib/api/responses';
@@ -89,43 +90,6 @@ async function describe(orgId: string, policy: OrgProviderPolicy) {
   };
 }
 
-/**
- * Reconcile the org's platform agents after a grant, or leave them to the
- * maintenance job. Never throws: the grant stands whatever happens here.
- * Imported on use, as `createOrg` does, so the route does not load the
- * orchestration layer for a GET.
- */
-async function reconcileAfterGrant(
-  orgId: string,
-  suspended: boolean,
-  log: Awaited<ReturnType<typeof getRouteLogger>>
-): Promise<void> {
-  try {
-    const { markPlatformAgentsStale, reconcilePlatformAgents } =
-      await import('@/lib/orchestration/agents/reconcile-platform-agents');
-    if (!suspended) {
-      try {
-        await reconcilePlatformAgents(orgId);
-        return;
-      } catch (err) {
-        log.error(
-          'Platform agents not reconciled after a provider grant; the maintenance job retries',
-          {
-            orgId,
-            error: err instanceof Error ? err.message : String(err),
-          }
-        );
-      }
-    }
-    await markPlatformAgentsStale(orgId);
-  } catch (err) {
-    log.error('Platform agents not marked for the maintenance job after a provider grant', {
-      orgId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
 export const GET = withAdminAuth<{ id: string }>(async (_request, _session, { params }) => {
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
 
@@ -149,7 +113,7 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
 
   // The org first, so a missing org is a 404 whatever the body names. The
   // write re-reads it inside its transaction; this read only orders the errors.
-  const org = await prisma.org.findUnique({ where: { id }, select: { status: true } });
+  const org = await prisma.org.findUnique({ where: { id }, select: { id: true } });
   if (!org) throw new OrgLifecycleError('ORG_NOT_FOUND', 'Organisation not found');
 
   // Slugs are what an operator names; the grant stores each row's id, which a
@@ -209,11 +173,22 @@ export const PUT = withAdminAuth<{ id: string }>(async (request, session, { para
     clientIp: getClientIP(request),
   });
 
-  // After the forget, so the reconcile's binding pick reads the new grants;
-  // after the audit row, which a slow reconcile must not hold up. A revocation
-  // to nothing cannot pin anything, so it skips the work.
-  if (policy.approved.length > 0) {
-    await reconcileAfterGrant(id, org.status === 'SUSPENDED', log);
+  // After the forget, so the binding pick reads the new policy. A re-save of
+  // the same policy changes nothing an agent can reach. Imported on use, as
+  // `createOrg` does, so a GET does not load the orchestration layer.
+  if (!isDeepStrictEqual(written.previous, written.stored)) {
+    // `tryReconcilePlatformAgents` never throws; the import could, and the
+    // grant is already written, so it must not turn into a 500.
+    await import('@/lib/orchestration/agents/reconcile-platform-agents')
+      .then(({ tryReconcilePlatformAgents }) =>
+        tryReconcilePlatformAgents(id, 'org.providers.replace')
+      )
+      .catch((err: unknown) => {
+        log.error('Platform agents not reconciled; the maintenance job catches up', {
+          orgId: id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
   }
 
   log.info('Org provider policy replaced by admin', {

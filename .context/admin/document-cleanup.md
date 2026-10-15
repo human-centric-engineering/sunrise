@@ -61,18 +61,17 @@ and is no better at picking a regex), then deepest reasoning, then model id for
 a stable tie-break. Nothing reachable → both fields stay empty and the runtime
 resolver fills them, exactly as before. That is what a new org at `multi` gets,
 since it starts with no approved providers. A policy that cannot be read fails
-the reconcile instead, so the maintenance job retries the org. The pin is applied when the org's
-instance is created, and again on any later reconcile while **both** fields are
-still empty. Granting the org providers (`PUT /admin/orgs/[id]/providers`)
-runs that reconcile, so a new org's cleanup agent is pinned as soon as it is
-granted a provider that qualifies (t-798). A reconcile failure there, or a
-suspended org, never fails the grant: it marks the org for the maintenance job,
-which reconciles it on its next pass (a suspended org once reinstated). Other
-changes that would let it pin, such as switching an approved provider on or
-adding its key, do not start a reconcile. An admin's own choice is never overwritten:
-provider and model belong to the org. Revoking the provider an agent is pinned
-to does not unpin it; the call-time gate then refuses that provider until an
-admin picks another.
+the reconcile instead, so the maintenance job retries the org. The pin is
+applied when the org's instance is created, and it then **follows what the org
+can reach** while it is the platform's (t-798): the `platformAgents`
+maintenance job asks the picker again every pass, and moves the agent onto a
+model newly reachable (a provider granted, switched on, its key set, a strong
+model added), off a provider the org lost, or back to inherit when nothing
+qualifies. A provider-policy change (`PUT /admin/orgs/[id]/providers`) also
+reconciles at once, so a grant shows straight away. An admin's own choice is
+never overwritten: once they set provider or model, the agent is theirs, and
+setting both back to empty hands it back. A pin placed before t-798 is treated
+as an admin's, since nothing recorded who placed it.
 
 The system prompt tells the agent to read before it acts and verify after,
 states what each tool cannot do, prefers deterministic capabilities, covers the

@@ -82,11 +82,12 @@ const CLEANUP_CAPABILITY_SLUGS = [
  *  - a fork's eligibility rule, asked as the gate will ask it of a pinned
  *    provider (`source: 'explicit'`).
  * With nothing eligible this returns null and the agent inherits, choosing per
- * turn among what the org may use. The reconcile asks again while the agent is
- * still unpinned, and a provider grant to the org runs one (t-798). Other
- * changes that would let it pin (a provider switched on, a key or a strong
- * model added) do not; until a reconcile runs, an org admin can pick the
- * agent's provider.
+ * turn among what the org may use. While the agent's binding is the
+ * platform's — empty, or still what this last picked — the maintenance job
+ * asks again every pass and moves it when the answer changes: a provider
+ * granted, revoked, switched on, its key set, a strong model added (t-798).
+ * Once an org admin picks the provider, it is theirs and this is not asked
+ * for that agent again.
  *
  * A policy that cannot be read THROWS rather than answering "nothing": the
  * reconcile then fails and leaves the org unmarked, so the maintenance job
@@ -97,8 +98,8 @@ const CLEANUP_CAPABILITY_SLUGS = [
  * Preference order: worker tier before thinking tier (a whole-document rewrite
  * on a thinking-tier model is expensive and no better at choosing a regex),
  * then deepest reasoning, then model id for a stable tie-break. Returns null
- * when nothing qualifies, in which case the agent keeps the empty-string
- * inherit-at-runtime behaviour.
+ * when nothing qualifies, in which case the agent is left on (or put back to)
+ * the empty-string inherit-at-runtime behaviour.
  */
 export async function pickCleanupBinding(
   prisma: TenancyClient
