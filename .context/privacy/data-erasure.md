@@ -355,9 +355,16 @@ transaction):
    | 1,000,000                            | 93.0 s              | 57.6 s             | 96%               |
 
    The last column overstates the transaction: it includes `eraseUser()`'s
-   own pre-pass, which in the spike only re-matches. A million rows fit;
-   beyond that the transaction's match (16.5 s alone at a million) is what
-   grows. Before t-806 a single in-transaction rewrite timed out near 600,000
+   own pre-pass, which in the spike only re-matches. Timed on its own, the
+   transaction's delivery pass after a pre-pass took 36.5 s for a million
+   rows (18.2 s per table, unvacuumed). It still matches and redacts every
+   row the person was ever named on, only to drop the ones already done, so
+   past a million that match is what grows. Cutting it to rows created since
+   the pre-pass began was considered and not done: a delivery committed by a
+   transaction that started before the match would fall outside both passes.
+   The pass takes row locks only on rows it writes (locking all of them is a
+   write to each: 80 s for a million), and those in id order, so two
+   erasures over one row queue and neither undoes the other. Before t-806 a single in-transaction rewrite timed out near 600,000
    rows. Two things made the difference, both measured: each SQL redaction
    step is fenced (`OFFSET 0`), since an inlined step re-ran its `jsonb_each`
    per reference (9.9 s against 0.6 s for 50,000 rows), and the payload GIN
