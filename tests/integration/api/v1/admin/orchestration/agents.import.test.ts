@@ -500,9 +500,12 @@ describe('POST /api/v1/admin/orchestration/agents/import', () => {
         })
       );
 
-      // The shared API error handler's answer for a unique violation (400),
-      // not "conflicted with a concurrent change, please retry".
-      expect(response.status).toBe(400);
+      // The shared API error handler's answer for a unique violation, not the
+      // route's "conflicted with a concurrent change, please retry". Both are
+      // 409 since t-796, so the message is what tells them apart.
+      expect(response.status).toBe(409);
+      const body = (await response.json()) as { error: { message: string } };
+      expect(body.error.message).toBe('A record with that value already exists');
     });
 
     it('rebuilds knowledge-document grants by slug on overwrite (#338)', async () => {
