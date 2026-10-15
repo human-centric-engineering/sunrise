@@ -555,6 +555,24 @@ release process.
 
 ### Security
 
+- **A customer org's configs can no longer read the platform's env vars**
+  (§111 t-811). Opening the agent, workflow and chat routes to org admins let
+  them author the configs that name env vars: `${env:NAME}` templates in
+  `call_external_api`'s `forcedUrl` / `forcedHeaders` and `external_call`'s
+  `url` / `headers`, `auth.secret` / `authSecret`, and the Twilio and WhatsApp
+  `*Env` fields. Naming the session secret or a provider key there, then
+  calling a host they could read, would have handed them the operator's
+  secret. At `multi`, a config acting for a non-install org may now name only
+  env vars starting `ORG_<ORG ID>_` (`orgEnvVarPrefix()` in
+  `lib/orchestration/env-template.ts`). The check runs where the value is
+  read, and before the variable is looked up. A refusal is `invalid_binding`
+  on `call_external_api`, new `env_var_not_available` on `external_call`, and
+  new HTTP error code `auth_secret_not_available`. The install org, a platform
+  scope, and `single` installs are unchanged. **Operators:** a customer org
+  binding that names an unprefixed env var stops working at `multi`. Move its
+  value to `ORG_<ORG ID>_…` and update the binding. See
+  [External calls](./.context/orchestration/external-calls.md).
+
 - **A narrowed caller's read of another member's memory is now refused at the
   query** (§115 t-801). Inside one org, an org OWNER, ADMIN or MEMBER (anyone
   but a platform admin or an `admin` API key) could read another member's

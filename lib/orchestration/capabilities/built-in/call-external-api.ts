@@ -336,6 +336,16 @@ export class CallExternalApiCapability extends BaseCapability<Args, Data> {
         : undefined;
       resolvedForcedHeaders = resolveEnvTemplatesInRecord(customConfig?.forcedHeaders);
     } catch (err) {
+      if (err instanceof EnvTemplateError && err.code === 'env_var_not_available') {
+        logger.warn(
+          'call_external_api: refusing call — binding names an env var its org may not use',
+          {
+            agentId: context.agentId,
+            envVarName: err.envVarName,
+          }
+        );
+        return this.error(err.message, 'invalid_binding');
+      }
       if (err instanceof EnvTemplateError) {
         logger.error(
           'call_external_api: refusing call — env var referenced by binding is not set',
@@ -493,6 +503,9 @@ function mapHttpErrorCode(code: string): string {
       return 'host_not_allowed';
     case 'missing_auth_secret':
       return 'auth_failed';
+    case 'auth_secret_not_available':
+      // The binding names a secret its org may not use: a config fix.
+      return 'invalid_binding';
     case 'multipart_hmac_unsupported':
       // The misconfiguration is on the admin's auth choice (HMAC) +
       // the LLM choosing multipart — surface as invalid_binding so the

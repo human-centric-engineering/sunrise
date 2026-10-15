@@ -59,6 +59,7 @@ import {
 const HTTP_TO_EXECUTOR_CODE: Record<string, string> = {
   host_not_allowed: 'host_not_allowed',
   missing_auth_secret: 'missing_auth_secret',
+  auth_secret_not_available: 'env_var_not_available',
   multipart_hmac_unsupported: 'multipart_hmac_unsupported',
   outbound_rate_limited: 'outbound_rate_limited',
   request_failed: 'request_failed',
@@ -133,8 +134,10 @@ export async function executeExternalCall(
     if (err instanceof EnvTemplateError) {
       throw new ExecutorError(
         step.id,
-        'missing_env_var',
-        `external_call step references env var "${err.envVarName}" which is not set`,
+        err.code === 'env_var_not_available' ? 'env_var_not_available' : 'missing_env_var',
+        err.code === 'env_var_not_available'
+          ? `external_call step: ${err.message}`
+          : `external_call step references env var "${err.envVarName}" which is not set`,
         err
       );
     }

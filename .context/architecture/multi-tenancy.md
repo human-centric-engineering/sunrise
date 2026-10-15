@@ -86,6 +86,12 @@ is on:
   org you create after flipping the mode**, or its agents, workflows and
   knowledge base will refuse to call any vendor. See
   [LLM providers → Per-org approved providers](../orchestration/llm-providers.md#per-org-approved-providers-core-at-multi).
+- **An org's configs cannot read the operator's env vars** (§111 t-811). At
+  `multi`, an outbound call, auth secret or channel credential configured in
+  a customer org may name only env vars under that org's `ORG_<ORG ID>_`
+  prefix. Set a customer's credentials under its prefix. The install org
+  names any. See
+  [External calls](../orchestration/external-calls.md).
 - **Each org can have its own monthly AI budget** (§110 t-788). A platform
   admin in the install org sets `settings.quotas.monthlyBudgetUsd` with
   `PATCH /api/v1/admin/orgs/[id]`, or a fork's billing code calls

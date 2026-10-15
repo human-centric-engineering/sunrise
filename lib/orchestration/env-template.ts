@@ -27,10 +27,57 @@
  * `external_call.url` / `headers`). A generic deep-walk would silently
  * rewrite every string the next contributor adds — substitution stays
  * explicit at each call site.
+ *
+ * **Whose env vars an org may name (§111 t-811).** The process
+ * environment is the platform operator's: the session secret, the
+ * database URL, every provider key. While only a platform admin could
+ * author these configs, "env-var names in DB, admin-authored" was safe.
+ * At `multi` an org OWNER/ADMIN authors them too, and naming
+ * `${env:BETTER_AUTH_SECRET}` in a header sent to a host they can read
+ * would hand them the operator's secret. So a config acting for a
+ * customer org may name only the env vars the operator set aside for
+ * that org: names starting {@link orgEnvVarPrefix} (`ORG_<ORG ID>_`).
+ * The install org, a platform scope with no org, and every install at
+ * `single` name anything, as before. {@link envVarAvailableHere} is the
+ * rule; this module and `readSecret` in `lib/orchestration/http/auth.ts`
+ * apply it where the value is read, so it holds whichever write path
+ * stored the config. Refused before the variable is looked up, so a
+ * refusal says nothing about whether the operator's variable is set.
  */
+import { getTenantContext, isMultiTenant } from '@/lib/tenancy/context';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+
+/**
+ * The prefix of the env vars a customer org's configs may name: `ORG_`,
+ * the org's id upper-cased, `_`. The id rather than the slug, because a
+ * slug can be changed or reused and a secret must not follow it to
+ * another org.
+ */
+export function orgEnvVarPrefix(orgId: string): string {
+  return `ORG_${orgId.toUpperCase()}_`;
+}
+
+/**
+ * May config acting for the org in context name this env var? Yes at
+ * `single`, for the install org, and with no org in context (a platform
+ * scope); otherwise only a name under that org's {@link orgEnvVarPrefix}.
+ */
+export function envVarAvailableHere(name: string): boolean {
+  if (!isMultiTenant()) return true;
+  const orgId = getTenantContext()?.orgId ?? null;
+  if (orgId === null || orgId === INSTALL_ORG_ID) return true;
+  return name.startsWith(orgEnvVarPrefix(orgId));
+}
+
+/** The refusal's wording, shared with `readSecret` so both say the same thing. */
+export function envVarNotAvailableMessage(name: string): string {
+  const orgId = getTenantContext()?.orgId ?? '';
+  return `Env var "${name}" is not available to this organisation. Its configs may name only env vars starting "${orgEnvVarPrefix(orgId)}".`;
+}
+
 export class EnvTemplateError extends Error {
   constructor(
-    public readonly code: 'unresolved_env_var',
+    public readonly code: 'unresolved_env_var' | 'env_var_not_available',
     public readonly envVarName: string,
     message: string
   ) {
@@ -79,6 +126,9 @@ export function resolveEnvTemplate(value: string): string {
   if (!containsEnvTemplate(value)) return value;
   ENV_TEMPLATE_PATTERN.lastIndex = 0;
   return value.replace(ENV_TEMPLATE_PATTERN, (_full, name: string) => {
+    if (!envVarAvailableHere(name)) {
+      throw new EnvTemplateError('env_var_not_available', name, envVarNotAvailableMessage(name));
+    }
     const resolved = process.env[name];
     if (!resolved) {
       throw new EnvTemplateError(
@@ -143,7 +193,10 @@ export function findUnsetEnvVarReferences(
   for (const name of all) {
     if (seen.has(name)) continue;
     seen.add(name);
-    if (!process.env[name]) {
+    // A name the org may not use is reported missing whatever the host
+    // holds: it will not resolve here, and answering by the operator's env
+    // would let an org admin probe which of its variables are set.
+    if (!envVarAvailableHere(name) || !process.env[name]) {
       missing.push(name);
     }
   }
