@@ -394,6 +394,8 @@ Body: `{ providerIds: string[] }` (1–50 cuids). Loads every requested provider
 
 Aggregated registry across all configured providers. Query: `?refresh=true` to bypass the in-process cache.
 
+Org-tier (§111 t-812): an org OWNER/ADMIN reads it, for the costs page's pricing and the dashboard's trend chart. `?refresh=true` makes an outbound call on the install's behalf, so it returns `403` to anyone who does not administer the platform.
+
 ---
 
 ## Provider Models (Selection Matrix)
@@ -1125,6 +1127,8 @@ Returns every agent with a `monthlyBudgetUsd` at or above 80% utilisation. Sever
 | `>= 1.0`    | `critical` |
 
 Agents without a budget, or with `monthlyBudgetUsd <= 0`, are filtered out.
+
+Also returns `globalCap: { cap, spent, exceeded }`, the install-wide monthly cap. `spent` is every org's spend, so it is `null` outside the install org. Org-tier (§111 t-812): an org OWNER/ADMIN gets their own org's agents and, of the cap, only `exceeded`; `cap` is `null` for them too, since it is the platform's budget setting.
 
 ### `GET /costs/orgs`
 

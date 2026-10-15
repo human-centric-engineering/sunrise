@@ -304,6 +304,25 @@ release process.
   The MCP keys page has no nav entry for an org admin until the MCP landing is
   split. See [Authorization → Admin tiers](./.context/auth/authorization.md#admin-tiers).
 
+- **An org admin now sees their org's half of the mixed admin pages**
+  (§111 t-812). The orchestration dashboard, costs, analytics, the
+  executions list and the MCP landing join `ORG_TIER_ADMIN_PAGES`, and their
+  nav items are `tier: 'org'`. An org OWNER/ADMIN sees their org's figures
+  there and no platform-ops panel: no setup wizard or quarantines, no per-org
+  usage or budget-settings link, no live-engine cards, lease inspector or
+  force-fail, and only the API Keys card on the MCP landing. The routes behind
+  their half are now org-tier: `costs`, `costs/summary`, `costs/alerts`,
+  `models`, `observability/dashboard-stats` and the five `analytics/*`
+  routes. Two answer an org admin differently: `costs/alerts` returns
+  `globalCap.cap` as `null` (as `spent` already was outside the install org),
+  and `models?refresh=true` returns `403`. `/admin` now sends an org admin to
+  `/admin/orchestration`; the overview stays platform-only. New
+  `adminPageViewerTier()` in `lib/auth/admin-page-viewer.ts` tells a page
+  which viewer it is rendering for; `CostsView`, `ExecutionsListView` and
+  `McpDashboard` take an optional `viewerTier`, and `ExecutionsTable` an
+  optional `engineControls`, each defaulting to the platform's view.
+  **Forks:** a page you add that pairs a platform panel with org data should
+  ask `adminPageViewerTier()` before you list it in the roster.
 - **A platform agent's `defaultBinding` is now asked on every maintenance
   pass, and its answer moves the agent** (t-798). `PlatformAgentDefinition
   .defaultBinding` used to be asked only when an instance was created, or

@@ -203,12 +203,19 @@ the reasoning behind it.
   the admin layout's platform question. The provider test routes use it: an org
   admin may test only a provider their org is approved for, in their own org,
   while a platform admin keeps the install-org probe.
-- **The mixed pages are not assigned.** The dashboard, costs, analytics, the
-  executions list and the MCP landing are split per viewer (§111 t-812), not
-  opened. Until then the MCP keys page has no nav entry for an org admin; it
-  is open by URL. One execution's detail page (`executions/[id]`) is open, with
-  the routes it calls, because the approval queue and a workflow run link to
-  it; the executions list and the live-engine view are not.
+- **The mixed pages are split per viewer, not assigned** (§111 t-812). The
+  orchestration dashboard, costs, analytics, the executions list and the MCP
+  landing are on the page roster, and each asks `adminPageViewerTier()`
+  (`lib/auth/admin-page-viewer.ts`, the layout's platform question) and
+  renders its platform-ops half for a platform viewer only. An org admin gets
+  the org's half; the routes behind it (costs, its summary and alerts, the
+  model catalogue, the dashboard stats and the analytics routes) are
+  org-tier, and the routes behind the platform-ops half stay undeclared, so
+  they refuse them. The MCP landing shows them the API Keys card alone, which
+  is their nav route to the keys page. The overview stays platform-only, since
+  every figure on it is install-wide; `/admin` sends an org admin to the
+  orchestration dashboard instead. The playbook's control-plane map says how
+  each page splits.
 
 **If you replace `canAdminister`,** handle `scope.tier`. A policy that ignores
 it admits nobody new: org admins stay locked out of every surface, which is the

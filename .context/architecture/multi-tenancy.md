@@ -558,39 +558,35 @@ fork's own surface, declare it the same way.
 | `orchestration/mcp/keys`                            | `McpApiKey`                                           |
 | `orchestration/approvals`                           | Approvals on executions                               |
 
-### Mixed — these need splitting, not assigning
+### Mixed — split per viewer, not assigned
 
 This is the "almost" in "almost 1:1", and skipping it is how a fork ships a
-customer console that leaks an aggregate.
+customer console that leaks an aggregate. §111 t-812 splits each of these
+**by query, not by page**: the page is on the roster, asks who is viewing
+(`adminPageViewerTier()` in `lib/auth/admin-page-viewer.ts`), and renders its
+platform-ops half for a platform viewer only. The routes behind the org's
+half are org-tier and read in the entered org; the routes behind the
+platform-ops half are undeclared, so an org admin who calls one directly is
+refused. The roster pins both.
 
-- **`orchestration` (dashboard) and `overview`** — headline counts over both
-  planes. Split the query, not the page.
-- **`orchestration/costs`** — the _settings_ are the global singleton
-  (platform-ops); the _spend_ is `AiCostLog`, per-tenant (`orgId`, `SetNull`
-  on org erasure so the vendor's billing record survives the tenant).
-- **`orchestration/analytics`** — topics, unanswered questions, engagement
-  and content gaps are all derived from `AiConversation`. Tenant data
-  presented as a global roll-up: the _page_ is a customer's, the vendor's
-  version of it is a different query.
-- **`orchestration/executions`** — the one that looks cleanly splittable and
-  is not. `app/admin/orchestration/executions/page.tsx` fans three reads —
-  `getExecutions()` (`AiWorkflowExecution`, the customer's),
-  `getInitialSnapshot()` (live-engine lease state, process-global) and
-  `getOrchestrationSettings()` (the global singleton, for the stuck-step
-  threshold) — and renders the live-engine dashboard **above** the table on
-  the same page. `executions/live` is a deeper view of the same platform-ops
-  data, not a separable surface.
-- **`orchestration/mcp/prompts`** — looks like a customer's, and is not one.
-  `McpExposedPrompt` is on `GLOBAL_CONFIG_MODELS`: its `createdBy` is
-  provenance, `prompt-registry.ts` serves every enabled row from a
-  process-global cache to every MCP client, `name` is unique across the
-  install, and the enabled cap is global. Shipping this page in a customer
-  console publishes one tenant's prompt to all of them. Assign it to the
-  customer only after scoping the model (column, `@@unique([orgId, name])`,
-  per-org cache key and cap).
-- **`orchestration/mcp` (landing)** — sits above both halves of the MCP split.
-  (`mcp/sessions` was listed here too until §39 t-718 deleted the page with the
-  stateful transport.)
+| Page                          | The org admin's half                                                                                                       | The platform's half (absent for them)                                                                                       |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `orchestration` (dashboard)   | Agent count, spend, budget alerts, dashboard stats, activity: all tenant rows in their org                                 | The setup wizard and banner (providers, global settings) and capability quarantines (`AiCapability`, global)                |
+| `orchestration/costs`         | Summary, alerts, trend, per-agent and per-model spend (`AiCostLog` in their org), pricing (the model catalogue, read-open) | Each org's usage (`costs/orgs`), the link to the global budget settings, and the global cap's amount and spend              |
+| `orchestration/analytics`     | All of it: every figure is derived from `AiConversation` in their org, quoted text from threads they may open (§115)       | None on the page. The vendor's cross-org view of the same figures is a different query, not built                           |
+| `orchestration/executions`    | The executions table (their org's, as the list route scopes it)                                                            | The live-engine cards (process-global lease and in-flight state), the lease inspector and force-fail; `executions/live` too |
+| `orchestration/mcp` (landing) | The API Keys card: their org's `McpApiKey` rows, and their nav route to `mcp/keys`                                         | The server toggle, exposed tools, resources and prompts, the audit log and the settings                                     |
+| `overview`                    | None. Every figure is install-wide (`User` is a system model) or the process's own, so the page stays platform-only        | All of it. `/admin` sends an org admin to the orchestration dashboard instead                                               |
+
+`orchestration/mcp/prompts` stays platform-ops on its own: it looks like a
+customer's, and is not one. `McpExposedPrompt` is on `GLOBAL_CONFIG_MODELS`:
+its `createdBy` is provenance, `prompt-registry.ts` serves every enabled row
+from a process-global cache to every MCP client, `name` is unique across the
+install, and the enabled cap is global. Shipping this page in a customer
+console publishes one tenant's prompt to all of them. Assign it to the
+customer only after scoping the model (column, `@@unique([orgId, name])`,
+per-org cache key and cap). (`mcp/sessions` was listed here too until §39
+t-718 deleted the page with the stateful transport.)
 
 ### Why the URL tree is not the answer
 
