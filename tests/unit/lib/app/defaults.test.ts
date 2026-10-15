@@ -62,7 +62,7 @@ import {
   appOwnerlessSurfaceExceptions,
 } from '@/lib/app/ci';
 import { occupiedTiers } from '@/lib/app/reserved-tiers';
-import { APP_CAPABILITY_PAIRS } from '@/lib/app/capability-seed-pairs';
+import { APP_CAPABILITY_PAIRS, APP_UNCHECKED_SEEDS } from '@/lib/app/capability-seed-pairs';
 import { initAppUserCreatedHooks } from '@/lib/app/user-created';
 import { collectAppSubjectData } from '@/lib/app/data-export';
 import {
@@ -434,8 +434,11 @@ const SEAM_DEFAULTS: SeamDefault[] = [
   },
   {
     seam: 'lib/app/capability-seed-pairs.ts',
-    risk: 'a stray pair fails the capability parity test on every install: for a slug no seed writes it is a pair nothing wrote, and for a slug core already pairs it is a duplicate',
-    assert: () => expect(APP_CAPABILITY_PAIRS).toEqual([]),
+    risk: 'a stray pair fails the capability parity test on every install (for a slug no seed writes it is a pair nothing wrote, for a slug core already pairs a duplicate), and a stray unchecked seed switches the parity checks off for that seed',
+    assert: () => {
+      expect(APP_CAPABILITY_PAIRS).toEqual([]);
+      expect(APP_UNCHECKED_SEEDS).toEqual({});
+    },
   },
   {
     seam: 'lib/app/brand.ts',

@@ -49,3 +49,23 @@ export interface AppCapabilityPair {
  * ```
  */
 export const APP_CAPABILITY_PAIRS: readonly AppCapabilityPair[] = [];
+
+/**
+ * Seeds of this fork's that the parity test cannot run under its strict mock
+ * client — they use the app's own client, raw SQL (`$executeRaw`) or another
+ * call the mock does not model — keyed by path relative to `prisma/seeds/`,
+ * each with the reason it writes no capability.
+ *
+ * The test then lets such a seed throw, use the app client or call what the
+ * mock refuses. Whatever it writes past that point goes unchecked, so a seed
+ * that writes a capability does not belong here: make it write through the
+ * `prisma` it is handed instead. Sunrise core ships `{}`.
+ *
+ * @example
+ * ```ts
+ * export const APP_UNCHECKED_SEEDS: Readonly<Record<string, string>> = {
+ *   'app/001-vector-index.ts': 'creates a pgvector index with $executeRaw; writes no capability',
+ * };
+ * ```
+ */
+export const APP_UNCHECKED_SEEDS: Readonly<Record<string, string>> = {};

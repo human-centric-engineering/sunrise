@@ -28,7 +28,9 @@ release process.
   source reader could not see (a hoisted const, a definition taken from the
   class) now fails the test until you pair it here. A seed must also run
   under the mock: one that calls a client method it does not model, uses the
-  app's own client, or writes a capability through a nested write fails it.
+  app's own client, or writes a capability through a nested write fails it,
+  unless you list it in `APP_UNCHECKED_SEEDS` (same file, ships `{}`) with the
+  reason it writes no capability.
 
 - **`AiAgent.bindingOwner` records who decides a platform agent's provider
   and model** (t-798; migration `20261015120000_ai_agent_binding_owner`). It

@@ -44,7 +44,11 @@
  *    or `$`-call the mock does not model, or by writing a capability through
  *    another model's nested write.
  *  - A seed that uses the app's own client (`@/lib/db/client`) at all, even if
- *    it catches the error. Only `GLOBAL_CLIENT_SEEDS` may, each with a reason.
+ *    it catches the error.
+ *
+ * A seed this cannot run — raw SQL, the app client — goes in
+ * `APP_UNCHECKED_SEEDS` (same file) with the reason it writes no capability;
+ * the first two rules then skip it. Do not put a capability seed there.
  *  - A seed whose source writes `aiCapability` by name but was seen writing
  *    none: its writes sit behind a path the mock did not drive.
  *
@@ -84,7 +88,11 @@ vi.mock('@/lib/db/client', () => {
 
 import { discoverSeedFiles, type SeedContext, type SeedUnit } from '@/prisma/runner';
 import { isRecord } from '@/lib/utils';
-import { APP_CAPABILITY_PAIRS, type AppCapabilityPair } from '@/lib/app/capability-seed-pairs';
+import {
+  APP_CAPABILITY_PAIRS,
+  APP_UNCHECKED_SEEDS,
+  type AppCapabilityPair,
+} from '@/lib/app/capability-seed-pairs';
 import { CLEANUP_CAPABILITIES } from '@/prisma/seeds/019-cleanup-capabilities';
 
 import { AddProviderModelsCapability } from '@/lib/orchestration/capabilities/built-in/add-provider-models';
@@ -124,17 +132,23 @@ const PAIRS: readonly AppCapabilityPair[] = [
 const SEED_DIR = join(process.cwd(), 'prisma', 'seeds');
 
 /**
- * Seeds allowed to use the app's own client, each with its reason. Everything
- * else that touches it fails — whatever a seed does through that client is
- * invisible here, capability writes included.
+ * Seeds this test may not be able to run, each with its reason: they may use
+ * the app's own client, call what the mock does not model, or throw. Whatever
+ * such a seed writes past that point is invisible here, capability writes
+ * included — so an entry says why it writes none. Core's, then the fork's.
  */
-const GLOBAL_CLIENT_SEEDS: ReadonlyMap<string, string> = new Map([
+const UNCHECKED_SEEDS: ReadonlyMap<string, string> = new Map([
   [
     '007-knowledge-chunks.ts',
     'seeds the patterns knowledge through seedChunks(), which writes with the app client; ' +
       'it writes no capability',
   ],
+  ...Object.entries(APP_UNCHECKED_SEEDS),
 ]);
+
+/** What a capability `…OrThrow` lookup throws in 'absent' mode, as Prisma would. */
+const NOT_FOUND = 'parity mock: no such capability';
+const ID_PREFIX = 'parity-mock-id:';
 
 /** One capability write a seed performed. */
 interface Captured {
@@ -227,9 +241,14 @@ function strictClient(
       : [args.create, args.update, args.data];
     for (const data of writes) {
       if (!isRecord(data) || !('functionDefinition' in data)) continue;
+      // An update by id names the slug only through the row it looked up.
+      const byId =
+        typeof where.id === 'string' && where.id.startsWith(ID_PREFIX)
+          ? where.id.slice(ID_PREFIX.length)
+          : undefined;
       captured.push({
         file,
-        slug: data.slug ?? where.slug,
+        slug: data.slug ?? where.slug ?? byId,
         functionDefinition: data.functionDefinition,
       });
     }
@@ -245,10 +264,11 @@ function strictClient(
           }
           return (args: unknown) => {
             const where = isRecord(args) && isRecord(args.where) ? args.where : {};
-            const row = {
-              id: 'parity-mock-id',
-              slug: typeof where.slug === 'string' ? where.slug : undefined,
-            };
+            const rowFor = (slug: unknown) => ({
+              id: `${ID_PREFIX}${typeof slug === 'string' ? slug : ''}`,
+              slug: typeof slug === 'string' ? slug : undefined,
+            });
+            const row = rowFor(where.slug);
             if (WRITES.has(method)) {
               if (name === 'aiCapability') {
                 wroteCapability.add(file);
@@ -258,10 +278,18 @@ function strictClient(
               if (/ManyAndReturn$/.test(method)) return Promise.resolve([row]);
               return Promise.resolve(row);
             }
-            if (name === 'aiCapability' && !/OrThrow$/.test(method)) {
+            if (name === 'aiCapability') {
               const present = capabilities === 'present';
-              if (method === 'findMany') return Promise.resolve(present ? [row] : []);
+              if (method === 'findMany') {
+                // One row per slug asked for (`slug: { in: [...] }`), else one.
+                const slugs =
+                  isRecord(where.slug) && Array.isArray(where.slug.in)
+                    ? where.slug.in
+                    : [undefined];
+                return Promise.resolve(present ? slugs.map(rowFor) : []);
+              }
               if (method === 'count') return Promise.resolve(present ? 1 : 0);
+              if (/OrThrow$/.test(method) && !present) return Promise.reject(new Error(NOT_FOUND));
               return Promise.resolve(present ? row : null);
             }
             if (method === 'findMany') return Promise.resolve([]);
@@ -314,7 +342,10 @@ beforeAll(async () => {
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   for (const file of (await discoverSeedFiles(SEED_DIR, SEED_DIR)).sort()) {
     globalClient.current = file;
-    if (NAMED_CAPABILITY_WRITE.test(readFileSync(join(SEED_DIR, file), 'utf8'))) {
+    const code = readFileSync(join(SEED_DIR, file), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+    if (NAMED_CAPABILITY_WRITE.test(code)) {
       namingCapabilityWrite.push(file);
     }
     try {
@@ -339,21 +370,23 @@ describe('capabilities — seeded definition matches the class (#545, #646)', ()
     // update, so a count of writes would be met by 019 alone.
     expect(new Set(captured.map((c) => c.slug)).size).toBeGreaterThanOrEqual(24);
     // A seed the mock could not run, or one that used the app's own client,
-    // may have written capabilities this never saw. Only the allow-listed
-    // seeds may do either, and only by way of that client.
-    const allowed = (file: string, error?: string) =>
-      GLOBAL_CLIENT_SEEDS.has(file) && (error === undefined || error.startsWith('used the global'));
-    expect(failed.filter((f) => !allowed(f.file, f.error))).toEqual([]);
-    expect([...new Set(globalClient.uses)].filter((file) => !allowed(file))).toEqual([]);
+    // may have written capabilities this never saw. Only UNCHECKED_SEEDS may.
+    // (A capability `…OrThrow` that found nothing is not a failure: the seed
+    // would throw there in production too, given an empty table.)
+    const checked = (file: string) => !UNCHECKED_SEEDS.has(file);
+    expect(failed.filter((f) => checked(f.file) && f.error !== NOT_FOUND)).toEqual([]);
+    expect([...new Set(globalClient.uses)].filter(checked)).toEqual([]);
     // The mock's refusals, including any a seed caught and carried on past.
-    expect(globalClient.refusals).toEqual([]);
+    expect(globalClient.refusals.filter((r) => checked(r.file))).toEqual([]);
     // A seed that writes `aiCapability` by name but was seen writing none took
     // a path the mock did not drive (a loop over rows it looked up, which
     // read as empty) — nothing it writes was checked. NOT covered: the same
     // loop calling a helper whose source, not the seed's, names the write.
     // (Any write counts: one that only retires or renames a capability has no
     // definition to check, but it did run.)
-    expect(namingCapabilityWrite.filter((file) => !wroteCapability.has(file))).toEqual([]);
+    expect(
+      namingCapabilityWrite.filter((file) => checked(file) && !wroteCapability.has(file))
+    ).toEqual([]);
   });
 
   it('pairs every capability the seeds write, and nothing they do not', () => {

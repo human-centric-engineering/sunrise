@@ -102,7 +102,7 @@ covered by the version contract.
   - `lib/app/bootstrap.ts` → `initApp()` — the app boot hook, awaited by `instrumentation.ts`
   - `lib/app/brand.ts` → `appBrandName` / `appBrandLegalName` / `appBrandDescription` — brand overrides
   - `lib/app/capabilities.ts` → `initAppCapabilities()` — capability registry (`registerAppCapability()`)
-  - `lib/app/capability-seed-pairs.ts` → `APP_CAPABILITY_PAIRS` — which class goes with each slug the fork's capability seeds write, read by the seed parity test
+  - `lib/app/capability-seed-pairs.ts` → `APP_CAPABILITY_PAIRS` / `APP_UNCHECKED_SEEDS` — which class goes with each slug the fork's capability seeds write, and which of its seeds the parity test cannot run, read by that test
   - `lib/app/ci.ts` → `appCoverageExclusions` / `appAlwaysRunTests` / `appOwnerlessSurfaceExceptions` — the fork's own coverage exclusions, whole-tree always-run tests, and files allowed to read an ownerless-capable model outside the access helpers
   - `lib/app/context-contributors.ts` → `initAppContextContributors()` — chat context contributors (primitive: `registerContextContributor()` in `lib/orchestration/chat/context-builder.ts`)
   - `lib/app/csp.ts` → `appFrameSrc` — extra CSP `frame-src` origins
