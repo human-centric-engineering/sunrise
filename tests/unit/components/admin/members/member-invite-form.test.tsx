@@ -183,6 +183,32 @@ describe('MemberInviteForm', () => {
     expect(mockRefresh).toHaveBeenCalledTimes(1);
   });
 
+  it('re-sends what was submitted, not what the fields hold after an edit', async () => {
+    vi.mocked(apiClient.post).mockResolvedValueOnce({
+      message: 'Already invited',
+      invitation: { email: 'new@example.com', name: 'New Person' },
+      emailStatus: 'pending',
+    });
+    vi.mocked(apiClient.post).mockResolvedValueOnce(sentResponse());
+    const user = userEvent.setup();
+    render(<MemberInviteForm orgId="org-1" />);
+
+    await fill(user, 'New Person', 'new@example.com');
+    await user.click(screen.getByRole('button', { name: /send invitation/i }));
+    expect(await screen.findByText(/already pending/)).toBeInTheDocument();
+
+    const email = screen.getByLabelText(/^Email/, { selector: 'input' });
+    await user.clear(email);
+    await user.type(email, 'other@example.com');
+    await user.click(screen.getByRole('button', { name: 'Send it again' }));
+
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
+    expect(apiClient.post).toHaveBeenLastCalledWith(URL, {
+      body: { name: 'New Person', email: 'new@example.com', orgRole: 'MEMBER' },
+      params: { resend: 'true' },
+    });
+  });
+
   it('does not send resend=true on the first post', async () => {
     vi.mocked(apiClient.post).mockResolvedValue(sentResponse());
     const user = userEvent.setup();

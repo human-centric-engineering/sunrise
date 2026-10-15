@@ -184,9 +184,9 @@ export function MembersTable({ orgId, members, currentUserId }: MembersTableProp
           <AlertDialogHeader>
             <AlertDialogTitle>Remove member</AlertDialogTitle>
             <AlertDialogDescription>
-              {removing?.name || removing?.email} will lose access to this organisation and be
-              signed out of it. Their account and their access to other organisations are not
-              affected.
+              {removing?.id === currentUserId
+                ? 'You will lose access to this organisation, including this page, and be signed out of it. Your account and your access to other organisations are not affected.'
+                : `${removing?.name || removing?.email} will lose access to this organisation and be signed out of it. Their account and their access to other organisations are not affected.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

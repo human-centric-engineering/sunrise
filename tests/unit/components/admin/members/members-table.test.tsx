@@ -185,6 +185,19 @@ describe('MembersTable', () => {
     expect(mockRefresh).not.toHaveBeenCalled();
   });
 
+  it('tells the current user that removing themself takes their own access', async () => {
+    const user = userEvent.setup();
+    renderTable();
+
+    await user.click(screen.getByRole('button', { name: 'Remove Alice Owner' }));
+    const dialog = await screen.findByRole('alertdialog');
+
+    expect(
+      within(dialog).getByText(/You will lose access to this organisation/)
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Alice Owner will lose access/)).not.toBeInTheDocument();
+  });
+
   it('deletes the confirmed member and refreshes', async () => {
     const user = userEvent.setup();
     renderTable();

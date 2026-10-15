@@ -54,6 +54,7 @@ import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { APIError } from '@/lib/api/errors';
 import { revokeUserSessions } from '@/lib/auth/sessions';
+import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { initialMembershipFor } from '@/lib/tenancy/membership';
 import { orgIdParamSchema, type OrgSettingsPatch } from '@/lib/validations/tenancy';
@@ -127,6 +128,19 @@ export class OrgLifecycleError extends APIError {
 export interface MembershipActor {
   platformAdmin: boolean;
   orgRole?: string | null;
+}
+
+/**
+ * The caller's standing, from what the guard verified: platform admin, or
+ * their role in the org the request entered. Every org route that hands the
+ * lifecycle an actor builds it here, so they cannot disagree about who has
+ * owner standing.
+ */
+export function membershipActorOf(session: {
+  user: { role?: string | null };
+  principal: { orgRole?: string | null };
+}): MembershipActor {
+  return { platformAdmin: isPlatformAdmin(session.user), orgRole: session.principal.orgRole };
 }
 
 /** May this actor confer, alter or revoke the OWNER role in the org? */

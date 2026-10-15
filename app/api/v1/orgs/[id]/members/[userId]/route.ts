@@ -28,9 +28,8 @@ import {
   changeMemberRole,
   removeMember,
   resolveOrgResource,
-  type MembershipActor,
+  membershipActorOf,
 } from '@/lib/tenancy/lifecycle';
-import { isPlatformAdmin } from '@/lib/auth/roles';
 import { getRouteLogger } from '@/lib/api/context';
 
 type Params = { id: string; userId: string };
@@ -47,14 +46,6 @@ const RESOURCE = {
   },
 } as const;
 
-/** The caller's standing for the ownership rule, from what the guard verified. */
-function actorOf(session: {
-  user: { role?: string | null };
-  principal: { orgRole?: string | null };
-}): MembershipActor {
-  return { platformAdmin: isPlatformAdmin(session.user), orgRole: session.principal.orgRole };
-}
-
 export const PATCH = withAuth<Params>(async (request, session, { params }) => {
   const log = await getRouteLogger(request);
   if (isApiKeySession(session)) {
@@ -70,7 +61,7 @@ export const PATCH = withAuth<Params>(async (request, session, { params }) => {
   );
   const { role } = await validateRequestBody(request, updateOrgMemberSchema);
 
-  const membership = await changeMemberRole(id, userId, role, actorOf(session));
+  const membership = await changeMemberRole(id, userId, role, membershipActorOf(session));
 
   log.info('Org member role changed', {
     orgId: id,
@@ -94,7 +85,7 @@ export const DELETE = withAuth<Params>(async (request, session, { params }) => {
     orgMemberParamsSchema
   );
 
-  const { revokedSessions } = await removeMember(id, userId, actorOf(session));
+  const { revokedSessions } = await removeMember(id, userId, membershipActorOf(session));
 
   log.info('Org member removed', {
     orgId: id,

@@ -107,13 +107,12 @@ export default async function AdminLayout({
     redirect(AUTH_LANDING_ROUTE);
   }
 
-  const sharedSettings = await sharedSettingsRead;
-
   // At `multi` every org-tier page is one org's, so the header names it
   // (§111 t-813). At `single` there is only the install org, and the header is
-  // as it was.
+  // as it was. Started alongside the shared-settings read.
   const multiTenant = isMultiTenant();
-  const actingOrg = multiTenant ? await requestActingOrg() : null;
+  const actingOrgRead = multiTenant ? requestActingOrg() : Promise.resolve(null);
+  const [sharedSettings, actingOrg] = await Promise.all([sharedSettingsRead, actingOrgRead]);
 
   return (
     <div className="bg-background flex h-screen overflow-hidden">

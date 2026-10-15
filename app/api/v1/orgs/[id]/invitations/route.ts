@@ -38,7 +38,7 @@
 
 import { withAuth } from '@/lib/auth/guards';
 import { isApiKeySession } from '@/lib/auth/api-keys';
-import { isPlatformAdmin, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
+import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 import { prisma } from '@/lib/db/client';
 import { successResponse, errorResponse } from '@/lib/api/responses';
 import { ErrorCodes, ForbiddenError } from '@/lib/api/errors';
@@ -47,9 +47,10 @@ import { orgIdParamSchema, inviteOrgMemberSchema } from '@/lib/validations/tenan
 import {
   checkInvitationInto,
   resolveOrgResource,
-  type MembershipActor,
+  membershipActorOf,
 } from '@/lib/tenancy/lifecycle';
 import { getValidInvitation } from '@/lib/utils/invitation-token';
+import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import { deliverInvitation } from '@/lib/auth/invitation-delivery';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
@@ -66,14 +67,6 @@ const RESOURCE = {
       'The policy admitted the caller to the org the URL names; the invitation is written for that resolved org id, and a pending invitation into any other org is refused rather than touched.',
   },
 } as const;
-
-/** The caller's standing for the ownership rule, from what the guard verified. */
-function actorOf(session: {
-  user: { role?: string | null };
-  principal: { orgRole?: string | null };
-}): MembershipActor {
-  return { platformAdmin: isPlatformAdmin(session.user), orgRole: session.principal.orgRole };
-}
 
 export const POST = withAuth<{ id: string }>(async (request, session, { params }) => {
   const log = await getRouteLogger(request);
@@ -95,7 +88,8 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
   const body = await validateRequestBody(request, inviteOrgMemberSchema);
   const resend = new URL(request.url).searchParams.get('resend') === 'true';
 
-  await checkInvitationInto(id, body.orgRole, actorOf(session));
+  const actor = membershipActorOf(session);
+  await checkInvitationInto(id, body.orgRole, actor);
 
   const existingUser = await prisma.user.findUnique({
     where: { email: body.email },
@@ -139,6 +133,16 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
     });
   }
 
+  // A resend re-issues the pending invitation, so it keeps the pending role
+  // unless the body names one (as the platform route keeps the pending org).
+  // And it is a change to that invitation: replacing an OWNER invitation
+  // needs owner standing whatever the new role is, as changing an OWNER's
+  // role does on the members routes.
+  const orgRole = body.orgRole ?? existingInvitation?.metadata.orgRole;
+  if (existingInvitation?.metadata.orgRole === ORG_OWNER_ROLE) {
+    await checkInvitationInto(id, ORG_OWNER_ROLE, actor);
+  }
+
   const invitedAt = new Date().toISOString();
   const delivered = await deliverInvitation({
     email: body.email,
@@ -149,7 +153,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
       invitedBy: session.user.id,
       invitedAt,
       orgId: id,
-      ...(body.orgRole ? { orgRole: body.orgRole } : {}),
+      ...(orgRole ? { orgRole } : {}),
     },
     isResend: !!existingInvitation,
     inviterName: session.user.name || 'Administrator',
@@ -159,7 +163,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
   log.info(existingInvitation ? 'Org invitation resent' : 'Org invitation created', {
     orgId: id,
     email: body.email,
-    orgRole: body.orgRole ?? null,
+    orgRole: orgRole ?? null,
     invitedBy: session.user.id,
   });
 
@@ -170,7 +174,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
         email: body.email,
         name: body.name,
         orgId: id,
-        orgRole: body.orgRole ?? null,
+        orgRole: orgRole ?? null,
         invitedAt,
         expiresAt: delivered.expiresAt.toISOString(),
         // No `link`: the token in it is the only proof acceptance asks for,

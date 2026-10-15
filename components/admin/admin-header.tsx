@@ -11,13 +11,16 @@ import { usePathname } from 'next/navigation';
 import { Building2, ChevronRight, Home } from 'lucide-react';
 import { HeaderActions } from '@/components/layouts/header-actions';
 import { AUTH_LANDING_LABEL, AUTH_LANDING_ROUTE } from '@/lib/auth-landing/route';
+import { adminPageTier } from '@/lib/auth/admin-tier';
 
 interface AdminHeaderProps {
   title?: string;
   description?: string;
   /**
    * The org the admin is acting in, named at `multi` only (§111 t-813):
-   * everything on an org-tier page is that org's. Absent, nothing is shown.
+   * everything on an org-tier page is that org's. Shown on org-tier pages
+   * only, because a platform page (Users, Organisations) is install-wide and
+   * naming an org there would read as a filter it does not apply.
    */
   orgName?: string;
 }
@@ -44,6 +47,8 @@ export function AdminHeader({ title, description, orgName }: AdminHeaderProps) {
 
     return { href, label, isLast };
   });
+
+  const actingOrgName = adminPageTier(pathname) === 'org' ? orgName : undefined;
 
   // Use the last segment as the title if not provided
   const pageTitle = title || segmentLabels[segments[segments.length - 1]] || 'Admin';
@@ -81,12 +86,12 @@ export function AdminHeader({ title, description, orgName }: AdminHeaderProps) {
         </div>
 
         {/* User actions, and at `multi` the org being acted in */}
-        {orgName ? (
+        {actingOrgName ? (
           <div className="flex items-center gap-4">
             <p className="text-muted-foreground flex items-center gap-1.5 text-sm">
               <Building2 className="h-4 w-4" aria-hidden="true" />
               <span>
-                Acting in <span className="text-foreground font-medium">{orgName}</span>
+                Acting in <span className="text-foreground font-medium">{actingOrgName}</span>
               </span>
             </p>
             <HeaderActions />

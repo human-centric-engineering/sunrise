@@ -57,6 +57,9 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<OrgInvitationResponse | null>(null);
+  // What was submitted when the API said an invitation is pending: "Send it
+  // again" re-sends that, not whatever the fields hold by then.
+  const [pending, setPending] = useState<InviteFormData | null>(null);
 
   const {
     register,
@@ -64,7 +67,6 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
     setValue,
     watch,
     reset,
-    getValues,
     formState: { errors },
   } = useForm<InviteFormData>({
     resolver: zodResolver(inviteFormSchema),
@@ -82,12 +84,14 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
         ...(resend ? { params: { resend: 'true' } } : {}),
       });
       setResult(response);
+      setPending(response.emailStatus === 'pending' ? data : null);
       if (response.emailStatus !== 'pending') {
         reset();
         router.refresh();
       }
     } catch (err) {
       setResult(null);
+      setPending(null);
       setError(err instanceof APIClientError ? err.message : 'An unexpected error occurred');
     } finally {
       setSubmitting(false);
@@ -165,14 +169,14 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
           </p>
         )}
 
-        {result?.emailStatus === 'pending' && (
+        {result?.emailStatus === 'pending' && pending && (
           <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
             <span>An invitation to {result.invitation.email} is already pending.</span>
             <Button
               variant="outline"
               size="sm"
               disabled={submitting}
-              onClick={() => void send(getValues(), true)}
+              onClick={() => void send(pending, true)}
             >
               Send it again
             </Button>

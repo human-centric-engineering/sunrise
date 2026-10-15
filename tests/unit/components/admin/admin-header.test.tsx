@@ -34,6 +34,14 @@ describe('AdminHeader', () => {
     expect(screen.getByTestId('header-actions')).toBeInTheDocument();
   });
 
+  it('names no org on a platform page, which is install-wide', () => {
+    nav.pathname = '/admin/users';
+    render(<AdminHeader orgName="Acme Ltd" />);
+
+    expect(screen.queryByText(/Acting in/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('header-actions')).toBeInTheDocument();
+  });
+
   it('shows no acting-in text without orgName', () => {
     render(<AdminHeader />);
 

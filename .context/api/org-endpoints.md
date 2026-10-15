@@ -244,6 +244,9 @@ as the members routes. The invitee joins this org on acceptance, as a platform
 - `orgRole`: optional, default `MEMBER` on acceptance. `OWNER` needs OWNER
   standing.
 - No platform `role` and no `orgId`. A `role` key is dropped.
+- `?resend=true` re-issues this org's pending invitation. It keeps the
+  pending `orgRole` unless the body names one. Replacing a pending `OWNER`
+  invitation needs OWNER standing, whatever role the body sends.
 
 **Response** (201 Created): `{ message, invitation: { email, name, orgId,
 orgRole, invitedAt, expiresAt }, emailStatus }`. That is the platform route's

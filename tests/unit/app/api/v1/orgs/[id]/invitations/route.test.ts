@@ -359,6 +359,46 @@ describe('POST /api/v1/orgs/[id]/invitations — existing accounts and invitatio
     expect(JSON.stringify(body)).not.toContain('tok-re');
     expect(body.data.message).toMatch(/resent/);
   });
+
+  it('keeps the pending org role on a resend that names none', async () => {
+    pending({ orgId: ORG, orgRole: ORG_ADMIN_ROLE });
+
+    const res = await post(invitee, ORG, '?resend=true');
+
+    expect(res.status).toBe(201);
+    expect(updateInvitationToken).toHaveBeenCalledWith(
+      'jane@example.com',
+      expect.objectContaining({ orgId: ORG, orgRole: ORG_ADMIN_ROLE })
+    );
+    expect((await json(res)).data.invitation.orgRole).toBe(ORG_ADMIN_ROLE);
+  });
+
+  it('refuses an org ADMIN replacing a pending OWNER invitation, whatever role they send', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_ADMIN_ROLE);
+    pending({ orgId: ORG, orgRole: ORG_OWNER_ROLE });
+
+    const res = await post({ ...invitee, orgRole: DEFAULT_ORG_ROLE }, ORG, '?resend=true');
+
+    expect(res.status).toBe(403);
+    expect((await json(res)).error.code).toBe('OWNER_STANDING');
+    expect(updateInvitationToken).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('lets an org OWNER re-send a pending OWNER invitation', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_OWNER_ROLE);
+    pending({ orgId: ORG, orgRole: ORG_OWNER_ROLE });
+
+    const res = await post(invitee, ORG, '?resend=true');
+
+    expect(res.status).toBe(201);
+    expect(updateInvitationToken).toHaveBeenCalledWith(
+      'jane@example.com',
+      expect.objectContaining({ orgRole: ORG_OWNER_ROLE })
+    );
+  });
 });
 
 describe('POST /api/v1/orgs/[id]/invitations — limits and delivery', () => {

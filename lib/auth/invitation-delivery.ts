@@ -7,7 +7,10 @@
  * own admins, into that org only, §111 t-813). This stores the token,
  * replacing a pending one when the route is re-sending, and sends the email.
  * A failed send does not fail the invitation: the token is stored and the
- * link is returned, so the inviter can pass it on by hand.
+ * link is returned to the route. Whether the route hands it to the inviter is
+ * the route's decision. The platform route does, so a platform admin can pass
+ * it on by hand. The org route does not: the token is all acceptance asks
+ * for, so it reaches the invitee by email only.
  */
 import { BRAND } from '@/lib/brand';
 import { env } from '@/lib/env';

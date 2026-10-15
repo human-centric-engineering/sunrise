@@ -39,8 +39,7 @@ import { successResponse } from '@/lib/api/responses';
 import { ForbiddenError } from '@/lib/api/errors';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { orgIdParamSchema, addOrgMemberSchema } from '@/lib/validations/tenancy';
-import { addMember, resolveOrgResource, type MembershipActor } from '@/lib/tenancy/lifecycle';
-import { isPlatformAdmin } from '@/lib/auth/roles';
+import { addMember, resolveOrgResource, membershipActorOf } from '@/lib/tenancy/lifecycle';
 import { getRouteLogger } from '@/lib/api/context';
 
 const RESOURCE = {
@@ -54,14 +53,6 @@ const RESOURCE = {
       'The policy admitted the caller to the org the URL names; the roster is filtered by that resolved id and the writes are keyed on it.',
   },
 } as const;
-
-/** The caller's standing for the ownership rule, from what the guard verified. */
-function actorOf(session: {
-  user: { role?: string | null };
-  principal: { orgRole?: string | null };
-}): MembershipActor {
-  return { platformAdmin: isPlatformAdmin(session.user), orgRole: session.principal.orgRole };
-}
 
 export const GET = withAuth<{ id: string }>(async (request, session, { params }) => {
   if (isApiKeySession(session)) {
@@ -103,7 +94,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
   const body = await validateRequestBody(request, addOrgMemberSchema);
 
-  const membership = await addMember(id, body.userId, body.role, actorOf(session));
+  const membership = await addMember(id, body.userId, body.role, membershipActorOf(session));
 
   log.info('Org member added', {
     orgId: id,
