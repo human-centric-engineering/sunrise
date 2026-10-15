@@ -1295,6 +1295,27 @@ describe('a binding the platform picks follows what the org can reach (t-798)', 
       expect(result.unchanged).toEqual(expect.arrayContaining(['advisor', 'judge']));
     });
 
+    it('is the org’s when the definition sets its own starting binding, as on create', async () => {
+      // v1 was written by the service account, but it placed the definition's
+      // starting value — a value for the org to tune — not a pick.
+      registry.definitions = [
+        definition('advisor', {
+          defaultBinding: async () => pick,
+          defaults: { provider: 'anthropic', model: 'claude' },
+        }),
+      ];
+      await reconcilePlatformAgents('install');
+      legacy('anthropic', 'claude');
+      pick = { provider: 'openai', model: 'gpt-4.1' };
+
+      await reconcilePlatformAgentsIfStale('install');
+      expect(agent('advisor')).toMatchObject({
+        provider: 'anthropic',
+        model: 'claude',
+        bindingOwner: 'org',
+      });
+    });
+
     it('is the org’s when it holds anything else, and is never moved', async () => {
       pick = { provider: 'anthropic', model: 'claude' };
       await reconcilePlatformAgents('install');
