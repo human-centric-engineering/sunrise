@@ -952,9 +952,11 @@ export class StreamingChatHandler {
       // persisted `fellBack` results unconditionally, so live conversations
       // exist whose `summary` IS `[Summary unavailable …]`; folding one
       // forward would carry the apology into every future summary.
-      const storedSummary = isPlaceholderSummary(conversation.summary)
-        ? null
-        : conversation.summary;
+      // Only read when a summary could matter this turn.
+      const storedSummary =
+        (requiredDrop > 0 || historyTruncated) && !isPlaceholderSummary(conversation.summary)
+          ? conversation.summary
+          : null;
       // How far into THIS window the stored summary reaches. `-1` means
       // "nothing in the loaded rows", which covers both no summary at all and
       // a pin older than the rows `loadHistory` returns. Those need the same
