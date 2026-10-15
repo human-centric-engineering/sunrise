@@ -4705,14 +4705,26 @@ describe('rolling conversation summarization', () => {
    * `take`). `all` is the WHOLE conversation, oldest first — which is what makes
    * the multi-turn tests honest about rows the handler did or did not read.
    */
-  function installMessageStore(all: ReturnType<typeof makeHistoryMessages>) {
+  function installMessageStore(initial: ReturnType<typeof makeHistoryMessages>) {
     type FindArgs = {
-      where: { id?: string; OR?: [unknown, { id: { gt: string } }] };
+      where: { id?: string; OR?: [unknown, { id: { gt: string } }]; NOT?: { id: string } };
       orderBy?: [{ createdAt: 'asc' | 'desc' }];
       take?: number;
     };
+    // The turn's own user message is persisted before the handler's later
+    // re-reads, so it has to be in the store for them — as it is in the database.
+    const all = [...initial];
     const indexOf = (id: string) => all.findIndex((m) => m.id === id);
     const afterPin = (args: FindArgs) => args.where.OR?.[1].id.gt;
+    const notId = (args: FindArgs) => args.where.NOT?.id;
+    (prisma.aiMessage.create as ReturnType<typeof vi.fn>).mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises
+      (a: { data: Record<string, unknown> }) => {
+        const row = makeMessage({ ...a.data, id: `persisted-${all.length}` });
+        all.push(row);
+        return Promise.resolve(row);
+      }
+    );
     (prisma.aiMessage.findFirst as ReturnType<typeof vi.fn>).mockImplementation(
       // eslint-disable-next-line @typescript-eslint/no-misused-promises
       (args: FindArgs) => {
@@ -4724,16 +4736,25 @@ describe('rolling conversation summarization', () => {
     (prisma.aiMessage.findMany as ReturnType<typeof vi.fn>).mockImplementation((args: FindArgs) => {
       const take = args.take ?? all.length;
       const pinId = afterPin(args);
-      if (pinId !== undefined) {
-        const from = indexOf(pinId) + 1;
-        return Promise.resolve(all.slice(from, from + take));
-      }
-      return Promise.resolve([...all].reverse().slice(0, take));
+      const visible = all.filter((m) => m.id !== notId(args));
+      const after =
+        pinId === undefined ? visible : visible.slice(visible.findIndex((m) => m.id === pinId) + 1);
+      // Oldest first from the pin, or newest first, as the handler asked.
+      return Promise.resolve(
+        args.orderBy?.[0].createdAt === 'asc'
+          ? after.slice(0, take)
+          : [...after].reverse().slice(0, take)
+      );
     });
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     (prisma.aiMessage.count as ReturnType<typeof vi.fn>).mockImplementation((args: FindArgs) => {
       const pinId = afterPin(args);
-      return Promise.resolve(pinId === undefined ? all.length : all.length - indexOf(pinId) - 1);
+      const visible = all.filter((m) => m.id !== notId(args));
+      return Promise.resolve(
+        pinId === undefined
+          ? visible.length
+          : visible.length - visible.findIndex((m) => m.id === pinId) - 1
+      );
     });
   }
 
@@ -5108,6 +5129,32 @@ describe('rolling conversation summarization', () => {
       expect(turn.prompt.some((m) => m.content.includes('old-summary'))).toBe(true);
       expect(verbatimHistory(turn.prompt).has('Message 449')).toBe(true);
       expect(turn.prompt.some((m) => m.content.includes('omitted'))).toBe(false);
+    });
+
+    it('does not carry the turn\u2019s own user message twice after a re-read', async () => {
+      // The user message is persisted before the summary block runs, so the
+      // catch-up re-read (and the fallback read) would return it as the newest
+      // row — and the prompt appends it again as the new turn.
+      mockSummariser();
+      capAgent(500);
+
+      const turn = await runTurn('conv-own-message', makeHistoryMessages(450), STORED);
+
+      const own = turn.prompt.filter((m) => m.role === 'user' && m.content === baseRequest.message);
+      expect(own).toHaveLength(1);
+    });
+
+    it('does not carry the turn\u2019s own user message twice when catch-up falls back', async () => {
+      (summarizeMessages as ReturnType<typeof vi.fn>).mockResolvedValue({
+        summary: 'old-summary',
+        fellBack: true,
+      });
+      capAgent(500);
+
+      const turn = await runTurn('conv-own-message-down', makeHistoryMessages(450), STORED);
+
+      const own = turn.prompt.filter((m) => m.role === 'user' && m.content === baseRequest.message);
+      expect(own).toHaveLength(1);
     });
 
     it('stops after a bounded number of catch-up passes and announces the rest', async () => {

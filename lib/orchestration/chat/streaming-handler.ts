@@ -1028,7 +1028,12 @@ export class StreamingChatHandler {
           where: { id: conversation.id, ...conversationOwner(request.userId) },
           data: { ...data, summaryUpToMessageId: pin.id },
         });
-        const next = await this.loadHistoryFromPin(conversation.id, request.userId, pin);
+        const next = await this.loadHistoryFromPin(
+          conversation.id,
+          request.userId,
+          pin,
+          userMessage?.id
+        );
         ({ rows: history, overflow: historyOverflow, omitted: omittedBeforeHistory } = next);
         lastFetched = next.lastFetched;
       };
@@ -1071,7 +1076,8 @@ export class StreamingChatHandler {
         ({ rows: history, omitted: omittedBeforeHistory } = await this.loadNewestHistory(
           conversation.id,
           request.userId,
-          currentPin
+          currentPin,
+          userMessage?.id
         ));
         historyOverflow = false;
       }
@@ -3094,17 +3100,21 @@ export class StreamingChatHandler {
    * into the summary and reads again.
    *
    * Ordered `createdAt` then `id`, the same total order as the newest-first read.
+   * `excludeId` is the turn's own user message: a re-read made after it was
+   * persisted would otherwise return it and the prompt would carry it twice.
    */
   private async loadHistoryFromPin(
     conversationId: string,
     userId: string,
-    pin: HistoryPin
+    pin: HistoryPin,
+    excludeId?: string
   ): Promise<LoadedHistory> {
     const fetched = await prisma.aiMessage.findMany({
       where: {
         conversationId,
         conversation: conversationOwner(userId),
         ...rowsAfterPin(pin),
+        ...(excludeId ? { NOT: { id: excludeId } } : {}),
       },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       // One extra row, so exactly the limit is not mistaken for an overflow.
@@ -3128,14 +3138,23 @@ export class StreamingChatHandler {
    * `omitted` counts the rows this read did not reach that nothing describes —
    * everything older than the window, or, given `afterPin`, only what follows
    * the pin (older rows are the summary's). The prompt announces it, so a gap is
-   * never silent.
+   * never silent. `excludeId` is the turn's own user message, which a read made
+   * after it was persisted would otherwise return and the prompt would carry
+   * twice.
    */
   private async loadNewestHistory(
     conversationId: string,
     userId: string,
-    afterPin: HistoryPin | null
+    afterPin: HistoryPin | null,
+    excludeId?: string
   ): Promise<LoadedHistory> {
-    const scope = { conversationId, conversation: conversationOwner(userId) };
+    const scope = {
+      conversationId,
+      conversation: conversationOwner(userId),
+      ...(excludeId ? { NOT: { id: excludeId } } : {}),
+      // Never a row the pin already covers, whatever has been written since.
+      ...(afterPin ? rowsAfterPin(afterPin) : {}),
+    };
     // Secondary sort on `id` ensures deterministic ordering for messages
     // persisted in the same millisecond.
     const fetched = await prisma.aiMessage.findMany({
@@ -3148,7 +3167,7 @@ export class StreamingChatHandler {
     let omitted = 0;
     if (truncated) {
       const unseen = await prisma.aiMessage.count({
-        where: afterPin ? { ...scope, ...rowsAfterPin(afterPin) } : scope,
+        where: scope,
       });
       omitted = Math.max(0, unseen - HISTORY_LOAD_LIMIT);
     }
