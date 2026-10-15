@@ -17,16 +17,15 @@ import { StripSpeakerLabelsCapability } from '@/lib/orchestration/capabilities/b
 import { StripTimestampsCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/strip-timestamps';
 
 interface CleanupCap {
-  slug: string;
   /** Admin-UI presentation, operator-owned — not what the LLM reads. */
   name: string;
   /** Admin-UI presentation, operator-owned — not what the LLM reads. */
   description: string;
-  handler: string;
   /**
    * The class the dispatcher runs. Its `functionDefinition` IS the seeded one,
    * so the schema the LLM is shown cannot drift from the schema the handler
-   * accepts (#545, #646). A hand-written copy here had drifted on all 14.
+   * accepts (#545, #646) — a hand-written copy here had drifted on all 14 —
+   * and the row's slug and handler are its `slug` and class name.
    */
   capability: BaseCapability;
   rateLimit: number;
@@ -34,69 +33,53 @@ interface CleanupCap {
 
 const DETERMINISTIC: CleanupCap[] = [
   {
-    slug: 'strip_lines_matching',
     name: 'Strip Lines Matching',
     description:
       'Remove whole lines from the cleanup document where a regex matches anywhere in the line.',
-    handler: 'StripLinesMatchingCapability',
     capability: new StripLinesMatchingCapability(),
     rateLimit: 60,
   },
   {
-    slug: 'strip_matches',
     name: 'Strip Matches',
     description:
       'Remove inline regex matches from the cleanup document, leaving surrounding text intact.',
-    handler: 'StripMatchesCapability',
     capability: new StripMatchesCapability(),
     rateLimit: 60,
   },
   {
-    slug: 'strip_timestamps',
     name: 'Strip Timestamps',
     description: 'Remove timestamp markers (00:00, [12:34:56], etc.) from the cleanup document.',
-    handler: 'StripTimestampsCapability',
     capability: new StripTimestampsCapability(),
     rateLimit: 60,
   },
   {
-    slug: 'strip_speaker_labels',
     name: 'Strip Speaker Labels',
     description: 'Remove "Name:" or "[Name]" speaker labels at the start of lines.',
-    handler: 'StripSpeakerLabelsCapability',
     capability: new StripSpeakerLabelsCapability(),
     rateLimit: 60,
   },
   {
-    slug: 'collapse_whitespace',
     name: 'Collapse Whitespace',
     description: 'Collapse runs of spaces/tabs, trim trailing whitespace, and squash blank lines.',
-    handler: 'CollapseWhitespaceCapability',
     capability: new CollapseWhitespaceCapability(),
     rateLimit: 60,
   },
   {
-    slug: 'dedupe_lines',
     name: 'Dedupe Lines',
     description: 'Remove duplicate lines (adjacent or document-wide).',
-    handler: 'DedupeLinesCapability',
     capability: new DedupeLinesCapability(),
     rateLimit: 60,
   },
   {
-    slug: 'join_wrapped_lines',
     name: 'Join Wrapped Lines',
     description:
       'Rejoin sentences a PDF or fixed-width renderer wrapped across lines, and rejoin hyphen-split words.',
-    handler: 'JoinWrappedLinesCapability',
     capability: new JoinWrappedLinesCapability(),
     rateLimit: 60,
   },
   {
-    slug: 'normalise_punctuation',
     name: 'Normalise Punctuation',
     description: 'Convert typographic punctuation (smart quotes, dashes, ellipsis) to ASCII.',
-    handler: 'NormalisePunctuationCapability',
     capability: new NormalisePunctuationCapability(),
     rateLimit: 60,
   },
@@ -104,37 +87,29 @@ const DETERMINISTIC: CleanupCap[] = [
 
 const READ_ONLY: CleanupCap[] = [
   {
-    slug: 'read_document',
     name: 'Read Document',
     description:
       'Read a window of the cleanup document as numbered lines — the only capability that returns actual text.',
-    handler: 'ReadDocumentCapability',
     capability: new ReadDocumentCapability(),
     rateLimit: 120,
   },
   {
-    slug: 'find_in_document',
     name: 'Find In Document',
     description:
       'Find lines matching a regex, returning line numbers and text. Checks a pattern before a destructive transform uses it.',
-    handler: 'FindInDocumentCapability',
     capability: new FindInDocumentCapability(),
     rateLimit: 120,
   },
   {
-    slug: 'preview_diff',
     name: 'Preview Diff',
     description: 'Summarise the difference between the original and current cleanup state.',
-    handler: 'PreviewDiffCapability',
     capability: new PreviewDiffCapability(),
     rateLimit: 120,
   },
   {
-    slug: 'estimate_size',
     name: 'Estimate Size',
     description:
       'Report token count and size class (small/medium/large/too-large) for the current cleanup state.',
-    handler: 'EstimateSizeCapability',
     capability: new EstimateSizeCapability(),
     rateLimit: 120,
   },
@@ -142,18 +117,14 @@ const READ_ONLY: CleanupCap[] = [
 
 const LLM_BACKED: CleanupCap[] = [
   {
-    slug: 'rewrite_with_llm',
     name: 'Rewrite With LLM',
     description: 'LLM rewrite of the entire cleanup document per natural-language instructions.',
-    handler: 'RewriteWithLlmCapability',
     capability: new RewriteWithLlmCapability(),
     rateLimit: 6,
   },
   {
-    slug: 'rewrite_section_with_llm',
     name: 'Rewrite Section With LLM',
     description: 'LLM rewrite of a single matched section of the cleanup document.',
-    handler: 'RewriteSectionWithLlmCapability',
     capability: new RewriteSectionWithLlmCapability(),
     rateLimit: 12,
   },
@@ -194,17 +165,18 @@ const unit: SeedUnit = {
   async run({ prisma, logger }) {
     logger.info('🧼 Seeding document cleanup capabilities...');
     for (const cap of CLEANUP_CAPABILITIES) {
+      const { slug } = cap.capability;
       const codeOwned = {
         executionType: 'internal' as const,
-        executionHandler: cap.handler,
+        executionHandler: cap.capability.constructor.name,
         // Internal, typed data (the class's own definition), not external input.
         functionDefinition: cap.capability.functionDefinition as unknown as Prisma.InputJsonValue,
       };
       await prisma.aiCapability.upsert({
-        where: { slug: cap.slug },
+        where: { slug },
         update: { isSystem: true, ...codeOwned },
         create: {
-          slug: cap.slug,
+          slug,
           name: cap.name,
           description: cap.description,
           category: 'document_cleanup',

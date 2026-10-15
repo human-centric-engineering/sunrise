@@ -1,6 +1,6 @@
 /**
- * Invariant: each built-in capability's seeded `functionDefinition` matches the
- * one its class declares.
+ * Invariant: each capability's seeded `functionDefinition` matches the one its
+ * class declares.
  *
  * The seed row is what the LLM and every MCP client are shown; the class is
  * what actually validates and runs. When they disagree the model is told about
@@ -23,38 +23,37 @@
  * of step with it — and a description is not cosmetic here, it is how the model
  * decides which parameter to use.
  *
+ * **The seeds are run, not read.** An earlier version found capabilities by
+ * reading seed source for `functionDefinition: { name: '…' }`, and passed over
+ * every seed written another way — a hoisted const, a definition taken from the
+ * class — without reporting it (#646). That hid all fourteen of
+ * `019-cleanup-capabilities`, every one of which had drifted from its class.
+ * Each capability seed now runs against a recording mock client, and what it
+ * actually writes is what gets checked, however the seed is written.
+ *
  * ---------------------------------------------------------------------------
- * FORK NOTE — your capability seeds are read here too
+ * FORK NOTE — your capability seeds are run here too
  * ---------------------------------------------------------------------------
- * The completeness check reads every seed under `prisma/seeds/`, recursively,
- * yours included, and fails on a capability with no pair. Declare your pairs in
+ * Every seed under `prisma/seeds/` that writes an `aiCapability` is run,
+ * yours included, and each capability it writes needs a pair. Declare yours in
  * `lib/app/capability-seed-pairs.ts` (`APP_CAPABILITY_PAIRS`, spread into
  * `PAIRS` below) — do not add rows to `PAIRS`, which is Sunrise's and a merge
- * conflict on every upgrade. A seed whose definitions the reader cannot name
- * (imported, read off an instance) also needs `seedFile` on its pairs (#646).
+ * conflict on every upgrade. A seed must write through the `prisma` it is
+ * handed (as the runner requires anyway); one that reaches for the global
+ * client writes nothing here and fails "captures a write from every
+ * capability seed".
  *
  * @see .context/database/seeding.md — the seed ownership rule
  * @see lib/app/capability-seed-pairs.ts — where a fork's pairs go
  */
 
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeAll } from 'vitest';
 
-import { scanCapabilitySeeds } from '@/tests/helpers/seed-capabilities';
+import type { SeedContext, SeedUnit } from '@/prisma/runner';
 import { APP_CAPABILITY_PAIRS, type AppCapabilityPair } from '@/lib/app/capability-seed-pairs';
-
-import { CAPABILITY_DEFINITIONS } from '@/prisma/seeds/005-pattern-advisor';
-import {
-  ADD_PROVIDER_MODELS_DEFINITION,
-  APPLY_AUDIT_CHANGES_DEFINITION,
-  DEACTIVATE_PROVIDER_MODELS_DEFINITION,
-} from '@/prisma/seeds/010-model-auditor';
-import { CALL_EXTERNAL_API_IMPL } from '@/prisma/seeds/011-call-external-api';
-import { RUN_WORKFLOW_IMPL } from '@/prisma/seeds/012-run-workflow';
-import { UPLOAD_TO_STORAGE_IMPL } from '@/prisma/seeds/013-upload-to-storage';
-import { SEND_MESSAGE_IMPL } from '@/prisma/seeds/014-send-message-to-channel';
-import { CLEANUP_CAPABILITIES } from '@/prisma/seeds/019-cleanup-capabilities';
 
 import { AddProviderModelsCapability } from '@/lib/orchestration/capabilities/built-in/add-provider-models';
 import { ApplyAuditChangesCapability } from '@/lib/orchestration/capabilities/built-in/apply-audit-changes';
@@ -81,202 +80,167 @@ import { StripMatchesCapability } from '@/lib/orchestration/capabilities/built-i
 import { StripSpeakerLabelsCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/strip-speaker-labels';
 import { StripTimestampsCapability } from '@/lib/orchestration/capabilities/built-in/document-cleanup/strip-timestamps';
 
-/** A seeded definition, whatever shape the seed file happens to hold it in. */
-type SeededDefinition = { functionDefinition: unknown };
-
-const byslug = (slug: string): SeededDefinition => {
-  const found = CAPABILITY_DEFINITIONS.find((d) => d.slug === slug);
-  if (!found) throw new Error(`005-pattern-advisor has no definition for "${slug}"`);
-  return found;
-};
-
-const CLEANUP_SEED = '019-cleanup-capabilities.ts';
-
-/**
- * 019 builds each definition from the class instance it holds, so the reader
- * cannot name them (it reports the file as opaque, and the module-side check
- * below lists them instead). Each row still pins the
- * slug to a FRESH instance of the class the test expects, which is what
- * catches the seed wiring the wrong class to a slug.
- */
-const cleanup = (slug: string, instance: { functionDefinition: unknown }): AppCapabilityPair => {
-  const found = CLEANUP_CAPABILITIES.find((c) => c.slug === slug);
-  if (!found) throw new Error(`019-cleanup-capabilities has no capability "${slug}"`);
-  return {
-    slug,
-    seeded: { functionDefinition: found.capability.functionDefinition },
-    instance,
-    seedFile: CLEANUP_SEED,
-  };
-};
-
-const PAIRS: AppCapabilityPair[] = [
-  {
-    slug: 'search_knowledge_base',
-    seeded: byslug('search_knowledge_base'),
-    seedFile: '005-pattern-advisor.ts',
-    instance: new SearchKnowledgeCapability(),
-  },
-  {
-    slug: 'get_pattern_detail',
-    seeded: byslug('get_pattern_detail'),
-    seedFile: '005-pattern-advisor.ts',
-    instance: new GetPatternDetailCapability(),
-  },
-  {
-    slug: 'estimate_workflow_cost',
-    seeded: byslug('estimate_workflow_cost'),
-    seedFile: '005-pattern-advisor.ts',
-    instance: new EstimateCostCapability(),
-  },
-  {
-    slug: 'apply_audit_changes',
-    seeded: APPLY_AUDIT_CHANGES_DEFINITION,
-    seedFile: '010-model-auditor.ts',
-    instance: new ApplyAuditChangesCapability(),
-  },
-  {
-    slug: 'add_provider_models',
-    seeded: ADD_PROVIDER_MODELS_DEFINITION,
-    seedFile: '010-model-auditor.ts',
-    instance: new AddProviderModelsCapability(),
-  },
-  {
-    slug: 'deactivate_provider_models',
-    seeded: DEACTIVATE_PROVIDER_MODELS_DEFINITION,
-    seedFile: '010-model-auditor.ts',
-    instance: new DeactivateProviderModelsCapability(),
-  },
-  {
-    slug: 'call_external_api',
-    seeded: CALL_EXTERNAL_API_IMPL,
-    instance: new CallExternalApiCapability(),
-  },
-  { slug: 'run_workflow', seeded: RUN_WORKFLOW_IMPL, instance: new RunWorkflowCapability() },
-  {
-    slug: 'upload_to_storage',
-    seeded: UPLOAD_TO_STORAGE_IMPL,
-    instance: new UploadToStorageCapability(),
-  },
-  {
-    slug: 'send_message_to_channel',
-    seeded: SEND_MESSAGE_IMPL,
-    instance: new SendMessageToChannelCapability(),
-  },
-  cleanup('collapse_whitespace', new CollapseWhitespaceCapability()),
-  cleanup('dedupe_lines', new DedupeLinesCapability()),
-  cleanup('estimate_size', new EstimateSizeCapability()),
-  cleanup('find_in_document', new FindInDocumentCapability()),
-  cleanup('join_wrapped_lines', new JoinWrappedLinesCapability()),
-  cleanup('normalise_punctuation', new NormalisePunctuationCapability()),
-  cleanup('preview_diff', new PreviewDiffCapability()),
-  cleanup('read_document', new ReadDocumentCapability()),
-  cleanup('rewrite_section_with_llm', new RewriteSectionWithLlmCapability()),
-  cleanup('rewrite_with_llm', new RewriteWithLlmCapability()),
-  cleanup('strip_lines_matching', new StripLinesMatchingCapability()),
-  cleanup('strip_matches', new StripMatchesCapability()),
-  cleanup('strip_speaker_labels', new StripSpeakerLabelsCapability()),
-  cleanup('strip_timestamps', new StripTimestampsCapability()),
+/** Which class goes with which slug. The seeds supply what was written. */
+const PAIRS: readonly AppCapabilityPair[] = [
+  { slug: 'search_knowledge_base', instance: new SearchKnowledgeCapability() },
+  { slug: 'get_pattern_detail', instance: new GetPatternDetailCapability() },
+  { slug: 'estimate_workflow_cost', instance: new EstimateCostCapability() },
+  { slug: 'apply_audit_changes', instance: new ApplyAuditChangesCapability() },
+  { slug: 'add_provider_models', instance: new AddProviderModelsCapability() },
+  { slug: 'deactivate_provider_models', instance: new DeactivateProviderModelsCapability() },
+  { slug: 'call_external_api', instance: new CallExternalApiCapability() },
+  { slug: 'run_workflow', instance: new RunWorkflowCapability() },
+  { slug: 'upload_to_storage', instance: new UploadToStorageCapability() },
+  { slug: 'send_message_to_channel', instance: new SendMessageToChannelCapability() },
+  // 019 takes these definitions from the classes themselves, so for them the
+  // comparison below holds by construction; the rows still pin which class
+  // each slug is seeded from.
+  { slug: 'collapse_whitespace', instance: new CollapseWhitespaceCapability() },
+  { slug: 'dedupe_lines', instance: new DedupeLinesCapability() },
+  { slug: 'estimate_size', instance: new EstimateSizeCapability() },
+  { slug: 'find_in_document', instance: new FindInDocumentCapability() },
+  { slug: 'join_wrapped_lines', instance: new JoinWrappedLinesCapability() },
+  { slug: 'normalise_punctuation', instance: new NormalisePunctuationCapability() },
+  { slug: 'preview_diff', instance: new PreviewDiffCapability() },
+  { slug: 'read_document', instance: new ReadDocumentCapability() },
+  { slug: 'rewrite_section_with_llm', instance: new RewriteSectionWithLlmCapability() },
+  { slug: 'rewrite_with_llm', instance: new RewriteWithLlmCapability() },
+  { slug: 'strip_lines_matching', instance: new StripLinesMatchingCapability() },
+  { slug: 'strip_matches', instance: new StripMatchesCapability() },
+  { slug: 'strip_speaker_labels', instance: new StripSpeakerLabelsCapability() },
+  { slug: 'strip_timestamps', instance: new StripTimestampsCapability() },
   ...APP_CAPABILITY_PAIRS,
 ];
 
-const paired = new Set(PAIRS.map((p) => p.slug));
+const SEED_DIR = join(process.cwd(), 'prisma', 'seeds');
+/** The runner's own pattern (`prisma/runner.ts`) — anything else is not a unit. */
+const SEED_FILE = /^\d{3}-[a-z0-9-]+\.ts$/;
 
-/**
- * The `functionDefinition.name` of every definition a seed module exports —
- * an exported definition, an array of them, and one level of nesting below an
- * entry (019's `{ capability }`).
- */
-function exportedDefinitionNames(mod: unknown): string[] {
-  const names: string[] = [];
-  const visit = (value: unknown, depth: number): void => {
-    if (Array.isArray(value)) {
-      for (const item of value) visit(item, depth);
-      return;
-    }
-    if (typeof value !== 'object' || value === null) return;
-    if ('functionDefinition' in value) {
-      const fd: unknown = value.functionDefinition;
-      if (typeof fd === 'object' && fd !== null && 'name' in fd && typeof fd.name === 'string') {
-        names.push(fd.name);
-      }
-      return;
-    }
-    if (depth < 2) for (const child of Object.values(value)) visit(child, depth + 1);
-  };
-  visit(mod, 0);
-  return [...new Set(names)];
+/** Every seed unit, recursively — the runner discovers fork seeds the same way. */
+function seedFiles(dir: string, prefix = ''): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) return seedFiles(join(dir, entry.name), rel);
+    return SEED_FILE.test(entry.name) ? [rel] : [];
+  });
 }
 
-describe('built-in capabilities — seed definition matches the class (#545)', () => {
-  it('covers every capability the seeds define', () => {
-    // Derived from the seeds, not asserted against a literal. The first version
-    // hardcoded `toHaveLength(10)` and deferred coverage to the companion
-    // check, which counts upsert STATEMENTS with a `>=` floor — so a review
-    // added an 11th capability in a fresh seed file and both suites stayed
-    // green while its class↔seed parity went unwatched. That is the exact
-    // failure this pair exists to close.
-    //
-    // Keyed on `functionDefinition.name`, not the `where:` slug: only four of
-    // the eight upserts pass a literal slug (005 loops, 010 reads `def.slug`),
-    // so slugs would have covered under half of them.
-    const { definedNames } = scanCapabilitySeeds();
+/** One capability write a seed performed. */
+interface Captured {
+  file: string;
+  slug: unknown;
+  functionDefinition: unknown;
+}
 
-    // Floor first. An earlier version read zero slugs through a regex bug, so
-    // `[].filter(unpaired)` was `[]` and the assertion passed while covering
-    // nothing. A derived expectation needs its own non-emptiness check.
-    expect(definedNames.length).toBeGreaterThanOrEqual(10);
-    expect(definedNames.filter((n) => !paired.has(n))).toEqual([]);
-    expect(new Set(PAIRS.map((p) => p.slug)).size).toBe(PAIRS.length);
-  });
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
 
-  it('covers every seed file whose definitions the reader cannot name (#646)', () => {
-    // A definition the reader cannot name used to contribute nothing, and
-    // nothing was reported either — so 019's fourteen capabilities went
-    // unwatched while every one of them drifted from its class.
-    //
-    // Every such file must be declared by a pair's `seedFile`, including one
-    // that ALSO names capabilities (005 and 010 re-read their own literals
-    // through `def.functionDefinition`): exempting a file for naming one
-    // capability would pass over an imported definition sitting beside it.
-    //
-    // The declaration is per FILE, because these are exactly the definitions
-    // the reader cannot name — it cannot say which capability is missing. The
-    // next test closes that from the module side.
-    const { opaqueDefinitions } = scanCapabilitySeeds();
-    const opaque = new Set(opaqueDefinitions.map((o) => o.file));
-    const declared = new Set(PAIRS.flatMap((p) => (p.seedFile ? [p.seedFile] : [])));
-    expect([...opaque].filter((file) => !declared.has(file))).toEqual([]);
-    // A declared file must actually be opaque, or the declaration is a typo
-    // that exempts nothing — and hides the file it meant.
-    expect([...declared].filter((file) => !opaque.has(file))).toEqual([]);
-  });
-
-  it('pairs every definition a declared seed exports', async () => {
-    // A `seedFile` declaration covers a FILE, because the reader cannot name
-    // the definitions in it — so on its own it would pass over a capability
-    // added to that file later. The module can name them: every declared seed
-    // is imported and each definition it exports must have a pair. A declared
-    // seed that exports none fails, rather than being taken on trust.
-    const declared = [...new Set(PAIRS.flatMap((p) => (p.seedFile ? [p.seedFile] : [])))];
-    expect(declared.length).toBeGreaterThan(0);
-    for (const file of declared) {
-      const mod: unknown = await import(
-        /* @vite-ignore */ join(process.cwd(), 'prisma', 'seeds', file)
-      );
-      const names = exportedDefinitionNames(mod);
-      expect({ file, names: names.length > 0 }).toEqual({ file, names: true });
-      expect({ file, unpaired: names.filter((n) => !paired.has(n)) }).toEqual({
+/**
+ * A client that records `aiCapability` writes and answers everything else
+ * with an inert value: a row with an id for single reads and writes (so a seed
+ * that looks up its owner proceeds), `[]` for lists, `0` for counts, and
+ * `$transaction(fn)` runs `fn` against the same client.
+ */
+function recordingClient(file: string, captured: Captured[]): unknown {
+  const record = (method: string, args: unknown): void => {
+    if (!isRecord(args)) return;
+    const where = isRecord(args.where) ? args.where : {};
+    const writes: unknown[] =
+      method === 'createMany' && Array.isArray(args.data)
+        ? args.data
+        : [args.create, args.update, args.data];
+    for (const data of writes) {
+      if (!isRecord(data) || !('functionDefinition' in data)) continue;
+      captured.push({
         file,
-        unpaired: [],
+        slug: data.slug ?? where.slug,
+        functionDefinition: data.functionDefinition,
       });
     }
+  };
+  const model = (name: string): unknown =>
+    new Proxy(
+      {},
+      {
+        get: (_target, method) => {
+          if (typeof method !== 'string') return undefined;
+          return (args: unknown) => {
+            if (name === 'aiCapability') record(method, args);
+            if (method === 'findMany' || method === 'groupBy') return Promise.resolve([]);
+            if (method === 'count') return Promise.resolve(0);
+            return Promise.resolve({ id: 'parity-mock-id' });
+          };
+        },
+      }
+    );
+  const client: unknown = new Proxy(
+    {},
+    {
+      get: (_target, prop) => {
+        if (typeof prop !== 'string' || prop === 'then') return undefined;
+        if (prop === '$transaction') {
+          return (arg: unknown) =>
+            typeof arg === 'function' ? Promise.resolve(arg(client)) : Promise.resolve([]);
+        }
+        if (prop.startsWith('$')) return () => Promise.resolve([]);
+        return model(prop);
+      },
+    }
+  );
+  return client;
+}
+
+const isSeedUnit = (value: unknown): value is SeedUnit =>
+  isRecord(value) && typeof value.run === 'function';
+
+/** Seeds that write capabilities, and every capability write they made. */
+let capabilitySeeds: string[] = [];
+const captured: Captured[] = [];
+
+beforeAll(async () => {
+  // A seed that never names `aiCapability` cannot write one through the
+  // client it is handed, and running every seed is not safe: `007` ignores
+  // that client and writes through the app's own, which here would be a real
+  // database if one is configured.
+  capabilitySeeds = seedFiles(SEED_DIR).filter((file) =>
+    readFileSync(join(SEED_DIR, file), 'utf8').includes('aiCapability')
+  );
+  const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
+  for (const file of capabilitySeeds) {
+    const mod: unknown = await import(/* @vite-ignore */ join(SEED_DIR, file));
+    const unit = isRecord(mod) ? mod.default : undefined;
+    if (!isSeedUnit(unit)) throw new Error(`${file} does not default-export a SeedUnit`);
+    await unit.run({ prisma: recordingClient(file, captured), logger } as unknown as SeedContext);
+  }
+});
+
+describe('capabilities — seeded definition matches the class (#545, #646)', () => {
+  it('captures a write from every capability seed', () => {
+    // Floor first. A derived expectation needs its own non-emptiness check:
+    // an earlier version read zero names through a regex bug and passed.
+    expect(captured.length).toBeGreaterThanOrEqual(24);
+    // A seed that names `aiCapability` but records nothing wrote through some
+    // other client, so nothing it writes would be checked.
+    const silent = capabilitySeeds.filter((file) => !captured.some((c) => c.file === file));
+    expect(silent).toEqual([]);
   });
 
-  it.each(PAIRS)('$slug', ({ slug, seeded, instance }) => {
-    expect(seeded.functionDefinition).toEqual(instance.functionDefinition);
-    // The seed used to force `name` to the slug (019 did); taking it from the
-    // class instead means nothing else holds them together.
+  it('pairs every capability the seeds write, and nothing they do not', () => {
+    const written = new Set(captured.map((c) => c.slug));
+    const paired = new Set(PAIRS.map((p) => p.slug));
+    expect(new Set(PAIRS.map((p) => p.slug)).size).toBe(PAIRS.length);
+    expect([...written].filter((slug) => typeof slug !== 'string' || !paired.has(slug))).toEqual(
+      []
+    );
+    expect([...paired].filter((slug) => !written.has(slug))).toEqual([]);
+  });
+
+  it.each(PAIRS)('$slug', ({ slug, instance }) => {
+    const writes = captured.filter((c) => c.slug === slug);
+    expect(writes.length).toBeGreaterThan(0);
+    for (const write of writes) {
+      expect(write.functionDefinition).toEqual(instance.functionDefinition);
+    }
     expect(instance.functionDefinition).toMatchObject({ name: slug });
   });
 });

@@ -119,19 +119,10 @@ describe('019-cleanup-capabilities seed', () => {
     const hashed = (cleanupCapabilitiesSeed.hashInputs ?? []).map((rel) =>
       readFileSync(join(seedDir, rel), 'utf8')
     );
-    const unhashed = CLEANUP_CAPABILITIES.filter(
-      (cap) => !hashed.some((src) => src.includes(`export class ${cap.handler} `))
-    ).map((cap) => cap.handler);
+    const unhashed = CLEANUP_CAPABILITIES.map((cap) => cap.capability.constructor.name).filter(
+      (handler) => !hashed.some((src) => src.includes(`export class ${handler} `))
+    );
     expect(unhashed).toEqual([]);
-  });
-
-  it('names, for each capability, the class it holds', () => {
-    // `executionHandler` is how the dispatcher finds the class; it must be the
-    // class whose definition the seed writes.
-    for (const cap of CLEANUP_CAPABILITIES) {
-      expect(cap.capability.constructor.name).toBe(cap.handler);
-      expect(cap.capability.slug).toBe(cap.slug);
-    }
   });
 
   it('declares the expected seed unit name', () => {

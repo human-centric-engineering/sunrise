@@ -434,7 +434,7 @@ const SEAM_DEFAULTS: SeamDefault[] = [
   },
   {
     seam: 'lib/app/capability-seed-pairs.ts',
-    risk: 'a stray pair would pin a capability no install seeds, and one declaring a `seedFile` would mark a seed as covered that nothing pairs — the parity check passing over the very file it was told to watch',
+    risk: 'a stray pair names a capability no install seeds, which fails the parity test on every install — and a stray class for a slug core seeds would hold that capability to the wrong definition',
     assert: () => expect(APP_CAPABILITY_PAIRS).toEqual([]),
   },
   {

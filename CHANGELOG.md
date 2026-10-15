@@ -20,17 +20,15 @@ release process.
 
 - **A fork pairs its own capability seeds with their classes** (#646): the new
   `lib/app/capability-seed-pairs.ts` seam (`APP_CAPABILITY_PAIRS`, ships
-  empty) is spread into `capability-class-seed-parity`'s `PAIRS`, so a fork's
-  capability seeds are held to their classes without editing a Sunrise test.
-  The seed reader now names a capability whose `functionDefinition` is a
-  same-file const (`functionDefinition: FOO_DEF`, or `{ functionDefinition }`),
-  and reports one it cannot name (imported, read off an instance) instead of
-  dropping it. `eslint.config.mjs` lets that one seam file import
-  `@/prisma/seeds/**` (the `lib/app/**` boundary otherwise matches it as a
-  Prisma import); `@prisma/*` and every other `prisma` path stay banned there. **Forks:** a capability seed
-  written that way was invisible to the completeness check and now fails it
-  until you pair it here; a pair for a seed the reader cannot name also sets
-  `seedFile`, and that seed must export the definitions it writes.
+  empty) lists which class goes with which slug, and is spread into
+  `capability-class-seed-parity`'s `PAIRS`, so a fork's capability seeds are
+  held to their classes without editing a Sunrise test. That test now runs
+  every seed that writes an `aiCapability` against a recording mock client
+  instead of reading seed source, so it checks every capability a seed writes,
+  however the seed is written. **Forks:** a capability seed that the old
+  source reader could not see (a hoisted const, a definition taken from the
+  class) now fails the test until you pair it here, and a seed must write
+  through the `prisma` it is handed for its capabilities to be captured.
 
 - **A fork classifies its own models for the owner layer** (§115 t-807): the
   new `lib/app/owner-classification.ts` seam (`initAppOwnerClassification()`,

@@ -12,46 +12,6 @@ import tseslint from 'typescript-eslint';
 // `no-restricted-imports` replace-not-merge footgun).
 import appEslintConfig from './lib/app/eslint.config.mjs';
 
-// The `lib/app/**` import-boundary patterns (see the block that applies them,
-// below). A const so the one carve-out — `lib/app/capability-seed-pairs.ts` —
-// restates them instead of copying them.
-const APP_BOUNDARY_PATTERNS = [
-  {
-    group: ['./*', '../*'],
-    message: 'Use the @/ path alias instead of relative imports (CLAUDE.md).',
-  },
-  {
-    group: ['next', 'next/*', 'next/dist/**'],
-    allowTypeImports: true,
-    message:
-      'lib/app/** must stay framework-agnostic — no runtime next/* imports ' +
-      '(type-only imports are allowed). Put framework glue in app/ or a ' +
-      'lib/app/<name>/server/ module.',
-  },
-  {
-    group: ['react-dom', 'react-dom/*'],
-    allowTypeImports: true,
-    message:
-      'lib/app/** must not import react-dom — hydration / server entry points ' +
-      'are framework glue that belongs in app/, not the portable extension surface.',
-  },
-  {
-    group: ['prisma', '@prisma/*'],
-    allowTypeImports: true,
-    message:
-      'lib/app/** must not import Prisma directly — DB access goes through ' +
-      'app/ route handlers or lib/ services; the extension surface stays ' +
-      'storage-agnostic.',
-  },
-  {
-    group: ['fs', 'fs/*', 'path', 'node:*'],
-    message:
-      'lib/app/** must not depend on Node-only built-ins — those crash in ' +
-      'the edge and client realms a fork may bundle this file into. Move IO ' +
-      'into a server-only module.',
-  },
-];
-
 export default tseslint.config(
   // Global ignores
   {
@@ -262,41 +222,42 @@ export default tseslint.config(
       '@typescript-eslint/no-restricted-imports': [
         'error',
         {
-          patterns: APP_BOUNDARY_PATTERNS,
-        },
-      ],
-    },
-  },
-
-  // ── Carve-out: the capability seed-pairs seam reads seed modules ─────────
-  // `lib/app/capability-seed-pairs.ts` is read only by the seed parity test,
-  // and its pairs are a seed constant beside a capability class — so it has
-  // to import `@/prisma/seeds/**`, which the `'prisma'` group above matches as
-  // a path segment (#646). Seeds only, for this one file; `@prisma/*` and the
-  // bare `prisma` CLI stay banned, and every other lib/app file is unchanged.
-  // A later block for the same file replaces the rule, so it restates the
-  // whole pattern list.
-  {
-    files: ['lib/app/capability-seed-pairs.ts'],
-    rules: {
-      '@typescript-eslint/no-restricted-imports': [
-        'error',
-        {
-          // The `'prisma'` group is gitignore-style, so it matches the `prisma`
-          // SEGMENT of `@/prisma/seeds/…` and a `!` negation cannot re-include
-          // a path under an excluded segment. Here the same two packages are
-          // banned by an anchored regex instead.
-          patterns: APP_BOUNDARY_PATTERNS.map((p) => {
-            if (!p.group.includes('@prisma/*')) return p;
-            // Bans what the group did — `@prisma/*`, and any specifier with a
-            // `prisma` path segment — except `@/prisma/seeds/…` with no `..`
-            // (`@/prisma/seeds/../runner` is `@/prisma/runner`).
-            return {
-              regex: '^(?:@prisma/.*|(?!@/prisma/seeds/(?!.*\\.\\.)).*(?:^|/)prisma(?:/.*)?)$',
-              allowTypeImports: p.allowTypeImports,
-              message: p.message,
-            };
-          }),
+          patterns: [
+            {
+              group: ['./*', '../*'],
+              message: 'Use the @/ path alias instead of relative imports (CLAUDE.md).',
+            },
+            {
+              group: ['next', 'next/*', 'next/dist/**'],
+              allowTypeImports: true,
+              message:
+                'lib/app/** must stay framework-agnostic — no runtime next/* imports ' +
+                '(type-only imports are allowed). Put framework glue in app/ or a ' +
+                'lib/app/<name>/server/ module.',
+            },
+            {
+              group: ['react-dom', 'react-dom/*'],
+              allowTypeImports: true,
+              message:
+                'lib/app/** must not import react-dom — hydration / server entry points ' +
+                'are framework glue that belongs in app/, not the portable extension surface.',
+            },
+            {
+              group: ['prisma', '@prisma/*'],
+              allowTypeImports: true,
+              message:
+                'lib/app/** must not import Prisma directly — DB access goes through ' +
+                'app/ route handlers or lib/ services; the extension surface stays ' +
+                'storage-agnostic.',
+            },
+            {
+              group: ['fs', 'fs/*', 'path', 'node:*'],
+              message:
+                'lib/app/** must not depend on Node-only built-ins — those crash in ' +
+                'the edge and client realms a fork may bundle this file into. Move IO ' +
+                'into a server-only module.',
+            },
+          ],
         },
       ],
     },

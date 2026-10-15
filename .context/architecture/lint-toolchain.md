@@ -151,12 +151,6 @@ upgrades and can be reasoned about in isolation:
   storage-agnostic; DB access flows through `app/` route handlers or `lib/` services.
   Type-only imports of `@prisma/*` are allowed (they're needed for entity types and
   erase at compile time).
-  The `prisma` pattern is gitignore-style, so it also matches the `prisma` segment of
-  `@/prisma/seeds/…`. One file needs those imports and gets a carve-out:
-  `lib/app/capability-seed-pairs.ts`, read only by the seed parity test (#646). Its
-  block restates the shared `APP_BOUNDARY_PATTERNS` with the Prisma group swapped
-  for an anchored regex that still bans `@prisma/*` and any specifier with a `prisma`
-  segment, except `@/prisma/seeds/…` with no `..` in it; nothing else changes for it.
 - **No Node-only built-ins** (`fs`, `fs/*`, `path`, or any `node:*` specifier). These
   crash in the edge and client realms a fork's `lib/app/` file may be bundled into.
   IO belongs in a server-only module.
