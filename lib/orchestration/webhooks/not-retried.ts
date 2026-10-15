@@ -19,31 +19,16 @@ export function notRetriedSuffix(reason: string): string {
   return ` (not retried: ${reason})`;
 }
 
-/** Why erasure stopped a row whose payload names the erased person (t-783). */
+/**
+ * Why erasure stopped a row whose payload names the erased person (t-783).
+ * The wording goes on `lastError` for people to read; what a retry or a
+ * replay refuses on is the row's `stoppedByErasure` column (t-809), which no
+ * later `lastError` write can clear.
+ */
 export const SUBJECT_ERASED = 'subject erased';
 
 /** Why erasure stopped an email delivery addressed to the erased person (t-786). */
 export const RECIPIENT_ERASED = 'recipient erased';
-
-const ERASURE_REASONS: readonly string[] = [SUBJECT_ERASED, RECIPIENT_ERASED];
-
-/**
- * Whether erasure stopped this row: its `lastError` is {@link notRetried}'s
- * wording for one of the erasure reasons. A manual retry or a replay refuses
- * such a row (t-793). What it would send is about a person who has been
- * erased, or goes to their address.
- *
- * Read from `lastError` because that is the only mark an erasure leaves. The
- * row keeps its status vocabulary, so `exhausted` alone cannot tell an erased
- * row from one that ran out of attempts.
- */
-export function isStoppedByErasure(lastError: string | null): boolean {
-  if (!lastError) return false;
-  return ERASURE_REASONS.some(
-    (reason) =>
-      lastError === notRetried(null, reason) || lastError.endsWith(notRetriedSuffix(reason))
-  );
-}
 
 /**
  * The statuses of a delivery that will still be sent again — waiting on its

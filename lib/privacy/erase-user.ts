@@ -324,6 +324,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
               status: 'exhausted',
               nextRetryAt: null,
               lastError: notRetried(row.lastError, RECIPIENT_ERASED),
+              stoppedByErasure: true,
               ...(row.destination === address
                 ? { destination: ERASED_DESTINATION, destinationFingerprint: null }
                 : {}),

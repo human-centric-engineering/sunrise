@@ -20,7 +20,6 @@ import { getClientIP } from '@/lib/security/ip';
 import { retryHookDelivery } from '@/lib/orchestration/hooks/registry';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
-import { isStoppedByErasure } from '@/lib/orchestration/webhooks/not-retried';
 
 export const POST = withAdminAuth<{ id: string }>(async (request, session, { params }) => {
   const clientIP = getClientIP(request);
@@ -32,7 +31,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
 
   const delivery = await prisma.aiEventHookDelivery.findUnique({
     where: { id },
-    select: { hookId: true, lastError: true },
+    select: { hookId: true, stoppedByErasure: true },
   });
   if (!delivery) throw new NotFoundError('Hook delivery not found');
   if (delivery.hookId === null) {
@@ -40,7 +39,7 @@ export const POST = withAdminAuth<{ id: string }>(async (request, session, { par
       'The hook that sent this delivery was deleted; the delivery is kept as a record and cannot be retried'
     );
   }
-  if (isStoppedByErasure(delivery.lastError)) {
+  if (delivery.stoppedByErasure) {
     throw new ConflictError(
       'This delivery was stopped because the person it concerns was erased; it is kept as a record and cannot be retried'
     );

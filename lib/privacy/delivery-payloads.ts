@@ -185,6 +185,36 @@ function dataContains(key: string, value: unknown): Prisma.Sql {
 }
 
 /**
+ * The `UNION ALL` of every way a delivery in `table` names `userId`, each arm
+ * returning `columns` and an `activity` flag (see the module comment). Each
+ * arm is one containment the GIN index answers; the two joins drive the index
+ * once per conversation or run. Every arm returns what its caller needs, so
+ * nothing joins back to the table. A row can come back from more than one arm.
+ */
+function matchArms(table: DeliveryTable, userId: string, columns: Prisma.Sql): Prisma.Sql {
+  const t = TABLES[table];
+  return Prisma.sql`
+      SELECT ${columns}, true AS activity
+        FROM ai_conversation c
+        JOIN ${t} d
+          ON d.payload @> jsonb_build_object('data', jsonb_build_object('conversationId', c.id))
+       WHERE c."userId" = ${userId}
+      UNION ALL
+      SELECT ${columns}, true
+        FROM ai_workflow_execution e
+        JOIN ${t} d
+          ON d.payload @> jsonb_build_object('data', jsonb_build_object('executionId', e.id))
+       WHERE e."userId" = ${userId}
+      UNION ALL
+      SELECT ${columns}, true FROM ${t} d WHERE d.payload @> ${dataContains('userId', userId)}
+      UNION ALL
+      SELECT ${columns}, NOT (d."eventType" = ANY(${[...ADMIN_ACTION_EVENTS]}::text[]))
+        FROM ${t} d WHERE d.payload @> ${dataContains('actorUserId', userId)}
+      UNION ALL
+      SELECT ${columns}, false FROM ${t} d WHERE d.payload @> ${dataContains(APPROVERS_KEY, [userId])}`;
+}
+
+/**
  * Every delivery in `table` whose payload names `userId`, with the basis it
  * names them on. Call before the user row is deleted: the conversation and run
  * ids it matches on cascade away with it.
@@ -194,36 +224,13 @@ export async function deliveriesNamingSubject(
   table: DeliveryTable,
   userId: string
 ): Promise<SubjectDelivery[]> {
-  const t = TABLES[table];
-  // Each arm is one containment the GIN index answers; the two joins drive
-  // the index once per conversation or run. Every arm returns the columns
-  // this needs, so nothing joins back to the table, and `DISTINCT ON` keeps
-  // one copy of a row matched twice — the `activity` one, the stronger basis.
-  // Ordered as {@link byCreatedAtThenId} orders: `COLLATE "C"` is code-unit
-  // order, whatever the database's collation.
+  // `DISTINCT ON` keeps one copy of a row matched twice — the `activity` one,
+  // the stronger basis. Ordered as {@link byCreatedAtThenId} orders:
+  // `COLLATE "C"` is code-unit order, whatever the database's collation.
   const rows = await client.$queryRaw<
     Array<Omit<SubjectDelivery, 'basis'> & { activity: boolean }>
   >`
-    WITH matched AS (
-      SELECT ${COLUMNS}, true AS activity
-        FROM ai_conversation c
-        JOIN ${t} d
-          ON d.payload @> jsonb_build_object('data', jsonb_build_object('conversationId', c.id))
-       WHERE c."userId" = ${userId}
-      UNION ALL
-      SELECT ${COLUMNS}, true
-        FROM ai_workflow_execution e
-        JOIN ${t} d
-          ON d.payload @> jsonb_build_object('data', jsonb_build_object('executionId', e.id))
-       WHERE e."userId" = ${userId}
-      UNION ALL
-      SELECT ${COLUMNS}, true FROM ${t} d WHERE d.payload @> ${dataContains('userId', userId)}
-      UNION ALL
-      SELECT ${COLUMNS}, NOT (d."eventType" = ANY(${[...ADMIN_ACTION_EVENTS]}::text[]))
-        FROM ${t} d WHERE d.payload @> ${dataContains('actorUserId', userId)}
-      UNION ALL
-      SELECT ${COLUMNS}, false FROM ${t} d WHERE d.payload @> ${dataContains(APPROVERS_KEY, [userId])}
-    )
+    WITH matched AS (${matchArms(table, userId, COLUMNS)})
     SELECT * FROM (
       SELECT DISTINCT ON (id) *
         FROM matched
@@ -349,29 +356,89 @@ export function subjectViewOfPayload(
   return view;
 }
 
-/** Rows written per statement, so one person's history never becomes one huge parameter. */
-const WRITE_CHUNK = 500;
-
 /**
- * The `lastError` a stopped row gets: `notRetried`'s wording
- * (`lib/orchestration/webhooks/not-retried.ts`), in SQL, so it is built from
- * the row as the `UPDATE` finds it rather than as it was read. Built from the
- * same functions, so `isStoppedByErasure` recognises it and a manual retry
- * refuses the row (t-793).
+ * The `lastError` a row gets when the erasure stops it: `notRetried`'s
+ * wording (`lib/orchestration/webhooks/not-retried.ts`), in SQL, so it is
+ * built from the row as the `UPDATE` finds it rather than as it was read.
+ * For people to read; what a retry refuses on is `stoppedByErasure` (t-809).
  */
 const STOPPED_LAST_ERROR = Prisma.sql`CASE WHEN d."lastError" IS NULL OR d."lastError" = ''
   THEN ${notRetried(null, SUBJECT_ERASED)}
   ELSE d."lastError" || ${notRetriedSuffix(SUBJECT_ERASED)} END`;
 
+/** The keys an `activity` row keeps: {@link erasedPayload}'s `pick`. */
+const ACTIVITY_KEEP_KEYS: readonly string[] = [
+  ...EVENT_RECORD_KEYS,
+  APPROVERS_KEY,
+  ...PERSON_KEYS.flatMap(({ id, name }) => (name ? [id, name] : [id])),
+];
+
+/**
+ * {@link erasedPayload}, in SQL, for the `one_each` row `o` (t-806). Each
+ * `LATERAL` step is one line of the TypeScript, in the same order:
+ *
+ *   1. `kept`: an `activity` row keeps only {@link ACTIVITY_KEEP_KEYS} of its
+ *      `data`; an `actor` row keeps all of it;
+ *   2. each {@link PERSON_KEYS} id equal to the subject becomes `null`, and
+ *      its display name goes;
+ *   3. the subject leaves `approverUserIds`, when that is an array, the rest
+ *      in their order.
+ *
+ * A payload whose `data` is not an object is left as it is. `erasedPayload()`
+ * stays the specification: `smoke:erasure-deliveries` checks this against it
+ * over every event shape it writes.
+ */
+function redactedPayloadSql(userId: string): Prisma.Sql {
+  const subject = Prisma.sql`to_jsonb(${userId}::text)`;
+  const personSteps = PERSON_KEYS.map(
+    ({ id, name }, i) => Prisma.sql`
+      CROSS JOIN LATERAL (
+        SELECT CASE WHEN ${Prisma.raw(`p${i}`)}.v -> ${id} = ${subject}
+                    THEN jsonb_set(${Prisma.raw(`p${i}`)}.v, ${`{${id}}`}::text[], 'null'::jsonb)
+                         ${name ? Prisma.sql`- ${name}::text` : Prisma.empty}
+                    ELSE ${Prisma.raw(`p${i}`)}.v END
+      ) ${Prisma.raw(`p${i + 1}`)}(v)`
+  );
+  const last = Prisma.raw(`p${PERSON_KEYS.length}`);
+  return Prisma.sql`
+    SELECT o.id, o.activity,
+           CASE WHEN jsonb_typeof(o.payload -> 'data') = 'object'
+                THEN jsonb_set(o.payload, '{data}', approvers.v)
+                ELSE o.payload END AS payload
+      FROM one_each o
+      CROSS JOIN LATERAL (
+        SELECT CASE WHEN jsonb_typeof(o.payload -> 'data') <> 'object' THEN '{}'::jsonb
+                    WHEN o.activity
+                    THEN (SELECT coalesce(jsonb_object_agg(e.key, e.value), '{}'::jsonb)
+                            FROM jsonb_each(o.payload -> 'data') AS e
+                           WHERE e.key = ANY(${ACTIVITY_KEEP_KEYS}::text[]))
+                    ELSE o.payload -> 'data' END
+      ) p0(v)
+      ${Prisma.join(personSteps, '')}
+      CROSS JOIN LATERAL (
+        SELECT CASE WHEN jsonb_typeof(${last}.v -> ${APPROVERS_KEY}) = 'array'
+                    THEN jsonb_set(${last}.v, ${`{${APPROVERS_KEY}}`}::text[], (
+                      SELECT coalesce(jsonb_agg(a.e ORDER BY a.i), '[]'::jsonb)
+                        FROM jsonb_array_elements(${last}.v -> ${APPROVERS_KEY})
+                             WITH ORDINALITY AS a(e, i)
+                       WHERE a.e <> ${subject}))
+                    ELSE ${last}.v END
+      ) approvers(v)`;
+}
+
 /**
  * Redact the subject from every delivery in `table` that names them, stop
  * the `activity` rows still waiting to retry, and mark every `activity` row
- * so a retry refuses it (`isStoppedByErasure`). One statement per
- * {@link WRITE_CHUNK} rows, so the transaction's cost tracks the rows
- * rather than a round trip each. Returns the number of rows rewritten.
+ * `stoppedByErasure` so a retry or a replay refuses it (t-793, t-809).
+ * Returns the number of rows rewritten.
  *
- * Whether a row stops is decided by the `UPDATE`, against its status at that
- * moment, not as the read found it: the retry worker can deliver a row in
+ * One statement, with no payload passing through Node (t-806): match, redact
+ * ({@link redactedPayloadSql}) and write all happen in Postgres, so a heavy
+ * history costs the erasure transaction an index scan and a rewrite rather
+ * than a round trip per row.
+ *
+ * Whether a row stops is decided against its status as the `UPDATE` finds
+ * it, not as the match read it: the retry worker can deliver a row in
  * between, and a delivered row must not be rewritten as exhausted.
  */
 export async function eraseSubjectFromDeliveries(
@@ -379,35 +446,30 @@ export async function eraseSubjectFromDeliveries(
   table: DeliveryTable,
   userId: string
 ): Promise<number> {
-  const rows = await deliveriesNamingSubject(client, table, userId);
-  const writes = rows.map((row) => ({
-    id: row.id,
-    payload: erasedPayload(row.payload, row.basis, userId),
-    activity: row.basis === 'activity',
-  }));
   const t = TABLES[table];
-  const stopNow = Prisma.sql`(w.activity AND d.status = ANY(${[...AWAITING_RETRY_STATUSES]}::text[]))`;
-  // Every `activity` row gets the mark, whatever its status, so a replay or a
+  const stopNow = Prisma.sql`(r.activity AND d.status = ANY(${[...AWAITING_RETRY_STATUSES]}::text[]))`;
+  // Every `activity` row is marked, whatever its status, so a replay or a
   // manual retry refuses it rather than send an event about nobody (t-793). An
   // `exhausted` row is the DLQ's population; a `delivered` one can still be
   // retried by hand. Only the rows still waiting to send also change status.
-  // A row already marked, by an earlier erasure of someone else it named, is
-  // not marked twice.
-  const markNow = Prisma.sql`(w.activity
-    AND d."lastError" IS DISTINCT FROM ${notRetried(null, SUBJECT_ERASED)}
-    AND right(coalesce(d."lastError", ''), ${notRetriedSuffix(SUBJECT_ERASED).length}) <> ${notRetriedSuffix(SUBJECT_ERASED)})`;
-  for (let i = 0; i < writes.length; i += WRITE_CHUNK) {
-    const chunk = writes.slice(i, i + WRITE_CHUNK);
-    await client.$executeRaw`
-      UPDATE ${t} AS d
-         SET payload = w.payload,
-             status = CASE WHEN ${stopNow} THEN 'exhausted' ELSE d.status END,
-             "nextRetryAt" = CASE WHEN ${stopNow} THEN NULL ELSE d."nextRetryAt" END,
-             "lastError" = CASE WHEN ${markNow} THEN ${STOPPED_LAST_ERROR} ELSE d."lastError" END
-        FROM jsonb_to_recordset(${JSON.stringify(chunk)}::jsonb)
-             AS w(id text, payload jsonb, activity boolean)
-       WHERE d.id = w.id
-    `;
-  }
-  return writes.length;
+  // A row already marked, by an earlier erasure of someone else it named,
+  // keeps its `lastError` as it is.
+  const markNow = Prisma.sql`(r.activity AND NOT d."stoppedByErasure")`;
+  return client.$executeRaw`
+    WITH matched AS (${matchArms(table, userId, Prisma.sql`d.id, d.payload`)}),
+    one_each AS (
+      SELECT DISTINCT ON (id) id, payload, activity
+        FROM matched
+       ORDER BY id, activity DESC
+    ),
+    redacted AS (${redactedPayloadSql(userId)})
+    UPDATE ${t} AS d
+       SET payload = r.payload,
+           status = CASE WHEN ${stopNow} THEN 'exhausted' ELSE d.status END,
+           "nextRetryAt" = CASE WHEN ${stopNow} THEN NULL ELSE d."nextRetryAt" END,
+           "lastError" = CASE WHEN ${markNow} THEN ${STOPPED_LAST_ERROR} ELSE d."lastError" END,
+           "stoppedByErasure" = d."stoppedByErasure" OR r.activity
+      FROM redacted r
+     WHERE d.id = r.id
+  `;
 }

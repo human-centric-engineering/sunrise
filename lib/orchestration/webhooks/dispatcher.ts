@@ -33,7 +33,6 @@ import {
   AWAITING_RETRY_STATUSES,
   claimArmedRetry,
   isArmedRetry,
-  isStoppedByErasure,
   logSettledInFlight,
   notRetried,
 } from '@/lib/orchestration/webhooks/not-retried';
@@ -191,8 +190,8 @@ export async function dispatchWebhookEvent(
  * stated concurrency cap holds.
  *
  * Returns `false`, sending nothing, when the delivery does not exist, its
- * subscription was deleted, an erasure stopped it (`isStoppedByErasure`,
- * t-793), or it changed between the read and the reset.
+ * subscription was deleted, an erasure stopped it (`stoppedByErasure`,
+ * t-793, t-809), or it changed between the read and the reset.
  */
 export async function retryDelivery(
   deliveryId: string,
@@ -211,7 +210,7 @@ export async function retryDelivery(
   if (!subscription) return false;
   // Stopped by an erasure: what it would send is about the erased person, or
   // goes to their address (t-793). Refused, and left as the record.
-  if (isStoppedByErasure(delivery.lastError)) return false;
+  if (delivery.stoppedByErasure) return false;
 
   // Reset status for retry, only if the row is as it was read. An erasure that
   // committed in between has redacted it or stopped it, and is not undone; a
@@ -224,6 +223,7 @@ export async function retryDelivery(
       status: delivery.status,
       lastError: delivery.lastError,
       nextRetryAt: delivery.nextRetryAt,
+      stoppedByErasure: false,
     },
     data: {
       status: 'pending',

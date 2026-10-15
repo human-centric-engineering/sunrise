@@ -279,6 +279,8 @@ model AiEventHookDelivery {
   lastResponseCode Int?
   lastError        String?   @db.Text
   createdAt        DateTime  @default(now())
+  // Same meaning as on `AiWebhookDelivery` (t-809).
+  stoppedByErasure Boolean   @default(false)
 
   // Same three fields, same meaning, as on `AiWebhookDelivery`.
   destination            String? @db.Text

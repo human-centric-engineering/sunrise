@@ -68,6 +68,11 @@ model AiWebhookDelivery {
   lastResponseCode Int?
   lastError        String?   @db.Text
   createdAt        DateTime  @default(now())
+  // Set by an erasure that stopped this row (t-809): the event is about the
+  // erased person, or goes to their address. A manual retry and a DLQ replay
+  // refuse it. Its own column so no later `lastError` write can clear it;
+  // `lastError` keeps the human-readable "(not retried: …)" wording.
+  stoppedByErasure Boolean   @default(false)
 
   // Where the latest attempt was sent: the URL's origin only (no path, query,
   // userinfo or fragment), or the email address, trimmed and lower-cased. Null

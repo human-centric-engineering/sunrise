@@ -122,6 +122,10 @@ async function resolveTargetIds(
     where: {
       subscriptionId: body.subscriptionId,
       status: 'exhausted',
+      // A row an erasure stopped is refused by `retryDelivery` anyway; left
+      // out here so a heavy erasure's rows cannot fill the oldest-first
+      // REPLAY_MAX_ROWS window and leave nothing replayable in it (t-809).
+      stoppedByErasure: false,
       ...(body.before ? { createdAt: { lt: body.before } } : {}),
     },
     select: { id: true },
