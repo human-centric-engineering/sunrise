@@ -483,8 +483,10 @@ export async function addMember(
  * change. The install org is refused: its memberships follow the platform
  * role, so inviting into it is the platform's invitation
  * (`POST /api/v1/users/invite`), which also sets that role. A suspended org
- * takes no new members. No role means the acceptance-time rule decides
- * (`membershipForNewUser`).
+ * issues no new invitations. One issued before the suspension can still be
+ * accepted; its member is then refused at entry, like every member of a
+ * suspended org (`.context/tenancy/identity.md`). No role means the
+ * acceptance-time rule decides (`membershipForNewUser`).
  */
 export async function checkInvitationInto(
   orgId: string,
@@ -492,13 +494,15 @@ export async function checkInvitationInto(
   actor: MembershipActor,
   db: LifecycleDb = prisma
 ): Promise<void> {
-  if (role === ORG_OWNER_ROLE) requireOwnerStanding(actor, 'invite someone as an owner');
+  // The install org first: it takes no invitation from here at any role, so
+  // that is the reason to give, not the caller's standing.
   if (orgId === INSTALL_ORG_ID) {
     throw new OrgLifecycleError(
       'INSTALL_ORG_MEMBERSHIP',
       'Members of the install organisation are invited from Users, where their platform role is set'
     );
   }
+  if (role === ORG_OWNER_ROLE) requireOwnerStanding(actor, 'invite someone as an owner');
   const org = await requireOrg(orgId, db);
   if (org.status !== 'ACTIVE') {
     throw new OrgLifecycleError('ORG_NOT_ACTIVE', 'A suspended organisation cannot invite members');

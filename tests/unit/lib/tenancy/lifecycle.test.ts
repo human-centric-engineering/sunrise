@@ -770,6 +770,14 @@ describe('checkInvitationInto (§111 t-813)', () => {
     expect(db.org.findUnique).not.toHaveBeenCalled();
   });
 
+  it('gives the install org as the reason even to an ADMIN asking for OWNER', async () => {
+    const error = await refusal(() =>
+      checkInvitationInto(INSTALL_ORG_ID, ORG_OWNER_ROLE, AS_ADMIN)
+    );
+
+    expect(error.code).toBe('INSTALL_ORG_MEMBERSHIP');
+  });
+
   it('is ORG_NOT_FOUND when the org does not exist', async () => {
     db.org.findUnique.mockResolvedValue(null);
 
