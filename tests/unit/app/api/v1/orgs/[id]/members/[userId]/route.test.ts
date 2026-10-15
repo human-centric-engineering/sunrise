@@ -197,6 +197,35 @@ describe('PATCH /api/v1/orgs/[id]/members/[userId]', () => {
 });
 
 describe('DELETE /api/v1/orgs/[id]/members/[userId]', () => {
+  it('refuses an API-key caller and removes nobody', async () => {
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue({
+      id: 'cmkey000000000000000key1',
+      userId: USER_ID,
+      scopes: ['admin'],
+      rateLimitRpm: null,
+      expiresAt: null,
+      createdAt: new Date(),
+      orgId: null,
+      user: {
+        id: USER_ID,
+        name: 'Key Owner',
+        email: 'owner@example.com',
+        emailVerified: true,
+        image: null,
+        role: 'ADMIN',
+        accountType: 'HUMAN',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    } as never);
+
+    const res = await del({ authorization: 'Bearer sk_deadbeefdeadbeefdeadbeefdeadbeef' });
+
+    expect(res.status).toBe(403);
+    expect(JSON.parse(await res.text()).error.message).toMatch(/browser session/);
+    expect(lifecycle.removeMember).not.toHaveBeenCalled();
+  });
+
   it('removes the member through the lifecycle and reports the revoked sessions', async () => {
     const res = await del();
     const json = JSON.parse(await res.text());
