@@ -302,7 +302,7 @@ export const ALWAYS_RUN_TESTS: readonly AlwaysRunEntry[] = [
   {
     path: 'tests/unit/prisma/seeds/capability-class-seed-parity.test.ts',
     reason:
-      'discovers `prisma/seeds/` off disk and runs every unit that writes an `aiCapability` ' +
+      'discovers `prisma/seeds/` off disk and runs every unit against a mock client ' +
       '(#646). A new seed is exactly what it exists to catch, and nothing imports one.',
   },
   {

@@ -11,7 +11,7 @@
  *
  * ## Why this exists
  *
- * That test runs every capability seed under `prisma/seeds/` — yours included,
+ * That test runs every seed under `prisma/seeds/` — yours included,
  * since the runner discovers seeds recursively — against a mock Prisma client,
  * captures each capability the seeds write, and requires the written
  * `functionDefinition` to equal the one its class declares (#545). A captured

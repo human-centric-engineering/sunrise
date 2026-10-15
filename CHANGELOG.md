@@ -23,8 +23,7 @@ release process.
   empty) lists which class goes with which slug, and is spread into
   `capability-class-seed-parity`'s `PAIRS`, so a fork's capability seeds are
   held to their classes without editing a Sunrise test. That test now runs
-  every seed that writes an `aiCapability` against a recording mock client
-  instead of reading seed source, so it checks every capability a seed writes,
+  every seed against a recording mock client instead of reading seed source, so it checks every capability a seed writes,
   however the seed is written. **Forks:** a capability seed that the old
   source reader could not see (a hoisted const, a definition taken from the
   class) now fails the test until you pair it here, and a seed must write

@@ -30,7 +30,8 @@ export interface SeedUnit {
   hashInputs?: string[];
 }
 
-const SEED_FILE_PATTERN = /^\d{3}-[a-z0-9-]+\.ts$/;
+/** What makes a file a seed unit. Exported for the capability parity test (#646). */
+export const SEED_FILE_PATTERN = /^\d{3}-[a-z0-9-]+\.ts$/;
 
 /**
  * Recursively discover seed units under `seedsDir`, skip those whose source

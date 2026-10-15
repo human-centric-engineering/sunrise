@@ -28,20 +28,21 @@
  * every seed written another way — a hoisted const, a definition taken from the
  * class — without reporting it (#646). That hid all fourteen of
  * `019-cleanup-capabilities`, every one of which had drifted from its class.
- * Each capability seed now runs against a recording mock client, and what it
+ * Every seed now runs against a recording mock client, and what it
  * actually writes is what gets checked, however the seed is written.
  *
  * ---------------------------------------------------------------------------
  * FORK NOTE — your capability seeds are run here too
  * ---------------------------------------------------------------------------
- * Every seed under `prisma/seeds/` that writes an `aiCapability` is run,
- * yours included, and each capability it writes needs a pair. Declare yours in
+ * Every seed under `prisma/seeds/` is run, yours included, and each
+ * capability it writes needs a pair. Declare yours in
  * `lib/app/capability-seed-pairs.ts` (`APP_CAPABILITY_PAIRS`, spread into
  * `PAIRS` below) — do not add rows to `PAIRS`, which is Sunrise's and a merge
  * conflict on every upgrade. A seed must write through the `prisma` it is
- * handed (as the runner requires anyway); one that reaches for the global
- * client writes nothing here and fails "captures a write from every
- * capability seed".
+ * handed (as the runner requires anyway): the app's own client is stubbed to
+ * throw here, and a seed that names `aiCapability` but writes nothing through
+ * the mock fails "captures the capability seeds through the client they are
+ * handed".
  *
  * @see .context/database/seeding.md — the seed ownership rule
  * @see lib/app/capability-seed-pairs.ts — where a fork's pairs go
@@ -67,7 +68,7 @@ vi.mock('@/lib/db/client', () => {
   return { prisma: refuse, default: refuse };
 });
 
-import type { SeedContext, SeedUnit } from '@/prisma/runner';
+import { SEED_FILE_PATTERN, type SeedContext, type SeedUnit } from '@/prisma/runner';
 import { APP_CAPABILITY_PAIRS, type AppCapabilityPair } from '@/lib/app/capability-seed-pairs';
 import { CLEANUP_CAPABILITIES } from '@/prisma/seeds/019-cleanup-capabilities';
 
@@ -104,15 +105,13 @@ const PAIRS: readonly AppCapabilityPair[] = [
 ];
 
 const SEED_DIR = join(process.cwd(), 'prisma', 'seeds');
-/** The runner's own pattern (`prisma/runner.ts`) — anything else is not a unit. */
-const SEED_FILE = /^\d{3}-[a-z0-9-]+\.ts$/;
 
 /** Every seed unit, recursively — the runner discovers fork seeds the same way. */
 function seedFiles(dir: string, prefix = ''): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
     if (entry.isDirectory()) return seedFiles(join(dir, entry.name), rel);
-    return SEED_FILE.test(entry.name) ? [rel] : [];
+    return SEED_FILE_PATTERN.test(entry.name) ? [rel] : [];
   });
 }
 
@@ -161,8 +160,10 @@ function recordingClient(file: string, captured: Captured[], touched: Set<string
               touched.add(file);
               record(method, args);
               // No capability exists yet, so a seed's create-if-missing
-              // branch runs and is captured rather than skipped.
-              if (/^find/.test(method)) return Promise.resolve(method === 'findMany' ? [] : null);
+              // branch runs and is captured rather than skipped. (`…OrThrow`
+              // asserts the row exists, so it gets one.)
+              if (method === 'findMany') return Promise.resolve([]);
+              if (/^find(Unique|First)$/.test(method)) return Promise.resolve(null);
             }
             if (method === 'findMany' || method === 'groupBy') return Promise.resolve([]);
             if (method === 'count') return Promise.resolve(0);
@@ -191,28 +192,39 @@ function recordingClient(file: string, captured: Captured[], touched: Set<string
 const isSeedUnit = (value: unknown): value is SeedUnit =>
   isRecord(value) && typeof value.run === 'function';
 
-/** Seeds that write capabilities, and every capability write they made. */
-let capabilitySeeds: string[] = [];
+/** Every capability write the seeds made. */
 const captured: Captured[] = [];
 /** Seeds that called anything on `aiCapability` through the client they were handed. */
 const touched = new Set<string>();
+/** Seeds that threw under the mock, and whether their source names `aiCapability`. */
+const failed: { file: string; error: string; namesCapability: boolean }[] = [];
+/** Seeds whose source names `aiCapability` — they are expected to reach it. */
+const namingCapability: string[] = [];
 
 beforeAll(async () => {
-  // A seed that never calls `aiCapability.…(` cannot write one through the
-  // client it is handed, and running every seed is not safe: `007` ignores
-  // that client and writes through the app's own (stubbed above to throw).
-  capabilitySeeds = seedFiles(SEED_DIR).filter((file) =>
-    /\baiCapability\s*\.\s*\w+\s*\(/.test(readFileSync(join(SEED_DIR, file), 'utf8'))
-  );
+  // EVERY seed runs, not those that look like capability seeds: one that
+  // writes through an alias or a helper names no `aiCapability` of its own,
+  // and selecting by source text would skip it — the #646 failure again. A
+  // seed that reaches for the app's own client hits the stub above and throws.
   const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
-  for (const file of capabilitySeeds) {
-    const mod: unknown = await import(/* @vite-ignore */ join(SEED_DIR, file));
-    const unit = isRecord(mod) ? mod.default : undefined;
-    if (!isSeedUnit(unit)) throw new Error(`${file} does not default-export a SeedUnit`);
-    await unit.run({
-      prisma: recordingClient(file, captured, touched),
-      logger,
-    } as unknown as SeedContext);
+  for (const file of seedFiles(SEED_DIR)) {
+    const namesCapability = readFileSync(join(SEED_DIR, file), 'utf8').includes('aiCapability');
+    if (namesCapability) namingCapability.push(file);
+    try {
+      const mod: unknown = await import(/* @vite-ignore */ join(SEED_DIR, file));
+      const unit = isRecord(mod) ? mod.default : undefined;
+      if (!isSeedUnit(unit)) throw new Error('does not default-export a SeedUnit');
+      await unit.run({
+        prisma: recordingClient(file, captured, touched),
+        logger,
+      } as unknown as SeedContext);
+    } catch (err) {
+      failed.push({
+        file,
+        error: err instanceof Error ? err.message : String(err),
+        namesCapability,
+      });
+    }
   }
 });
 
@@ -222,10 +234,16 @@ describe('capabilities — seeded definition matches the class (#545, #646)', ()
     // update, so a count of writes would be met by 019 alone. An earlier
     // version read zero names through a regex bug and passed.
     expect(new Set(captured.map((c) => c.slug)).size).toBeGreaterThanOrEqual(24);
-    // A seed that calls `aiCapability` in its source but touched nothing here
-    // did it through some other client, so nothing it writes would be checked.
-    // (One that only reads capabilities is fine — it touched the mock.)
-    expect(capabilitySeeds.filter((file) => !touched.has(file))).toEqual([]);
+    // A seed that throws part-way may not have reached its capability writes.
+    // One that never touched or named `aiCapability` cannot be a capability
+    // seed (`007` throws on the stubbed global client, by design); any other
+    // failure is reported, not taken on trust.
+    expect(failed.filter((f) => f.namesCapability || touched.has(f.file))).toEqual([]);
+    // A seed that names `aiCapability` but touched nothing here either wrote
+    // through another client or only on a path the mock did not take (a loop
+    // over rows it looked up, which read as empty here) — either way, nothing
+    // it writes was checked. One that only reads capabilities is fine.
+    expect(namingCapability.filter((file) => !touched.has(file))).toEqual([]);
   });
 
   it('pairs every capability the seeds write, and nothing they do not', () => {
