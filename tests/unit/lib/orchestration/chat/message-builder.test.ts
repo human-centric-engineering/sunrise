@@ -518,9 +518,9 @@ describe('buildMessages', () => {
       newUserMessage: 'new',
       omittedBeforeHistory: 7,
     });
-    expect(bare.some((m) => getTextContent(m.content).includes('7 older messages omitted'))).toBe(
-      true
-    );
+    expect(
+      bare.some((m) => getTextContent(m.content).includes('up to 7 earlier messages omitted'))
+    ).toBe(true);
 
     const withSummary = buildMessages({
       systemInstructions: 'sys',
@@ -531,7 +531,9 @@ describe('buildMessages', () => {
       omittedBeforeHistory: 7,
     });
     expect(
-      withSummary.some((m) => getTextContent(m.content).includes('7 older messages omitted'))
+      withSummary.some((m) =>
+        getTextContent(m.content).includes('up to 7 earlier messages omitted')
+      )
     ).toBe(true);
     expect(withSummary.some((m) => getTextContent(m.content).includes('older stuff'))).toBe(true);
   });

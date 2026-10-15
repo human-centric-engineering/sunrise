@@ -148,7 +148,8 @@ export interface BuildMessagesArgs {
    * Messages older than the first row of `history` that nothing describes — the
    * loaded window did not reach back to the summary's pin (or to the start of
    * the conversation). Announced to the model as omitted, so that a gap is never
-   * silent. Defaults to none.
+   * silent. An upper bound: it counts every row, including the error markers a
+   * read never shows. Defaults to none.
    */
   omittedBeforeHistory?: number;
 }
@@ -304,7 +305,15 @@ export function buildMessagesAndBreakdown(args: BuildMessagesArgs): BuildMessage
       messages.push({ role: 'system', content: summaryBlock });
       breakdown.conversationSummary = makePart(summaryBlock, modelId);
     }
-    const unsummarised = droppedCount - summarised + omittedBeforeHistory;
+    if (omittedBeforeHistory > 0) {
+      // Between the summary (or the start) and the first loaded row. An upper
+      // bound — see `omittedBeforeHistory` — so it says "up to".
+      messages.push({
+        role: 'system',
+        content: `[... up to ${omittedBeforeHistory} earlier messages omitted ...]`,
+      });
+    }
+    const unsummarised = droppedCount - summarised;
     if (unsummarised > 0) {
       // Emitted after the summary because these are the more RECENT of the
       // dropped messages: the summary covers a prefix, so the gap sits between

@@ -149,6 +149,66 @@ export interface SummarizeOptions {
    * (§120 t-741). Without it the call is evaluated as unrecorded.
    */
   provenance?: BindingProvenance;
+  /**
+   * The caller's cancellation signal. A client that disconnects mid-turn stops
+   * the provider call instead of paying for a summary nobody will read.
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * The most a single row contributes to a summariser call. The summary is a
+ * gist; a row of tool output tens of thousands of characters long would
+ * otherwise make one call too big to run, and every later turn would rebuild
+ * the same call and fail the same way (#655).
+ */
+export const SUMMARY_ROW_MAX_CHARS = 2000;
+
+/** The most one catch-up call's rows may add up to, after clipping. */
+export const SUMMARY_CHUNK_MAX_CHARS = 60_000;
+
+/** Clip each row's content for the summariser. Rows are never dropped. */
+export function clipForSummary(rows: HistoryRow[]): HistoryRow[] {
+  return rows.map((m) =>
+    m.content.length > SUMMARY_ROW_MAX_CHARS
+      ? { ...m, content: `${m.content.slice(0, SUMMARY_ROW_MAX_CHARS)}…` }
+      : m
+  );
+}
+
+/**
+ * How many of the leading `rows` fit one catch-up call: as many as stay inside
+ * {@link SUMMARY_CHUNK_MAX_CHARS} once clipped, and always at least one so the
+ * pin can move.
+ */
+export function countWithinChunkBudget(rows: HistoryRow[]): number {
+  let used = 0;
+  let count = 0;
+  for (const m of rows) {
+    const next = Math.min(m.content.length, SUMMARY_ROW_MAX_CHARS + 1);
+    if (count > 0 && used + next > SUMMARY_CHUNK_MAX_CHARS) break;
+    used += next;
+    count += 1;
+  }
+  return count;
+}
+
+/**
+ * A summary may begin with a line saying how many earlier messages it may not
+ * describe. The CODE writes and reads it — the summariser is handed only the
+ * body, so a model that paraphrases a summary away cannot take the gap with it.
+ */
+const GAP_NOTE = /^\(up to (\d+) earlier messages may not be described in this summary\.\)\n\n/;
+
+export function splitGapNote(text: string): { gap: number; body: string } {
+  const m = GAP_NOTE.exec(text);
+  return m ? { gap: Number(m[1]), body: text.slice(m[0].length) } : { gap: 0, body: text };
+}
+
+export function withGapNote(body: string, gap: number): string {
+  return gap > 0
+    ? `(up to ${gap} earlier messages may not be described in this summary.)\n\n${body}`
+    : body;
 }
 
 /**
@@ -211,7 +271,7 @@ export async function summarizeMessages(
             },
             { role: 'user', content: userContent },
           ],
-          { model, maxTokens: 500 }
+          { model, maxTokens: 500, ...(options.signal ? { signal: options.signal } : {}) }
         );
 
         setSpanAttributes(span, {

@@ -150,12 +150,12 @@ export const HISTORY_LOAD_LIMIT = 200;
 export const SUMMARY_CATCHUP_MESSAGES = HISTORY_LOAD_LIMIT / 2;
 
 /**
- * Catch-up passes one turn will run before it stops and shows the newest rows
- * with the remainder announced as omitted. Each pass is a summariser call the
- * user is waiting behind; progress is persisted per pass, so the next turn
- * resumes where this one stopped. (#655)
+ * Summariser calls one turn may make in total — catch-up passes and the
+ * ordinary summarisation together. Each is a call the user waits behind and
+ * pays for; what is done is persisted per call, so the next turn resumes where
+ * this one stopped. (#655)
  */
-export const SUMMARY_CATCHUP_MAX_PASSES = 3;
+export const SUMMARY_MAX_CALLS_PER_TURN = 3;
 
 /**
  * How far **past** the current drop boundary a summarisation run extends.
