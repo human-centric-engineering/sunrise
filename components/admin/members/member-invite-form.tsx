@@ -32,19 +32,18 @@ import { FormError } from '@/components/forms/form-error';
 import { OrgRoleHelp, ORG_ROLE_LABELS } from '@/components/admin/members/org-role-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { DEFAULT_ORG_ROLE, ORG_ROLES } from '@/lib/tenancy/roles';
+import { DEFAULT_ORG_ROLE, isOrgRole, ORG_ROLES } from '@/lib/tenancy/roles';
+import { inviteOrgMemberSchema } from '@/lib/validations/tenancy';
 
-const inviteFormSchema = z.object({
-  name: z.string().trim().min(1, 'Name is required').max(100, 'Name must be under 100 characters'),
-  email: z.string().email('Enter a valid email address'),
-  orgRole: z.enum(ORG_ROLES),
-});
+// The route's own schema, with the role required because the form always
+// has one selected.
+const inviteFormSchema = inviteOrgMemberSchema.extend({ orgRole: z.enum(ORG_ROLES) });
 
 type InviteFormData = z.infer<typeof inviteFormSchema>;
 
 interface OrgInvitationResponse {
   message: string;
-  invitation: { email: string; name: string };
+  invitation: { email: string; name: string; orgRole?: string | null };
   emailStatus: 'sent' | 'failed' | 'disabled' | 'pending';
 }
 
@@ -57,9 +56,10 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<OrgInvitationResponse | null>(null);
-  // What was submitted when the API said an invitation is pending: "Send it
-  // again" re-sends that, not whatever the fields hold by then.
-  const [pending, setPending] = useState<InviteFormData | null>(null);
+  // Who the API said already has a pending invitation. "Send it again"
+  // re-sends that invitation by name and email, with no role, so the API keeps
+  // the role it was issued with rather than taking whatever the field holds.
+  const [pending, setPending] = useState<{ name: string; email: string } | null>(null);
 
   const {
     register,
@@ -75,7 +75,10 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
   });
   const orgRole = watch('orgRole');
 
-  const send = async (data: InviteFormData, resend: boolean) => {
+  const send = async (
+    data: Pick<InviteFormData, 'name' | 'email'> & Partial<InviteFormData>,
+    resend: boolean
+  ) => {
     setSubmitting(true);
     setError(null);
     try {
@@ -84,7 +87,9 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
         ...(resend ? { params: { resend: 'true' } } : {}),
       });
       setResult(response);
-      setPending(response.emailStatus === 'pending' ? data : null);
+      setPending(
+        response.emailStatus === 'pending' ? { name: data.name, email: data.email } : null
+      );
       if (response.emailStatus !== 'pending') {
         reset();
         router.refresh();
@@ -171,7 +176,13 @@ export function MemberInviteForm({ orgId }: MemberInviteFormProps) {
 
         {result?.emailStatus === 'pending' && pending && (
           <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
-            <span>An invitation to {result.invitation.email} is already pending.</span>
+            <span>
+              An invitation to {result.invitation.email} is already pending
+              {result.invitation.orgRole && isOrgRole(result.invitation.orgRole)
+                ? ` as ${ORG_ROLE_LABELS[result.invitation.orgRole]}`
+                : ''}
+              . Sending it again keeps that role.
+            </span>
             <Button
               variant="outline"
               size="sm"

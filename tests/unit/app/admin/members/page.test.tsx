@@ -44,6 +44,7 @@ import MembersPage from '@/app/admin/members/page';
 import { requestActingOrg, requestPrincipal } from '@/lib/auth/admin-page-viewer';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 const MEMBERS = [
   { id: 'u-1', name: 'A', email: 'a@x.test', role: 'OWNER', joinedAt: '2026-01-01T00:00:00.000Z' },
@@ -78,6 +79,23 @@ describe('MembersPage', () => {
       currentUserId: 'u-1',
     });
     expect(formProps).toHaveBeenCalledWith({ orgId: 'org-entered' });
+  });
+
+  it('points to Users in the install org, and only there', async () => {
+    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
+    vi.mocked(parseApiResponse).mockResolvedValue({
+      success: true,
+      data: { members: MEMBERS },
+    } as never);
+
+    actAs({ id: INSTALL_ORG_ID, name: 'Install' });
+    const { unmount } = render(await MembersPage());
+    expect(screen.getByRole('link', { name: 'Users' })).toHaveAttribute('href', '/admin/users');
+    unmount();
+
+    actAs({ id: 'org-entered', name: 'Acme' });
+    render(await MembersPage());
+    expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
   });
 
   it('passes a null currentUserId when there is no principal', async () => {

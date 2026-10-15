@@ -27,6 +27,7 @@ vi.mock('@/lib/db/client', () => ({
     org: { findUnique: vi.fn() },
     orgMembership: { findUnique: vi.fn(), findMany: vi.fn() },
     aiApiKey: { findFirst: vi.fn(), update: vi.fn() },
+    verification: { count: vi.fn() },
   },
 }));
 
@@ -34,6 +35,7 @@ vi.mock('@/lib/utils/invitation-token', () => ({
   generateInvitationToken: vi.fn(),
   updateInvitationToken: vi.fn(),
   getValidInvitation: vi.fn(),
+  INVITATION_IDENTIFIER_PREFIX: 'invitation:',
 }));
 vi.mock('@/lib/email/send', () => ({ sendEmail: vi.fn() }));
 vi.mock('@/lib/email/registry', () => ({ resolveEmailTemplate: vi.fn(() => null) }));
@@ -118,6 +120,7 @@ beforeEach(() => {
   vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
   vi.mocked(prisma.org.findUnique).mockResolvedValue({ id: ORG, status: 'ACTIVE' } as never);
   vi.mocked(getValidInvitation).mockResolvedValue(null);
+  vi.mocked(prisma.verification.count).mockResolvedValue(0);
   vi.mocked(generateInvitationToken).mockResolvedValue('tok-new');
   vi.mocked(updateInvitationToken).mockResolvedValue('tok-re');
   vi.mocked(sendEmail).mockResolvedValue({ success: true, status: 'sent', id: 'e1' });
@@ -325,6 +328,27 @@ describe('POST /api/v1/orgs/[id]/invitations — existing accounts and invitatio
       expect(sendEmail).not.toHaveBeenCalled();
     }
   );
+
+  it('refuses, rather than replaces, a pending invitation it cannot read', async () => {
+    // getValidInvitation answers null for unparseable metadata or a failed
+    // read; a row that is still there belongs to someone this route cannot see.
+    vi.mocked(getValidInvitation).mockResolvedValue(null);
+    vi.mocked(prisma.verification.count).mockResolvedValue(1);
+
+    const res = await post(invitee, ORG, '?resend=true');
+
+    expect(res.status).toBe(409);
+    expect((await json(res)).error.code).toBe('CONFLICT');
+    expect(prisma.verification.count).toHaveBeenCalledWith({
+      where: {
+        identifier: 'invitation:jane@example.com',
+        expiresAt: { gt: expect.any(Date) },
+      },
+    });
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+    expect(updateInvitationToken).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
 
   it('reports this org’s own pending invitation without writing when not resending', async () => {
     pending({ orgId: ORG, orgRole: ORG_ADMIN_ROLE });

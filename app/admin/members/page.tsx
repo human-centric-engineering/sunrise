@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 import { MemberInviteForm } from '@/components/admin/members/member-invite-form';
 import { MembersTable, type OrgMember } from '@/components/admin/members/members-table';
@@ -6,6 +7,7 @@ import { API } from '@/lib/api/endpoints';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { requestActingOrg, requestPrincipal } from '@/lib/auth/admin-page-viewer';
 import { logger } from '@/lib/logging';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 export const metadata: Metadata = {
   title: 'Members',
@@ -52,6 +54,16 @@ export default async function MembersPage() {
         </p>
       ) : (
         <>
+          {org.id === INSTALL_ORG_ID && (
+            <p className="text-muted-foreground text-sm">
+              Roles in the install organisation follow each person&apos;s platform role. Invite
+              people and change their roles from{' '}
+              <Link href="/admin/users" className="underline">
+                Users
+              </Link>
+              .
+            </p>
+          )}
           <MemberInviteForm orgId={org.id} />
           {members ? (
             <MembersTable

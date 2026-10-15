@@ -44,7 +44,7 @@ import { ClientDate } from '@/components/ui/client-date';
 import { OrgRoleHelp, ORG_ROLE_LABELS } from '@/components/admin/members/org-role-help';
 import { apiClient, APIClientError } from '@/lib/api/client';
 import { API } from '@/lib/api/endpoints';
-import { ORG_ROLES, type OrgRole } from '@/lib/tenancy/roles';
+import { isOrgRole, ORG_ROLES, type OrgRole } from '@/lib/tenancy/roles';
 
 export interface OrgMember {
   id: string;
@@ -58,10 +58,6 @@ export interface MembersTableProps {
   orgId: string;
   members: OrgMember[];
   currentUserId: string | null;
-}
-
-function isOrgRole(value: string): value is OrgRole {
-  return (ORG_ROLES as readonly string[]).includes(value);
 }
 
 export function MembersTable({ orgId, members, currentUserId }: MembersTableProps) {

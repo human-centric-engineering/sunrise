@@ -14,6 +14,7 @@ import {
   requestPrincipal,
 } from '@/lib/auth/admin-page-viewer';
 import { isMultiTenant } from '@/lib/tenancy/context';
+import { logger } from '@/lib/logging';
 import {
   ADMIN_PATHNAME_HEADER,
   adminPageTier,
@@ -111,7 +112,14 @@ export default async function AdminLayout({
   // (§111 t-813). At `single` there is only the install org, and the header is
   // as it was. Started alongside the shared-settings read.
   const multiTenant = isMultiTenant();
-  const actingOrgRead = multiTenant ? requestActingOrg() : Promise.resolve(null);
+  // The name is a label, so a failed lookup leaves it out rather than taking
+  // the console down with it.
+  const actingOrgRead = multiTenant
+    ? requestActingOrg().catch((error: unknown) => {
+        logger.error('admin layout: could not read the acting org', error);
+        return null;
+      })
+    : Promise.resolve(null);
   const [sharedSettings, actingOrg] = await Promise.all([sharedSettingsRead, actingOrgRead]);
 
   return (

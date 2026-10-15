@@ -176,7 +176,7 @@ describe('MemberInviteForm', () => {
 
     await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
     expect(apiClient.post).toHaveBeenLastCalledWith(URL, {
-      body: { name: 'New Person', email: 'new@example.com', orgRole: 'MEMBER' },
+      body: { name: 'New Person', email: 'new@example.com' },
       params: { resend: 'true' },
     });
     expect(await screen.findByText(/Invitation sent/)).toBeInTheDocument();
@@ -204,8 +204,42 @@ describe('MemberInviteForm', () => {
 
     await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
     expect(apiClient.post).toHaveBeenLastCalledWith(URL, {
-      body: { name: 'New Person', email: 'new@example.com', orgRole: 'MEMBER' },
+      body: { name: 'New Person', email: 'new@example.com' },
       params: { resend: 'true' },
+    });
+  });
+
+  it('names the pending role and re-sends without one, so the API keeps it', async () => {
+    vi.mocked(apiClient.post).mockResolvedValueOnce({
+      message: 'Already invited',
+      invitation: { email: 'new@example.com', name: 'New Person', orgRole: 'ADMIN' },
+      emailStatus: 'pending',
+    });
+    vi.mocked(apiClient.post).mockResolvedValueOnce(sentResponse());
+    const user = userEvent.setup();
+    render(<MemberInviteForm orgId="org-1" />);
+
+    await fill(user, 'New Person', 'new@example.com');
+    await user.click(screen.getByRole('button', { name: /send invitation/i }));
+
+    expect(await screen.findByText(/already pending as Admin/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Send it again' }));
+
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(apiClient.post).mock.calls[1][1]?.body).not.toHaveProperty('orgRole');
+  });
+
+  it('accepts an email pasted with spaces around it, as the API does', async () => {
+    vi.mocked(apiClient.post).mockResolvedValue(sentResponse());
+    const user = userEvent.setup();
+    render(<MemberInviteForm orgId="org-1" />);
+
+    await fill(user, 'New Person', '  New@Example.com ');
+    await user.click(screen.getByRole('button', { name: /send invitation/i }));
+
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(apiClient.post).mock.calls[0][1]?.body).toMatchObject({
+      email: 'new@example.com',
     });
   });
 
@@ -227,14 +261,14 @@ describe('MemberInviteForm', () => {
 
     await user.click(screen.getByRole('button', { name: /send invitation/i }));
     expect(await screen.findByText('Name is required')).toBeInTheDocument();
-    expect(screen.getByText('Enter a valid email address')).toBeInTheDocument();
+    expect(screen.getByText('Email is required')).toBeInTheDocument();
     expect(apiClient.post).not.toHaveBeenCalled();
 
     await user.type(screen.getByLabelText('Name'), 'Someone');
     await user.type(screen.getByLabelText(/^Email/, { selector: 'input' }), 'not-an-email');
     await user.click(screen.getByRole('button', { name: /send invitation/i }));
 
-    expect(await screen.findByText('Enter a valid email address')).toBeInTheDocument();
+    expect(await screen.findByText('Invalid email address')).toBeInTheDocument();
     expect(screen.queryByText('Name is required')).not.toBeInTheDocument();
     expect(apiClient.post).not.toHaveBeenCalled();
   });

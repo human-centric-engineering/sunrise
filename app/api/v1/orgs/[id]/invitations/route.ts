@@ -49,7 +49,7 @@ import {
   resolveOrgResource,
   membershipActorOf,
 } from '@/lib/tenancy/lifecycle';
-import { getValidInvitation } from '@/lib/utils/invitation-token';
+import { getValidInvitation, INVITATION_IDENTIFIER_PREFIX } from '@/lib/utils/invitation-token';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import { deliverInvitation } from '@/lib/auth/invitation-delivery';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
@@ -102,11 +102,25 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
     );
   }
 
+  // `getValidInvitation` answers null for a row it cannot parse, and for a
+  // failed read, which here would mean "nothing pending" and let a new token
+  // replace another org's invitation. So when it says null, look for any
+  // unexpired row before believing it: a row this route cannot read is one
+  // it does not own.
   const existingInvitation = await getValidInvitation(body.email);
+  const unreadablePending =
+    !existingInvitation &&
+    (await prisma.verification.count({
+      where: {
+        identifier: `${INVITATION_IDENTIFIER_PREFIX}${body.email}`,
+        expiresAt: { gt: new Date() },
+      },
+    })) > 0;
   if (
-    existingInvitation &&
-    (existingInvitation.metadata.orgId !== id ||
-      existingInvitation.metadata.role !== DEFAULT_USER_ROLE)
+    unreadablePending ||
+    (existingInvitation &&
+      (existingInvitation.metadata.orgId !== id ||
+        existingInvitation.metadata.role !== DEFAULT_USER_ROLE))
   ) {
     log.info('Invitation refused: another invitation is pending for this email', {
       orgId: id,
