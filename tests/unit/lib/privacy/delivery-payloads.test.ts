@@ -757,9 +757,11 @@ describe('eraseSubjectFromDeliveries', () => {
     expect(text.match(/\bone_each\b/g)).toHaveLength(2);
     // Only todo rows are locked, in id order, and re-read.
     expect(text).toMatch(
-      /locked AS \(\s+SELECT d\.id, d\.payload, d\.status, d\."stoppedByErasure", d\."lastError", todo\.activity\s+FROM todo\s+JOIN ai_webhook_delivery d ON d\.id = todo\.id\s+ORDER BY d\.id\s+FOR UPDATE OF d\s+\)/
+      /locked AS \(\s+SELECT d\.id, d\.payload, todo\.activity\s+FROM todo\s+JOIN ai_webhook_delivery d ON d\.id = todo\.id\s+ORDER BY d\.id\s+FOR UPDATE OF d\s+\)/
     );
     expect(text.match(/FOR UPDATE/g)).toHaveLength(1);
+    // Only the first look carries the row as read; the locked re-read does not.
+    expect(text.match(/o\.payload AS before/g)).toHaveLength(1);
     // The write redacts from the locked read, never the first look.
     expect(text).toMatch(
       /redacted AS \([\s\S]+FROM locked o[\s\S]+\)\s+UPDATE ai_webhook_delivery AS d/

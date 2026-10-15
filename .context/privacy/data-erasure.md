@@ -356,8 +356,7 @@ transaction):
 
    The last column overstates the transaction: it includes `eraseUser()`'s
    own pre-pass, which in the spike only re-matches. Timed on its own, the
-   transaction's delivery pass after a pre-pass took 36.5 s for a million
-   rows (18.2 s per table, unvacuumed). It still matches and redacts every
+   transaction's delivery pass after a pre-pass took 39.8 s for a million rows (19.9 s per table; tables vacuumed before seeding, not between the pre-pass and the pass). It still matches and redacts every
    row the person was ever named on, only to drop the ones already done, so
    past a million that match is what grows. Cutting it to rows created since
    the pre-pass began was considered and not done: a delivery committed by a
@@ -367,7 +366,8 @@ transaction):
    order, and redacts each as it is once locked, so two erasures over one row
    do not undo each other. Two concurrent erasures can still deadlock, since
    the address passes (step 5) lock rows in their own order; Postgres aborts
-   one, which fails and can be retried. Before t-806 a single in-transaction rewrite timed out near 600,000
+   one, which fails, and its caller has to run it again; nothing retries it
+   automatically. Before t-806 a single in-transaction rewrite timed out near 600,000
    rows. Two things made the difference, both measured: each SQL redaction
    step is fenced (`OFFSET 0`), since an inlined step re-ran its `jsonb_each`
    per reference (9.9 s against 0.6 s for 50,000 rows), and the payload GIN

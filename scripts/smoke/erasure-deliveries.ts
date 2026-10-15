@@ -719,32 +719,47 @@ async function main(): Promise<void> {
     const rolledBack = new Error('rolled back on purpose');
     const held: { marked?: { webhook: boolean[]; hook: boolean[] } } = {};
     await prisma
-      .$transaction(async (tx) => {
-        const seeded = { webhook: [] as string[], hook: [] as string[] };
-        for (const lastError of lastErrors) {
-          const w = await tx.aiWebhookDelivery.create({
-            data: { eventType: `${PREFIX}-backfill`, payload: {}, status: 'exhausted', lastError },
-          });
-          const h = await tx.aiEventHookDelivery.create({
-            data: { eventType: `${PREFIX}-backfill`, payload: {}, status: 'exhausted', lastError },
-          });
-          seeded.webhook.push(w.id);
-          seeded.hook.push(h.id);
-        }
-        for (const statement of backfill) await tx.$executeRawUnsafe(statement);
-        const read = async (ids: string[], table: 'webhook' | 'hook') => {
-          const rows =
-            table === 'webhook'
-              ? await tx.aiWebhookDelivery.findMany({ where: { id: { in: ids } } })
-              : await tx.aiEventHookDelivery.findMany({ where: { id: { in: ids } } });
-          return ids.map((id) => rows.find((r) => r.id === id)?.stoppedByErasure ?? false);
-        };
-        held.marked = {
-          webhook: await read(seeded.webhook, 'webhook'),
-          hook: await read(seeded.hook, 'hook'),
-        };
-        throw rolledBack;
-      })
+      .$transaction(
+        async (tx) => {
+          const seeded = { webhook: [] as string[], hook: [] as string[] };
+          for (const lastError of lastErrors) {
+            const w = await tx.aiWebhookDelivery.create({
+              data: {
+                eventType: `${PREFIX}-backfill`,
+                payload: {},
+                status: 'exhausted',
+                lastError,
+              },
+            });
+            const h = await tx.aiEventHookDelivery.create({
+              data: {
+                eventType: `${PREFIX}-backfill`,
+                payload: {},
+                status: 'exhausted',
+                lastError,
+              },
+            });
+            seeded.webhook.push(w.id);
+            seeded.hook.push(h.id);
+          }
+          for (const statement of backfill) await tx.$executeRawUnsafe(statement);
+          const read = async (ids: string[], table: 'webhook' | 'hook') => {
+            const rows =
+              table === 'webhook'
+                ? await tx.aiWebhookDelivery.findMany({ where: { id: { in: ids } } })
+                : await tx.aiEventHookDelivery.findMany({ where: { id: { in: ids } } });
+            return ids.map((id) => rows.find((r) => r.id === id)?.stoppedByErasure ?? false);
+          };
+          held.marked = {
+            webhook: await read(seeded.webhook, 'webhook'),
+            hook: await read(seeded.hook, 'hook'),
+          };
+          throw rolledBack;
+          // The backfill statements cover whole tables, so a large dev database
+          // needs longer than Prisma's 5 s default.
+        },
+        { timeout: 120_000 }
+      )
       .catch((err: unknown) => {
         if (err !== rolledBack) throw err;
       });
@@ -772,8 +787,11 @@ async function main(): Promise<void> {
       xRedacted = resolve;
     });
     // X's erasure redacts the row and holds it, uncommitted, until released.
+    let xPid = 0;
     const xErasure = prisma.$transaction(
       async (tx) => {
+        const [me] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+        xPid = me.pid;
         await eraseSubjectFromDeliveries(tx, 'webhook', personX);
         xRedacted();
         await gate;
@@ -784,21 +802,26 @@ async function main(): Promise<void> {
     // Y's pre-pass starts while X's write is uncommitted: it must wait for it
     // and redact the row as X left it, not as it read it before.
     const yPrePass = preRedactSubjectFromDeliveries(prisma, 'webhook', personY);
-    // Release X only once Y's write is seen blocked on a row lock: released
-    // any earlier, Y would read X's committed row and pass without the race.
-    const waitingOnLock = async (): Promise<boolean> => {
+    // Release X only once a session is seen blocked by X's own: released any
+    // earlier, Y would read X's committed row and pass without the race. X is
+    // released whatever the probe does, so a failed probe cannot leave X's
+    // lock held over the cleanup below.
+    const blockedByX = async (): Promise<boolean> => {
       for (let i = 0; i < 100; i++) {
         const [row] = await prisma.$queryRaw<Array<{ n: bigint }>>`
           SELECT count(*)::bigint AS n FROM pg_stat_activity
-           WHERE wait_event_type = 'Lock' AND query LIKE '%first_look%'
-             AND pid <> pg_backend_pid()`;
+           WHERE ${xPid}::int = ANY(pg_blocking_pids(pid))`;
         if (Number(row.n) > 0) return true;
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
       return false;
     };
-    const yBlocked = await waitingOnLock();
-    release();
+    let yBlocked = false;
+    try {
+      yBlocked = await blockedByX();
+    } finally {
+      release();
+    }
     await xErasure;
     await yPrePass;
     const sharedAfter = await prisma.aiWebhookDelivery.findUniqueOrThrow({

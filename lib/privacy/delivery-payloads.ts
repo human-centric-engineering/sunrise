@@ -394,6 +394,12 @@ const ACTIVITY_KEEP_KEYS: readonly string[] = [
  * over every event shape it writes.
  */
 function redactedPayloadSql(userId: string, from: 'one_each' | 'locked'): Prisma.Sql {
+  // The first look also carries the row's columns and its payload as read
+  // (`before`), which `todo` filters on; the locked re-read needs neither.
+  const passThrough =
+    from === 'one_each'
+      ? Prisma.sql`, o.status, o."stoppedByErasure", o."lastError", o.payload AS before`
+      : Prisma.empty;
   const subject = Prisma.sql`to_jsonb(${userId}::text)`;
   const personSteps = PERSON_KEYS.map(
     ({ id, name }, i) => Prisma.sql`
@@ -407,7 +413,7 @@ function redactedPayloadSql(userId: string, from: 'one_each' | 'locked'): Prisma
   );
   const last = Prisma.raw(`p${PERSON_KEYS.length}`);
   return Prisma.sql`
-    SELECT o.id, o.activity, o.status, o."stoppedByErasure", o."lastError", o.payload AS before,
+    SELECT o.id, o.activity${passThrough},
            CASE WHEN jsonb_typeof(o.payload -> 'data') = 'object'
                 THEN jsonb_set(o.payload, '{data}', approvers.v)
                 ELSE o.payload END AS payload
@@ -449,10 +455,12 @@ const SOURCE_COLUMNS = Prisma.sql`d.id, d.payload, d.status, d."stoppedByErasure
  * the column, so a row already stopped for another reason (step 5's
  * "recipient erased") still says its content was erased too.
  */
-function writeConditions(r: 'f' | 'r', d: 'f' | 'd', before: 'before' | 'payload') {
-  const R = Prisma.raw(r);
-  const D = Prisma.raw(d);
-  const BEFORE = Prisma.raw(`${d}.${before}`);
+function writeConditions(mode: 'look' | 'live') {
+  // `look`: the first look `f`, which carries the row as read. `live`: the
+  // redaction `r` against the row `d` as the UPDATE finds it.
+  const R = Prisma.raw(mode === 'look' ? 'f' : 'r');
+  const D = Prisma.raw(mode === 'look' ? 'f' : 'd');
+  const BEFORE = Prisma.raw(mode === 'look' ? 'f.before' : 'd.payload');
   const stopNow = Prisma.sql`(${R}.activity AND ${D}.status = ANY(${[...AWAITING_RETRY_STATUSES]}::text[]))`;
   const markNow = Prisma.sql`(${R}.activity AND NOT ${D}."stoppedByErasure")`;
   const wordNow = Prisma.sql`(${R}.activity
@@ -482,8 +490,9 @@ function writeConditions(r: 'f' | 'r', d: 'f' | 'd', before: 'before' | 'payload
  *      stays locked until the transaction ends. Id order keeps two payload
  *      passes from deadlocking each other; the recipient passes in the same
  *      erasure transaction lock rows in their own order, so two concurrent
- *      erasures can still deadlock there. Postgres then aborts one, which
- *      fails and is retried.
+ *      erasures can still deadlock there. Postgres then aborts one: that
+ *      erasure fails (its caller gets the error) and has to be run again;
+ *      nothing retries it on its own.
  *
  * A row that needed nothing in the snapshot cannot need something now: another
  * erasure only removes its own subject, a retry refuses a marked row, and no
@@ -495,10 +504,10 @@ function writeConditions(r: 'f' | 'r', d: 'f' | 'd', before: 'before' | 'payload
  */
 function redactUpdate(table: DeliveryTable, userId: string, source: Prisma.Sql): Prisma.Sql {
   const t = TABLES[table];
-  // The first look carries the row's columns and its payload as read
-  // (`before`), so `one_each` is read once and never joined back to itself.
-  const look = writeConditions('f', 'f', 'before');
-  const live = writeConditions('r', 'd', 'payload');
+  // The first look carries the row's columns and its payload as read, so
+  // `one_each` is read once and never joined back to itself.
+  const look = writeConditions('look');
+  const live = writeConditions('live');
   return Prisma.sql`
     WITH one_each AS (${source}),
     first_look AS (${redactedPayloadSql(userId, 'one_each')}),
@@ -508,7 +517,7 @@ function redactUpdate(table: DeliveryTable, userId: string, source: Prisma.Sql):
        WHERE ${look.needsWrite}
     ),
     locked AS (
-      SELECT ${SOURCE_COLUMNS}, todo.activity
+      SELECT d.id, d.payload, todo.activity
         FROM todo
         JOIN ${t} d ON d.id = todo.id
        ORDER BY d.id
