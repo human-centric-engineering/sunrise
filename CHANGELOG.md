@@ -18,6 +18,30 @@ release process.
 
 ### Added
 
+- **A platform admin enters a customer org under its open support grant**
+  (§121 t-824). At `multi`, `enterSessionOrg` admits a platform admin who is
+  not a member to an org whose grant `verifiedSupportGrant()` (new, in
+  `lib/tenancy/entry.ts`) finds: open, its org active, not the install org,
+  and its granter still an OWNER of the org. It is re-read on every request,
+  for the resolver header and `activeOrgId` alike; API keys never take it.
+  The entry is a new source, `'support'` (on `OrgEntry` and
+  `TenantContextSource`), with role `ADMIN` and a new `support` field
+  (`SupportEntry`: `grantId`, `level`, `expiresAt`) on the entry and the
+  tenant context. **The support principal presents as an org ADMIN who is not
+  a platform admin:** the guards and `sessionPrincipal` replace the platform
+  role with the default user role on the principal and on the handler's
+  session (new `lib/auth/support-principal.ts`), so a fork policy or handler
+  that reads `isPlatformAdmin` answers false. A `READ_ONLY` grant refuses
+  every write in both guards before the handler runs. `POST
+  /api/v1/orgs/switch` accepts an org with an open grant for a platform admin,
+  writes a `support.enter` audit row, and its response gains `support`
+  (`null` for a member's switch). New `requestSupportSession()` in
+  `lib/auth/admin-page-viewer.ts` feeds a banner across the admin layout, with
+  an ended state once the grant ends. The Organisations page offers **Enter as
+  support**. `DELETE /api/v1/users/me` refuses inside a support session.
+  **Forks:** a handler that must know it is serving support reads
+  `getTenantContext()?.source === 'support'`; the principal deliberately does
+  not say.
 - **An org's OWNER grants and revokes vendor support access** (§121 t-823). New
   model `OrgSupportGrant` with enum `SupportGrantLevel` (`ADMIN`, the default,
   or `READ_ONLY`), a system model beside `OrgMembership`: a reason, an expiry
@@ -29,8 +53,8 @@ release process.
   one; refused at `single`, for the install org and for a suspended org. New
   org-tier page `/admin/support-access` (nav at `multi` only; `CORE_ADMIN_SECTIONS`
   gains `support-access`). `GET /api/v1/admin/orgs` rows gain `supportGrant`.
-  Both privacy manifests list the model. A grant admits nobody yet: entry under
-  it is §121 t-824. **Forks:** run the migration; a fork page may not sit under
+  Both privacy manifests list the model. Entry under a grant is t-824's, above.
+  **Forks:** run the migration; a fork page may not sit under
   `/admin/support-access`.
 - **A fork lists its own admin pages as org-tier** (t-817): the new
   `lib/app/admin-tier.ts` seam (`initAppOrgTierAdminPages()`, ships empty)

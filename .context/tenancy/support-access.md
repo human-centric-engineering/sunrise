@@ -8,9 +8,8 @@ consent on record, and an audit trail that reads as the org's own user.
 
 A **support grant** is the org's consent instead: its OWNER lets the vendor's
 support staff in, at a level, for a stated reason and a bounded time. This
-page covers the grant. Entering an org under one, and how the audit log names
-the support actor, are §121's later tasks (t-824, t-825); until t-824 lands, a
-grant is recorded and listed but admits nobody.
+page covers the grant and entering an org under one (t-824). How the audit
+log names the support actor on every row is §121's last task (t-825).
 
 ## Quick Reference
 
@@ -25,6 +24,10 @@ grant is recorded and listed but admits nobody.
 | Revoke                   | `DELETE /api/v1/orgs/[id]/support-grants/[grantId]`                                               |
 | The org's page           | `/admin/support-access` (org-tier, nav shown at `multi` only)                                     |
 | The vendor's view        | the **Support access** column on `/admin/orgs` (`GET /api/v1/admin/orgs` → `supportGrant`)        |
+| Enter under a grant      | **Enter as support** on `/admin/orgs` → `POST /api/v1/orgs/switch`                                |
+| Does a grant admit now?  | `verifiedSupportGrant(orgId)` in `lib/tenancy/entry.ts`                                           |
+| What support presents as | `lib/auth/support-principal.ts`                                                                   |
+| The banner               | `components/admin/support-banner.tsx`, fed by `requestSupportSession()`                           |
 
 ### Anti-patterns
 
@@ -41,6 +44,16 @@ grant is recorded and listed but admits nobody.
 - **Writing on expiry.** Nothing runs when a grant expires. "Open" is
   computed, `revokedAt IS NULL AND expiresAt > now`, and
   `openSupportGrantWhere` is the one statement of it.
+- **Telling a policy "this is support" with a flag.** A support actor is a
+  platform admin, and a fork's `canAdminister` written as
+  `isPlatformAdmin(viewer)` would hand them the whole console inside the
+  customer's org whatever flag core set. The guards instead replace the
+  platform role with the default user role on the principal and on the
+  handler's session (`presentedRole` / `presentedSession`), which is
+  fail-closed for every policy and every handler check.
+- **Caching the right to be there.** Entry re-reads the grant on every
+  request. The 5-minute session cookie cache holds `activeOrgId`, never the
+  grant, so expiry and revocation refuse the very next request.
 - **Deleting grants.** An ended grant is the org's record of what it agreed
   to. Grants go only with their org (`eraseOrg`), and keep standing when the
   person who granted or revoked them is erased (`SetNull`).
@@ -72,6 +85,49 @@ Audit actions: `support_grant.create`, `support_grant.replace`,
 `support_grant.revoke`, all `entityType: 'support_grant'`, with the org id in
 `metadata`.
 
+## Entering under a grant (t-824)
+
+A platform admin, at `multi`, who is **not** a member of an org, is admitted
+to it while it has a grant that `verifiedSupportGrant` finds: open (not
+revoked, not expired), its org `ACTIVE`, not the install org, and its
+**granter still an OWNER of the org**. A grant is consent, and consent from
+someone who has since been removed or demoted (or erased, which nulls
+`grantedById`) admits nobody. Nothing is written when that happens; the grant
+reads as open in the history until it expires.
+
+- **One rule, both paths.** `enterSessionOrg` falls through to the grant only
+  on `not-a-member`, for the resolver header and `activeOrgId` alike. A
+  platform admin who is a member enters as that member. A member of a
+  suspended org stays refused as suspended. API keys never take this path.
+- **The entry.** Source `'support'`, role `ADMIN`, and `support: { grantId,
+level, expiresAt }`. The tenant context carries the same `support` field,
+  which is what the audit log reads (t-825).
+- **What the actor is.** An org ADMIN of that org who is **not** a platform
+  admin (§121 ruling 3). The guards present the default user role on the
+  principal and on the session the handler gets, and `sessionPrincipal` does
+  the same for the admin layout and maintenance bypass. So the default policy
+  admits org-tier surfaces only, the owner layer included;
+  `adminPageViewerTier()` answers `org`; platform-tier routes and pages
+  refuse; and a handler's own `isPlatformAdmin(session.user)` is false. The
+  user id is untouched, so every row names the individual.
+- **READ_ONLY.** Both guards refuse every method but `GET`, `HEAD` and
+  `OPTIONS` (a missing method too), with a 403, before the resource
+  resolver, the policy or the handler runs.
+- **Switching in and out.** `POST /api/v1/orgs/switch` admits a platform
+  admin into an org whose grant `verifiedSupportGrant` finds, and writes a
+  `support.enter` audit row (`entityType: 'support_grant'`, the grant's id,
+  the org id, level and expiry in `metadata`). The response carries
+  `support: { grantId, level, expiresAt }`, or `null` for a member's switch.
+  Ending a session is a switch back to the install org. The route does not
+  enter the current org, so it works from one whose grant has ended.
+- **The banner.** The admin layout shows `SupportBanner` for the whole
+  session: the org, the level, the time left, and **End support session**.
+  When the grant ends mid-session the next request is refused. The layout then
+  recognises a platform admin refused entry to an org that has granted support
+  before, and shows the banner's ended state with the same way back (`HB10`).
+- **Account deletion.** `DELETE /api/v1/users/me` refuses inside a support
+  session: the presented role would otherwise skip its last-admin check.
+
 ## Privacy
 
 - **Subject export** (`SUBJECT_DATA_SOURCES`): `supportGrants`, attribution.
@@ -90,6 +146,9 @@ Audit actions: `support_grant.create`, `support_grant.replace`,
   user's consent as well as the org's.
 - **Email to the org on entry** is not in v1. The org reads entries off its
   grant list once t-825 lands.
+- **An org switcher in the console.** Support enters from the Organisations
+  page and leaves from the banner. A platform admin on a platform-tier page
+  during a support session is sent to the landing route, as an org admin is.
 
 ## Related
 

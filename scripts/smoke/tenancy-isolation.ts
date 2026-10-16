@@ -96,6 +96,13 @@
  *     A's agent and workflows and every shared row are untouched, A's
  *     workflow lands in B under a free slug, and a bundle's shared part
  *     imported without asking is skipped;
+ *   - support access (§121 t-824): a platform admin who is a member of
+ *     neither org is refused entry to B before it grants support, enters it
+ *     as support ADMIN under B's open grant and sees B's rows and none of
+ *     A's, and is refused again after the grant expires, after its granter
+ *     is demoted, after revocation, and into A, which granted nothing; under
+ *     a READ_ONLY grant a write is refused by the guard's rule and B's agents
+ *     are unchanged;
  *   - the org export and erasure (§106 t-735, t-730): B's export, asked
  *     from inside A (an admin's session) and from no org (an admin API key),
  *     holds B's rows and none of A's; B, holding a knowledge base with

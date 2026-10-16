@@ -107,6 +107,31 @@ The comparison is guarded on the resource side explicitly because
 fork seam's docblock warns about. A fork's own org policy must guard it the same
 way.
 
+### A support session presents as an org ADMIN (§121 t-824)
+
+A platform admin entering a customer org under its support grant
+([support-access.md](../tenancy/support-access.md#entering-under-a-grant-t-824))
+is, for the length of the entry, **an org ADMIN of that org who is not a
+platform admin**. The guards build that principal (`orgRole: 'ADMIN'`, the
+entered `orgId`) with the **default user role in place of the platform role**
+(`presentedRole`, `lib/auth/support-principal.ts`), and hand the handler a
+session whose `user.role` is replaced the same way (`presentedSession`).
+`sessionPrincipal` does likewise for the admin layout and the maintenance
+bypass.
+
+That is what makes it hold for every policy rather than core's alone. A
+`support` flag the default policy checked would be ignored by a fork whose
+`canAdminister` is `isPlatformAdmin(viewer)`, which would then hand support
+the whole console inside the customer's org. Presenting a non-platform role
+needs no policy to cooperate: `isPlatformAdmin(viewer)` answers false, org
+arms answer as for the org's own ADMIN, and a handler's
+`isPlatformAdmin(session.user)` is false too. `tests/unit/lib/auth/guards-support.test.ts`
+pins the fork-policy case. The stored `User.role` is never changed.
+
+A policy that wants to know it is talking to support reads
+`getTenantContext()?.source === 'support'` (and `.support` for the grant) —
+the principal does not carry it, deliberately.
+
 ## Admin tiers
 
 Every admin surface is the **platform's** unless it says otherwise. An org

@@ -142,7 +142,9 @@ covered by the version contract.
     — `orgId` stamped on every tenant-owned create, every operation scoped by
     `set_config` at `multi`; the tenant context `lib/tenancy/context.ts`
     — `getTenantContext` / `requireTenantContext` / `requireOrgId` /
-    `runAsOrg` / `runAsSystem` / `runAsCredentialLookup` / `forEachOrg` —
+    `runAsOrg` / `runAsSystem` / `runAsCredentialLookup` / `forEachOrg`, and
+    its `'support'` source with the `support` field (`SupportEntry`: the grant
+    a support session entered under, §121 t-824) —
     the subject context `lib/auth/subject-context.ts` —
     `runAsSubject` / `getSubjectReadScope` / `runAcrossOwners` — the owner
     classification `lib/db/owner-classification.ts`
@@ -170,7 +172,7 @@ covered by the version contract.
   - `successResponse()`, `errorResponse()` from `lib/api/responses.ts`
   - `serverFetch()` from `lib/api/server-fetch.ts`
   - `logger` from `lib/logging/`
-  - org support grants (§121): `GET`/`POST /api/v1/orgs/[id]/support-grants` and `DELETE /api/v1/orgs/[id]/support-grants/[grantId]`; `findOpenSupportGrant()`, `openSupportGrantWhere()`, `grantSupportAccess()`, `revokeSupportGrant()`, `listSupportGrants()` and `SupportGrantError` from `lib/tenancy/support-grants.ts`; `SUPPORT_GRANT_LEVELS` / `DEFAULT_SUPPORT_GRANT_LEVEL` from `lib/tenancy/roles.ts`; `SUPPORT_GRANT_DEFAULT_HOURS` / `SUPPORT_GRANT_MAX_HOURS` and `createSupportGrantSchema` from `lib/validations/tenancy.ts` (see [`.context/tenancy/support-access.md`](./.context/tenancy/support-access.md))
+  - org support grants (§121): `GET`/`POST /api/v1/orgs/[id]/support-grants` and `DELETE /api/v1/orgs/[id]/support-grants/[grantId]`; `findOpenSupportGrant()`, `openSupportGrantWhere()`, `grantSupportAccess()`, `revokeSupportGrant()`, `listSupportGrants()` and `SupportGrantError` from `lib/tenancy/support-grants.ts`; `SUPPORT_GRANT_LEVELS` / `DEFAULT_SUPPORT_GRANT_LEVEL` from `lib/tenancy/roles.ts`; `SUPPORT_GRANT_DEFAULT_HOURS` / `SUPPORT_GRANT_MAX_HOURS` and `createSupportGrantSchema` from `lib/validations/tenancy.ts`; entry under a grant (t-824): `verifiedSupportGrant()` and the `'support'` `OrgEntry` source from `lib/tenancy/entry.ts`, the support principal's shape (the default user role in place of the platform role, on the principal and on the handler's session; `presentedRole()` / `presentedSession()` / `isRefusedReadOnlyWrite()` from `lib/auth/support-principal.ts`), `requestSupportSession()` from `lib/auth/admin-page-viewer.ts`, and `support` on the `POST /api/v1/orgs/switch` response (see [`.context/tenancy/support-access.md`](./.context/tenancy/support-access.md))
   - an org's caps in `Org.settings.quotas` (`monthlyBudgetUsd`, `requestsPerMinute`): `readOrgQuotas()` / `loadOrgQuotas()` / `writeOrgQuotas()` and `ORG_QUOTAS_KEY` from `lib/tenancy/org-settings.ts`, with `orgQuotasSchema` / `OrgQuotas` from `lib/validations/tenancy.ts` — what a fork's billing or plan code calls to set an org's monthly budget and request cap
   - the per-org request counter's cache clear, `forgetOrgRequestCap()` from `lib/security/org-request-cap.ts` — called after a direct `writeOrgQuotas()` so the change applies at once in that process
   - The orchestration admin API surface documented in
