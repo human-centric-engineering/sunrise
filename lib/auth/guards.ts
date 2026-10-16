@@ -64,6 +64,11 @@ import {
 } from '@/lib/tenancy/entry';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import {
+  isRefusedReadOnlyWrite,
+  presentedRole,
+  presentedSession,
+} from '@/lib/auth/support-principal';
+import {
   canChangeSharedSettings,
   SHARED_SETTINGS_REFUSAL,
   SHARED_SETTINGS_REFUSAL_CODE,
@@ -427,7 +432,9 @@ function principalOf(
 ): AuthorizationPrincipal {
   return {
     userId: session.user.id,
-    role: session.user.role,
+    // A support session presents the default user role, never the platform
+    // one (§121 t-824, `lib/auth/support-principal.ts`).
+    role: presentedRole(session.user.role, entry),
     credential,
     scopes,
     // The org facts ride on the principal (§106): the guard is the one writer,
@@ -495,6 +502,20 @@ async function sessionEntryFor(
   );
   if (isOrgRefusal(entry)) {
     refuseOrgEntry(guard, request, principalOf(session, 'session'), entry);
+  }
+  // A READ_ONLY support grant refuses every write here, before the resolver,
+  // the policy or the handler runs (§121 t-824) — one rule in the one place
+  // both guards enter a session's org, so no route can forget it.
+  if (isRefusedReadOnlyWrite(entry, request.method)) {
+    logger.warn('tenancy: refused a write under a read-only support grant', {
+      guard,
+      path: loggablePath(request.nextUrl?.pathname),
+      method: request.method,
+      userId: session.user.id,
+      orgId: entry.orgId,
+      grantId: entry.support?.grantId,
+    });
+    throw new ForbiddenError('Support access to this organisation is read-only');
   }
   return entry;
 }
@@ -1004,7 +1025,7 @@ export function withAuth(
           handler,
           request: request as NextRequest,
           context: context as RouteContext | undefined,
-          session,
+          session: presentedSession(session, entry),
           principal,
           ownership: options?.ownership,
           declaredResource: options?.resource !== undefined,
@@ -1033,7 +1054,13 @@ function orgScope(entry: OrgEntry | null): { org?: string } {
  * which at `single` still resolves to the install org for whatever asks.
  */
 function inTenantScope<T>(entry: OrgEntry | null, fn: () => Promise<T>): Promise<T> {
-  return entry ? runAsOrg(entry.orgId, fn, { source: entry.source, role: entry.role }) : fn();
+  return entry
+    ? runAsOrg(entry.orgId, fn, {
+        source: entry.source,
+        role: entry.role,
+        ...(entry.support ? { support: entry.support } : {}),
+      })
+    : fn();
 }
 
 /**
@@ -1393,7 +1420,7 @@ export function withAdminAuth(
           handler,
           request: request as NextRequest,
           context: context as RouteContext | undefined,
-          session,
+          session: presentedSession(session, entry),
           principal,
           ownership: options?.ownership,
           declaredResource: options?.resource !== undefined,

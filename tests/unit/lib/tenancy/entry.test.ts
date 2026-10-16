@@ -19,6 +19,7 @@ vi.mock('@/lib/logging', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error:
 import {
   enterApiKeyOrg,
   enterSessionOrg,
+  verifiedSupportGrant,
   isOrgRefusal,
   orgForMint,
   orgOfColumn,
@@ -28,7 +29,11 @@ import { runAsOrg, runAsSystem } from '@/lib/tenancy/context';
 import { ForbiddenError } from '@/lib/api/errors';
 
 const findUnique = vi.fn();
-const db = { orgMembership: { findUnique } } as unknown as Pick<PrismaClient, 'orgMembership'>;
+const findFirst = vi.fn();
+const db = {
+  orgMembership: { findUnique },
+  orgSupportGrant: { findFirst },
+} as unknown as Pick<PrismaClient, 'orgMembership' | 'orgSupportGrant'>;
 
 const OTHER = 'cmorg000000000000000other';
 const USER = { id: 'cmuser00000000000000user1', role: 'USER', accountType: 'HUMAN' };
@@ -42,6 +47,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockEnv.TENANCY_MODE = 'single';
   findUnique.mockResolvedValue(null);
+  findFirst.mockResolvedValue(null);
 });
 
 describe('enterSessionOrg at single', () => {
@@ -316,5 +322,123 @@ describe('orgForMint — the org a credential minted on this call stack binds to
     await runAsSystem('fixture', async () => {
       expect(() => orgForMint()).toThrow(ForbiddenError);
     });
+  });
+});
+
+describe('enterSessionOrg under a support grant (§121 t-824)', () => {
+  const NOW = new Date('2026-10-17T12:00:00Z');
+  const EXPIRES = new Date('2026-10-17T18:00:00Z');
+  const GRANT = { id: 'cmgrant000000000000grant1', level: 'ADMIN', expiresAt: EXPIRES };
+
+  beforeEach(() => {
+    mockEnv.TENANCY_MODE = 'multi';
+  });
+
+  it('admits a platform admin who is not a member of an org with an open grant, as support ADMIN', async () => {
+    findFirst.mockResolvedValue(GRANT);
+    expect(await enterSessionOrg(ADMIN, OTHER, null, db, NOW)).toEqual({
+      orgId: OTHER,
+      role: ORG_ADMIN_ROLE,
+      source: 'support',
+      support: { grantId: GRANT.id, level: 'ADMIN', expiresAt: EXPIRES },
+    });
+  });
+
+  it('the resolver header takes the same rule', async () => {
+    findFirst.mockResolvedValue(GRANT);
+    const entry = await enterSessionOrg(ADMIN, null, OTHER, db, NOW);
+    expect(entry).toMatchObject({ orgId: OTHER, source: 'support' });
+  });
+
+  it('asks for a grant that is open at `now`, in an active org, whose granter is still its OWNER', async () => {
+    findFirst.mockResolvedValue(GRANT);
+    await enterSessionOrg(ADMIN, OTHER, null, db, NOW);
+    expect(findFirst).toHaveBeenCalledTimes(1);
+    const { where } = findFirst.mock.calls[0][0] as { where: Record<string, unknown> };
+    expect(where).toEqual({
+      orgId: OTHER,
+      revokedAt: null,
+      expiresAt: { gt: NOW },
+      org: { status: 'ACTIVE' },
+      grantedBy: { orgMemberships: { some: { orgId: OTHER, role: ORG_OWNER_ROLE } } },
+    });
+  });
+
+  it('refuses as not-a-member when the org has no grant the query admits', async () => {
+    // findFirst answers null: no grant, an expired or revoked one, a
+    // suspended org, or a granter no longer OWNER — the query states each.
+    expect(await enterSessionOrg(ADMIN, OTHER, null, db, NOW)).toEqual({
+      refused: 'not-a-member',
+    });
+    expect(findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-reads the grant on every call: open on one request, refused on the next (same cookie)', async () => {
+    findFirst.mockResolvedValueOnce(GRANT).mockResolvedValueOnce(null);
+    expect(await enterSessionOrg(ADMIN, OTHER, null, db, NOW)).toMatchObject({
+      source: 'support',
+    });
+    expect(await enterSessionOrg(ADMIN, OTHER, null, db, EXPIRES)).toEqual({
+      refused: 'not-a-member',
+    });
+    expect(findFirst).toHaveBeenCalledTimes(2);
+    expect(findFirst.mock.calls[1][0]).toMatchObject({ where: { expiresAt: { gt: EXPIRES } } });
+  });
+
+  it('a user who is not a platform admin never reaches the grant', async () => {
+    findFirst.mockResolvedValue(GRANT);
+    expect(await enterSessionOrg(USER, OTHER, null, db, NOW)).toEqual({ refused: 'not-a-member' });
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it('a platform admin who IS a member enters as the member, never as support', async () => {
+    memberOf(ORG_OWNER_ROLE);
+    findFirst.mockResolvedValue(GRANT);
+    expect(await enterSessionOrg(ADMIN, OTHER, null, db, NOW)).toEqual({
+      orgId: OTHER,
+      role: ORG_OWNER_ROLE,
+      source: 'session',
+    });
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it('a suspended org a platform admin is a member of stays refused as suspended', async () => {
+    memberOf(ORG_ADMIN_ROLE, 'SUSPENDED');
+    expect(await enterSessionOrg(ADMIN, OTHER, null, db, NOW)).toEqual({
+      refused: 'org-suspended',
+    });
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it('never admits support to the install org', async () => {
+    findFirst.mockResolvedValue(GRANT);
+    expect(await enterSessionOrg(ADMIN, INSTALL_ORG_ID, null, db, NOW)).toEqual({
+      refused: 'not-a-member',
+    });
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it('at single the support path is never reached', async () => {
+    mockEnv.TENANCY_MODE = 'single';
+    findFirst.mockResolvedValue(GRANT);
+    expect(await enterSessionOrg(ADMIN, OTHER, null, db, NOW)).toEqual({
+      refused: 'not-a-member',
+    });
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it("an API key never takes the support path, even an admin owner's org-bound key", async () => {
+    findFirst.mockResolvedValue(GRANT);
+    const entry = await enterApiKeyOrg(
+      { userId: ADMIN.id, scopes: ['chat'], orgId: OTHER, owner: ADMIN },
+      db
+    );
+    expect(entry).toEqual({ refused: 'not-a-member' });
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it('verifiedSupportGrant answers null for the install org without a read', async () => {
+    expect(await verifiedSupportGrant(INSTALL_ORG_ID, db, NOW)).toBeNull();
+    expect(findFirst).not.toHaveBeenCalled();
   });
 });

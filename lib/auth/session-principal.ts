@@ -19,7 +19,9 @@
  * session whose active org went away, which is what the layout has always
  * done, while the routes the console calls still refuse until they switch.
  */
-import { enterSessionOrg, isOrgRefusal } from '@/lib/tenancy/entry';
+import { enterSessionOrg, isOrgRefusal, type OrgRefusal } from '@/lib/tenancy/entry';
+import { presentedRole } from '@/lib/auth/support-principal';
+import type { SupportEntry } from '@/lib/tenancy/context';
 import { logger } from '@/lib/logging';
 import type { AuthorizationPrincipal, AuthorizationScope } from '@/lib/auth/authorization';
 
@@ -32,6 +34,10 @@ export interface SessionPrincipal {
   principal: AuthorizationPrincipal;
   /** `{ org }` for the entered org, or `{}` when none was entered. */
   scope: AuthorizationScope;
+  /** Why the session's org was not entered, when it was refused. */
+  refused?: OrgRefusal['refused'];
+  /** The grant a support session entered under (§121 t-824). */
+  support?: SupportEntry;
 }
 
 /**
@@ -54,10 +60,18 @@ export async function sessionPrincipal(
       session.session.activeOrgId ?? null,
       headerOrgId
     );
-    if (isOrgRefusal(entry)) return { principal: base, scope: {} };
+    if (isOrgRefusal(entry)) return { principal: base, scope: {}, refused: entry.refused };
     return {
-      principal: { ...base, orgId: entry.orgId, orgRole: entry.role },
+      // A support session presents the default user role, as the guards
+      // present it (§121 t-824), so the layout's answer matches the routes'.
+      principal: {
+        ...base,
+        role: presentedRole(base.role, entry),
+        orgId: entry.orgId,
+        orgRole: entry.role,
+      },
       scope: { org: entry.orgId },
+      ...(entry.support ? { support: entry.support } : {}),
     };
   } catch (error) {
     // No org facts is the closed answer: nothing org-scoped is admitted, and

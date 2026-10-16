@@ -30,6 +30,16 @@
  * migration and the backfill that t-673 re-ran — is the install org at `single` and nothing
  * at `multi`.
  *
+ * **Support (§121 t-824).** A platform admin's session, at `multi`, naming
+ * an org they are not a member of, is admitted when that org has an open
+ * support grant — {@link verifiedSupportGrant}, read on every request, so
+ * expiry and revocation take effect on the next request whatever the cookie
+ * cache holds. The entry is source `'support'`, role ADMIN, and carries the
+ * grant. It is a session-only path: no API key reaches it. The guards then
+ * present the principal as an org ADMIN who is NOT a platform admin
+ * (`lib/auth/support-principal.ts`), so no policy, core's or a fork's, hands a
+ * support actor anything beyond the org tier.
+ *
  * **Credentials with no user behind them** — an embed token, an MCP key
  * whose creator may be gone — enter through {@link resolveCredentialOrg}:
  * the same null rule, and the org's own status in place of a membership
@@ -43,9 +53,16 @@ import { prisma } from '@/lib/db/client';
 import { hasScope } from '@/lib/auth/api-key-scopes';
 import { initialMembershipFor, type NewUserShape } from '@/lib/tenancy/membership';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { getTenantContext, isMultiTenant, type TenantContextSource } from '@/lib/tenancy/context';
+import {
+  getTenantContext,
+  isMultiTenant,
+  type SupportEntry,
+  type TenantContextSource,
+} from '@/lib/tenancy/context';
 import { ForbiddenError } from '@/lib/api/errors';
-import type { OrgRole } from '@/lib/tenancy/roles';
+import { isPlatformAdmin } from '@/lib/auth/roles';
+import { openSupportGrantWhere } from '@/lib/tenancy/support-grants';
+import { ORG_ADMIN_ROLE, ORG_OWNER_ROLE, type OrgRole } from '@/lib/tenancy/roles';
 
 /** A request may act for this org, as this role. */
 export interface OrgEntry {
@@ -54,6 +71,7 @@ export interface OrgEntry {
   source: Extract<
     TenantContextSource,
     | 'session'
+    | 'support'
     | 'api-key'
     | 'resolver'
     | 'embed-token'
@@ -61,6 +79,8 @@ export interface OrgEntry {
     | 'inbound-trigger'
     | 'approval-token'
   >;
+  /** The grant a `'support'` entry was admitted under; absent for every other source. */
+  support?: SupportEntry;
 }
 
 /** Why a request may not act for the org it named. */
@@ -77,6 +97,7 @@ export function isOrgRefusal(result: OrgEntryResult): result is OrgRefusal {
 }
 
 type MembershipReader = Pick<PrismaClient, 'orgMembership'>;
+type SessionEntryReader = Pick<PrismaClient, 'orgMembership' | 'orgSupportGrant'>;
 
 /** Read and verify one membership: present, and its org active. */
 export async function verifiedMembership(
@@ -94,6 +115,65 @@ export async function verifiedMembership(
 }
 
 /**
+ * The org's support grant that admits a platform admin right now, or `null`.
+ *
+ * Open (not revoked, not expired, by {@link openSupportGrantWhere}), its org
+ * `ACTIVE`, not the install org, and — the §121 owner ruling of 2026-10-16 —
+ * its granter still an OWNER of the org. A grant is the org's consent, and
+ * consent from someone who no longer speaks for the org is not consent, so a
+ * granter removed or demoted (or erased, which nulls the column) ends it at
+ * the next request. Nothing is written when that happens: the grant reads as
+ * open in the history until it expires, and entry under it is refused.
+ *
+ * One query, and no cache: it runs on every request that enters under a
+ * grant, which is what makes expiry and revocation immediate.
+ */
+export async function verifiedSupportGrant(
+  orgId: string,
+  db: Pick<PrismaClient, 'orgSupportGrant'> = prisma,
+  now: Date = new Date()
+): Promise<SupportEntry | null> {
+  if (orgId === INSTALL_ORG_ID) return null;
+  const grant = await db.orgSupportGrant.findFirst({
+    where: {
+      orgId,
+      ...openSupportGrantWhere(now),
+      org: { status: 'ACTIVE' },
+      grantedBy: { orgMemberships: { some: { orgId, role: ORG_OWNER_ROLE } } },
+    },
+    select: { id: true, level: true, expiresAt: true },
+    orderBy: { createdAt: 'desc' },
+  });
+  return grant ? { grantId: grant.id, level: grant.level, expiresAt: grant.expiresAt } : null;
+}
+
+/**
+ * A session's entry to one named org: its membership, else — for a platform
+ * admin at `multi` who holds none — the org's support grant. Both of
+ * {@link enterSessionOrg}'s paths (the resolver header and `activeOrgId`)
+ * come through here, so there is one rule for both.
+ *
+ * Only `not-a-member` falls through to the grant. A member of a suspended
+ * org stays refused as suspended; a platform admin who IS a member enters as
+ * that member, never as support.
+ */
+async function memberOrSupportEntry(
+  user: NewUserShape & { id: string },
+  orgId: string,
+  source: 'session' | 'resolver',
+  db: SessionEntryReader,
+  now: Date
+): Promise<OrgEntryResult> {
+  const membership = await verifiedMembership(user.id, orgId, db);
+  if (!('refused' in membership)) return { orgId, role: membership.role, source };
+  if (membership.refused !== 'not-a-member' || !isMultiTenant() || !isPlatformAdmin(user)) {
+    return membership;
+  }
+  const support = await verifiedSupportGrant(orgId, db, now);
+  return support ? { orgId, role: ORG_ADMIN_ROLE, source: 'support', support } : membership;
+}
+
+/**
  * The org a cookie session acts for.
  *
  * `headerOrgId` is the proxy-written resolver header, verified here exactly
@@ -106,13 +186,11 @@ export async function enterSessionOrg(
   user: NewUserShape & { id: string },
   activeOrgId: string | null | undefined,
   headerOrgId: string | null,
-  db: MembershipReader = prisma
+  db: SessionEntryReader = prisma,
+  now: Date = new Date()
 ): Promise<OrgEntryResult> {
   if (headerOrgId) {
-    const membership = await verifiedMembership(user.id, headerOrgId, db);
-    return 'refused' in membership
-      ? membership
-      : { orgId: headerOrgId, role: membership.role, source: 'resolver' };
+    return memberOrSupportEntry(user, headerOrgId, 'resolver', db, now);
   }
 
   const multi = isMultiTenant();
@@ -126,10 +204,7 @@ export async function enterSessionOrg(
     return { orgId: INSTALL_ORG_ID, role: initialMembershipFor(user).role, source: 'session' };
   }
 
-  const membership = await verifiedMembership(user.id, activeOrgId, db);
-  return 'refused' in membership
-    ? membership
-    : { orgId: activeOrgId, role: membership.role, source: 'session' };
+  return memberOrSupportEntry(user, activeOrgId, 'session', db, now);
 }
 
 /**
