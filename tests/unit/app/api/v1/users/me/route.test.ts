@@ -224,6 +224,29 @@ describe('DELETE /api/v1/users/me', () => {
     expect(eraseUser).not.toHaveBeenCalled();
   });
 
+  it('refuses self-deletion inside a support session, before the last-admin check (§121 t-824)', async () => {
+    // The guard presents a supporting platform admin as role USER, so the
+    // last-admin count would never run for them; the route refuses instead.
+    const { runAsOrg } = await import('@/lib/tenancy/context');
+    const session = buildUserSession('USER');
+    const request = createMockRequest({
+      method: 'DELETE',
+      url: 'http://localhost:3000/api/v1/users/me',
+      body: { confirmation: 'DELETE' },
+    });
+
+    const response = await runAsOrg('cmorg00000000000customer1', () => DELETE(request, session), {
+      source: 'support',
+      role: 'ADMIN',
+      support: { grantId: 'grant-1', level: 'ADMIN', expiresAt: new Date(Date.now() + 60_000) },
+    });
+    const body = await parseJSON<ApiBody>(response);
+
+    expect(response.status).toBe(403);
+    expect((body as ErrorBody).error.code).toBe('FORBIDDEN');
+    expect(eraseUser).not.toHaveBeenCalled();
+  });
+
   // ── Case 2: Last-admin block ─────────────────────────────────────────────
 
   it('returns 400 LAST_ADMIN and does NOT call eraseUser when the sole admin tries to self-delete', async () => {

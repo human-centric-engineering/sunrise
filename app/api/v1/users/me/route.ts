@@ -24,6 +24,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { serverTrack } from '@/lib/analytics/server';
 import { EVENTS } from '@/lib/analytics/events';
 import { isPlatformAdmin } from '@/lib/auth/roles';
+import { getTenantContext } from '@/lib/tenancy/context';
 
 /**
  * GET /api/v1/users/me
@@ -297,6 +298,17 @@ export const DELETE = withAuth(
     const log = await getRouteLogger(request);
 
     try {
+      // Inside a support session the guard presents a platform admin as a
+      // plain user (§121 t-824), so the last-admin check below would not see
+      // them. Deleting a vendor account from inside a customer's org is not a
+      // support act anyway: end the session first.
+      if (getTenantContext()?.source === 'support') {
+        return errorResponse('End your support session before deleting your account.', {
+          status: 403,
+          code: ErrorCodes.FORBIDDEN,
+        });
+      }
+
       // Validate confirmation (ensures user typed "DELETE")
       await validateRequestBody(request, deleteAccountSchema);
 

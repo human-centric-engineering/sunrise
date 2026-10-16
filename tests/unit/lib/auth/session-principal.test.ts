@@ -12,7 +12,10 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
 const findUnique = vi.hoisted(() => vi.fn());
-vi.mock('@/lib/db/client', () => ({ prisma: { orgMembership: { findUnique } } }));
+const findFirst = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/db/client', () => ({
+  prisma: { orgMembership: { findUnique }, orgSupportGrant: { findFirst } },
+}));
 vi.mock('@/lib/logging', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
@@ -29,6 +32,7 @@ const session = (activeOrgId: string | null, role = 'USER') => ({
 beforeEach(() => {
   vi.clearAllMocks();
   mockEnv.TENANCY_MODE = 'multi';
+  findFirst.mockResolvedValue(null);
 });
 
 describe('sessionPrincipal', () => {
@@ -53,13 +57,43 @@ describe('sessionPrincipal', () => {
   });
 
   it.each([
-    ['not a member', null],
-    ['a suspended org', { role: 'OWNER', org: { status: 'SUSPENDED' } }],
-  ])('carries no org facts when the entry is refused — %s', async (_label, row) => {
-    findUnique.mockResolvedValue(row);
-    await expect(sessionPrincipal(session(ORG), null)).resolves.toEqual({
-      principal: { userId: 'user-1', role: 'USER', credential: 'session' },
+    ['not a member', null, 'not-a-member'],
+    ['a suspended org', { role: 'OWNER', org: { status: 'SUSPENDED' } }, 'org-suspended'],
+  ])(
+    'carries no org facts, and says why, when the entry is refused — %s',
+    async (_label, row, why) => {
+      findUnique.mockResolvedValue(row);
+      await expect(sessionPrincipal(session(ORG), null)).resolves.toEqual({
+        principal: { userId: 'user-1', role: 'USER', credential: 'session' },
+        scope: {},
+        refused: why,
+      });
+    }
+  );
+
+  it('a support session presents the default user role and carries the grant (§121 t-824)', async () => {
+    findUnique.mockResolvedValue(null);
+    const expiresAt = new Date(Date.now() + 3_600_000);
+    findFirst.mockResolvedValue({ id: 'grant-1', level: 'READ_ONLY', expiresAt });
+    await expect(sessionPrincipal(session(ORG, 'ADMIN'), null)).resolves.toEqual({
+      principal: {
+        userId: 'user-1',
+        role: 'USER',
+        credential: 'session',
+        orgId: ORG,
+        orgRole: 'ADMIN',
+      },
+      scope: { org: ORG },
+      support: { grantId: 'grant-1', level: 'READ_ONLY', expiresAt },
+    });
+  });
+
+  it('a platform admin whose grant has ended keeps their role and no org facts', async () => {
+    findUnique.mockResolvedValue(null);
+    await expect(sessionPrincipal(session(ORG, 'ADMIN'), null)).resolves.toEqual({
+      principal: { userId: 'user-1', role: 'ADMIN', credential: 'session' },
       scope: {},
+      refused: 'not-a-member',
     });
   });
 
