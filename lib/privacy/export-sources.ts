@@ -446,23 +446,46 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
   {
     // Two `User` FKs, both `SetNull`: the grant is the org's consent record,
     // not the person's, so it outlives them (§121 t-823). What the subject
-    // receives is the fact that they granted or revoked support access to an
-    // org, labelled with the org, not the grant's reason or terms.
+    // receives is each act of theirs — granting, revoking — as its own row,
+    // dated when they did it and labelled with the act and the org, not the
+    // grant's reason or terms. One person can do both to one grant: two rows.
     model: 'OrgSupportGrant',
     section: 'supportGrants',
     disposition: 'attribution',
     description:
       'Support-access grants the subject gave to the platform, or revoked, on behalf of an organisation.',
-    fetch: async ({ userId }) =>
-      toAttribution(
-        (
-          await prisma.orgSupportGrant.findMany({
-            where: { OR: [{ grantedById: userId }, { revokedById: userId }] },
-            select: { id: true, createdAt: true, org: { select: { name: true } } },
-            orderBy: byCreatedAt,
-          })
-        ).map((grant) => ({ id: grant.id, name: grant.org.name, createdAt: grant.createdAt }))
-      ),
+    fetch: async ({ userId }: SubjectQuery): Promise<AttributionRow[]> => {
+      const grants = await prisma.orgSupportGrant.findMany({
+        where: { OR: [{ grantedById: userId }, { revokedById: userId }] },
+        select: {
+          id: true,
+          createdAt: true,
+          revokedAt: true,
+          grantedById: true,
+          revokedById: true,
+          org: { select: { name: true } },
+        },
+        orderBy: byCreatedAt,
+      });
+      const acts: AttributionRow[] = [];
+      for (const grant of grants) {
+        if (grant.grantedById === userId) {
+          acts.push({
+            id: grant.id,
+            label: `Granted support access to ${grant.org.name}`,
+            createdAt: grant.createdAt,
+          });
+        }
+        if (grant.revokedById === userId && grant.revokedAt) {
+          acts.push({
+            id: grant.id,
+            label: `Revoked support access to ${grant.org.name}`,
+            createdAt: grant.revokedAt,
+          });
+        }
+      }
+      return acts.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    },
   },
   {
     model: 'AiAgent',

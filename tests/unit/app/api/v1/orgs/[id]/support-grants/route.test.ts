@@ -15,6 +15,7 @@
  * `TENANCY_MODE=multi` unless a case says otherwise, so the guard reads and
  * verifies the membership on every request (`memberOf` arms that read).
  */
+import { Prisma } from '@prisma/client';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { NextRequest } from 'next/server';
 import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
@@ -182,11 +183,47 @@ describe('POST — granting', () => {
     const res = await post({ reason: 'New ticket' });
 
     expect(res.status).toBe(201);
-    expect((await body(res)).data.replacedGrantId).toBe('cmgrant0000000000000older');
+    expect((await body(res)).data.replacedGrantIds).toEqual(['cmgrant0000000000000older']);
     expect(mockAudit.mock.calls.map(([entry]) => [entry.action, entry.entityId])).toEqual([
       ['support_grant.replace', 'cmgrant0000000000000older'],
       ['support_grant.create', GRANT],
     ]);
+  });
+
+  it('audits every open grant the replacement revoked, not only the first', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_OWNER_ROLE);
+    mockDb.orgSupportGrant.findMany.mockResolvedValue([
+      { id: 'cmgrant0000000000000older' },
+      { id: 'cmgrant000000000000oldest' },
+    ]);
+    mockDb.orgSupportGrant.updateMany.mockResolvedValue({ count: 2 });
+
+    const res = await post({ reason: 'New ticket' });
+
+    expect(res.status).toBe(201);
+    expect(mockAudit.mock.calls.map(([entry]) => [entry.action, entry.entityId])).toEqual([
+      ['support_grant.replace', 'cmgrant0000000000000older'],
+      ['support_grant.replace', 'cmgrant000000000000oldest'],
+      ['support_grant.create', GRANT],
+    ]);
+  });
+
+  it('answers 409 when a concurrent grant for the org won the transaction, and audits nothing', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_OWNER_ROLE);
+    mockDb.$transaction.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('could not serialize access', {
+        code: 'P2034',
+        clientVersion: 'test',
+      })
+    );
+
+    const res = await post({ reason: 'Ticket 42' });
+
+    expect(res.status).toBe(409);
+    expect((await body(res)).error.code).toBe('GRANT_CONFLICT');
+    expect(mockAudit).not.toHaveBeenCalled();
   });
 
   it('refuses an ADMIN of the org: granting is an owner’s act', async () => {

@@ -113,7 +113,7 @@ describe('supportGrantActorOf', () => {
 
 describe('grantSupportAccess', () => {
   it('creates an ADMIN grant for the default duration when the owner names neither', async () => {
-    const { grant, replacedGrantId } = await grantSupportAccess(
+    const { grant, replacedGrantIds } = await grantSupportAccess(
       ORG,
       { reason: 'Ticket 42' },
       AS_OWNER,
@@ -133,7 +133,7 @@ describe('grantSupportAccess', () => {
       })
     );
     expect(grant.open).toBe(true);
-    expect(replacedGrantId).toBeNull();
+    expect(replacedGrantIds).toEqual([]);
     expect(db.orgSupportGrant.updateMany).not.toHaveBeenCalled();
   });
 
@@ -167,7 +167,7 @@ describe('grantSupportAccess', () => {
       return grantRow();
     });
 
-    const { replacedGrantId } = await grantSupportAccess(
+    const { replacedGrantIds } = await grantSupportAccess(
       ORG,
       { reason: 'New ticket' },
       AS_OWNER,
@@ -175,7 +175,7 @@ describe('grantSupportAccess', () => {
       NOW
     );
 
-    expect(replacedGrantId).toBe('cmgrant0000000000000older');
+    expect(replacedGrantIds).toEqual(['cmgrant0000000000000older']);
     expect(db.orgSupportGrant.findMany).toHaveBeenCalledWith({
       where: { orgId: ORG, revokedAt: null, expiresAt: { gt: NOW } },
       select: { id: true },
@@ -188,6 +188,51 @@ describe('grantSupportAccess', () => {
     expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
+  });
+
+  it('returns every open grant it revoked, so each replacement can be audited', async () => {
+    // At most one should be open; if the invariant was ever broken, all are
+    // revoked and all are reported, not just the first.
+    db.orgSupportGrant.findMany.mockResolvedValue([
+      { id: 'cmgrant0000000000000older' },
+      { id: 'cmgrant000000000000oldest' },
+    ]);
+    db.orgSupportGrant.updateMany.mockResolvedValue({ count: 2 });
+
+    const { replacedGrantIds } = await grantSupportAccess(
+      ORG,
+      { reason: 'New ticket' },
+      AS_OWNER,
+      db as never,
+      NOW
+    );
+
+    expect(replacedGrantIds).toEqual(['cmgrant0000000000000older', 'cmgrant000000000000oldest']);
+  });
+
+  it('answers a clash with a concurrent grant as a 409 GRANT_CONFLICT', async () => {
+    db.$transaction.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('could not serialize access', {
+        code: 'P2034',
+        clientVersion: 'test',
+      })
+    );
+    const err = await refusal(() =>
+      grantSupportAccess(ORG, { reason: 'x' }, AS_OWNER, db as never, NOW)
+    );
+    expect(err.code).toBe('GRANT_CONFLICT');
+    expect(err.status).toBe(409);
+  });
+
+  it('lets any other transaction failure through unchanged', async () => {
+    const boom = new Prisma.PrismaClientKnownRequestError('unique', {
+      code: 'P2002',
+      clientVersion: 'test',
+    });
+    db.$transaction.mockRejectedValue(boom);
+    await expect(grantSupportAccess(ORG, { reason: 'x' }, AS_OWNER, db as never, NOW)).rejects.toBe(
+      boom
+    );
   });
 
   describe('refuses, and writes nothing', () => {

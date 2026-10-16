@@ -9,6 +9,7 @@
 
 import Link from 'next/link';
 
+import { SUPPORT_GRANT_LEVEL_LABELS } from '@/components/admin/support-access/support-level-help';
 import { Badge } from '@/components/ui/badge';
 import { ClientDate } from '@/components/ui/client-date';
 import {
@@ -19,6 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import type { SupportGrantLevel } from '@/lib/tenancy/roles';
 
 /** One row of `GET /api/v1/admin/orgs`. */
 export interface OrgListItem {
@@ -30,7 +32,7 @@ export interface OrgListItem {
   memberCount: number;
   ownerCount: number;
   /** The org's open support grant (§121 t-823): support may enter until `expiresAt`. */
-  supportGrant: { level: string; expiresAt: string } | null;
+  supportGrant: { level: SupportGrantLevel; expiresAt: string } | null;
 }
 
 export interface OrgsTableProps {
@@ -94,7 +96,7 @@ export function OrgsTable({ orgs, installOrgId }: OrgsTableProps) {
               <TableCell className="text-xs">
                 {org.supportGrant ? (
                   <span>
-                    {org.supportGrant.level === 'READ_ONLY' ? 'Read-only' : 'Admin'} until{' '}
+                    {SUPPORT_GRANT_LEVEL_LABELS[org.supportGrant.level]} until{' '}
                     <ClientDate date={org.supportGrant.expiresAt} showTime />
                   </span>
                 ) : (

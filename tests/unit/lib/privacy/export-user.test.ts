@@ -1201,6 +1201,45 @@ describe('exportUserData', () => {
       ]);
     });
 
+    it('reports each support-grant act as its own row, dated when the subject did it', async () => {
+      // Granted by the subject, revoked by them a day later; and someone
+      // else's grant the subject only revoked. The revocation carries its own
+      // date, not the grant's, and the label says which act it was.
+      const GRANTED = new Date('2026-03-01T00:00:00.000Z');
+      const REVOKED = new Date('2026-03-02T00:00:00.000Z');
+      const OTHERS = new Date('2026-02-01T00:00:00.000Z');
+      const OTHERS_REVOKED = new Date('2026-03-05T00:00:00.000Z');
+      delegateFor('orgSupportGrant').findMany.mockResolvedValue([
+        {
+          id: 'grant-others',
+          createdAt: OTHERS,
+          revokedAt: OTHERS_REVOKED,
+          grantedById: 'user-2',
+          revokedById: 'user-1',
+          org: { name: 'Acme' },
+        },
+        {
+          id: 'grant-own',
+          createdAt: GRANTED,
+          revokedAt: REVOKED,
+          grantedById: 'user-1',
+          revokedById: 'user-1',
+          org: { name: 'Acme' },
+        },
+      ]);
+
+      const bundle = await exportUserData(PARAMS);
+
+      expect(argsTo('orgSupportGrant').where).toEqual({
+        OR: [{ grantedById: 'user-1' }, { revokedById: 'user-1' }],
+      });
+      expect(bundle.attributions.supportGrants).toEqual([
+        { id: 'grant-own', label: 'Granted support access to Acme', createdAt: GRANTED },
+        { id: 'grant-own', label: 'Revoked support access to Acme', createdAt: REVOKED },
+        { id: 'grant-others', label: 'Revoked support access to Acme', createdAt: OTHERS_REVOKED },
+      ]);
+    });
+
     it('labels versioned attribution rows by version number', async () => {
       delegateFor('aiAgentVersion').findMany.mockResolvedValue([
         { id: 'ver-1', version: 3, createdAt: SUBJECT.createdAt },

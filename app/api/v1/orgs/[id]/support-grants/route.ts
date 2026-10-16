@@ -74,7 +74,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
   const { id } = validateQueryParams(new URLSearchParams(await params), orgIdParamSchema);
   const body = await validateRequestBody(request, createSupportGrantSchema);
 
-  const { grant, replacedGrantId } = await grantSupportAccess(
+  const { grant, replacedGrantIds } = await grantSupportAccess(
     id,
     body,
     supportGrantActorOf(session)
@@ -82,7 +82,7 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
 
   const org = await prisma.org.findUnique({ where: { id }, select: { name: true } });
   const clientIp = getClientIP(request);
-  if (replacedGrantId) {
+  for (const replacedGrantId of replacedGrantIds) {
     logAdminAction({
       userId: session.user.id,
       action: 'support_grant.replace',
@@ -111,9 +111,9 @@ export const POST = withAuth<{ id: string }>(async (request, session, { params }
   log.info('Support grant created', {
     orgId: id,
     grantId: grant.id,
-    replacedGrantId,
+    replacedGrantIds,
     actorUserId: session.user.id,
   });
 
-  return successResponse({ grant, replacedGrantId }, undefined, { status: 201 });
+  return successResponse({ grant, replacedGrantIds }, undefined, { status: 201 });
 }, RESOURCE);

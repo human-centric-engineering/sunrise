@@ -34,34 +34,35 @@ const PLATFORM_ONLY = {
 } as const;
 
 export const GET = withAdminAuth(async () => {
-  const orgs = await prisma.org.findMany({
-    select: {
-      id: true,
-      slug: true,
-      name: true,
-      status: true,
-      createdAt: true,
-      updatedAt: true,
-      _count: { select: { memberships: true } },
-    },
-    orderBy: { createdAt: 'asc' },
-  });
-
-  // Owner counts in one query rather than one per row: an org with no
-  // OWNER is the state the admin page needs to flag.
-  const owners = await prisma.orgMembership.groupBy({
-    by: ['orgId'],
-    where: { role: ORG_OWNER_ROLE },
-    _count: { _all: true },
-  });
+  // Three independent queries, run together. Owner counts and open support
+  // grants are each one query rather than one per row: an org with no OWNER
+  // is the state the admin page needs to flag, and an open grant is where the
+  // vendor may enter. At most one grant is open per org
+  // (`lib/tenancy/support-grants.ts`).
+  const [orgs, owners, openGrants] = await Promise.all([
+    prisma.org.findMany({
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: { select: { memberships: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+    prisma.orgMembership.groupBy({
+      by: ['orgId'],
+      where: { role: ORG_OWNER_ROLE },
+      _count: { _all: true },
+    }),
+    prisma.orgSupportGrant.findMany({
+      where: openSupportGrantWhere(new Date()),
+      select: { orgId: true, level: true, expiresAt: true },
+    }),
+  ]);
   const ownerCount = new Map(owners.map((row) => [row.orgId, row._count._all]));
-
-  // Open support grants in one query too: where the vendor may enter. At most
-  // one is open per org (`lib/tenancy/support-grants.ts`).
-  const openGrants = await prisma.orgSupportGrant.findMany({
-    where: openSupportGrantWhere(new Date()),
-    select: { orgId: true, level: true, expiresAt: true },
-  });
   const supportGrant = new Map(openGrants.map(({ orgId, ...grant }) => [orgId, grant] as const));
 
   return successResponse({

@@ -67,7 +67,8 @@ export type SupportGrantErrorCode =
   | 'ORG_NOT_FOUND'
   | 'ORG_NOT_ACTIVE'
   | 'OWNER_REQUIRED'
-  | 'GRANT_NOT_FOUND';
+  | 'GRANT_NOT_FOUND'
+  | 'GRANT_CONFLICT';
 
 const STATUS_FOR: Record<SupportGrantErrorCode, number> = {
   SUPPORT_NOT_AVAILABLE: 400,
@@ -76,6 +77,7 @@ const STATUS_FOR: Record<SupportGrantErrorCode, number> = {
   ORG_NOT_ACTIVE: 400,
   OWNER_REQUIRED: 403,
   GRANT_NOT_FOUND: 404,
+  GRANT_CONFLICT: 409,
 };
 
 /**
@@ -189,9 +191,11 @@ export async function listSupportGrants(
  * Grant support access to the org, replacing the open grant if there is one.
  *
  * Refused at `single`, for the install org, for an org that does not exist or
- * is suspended, and for anyone but an OWNER of this org acting in it. Returns
- * the new grant and the id of the one it replaced, so the route can audit the
- * replacement as well as the grant.
+ * is suspended, and for anyone but an OWNER of this org acting in it. A clash
+ * with a concurrent grant for the same org is refused with `GRANT_CONFLICT`
+ * (409), and nothing is written. Returns the new grant and the ids of every
+ * open grant it revoked, so the route can audit each replacement as well as
+ * the grant.
  */
 export async function grantSupportAccess(
   orgId: string,
@@ -199,7 +203,7 @@ export async function grantSupportAccess(
   actor: SupportGrantActor,
   db: SupportGrantDb = prisma,
   now: Date = new Date()
-): Promise<{ grant: SupportGrantRecord; replacedGrantId: string | null }> {
+): Promise<{ grant: SupportGrantRecord; replacedGrantIds: string[] }> {
   if (!isMultiTenant()) {
     throw new SupportGrantError(
       'SUPPORT_NOT_AVAILABLE',
@@ -232,44 +236,56 @@ export async function grantSupportAccess(
   const hours = input.durationHours ?? SUPPORT_GRANT_DEFAULT_HOURS;
   const expiresAt = new Date(now.getTime() + hours * 60 * 60 * 1000);
 
-  const result = await db.$transaction(
-    async (tx) => {
-      const open = await tx.orgSupportGrant.findMany({
-        where: { orgId, ...openSupportGrantWhere(now) },
-        select: { id: true },
-      });
-      if (open.length > 0) {
-        await tx.orgSupportGrant.updateMany({
-          where: { id: { in: open.map((g) => g.id) } },
-          data: { revokedAt: now, revokedById: actor.userId },
+  let result: { created: GrantRow; replacedGrantIds: string[] };
+  try {
+    result = await db.$transaction(
+      async (tx) => {
+        const open = await tx.orgSupportGrant.findMany({
+          where: { orgId, ...openSupportGrantWhere(now) },
+          select: { id: true },
         });
-      }
-      const created = await tx.orgSupportGrant.create({
-        data: {
-          orgId,
-          level: input.level ?? DEFAULT_SUPPORT_GRANT_LEVEL,
-          reason: input.reason,
-          expiresAt,
-          grantedById: actor.userId,
-        },
-        select: grantSelect,
-      });
-      return { created, replacedGrantId: open[0]?.id ?? null };
-    },
-    // A read of the open grant, then a write keyed on it: at READ COMMITTED
-    // two concurrent grants would each see none open and both stand.
-    { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
-  );
+        if (open.length > 0) {
+          await tx.orgSupportGrant.updateMany({
+            where: { id: { in: open.map((g) => g.id) } },
+            data: { revokedAt: now, revokedById: actor.userId },
+          });
+        }
+        const created = await tx.orgSupportGrant.create({
+          data: {
+            orgId,
+            level: input.level ?? DEFAULT_SUPPORT_GRANT_LEVEL,
+            reason: input.reason,
+            expiresAt,
+            grantedById: actor.userId,
+          },
+          select: grantSelect,
+        });
+        return { created, replacedGrantIds: open.map((g) => g.id) };
+      },
+      // A read of the open grant, then a write keyed on it: at READ COMMITTED
+      // two concurrent grants would each see none open and both stand.
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+    );
+  } catch (error) {
+    // SERIALIZABLE failed the later of two concurrent grants (P2034).
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+      throw new SupportGrantError(
+        'GRANT_CONFLICT',
+        'Another support grant for this organisation was saved at the same time; retry'
+      );
+    }
+    throw error;
+  }
 
   logger.info('Support access granted', {
     orgId,
     grantId: result.created.id,
     level: result.created.level,
     expiresAt: expiresAt.toISOString(),
-    replacedGrantId: result.replacedGrantId,
+    replacedGrantIds: result.replacedGrantIds,
     grantedById: actor.userId,
   });
-  return { grant: toRecord(result.created, now), replacedGrantId: result.replacedGrantId };
+  return { grant: toRecord(result.created, now), replacedGrantIds: result.replacedGrantIds };
 }
 
 /**

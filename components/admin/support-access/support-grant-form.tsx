@@ -52,10 +52,10 @@ export const SUPPORT_GRANT_DURATIONS: readonly { hours: number; label: string }[
 ];
 
 // The route's own schema, with level and duration required because the form
-// always has one selected.
+// always has one selected. Unwrapped, not redeclared, so the route's bounds hold.
 const grantFormSchema = createSupportGrantSchema.extend({
-  level: z.enum(SUPPORT_GRANT_LEVELS),
-  durationHours: z.number().int(),
+  level: createSupportGrantSchema.shape.level.unwrap(),
+  durationHours: createSupportGrantSchema.shape.durationHours.unwrap(),
 });
 
 type GrantFormData = z.infer<typeof grantFormSchema>;

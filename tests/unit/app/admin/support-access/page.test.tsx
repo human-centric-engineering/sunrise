@@ -137,6 +137,18 @@ describe('SupportAccessPage', () => {
     expect(screen.queryByTestId('grants-table')).not.toBeInTheDocument();
   });
 
+  it('withholds the form from an owner when the grants could not be loaded', async () => {
+    // Without the list the page cannot say whether granting replaces an open
+    // grant, so it offers no grant rather than one that might silently replace.
+    actAs(ORG, ORG.id, 'OWNER');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+
+    render(await SupportAccessPage());
+
+    expect(formProps).not.toHaveBeenCalled();
+    expect(screen.getByRole('alert')).toHaveTextContent('cannot be granted until they can');
+  });
+
   it('says so when the grants could not be loaded', async () => {
     actAs(ORG, ORG.id, 'ADMIN');
     vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);

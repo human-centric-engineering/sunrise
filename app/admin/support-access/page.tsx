@@ -73,19 +73,22 @@ export default async function SupportAccessPage() {
         </Unavailable>
       ) : (
         <>
-          {isOwner ? (
+          {/* No form without the list: granting replaces the open grant, and
+              the owner is told so only when the page knows there is one. */}
+          {!isOwner ? (
+            <Unavailable>Only an owner of this organisation can grant support access.</Unavailable>
+          ) : grants ? (
             <SupportGrantForm
               orgId={org.id}
-              replacesOpenGrant={grants?.some((grant) => grant.open) ?? false}
+              replacesOpenGrant={grants.some((grant) => grant.open)}
             />
-          ) : (
-            <Unavailable>Only an owner of this organisation can grant support access.</Unavailable>
-          )}
+          ) : null}
           {grants ? (
             <SupportGrantsTable orgId={org.id} grants={grants} />
           ) : (
             <p role="alert" className="text-destructive text-sm">
-              The support grants for this organisation could not be loaded.
+              The support grants for this organisation could not be loaded
+              {isOwner ? ', so support access cannot be granted until they can.' : '.'}
             </p>
           )}
         </>

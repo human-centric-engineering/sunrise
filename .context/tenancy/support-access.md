@@ -61,7 +61,10 @@ grant is recorded and listed but admits nobody.
   need is a new grant with a new reason.
 - **One open per org.** A new grant revokes the open one, as the person
   granting, in the same SERIALIZABLE transaction. The route audits both
-  (`support_grant.replace`, then `support_grant.create`).
+  (`support_grant.replace` for each grant revoked, then `support_grant.create`),
+  and answers with the new grant and `replacedGrantIds`. Two grants for one org
+  at the same moment: the later fails with 409 `GRANT_CONFLICT` and writes
+  nothing.
 - **Revoking an ended grant** answers 200 with `revoked: false` and writes
   nothing, so a second click or a race with expiry is not an error.
 
