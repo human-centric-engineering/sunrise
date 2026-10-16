@@ -33,7 +33,8 @@ model Org {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  memberships OrgMembership[]
+  memberships   OrgMembership[]
+  supportGrants OrgSupportGrant[]
 
   // Credentials minted inside this org (§106 t-673 writes them; the identity
   // migration backfills every existing row to the install org).
@@ -102,6 +103,52 @@ model OrgMembership {
   @@unique([orgId, userId])
   @@index([userId])
   @@map("org_membership")
+}
+
+/// An org's consent for the vendor's support staff to act inside it, for a
+/// stated time and reason (§121 t-823). Granted by the org's OWNER; revoked by
+/// its OWNER or ADMIN, or by a platform admin. Any platform admin may enter the
+/// org while a grant is open (§121 ruling 1); the entry itself is t-824's.
+///
+/// A system model, not tenant-owned, for `OrgMembership`'s reason: it is read
+/// before any org is entered, to decide whether a non-member may enter, and
+/// under row isolation a tenant-owned grant would be invisible at exactly that
+/// moment. Never deleted by the lifecycle: an ended grant is history the org
+/// reads back. It goes with its org (`eraseOrg`), and keeps standing when the
+/// person who granted or revoked it is erased (`SetNull`) — the consent was
+/// the org's, not theirs.
+///
+/// "Open" is `revokedAt IS NULL AND expiresAt > now()`. At most one is open per
+/// org; `lib/tenancy/support-grants.ts` holds that, since an index cannot
+/// say "not yet expired".
+model OrgSupportGrant {
+  id          String            @id @default(cuid())
+  orgId       String
+  level       SupportGrantLevel @default(ADMIN)
+  reason      String            @db.Text
+  expiresAt   DateTime
+  grantedById String?
+  revokedAt   DateTime?
+  revokedById String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  org       Org   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  grantedBy User? @relation("OrgSupportGrantGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+  revokedBy User? @relation("OrgSupportGrantRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
+
+  @@index([orgId, expiresAt])
+  @@index([grantedById])
+  @@index([revokedById])
+  @@map("org_support_grant")
+}
+
+/// What a support grant lets the vendor's staff do in the org (§121 ruling 2).
+/// ADMIN, the default: what an org ADMIN may do. READ_ONLY: the same view,
+/// with every write refused.
+enum SupportGrantLevel {
+  ADMIN
+  READ_ONLY
 }
 
 /// Lifecycle of an org. SUSPENDED members are denied entry by the guard

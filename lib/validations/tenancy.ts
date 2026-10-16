@@ -8,7 +8,7 @@
 import { z } from 'zod';
 import { cuidSchema, slugSchema } from '@/lib/validations/common';
 import { emailSchema } from '@/lib/validations/auth';
-import { ORG_ROLES, ORG_STATUSES } from '@/lib/tenancy/roles';
+import { ORG_ROLES, ORG_STATUSES, SUPPORT_GRANT_LEVELS } from '@/lib/tenancy/roles';
 import { ORG_ID_SHAPE } from '@/lib/tenancy/resolver';
 
 /**
@@ -333,3 +333,37 @@ export const inviteOrgMemberSchema = z.object({
 });
 
 export type InviteOrgMemberInput = z.infer<typeof inviteOrgMemberSchema>;
+
+/**
+ * How long a support grant runs when the OWNER names no duration, and the
+ * longest it may run (§121 t-823). Bounded so consent stays fresh: a longer
+ * need is a new grant with a new reason, not one open-ended one.
+ */
+export const SUPPORT_GRANT_DEFAULT_HOURS = 24;
+export const SUPPORT_GRANT_MAX_HOURS = 7 * 24;
+
+/**
+ * `POST /api/v1/orgs/[id]/support-grants` body — the org's OWNER consenting
+ * to vendor support acting inside the org. The reason is required: it is the
+ * record of what the org agreed to, and the vendor reads it on entry.
+ */
+export const createSupportGrantSchema = z.object({
+  /** Absent ⇒ ADMIN (ruling 2): the OWNER restricts by choosing READ_ONLY. */
+  level: z.enum(SUPPORT_GRANT_LEVELS).optional(),
+  reason: z
+    .string()
+    .trim()
+    .min(1, 'Say why support needs access')
+    .max(1000, 'Reason must be 1000 characters or fewer'),
+  durationHours: z
+    .number()
+    .int('Duration must be a whole number of hours')
+    .min(1, 'Duration must be at least 1 hour')
+    .max(SUPPORT_GRANT_MAX_HOURS, `Duration must be at most ${SUPPORT_GRANT_MAX_HOURS} hours`)
+    .optional(),
+});
+
+export type CreateSupportGrantInput = z.infer<typeof createSupportGrantSchema>;
+
+/** `[id]/support-grants/[grantId]` segments. */
+export const supportGrantParamsSchema = z.object({ id: orgIdSchema, grantId: cuidSchema });

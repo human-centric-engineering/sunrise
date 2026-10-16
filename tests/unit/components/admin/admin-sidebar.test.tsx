@@ -18,6 +18,9 @@ import { registerNavSection, __resetNavRegistryForTests } from '@/lib/admin-nav/
 
 const pathnameMock = vi.fn(() => '/admin/overview');
 
+/** The nav items shown at `multi` only: Members (t-813) and Support access (§121 t-823). */
+const MULTI_ONLY = ['/admin/members', '/admin/support-access'];
+
 vi.mock('next/navigation', () => ({
   usePathname: () => pathnameMock(),
 }));
@@ -544,7 +547,7 @@ describe('AdminSidebar — Members at multi (t-813)', () => {
     expect(hrefsOf()).not.toContain('/admin/members');
   });
 
-  it('shows Members for a platform viewer at multi, and every other link is unchanged', () => {
+  it('shows Members and Support access for a platform viewer at multi, and every other link is unchanged', () => {
     const { unmount } = render(<AdminSidebar viewerTier="platform" />);
     const single = hrefsOf();
     unmount();
@@ -554,20 +557,30 @@ describe('AdminSidebar — Members at multi (t-813)', () => {
 
     const members = screen.getByRole('link', { name: /Members/ });
     expect(members).toHaveAttribute('href', '/admin/members');
-    expect(multi.filter((h) => h !== '/admin/members')).toEqual(single);
+    expect(screen.getByRole('link', { name: /Support access/ })).toHaveAttribute(
+      'href',
+      '/admin/support-access'
+    );
+    expect(single).not.toContain('/admin/support-access');
+    expect(multi.filter((h) => !MULTI_ONLY.includes(h))).toEqual(single);
   });
 
-  it('shows an org viewer Members at multi but not Users or Organisations', () => {
+  it('shows an org viewer Members and Support access at multi but not Users or Organisations', () => {
     render(<AdminSidebar viewerTier="org" multiTenant />);
 
     expect(screen.getByRole('link', { name: /Members/ })).toHaveAttribute('href', '/admin/members');
+    expect(screen.getByRole('link', { name: /Support access/ })).toHaveAttribute(
+      'href',
+      '/admin/support-access'
+    );
     expect(screen.queryByRole('link', { name: /^Users/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Organisations/ })).not.toBeInTheDocument();
   });
 
-  it('shows an org viewer no Members at single', () => {
+  it('shows an org viewer no Members or Support access at single', () => {
     render(<AdminSidebar viewerTier="org" multiTenant={false} />);
     expect(screen.queryByRole('link', { name: /Members/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Support access/ })).not.toBeInTheDocument();
   });
 });
 
@@ -597,7 +610,7 @@ describe('sectionsForMode', () => {
     expect(sections[0].items).toHaveLength(3);
   });
 
-  it('removes only the Members item from the real core sections at single', async () => {
+  it('removes only the multi-only items from the real core sections at single', async () => {
     const { coreNavSections } = await import('@/components/admin/admin-sidebar');
     const flat = (secs: typeof coreNavSections) =>
       secs.flatMap((s) => [...(s.items ?? []), ...(s.subgroups?.flatMap((g) => g.items) ?? [])]);
@@ -605,7 +618,7 @@ describe('sectionsForMode', () => {
     const before = flat(coreNavSections).map((i) => i.href);
     const after = flat(sectionsForMode(coreNavSections, false)).map((i) => i.href);
 
-    expect(before).toContain('/admin/members');
-    expect(after).toEqual(before.filter((h) => h !== '/admin/members'));
+    for (const href of MULTI_ONLY) expect(before).toContain(href);
+    expect(after).toEqual(before.filter((h) => !MULTI_ONLY.includes(h)));
   });
 });

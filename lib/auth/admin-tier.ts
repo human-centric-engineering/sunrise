@@ -84,7 +84,9 @@ export type AdminViewerTier = 'platform' | 'org';
  * `/admin` itself is here so it can send an org admin to the dashboard; the
  * overview it sends a platform admin to is not. Members (§111 t-813) is the org's
  * roster, over `/api/v1/orgs/[id]/members`, which the org arm already admits
- * an org admin to; Users stays the platform's. The roster test
+ * an org admin to; Users stays the platform's. Support access (§121 t-823) is
+ * the org's consent to vendor support, over `/api/v1/orgs/[id]/support-grants`,
+ * the same org arm. The roster test
  * pins this list, so widening it fails until the test is updated in the same
  * diff. Frozen, because it is a constant and not a registry: nothing adds to
  * it at runtime. A fork's pages go in a registry of their own beside it
@@ -134,6 +136,7 @@ export const ORG_TIER_ADMIN_PAGES: readonly string[] = Object.freeze([
   // page a pattern names on the list by name.
   '/admin/orchestration/executions/live',
   '/admin/members',
+  '/admin/support-access',
 ]);
 
 /**
@@ -152,6 +155,7 @@ export const CORE_ADMIN_SECTIONS: readonly string[] = Object.freeze([
   'orchestration',
   'orgs',
   'overview',
+  'support-access',
   'users',
 ]);
 

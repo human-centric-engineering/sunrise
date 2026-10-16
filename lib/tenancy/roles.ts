@@ -68,6 +68,23 @@ export const ORG_STATUSES = ['ACTIVE', 'SUSPENDED'] as const;
 export type OrgStatus = (typeof ORG_STATUSES)[number];
 
 /**
+ * What a support grant lets the vendor's staff do in the org (§121 t-823,
+ * ruling 2): `ADMIN`, the default, is what an org ADMIN may do; `READ_ONLY`
+ * is the same view with every write refused. Here rather than beside the
+ * grant module because `'ADMIN'` is an org-role literal
+ * (`tests/unit/auth-role-literals.test.ts`), and because the grant form reads
+ * it client-side. A Prisma enum, and `tests/unit/lib/tenancy/roles.test.ts`
+ * asserts the two agree.
+ */
+export const SUPPORT_GRANT_LEVELS = [ORG_ADMIN_ROLE, 'READ_ONLY'] as const;
+
+/** A known `OrgSupportGrant.level` value. */
+export type SupportGrantLevel = (typeof SUPPORT_GRANT_LEVELS)[number];
+
+/** The level a grant gets when the OWNER does not restrict it. */
+export const DEFAULT_SUPPORT_GRANT_LEVEL: SupportGrantLevel = ORG_ADMIN_ROLE;
+
+/**
  * Is `value` an org role this install knows about?
  *
  * The narrowing form for data crossing a boundary — invitation metadata, a

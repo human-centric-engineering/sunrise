@@ -38,6 +38,7 @@ import {
   MessagesSquare,
   UserCog,
   UsersRound,
+  LifeBuoy,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { API } from '@/lib/api/endpoints';
@@ -90,6 +91,13 @@ export const coreNavSections: NavSection[] = [
         label: 'Members',
         icon: UsersRound,
         description: 'People in this organisation',
+      },
+      {
+        href: '/admin/support-access',
+        tier: 'org',
+        label: 'Support access',
+        icon: LifeBuoy,
+        description: 'Let platform support into this organisation',
       },
       {
         href: '/admin/orgs',
@@ -439,9 +447,10 @@ interface AdminSidebarProps {
 /**
  * Items shown at `multi` only. Members (§111 t-813) manages one org's roster,
  * and at `single` the only org is the install org, whose roles follow the
- * platform role and are managed on Users.
+ * platform role and are managed on Users. Support access (§121 t-823) is
+ * one org consenting to the vendor, and at `single` there is no other org.
  */
-const MULTI_TENANT_ONLY: ReadonlySet<string> = new Set(['/admin/members']);
+const MULTI_TENANT_ONLY: ReadonlySet<string> = new Set(['/admin/members', '/admin/support-access']);
 
 /** The sections without the `multi`-only items, when the install is not `multi`. */
 export function sectionsForMode(sections: NavSection[], multiTenant: boolean): NavSection[] {

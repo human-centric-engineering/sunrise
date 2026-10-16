@@ -1,8 +1,9 @@
 /**
  * Orgs, as the vendor sees them (§106 t-672)
  *
- * GET  /api/v1/admin/orgs — every org with its member and owner counts, the
- *      enriched list the admin page reads in one request.
+ * GET  /api/v1/admin/orgs — every org with its member and owner counts and
+ *      its open support grant, if any (§121 t-823): the enriched list the
+ *      admin page reads in one request.
  * POST /api/v1/admin/orgs — create one: `{ slug, name, ownerUserId? }`,
  *      naming the founding OWNER in the same write.
  *
@@ -20,6 +21,7 @@ import { validateRequestBody } from '@/lib/api/validation';
 import { createOrgSchema } from '@/lib/validations/tenancy';
 import { createOrg } from '@/lib/tenancy/lifecycle';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import { openSupportGrantWhere } from '@/lib/tenancy/support-grants';
 import { getRouteLogger } from '@/lib/api/context';
 
 const PLATFORM_ONLY = {
@@ -54,11 +56,20 @@ export const GET = withAdminAuth(async () => {
   });
   const ownerCount = new Map(owners.map((row) => [row.orgId, row._count._all]));
 
+  // Open support grants in one query too: where the vendor may enter. At most
+  // one is open per org (`lib/tenancy/support-grants.ts`).
+  const openGrants = await prisma.orgSupportGrant.findMany({
+    where: openSupportGrantWhere(new Date()),
+    select: { orgId: true, level: true, expiresAt: true },
+  });
+  const supportGrant = new Map(openGrants.map(({ orgId, ...grant }) => [orgId, grant] as const));
+
   return successResponse({
     orgs: orgs.map(({ _count, ...org }) => ({
       ...org,
       memberCount: _count.memberships,
       ownerCount: ownerCount.get(org.id) ?? 0,
+      supportGrant: supportGrant.get(org.id) ?? null,
     })),
   });
 }, PLATFORM_ONLY);

@@ -444,6 +444,27 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
       ),
   },
   {
+    // Two `User` FKs, both `SetNull`: the grant is the org's consent record,
+    // not the person's, so it outlives them (§121 t-823). What the subject
+    // receives is the fact that they granted or revoked support access to an
+    // org, labelled with the org, not the grant's reason or terms.
+    model: 'OrgSupportGrant',
+    section: 'supportGrants',
+    disposition: 'attribution',
+    description:
+      'Support-access grants the subject gave to the platform, or revoked, on behalf of an organisation.',
+    fetch: async ({ userId }) =>
+      toAttribution(
+        (
+          await prisma.orgSupportGrant.findMany({
+            where: { OR: [{ grantedById: userId }, { revokedById: userId }] },
+            select: { id: true, createdAt: true, org: { select: { name: true } } },
+            orderBy: byCreatedAt,
+          })
+        ).map((grant) => ({ id: grant.id, name: grant.org.name, createdAt: grant.createdAt }))
+      ),
+  },
+  {
     model: 'AiAgent',
     section: 'agents',
     disposition: 'attribution',

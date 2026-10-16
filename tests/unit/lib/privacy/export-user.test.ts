@@ -979,6 +979,8 @@ describe('exportUserData', () => {
     const RELATION_READS: Record<string, string[]> = {
       // The org row of each of the subject's own memberships: id, slug, name.
       OrgMembership: ['org'],
+      // The name of the org each grant the subject gave or revoked was for.
+      OrgSupportGrant: ['org'],
       // The messages and share link of the subject's own conversations.
       AiConversation: ['messages', 'share'],
     };

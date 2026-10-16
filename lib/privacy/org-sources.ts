@@ -127,6 +127,22 @@ export const ORG_DATA_SOURCES: OrgDataSource[] = [
       }),
   },
   {
+    model: 'OrgSupportGrant',
+    section: 'supportGrants',
+    disposition: 'export',
+    description:
+      'Every time the organisation let the platform’s support staff in: at what level, why, for how long, who granted it, and who ended it. The names of those people ride along; nothing else about them is included.',
+    fetch: ({ orgId }) =>
+      prisma.orgSupportGrant.findMany({
+        where: { orgId },
+        include: {
+          grantedBy: { select: { id: true, name: true } },
+          revokedBy: { select: { id: true, name: true } },
+        },
+        orderBy: byCreatedAt,
+      }),
+  },
+  {
     model: 'Verification',
     section: 'pendingInvitations',
     disposition: 'export',

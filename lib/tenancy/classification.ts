@@ -37,7 +37,9 @@
  * `OrgMembership` carries `orgId` but is the join that *decides* which org a
  * request acts for — reading it cross-org is the org switcher's job — and
  * `Session` / `Account` are the user's under multi-membership, not any one
- * org's (§107 planning decision, 2026-09-18).
+ * org's (§107 planning decision, 2026-09-18). `OrgSupportGrant` (§121 t-823)
+ * is `OrgMembership`'s other half: it decides whether a non-member may enter,
+ * so it is read before any org is.
  */
 export const SYSTEM_MODELS = [
   'User',
@@ -46,6 +48,7 @@ export const SYSTEM_MODELS = [
   'Verification',
   'Org',
   'OrgMembership',
+  'OrgSupportGrant',
   'AuthBootstrap',
   'SeedHistory',
   'ContactSubmission',

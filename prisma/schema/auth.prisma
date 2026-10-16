@@ -42,7 +42,11 @@ model User {
   accounts Account[]
 
   // Tenancy (§106). Cascade: a membership is the person's data.
-  orgMemberships OrgMembership[] @relation("OrgMembershipUser")
+  orgMemberships       OrgMembership[]   @relation("OrgMembershipUser")
+  // Support grants this user issued or revoked (§121 t-823). SetNull on the
+  // grant side: the consent was the org's, so it outlives the person.
+  supportGrantsGranted OrgSupportGrant[] @relation("OrgSupportGrantGrantedBy")
+  supportGrantsRevoked OrgSupportGrant[] @relation("OrgSupportGrantRevokedBy")
 
   // Agent Orchestration relations
   aiAgents                          AiAgent[]                          @relation("AiAgentCreator")

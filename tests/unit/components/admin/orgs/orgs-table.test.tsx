@@ -22,6 +22,7 @@ function org(overrides: Partial<OrgListItem>): OrgListItem {
     createdAt: '2026-09-01T00:00:00.000Z',
     memberCount: 3,
     ownerCount: 1,
+    supportGrant: null,
     ...overrides,
   };
 }
@@ -46,6 +47,32 @@ describe('OrgsTable', () => {
     expect(within(installRow).getByText('Install org')).toBeInTheDocument();
     expect(within(acmeRow).queryByText('Install org')).not.toBeInTheDocument();
     expect(acmeRow).toHaveTextContent('suspended');
+  });
+
+  it('says which orgs have an open support grant, and at what level', () => {
+    render(
+      <OrgsTable
+        installOrgId={INSTALL}
+        orgs={[
+          org({ id: 'cmorg0000000000000000none' }),
+          org({
+            id: 'cmorg0000000000000000open',
+            name: 'Globex',
+            supportGrant: { level: 'READ_ONLY', expiresAt: '2026-10-17T09:00:00.000Z' },
+          }),
+          org({
+            id: 'cmorg00000000000000admin',
+            name: 'Initech',
+            supportGrant: { level: 'ADMIN', expiresAt: '2026-10-17T09:00:00.000Z' },
+          }),
+        ]}
+      />
+    );
+    const [, noneRow, readOnlyRow, adminRow] = screen.getAllByRole('row');
+    expect(noneRow).toHaveTextContent('None');
+    expect(readOnlyRow).toHaveTextContent('Read-only until');
+    expect(adminRow).toHaveTextContent('Admin until');
+    expect(adminRow).not.toHaveTextContent('None');
   });
 
   it('says so when there is nothing to list', () => {
