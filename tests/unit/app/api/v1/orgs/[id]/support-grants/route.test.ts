@@ -94,25 +94,26 @@ const grantRow = (over: Partial<{ revokedAt: Date | null; expiresAt: Date }> = {
 
 const params = (id = ORG) => ({ params: Promise.resolve({ id }) });
 
-function get(orgId = ORG) {
-  const request = new Request(
-    `http://localhost/api/v1/orgs/${orgId}/support-grants`
-  ) as unknown as NextRequest;
+function get(orgId = ORG, headers: Record<string, string> = {}) {
+  const request = new Request(`http://localhost/api/v1/orgs/${orgId}/support-grants`, {
+    headers,
+  }) as unknown as NextRequest;
   return GET(request, params(orgId));
 }
 
-function post(body: unknown, orgId = ORG) {
+function post(body: unknown, orgId = ORG, headers: Record<string, string> = {}) {
   const request = new Request(`http://localhost/api/v1/orgs/${orgId}/support-grants`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify(body),
   }) as unknown as NextRequest;
   return POST(request, params(orgId));
 }
 
-function del(orgId = ORG, grantId = GRANT) {
+function del(orgId = ORG, grantId = GRANT, headers: Record<string, string> = {}) {
   const request = new Request(`http://localhost/api/v1/orgs/${orgId}/support-grants/${grantId}`, {
     method: 'DELETE',
+    headers,
   }) as unknown as NextRequest;
   return DELETE(request, { params: Promise.resolve({ id: orgId, grantId }) });
 }
@@ -339,5 +340,71 @@ describe('DELETE — revoking', () => {
     memberOf(DEFAULT_ORG_ROLE);
     expect((await del()).status).toBe(403);
     expect(mockDb.orgSupportGrant.updateMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('credentials and the audit entry', () => {
+  const BEARER = { authorization: 'Bearer sk_deadbeefdeadbeefdeadbeefdeadbeef' };
+
+  /**
+   * An `admin`-scoped key minted by a platform admin: the policy admits it to
+   * every org's routes, so it is the key the routes themselves must refuse.
+   */
+  function adminKey() {
+    mockDb.aiApiKey.findFirst.mockResolvedValue({
+      id: 'cmkey000000000000000key1',
+      userId: USER_ID,
+      scopes: ['admin'],
+      rateLimitRpm: null,
+      expiresAt: null,
+      createdAt: new Date(),
+      orgId: null,
+      user: {
+        id: USER_ID,
+        name: 'Key Owner',
+        email: 'owner@example.com',
+        emailVerified: true,
+        image: null,
+        role: PLATFORM_ADMIN_ROLE,
+        accountType: 'HUMAN',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  it('refuses an admin-scoped API key on every route: consent is a person’s act', async () => {
+    adminKey();
+
+    expect((await get(ORG, BEARER)).status).toBe(403);
+    expect((await post({ reason: 'x' }, ORG, BEARER)).status).toBe(403);
+    expect((await del(ORG, GRANT, BEARER)).status).toBe(403);
+
+    expect(mockDb.orgSupportGrant.findMany).not.toHaveBeenCalled();
+    expectNoGrantWritten();
+  });
+
+  it('still audits a grant and a revocation when the org’s name cannot be read', async () => {
+    mockGetSession.mockResolvedValue(session('USER', ORG));
+    memberOf(ORG_OWNER_ROLE);
+    // Resolver, then the grant rule's status read, then the audit's name read.
+    mockDb.org.findUnique
+      .mockResolvedValueOnce({ id: ORG })
+      .mockResolvedValueOnce({ status: 'ACTIVE' })
+      .mockResolvedValueOnce(null);
+
+    expect((await post({ reason: 'Ticket 42' })).status).toBe(201);
+    expect(mockAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'support_grant.create', entityName: null })
+    );
+
+    mockDb.org.findUnique.mockResolvedValueOnce({ id: ORG }).mockResolvedValueOnce(null);
+    mockDb.orgSupportGrant.updateMany.mockResolvedValue({ count: 1 });
+    mockDb.orgSupportGrant.findFirst.mockResolvedValue(grantRow({ revokedAt: new Date() }));
+
+    expect((await del()).status).toBe(200);
+    expect(mockAudit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ action: 'support_grant.revoke', entityName: null })
+    );
   });
 });
