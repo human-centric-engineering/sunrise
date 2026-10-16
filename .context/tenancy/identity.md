@@ -555,6 +555,8 @@ merge-impact section promises forks.
 
 - [Tenant context](./context.md) — how a request enters the org it acts
   for, and what reads it
+- [Support access](./support-access.md) — an org's consent for vendor support
+  to act inside it, and its rules
 - [Multi-tenancy design record](../architecture/multi-tenancy-design.md) —
   the decisions and principles this page applies
 - [Multi-tenancy playbook](../architecture/multi-tenancy.md) — enabling

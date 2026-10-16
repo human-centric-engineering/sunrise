@@ -75,7 +75,7 @@ const TREE: RosterInput = {
 };
 
 describe('the pins', () => {
-  it('opens exactly the customer’s sections and the mixed pages and Members to an org admin (t-811, t-812, t-813)', () => {
+  it('opens exactly the customer’s sections, the mixed pages, Members and Support access to an org admin (t-811, t-812, t-813, t-823)', () => {
     // A page added here is a page every org OWNER/ADMIN can open: add it to
     // ORG_TIER_ADMIN_PAGES and here, in the same diff, and say why in the PR.
     expect(ORG_TIER_ADMIN_PAGES).toEqual([
@@ -119,6 +119,8 @@ describe('the pins', () => {
       '/admin/orchestration/executions/[id]',
       '/admin/orchestration/executions/live',
       '/admin/members',
+      // §121 t-823: the org's consent to vendor support, over the org arm.
+      '/admin/support-access',
     ]);
   });
 
@@ -335,6 +337,7 @@ describe('the core sections', () => {
       'orchestration',
       'orgs',
       'overview',
+      'support-access',
       'users',
     ]);
   });

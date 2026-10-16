@@ -558,6 +558,7 @@ fork's own surface, declare it the same way.
 | `orchestration/mcp/keys`                            | `McpApiKey`                                           |
 | `orchestration/approvals`                           | Approvals on executions                               |
 | `members` (§111 t-813, shown at `multi` only)       | `OrgMembership` of the entered org, and invitations   |
+| `support-access` (§121 t-823, `multi` only)         | `OrgSupportGrant` of the entered org                  |
 
 ### Mixed — split per viewer, not assigned
 

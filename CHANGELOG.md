@@ -18,6 +18,20 @@ release process.
 
 ### Added
 
+- **An org's OWNER grants and revokes vendor support access** (§121 t-823). New
+  model `OrgSupportGrant` with enum `SupportGrantLevel` (`ADMIN`, the default,
+  or `READ_ONLY`), a system model beside `OrgMembership`: a reason, an expiry
+  (24 hours by default, 7 days at most) and who granted and revoked it. New
+  routes `GET`/`POST /api/v1/orgs/[id]/support-grants` and
+  `DELETE /api/v1/orgs/[id]/support-grants/[grantId]`, with the rules in the
+  new `lib/tenancy/support-grants.ts`: only an OWNER of the org, acting in it,
+  may grant (platform standing never counts); a new grant replaces the open
+  one; refused at `single`, for the install org and for a suspended org. New
+  org-tier page `/admin/support-access` (nav at `multi` only; `CORE_ADMIN_SECTIONS`
+  gains `support-access`). `GET /api/v1/admin/orgs` rows gain `supportGrant`.
+  Both privacy manifests list the model. A grant admits nobody yet: entry under
+  it is §121 t-824. **Forks:** run the migration; a fork page may not sit under
+  `/admin/support-access`.
 - **A fork lists its own admin pages as org-tier** (t-817): the new
   `lib/app/admin-tier.ts` seam (`initAppOrgTierAdminPages()`, ships empty)
   calls `registerOrgTierAdminPage(pattern)` from `lib/auth/admin-tier.ts`, and

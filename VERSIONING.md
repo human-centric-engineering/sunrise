@@ -170,6 +170,7 @@ covered by the version contract.
   - `successResponse()`, `errorResponse()` from `lib/api/responses.ts`
   - `serverFetch()` from `lib/api/server-fetch.ts`
   - `logger` from `lib/logging/`
+  - org support grants (§121): `GET`/`POST /api/v1/orgs/[id]/support-grants` and `DELETE /api/v1/orgs/[id]/support-grants/[grantId]`; `findOpenSupportGrant()`, `openSupportGrantWhere()`, `grantSupportAccess()`, `revokeSupportGrant()`, `listSupportGrants()` and `SupportGrantError` from `lib/tenancy/support-grants.ts`; `SUPPORT_GRANT_LEVELS` / `DEFAULT_SUPPORT_GRANT_LEVEL` from `lib/tenancy/roles.ts`; `SUPPORT_GRANT_DEFAULT_HOURS` / `SUPPORT_GRANT_MAX_HOURS` and `createSupportGrantSchema` from `lib/validations/tenancy.ts` (see [`.context/tenancy/support-access.md`](./.context/tenancy/support-access.md))
   - an org's caps in `Org.settings.quotas` (`monthlyBudgetUsd`, `requestsPerMinute`): `readOrgQuotas()` / `loadOrgQuotas()` / `writeOrgQuotas()` and `ORG_QUOTAS_KEY` from `lib/tenancy/org-settings.ts`, with `orgQuotasSchema` / `OrgQuotas` from `lib/validations/tenancy.ts` — what a fork's billing or plan code calls to set an org's monthly budget and request cap
   - the per-org request counter's cache clear, `forgetOrgRequestCap()` from `lib/security/org-request-cap.ts` — called after a direct `writeOrgQuotas()` so the change applies at once in that process
   - The orchestration admin API surface documented in
@@ -179,6 +180,9 @@ covered by the version contract.
   - `Org` and `OrgMembership` (`prisma/schema/tenancy.prisma`) — the identity a
     fork's own tenant-owned models bind to; see
     [`.context/tenancy/identity.md`](./.context/tenancy/identity.md)
+  - `OrgSupportGrant` and `SupportGrantLevel` (`prisma/schema/tenancy.prisma`) — an
+    org's consent for vendor support to act inside it; see
+    [`.context/tenancy/support-access.md`](./.context/tenancy/support-access.md)
   - The `Ai*` orchestration models the admin API exposes (see
     [`.context/orchestration/admin-api.md`](./.context/orchestration/admin-api.md))
 
