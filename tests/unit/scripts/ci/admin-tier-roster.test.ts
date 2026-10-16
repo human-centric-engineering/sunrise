@@ -25,7 +25,11 @@ import {
   type RosterInput,
   type SourceFile,
 } from '@/scripts/ci/admin-tier-roster';
-import { ORG_TIER_ADMIN_PAGES, ORG_TIER_ADMIN_ROUTES } from '@/lib/auth/admin-tier';
+import {
+  ORG_TIER_ADMIN_PAGES,
+  ORG_TIER_ADMIN_ROUTES,
+  getAppOrgTierAdminPages,
+} from '@/lib/auth/admin-tier';
 import { coreNavSections } from '@/components/admin/admin-sidebar';
 import { getRegisteredNavSections } from '@/lib/admin-nav/registry';
 
@@ -57,6 +61,9 @@ const TREE: RosterInput = {
   routes: ROUTES,
   listedRoutes: ORG_TIER_ADMIN_ROUTES,
   listedPages: ORG_TIER_ADMIN_PAGES,
+  // The fork's, from lib/app/admin-tier.ts: held to the same checks. Not
+  // pinned here — the fork pins its own list in tests/unit/lib/app/defaults.test.ts.
+  appListedPages: getAppOrgTierAdminPages(),
   pageFiles: PAGE_FILES,
   navItems: NAV_ITEMS,
 };
@@ -463,6 +470,36 @@ describe('what it catches', () => {
       expect.stringContaining('[...slug]: listed'),
       expect.stringContaining('[[...slug]]: listed'),
       expect.stringContaining('(org)/agents: listed'),
+    ]);
+  });
+
+  it('holds a fork’s pages to the same checks, and names them as the fork’s', () => {
+    expect(
+      findAdminTierRosterProblems(
+        input({
+          appListedPages: [
+            '/admin/orchestration/agents',
+            '/admin/reports',
+            '/admin/reports/[...slug]',
+          ],
+        })
+      )
+    ).toEqual([
+      '/admin/reports: listed in lib/app/admin-tier.ts but app/admin/reports/page.tsx does not exist.',
+      expect.stringMatching(
+        /^\/admin\/reports\/\[\.\.\.slug\]: listed in lib\/app\/admin-tier\.ts with a catch-all/
+      ),
+    ]);
+  });
+
+  it('lets an org-tier nav item point at a page the fork listed, and at no other', () => {
+    const fork = input({
+      appListedPages: ['/admin/orchestration/agents'],
+      navItems: [{ href: '/admin/orchestration/agents', tier: 'org' }],
+    });
+    expect(findAdminTierRosterProblems(fork)).toEqual([]);
+    expect(findAdminTierRosterProblems({ ...fork, appListedPages: [] })).toEqual([
+      expect.stringContaining('nav item /admin/orchestration/agents'),
     ]);
   });
 

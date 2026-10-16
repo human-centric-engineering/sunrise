@@ -19,8 +19,8 @@
  *   are narrowed to their own, so the guard demands one the first time it
  *   admits them (refusing under test, logging elsewhere); this says so at
  *   review time instead of at the first request;
- * - a listed page with no `page.tsx` behind it;
- * - a core nav item marked `tier: 'org'` over a page that is not listed —
+ * - a listed page with no `page.tsx` behind it, core's or the fork's;
+ * - a nav item, core's or the fork's, marked `tier: 'org'` over a page that is not listed —
  *   a link an org admin would follow to a redirect.
  *
  * Uses the TypeScript parser, as `shared-settings-writes.ts` beside it does.
@@ -208,9 +208,14 @@ export interface RosterInput {
   listedRoutes: readonly string[];
   /** `ORG_TIER_ADMIN_PAGES`. */
   listedPages: readonly string[];
+  /**
+   * The fork's pages, from `lib/app/admin-tier.ts` (`getAppOrgTierAdminPages()`).
+   * Held to the same checks as core's, and named as the fork's in a problem.
+   */
+  appListedPages?: readonly string[];
   /** Every `page.tsx` path under `app/admin`, repo-relative. */
   pageFiles: readonly string[];
-  /** Every core sidebar item. */
+  /** Every sidebar item: core's, and the sections the fork registered. */
   navItems: readonly NavItemFacts[];
 }
 
@@ -244,28 +249,36 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
   }
 
   const pageFiles = new Set(input.pageFiles);
-  for (const pattern of input.listedPages) {
-    // `matchesAdminPagePattern` takes literal and `[x]` segments only. A
-    // catch-all would never match, and a route group is not in the URL, so
-    // either would be a page the roster says is open and the layout refuses.
-    if (/\[\[|\[\.\.\.|\(/.test(pattern)) {
-      problems.push(
-        `${pattern}: listed in ORG_TIER_ADMIN_PAGES with a catch-all or route-group segment, which the matcher cannot match. List the URL pattern with [x] segments only.`
-      );
-      continue;
-    }
-    const file = `app${pattern}/page.tsx`;
-    if (!pageFiles.has(file)) {
-      problems.push(`${pattern}: listed in ORG_TIER_ADMIN_PAGES but ${file} does not exist.`);
+  const appPages = input.appListedPages ?? [];
+  const pageLists: [string, readonly string[]][] = [
+    ['ORG_TIER_ADMIN_PAGES', input.listedPages],
+    ['lib/app/admin-tier.ts', appPages],
+  ];
+  for (const [where, pages] of pageLists) {
+    for (const pattern of pages) {
+      // `matchesAdminPagePattern` takes literal and `[x]` segments only. A
+      // catch-all would never match, and a route group is not in the URL, so
+      // either would be a page the roster says is open and the layout refuses.
+      if (/\[\[|\[\.\.\.|\(/.test(pattern)) {
+        problems.push(
+          `${pattern}: listed in ${where} with a catch-all or route-group segment, which the matcher cannot match. List the URL pattern with [x] segments only.`
+        );
+        continue;
+      }
+      const file = `app${pattern}/page.tsx`;
+      if (!pageFiles.has(file)) {
+        problems.push(`${pattern}: listed in ${where} but ${file} does not exist.`);
+      }
     }
   }
 
+  const allPages = [...input.listedPages, ...appPages];
   for (const item of input.navItems) {
     // The page an href opens: a query string or fragment is not part of it.
     const page = item.href.split(/[?#]/)[0];
-    if (item.tier === 'org' && adminPageTier(page, input.listedPages) !== 'org') {
+    if (item.tier === 'org' && adminPageTier(page, allPages) !== 'org') {
       problems.push(
-        `nav item ${item.href}: marked tier 'org' over a page ORG_TIER_ADMIN_PAGES does not list, so an org admin would follow it to a redirect.`
+        `nav item ${item.href}: marked tier 'org' over a page neither ORG_TIER_ADMIN_PAGES nor lib/app/admin-tier.ts lists, so an org admin would follow it to a redirect.`
       );
     }
   }
