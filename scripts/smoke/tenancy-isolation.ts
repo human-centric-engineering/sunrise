@@ -131,6 +131,9 @@ import {
   runAsSystem,
 } from '@/lib/tenancy/context';
 import { createOrg } from '@/lib/tenancy/lifecycle';
+import { enterSessionOrg, isOrgRefusal } from '@/lib/tenancy/entry';
+import { grantSupportAccess, revokeSupportGrant } from '@/lib/tenancy/support-grants';
+import { isRefusedReadOnlyWrite } from '@/lib/auth/support-principal';
 import {
   agentProfileUsage,
   capabilityAgentUsage,
@@ -3292,6 +3295,166 @@ async function main(): Promise<void> {
       JSON.stringify(await globalState()) === JSON.stringify(globalsBeforeShared),
       'and no shared row changed'
     );
+
+    // ── [19c] Support access: entry only under B's open grant (§121 t-824) ─
+    // A platform admin who is a member of neither org, entered into B through
+    // the real `enterSessionOrg` against the real grant table — the read the
+    // guards make on every request. While admitted, the reads run as the
+    // guard runs them (source `support`, B's org) under RLS. The cookie path
+    // of the guard itself needs a request, which a script does not have; the
+    // order it refuses a READ_ONLY write in (before the handler) is the unit
+    // tests' (`tests/unit/lib/auth/guards-support.test.ts`). Here the guard's
+    // own predicate decides, and the table is read to show nothing landed.
+    console.log('\n[19c] support access: a platform admin enters B only under its open grant');
+    const supporter = await prisma.user.create({
+      data: {
+        name: `${PREFIX} vendor support`,
+        email: `${PREFIX}-support-${stamp}@example.com`,
+        role: 'ADMIN',
+      },
+    });
+    const supportUser = { id: supporter.id, role: 'ADMIN' };
+    const enterB = (now?: Date) => enterSessionOrg(supportUser, b.orgId, null, prisma, now);
+    const describeEntry = (entry: Awaited<ReturnType<typeof enterB>>) =>
+      isOrgRefusal(entry) ? `refused: ${entry.refused}` : `entered as ${entry.source}`;
+
+    const beforeGrant = await enterB();
+    check(
+      isOrgRefusal(beforeGrant),
+      `before B grants anything, the platform admin is refused (${describeEntry(beforeGrant)})`
+    );
+
+    const ownerOfB = { userId: b.ownerId, orgId: b.orgId, orgRole: 'OWNER' };
+    const { grant: adminGrant } = await runAsOrg(
+      b.orgId,
+      () => grantSupportAccess(b.orgId, { reason: `${PREFIX} smoke`, durationHours: 1 }, ownerOfB),
+      { source: 'session' }
+    );
+    const during = await enterB();
+    check(
+      !isOrgRefusal(during) &&
+        during.source === 'support' &&
+        during.orgId === b.orgId &&
+        during.role === 'ADMIN' &&
+        during.support?.grantId === adminGrant.id,
+      `under B's open grant, the platform admin enters B as support ADMIN (${describeEntry(during)})`
+    );
+    if (!isOrgRefusal(during)) {
+      const seenAsSupport = await runAsOrg(b.orgId, () => visible(b.orgId, b, a), {
+        source: 'support',
+        role: during.role,
+        support: during.support,
+      });
+      check(
+        seenAsSupport.agents.includes(b.agentId) &&
+          seenAsSupport.documents.includes(b.documentId) &&
+          seenAsSupport.conversations.includes(b.conversationId),
+        'as support in B, B’s agent, document and conversation are there'
+      );
+      const leakedToSupport = Object.values(seenAsSupport)
+        .flat()
+        .filter((id) =>
+          [
+            a.agentId,
+            a.documentId,
+            ...a.chunkIds,
+            a.conversationId,
+            ...a.messageIds,
+            a.executionId,
+            a.costLogId,
+          ].includes(id)
+        );
+      check(
+        leakedToSupport.length === 0,
+        `as support in B, nothing of A (${leakedToSupport.length} leaked)`
+      );
+    }
+    const afterExpiry = await enterB(new Date(adminGrant.expiresAt.getTime() + 1_000));
+    check(
+      isOrgRefusal(afterExpiry),
+      `a second after the grant expires, the same session is refused (${describeEntry(afterExpiry)})`
+    );
+
+    // The granter demoted: consent from someone who no longer speaks for B
+    // admits nobody (owner ruling, 2026-10-16). Put back straight after.
+    await runAsSystem('smoke: demote B’s owner', () =>
+      prisma.orgMembership.update({
+        where: { orgId_userId: { orgId: b.orgId, userId: b.ownerId } },
+        data: { role: 'ADMIN' },
+      })
+    );
+    const granterDemoted = await enterB();
+    await runAsSystem('smoke: restore B’s owner', () =>
+      prisma.orgMembership.update({
+        where: { orgId_userId: { orgId: b.orgId, userId: b.ownerId } },
+        data: { role: 'OWNER' },
+      })
+    );
+    check(
+      isOrgRefusal(granterDemoted),
+      `with the granter no longer B’s OWNER, the grant admits nobody (${describeEntry(granterDemoted)})`
+    );
+
+    await revokeSupportGrant(b.orgId, adminGrant.id, { userId: b.ownerId });
+    const afterRevoke = await enterB();
+    check(
+      isOrgRefusal(afterRevoke),
+      `after B revokes the grant, the platform admin is refused (${describeEntry(afterRevoke)})`
+    );
+
+    const intoA = await enterSessionOrg(supportUser, a.orgId, null, prisma);
+    check(
+      isOrgRefusal(intoA),
+      `A granted nothing, so the platform admin is refused entry to A (${describeEntry(intoA)})`
+    );
+
+    // A READ_ONLY grant: admitted for reads, a write refused before it runs.
+    const { grant: readOnlyGrant } = await runAsOrg(
+      b.orgId,
+      () =>
+        grantSupportAccess(
+          b.orgId,
+          { reason: `${PREFIX} smoke read-only`, level: 'READ_ONLY', durationHours: 1 },
+          ownerOfB
+        ),
+      { source: 'session' }
+    );
+    const readOnlyEntry = await enterB();
+    check(
+      !isOrgRefusal(readOnlyEntry) && readOnlyEntry.support?.level === 'READ_ONLY',
+      `under a READ_ONLY grant, the platform admin enters B (${describeEntry(readOnlyEntry)})`
+    );
+    const agentsInB = () => runAsOrg(b.orgId, () => prisma.aiAgent.count(), { source: 'support' });
+    const agentsBefore = await agentsInB();
+    const writeRefused =
+      !isOrgRefusal(readOnlyEntry) && isRefusedReadOnlyWrite(readOnlyEntry, 'POST');
+    if (!writeRefused && !isOrgRefusal(readOnlyEntry)) {
+      // What the guard would have let through: the write, as the handler.
+      await runAsOrg(
+        b.orgId,
+        () =>
+          prisma.aiAgent.create({
+            data: {
+              name: `${PREFIX} support write`,
+              slug: `${PREFIX}-support-write-${stamp}`,
+              description: 'smoke fixture',
+              systemInstructions: 'smoke fixture',
+              model: '',
+              provider: 'anthropic',
+            },
+          }),
+        { source: 'support', role: readOnlyEntry.role, support: readOnlyEntry.support }
+      );
+    }
+    check(
+      writeRefused && (await agentsInB()) === agentsBefore,
+      `a READ_ONLY POST is refused by the guard’s rule, and B’s agents are unchanged (${agentsBefore})`
+    );
+    check(
+      !isOrgRefusal(readOnlyEntry) && !isRefusedReadOnlyWrite(readOnlyEntry, 'GET'),
+      'and a READ_ONLY GET is admitted'
+    );
+    await revokeSupportGrant(b.orgId, readOnlyGrant.id, { userId: b.ownerId });
 
     // ── [20] Org erasure: from inside another org, with knowledge documents ─
     // `ai_knowledge_document.knowledgeBaseId` is ON DELETE RESTRICT, and both
