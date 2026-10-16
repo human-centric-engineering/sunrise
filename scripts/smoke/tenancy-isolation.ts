@@ -3317,10 +3317,10 @@ async function main(): Promise<void> {
       data: {
         name: `${PREFIX} vendor support`,
         email: `${PREFIX}-support-${stamp}@example.com`,
-        role: 'ADMIN',
+        role: PLATFORM_ADMIN_ROLE,
       },
     });
-    const supportUser = { id: supporter.id, role: 'ADMIN' };
+    const supportUser = { id: supporter.id, role: PLATFORM_ADMIN_ROLE };
     const enterB = (now?: Date) => enterSessionOrg(supportUser, b.orgId, null, prisma, now);
     const describeEntry = (entry: Awaited<ReturnType<typeof enterB>>) =>
       isOrgRefusal(entry) ? `refused: ${entry.refused}` : `entered as ${entry.source}`;
@@ -3331,7 +3331,7 @@ async function main(): Promise<void> {
       `before B grants anything, the platform admin is refused (${describeEntry(beforeGrant)})`
     );
 
-    const ownerOfB = { userId: b.ownerId, orgId: b.orgId, orgRole: 'OWNER' };
+    const ownerOfB = { userId: b.ownerId, orgId: b.orgId, orgRole: ORG_OWNER_ROLE };
     const { grant: adminGrant } = await runAsOrg(
       b.orgId,
       () => grantSupportAccess(b.orgId, { reason: `${PREFIX} smoke`, durationHours: 1 }, ownerOfB),
@@ -3342,7 +3342,7 @@ async function main(): Promise<void> {
       !isOrgRefusal(during) &&
         during.source === 'support' &&
         during.orgId === b.orgId &&
-        during.role === 'ADMIN' &&
+        during.role === ORG_ADMIN_ROLE &&
         during.support?.grantId === adminGrant.id,
       `under B's open grant, the platform admin enters B as support ADMIN (${describeEntry(during)})`
     );
@@ -3387,14 +3387,14 @@ async function main(): Promise<void> {
     await runAsSystem('smoke: demote B’s owner', () =>
       prisma.orgMembership.update({
         where: { orgId_userId: { orgId: b.orgId, userId: b.ownerId } },
-        data: { role: 'ADMIN' },
+        data: { role: ORG_ADMIN_ROLE },
       })
     );
     const granterDemoted = await enterB();
     await runAsSystem('smoke: restore B’s owner', () =>
       prisma.orgMembership.update({
         where: { orgId_userId: { orgId: b.orgId, userId: b.ownerId } },
-        data: { role: 'OWNER' },
+        data: { role: ORG_OWNER_ROLE },
       })
     );
     check(
