@@ -31,9 +31,16 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
+const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'single' }));
+vi.mock('@/lib/env', () => ({ env: mockEnv }));
+
+vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({ logAdminAction: vi.fn() }));
+
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     orgMembership: { findUnique: vi.fn() },
+    orgSupportGrant: { findFirst: vi.fn() },
+    org: { findUnique: vi.fn() },
     session: { update: vi.fn() },
     aiApiKey: { findFirst: vi.fn(), update: vi.fn() },
   },
@@ -52,6 +59,7 @@ vi.mock('@/lib/api/context', () => ({
 import { POST } from '@/app/api/v1/orgs/switch/route';
 import { prisma } from '@/lib/db/client';
 import { createMockAuthSession } from '@/tests/helpers/auth';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 
 const USER_ID = 'cmjbv4i3x00003wsloputgwul';
 const OTHER_ORG = 'cmorg000000000000000other';
@@ -78,6 +86,8 @@ function refreshedSessionResponse(cookies: string[]): Response {
 describe('POST /api/v1/orgs/switch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEnv.TENANCY_MODE = 'single';
+    vi.mocked(prisma.orgSupportGrant.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue(null);
     // The guard's own session lookup (no options) is the first call; the
     // route's cache-bypassing refresh is the second. Distinguished by args.
@@ -99,6 +109,7 @@ describe('POST /api/v1/orgs/switch', () => {
     expect(json.data).toEqual({
       activeOrgId: OTHER_ORG,
       org: { id: OTHER_ORG, slug: 'other', name: 'Other Org' },
+      support: null,
     });
 
     // The membership was looked up for THIS caller, not for a body-supplied user.
@@ -215,5 +226,115 @@ describe('POST /api/v1/orgs/switch', () => {
     const res = await POST(request({ orgId: OTHER_ORG }));
 
     expect(res.status).toBe(401);
+  });
+});
+
+describe('POST /api/v1/orgs/switch under a support grant (§121 t-824)', () => {
+  const GRANT = {
+    id: 'cmgrant000000000000grant1',
+    level: 'READ_ONLY',
+    expiresAt: new Date('2030-01-01T00:00:00Z'),
+  };
+
+  function signedInAs(role: 'ADMIN' | 'USER') {
+    const base = createMockAuthSession();
+    mockGetSession.mockImplementation(async (args: { asResponse?: boolean }) =>
+      args?.asResponse
+        ? refreshedSessionResponse(['better-auth.session_data=refreshed; Path=/; HttpOnly'])
+        : { ...base, user: { ...base.user, role } }
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockEnv.TENANCY_MODE = 'multi';
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.orgSupportGrant.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.org.findUnique).mockResolvedValue({
+      id: OTHER_ORG,
+      slug: 'other',
+      name: 'Other Org',
+    } as never);
+    vi.mocked(prisma.session.update).mockResolvedValue({} as never);
+    signedInAs('ADMIN');
+  });
+
+  it('switches a platform admin into an org with an open grant, and audits support.enter', async () => {
+    vi.mocked(prisma.orgSupportGrant.findFirst).mockResolvedValue(GRANT as never);
+
+    const res = await POST(request({ orgId: OTHER_ORG }));
+    const json = JSON.parse(await res.text());
+
+    expect(res.status).toBe(200);
+    expect(json.data).toEqual({
+      activeOrgId: OTHER_ORG,
+      org: { id: OTHER_ORG, slug: 'other', name: 'Other Org' },
+      support: { grantId: GRANT.id, level: 'READ_ONLY', expiresAt: GRANT.expiresAt.toISOString() },
+    });
+    expect(prisma.session.update).toHaveBeenCalledWith({
+      where: { id: 'session_123' },
+      data: { activeOrgId: OTHER_ORG },
+    });
+    expect(logAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: USER_ID,
+        action: 'support.enter',
+        entityType: 'support_grant',
+        entityId: GRANT.id,
+        entityName: 'Other Org',
+        metadata: {
+          orgId: OTHER_ORG,
+          level: 'READ_ONLY',
+          expiresAt: GRANT.expiresAt.toISOString(),
+        },
+      })
+    );
+    expect(res.headers.getSetCookie()).toEqual([
+      'better-auth.session_data=refreshed; Path=/; HttpOnly',
+    ]);
+  });
+
+  it('refuses a platform admin when the org has no grant entry would admit, and writes nothing', async () => {
+    const res = await POST(request({ orgId: OTHER_ORG }));
+
+    expect(res.status).toBe(403);
+    expect(prisma.orgSupportGrant.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.session.update).not.toHaveBeenCalled();
+    expect(logAdminAction).not.toHaveBeenCalled();
+  });
+
+  it('never consults a grant for a user who is not a platform admin', async () => {
+    signedInAs('USER');
+    vi.mocked(prisma.orgSupportGrant.findFirst).mockResolvedValue(GRANT as never);
+
+    const res = await POST(request({ orgId: OTHER_ORG }));
+
+    expect(res.status).toBe(403);
+    expect(prisma.orgSupportGrant.findFirst).not.toHaveBeenCalled();
+    expect(prisma.session.update).not.toHaveBeenCalled();
+  });
+
+  it('never consults a grant at single', async () => {
+    mockEnv.TENANCY_MODE = 'single';
+    vi.mocked(prisma.orgSupportGrant.findFirst).mockResolvedValue(GRANT as never);
+
+    const res = await POST(request({ orgId: OTHER_ORG }));
+
+    expect(res.status).toBe(403);
+    expect(prisma.orgSupportGrant.findFirst).not.toHaveBeenCalled();
+    expect(prisma.session.update).not.toHaveBeenCalled();
+  });
+
+  it('a member switches as a member, with no grant read and no support audit', async () => {
+    vi.mocked(prisma.orgMembership.findUnique).mockResolvedValue(membershipIn('ACTIVE') as never);
+
+    const res = await POST(request({ orgId: OTHER_ORG }));
+    const json = JSON.parse(await res.text());
+
+    expect(res.status).toBe(200);
+    expect(json.data.support).toBeNull();
+    expect(prisma.orgSupportGrant.findFirst).not.toHaveBeenCalled();
+    expect(logAdminAction).not.toHaveBeenCalled();
   });
 });

@@ -176,7 +176,7 @@ describe('a support session as the handler and the policy see it', () => {
   it('a fork policy written as isPlatformAdmin(viewer) admits nothing, at either tier', async () => {
     registerAuthorizationPolicy({
       ...DEFAULT_AUTHORIZATION_POLICY,
-      canAdminister: (viewer) => isPlatformAdmin(viewer),
+      canAdminister: (viewer) => Promise.resolve(isPlatformAdmin(viewer)),
     });
     grantOpen();
     const seen: Seen[] = [];
