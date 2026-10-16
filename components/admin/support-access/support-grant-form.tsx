@@ -42,14 +42,22 @@ import {
   SUPPORT_GRANT_MAX_HOURS,
 } from '@/lib/validations/tenancy';
 
-/** The durations offered, in hours. Every one is within the API's bound. */
+/** A duration as the form shows it: hours up to a day, whole days beyond. */
+export function durationLabel(hours: number): string {
+  if (hours > 24 && hours % 24 === 0) return `${hours / 24} days`;
+  return hours === 1 ? '1 hour' : `${hours} hours`;
+}
+
+/**
+ * The durations offered, in hours: the default and the API's maximum always
+ * among them, none past the maximum, each once.
+ */
 export const SUPPORT_GRANT_DURATIONS: readonly { hours: number; label: string }[] = [
-  { hours: 1, label: '1 hour' },
-  { hours: 4, label: '4 hours' },
-  { hours: SUPPORT_GRANT_DEFAULT_HOURS, label: '24 hours' },
-  { hours: 72, label: '3 days' },
-  { hours: SUPPORT_GRANT_MAX_HOURS, label: '7 days' },
-];
+  ...new Set([1, 4, SUPPORT_GRANT_DEFAULT_HOURS, 72, SUPPORT_GRANT_MAX_HOURS]),
+]
+  .filter((hours) => hours <= SUPPORT_GRANT_MAX_HOURS)
+  .sort((a, b) => a - b)
+  .map((hours) => ({ hours, label: durationLabel(hours) }));
 
 // The route's own schema, with level and duration required because the form
 // always has one selected. Unwrapped, not redeclared, so the route's bounds hold.
@@ -151,8 +159,8 @@ export function SupportGrantForm({ orgId, replacesOpenGrant }: SupportGrantFormP
                     access stops on its own.
                   </p>
                   <p className="mt-2">
-                    The longest grant is 7 days. If support needs longer, grant again with a new
-                    reason.
+                    The longest grant is {durationLabel(SUPPORT_GRANT_MAX_HOURS)}. If support needs
+                    longer, grant again with a new reason.
                   </p>
                 </FieldHelp>
               </Label>

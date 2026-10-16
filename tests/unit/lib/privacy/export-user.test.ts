@@ -1234,9 +1234,13 @@ describe('exportUserData', () => {
         OR: [{ grantedById: 'user-1' }, { revokedById: 'user-1' }],
       });
       expect(bundle.attributions.supportGrants).toEqual([
-        { id: 'grant-own', label: 'Granted support access to Acme', createdAt: GRANTED },
-        { id: 'grant-own', label: 'Revoked support access to Acme', createdAt: REVOKED },
-        { id: 'grant-others', label: 'Revoked support access to Acme', createdAt: OTHERS_REVOKED },
+        { id: 'grant-own:granted', label: 'Granted support access to Acme', createdAt: GRANTED },
+        { id: 'grant-own:revoked', label: 'Revoked support access to Acme', createdAt: REVOKED },
+        {
+          id: 'grant-others:revoked',
+          label: 'Revoked support access to Acme',
+          createdAt: OTHERS_REVOKED,
+        },
       ]);
     });
 

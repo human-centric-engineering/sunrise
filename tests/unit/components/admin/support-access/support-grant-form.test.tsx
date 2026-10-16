@@ -12,7 +12,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { SupportGrantForm } from '@/components/admin/support-access/support-grant-form';
+import {
+  durationLabel,
+  SupportGrantForm,
+  SUPPORT_GRANT_DURATIONS,
+} from '@/components/admin/support-access/support-grant-form';
+import { SUPPORT_GRANT_DEFAULT_HOURS, SUPPORT_GRANT_MAX_HOURS } from '@/lib/validations/tenancy';
 import { apiClient, APIClientError } from '@/lib/api/client';
 
 const mockRefresh = vi.fn();
@@ -130,5 +135,29 @@ describe('SupportGrantForm', () => {
       'Only an owner of this organisation may grant support access'
     );
     expect(mockRefresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('durationLabel', () => {
+  it('shows hours up to a day, and whole days beyond', () => {
+    expect(durationLabel(1)).toBe('1 hour');
+    expect(durationLabel(4)).toBe('4 hours');
+    expect(durationLabel(24)).toBe('24 hours');
+    expect(durationLabel(72)).toBe('3 days');
+    expect(durationLabel(168)).toBe('7 days');
+    expect(durationLabel(30)).toBe('30 hours');
+  });
+});
+
+describe('SUPPORT_GRANT_DURATIONS', () => {
+  it('offers the default and the maximum, ascending, each once, none past the maximum', () => {
+    const hours = SUPPORT_GRANT_DURATIONS.map((option) => option.hours);
+    expect(hours).toContain(SUPPORT_GRANT_DEFAULT_HOURS);
+    expect(hours).toContain(SUPPORT_GRANT_MAX_HOURS);
+    expect(hours).toEqual([...new Set(hours)].sort((a, b) => a - b));
+    expect(Math.max(...hours)).toBe(SUPPORT_GRANT_MAX_HOURS);
+    for (const option of SUPPORT_GRANT_DURATIONS) {
+      expect(option.label).toBe(durationLabel(option.hours));
+    }
   });
 });

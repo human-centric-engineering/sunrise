@@ -50,6 +50,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
+import { isSerializableConflict } from '@/lib/db/serializable-conflict';
 import { logger as defaultLogger, type Logger } from '@/lib/logging';
 import {
   ORG_QUOTA_KEYS,
@@ -469,7 +470,7 @@ async function writeSettingsSlice(
 
 /** Whether `error` is a SERIALIZABLE clash from {@link writeSettingsSlice}. */
 export function isSettingsWriteConflict(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034';
+  return isSerializableConflict(error);
 }
 
 function isJsonObject(value: unknown): value is Record<string, unknown> {

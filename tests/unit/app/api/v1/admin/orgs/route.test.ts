@@ -144,7 +144,12 @@ describe('GET /api/v1/admin/orgs', () => {
     expect(prisma.orgSupportGrant.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.orgSupportGrant.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { revokedAt: null, expiresAt: { gt: expect.any(Date) } },
+        // A suspended org admits nobody, so its grant is not listed as open.
+        where: {
+          revokedAt: null,
+          expiresAt: { gt: expect.any(Date) },
+          org: { status: 'ACTIVE' },
+        },
       })
     );
   });

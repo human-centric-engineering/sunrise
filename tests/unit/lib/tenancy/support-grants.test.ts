@@ -309,6 +309,13 @@ describe('grantSupportAccess', () => {
       expectNoWrite();
     });
 
+    // The org's status is read inside the transaction, so these two reach
+    // it; what they must not do is write.
+    const expectNoGrantWrite = () => {
+      expect(db.orgSupportGrant.create).not.toHaveBeenCalled();
+      expect(db.orgSupportGrant.updateMany).not.toHaveBeenCalled();
+    };
+
     it('for an org that does not exist', async () => {
       db.org.findUnique.mockResolvedValue(null);
       const err = await refusal(() =>
@@ -316,7 +323,7 @@ describe('grantSupportAccess', () => {
       );
       expect(err.code).toBe('ORG_NOT_FOUND');
       expect(err.status).toBe(404);
-      expectNoWrite();
+      expectNoGrantWrite();
     });
 
     it('for a suspended org', async () => {
@@ -325,7 +332,31 @@ describe('grantSupportAccess', () => {
         grantSupportAccess(ORG, { reason: 'x' }, AS_OWNER, db as never, NOW)
       );
       expect(err.code).toBe('ORG_NOT_ACTIVE');
-      expectNoWrite();
+      expectNoGrantWrite();
+    });
+
+    it('for an org suspended as the transaction began: the status is read inside it', async () => {
+      // Outside the transaction the org still reads ACTIVE; the transaction's
+      // own client sees the committed suspension. Only an in-transaction read
+      // refuses.
+      db.org.findUnique.mockResolvedValue({ status: 'ACTIVE' });
+      const tx = {
+        org: { findUnique: vi.fn().mockResolvedValue({ status: 'SUSPENDED' }) },
+        orgSupportGrant: { findMany: vi.fn(), updateMany: vi.fn(), create: vi.fn() },
+      };
+      db.$transaction.mockImplementation(async (fn: (client: typeof tx) => unknown) => fn(tx));
+
+      const err = await refusal(() =>
+        grantSupportAccess(ORG, { reason: 'x' }, AS_OWNER, db as never, NOW)
+      );
+
+      expect(err.code).toBe('ORG_NOT_ACTIVE');
+      expect(tx.org.findUnique).toHaveBeenCalledWith({
+        where: { id: ORG },
+        select: { status: true },
+      });
+      expect(tx.orgSupportGrant.create).not.toHaveBeenCalled();
+      expect(tx.orgSupportGrant.updateMany).not.toHaveBeenCalled();
     });
   });
 

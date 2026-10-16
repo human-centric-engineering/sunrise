@@ -58,7 +58,8 @@ export const GET = withAdminAuth(async () => {
       _count: { _all: true },
     }),
     prisma.orgSupportGrant.findMany({
-      where: openSupportGrantWhere(new Date()),
+      // A suspended org admits nobody, so its grant is not open access.
+      where: { ...openSupportGrantWhere(new Date()), org: { status: 'ACTIVE' } },
       select: { orgId: true, level: true, expiresAt: true },
     }),
   ]);

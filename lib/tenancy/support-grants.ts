@@ -43,6 +43,7 @@
  */
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
+import { isSerializableConflict } from '@/lib/db/serializable-conflict';
 import { logger } from '@/lib/logging';
 import { APIError } from '@/lib/api/errors';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
@@ -224,15 +225,6 @@ export async function grantSupportAccess(
     );
   }
 
-  const org = await db.org.findUnique({ where: { id: orgId }, select: { status: true } });
-  if (!org) throw new SupportGrantError('ORG_NOT_FOUND', 'Organisation not found');
-  if (org.status !== 'ACTIVE') {
-    throw new SupportGrantError(
-      'ORG_NOT_ACTIVE',
-      'A suspended organisation cannot grant support access'
-    );
-  }
-
   const hours = input.durationHours ?? SUPPORT_GRANT_DEFAULT_HOURS;
   const expiresAt = new Date(now.getTime() + hours * 60 * 60 * 1000);
 
@@ -240,6 +232,18 @@ export async function grantSupportAccess(
   try {
     result = await db.$transaction(
       async (tx) => {
+        // The org's status is read in the transaction, so a suspension that
+        // commits first is seen here, and one that commits after is ordered
+        // after this grant — which entry then refuses, as it refuses every
+        // request to a suspended org.
+        const org = await tx.org.findUnique({ where: { id: orgId }, select: { status: true } });
+        if (!org) throw new SupportGrantError('ORG_NOT_FOUND', 'Organisation not found');
+        if (org.status !== 'ACTIVE') {
+          throw new SupportGrantError(
+            'ORG_NOT_ACTIVE',
+            'A suspended organisation cannot grant support access'
+          );
+        }
         const open = await tx.orgSupportGrant.findMany({
           where: { orgId, ...openSupportGrantWhere(now) },
           select: { id: true },
@@ -268,7 +272,7 @@ export async function grantSupportAccess(
     );
   } catch (error) {
     // SERIALIZABLE failed the later of two concurrent grants (P2034).
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+    if (isSerializableConflict(error)) {
       throw new SupportGrantError(
         'GRANT_CONFLICT',
         'Another support grant for this organisation was saved at the same time; retry'

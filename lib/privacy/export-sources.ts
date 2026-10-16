@@ -448,7 +448,8 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     // not the person's, so it outlives them (§121 t-823). What the subject
     // receives is each act of theirs — granting, revoking — as its own row,
     // dated when they did it and labelled with the act and the org, not the
-    // grant's reason or terms. One person can do both to one grant: two rows.
+    // grant's reason or terms. One person can do both to one grant: two rows,
+    // each id the grant's with the act appended, so ids stay unique.
     model: 'OrgSupportGrant',
     section: 'supportGrants',
     disposition: 'attribution',
@@ -471,14 +472,14 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
       for (const grant of grants) {
         if (grant.grantedById === userId) {
           acts.push({
-            id: grant.id,
+            id: `${grant.id}:granted`,
             label: `Granted support access to ${grant.org.name}`,
             createdAt: grant.createdAt,
           });
         }
         if (grant.revokedById === userId && grant.revokedAt) {
           acts.push({
-            id: grant.id,
+            id: `${grant.id}:revoked`,
             label: `Revoked support access to ${grant.org.name}`,
             createdAt: grant.revokedAt,
           });
