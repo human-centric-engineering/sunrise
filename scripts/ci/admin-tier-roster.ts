@@ -21,12 +21,19 @@
  *   review time instead of at the first request;
  * - a listed page with no `page.tsx` behind it, core's or the fork's;
  * - a nav item, core's or the fork's, marked `tier: 'org'` over a page that is not listed —
- *   a link an org admin would follow to a redirect.
+ *   a link an org admin would follow to a redirect;
+ * - a page that is not listed but whose URL a listed pattern names — a `[x]`
+ *   segment that also takes a literal page beside it (`/admin/reports/[id]`
+ *   over `/admin/reports/settings`). Next.js serves the literal page, and the
+ *   matcher, which cannot see the tree, would call it org-tier;
+ * - a core section (`CORE_ADMIN_SECTIONS`) with no page under it, or a core
+ *   page or nav item in a section the list does not name — the list is what
+ *   keeps a fork's pages out of core's.
  *
  * Uses the TypeScript parser, as `shared-settings-writes.ts` beside it does.
  */
 import ts from 'typescript';
-import { adminPageTier } from '@/lib/auth/admin-tier';
+import { adminPageTier, matchesAdminPagePattern } from '@/lib/auth/admin-tier';
 
 export interface SourceFile {
   path: string;
@@ -217,6 +224,26 @@ export interface RosterInput {
   pageFiles: readonly string[];
   /** Every sidebar item: core's, and the sections the fork registered. */
   navItems: readonly NavItemFacts[];
+  /** `CORE_ADMIN_SECTIONS`. Unchecked when left out. */
+  coreSections?: readonly string[];
+  /** Core's sidebar hrefs alone, for the section check. */
+  coreNavHrefs?: readonly string[];
+}
+
+/** The URL pattern a page file serves: `app/admin/(g)/x/[id]/page.tsx` → `/admin/x/[id]`. */
+function pagePattern(file: string): string {
+  return file
+    .replace(/^app/, '')
+    .replace(/\/page\.tsx$/, '')
+    .split('/')
+    .filter((segment) => !/^\(.*\)$/.test(segment))
+    .join('/');
+}
+
+/** The first segment under `/admin` of a path, or `null` for `/admin` itself or a path outside it. */
+function sectionOf(path: string): string | null {
+  const match = /^\/admin\/([^/?#]+)/.exec(path);
+  return match ? match[1] : null;
 }
 
 /** Everything about the roster that does not match the tree, one sentence each. */
@@ -273,6 +300,39 @@ export function findAdminTierRosterProblems(input: RosterInput): string[] {
   }
 
   const allPages = [...input.listedPages, ...appPages];
+  const listedSet = new Set(allPages);
+  for (const file of input.pageFiles) {
+    const path = pagePattern(file);
+    // A catch-all page is matched by nothing here; the catch-all check above
+    // keeps one off the list.
+    if (listedSet.has(path) || /\[\[|\[\.\.\./.test(path)) continue;
+    const by = allPages.find((pattern) => matchesAdminPagePattern(pattern, path));
+    if (by) {
+      problems.push(
+        `${path}: not listed, but the listed pattern ${by} names its URL, so an org admin would be let into it. List it if it is the org's, or list the dynamic page's siblings one by one.`
+      );
+    }
+  }
+
+  if (input.coreSections) {
+    const sections = new Set(input.coreSections);
+    for (const section of sections) {
+      if (!input.pageFiles.some((file) => file.startsWith(`app/admin/${section}/`))) {
+        problems.push(
+          `CORE_ADMIN_SECTIONS lists ${section}, but app/admin/${section}/ has no page.`
+        );
+      }
+    }
+    for (const path of [...input.listedPages, ...(input.coreNavHrefs ?? [])]) {
+      const section = sectionOf(path);
+      if (section !== null && !sections.has(section)) {
+        problems.push(
+          `${path}: core's, in a section CORE_ADMIN_SECTIONS does not name, so a fork could list pages in it. Add ${section}.`
+        );
+      }
+    }
+  }
+
   for (const item of input.navItems) {
     // The page an href opens: a query string or fragment is not part of it.
     const page = item.href.split(/[?#]/)[0];

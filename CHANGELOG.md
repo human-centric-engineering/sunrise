@@ -21,13 +21,22 @@ release process.
 - **A fork lists its own admin pages as org-tier** (t-817): the new
   `lib/app/admin-tier.ts` seam (`initAppOrgTierAdminPages()`, ships empty)
   calls `registerOrgTierAdminPage(pattern)` from `lib/auth/admin-tier.ts`, and
-  `adminPageTier()` reads core's `ORG_TIER_ADMIN_PAGES` plus the fork's, so an
-  org admin may open a fork page without an edit to a core file. The fork's
-  init runs lazily in both realms (the admin layout and `<AdminTierGate>`),
-  and a throw opens none of its pages. `adminPageTier()`'s `pages` argument is
-  now optional rather than defaulting to `ORG_TIER_ADMIN_PAGES`; leaving it out
-  reads both lists. **Forks:** `tests/unit/lib/app/defaults.test.ts` has a new
-  row for the seam — pin your pages there when you fill it.
+  `orgTierAdminPages()` in the new `lib/auth/org-tier-admin-pages.ts` returns
+  core's `ORG_TIER_ADMIN_PAGES` plus the fork's, so an org admin may open a fork
+  page without an edit to a core file. The fork's init runs on the server
+  only; the admin layout hands the list to `<AdminTierGate>` and
+  `<AdminHeader>`, which take a new required `orgTierPages` prop. A throw
+  opens none of the fork's pages. The registrar refuses a pattern the matcher
+  cannot read, a dynamic first segment, and any pattern inside one of core's
+  sections (new `CORE_ADMIN_SECTIONS`), so a fork's list cannot reach a core
+  page. `adminPageTier()`'s `pages` argument is now required rather than
+  defaulting to `ORG_TIER_ADMIN_PAGES`, which silently left the fork's pages
+  out. The roster test now also fails when a listed `[x]` pattern names an
+  unlisted literal page beside it, and when the fork's init threw.
+  `/admin/orchestration/executions/live`, a redirect to the executions page,
+  is now listed as org-tier for that reason. **Forks:**
+  `tests/unit/lib/app/defaults.test.ts` has a new row for the seam — pin your
+  pages there when you fill it.
 - **`AiWebhookDelivery.stoppedByErasure` and `AiEventHookDelivery.stoppedByErasure`
   record that an erasure stopped the row** (t-809; migration
   `20261015150000_delivery_stopped_by_erasure`, which backfills rows already

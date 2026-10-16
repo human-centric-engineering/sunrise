@@ -228,14 +228,29 @@ an org admin to every platform surface, roster or not. Gate it on
 
 **A fork's own pages** (t-817) are listed in `lib/app/admin-tier.ts`, not in
 `ORG_TIER_ADMIN_PAGES`: its `initAppOrgTierAdminPages()` calls
-`registerOrgTierAdminPage(pattern)`, and `adminPageTier()` reads core's list
-and the fork's. Its routes and nav items already declare in the fork's own
-files, so opening a fork page edits no core file. The init runs lazily, at the
-top of the first `adminPageTier()` read in each realm, because the layout
-(server) and the tier gate (browser) are different bundles and a registration
-made in one is invisible in the other. If it throws, the fork's pages roll
-back and none of them open. The roster test holds the fork's pages to core's
-checks.
+`registerOrgTierAdminPage(pattern)`, and `orgTierAdminPages()`
+(`lib/auth/org-tier-admin-pages.ts`) returns core's list and the fork's. Its
+routes and nav items already declare in the fork's own files, so opening a
+fork page edits no core file.
+
+- **One realm.** The init runs lazily on the server, at the admin layout's
+  first read. The layout hands the list to `<AdminTierGate>` and
+  `<AdminHeader>` as a prop, so the browser never builds a list of its own
+  that could disagree with the one the layout admitted by.
+- **Its own sections only.** The registrar throws on a dynamic first segment
+  and on any of `CORE_ADMIN_SECTIONS`, so the fork's list cannot reach a core
+  page, platform or org.
+- **All-or-nothing.** If the init throws, the fork's pages roll back and none
+  of them open; the roster test fails on that, rather than passing an empty
+  list.
+- **No shadowing.** `adminPageTier()` matches patterns without seeing the
+  tree, so a `[x]` segment would also name a literal page beside it, which
+  Next.js serves instead. The roster test fails for any page a listed
+  pattern names that is not itself listed, core's and the fork's alike.
+
+`lib/auth/admin-tier.ts` imports nothing, so the scaffold can import the
+registrar from it and `proxy.ts` its header name without either pulling the
+fork's scaffold in.
 
 ---
 

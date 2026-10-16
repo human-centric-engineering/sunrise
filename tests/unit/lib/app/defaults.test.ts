@@ -103,13 +103,12 @@ import {
   __resetAccountSectionRegistryForTests,
 } from '@/lib/account-sections/registry';
 import { initAppAuthorizationPolicy } from '@/lib/app/authorization';
+import { ORG_TIER_ADMIN_PAGES, adminPageTier } from '@/lib/auth/admin-tier';
 import {
-  ORG_TIER_ADMIN_PAGES,
-  adminPageTier,
   getAppOrgTierAdminPages,
   orgTierAdminPages,
   __resetAppOrgTierAdminPagesForTests,
-} from '@/lib/auth/admin-tier';
+} from '@/lib/auth/org-tier-admin-pages';
 import {
   appOwnerClassifications,
   __resetAppOwnerClassificationForTests,
@@ -432,9 +431,9 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       __resetAppOrgTierAdminPagesForTests();
       // The read triggers the lazy init, so this exercises the REAL seam.
       expect(getAppOrgTierAdminPages()).toEqual([]);
-      // …and the roster the layout and the gate read is exactly core's.
+      // …and the roster the layout reads and hands the gate is exactly core's.
       expect(orgTierAdminPages()).toEqual(ORG_TIER_ADMIN_PAGES);
-      expect(adminPageTier('/admin/users')).toBeNull();
+      expect(adminPageTier('/admin/users', orgTierAdminPages())).toBeNull();
     },
   },
   {

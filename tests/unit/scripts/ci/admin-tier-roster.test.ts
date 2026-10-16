@@ -26,10 +26,14 @@ import {
   type SourceFile,
 } from '@/scripts/ci/admin-tier-roster';
 import {
+  CORE_ADMIN_SECTIONS,
   ORG_TIER_ADMIN_PAGES,
   ORG_TIER_ADMIN_ROUTES,
-  getAppOrgTierAdminPages,
 } from '@/lib/auth/admin-tier';
+import {
+  appOrgTierAdminPagesInitState,
+  getAppOrgTierAdminPages,
+} from '@/lib/auth/org-tier-admin-pages';
 import { coreNavSections } from '@/components/admin/admin-sidebar';
 import { getRegisteredNavSections } from '@/lib/admin-nav/registry';
 
@@ -50,12 +54,12 @@ const ROUTES: SourceFile[] = [
 const PAGE_FILES = tracked('app/admin').filter((p) => p.endsWith('/page.tsx'));
 // Core sections and whatever the fork registered: importing the sidebar has
 // already run `initAppNav()`.
-const NAV_ITEMS: NavItemFacts[] = [...coreNavSections, ...getRegisteredNavSections()].flatMap(
-  (section) => [
+const itemsOf = (sections: typeof coreNavSections): NavItemFacts[] =>
+  sections.flatMap((section) => [
     ...(section.items ?? []),
     ...(section.subgroups ?? []).flatMap((group) => group.items),
-  ]
-);
+  ]);
+const NAV_ITEMS: NavItemFacts[] = itemsOf([...coreNavSections, ...getRegisteredNavSections()]);
 
 const TREE: RosterInput = {
   routes: ROUTES,
@@ -66,6 +70,8 @@ const TREE: RosterInput = {
   appListedPages: getAppOrgTierAdminPages(),
   pageFiles: PAGE_FILES,
   navItems: NAV_ITEMS,
+  coreSections: CORE_ADMIN_SECTIONS,
+  coreNavHrefs: itemsOf(coreNavSections).map((item) => item.href),
 };
 
 describe('the pins', () => {
@@ -111,6 +117,7 @@ describe('the pins', () => {
       '/admin/orchestration/mcp/keys',
       '/admin/orchestration/approvals',
       '/admin/orchestration/executions/[id]',
+      '/admin/orchestration/executions/live',
       '/admin/members',
     ]);
   });
@@ -300,12 +307,36 @@ describe('the tree', () => {
     expect(findAdminTierRosterProblems(TREE)).toEqual([]);
   });
 
+  it('judged the fork’s pages as its init left them, not an empty list a throw left behind', () => {
+    // A throwing init rolls the fork's list back to empty, and an empty list
+    // has nothing to report — so without this the tree passes while every
+    // fork page ships closed. The init's own log says why it threw.
+    expect(appOrgTierAdminPagesInitState()).toBe('ok');
+  });
+
   it('sees the tree it judges', () => {
     // A check that reads nothing passes everything; these are the floor.
     expect(ROUTES.length).toBeGreaterThan(100);
     expect(PAGE_FILES.length).toBeGreaterThan(50);
     expect(NAV_ITEMS.length).toBeGreaterThan(15);
     expect(PAGE_FILES).toContain('app/admin/orchestration/agents/page.tsx');
+  });
+});
+
+describe('the core sections', () => {
+  it('names every top-level admin section core ships (t-817)', () => {
+    // A fork's page may not sit in one of these. Adding a core section means
+    // adding it here and in CORE_ADMIN_SECTIONS in the same diff; the tree
+    // check above fails for a core page or nav item in a section left out.
+    expect(CORE_ADMIN_SECTIONS).toEqual([
+      'features',
+      'logs',
+      'members',
+      'orchestration',
+      'orgs',
+      'overview',
+      'users',
+    ]);
   });
 });
 
@@ -380,6 +411,50 @@ describe('what it catches', () => {
     ).toEqual([
       expect.stringContaining('/admin/nowhere: listed'),
       expect.stringContaining('/admin/orchestration/agents/[id]/nowhere: listed'),
+    ]);
+  });
+
+  it('a literal page a listed [x] pattern also names (t-817)', () => {
+    expect(
+      findAdminTierRosterProblems(
+        input({
+          pageFiles: ['app/admin/reports/[id]/page.tsx', 'app/admin/reports/settings/page.tsx'],
+          appListedPages: ['/admin/reports/[id]'],
+        })
+      )
+    ).toEqual([
+      expect.stringContaining(
+        '/admin/reports/settings: not listed, but the listed pattern /admin/reports/[id]'
+      ),
+    ]);
+  });
+
+  it('reads a page in a route group by its URL, which the group is not part of', () => {
+    expect(
+      findAdminTierRosterProblems(
+        input({
+          pageFiles: [
+            'app/admin/reports/[id]/page.tsx',
+            'app/admin/reports/(tabs)/settings/page.tsx',
+          ],
+          appListedPages: ['/admin/reports/[id]'],
+        })
+      )
+    ).toEqual([expect.stringContaining('/admin/reports/settings: not listed')]);
+  });
+
+  it('a core section with no page, and a core page or nav item outside the core sections', () => {
+    expect(
+      findAdminTierRosterProblems(
+        input({
+          listedPages: ['/admin/orchestration/agents'],
+          coreSections: ['orchestration', 'gone'],
+          coreNavHrefs: ['/admin/billing', '/admin'],
+        })
+      )
+    ).toEqual([
+      expect.stringContaining('CORE_ADMIN_SECTIONS lists gone'),
+      expect.stringContaining('/admin/billing: core'),
     ]);
   });
 

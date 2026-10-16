@@ -114,12 +114,14 @@ module registries do not cross Next's bundle boundaries. A throw there fails the
 module's evaluation, so nothing reads the partial registry — loud, and a
 different shape.
 
-`admin-tier.ts` → `initAppOrgTierAdminPages()` **is** in the family, and it is
-the one read in both realms: the admin layout on the server, the tier gate and
-the header in the browser. Each realm's copy of `lib/auth/admin-tier.ts` runs it
-through its own gate, at the top of its own first `adminPageTier()` read, so
-neither depends on the other having run. Its rollback fails closed: every fork
-page goes back to being the platform's.
+`admin-tier.ts` → `initAppOrgTierAdminPages()` **is** in the family. Its gate is
+in `lib/auth/org-tier-admin-pages.ts`, and it runs on the server only, at the
+admin layout's first read. The tier gate and the header in the browser are
+handed the list the layout built rather than running the init themselves: a
+list each realm built for itself could differ (an init that reads a
+server-only env var), and the browser would then turn away an org admin the
+layout admitted. Its rollback fails closed: every fork page goes back to being
+the platform's.
 
 ### The seams that do more than degrade
 

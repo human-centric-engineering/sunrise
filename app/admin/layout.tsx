@@ -21,6 +21,7 @@ import {
   type AdminTier,
   type AdminViewerTier,
 } from '@/lib/auth/admin-tier';
+import { orgTierAdminPages } from '@/lib/auth/org-tier-admin-pages';
 import { AdminTierGate } from '@/components/admin/admin-tier-gate';
 import { getSharedSettingsAccess } from '@/lib/tenancy/shared-settings-access';
 import { SharedSettingsAccessProvider } from '@/components/admin/shared-settings-access';
@@ -94,15 +95,17 @@ export default async function AdminLayout({
   //
   // Asked once for the platform tier and, for whoever that refuses, once for
   // the org tier (§111 t-810): an org OWNER/ADMIN may open a page listed in
-  // `ORG_TIER_ADMIN_PAGES`, and no other. The page comes from the proxy's
+  // `ORG_TIER_ADMIN_PAGES` or by the fork (t-817), and no other. The page comes from the proxy's
   // header, because a layout is not handed a pathname; no header is no page,
   // and no page is the platform's. This runs on a full load only — Next.js
   // does not re-render a layout on in-app navigation — so `AdminTierGate`
   // below re-checks each navigation for the reader, and every API route the
-  // page calls checks for itself.
+  // page calls checks for itself. The gate and the header judge by the list
+  // this read built, handed down, so the browser never builds its own.
   const requestHeaders = await headers();
+  const orgTierPages = orgTierAdminPages();
   const viewerTier = await adminViewerTier(
-    adminPageTier(requestHeaders.get(ADMIN_PATHNAME_HEADER))
+    adminPageTier(requestHeaders.get(ADMIN_PATHNAME_HEADER), orgTierPages)
   );
   if (!viewerTier) {
     redirect(AUTH_LANDING_ROUTE);
@@ -126,7 +129,7 @@ export default async function AdminLayout({
     <div className="bg-background flex h-screen overflow-hidden">
       <AdminSidebar viewerTier={viewerTier} multiTenant={multiTenant} />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <AdminHeader orgName={actingOrg?.name} />
+        <AdminHeader orgName={actingOrg?.name} orgTierPages={orgTierPages} />
         <InFlightExecutionBanner />
         <main className="flex-1 overflow-y-auto overscroll-contain">
           <div className="p-6">
@@ -136,7 +139,9 @@ export default async function AdminLayout({
               installOrgMember={sharedSettings.installOrgMember}
               isInstallOrg={sharedSettings.isInstallOrg}
             >
-              <AdminTierGate viewerTier={viewerTier}>{children}</AdminTierGate>
+              <AdminTierGate viewerTier={viewerTier} orgTierPages={orgTierPages}>
+                {children}
+              </AdminTierGate>
             </SharedSettingsAccessProvider>
           </div>
         </main>

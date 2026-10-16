@@ -22,8 +22,10 @@
  *   page has to remember to call is fail-OPEN for every page that forgets. A
  *   fork lists its own in `lib/app/admin-tier.ts` with
  *   {@link registerOrgTierAdminPage}. The admin layout reads both lists on
- *   every full load and the client gate on every in-app navigation
- *   (`components/admin/admin-tier-gate.tsx`), through {@link adminPageTier}.
+ *   every full load (`orgTierAdminPages()` in
+ *   `lib/auth/org-tier-admin-pages.ts`) and hands them to the client gate,
+ *   which judges every in-app navigation against them
+ *   (`components/admin/admin-tier-gate.tsx`), both through {@link adminPageTier}.
  * - **Nav items** carry `tier` (`lib/admin-nav/registry.ts`), and the sidebar
  *   shows an org admin only those. A core item marked `'org'` must point at a
  *   page listed here; the roster test holds that.
@@ -38,23 +40,18 @@
  * `proxy.ts` would cover it server-side, and the framework says not to put one
  * there: the proxy runs on every route, prefetches included.
  *
- * **Client-safe.** Read by `proxy.ts`, a server layout and two client
- * components, so it imports only the shared init gate (which logs) and the
- * fork's scaffold, and the scaffold must stay client-safe too.
- *
- * **Two realms, one lazy init.** The layout and the client gate run in
- * different bundles, and a registration made in one is invisible in the
- * other. So the fork's `initAppOrgTierAdminPages()` is not run from app boot:
- * {@link adminPageTier} runs it once, at the top of its first read, in
- * whichever realm that read happens in.
+ * **Imports nothing.** Read by `proxy.ts` (on every request), a server layout,
+ * client components and the fork's scaffold, so it stays a leaf: the scaffold
+ * imports the registrar from here, and this must not import the scaffold back.
+ * Running the fork's init lives in `lib/auth/org-tier-admin-pages.ts`, which
+ * the server layout alone reads — one realm, so the list a client gate judges
+ * by is the list the server built, not one the browser rebuilt.
  *
  * @see lib/auth/authorization.ts — `AuthorizationScope.tier`, and the default policy's tier arm
  * @see .context/auth/authorization.md — "Admin tiers"
  * @see lib/app/admin-tier.ts — the fork's pages
+ * @see lib/auth/org-tier-admin-pages.ts — the fork's init, and the combined list
  */
-
-import { createAppInitGate } from '@/lib/fork-init';
-import { initAppOrgTierAdminPages } from '@/lib/app/admin-tier';
 
 /**
  * The tier an admin surface may declare. Only one value: the absence of a
@@ -132,59 +129,113 @@ export const ORG_TIER_ADMIN_PAGES: readonly string[] = Object.freeze([
   '/admin/orchestration/mcp/keys',
   '/admin/orchestration/approvals',
   '/admin/orchestration/executions/[id]',
+  // A legacy URL that redirects to the executions page. Listed because the
+  // `[id]` pattern above names its URL too, and the roster check wants every
+  // page a pattern names on the list by name.
+  '/admin/orchestration/executions/live',
   '/admin/members',
 ]);
 
+/**
+ * The top-level admin sections core owns: the first segment under `/admin` of
+ * every core admin page. A fork's page may not sit inside one
+ * ({@link registerOrgTierAdminPage}), which is what keeps the fork's list from
+ * reaching a core page — a platform one, `/admin/users`, or one a core upgrade
+ * adds later under a section the fork had widened. The roster test holds this
+ * to the tree: every core page listed here and every core nav item is under
+ * one of these, and each is a directory under `app/admin`.
+ */
+export const CORE_ADMIN_SECTIONS: readonly string[] = Object.freeze([
+  'features',
+  'logs',
+  'members',
+  'orchestration',
+  'orgs',
+  'overview',
+  'users',
+]);
+
+/** One literal segment of a page's path: what a directory under `app/` that is a URL segment may be called. */
+const STATIC_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._~-]*$/;
+/** One dynamic segment, `[id]` — not a catch-all `[...x]` or an optional one `[[...x]]`. */
+const DYNAMIC_SEGMENT = /^\[[A-Za-z0-9_-]+\]$/;
+
 /** The fork's org-tier page patterns, in registration order. */
 const appPages = new Set<string>();
+/** {@link appPages} as a frozen array, rebuilt only after it changes. */
+let appPagesView: readonly string[] | null = null;
 
 /**
  * List one of the fork's admin pages as org-tier. Call it from
- * `initAppOrgTierAdminPages()` in `lib/app/admin-tier.ts`, which runs it
- * lazily; a call from anywhere else may land in a realm that never reads it.
+ * `initAppOrgTierAdminPages()` in `lib/app/admin-tier.ts`: that is what runs
+ * under the init gate, so a throw part-way rolls back every page the init
+ * listed. A call at the scaffold's module scope still registers, but outside
+ * the rollback.
  *
- * Takes one pattern, written as {@link ORG_TIER_ADMIN_PAGES} writes its own.
- * Throws on anything that is not a path under `/admin/`, and a throw rolls back
- * every page the init listed, so a mistake opens nothing. Idempotent: listing
- * a pattern twice lists it once.
+ * Takes one pattern, written as {@link ORG_TIER_ADMIN_PAGES} writes its own:
+ * `/admin/` then literal segments and `[x]` dynamic ones, nothing else. Throws,
+ * so a mistake opens nothing, on:
+ *
+ * - anything else — a trailing slash, an empty segment, a query string, a
+ *   route group, a catch-all. The matcher reads none of them, so each would
+ *   be a page the fork believes it opened that stays closed, or the reverse;
+ * - a dynamic first segment (`/admin/[slug]`), which names every top-level
+ *   admin page there is;
+ * - a first segment that is one of {@link CORE_ADMIN_SECTIONS}. Those pages
+ *   are core's, and core's org-tier ones are already listed; a fork that
+ *   could list the rest would open a platform page (`/admin/users`) without
+ *   editing a core file.
+ *
+ * Idempotent: listing a pattern twice lists it once.
  */
 export function registerOrgTierAdminPage(pattern: string): void {
-  if (typeof pattern !== 'string' || !/^\/admin\/[^/]/.test(pattern)) {
-    throw new TypeError(
-      `registerOrgTierAdminPage: ${JSON.stringify(pattern)} is not an admin page pattern — write the path under app/, starting /admin/.`
+  const refuse = (why: string): never => {
+    throw new TypeError(`registerOrgTierAdminPage: ${JSON.stringify(pattern)} ${why}`);
+  };
+  if (typeof pattern !== 'string' || !pattern.startsWith('/admin/')) {
+    refuse('is not an admin page pattern — write the path under app/, starting /admin/.');
+  }
+  const segments = pattern.split('/').slice(2);
+  if (!segments.every((s) => STATIC_SEGMENT.test(s) || DYNAMIC_SEGMENT.test(s))) {
+    refuse(
+      'is not an admin page pattern — write the path under app/ with literal and [x] segments only: no trailing slash, query, route group or catch-all.'
     );
   }
+  if (!STATIC_SEGMENT.test(segments[0])) {
+    refuse('starts with a dynamic segment, which would name every top-level admin page.');
+  }
+  if (CORE_ADMIN_SECTIONS.includes(segments[0])) {
+    refuse(
+      `is inside /admin/${segments[0]}, which is core's — put the fork's pages in a section of its own.`
+    );
+  }
+  if (appPages.has(pattern)) return;
   appPages.add(pattern);
+  appPagesView = null;
 }
 
-const appInit = createAppInitGate({
-  label: 'admin-tier: initAppOrgTierAdminPages',
-  // Fail closed: with the init rolled back, every fork page is the platform's
-  // again, so an org admin is refused it rather than let into half a list.
-  subject: 'app org-tier admin pages',
-  init: initAppOrgTierAdminPages,
-  snapshot: () => new Set(appPages),
-  restore: (before) => {
-    appPages.clear();
-    for (const pattern of before) appPages.add(pattern);
-  },
-});
-
-/** The fork's org-tier page patterns: what `lib/app/admin-tier.ts` registered. */
-export function getAppOrgTierAdminPages(): readonly string[] {
-  appInit.ensure();
-  return [...appPages];
+/**
+ * What the fork has registered so far, without running its init. For the init
+ * gate in `lib/auth/org-tier-admin-pages.ts`; read the list through
+ * `getAppOrgTierAdminPages()` there, which runs the init first.
+ *
+ * @internal
+ */
+export function registeredAppOrgTierAdminPages(): readonly string[] {
+  appPagesView ??= Object.freeze([...appPages]);
+  return appPagesView;
 }
 
-/** Every org-tier page pattern: core's roster, then the fork's. */
-export function orgTierAdminPages(): readonly string[] {
-  return [...ORG_TIER_ADMIN_PAGES, ...getAppOrgTierAdminPages()];
-}
-
-/** Test-only: clear the fork's pages and re-arm the one-shot init. */
-export function __resetAppOrgTierAdminPagesForTests(): void {
+/**
+ * Put the fork's registrations back to a list {@link registeredAppOrgTierAdminPages}
+ * returned — the init gate's rollback, and the tests' reset.
+ *
+ * @internal
+ */
+export function restoreAppOrgTierAdminPages(pages: readonly string[]): void {
   appPages.clear();
-  appInit.reset();
+  for (const pattern of pages) appPages.add(pattern);
+  appPagesView = null;
 }
 
 /**
@@ -394,20 +445,17 @@ function segmentsOf(path: string): string[] {
  * The tier a page declares, or `null` for the platform's. A missing pathname
  * is the platform's too: an unknown page is the one that must not open.
  *
- * Reads core's roster and the fork's ({@link orgTierAdminPages}), running the
- * fork's init first if this realm has not yet. `pages` replaces both, for a
- * caller that judges a list of its own (the roster check, tests).
+ * Judges against the list it is handed, which has no default: a default of
+ * core's list alone would silently leave out the fork's. The server reads the
+ * whole list from `orgTierAdminPages()` (`lib/auth/org-tier-admin-pages.ts`);
+ * a client component is handed it by the layout.
  */
 export function adminPageTier(
   pathname: string | null | undefined,
-  pages?: readonly string[]
+  pages: readonly string[]
 ): AdminTier | null {
   if (!pathname) return null;
-  return (pages ?? orgTierAdminPages()).some((pattern) =>
-    matchesAdminPagePattern(pattern, pathname)
-  )
-    ? 'org'
-    : null;
+  return pages.some((pattern) => matchesAdminPagePattern(pattern, pathname)) ? 'org' : null;
 }
 
 /** May a viewer of this tier see a surface of that one? */

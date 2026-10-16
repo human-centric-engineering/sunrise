@@ -23,6 +23,8 @@ interface AdminHeaderProps {
    * naming an org there would read as a filter it does not apply.
    */
   orgName?: string;
+  /** Every org-tier page pattern, core's and the fork's, as the layout read them. */
+  orgTierPages: readonly string[];
 }
 
 // Map route segments to display names
@@ -35,7 +37,7 @@ const segmentLabels: Record<string, string> = {
   members: 'Members',
 };
 
-export function AdminHeader({ title, description, orgName }: AdminHeaderProps) {
+export function AdminHeader({ title, description, orgName, orgTierPages }: AdminHeaderProps) {
   const pathname = usePathname();
 
   // Generate breadcrumbs from pathname
@@ -48,7 +50,7 @@ export function AdminHeader({ title, description, orgName }: AdminHeaderProps) {
     return { href, label, isLast };
   });
 
-  const actingOrgName = adminPageTier(pathname) === 'org' ? orgName : undefined;
+  const actingOrgName = adminPageTier(pathname, orgTierPages) === 'org' ? orgName : undefined;
 
   // Use the last segment as the title if not provided
   const pageTitle = title || segmentLabels[segments[segments.length - 1]] || 'Admin';
