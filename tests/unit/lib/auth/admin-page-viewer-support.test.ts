@@ -21,6 +21,7 @@ const db = vi.hoisted(() => ({
   orgMembership: { findUnique: vi.fn() },
   orgSupportGrant: { findFirst: vi.fn() },
   org: { findUnique: vi.fn() },
+  aiAdminAuditLog: { findFirst: vi.fn() },
 }));
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
 vi.mock('@/lib/auth/utils', () => ({ getServerSession: vi.fn() }));
@@ -50,6 +51,7 @@ beforeEach(() => {
   db.orgMembership.findUnique.mockResolvedValue(null);
   db.orgSupportGrant.findFirst.mockResolvedValue(null);
   db.org.findUnique.mockResolvedValue({ name: 'Customer Ltd', supportGrants: [] });
+  db.aiAdminAuditLog.findFirst.mockResolvedValue(null);
   signedIn('ADMIN', CUSTOMER);
 });
 
@@ -78,8 +80,9 @@ describe('inside a support session', () => {
 });
 
 describe('after the grant ends', () => {
-  it('the session is ended when the org has granted support before', async () => {
+  it('the session is ended when this admin entered the org under one of its grants', async () => {
     db.org.findUnique.mockResolvedValue({ name: 'Customer Ltd', supportGrants: [{ id: 'g' }] });
+    db.aiAdminAuditLog.findFirst.mockResolvedValue({ id: 'audit-1' });
 
     await expect(requestSupportSession()).resolves.toEqual({
       state: 'ended',
@@ -89,6 +92,30 @@ describe('after the grant ends', () => {
     // Refused entry leaves the platform admin their own role: the console
     // stays reachable so the banner's way back works.
     await expect(adminPageViewerTier()).resolves.toBe('platform');
+  });
+
+  it('asks the audit log for this admin’s support.enter on one of the org’s grants', async () => {
+    db.org.findUnique.mockResolvedValue({ name: 'Customer Ltd', supportGrants: [{ id: 'g' }] });
+    db.aiAdminAuditLog.findFirst.mockResolvedValue({ id: 'audit-1' });
+
+    await requestSupportSession();
+
+    expect(db.aiAdminAuditLog.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          userId: 'user_1',
+          action: 'support.enter',
+          entityType: 'support_grant',
+          entityId: { in: ['g'] },
+        },
+      })
+    );
+  });
+
+  it('nothing is shown when the org granted support but this admin never entered under it', async () => {
+    db.org.findUnique.mockResolvedValue({ name: 'Customer Ltd', supportGrants: [{ id: 'g' }] });
+
+    await expect(requestSupportSession()).resolves.toBeNull();
   });
 
   it('nothing is shown for an org that never granted support', async () => {

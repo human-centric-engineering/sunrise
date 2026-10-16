@@ -38,7 +38,11 @@ release process.
   (`null` for a member's switch). New `requestSupportSession()` in
   `lib/auth/admin-page-viewer.ts` feeds a banner across the admin layout, with
   an ended state once the grant ends. The Organisations page offers **Enter as
-  support**. `DELETE /api/v1/users/me` refuses inside a support session.
+  support**, and `GET /api/v1/admin/orgs` lists a grant only while its granter
+  is still an OWNER. `DELETE /api/v1/users/me` refuses inside a support
+  session, and so does `orgForMint()`: no credential (embed token, invite
+  token, MCP key, API key) is minted under a grant. The maintenance bypass
+  asks about the platform admin's own role inside a support session.
   **Forks:** a handler that must know it is serving support reads
   `getTenantContext()?.source === 'support'`; the principal deliberately does
   not say.

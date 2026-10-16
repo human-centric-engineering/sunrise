@@ -101,6 +101,10 @@ vi.mock('@/lib/db/client', () => ({
       ),
     },
     orgSupportGrant: { findFirst: vi.fn(() => Promise.resolve(support.open)) },
+    // The switch route's support.enter row: present once a grant was entered.
+    aiAdminAuditLog: {
+      findFirst: vi.fn(() => Promise.resolve(support.pastGrants.length ? { id: 'audit-1' } : null)),
+    },
   },
 }));
 

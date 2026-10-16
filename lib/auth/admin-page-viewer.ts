@@ -34,6 +34,7 @@ import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { sessionActingOrgId } from '@/lib/tenancy/entry';
 import type { SupportGrantLevel } from '@/lib/tenancy/roles';
+import { SUPPORT_GRANT_LIST_LIMIT } from '@/lib/tenancy/support-grants';
 
 /**
  * This request's principal and scope, built from its session and the org it
@@ -90,8 +91,9 @@ export const requestActingOrg = cache(async (): Promise<{ id: string; name: stri
  * a grant ends, so every API call the page makes answers 403; the layout
  * says why, and offers the same way back as the banner, rather than leaving
  * a bare refusal. It is recognised as a platform admin refused entry to an
- * org they are not a member of, which has granted support before. Without a
- * past grant there was never a support session to end, and nothing is shown.
+ * org they are not a member of, which they entered as support under one of
+ * its grants (the switch route's `support.enter` audit row). Anyone else was
+ * never in a support session there, and nothing is shown.
  */
 export type SupportSessionView =
   | {
@@ -132,10 +134,31 @@ export const requestSupportSession = cache(async (): Promise<SupportSessionView 
   );
   if (!orgId || orgId === INSTALL_ORG_ID) return null;
 
+  // Ended means THIS admin entered this org under one of its grants: the
+  // switch route's `support.enter` row says so. An org that merely granted
+  // support once is not enough — a platform admin removed as a member, or
+  // sent there by a fork's resolver, was never in a support session.
   const org = await prisma.org.findUnique({
     where: { id: orgId },
-    select: { name: true, supportGrants: { select: { id: true }, take: 1 } },
+    select: {
+      name: true,
+      supportGrants: {
+        select: { id: true },
+        orderBy: { createdAt: 'desc' },
+        take: SUPPORT_GRANT_LIST_LIMIT,
+      },
+    },
   });
   if (!org || org.supportGrants.length === 0) return null;
+  const entered = await prisma.aiAdminAuditLog.findFirst({
+    where: {
+      userId: entry.principal.userId,
+      action: 'support.enter',
+      entityType: 'support_grant',
+      entityId: { in: org.supportGrants.map((grant) => grant.id) },
+    },
+    select: { id: true },
+  });
+  if (!entered) return null;
   return { state: 'ended', orgId, orgName: org.name };
 });

@@ -60,11 +60,27 @@ export const GET = withAdminAuth(async () => {
     prisma.orgSupportGrant.findMany({
       // A suspended org admits nobody, so its grant is not open access.
       where: { ...openSupportGrantWhere(new Date()), org: { status: 'ACTIVE' } },
-      select: { orgId: true, level: true, expiresAt: true },
+      select: {
+        orgId: true,
+        level: true,
+        expiresAt: true,
+        grantedBy: {
+          select: { orgMemberships: { where: { role: ORG_OWNER_ROLE }, select: { orgId: true } } },
+        },
+      },
     }),
   ]);
   const ownerCount = new Map(owners.map((row) => [row.orgId, row._count._all]));
-  const supportGrant = new Map(openGrants.map(({ orgId, ...grant }) => [orgId, grant] as const));
+  // Entry admits under a grant only while its granter is still an OWNER of
+  // the org (`verifiedSupportGrant`, §121 t-824), so the list offers only
+  // those: a grant whose granter has left or been demoted admits nobody.
+  const supportGrant = new Map(
+    openGrants
+      .filter(({ orgId, grantedBy }) =>
+        grantedBy?.orgMemberships.some((membership) => membership.orgId === orgId)
+      )
+      .map(({ orgId, level, expiresAt }) => [orgId, { level, expiresAt }] as const)
+  );
 
   return successResponse({
     orgs: orgs.map(({ _count, ...org }) => ({

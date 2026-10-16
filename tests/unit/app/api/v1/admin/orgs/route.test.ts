@@ -128,7 +128,12 @@ describe('GET /api/v1/admin/orgs', () => {
     mockGetSession.mockResolvedValue(session('ADMIN'));
     const expiresAt = new Date('2026-10-17T09:00:00.000Z');
     vi.mocked(prisma.orgSupportGrant.findMany).mockResolvedValue([
-      { orgId: OTHER, level: 'READ_ONLY', expiresAt },
+      {
+        orgId: OTHER,
+        level: 'READ_ONLY',
+        expiresAt,
+        grantedBy: { orgMemberships: [{ orgId: OTHER }] },
+      },
     ] as never);
 
     const res = await get();
@@ -151,6 +156,45 @@ describe('GET /api/v1/admin/orgs', () => {
           org: { status: 'ACTIVE' },
         },
       })
+    );
+  });
+
+  it('leaves out a grant whose granter is no longer an OWNER of that org — it admits nobody (§121 t-824)', async () => {
+    mockGetSession.mockResolvedValue(session('ADMIN'));
+    vi.mocked(prisma.orgSupportGrant.findMany).mockResolvedValue([
+      // The granter is an OWNER elsewhere, not in OTHER.
+      {
+        orgId: OTHER,
+        level: 'ADMIN',
+        expiresAt: new Date('2030-01-01T00:00:00.000Z'),
+        grantedBy: { orgMemberships: [{ orgId: 'cmorg0000000000000000else' }] },
+      },
+    ] as never);
+
+    const res = await get();
+    const json = JSON.parse(await res.text());
+
+    expect(json.data.orgs).toEqual([
+      expect.objectContaining({ id: INSTALL_ORG_ID, supportGrant: null }),
+      expect.objectContaining({ id: OTHER, supportGrant: null }),
+    ]);
+  });
+
+  it('leaves out a grant whose granter has been erased', async () => {
+    mockGetSession.mockResolvedValue(session('ADMIN'));
+    vi.mocked(prisma.orgSupportGrant.findMany).mockResolvedValue([
+      {
+        orgId: OTHER,
+        level: 'ADMIN',
+        expiresAt: new Date('2030-01-01T00:00:00.000Z'),
+        grantedBy: null,
+      },
+    ] as never);
+
+    const json = JSON.parse(await (await get()).text());
+
+    expect(json.data.orgs).toContainEqual(
+      expect.objectContaining({ id: OTHER, supportGrant: null })
     );
   });
 

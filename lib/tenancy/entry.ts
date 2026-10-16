@@ -322,9 +322,19 @@ export function orgOfColumn(orgId: string | null | undefined): string | null {
  * into) and a refusal at `multi`, where there is no org to bind and a
  * browser session acting in one is the way to mint. `requireTenantContext`
  * would throw a plain `Error` there; this is a 403 that names nothing.
+ *
+ * **Never inside a support session** (§121 t-824). A credential bound to the
+ * org is checked against the org's status when used, not against the grant
+ * that let its minter in, so a key or token minted under a grant would keep
+ * working after the grant expired or was revoked. Every mint route binds
+ * through here, so refusing here covers embed tokens, invite tokens, MCP keys
+ * and personal API keys alike.
  */
 export function orgForMint(): string {
   const current = getTenantContext();
+  if (current?.source === 'support') {
+    throw new ForbiddenError('Credentials cannot be created during a support session');
+  }
   if (current?.orgId) return current.orgId;
   if (!isMultiTenant()) return INSTALL_ORG_ID;
   throw new ForbiddenError('Minting a credential requires an org context');

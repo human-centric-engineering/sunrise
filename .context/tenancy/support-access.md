@@ -125,6 +125,19 @@ level, expiresAt }`. The tenant context carries the same `support` field,
   When the grant ends mid-session the next request is refused. The layout then
   recognises a platform admin refused entry to an org that has granted support
   before, and shows the banner's ended state with the same way back (`HB10`).
+- **No credentials.** `orgForMint()` refuses inside a support session, so no
+  embed token, invite token, MCP key or personal API key is bound to the
+  customer org under a grant. Those are checked against the org's status when
+  used, not against the grant, so one minted under a grant would outlive it.
+- **Maintenance.** The maintenance bypass asks the policy about the platform
+  admin's own role, with no org facts, inside a support session. Otherwise the
+  presented plain-user role would put them on the maintenance page,
+  the banner's way back included.
+- **The ended state** shows only to a platform admin who entered that org as
+  support (a `support.enter` row for one of its grants). An admin who was a
+  member and was removed is not told a support session ended.
+- **The Organisations list** offers **Enter as support** only for a grant
+  entry would admit (the granter still an OWNER of the org).
 - **Account deletion.** `DELETE /api/v1/users/me` refuses inside a support
   session: the presented role would otherwise skip its last-admin check.
 

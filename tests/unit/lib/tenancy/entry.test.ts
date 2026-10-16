@@ -311,6 +311,25 @@ describe('orgForMint — the org a credential minted on this call stack binds to
     });
   });
 
+  it('refuses inside a support session, so no credential outlives the grant (§121 t-824)', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    await runAsOrg(
+      OTHER,
+      () => {
+        expect(() => orgForMint()).toThrow(ForbiddenError);
+        expect(() => orgForMint()).toThrow(
+          'Credentials cannot be created during a support session'
+        );
+        return Promise.resolve();
+      },
+      {
+        source: 'support',
+        role: ORG_ADMIN_ROLE,
+        support: { grantId: 'g', level: 'ADMIN', expiresAt: new Date(Date.now() + 60_000) },
+      }
+    );
+  });
+
   it('with no context is the install org at single — what an admin key has always minted into', () => {
     expect(orgForMint()).toBe(INSTALL_ORG_ID);
   });

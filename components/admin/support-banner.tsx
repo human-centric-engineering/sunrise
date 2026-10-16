@@ -38,15 +38,20 @@ export function formatTimeLeft(msLeft: number): string {
 }
 
 export function SupportBanner({ view }: { view: SupportSessionView }) {
-  const [now, setNow] = useState(() => Date.now());
+  // Read the clock only after mount: the server and the browser would read it
+  // at different moments, and the time left would differ between the HTML and
+  // hydration. Until then the time left is simply not shown.
+  const [now, setNow] = useState<number | null>(null);
   const [ending, setEnding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const expiresAt = view.state === 'active' ? Date.parse(view.expiresAt) : null;
-  const expired = view.state === 'ended' || (expiresAt !== null && expiresAt <= now);
+  const expired =
+    view.state === 'ended' || (expiresAt !== null && now !== null && expiresAt <= now);
 
   useEffect(() => {
     if (view.state !== 'active') return;
+    setNow(Date.now());
     const interval = setInterval(() => setNow(Date.now()), TICK_MS);
     return () => clearInterval(interval);
   }, [view.state]);
@@ -86,8 +91,12 @@ export function SupportBanner({ view }: { view: SupportSessionView }) {
               <>
                 {' · '}
                 {SUPPORT_GRANT_LEVEL_LABELS[view.level]} access
-                {' · '}
-                {formatTimeLeft((expiresAt ?? now) - now)}
+                {expiresAt !== null && now !== null && (
+                  <>
+                    {' · '}
+                    {formatTimeLeft(expiresAt - now)}
+                  </>
+                )}
               </>
             )}
           </>

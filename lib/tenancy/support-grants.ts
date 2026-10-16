@@ -32,8 +32,10 @@
  *
  * Who may *call* each function is the policy's decision, through the org
  * `resource` the routes hand the guard (`resolveOrgResource`). This module
- * decides what is a valid grant. Entering an org under one is t-824's
- * (`lib/tenancy/entry.ts`), and reads {@link findOpenSupportGrant}.
+ * decides what is a valid grant. Entering an org under one is t-824's:
+ * `verifiedSupportGrant` in `lib/tenancy/entry.ts`, which adds what entry
+ * needs on top of "open" (org active, not the install org, granter still an
+ * OWNER).
  *
  * Every function takes a `db` and a `now`, so a test can pass a double and a
  * clock.
@@ -156,7 +158,12 @@ export function openSupportGrantWhere(now: Date): Prisma.OrgSupportGrantWhereInp
   return { revokedAt: null, expiresAt: { gt: now } };
 }
 
-/** The org's open grant, or `null`. What entry under a grant reads (t-824). */
+/**
+ * The org's open grant, or `null`. "Open" only: this does NOT decide whether
+ * the grant admits anyone. Entry asks `verifiedSupportGrant`
+ * (`lib/tenancy/entry.ts`), which also requires the org active, not the
+ * install org, and the granter still an OWNER.
+ */
 export async function findOpenSupportGrant(
   orgId: string,
   db: Pick<PrismaClient, 'orgSupportGrant'> = prisma,
