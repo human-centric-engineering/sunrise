@@ -112,7 +112,10 @@ level, expiresAt }`. The tenant context carries the same `support` field,
   user id is untouched, so every row names the individual.
 - **READ_ONLY.** Both guards refuse every method but `GET`, `HEAD` and
   `OPTIONS` (a missing method too), with a 403, before the resource
-  resolver, the policy or the handler runs.
+  resolver, the policy or the handler runs. It goes by method alone, so a
+  `POST` that only reads (the knowledge base search test, an estimate) is
+  refused too: the safe direction for a rule that cannot see what a handler
+  does.
 - **Switching in and out.** `POST /api/v1/orgs/switch` admits a platform
   admin into an org whose grant `verifiedSupportGrant` finds, and writes a
   `support.enter` audit row (`entityType: 'support_grant'`, the grant's id,

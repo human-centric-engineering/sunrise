@@ -25,16 +25,13 @@ import { prisma } from '@/lib/db/client';
 import { MaintenancePage } from '@/components/maintenance-page';
 import { logger } from '@/lib/logging';
 import { canAdminister } from '@/lib/auth/authorization';
-import { sessionPrincipal } from '@/lib/auth/session-principal';
+import { sessionPrincipal, type SessionLike } from '@/lib/auth/session-principal';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 
 interface MaintenanceWrapperProps {
   children: React.ReactNode;
 }
 
-/**
- * Get the maintenance mode flag status
- */
 /**
  * May this session see the site during maintenance? The policy's platform
  * question, about the principal the guards build.
@@ -47,7 +44,7 @@ interface MaintenanceWrapperProps {
  * with no org facts.
  */
 async function bypassesMaintenance(
-  session: { user: { id: string; role?: string | null }; session: { activeOrgId?: string | null } },
+  session: SessionLike,
   headerOrgId: string | null
 ): Promise<boolean> {
   const { principal, scope, support } = await sessionPrincipal(session, headerOrgId);
@@ -61,6 +58,9 @@ async function bypassesMaintenance(
   return canAdminister(principal, null, scope);
 }
 
+/**
+ * Get the maintenance mode flag status
+ */
 async function getMaintenanceFlag() {
   try {
     const flag = await prisma.featureFlag.findUnique({

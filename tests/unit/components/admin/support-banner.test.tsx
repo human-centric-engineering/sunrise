@@ -43,6 +43,7 @@ const active = (msLeft: number, level: 'ADMIN' | 'READ_ONLY' = 'ADMIN') =>
     orgName: 'Customer Ltd',
     level,
     expiresAt: new Date(Date.now() + msLeft).toISOString(),
+    viaResolver: false,
   }) as const;
 
 describe('formatTimeLeft', () => {
@@ -78,6 +79,15 @@ describe('SupportBanner', () => {
     render(<SupportBanner view={{ state: 'ended', orgId: 'org-1', orgName: 'Customer Ltd' }} />);
 
     expect(screen.getByRole('status')).toHaveTextContent('has ended');
+  });
+
+  it('entered through a resolver address, says to leave it instead of offering a switch that cannot work', () => {
+    render(<SupportBanner view={{ ...active(3_600_000), viaResolver: true }} />);
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Leave this organisation’s address to end the session.'
+    );
+    expect(screen.queryByRole('button', { name: 'End support session' })).not.toBeInTheDocument();
   });
 
   it('ends the session by switching to the install org, then reloading the console', async () => {

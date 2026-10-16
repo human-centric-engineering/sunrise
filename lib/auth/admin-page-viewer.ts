@@ -103,6 +103,12 @@ export type SupportSessionView =
       level: SupportGrantLevel;
       /** ISO 8601; the banner counts down to it. */
       expiresAt: string;
+      /**
+       * Entered through a fork's resolver header (the org of this address),
+       * not the session's own choice. A switch cannot end such a session,
+       * because the header wins over `activeOrgId`; leaving the address does.
+       */
+      viaResolver: boolean;
     }
   | { state: 'ended'; orgId: string; orgName: string };
 
@@ -112,6 +118,7 @@ export const requestSupportSession = cache(async (): Promise<SupportSessionView 
   if (!entry) return null;
 
   if (entry.support && entry.principal.orgId) {
+    const viaResolver = Boolean((await headers()).get(TENANT_HEADER_NAME));
     const org = await prisma.org.findUnique({
       where: { id: entry.principal.orgId },
       select: { name: true },
@@ -122,6 +129,7 @@ export const requestSupportSession = cache(async (): Promise<SupportSessionView 
       orgName: org?.name ?? 'this organisation',
       level: entry.support.level,
       expiresAt: entry.support.expiresAt.toISOString(),
+      viaResolver,
     };
   }
 

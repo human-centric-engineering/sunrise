@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 
 const mockEnv = vi.hoisted(() => ({ TENANCY_MODE: 'multi' }));
 vi.mock('@/lib/env', () => ({ env: mockEnv }));
@@ -75,6 +76,16 @@ describe('inside a support session', () => {
       orgName: 'Customer Ltd',
       level: 'READ_ONLY',
       expiresAt: EXPIRES.toISOString(),
+      viaResolver: false,
+    });
+  });
+
+  it('notes when the org came from a resolver header, which a switch cannot leave', async () => {
+    vi.mocked(headers).mockResolvedValue(new Headers({ [TENANT_HEADER_NAME]: CUSTOMER }));
+
+    await expect(requestSupportSession()).resolves.toMatchObject({
+      state: 'active',
+      viaResolver: true,
     });
   });
 });

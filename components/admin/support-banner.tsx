@@ -81,8 +81,9 @@ export function SupportBanner({ view }: { view: SupportSessionView }) {
       <p className="flex-1">
         {expired ? (
           <>
-            Your support session in <strong>{view.orgName}</strong> has ended. The organisation’s
-            grant expired or was revoked, so this console can no longer act in it.
+            Your support session in <strong>{view.orgName}</strong> has ended. Its grant expired or
+            was revoked, or the organisation is no longer available, so this console can no longer
+            act in it.
           </>
         ) : (
           <>
@@ -103,9 +104,14 @@ export function SupportBanner({ view }: { view: SupportSessionView }) {
         )}
       </p>
       {error && <p className="text-xs">{error}</p>}
-      <Button size="sm" variant="outline" onClick={() => void endSession()} disabled={ending}>
-        {ending ? 'Ending…' : 'End support session'}
-      </Button>
+      {view.state === 'active' && view.viaResolver ? (
+        // This address picks the org, so switching cannot leave it.
+        <p className="text-xs">Leave this organisation’s address to end the session.</p>
+      ) : (
+        <Button size="sm" variant="outline" onClick={() => void endSession()} disabled={ending}>
+          {ending ? 'Ending…' : 'End support session'}
+        </Button>
+      )}
     </div>
   );
 }
