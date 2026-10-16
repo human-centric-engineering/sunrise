@@ -119,6 +119,11 @@ export const OWNER_CLASSIFICATION = {
     because:
       'Decides which org a request acts for; an org roster is read by its admins (canAdminister on the org), not owner-scoped.',
   },
+  OrgSupportGrant: {
+    kind: 'not-personal',
+    because:
+      "The org's consent record for vendor support; grantedBy / revokedBy record who acted. Read by the org's OWNER/ADMINs and platform admins, not owner-scoped.",
+  },
   AiApiKey: {
     kind: 'personal',
     owner: { column: 'userId' },
