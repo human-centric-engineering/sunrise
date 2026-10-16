@@ -23,6 +23,7 @@ vi.mock('@/lib/db/client', () => ({
   prisma: {
     org: { findMany: vi.fn() },
     orgMembership: { findUnique: vi.fn(), groupBy: vi.fn() },
+    orgSupportGrant: { findMany: vi.fn() },
     aiApiKey: { findFirst: vi.fn(), update: vi.fn() },
   },
 }));
@@ -92,6 +93,7 @@ beforeEach(() => {
   vi.mocked(prisma.orgMembership.groupBy).mockResolvedValue([
     { orgId: INSTALL_ORG_ID, _count: { _all: 1 } },
   ] as never);
+  vi.mocked(prisma.orgSupportGrant.findMany).mockResolvedValue([]);
   mockCreateOrg.mockResolvedValue({
     id: OTHER,
     slug: 'other',
@@ -119,6 +121,31 @@ describe('GET /api/v1/admin/orgs', () => {
     expect(prisma.orgMembership.groupBy).toHaveBeenCalledTimes(1);
     expect(prisma.orgMembership.groupBy).toHaveBeenCalledWith(
       expect.objectContaining({ by: ['orgId'], where: { role: ORG_OWNER_ROLE } })
+    );
+  });
+
+  it('carries each org’s open support grant, from one query, and null where there is none (§121 t-823)', async () => {
+    mockGetSession.mockResolvedValue(session('ADMIN'));
+    const expiresAt = new Date('2026-10-17T09:00:00.000Z');
+    vi.mocked(prisma.orgSupportGrant.findMany).mockResolvedValue([
+      { orgId: OTHER, level: 'READ_ONLY', expiresAt },
+    ] as never);
+
+    const res = await get();
+    const json = JSON.parse(await res.text());
+
+    expect(json.data.orgs).toEqual([
+      expect.objectContaining({ id: INSTALL_ORG_ID, supportGrant: null }),
+      expect.objectContaining({
+        id: OTHER,
+        supportGrant: { level: 'READ_ONLY', expiresAt: expiresAt.toISOString() },
+      }),
+    ]);
+    expect(prisma.orgSupportGrant.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.orgSupportGrant.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { revokedAt: null, expiresAt: { gt: expect.any(Date) } },
+      })
     );
   });
 
