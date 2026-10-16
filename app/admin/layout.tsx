@@ -12,7 +12,9 @@ import {
   requestActingOrg,
   requestAdministersPlatform,
   requestPrincipal,
+  requestSupportSession,
 } from '@/lib/auth/admin-page-viewer';
+import { SupportBanner } from '@/components/admin/support-banner';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { logger } from '@/lib/logging';
 import {
@@ -123,12 +125,27 @@ export default async function AdminLayout({
         return null;
       })
     : Promise.resolve(null);
-  const [sharedSettings, actingOrg] = await Promise.all([sharedSettingsRead, actingOrgRead]);
+  // A support session (§121 t-824) is named across the whole console, and
+  // so is one whose grant has just ended — the next request is refused, and
+  // this says why and offers the way back. Like the org name, a failed read
+  // leaves the banner out rather than taking the console down.
+  const supportRead = multiTenant
+    ? requestSupportSession().catch((error: unknown) => {
+        logger.error('admin layout: could not read the support session', error);
+        return null;
+      })
+    : Promise.resolve(null);
+  const [sharedSettings, actingOrg, supportSession] = await Promise.all([
+    sharedSettingsRead,
+    actingOrgRead,
+    supportRead,
+  ]);
 
   return (
     <div className="bg-background flex h-screen overflow-hidden">
       <AdminSidebar viewerTier={viewerTier} multiTenant={multiTenant} />
       <div className="flex flex-1 flex-col overflow-hidden">
+        {supportSession && <SupportBanner view={supportSession} />}
         <AdminHeader orgName={actingOrg?.name} orgTierPages={orgTierPages} />
         <InFlightExecutionBanner />
         <main className="flex-1 overflow-y-auto overscroll-contain">

@@ -29,6 +29,11 @@ import { getServerSession } from '@/lib/auth/utils';
 import type { AdminViewerTier } from '@/lib/auth/admin-tier';
 import { TENANT_HEADER_NAME } from '@/lib/tenancy/resolver';
 import { prisma } from '@/lib/db/client';
+import { isPlatformAdmin } from '@/lib/auth/roles';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { isMultiTenant } from '@/lib/tenancy/context';
+import { sessionActingOrgId } from '@/lib/tenancy/entry';
+import type { SupportGrantLevel } from '@/lib/tenancy/roles';
 
 /**
  * This request's principal and scope, built from its session and the org it
@@ -73,4 +78,64 @@ export const requestActingOrg = cache(async (): Promise<{ id: string; name: stri
   const orgId = (await requestPrincipal())?.principal.orgId;
   if (!orgId) return null;
   return prisma.org.findUnique({ where: { id: orgId }, select: { id: true, name: true } });
+});
+
+/**
+ * The support session this request is in, for the admin layout's banner
+ * (§121 t-824): `active` while a platform admin acts in an org under its
+ * grant, `ended` once the grant that let them in has expired or been revoked
+ * (or no longer admits them), and `null` for everyone else.
+ *
+ * `ended` is the remedy `HB10` asks for. Entry refuses the next request once
+ * a grant ends, so every API call the page makes answers 403; the layout
+ * says why, and offers the same way back as the banner, rather than leaving
+ * a bare refusal. It is recognised as a platform admin refused entry to an
+ * org they are not a member of, which has granted support before. Without a
+ * past grant there was never a support session to end, and nothing is shown.
+ */
+export type SupportSessionView =
+  | {
+      state: 'active';
+      orgId: string;
+      orgName: string;
+      level: SupportGrantLevel;
+      /** ISO 8601; the banner counts down to it. */
+      expiresAt: string;
+    }
+  | { state: 'ended'; orgId: string; orgName: string };
+
+export const requestSupportSession = cache(async (): Promise<SupportSessionView | null> => {
+  if (!isMultiTenant()) return null;
+  const entry = await requestPrincipal();
+  if (!entry) return null;
+
+  if (entry.support && entry.principal.orgId) {
+    const org = await prisma.org.findUnique({
+      where: { id: entry.principal.orgId },
+      select: { name: true },
+    });
+    return {
+      state: 'active',
+      orgId: entry.principal.orgId,
+      orgName: org?.name ?? 'this organisation',
+      level: entry.support.level,
+      expiresAt: entry.support.expiresAt.toISOString(),
+    };
+  }
+
+  if (entry.refused !== 'not-a-member' || !isPlatformAdmin(entry.principal)) return null;
+  const session = await getServerSession();
+  const requestHeaders = await headers();
+  const orgId = sessionActingOrgId(
+    requestHeaders.get(TENANT_HEADER_NAME) || null,
+    session?.session.activeOrgId
+  );
+  if (!orgId || orgId === INSTALL_ORG_ID) return null;
+
+  const org = await prisma.org.findUnique({
+    where: { id: orgId },
+    select: { name: true, supportGrants: { select: { id: true }, take: 1 } },
+  });
+  if (!org || org.supportGrants.length === 0) return null;
+  return { state: 'ended', orgId, orgName: org.name };
 });

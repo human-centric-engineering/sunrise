@@ -77,15 +77,25 @@ vi.mock('@/lib/auth/utils', () => ({
 const membership = vi.hoisted(() => ({
   row: { orgId: 'install', role: 'OWNER', org: { status: 'ACTIVE' } },
 }));
+// The org's open support grant (§121 t-824), and whether it ever granted one.
+const support = vi.hoisted(() => ({
+  open: null as { id: string; level: string; expiresAt: Date } | null,
+  pastGrants: [] as { id: string }[],
+}));
 vi.mock('@/lib/db/client', () => ({
   prisma: {
     orgMembership: { findUnique: vi.fn(() => Promise.resolve(membership.row)) },
     // The org the header names at `multi` (t-813): the entered org's row.
     org: {
       findUnique: vi.fn(({ where }: { where: { id: string } }) =>
-        Promise.resolve({ id: where.id, name: `Org ${where.id}` })
+        Promise.resolve({
+          id: where.id,
+          name: `Org ${where.id}`,
+          supportGrants: support.pastGrants,
+        })
       ),
     },
+    orgSupportGrant: { findFirst: vi.fn(() => Promise.resolve(support.open)) },
   },
 }));
 
@@ -283,7 +293,74 @@ describe('AdminLayout admits an org admin to org-tier pages only (§111 t-810)',
     env.TENANCY_MODE = previousMode;
     roster.pages = [];
     membership.row = { orgId: 'install', role: 'OWNER', org: { status: 'ACTIVE' } };
+    support.open = null;
+    support.pastGrants = [];
     vi.mocked(headers).mockReset();
+  });
+
+  describe('a support session (§121 t-824)', () => {
+    /** A platform admin, not a member of the customer org, acting in it. */
+    function supporting() {
+      membership.row = null;
+      const admin = createMockSession({ user: { role: 'ADMIN' } });
+      vi.mocked(getServerSession).mockResolvedValue({
+        ...admin,
+        session: { ...admin.session, activeOrgId: CUSTOMER },
+      });
+    }
+
+    it('opens an org-tier page as an org viewer, under a banner naming the org and level', async () => {
+      supporting();
+      support.open = {
+        id: 'grant-1',
+        level: 'READ_ONLY',
+        expiresAt: new Date(Date.now() + 7_200_000),
+      };
+      onPage(ORG_PAGE);
+
+      render(await AdminLayout({ children: <div data-testid="admin-content">agents</div> }));
+
+      expect(screen.getByTestId('admin-content')).toBeInTheDocument();
+      expect(screen.getByTestId('admin-sidebar')).toHaveAttribute('data-viewer-tier', 'org');
+      const banner = screen.getByRole('status');
+      expect(banner).toHaveTextContent(`Support session in Org ${CUSTOMER}`);
+      expect(banner).toHaveTextContent('Read-only access');
+      expect(banner).toHaveTextContent(/1h 59m left|2h left/);
+      expect(screen.getByRole('button', { name: 'End support session' })).toBeInTheDocument();
+    });
+
+    it('refuses a platform page while supporting', async () => {
+      supporting();
+      support.open = { id: 'grant-1', level: 'ADMIN', expiresAt: new Date(Date.now() + 60_000) };
+      onPage('/admin/users');
+
+      await expect(AdminLayout({ children: <div>users</div> })).rejects.toThrow(
+        `NEXT_REDIRECT:${AUTH_LANDING_ROUTE}`
+      );
+    });
+
+    it('says the session ended once the grant has, with the same way back', async () => {
+      supporting();
+      support.pastGrants = [{ id: 'grant-1' }];
+      onPage(ORG_PAGE);
+
+      render(await AdminLayout({ children: <div>agents</div> }));
+
+      expect(screen.getByRole('status')).toHaveTextContent(
+        `Your support session in Org ${CUSTOMER} has ended`
+      );
+      expect(screen.getByRole('button', { name: 'End support session' })).toBeInTheDocument();
+    });
+
+    it('shows no banner to the org’s own admin', async () => {
+      actingAs('ADMIN');
+      support.pastGrants = [{ id: 'grant-1' }];
+      onPage(ORG_PAGE);
+
+      render(await AdminLayout({ children: <div>agents</div> }));
+
+      expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    });
   });
 
   it.each(['OWNER', 'ADMIN'])(
