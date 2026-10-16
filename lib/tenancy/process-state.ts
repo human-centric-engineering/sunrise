@@ -473,6 +473,12 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
     why: 'The configured analytics provider, its one-shot init promise and a warn-once latch.',
   },
   {
+    file: 'lib/auth/admin-tier.ts',
+    holders: ['appPages', 'appInit'],
+    posture: 'no-tenant-data',
+    why: 'Admin page patterns a fork lists as org-tier from code (t-817), and their one-shot init latch.',
+  },
+  {
     file: 'lib/auth/config.ts',
     holders: ['auth'],
     posture: 'no-tenant-data',

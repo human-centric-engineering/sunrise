@@ -226,10 +226,16 @@ safe failure. The other direction is not safe. A policy that admits on
 an org admin to every platform surface, roster or not. Gate it on
 `scope.tier === 'org'`.
 
-**Not yet:** a fork cannot list its **own** pages as org-tier without editing
-`ORG_TIER_ADMIN_PAGES`, a core file. Its API routes and nav items declare in
-the fork's own files. Its pages stay platform-only until the roster takes a
-fork seam.
+**A fork's own pages** (t-817) are listed in `lib/app/admin-tier.ts`, not in
+`ORG_TIER_ADMIN_PAGES`: its `initAppOrgTierAdminPages()` calls
+`registerOrgTierAdminPage(pattern)`, and `adminPageTier()` reads core's list
+and the fork's. Its routes and nav items already declare in the fork's own
+files, so opening a fork page edits no core file. The init runs lazily, at the
+top of the first `adminPageTier()` read in each realm, because the layout
+(server) and the tier gate (browser) are different bundles and a registration
+made in one is invisible in the other. If it throws, the fork's pages roll
+back and none of them open. The roster test holds the fork's pages to core's
+checks.
 
 ---
 

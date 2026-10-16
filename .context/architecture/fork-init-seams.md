@@ -1,9 +1,9 @@
 # Fork Init Seams
 
-Sixteen of the `lib/app/*` scaffolds Sunrise ships are reached the same way: a
+Seventeen of the `lib/app/*` scaffolds Sunrise ships are reached the same way: a
 core registry runs the fork's `initApp*()` function **once, lazily, before its
 first read**. (Most of `lib/app/` is not this — the majority of those files are
-value and config scaffolds with no init function at all, and two of the eighteen
+value and config scaffolds with no init function at all, and two of the nineteen
 `initApp*` exports are different shapes; see below.)
 That lets a fork accumulate registrations at module-import time without a startup
 hook, and without core needing to know which bundle realm got there first.
@@ -52,6 +52,7 @@ Three properties come with it:
 | Seam file (`lib/app/`)             | Init function                        | Registry                                                    | On a throw                     |
 | ---------------------------------- | ------------------------------------ | ----------------------------------------------------------- | ------------------------------ |
 | `account-sections.ts`              | `initAppAccountSections`             | `lib/account-sections/registry.ts`                          | roll back, log, degrade        |
+| `admin-tier.ts`                    | `initAppOrgTierAdminPages`           | `lib/auth/admin-tier.ts`                                    | roll back, log, degrade        |
 | `authorization.ts`                 | `initAppAuthorizationPolicy`         | `lib/auth/authorization.ts`                                 | roll back, log, **safe mode**  |
 | `capabilities.ts`                  | `initAppCapabilities`                | `lib/orchestration/capabilities/registry.ts`                | roll back, log, **re-raise**   |
 | `context-contributors.ts`          | `initAppContextContributors`         | `lib/orchestration/chat/context-builder.ts`                 | roll back, log, degrade        |
@@ -112,6 +113,13 @@ scope from `components/admin/admin-sidebar.tsx`, in the client realm, because
 module registries do not cross Next's bundle boundaries. A throw there fails the
 module's evaluation, so nothing reads the partial registry — loud, and a
 different shape.
+
+`admin-tier.ts` → `initAppOrgTierAdminPages()` **is** in the family, and it is
+the one read in both realms: the admin layout on the server, the tier gate and
+the header in the browser. Each realm's copy of `lib/auth/admin-tier.ts` runs it
+through its own gate, at the top of its own first `adminPageTier()` read, so
+neither depends on the other having run. Its rollback fails closed: every fork
+page goes back to being the platform's.
 
 ### The seams that do more than degrade
 

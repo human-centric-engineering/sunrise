@@ -18,6 +18,16 @@ release process.
 
 ### Added
 
+- **A fork lists its own admin pages as org-tier** (t-817): the new
+  `lib/app/admin-tier.ts` seam (`initAppOrgTierAdminPages()`, ships empty)
+  calls `registerOrgTierAdminPage(pattern)` from `lib/auth/admin-tier.ts`, and
+  `adminPageTier()` reads core's `ORG_TIER_ADMIN_PAGES` plus the fork's, so an
+  org admin may open a fork page without an edit to a core file. The fork's
+  init runs lazily in both realms (the admin layout and `<AdminTierGate>`),
+  and a throw opens none of its pages. `adminPageTier()`'s `pages` argument is
+  now optional rather than defaulting to `ORG_TIER_ADMIN_PAGES`; leaving it out
+  reads both lists. **Forks:** `tests/unit/lib/app/defaults.test.ts` has a new
+  row for the seam — pin your pages there when you fill it.
 - **`AiWebhookDelivery.stoppedByErasure` and `AiEventHookDelivery.stoppedByErasure`
   record that an erasure stopped the row** (t-809; migration
   `20261015150000_delivery_stopped_by_erasure`, which backfills rows already

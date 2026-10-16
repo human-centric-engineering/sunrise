@@ -104,6 +104,13 @@ import {
 } from '@/lib/account-sections/registry';
 import { initAppAuthorizationPolicy } from '@/lib/app/authorization';
 import {
+  ORG_TIER_ADMIN_PAGES,
+  adminPageTier,
+  getAppOrgTierAdminPages,
+  orgTierAdminPages,
+  __resetAppOrgTierAdminPagesForTests,
+} from '@/lib/auth/admin-tier';
+import {
   appOwnerClassifications,
   __resetAppOwnerClassificationForTests,
 } from '@/lib/db/owner-classification';
@@ -419,6 +426,18 @@ const SEAM_DEFAULTS: SeamDefault[] = [
     },
   },
   {
+    seam: 'lib/app/admin-tier.ts',
+    risk: 'a stray pattern would open that admin page to every org OWNER/ADMIN on every install — the page only, since its API routes declare their own tier, but a page core meant for platform admins alone',
+    assert: () => {
+      __resetAppOrgTierAdminPagesForTests();
+      // The read triggers the lazy init, so this exercises the REAL seam.
+      expect(getAppOrgTierAdminPages()).toEqual([]);
+      // …and the roster the layout and the gate read is exactly core's.
+      expect(orgTierAdminPages()).toEqual(ORG_TIER_ADMIN_PAGES);
+      expect(adminPageTier('/admin/users')).toBeNull();
+    },
+  },
+  {
     seam: 'lib/app/api-key-scopes.ts',
     risk: 'a stray scope would be mintable on every install \u2014 and a name colliding with a core scope would change what an existing key satisfies',
     assert: () => {
@@ -477,6 +496,7 @@ const SEAM_DEFAULTS: SeamDefault[] = [
 afterEach(() => {
   __resetNavRegistryForTests();
   __resetAccountSectionRegistryForTests();
+  __resetAppOrgTierAdminPagesForTests();
   __resetAuthorizationPolicyForTests();
 });
 
