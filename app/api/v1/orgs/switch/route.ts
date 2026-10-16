@@ -84,8 +84,14 @@ export const POST = withAuth(
 
     if (!membership && !support) {
       // Deliberately the same message for "no such org" and "not a member".
+      // A platform admin at `multi` is told what they were missing instead:
+      // they list every org already, so the answer enumerates nothing.
       log.warn('Org switch refused: not a member', { userId: session.user.id, orgId });
-      throw new ForbiddenError('You are not a member of that organisation');
+      throw new ForbiddenError(
+        isMultiTenant() && isPlatformAdmin(session.user)
+          ? 'That organisation has no open support grant'
+          : 'You are not a member of that organisation'
+      );
     }
 
     if (membership && membership.org.status !== 'ACTIVE') {

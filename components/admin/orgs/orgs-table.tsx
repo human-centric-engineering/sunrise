@@ -2,14 +2,17 @@
  * OrgsTable — every org, the vendor's view (§120 t-745)
  *
  * Renders `GET /api/v1/admin/orgs` as a table, each row linking to the org's
- * page. Read-only: rename, suspend and membership stay API-only for now.
+ * page. Read-only: rename, suspend and membership stay API-only for now. An
+ * org with an open support grant offers *Enter as support* (§121 t-824).
  *
- * Server component: no client state, just rendering.
+ * Server component: no client state of its own; the enter action is a client
+ * island.
  */
 
 import Link from 'next/link';
 
 import { SUPPORT_GRANT_LEVEL_LABELS } from '@/components/admin/support-access/support-level-help';
+import { EnterSupportButton } from '@/components/admin/orgs/enter-support-button';
 import { Badge } from '@/components/ui/badge';
 import { ClientDate } from '@/components/ui/client-date';
 import {
@@ -98,6 +101,7 @@ export function OrgsTable({ orgs, installOrgId }: OrgsTableProps) {
                   <span>
                     {SUPPORT_GRANT_LEVEL_LABELS[org.supportGrant.level]} until{' '}
                     <ClientDate date={org.supportGrant.expiresAt} showTime />
+                    <EnterSupportButton orgId={org.id} orgName={org.name} />
                   </span>
                 ) : (
                   <span className="text-muted-foreground">None</span>

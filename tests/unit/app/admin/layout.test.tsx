@@ -74,7 +74,12 @@ vi.mock('@/lib/auth/utils', () => ({
 
 // The memberships the layout reads: the entered org's (role, org status) and
 // the install org's before offering a switch. One row shape serves both.
-const membership = vi.hoisted(() => ({
+interface MembershipRow {
+  orgId: string;
+  role: string;
+  org: { status: string };
+}
+const membership = vi.hoisted((): { row: MembershipRow | null } => ({
   row: { orgId: 'install', role: 'OWNER', org: { status: 'ACTIVE' } },
 }));
 // The org's open support grant (§121 t-824), and whether it ever granted one.

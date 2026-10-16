@@ -299,6 +299,9 @@ describe('POST /api/v1/orgs/switch under a support grant (§121 t-824)', () => {
     const res = await POST(request({ orgId: OTHER_ORG }));
 
     expect(res.status).toBe(403);
+    expect(JSON.parse(await res.text()).error.message).toBe(
+      'That organisation has no open support grant'
+    );
     expect(prisma.orgSupportGrant.findFirst).toHaveBeenCalledTimes(1);
     expect(prisma.session.update).not.toHaveBeenCalled();
     expect(logAdminAction).not.toHaveBeenCalled();
