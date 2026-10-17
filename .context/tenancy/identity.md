@@ -390,7 +390,10 @@ verification, password reset). In order:
    The record is cleared in the same transaction that writes the membership,
    so a set record means only "the signup's write never landed" — a user
    whose membership was written and later removed has none, and is never put
-   back (t-838).
+   back (t-838). The same holds for a membership an admin writes by hand:
+   `addMember`, `createOrg` with an owner and `syncInstallMembershipRole`
+   each call `clearSignupRecord()`, and a fork writing `OrgMembership` rows
+   directly should too.
 
    **At `multi`, a user with no record is refused** (t-836, owner ruling
    2026-10-17; kept by t-838). The session starts with no org, the guard

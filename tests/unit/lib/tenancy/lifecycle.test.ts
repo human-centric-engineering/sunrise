@@ -29,7 +29,7 @@ const db = vi.hoisted(() => ({
     count: vi.fn(),
     upsert: vi.fn(),
   },
-  user: { findUnique: vi.fn() },
+  user: { findUnique: vi.fn(), updateMany: vi.fn() },
   $transaction: vi.fn(),
 }));
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
@@ -331,6 +331,15 @@ describe('addMember', () => {
     expect(db.orgMembership.count).not.toHaveBeenCalled();
   });
 
+  it('clears a surviving signup record, so a later removal is not healed back (t-838)', async () => {
+    db.orgMembership.count.mockResolvedValue(3);
+    await addMember(ORG, OTHER, ORG_ADMIN_ROLE, AS_OWNER);
+    expect(db.user.updateMany).toHaveBeenCalledWith({
+      where: { id: OTHER, signupOrgId: { not: null } },
+      data: { signupOrgId: null, signupOrgRole: null },
+    });
+  });
+
   it('defaults to MEMBER in a populated org, and OWNER for the first member of an empty one', async () => {
     db.orgMembership.count.mockResolvedValueOnce(2);
     expect((await addMember(ORG, OTHER, undefined, AS_OWNER)).role).toBe(DEFAULT_ORG_ROLE);
@@ -570,7 +579,10 @@ describe('syncInstallMembershipRole (ruling a)', () => {
   });
 
   it('accepts a transaction client', async () => {
-    const tx = { orgMembership: { upsert: vi.fn().mockResolvedValue({ role: DEFAULT_ORG_ROLE }) } };
+    const tx = {
+      orgMembership: { upsert: vi.fn().mockResolvedValue({ role: DEFAULT_ORG_ROLE }) },
+      user: { updateMany: vi.fn() },
+    };
     await syncInstallMembershipRole(human(OWNER), tx as never);
     expect(tx.orgMembership.upsert).toHaveBeenCalled();
     expect(db.orgMembership.upsert).not.toHaveBeenCalled();

@@ -314,6 +314,25 @@ export function signupRecordFor(memberships: NewUserMemberships): SignupRecord {
 const CLEARED_SIGNUP_RECORD: SignupRecord = { signupOrgId: null, signupOrgRole: null };
 
 /**
+ * Clear `userId`'s {@link SignupRecord}, if one is set. Every writer that
+ * gives a user a membership calls it (the org lifecycle's add-member,
+ * create-org-with-owner and install-role sync): a record must mean only "the
+ * signup's own write never landed", so once anyone has written a membership
+ * for them it is gone — otherwise a user an admin placed by hand, and later
+ * removed from every org, would be healed back into the org their signup once
+ * named. A fork that writes `OrgMembership` rows directly calls it too.
+ */
+export async function clearSignupRecord(
+  userId: string,
+  db: Pick<PrismaClient, 'user'> = prisma
+): Promise<void> {
+  await db.user.updateMany({
+    where: { id: userId, signupOrgId: { not: null } },
+    data: CLEARED_SIGNUP_RECORD,
+  });
+}
+
+/**
  * The memberships a {@link SignupRecord} stands for, or `null` when there is
  * none. The install-org floor (#872) is re-derived rather than stored: it is
  * {@link withInstallFloor}'s rule on the row's own platform role, which by the

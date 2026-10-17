@@ -35,6 +35,7 @@ import {
   INSTALL_BACKFILL_BATCH,
   initialMembershipFor,
   membershipForNewUser,
+  clearSignupRecord,
   membershipsForNewUser,
   membershipsFromSignupRecord,
   signupRecordFor,
@@ -51,6 +52,7 @@ const mocks = {
   user: {
     findUnique: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
   },
   org: {
     findUnique: vi.fn(),
@@ -504,6 +506,14 @@ describe('the signup record (t-838)', () => {
     mockEnv.TENANCY_MODE = 'multi';
     expect(membershipsFromSignupRecord(human, record)).toEqual({
       membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE },
+    });
+  });
+
+  it('clearSignupRecord writes only when a record is set', async () => {
+    await clearSignupRecord(USER_ID, db);
+    expect(mocks.user.updateMany).toHaveBeenCalledWith({
+      where: { id: USER_ID, signupOrgId: { not: null } },
+      data: cleared,
     });
   });
 
