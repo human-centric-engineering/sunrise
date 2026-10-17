@@ -18,6 +18,13 @@ release process.
 
 ### Added
 
+- **`npm run db:tenancy:install-floor`** (t-835) gives every user without an
+  install-org membership one, by the platform-role rule. #872's floor is
+  written at signup only, so a user invited into another org before it
+  shipped still loses everything when that org is suspended. **Single-tenant
+  installs that had such invitations should run it once.** It writes nothing
+  on a second run and refuses at `TENANCY_MODE=multi`. New
+  `backfillInstallMemberships()` in `lib/tenancy/membership.ts`.
 - **Every admin audit row made in a support session names the grant and the
   org** (§121 t-825). `AiAdminAuditLog` gains `supportGrantId` (FK to
   `OrgSupportGrant`, `onDelete: SetNull`) and `supportOrgId` (no FK, so an
