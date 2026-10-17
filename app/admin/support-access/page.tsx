@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 
+import { SupportActivityTable } from '@/components/admin/support-access/support-activity-table';
 import { SupportGrantForm } from '@/components/admin/support-access/support-grant-form';
 import {
   SupportGrantsTable,
@@ -26,6 +27,7 @@ export const metadata: Metadata = {
  * do what. The grant form is shown to an owner of this org only, because the
  * API refuses anyone else, platform admins included — the vendor does not
  * grant itself access. Revoke is offered to everyone who can see the list.
+ * Below the grants, what support did under them (t-825).
  */
 async function getGrants(orgId: string): Promise<SupportGrantRow[] | null> {
   try {
@@ -84,7 +86,10 @@ export default async function SupportAccessPage() {
             />
           ) : null}
           {grants ? (
-            <SupportGrantsTable orgId={org.id} grants={grants} />
+            <>
+              <SupportGrantsTable orgId={org.id} grants={grants} />
+              {grants.length > 0 && <SupportActivityTable orgId={org.id} grants={grants} />}
+            </>
           ) : (
             <p role="alert" className="text-destructive text-sm">
               The support grants for this organisation could not be loaded

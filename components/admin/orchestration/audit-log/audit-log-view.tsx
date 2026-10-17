@@ -25,7 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCw, X } from 'lucide-react';
 
 interface AuditEntry {
   id: string;
@@ -39,6 +39,25 @@ interface AuditEntry {
   clientIp: string | null;
   createdAt: string;
   user: { id: string; name: string; email: string };
+  /**
+   * Set when the action was made inside a support session (§121 t-825): the
+   * org it was made in, and the grant — null once that org is erased.
+   */
+  supportOrgId: string | null;
+  supportGrant: { id: string; level: string; org: { id: string; name: string } } | null;
+}
+
+type SupportFilter = 'all' | 'only' | 'none';
+
+const SUPPORT_FILTERS: { value: SupportFilter; label: string }[] = [
+  { value: 'all', label: 'All actions' },
+  { value: 'only', label: 'Support sessions only' },
+  { value: 'none', label: 'Not support sessions' },
+];
+
+/** Where a support row was made: the org's name, or its id once it is erased. */
+function supportOrgLabel(entry: AuditEntry): string {
+  return entry.supportGrant?.org.name ?? `erased org ${entry.supportOrgId ?? ''}`.trim();
 }
 
 const ENTITY_TYPES = [
@@ -89,6 +108,8 @@ export function AuditLogView() {
   const [error, setError] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [support, setSupport] = useState<SupportFilter>('all');
+  const [supportGrant, setSupportGrant] = useState<{ id: string; orgName: string } | null>(null);
 
   const limit = 25;
   const latestRequest = useRef(0);
@@ -125,6 +146,8 @@ export function AuditLogView() {
       if (debouncedSearch) params.set('q', debouncedSearch);
       if (dateFrom) params.set('dateFrom', dateFrom);
       if (dateTo) params.set('dateTo', dateTo);
+      if (support !== 'all') params.set('support', support);
+      if (supportGrant) params.set('supportGrantId', supportGrant.id);
       const res = await fetch(`${API.ADMIN.ORCHESTRATION.AUDIT_LOG}?${params}`);
       if (!isCurrent()) return;
       if (!res.ok) {
@@ -148,7 +171,7 @@ export function AuditLogView() {
     } finally {
       if (isCurrent()) setLoading(false);
     }
-  }, [page, entityType, debouncedSearch, dateFrom, dateTo]);
+  }, [page, entityType, debouncedSearch, dateFrom, dateTo, support, supportGrant]);
 
   useEffect(() => {
     void fetchEntries();
@@ -196,6 +219,24 @@ export function AuditLogView() {
             ))}
           </SelectContent>
         </Select>
+        <Select
+          value={support}
+          onValueChange={(v) => {
+            setSupport(v as SupportFilter);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="w-[200px]" aria-label="Support sessions">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SUPPORT_FILTERS.map((f) => (
+              <SelectItem key={f.value} value={f.value}>
+                {f.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <div className="flex items-end gap-2">
           <div>
             <Label htmlFor="audit-date-from" className="text-muted-foreground text-xs">
@@ -227,6 +268,26 @@ export function AuditLogView() {
           </div>
         </div>
       </div>
+
+      {supportGrant && (
+        <div className="flex items-center gap-2 text-sm">
+          <span>
+            Showing actions under one support grant for{' '}
+            <span className="font-medium">{supportGrant.orgName}</span>
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Show every grant"
+            onClick={() => {
+              setSupportGrant(null);
+              setPage(1);
+            }}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
 
       {error && <p className="text-destructive text-sm">{error}</p>}
 
@@ -264,28 +325,67 @@ export function AuditLogView() {
                   <TableCell>
                     <span className="font-medium">{entry.entityName ?? entry.entityId ?? '—'}</span>
                     <span className="text-muted-foreground ml-2 text-xs">{entry.entityType}</span>
-                    {expandedId === entry.id && (entry.changes || entry.metadata) && (
-                      <div className="bg-muted mt-2 space-y-2 rounded p-2 text-xs">
-                        {entry.changes && (
-                          <div>
-                            <span className="text-muted-foreground font-medium">Changes</span>
-                            <pre className="overflow-x-auto whitespace-pre-wrap">
-                              {JSON.stringify(entry.changes, null, 2)}
-                            </pre>
-                          </div>
-                        )}
-                        {entry.metadata && (
-                          <div>
-                            <span className="text-muted-foreground font-medium">Metadata</span>
-                            <pre className="overflow-x-auto whitespace-pre-wrap">
-                              {JSON.stringify(entry.metadata, null, 2)}
-                            </pre>
-                          </div>
-                        )}
-                      </div>
+                    {expandedId === entry.id &&
+                      (entry.changes || entry.metadata || entry.supportOrgId) && (
+                        <div className="bg-muted mt-2 space-y-2 rounded p-2 text-xs">
+                          {entry.supportOrgId && (
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span>
+                                Made during a support session in {supportOrgLabel(entry)}
+                                {entry.supportGrant
+                                  ? `, under a ${entry.supportGrant.level === 'READ_ONLY' ? 'read-only' : 'admin'} grant`
+                                  : ''}
+                                .
+                              </span>
+                              {entry.supportGrant && entry.supportGrant.id !== supportGrant?.id && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-6 text-xs"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const grant = entry.supportGrant;
+                                    if (!grant) return;
+                                    setSupportGrant({ id: grant.id, orgName: grant.org.name });
+                                    setPage(1);
+                                  }}
+                                >
+                                  Show this grant&apos;s actions
+                                </Button>
+                              )}
+                            </div>
+                          )}
+                          {entry.changes && (
+                            <div>
+                              <span className="text-muted-foreground font-medium">Changes</span>
+                              <pre className="overflow-x-auto whitespace-pre-wrap">
+                                {JSON.stringify(entry.changes, null, 2)}
+                              </pre>
+                            </div>
+                          )}
+                          {entry.metadata && (
+                            <div>
+                              <span className="text-muted-foreground font-medium">Metadata</span>
+                              <pre className="overflow-x-auto whitespace-pre-wrap">
+                                {JSON.stringify(entry.metadata, null, 2)}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                  </TableCell>
+                  <TableCell className="text-sm">
+                    {entry.user.name}
+                    {entry.supportOrgId && (
+                      <Badge
+                        variant="outline"
+                        className="ml-2"
+                        title={`Support session in ${supportOrgLabel(entry)}`}
+                      >
+                        Support
+                      </Badge>
                     )}
                   </TableCell>
-                  <TableCell className="text-sm">{entry.user.name}</TableCell>
                   <TableCell className="text-muted-foreground text-xs">
                     {entry.clientIp ?? '—'}
                   </TableCell>

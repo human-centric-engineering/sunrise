@@ -61,6 +61,8 @@ export const API = {
     /** One support grant (revoke) */
     supportGrant: (id: string, grantId: string): string =>
       `/api/v1/orgs/${id}/support-grants/${grantId}`,
+    /** What support did under the org's grants (who reads the grants reads this) */
+    supportActivity: (id: string): string => `/api/v1/orgs/${id}/support-grants/activity`,
   },
 
   /** Admin endpoints */

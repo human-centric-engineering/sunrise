@@ -196,6 +196,67 @@ export async function listSupportGrants(
 }
 
 /**
+ * One audit row made under one of the org's grants (§121 t-825). The action
+ * and what it touched, who did it (a name, as on the grant list), and the
+ * grant. Not the IP address or the diff: the IP is the support person's
+ * personal data, not the org's, and the vendor's own log keeps both.
+ */
+export interface SupportActivityRecord {
+  id: string;
+  grantId: string;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  entityName: string | null;
+  createdAt: Date;
+  actor: { id: string; name: string | null } | null;
+}
+
+/**
+ * The audit rows made under `orgId`'s support grants, newest first — or under
+ * one of them, when `grantId` is given.
+ *
+ * The filter names the grant AND requires it to be this org's, in the one
+ * query: a grant id that belongs to another org matches nothing, so a caller
+ * admitted to one org cannot read what support did in another by naming its
+ * grant. `AiAdminAuditLog` is a system model, so row isolation does not
+ * bound this read; the `supportGrant.orgId` condition is what does.
+ */
+export async function listSupportActivity(
+  orgId: string,
+  options: { grantId?: string; page: number; limit: number },
+  db: Pick<PrismaClient, 'aiAdminAuditLog'> = prisma
+): Promise<{ entries: SupportActivityRecord[]; total: number }> {
+  const where: Prisma.AiAdminAuditLogWhereInput = {
+    supportGrantId: options.grantId ?? { not: null },
+    supportGrant: { orgId },
+  };
+  const [rows, total] = await Promise.all([
+    db.aiAdminAuditLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      skip: (options.page - 1) * options.limit,
+      take: options.limit,
+      select: {
+        id: true,
+        supportGrantId: true,
+        action: true,
+        entityType: true,
+        entityId: true,
+        entityName: true,
+        createdAt: true,
+        user: { select: { id: true, name: true } },
+      },
+    }),
+    db.aiAdminAuditLog.count({ where }),
+  ]);
+  const entries = rows.flatMap(({ supportGrantId, user, ...row }) =>
+    supportGrantId ? [{ ...row, grantId: supportGrantId, actor: user }] : []
+  );
+  return { entries, total };
+}
+
+/**
  * Grant support access to the org, replacing the open grant if there is one.
  *
  * Refused at `single`, for the install org, for an org that does not exist or

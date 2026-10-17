@@ -6,7 +6,7 @@
  * `invitationMetadataSchema` in `lib/validations/admin.ts`.
  */
 import { z } from 'zod';
-import { cuidSchema, slugSchema } from '@/lib/validations/common';
+import { cuidSchema, paginationQuerySchema, slugSchema } from '@/lib/validations/common';
 import { emailSchema } from '@/lib/validations/auth';
 import { ORG_ROLES, ORG_STATUSES, SUPPORT_GRANT_LEVELS } from '@/lib/tenancy/roles';
 import { ORG_ID_SHAPE } from '@/lib/tenancy/resolver';
@@ -367,3 +367,12 @@ export type CreateSupportGrantInput = z.infer<typeof createSupportGrantSchema>;
 
 /** `[id]/support-grants/[grantId]` segments. */
 export const supportGrantParamsSchema = z.object({ id: orgIdSchema, grantId: cuidSchema });
+
+/**
+ * `GET /api/v1/orgs/[id]/support-grants/activity` query (§121 t-825): the
+ * audit rows made under the org's grants, newest first, optionally one grant's.
+ */
+export const listSupportActivityQuerySchema = paginationQuerySchema.extend({
+  limit: z.coerce.number().int().positive().max(100).default(50),
+  grantId: cuidSchema.optional(),
+});

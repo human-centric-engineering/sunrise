@@ -139,7 +139,12 @@ import {
 } from '@/lib/tenancy/context';
 import { createOrg } from '@/lib/tenancy/lifecycle';
 import { enterSessionOrg, isOrgRefusal } from '@/lib/tenancy/entry';
-import { grantSupportAccess, revokeSupportGrant } from '@/lib/tenancy/support-grants';
+import {
+  grantSupportAccess,
+  listSupportActivity,
+  revokeSupportGrant,
+} from '@/lib/tenancy/support-grants';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { isRefusedReadOnlyWrite } from '@/lib/auth/support-principal';
 import {
   agentProfileUsage,
@@ -3463,6 +3468,87 @@ async function main(): Promise<void> {
     );
     await revokeSupportGrant(b.orgId, readOnlyGrant.id, { userId: b.ownerId });
 
+    // ── [19d] Support audit rows: stamped, and read back by their org only (§121 t-825)
+    // `logAdminAction` is what all of the admin routes call, so a row written
+    // through it inside the support entry above is the row any of them would
+    // write. The org's read runs in an org scope, as its route does, and is
+    // the read that has to refuse a grant id from somewhere else.
+    console.log('\n[19d] support audit: rows name the grant, and only B reads them back');
+    const auditName = (what: string) => `${PREFIX} ${what} ${stamp}`;
+    const auditRow = async (entityName: string) => {
+      // Fire-and-forget: wait for the write to land.
+      for (let i = 0; i < 40; i++) {
+        const row = await prisma.aiAdminAuditLog.findFirst({
+          where: { entityName },
+          select: { id: true, supportGrantId: true, supportOrgId: true },
+        });
+        if (row) return row;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return null;
+    };
+    const supportAction = auditName('support action');
+    const memberAction = auditName('member action');
+    if (!isOrgRefusal(during) && during.support) {
+      await runAsOrg(
+        b.orgId,
+        () =>
+          Promise.resolve(
+            logAdminAction({
+              userId: supporter.id,
+              action: 'agent.update',
+              entityType: 'agent',
+              entityId: b.agentId,
+              entityName: supportAction,
+            })
+          ),
+        { source: 'support', role: during.role, support: during.support }
+      );
+    }
+    await runAsOrg(
+      b.orgId,
+      () =>
+        Promise.resolve(
+          logAdminAction({
+            userId: b.ownerId,
+            action: 'agent.update',
+            entityType: 'agent',
+            entityId: b.agentId,
+            entityName: memberAction,
+          })
+        ),
+      { source: 'session', role: ORG_OWNER_ROLE }
+    );
+    const supportRow = await auditRow(supportAction);
+    const memberRow = await auditRow(memberAction);
+    check(
+      supportRow?.supportGrantId === adminGrant.id && supportRow.supportOrgId === b.orgId,
+      `a row written inside the support entry names B’s grant and B (${JSON.stringify(supportRow)})`
+    );
+    check(
+      memberRow !== null && memberRow.supportGrantId === null && memberRow.supportOrgId === null,
+      `a row written by B’s own owner names no grant (${JSON.stringify(memberRow)})`
+    );
+    const activity = (orgId: string, grantId?: string) =>
+      runAsOrg(orgId, () => listSupportActivity(orgId, { grantId, page: 1, limit: 100 }), {
+        source: 'session',
+        role: ORG_OWNER_ROLE,
+      });
+    const bReads = await activity(b.orgId, adminGrant.id);
+    check(
+      bReads.entries.some((e) => e.id === supportRow?.id) &&
+        !bReads.entries.some((e) => e.id === memberRow?.id),
+      `B reads the support row under its grant, and not its owner’s own (${bReads.total} rows)`
+    );
+    const aNamesBsGrant = await activity(a.orgId, adminGrant.id);
+    const aReadsAll = await activity(a.orgId);
+    check(
+      bReads.total > 0 &&
+        aNamesBsGrant.total === 0 &&
+        !aReadsAll.entries.some((e) => e.id === supportRow?.id),
+      `A naming B’s grant reads nothing (${aNamesBsGrant.total}), and A’s own list holds none of B’s`
+    );
+
     // ── [20] Org erasure: from inside another org, with knowledge documents ─
     // `ai_knowledge_document.knowledgeBaseId` is ON DELETE RESTRICT, and both
     // rows also cascade from the org: erasure must still go through (t-730).
@@ -3533,6 +3619,20 @@ async function main(): Promise<void> {
       `A, erased from no org (an admin API key), is gone, and no row carries its org${nonZero(afterErasingA).length ? ` — left: ${JSON.stringify(nonZero(afterErasingA))}` : ''}`
     );
 
+    // [19d]'s support row outlives B: the grant is gone with the org, and the
+    // vendor's log still says the row was support, in B.
+    const supportRowAfterErasure = await runAsSystem('smoke: read the support audit row', () =>
+      prisma.aiAdminAuditLog.findFirst({
+        where: { entityName: supportAction },
+        select: { supportGrantId: true, supportOrgId: true },
+      })
+    );
+    check(
+      supportRowAfterErasure?.supportGrantId === null &&
+        supportRowAfterErasure.supportOrgId === b.orgId,
+      `after B’s erasure, its support audit row stays, marked as support in B (${JSON.stringify(supportRowAfterErasure)})`
+    );
+
     if (failures > 0) throw new Error(`${failures} check(s) failed`);
     console.log('\n✓ smoke:tenancy-isolation passed');
   } finally {
@@ -3547,6 +3647,9 @@ async function main(): Promise<void> {
         await prisma.aiCostLog.deleteMany({ where: { id: f.costLogId } });
       }
       await prisma.dataErasureReceipt.deleteMany({ where: { id: { in: erasureReceiptIds } } });
+      await prisma.aiAdminAuditLog.deleteMany({
+        where: { entityName: { startsWith: `${PREFIX} ` } },
+      });
       await prisma.org.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });
       await prisma.user.deleteMany({ where: { email: { startsWith: `${PREFIX}-` } } });
       await prisma.knowledgeTag.deleteMany({ where: { slug: { startsWith: `${PREFIX}-` } } });

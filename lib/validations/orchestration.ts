@@ -4316,4 +4316,10 @@ export const listAuditLogQuerySchema = paginationQuerySchema.extend({
   dateFrom: z.coerce.date().optional(),
   dateTo: z.coerce.date().optional(),
   q: z.string().trim().min(1).max(100).optional(),
+  /**
+   * Rows made inside a support session (§121 t-825): `only` those, or `none`
+   * of them. `supportGrantId` narrows to one grant's rows.
+   */
+  support: z.enum(['only', 'none']).optional(),
+  supportGrantId: z.cuid().optional(),
 });
