@@ -20,6 +20,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { updateWebhookSchema } from '@/lib/validations/orchestration';
 import { ValidationError } from '@/lib/api/errors';
+import { refuseErasedSubjects } from '@/lib/privacy/erased-subjects';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { webhookSubscriptionVisibilityWhere } from '@/lib/orchestration/access/webhook-subscription-access';
 import {
@@ -113,10 +114,19 @@ export const PATCH = withAdminAuth<{ id: string }>(
       }
     }
 
-    const webhook = await prisma.aiWebhookSubscription.update({
-      where: { id: parsed.data },
-      data: body,
-      select: SAFE_SELECT,
+    // The edit form sends the address it loaded on every save, so a page
+    // opened before a person was erased would restore their address and
+    // re-activate the subscription erasure switched off (t-805). Refused under
+    // the lock erasure takes.
+    const webhook = await prisma.$transaction(async (tx) => {
+      if ('emailAddress' in body && body.emailAddress) {
+        await refuseErasedSubjects(tx, { addresses: [body.emailAddress] }, 'emailAddress');
+      }
+      return tx.aiWebhookSubscription.update({
+        where: { id: parsed.data },
+        data: body,
+        select: SAFE_SELECT,
+      });
     });
 
     log.info('Webhook updated', {

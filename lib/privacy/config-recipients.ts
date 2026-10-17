@@ -42,8 +42,8 @@
  * write, and is not overwritten by the copy read before it — while a new run's
  * insert, which takes `FOR KEY SHARE` on the workflow and version it points
  * at, is not blocked. A writer that read *before* the erasure and writes after
- * it (an open settings form, a builder tab, a publish in flight) still writes
- * its old copy back: that is t-805. Workflows are narrowed in SQL by a plain
+ * it (an open settings form, a builder tab, a publish in flight) is refused by
+ * the writer itself: see `lib/privacy/erased-subjects.ts` (t-805). Workflows are narrowed in SQL by a plain
  * substring test on the definition's text — the user id, or the address with
  * ASCII letters (and U+212A KELVIN SIGN, the one non-ASCII character
  * `toLowerCase()` turns into ASCII) folded by `translate()`, never `lower()`,
@@ -184,6 +184,44 @@ export function removeFromDefinition(
     approvalStepIds,
     emptiedStepIds,
   };
+}
+
+/**
+ * Every address and approver id a definition names — the same places
+ * {@link removeFromDefinition} reads, so a writer refusing an erased person
+ * (t-805, `lib/privacy/erased-subjects.ts`) asks about exactly what erasure
+ * would have removed. Tolerant of a definition that does not parse.
+ */
+export function definitionRecipients(definition: Prisma.JsonValue | undefined): {
+  addresses: string[];
+  userIds: string[];
+} {
+  const addresses: string[] = [];
+  const userIds: string[] = [];
+  if (!isJsonObject(definition) || !Array.isArray(definition.steps)) {
+    return { addresses, userIds };
+  }
+  for (const step of definition.steps) {
+    if (!isJsonObject(step) || !isJsonObject(step.config)) continue;
+    const { config } = step;
+    if (step.type === 'send_notification' && config.channel === 'email') {
+      const { to } = config;
+      if (typeof to === 'string') addresses.push(to);
+      if (Array.isArray(to)) {
+        for (const entry of to) if (typeof entry === 'string') addresses.push(entry);
+      }
+    }
+    if (step.type === 'human_approval') {
+      if (Array.isArray(config.approverUserIds)) {
+        for (const id of config.approverUserIds) if (typeof id === 'string') userIds.push(id);
+      }
+      const channel = config.notificationChannel;
+      if (isJsonObject(channel) && typeof channel.target === 'string') {
+        addresses.push(channel.target);
+      }
+    }
+  }
+  return { addresses, userIds };
 }
 
 /**

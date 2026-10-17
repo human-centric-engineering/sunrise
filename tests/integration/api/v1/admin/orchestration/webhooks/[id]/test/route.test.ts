@@ -225,10 +225,17 @@ describe('POST /api/v1/admin/orchestration/webhooks/:id/test', () => {
       // Assert the DB was queried with the createdBy ownership filter
       expect(vi.mocked(prisma.aiWebhookSubscription.findFirst)).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            id: WEBHOOK_ID,
-            createdBy: 'cmjbv4i3x00003wsloputgwul', // session.user.id from mockAdminUser
-          }),
+          where: {
+            AND: [
+              {
+                OR: [
+                  { createdBy: 'cmjbv4i3x00003wsloputgwul' }, // session.user.id from mockAdminUser
+                  { createdBy: null },
+                ],
+              },
+              { id: WEBHOOK_ID },
+            ],
+          },
         })
       );
       // Fetch must not fire when webhook is not found
@@ -254,9 +261,9 @@ describe('POST /api/v1/admin/orchestration/webhooks/:id/test', () => {
       expect(response.status).toBe(404);
       expect(vi.mocked(prisma.aiWebhookSubscription.findFirst)).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            createdBy: OTHER_ADMIN_ID,
-          }),
+          where: {
+            AND: [{ OR: [{ createdBy: OTHER_ADMIN_ID }, { createdBy: null }] }, { id: WEBHOOK_ID }],
+          },
         })
       );
     });

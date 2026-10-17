@@ -160,6 +160,16 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     calls: 4,
     why: 'deliveries whose payload names a person (JSON containment via the GIN index) and their redaction in SQL (t-783, t-806): the subject-access read, the in-transaction pass, and the pre-pass match and its chunked writes; system-scoped at multi, like every erasure and subject-access read',
   },
+  {
+    file: 'lib/privacy/erased-subjects.ts',
+    calls: 1,
+    why: 'the advisory lock erasure and every recipient writer share (t-805): `pg_advisory_xact_lock(hashtextextended(key, 0))`, which Prisma has no call for; it touches no table, so RLS has nothing to filter',
+  },
+  {
+    file: 'lib/privacy/run-recipients.ts',
+    calls: 2,
+    why: "erasure (t-804): the schedules and other people's runs that could name the person, read FOR NO KEY UPDATE in pages and narrowed by a text search Prisma cannot express; deliberately system-scoped at multi, since a person must be removed from every org's runs, like every erasure read",
+  },
 ];
 
 function countRawSqlCalls(source: string): number {

@@ -25,6 +25,7 @@ const {
   mockContactDeleteMany,
   mockContactCount,
   mockReceiptCreate,
+  mockExecuteRaw,
   mockUserDelete,
   mockUserFind,
   mockDeliveryUpdateMany,
@@ -44,6 +45,7 @@ const {
     id: 'receipt-1',
     erasedAt: new Date('2026-01-01T00:00:00.000Z'),
   });
+  const executeRaw = vi.fn().mockResolvedValue(1);
   const userDelete = vi.fn().mockResolvedValue({ id: 'user-1' });
   // The address as the user row holds it — what the contact delete matches on.
   const deliveryUpdateMany = vi.fn().mockResolvedValue({ count: 0 });
@@ -61,6 +63,8 @@ const {
   // assertions vacuous).
   const prismaObj = {
     $transaction: vi.fn(),
+    // lockSubjects() takes advisory locks through this (t-805)
+    $executeRaw: executeRaw,
     aiAdminAuditLog: { updateMany, createMany: auditCreateMany },
     contactSubmission: { deleteMany: contactDeleteMany, count: contactCount },
     dataErasureReceipt: { create: receiptCreate },
@@ -90,6 +94,7 @@ const {
     mockContactDeleteMany: contactDeleteMany,
     mockContactCount: contactCount,
     mockReceiptCreate: receiptCreate,
+    mockExecuteRaw: executeRaw,
     mockUserDelete: userDelete,
     mockUserFind: userFind,
     mockDeliveryUpdateMany: deliveryUpdateMany,
@@ -190,6 +195,7 @@ describe('eraseUser', () => {
     // clears call history and return-value queues.
     mockIsStorageEnabled.mockReturnValue(false);
     mockDeleteByPrefix.mockResolvedValue({ deleted: 1 });
+    mockExecuteRaw.mockResolvedValue(1);
     mockUpdateMany.mockResolvedValue({ count: 1 });
     mockContactDeleteMany.mockResolvedValue({ count: 1 });
     mockContactCount.mockResolvedValue(0);
@@ -281,6 +287,7 @@ describe('eraseUser', () => {
         subjectEmailHash: expectedHash,
         actorUserId: BASE_PARAMS.actorUserId,
         reason: BASE_PARAMS.reason,
+        metadata: { addressVerified: true },
       },
     });
   });
@@ -334,6 +341,60 @@ describe('eraseUser', () => {
 
       expect(mockReceiptCreate).toHaveBeenCalledWith({
         data: expect.objectContaining({ subjectEmailHash: sha256Hex('new@bar.com') }),
+      });
+    });
+  });
+
+  describe('writer locks and receipt metadata (t-805)', () => {
+    it('takes the advisory locks before any configuration is read or rewritten', async () => {
+      const order: string[] = [];
+      mockExecuteRaw.mockImplementation(async () => {
+        order.push('lock');
+        return 1;
+      });
+      mockEraseConfig.mockImplementation(async () => {
+        order.push('config');
+        return { escalationListsChanged: 0, workflowsChanged: 0 };
+      });
+      mockEraseRuns.mockImplementation(async () => {
+        order.push('runs');
+        return { schedulesChanged: 0, executionsRedacted: 0 };
+      });
+
+      await eraseUser(BASE_PARAMS);
+
+      // One lock for the address, one for the user id; both before either rewrite.
+      expect(order.slice(0, 2)).toEqual(['lock', 'lock']);
+      expect(order.indexOf('config')).toBeGreaterThan(order.lastIndexOf('lock'));
+      expect(order.indexOf('runs')).toBeGreaterThan(order.lastIndexOf('lock'));
+      expect(mockExecuteRaw).toHaveBeenCalledTimes(2);
+    });
+
+    it('locks the user id only when the address was never verified', async () => {
+      mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: false });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+    });
+
+    it('records addressVerified: true on the receipt for a verified account', async () => {
+      mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockReceiptCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ metadata: { addressVerified: true } }),
+      });
+    });
+
+    it('records addressVerified: false on the receipt for an unverified account', async () => {
+      mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: false });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockReceiptCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ metadata: { addressVerified: false } }),
       });
     });
   });

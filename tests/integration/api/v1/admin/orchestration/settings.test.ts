@@ -16,6 +16,7 @@
  *   - PATCH invalidates the settings cache
  */
 
+import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, PATCH } from '@/app/api/v1/admin/orchestration/settings/route';
@@ -36,12 +37,18 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const prisma = {
     aiOrchestrationSettings: {
       findUnique: vi.fn(),
       upsert: vi.fn(),
     },
+    // The erased-person check runs in the write's transaction (t-805)
+    $executeRaw: vi.fn(async () => 1),
+    dataErasureReceipt: { findMany: vi.fn(async () => []) },
+    user: { findMany: vi.fn(async () => []) },
+    $transaction: vi.fn(),
+
     aiProviderModel: {
       // Registry hydration: PATCH calls hydrateFromDb() before validating.
       // These fixtures carry no DB-managed rows, so return an empty matrix —
@@ -61,8 +68,10 @@ vi.mock('@/lib/db/client', () => ({
         dimensions: 1536,
       })),
     },
-  },
-}));
+  };
+  prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
+  return { prisma };
+});
 
 vi.mock('@/lib/orchestration/llm/model-registry', async (importOriginal) => {
   const actual = await importOriginal<object>();
@@ -196,6 +205,9 @@ async function parseJson<T>(res: Response): Promise<T> {
 describe('Admin Orchestration — /settings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
+    vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
     // The settings singleton is cached for 30s (#442) — module state that
     // outlives a test, so without this each GET would serve the row the
     // previous test mocked.
@@ -1083,6 +1095,73 @@ describe('Admin Orchestration — /settings', () => {
       const res = await PATCH(makePatch({ activeEmbeddingModelId: 'cm_missing' }));
 
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe('PATCH — erased escalation recipients (t-805)', () => {
+    const erasedReceipt = {
+      subjectUserId: 'gone-user',
+      subjectEmailHash: createHash('sha256').update('gone@example.com').digest('hex'),
+      metadata: { addressVerified: true },
+    };
+
+    beforeEach(() => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+    });
+
+    it('refuses a list naming an erased address: 400 on the field, nothing upserted', async () => {
+      vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([erasedReceipt] as never);
+
+      const res = await PATCH(
+        makePatch({
+          escalationConfig: {
+            emailAddresses: ['keep@example.com', 'Gone@Example.com'],
+            notifyOnPriority: 'all',
+          },
+        })
+      );
+      const body = await parseJson<{
+        success: boolean;
+        error: { code: string; details: Record<string, string[]> };
+      }>(res);
+
+      expect(res.status).toBe(400);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.details['escalationConfig.emailAddresses']).toEqual([
+        expect.stringMatching(/erased/i),
+      ]);
+      expect(prisma.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
+      expect(vi.mocked(invalidateSettingsCache)).not.toHaveBeenCalled();
+    });
+
+    it('saves a list whose addresses belong to nobody erased', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow() as never
+      );
+
+      const res = await PATCH(
+        makePatch({
+          escalationConfig: { emailAddresses: ['keep@example.com'], notifyOnPriority: 'all' },
+        })
+      );
+
+      expect(res.status).toBe(200);
+      expect(prisma.dataErasureReceipt.findMany).toHaveBeenCalledOnce();
+      expect(prisma.aiOrchestrationSettings.upsert).toHaveBeenCalledOnce();
+    });
+
+    it('does not ask about receipts when the save carries no escalation list', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ globalMonthlyBudgetUsd: 5 }) as never
+      );
+
+      const res = await PATCH(makePatch({ globalMonthlyBudgetUsd: 5 }));
+
+      expect(res.status).toBe(200);
+      expect(prisma.dataErasureReceipt.findMany).not.toHaveBeenCalled();
     });
   });
 

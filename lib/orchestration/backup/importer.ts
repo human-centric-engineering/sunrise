@@ -52,6 +52,10 @@ import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settin
 import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import type { WorkflowDefinition } from '@/types/orchestration';
+import { isRecord } from '@/lib/utils';
+import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
+import { definitionRecipients, removeFromDefinition } from '@/lib/privacy/config-recipients';
+import { findErasedSubjects, type ErasedSubjects } from '@/lib/privacy/erased-subjects';
 import { importedAgentProviderWarnings } from '@/lib/orchestration/agents/provider-approval';
 import { findUnapprovedModelOverridesIn } from '@/lib/orchestration/workflows/semantic-validator';
 import {
@@ -237,6 +241,13 @@ async function importParsed(
 
   await prisma.$transaction(
     async (tx) => {
+      // People the bundle names who have been erased since it was taken (t-805).
+      // A backup from before an erasure would otherwise restore their address
+      // or approver id into the escalation list, a subscription or a workflow.
+      // Found once, under the locks erasure takes, and stripped from every
+      // write below with a warning — an import is not refused for it.
+      const erased = await findErasedSubjects(tx, bundleRecipients(parsed.data, includeShared));
+
       // Knowledge tags first — agents reference them by slug, so create/refresh
       // them before the agent import so grant resolution succeeds.
       const tagIdBySlug = new Map<string, string>();
@@ -632,6 +643,12 @@ async function importParsed(
         }
         const unapprovedSteps = workflowProviders.bySlug.get(wf.slug);
         if (unapprovedSteps) result.warnings.push(unapprovedSteps);
+        const definition = withoutErased(defParsed.data, erased);
+        if (definition !== defParsed.data) {
+          result.warnings.push(
+            `Workflow '${wf.slug}': recipients or approvers belonging to people whose data was erased were removed`
+          );
+        }
         if (existing) {
           // Promote the imported snapshot to a new version on the existing workflow.
           const lastVersion = await tx.aiWorkflowVersion.findFirst({
@@ -643,7 +660,7 @@ async function importParsed(
             data: {
               workflowId: existing.id,
               version: (lastVersion?.version ?? 0) + 1,
-              snapshot: defParsed.data as unknown as Prisma.InputJsonValue,
+              snapshot: definition as unknown as Prisma.InputJsonValue,
               changeSummary: 'Imported from backup',
               createdBy: userId,
             },
@@ -698,7 +715,7 @@ async function importParsed(
           await createInitialVersion({
             tx,
             workflowId: created.id,
-            definition: defParsed.data,
+            definition,
             userId,
           });
           result.workflows.created++;
@@ -734,6 +751,14 @@ async function importParsed(
         if (channel === 'email' && !z.string().email().safeParse(destination).success) {
           result.warnings.push(
             `Skipped email subscription — "${destination}" is not a valid address`
+          );
+          continue;
+        }
+
+        if (channel === 'email' && erased.addresses.includes(normaliseAddress(destination))) {
+          // Not echoed: it is the address being kept out.
+          result.warnings.push(
+            'Skipped an email subscription — its address belongs to a person whose data was erased'
           );
           continue;
         }
@@ -789,6 +814,12 @@ async function importParsed(
       // Import settings — the shared part.
       if (includeShared && parsed.data.settings) {
         const s = parsed.data.settings;
+        const escalationConfig = escalationWithoutErased(s.escalationConfig, erased);
+        if (escalationConfig !== s.escalationConfig) {
+          result.warnings.push(
+            'Escalation list: addresses belonging to people whose data was erased were removed'
+          );
+        }
         await tx.aiOrchestrationSettings.upsert({
           where: { slug: 'global' },
           create: {
@@ -808,7 +839,7 @@ async function importParsed(
             evaluationRetentionDays: s.evaluationRetentionDays,
             maxConversationsPerUser: s.maxConversationsPerUser,
             maxMessagesPerConversation: s.maxMessagesPerConversation,
-            escalationConfig: (s.escalationConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            escalationConfig: (escalationConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
           },
           update: {
             defaultModels: s.defaultModels as Prisma.InputJsonValue,
@@ -826,7 +857,7 @@ async function importParsed(
             evaluationRetentionDays: s.evaluationRetentionDays,
             maxConversationsPerUser: s.maxConversationsPerUser,
             maxMessagesPerConversation: s.maxMessagesPerConversation,
-            escalationConfig: (s.escalationConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
+            escalationConfig: (escalationConfig as Prisma.InputJsonValue) ?? Prisma.JsonNull,
           },
         });
         result.settingsUpdated = true;
@@ -887,4 +918,74 @@ async function importedWorkflowProviderWarnings(
     );
   }
   return { bySlug, unchecked: null };
+}
+
+/**
+ * Every address and approver id a bundle names, for the erased-person check
+ * (t-805): workflow definitions, email subscriptions, and — when shared
+ * settings are imported — the escalation list.
+ */
+function bundleRecipients(
+  data: {
+    workflows: Array<{ workflowDefinition: unknown }>;
+    webhooks: Array<{ channel?: string | null; emailAddress?: string | null }>;
+    settings?: { escalationConfig: unknown } | null;
+  },
+  includeShared: boolean
+): { addresses: string[]; userIds: string[] } {
+  const addresses: string[] = [];
+  const userIds: string[] = [];
+  for (const wf of data.workflows) {
+    const parsed = workflowDefinitionSchema.safeParse(wf.workflowDefinition);
+    if (!parsed.success) continue;
+    const named = definitionRecipients(parsed.data as unknown as Prisma.JsonValue);
+    addresses.push(...named.addresses);
+    userIds.push(...named.userIds);
+  }
+  for (const wh of data.webhooks) {
+    if (wh.channel === 'email' && wh.emailAddress) addresses.push(wh.emailAddress);
+  }
+  if (includeShared && data.settings) {
+    addresses.push(...escalationAddresses(data.settings.escalationConfig));
+  }
+  return { addresses, userIds };
+}
+
+function escalationAddresses(config: unknown): string[] {
+  if (!isRecord(config) || !Array.isArray(config.emailAddresses)) return [];
+  return config.emailAddresses.filter((a): a is string => typeof a === 'string');
+}
+
+/** The escalation config without erased addresses — the same object when none were. */
+function escalationWithoutErased(config: unknown, erased: ErasedSubjects): unknown {
+  if (erased.addresses.length === 0 || !isRecord(config)) return config;
+  const list = config.emailAddresses;
+  if (!Array.isArray(list)) return config;
+  const kept = list.filter(
+    (a) => typeof a !== 'string' || !erased.addresses.includes(normaliseAddress(a))
+  );
+  return kept.length === list.length ? config : { ...config, emailAddresses: kept };
+}
+
+/**
+ * The definition without any erased person in it — the same object when none
+ * were — removed exactly as erasure removes them (`removeFromDefinition`).
+ */
+function withoutErased(definition: WorkflowDefinition, erased: ErasedSubjects): WorkflowDefinition {
+  let current: Prisma.JsonValue = definition as unknown as Prisma.JsonValue;
+  let changed = false;
+  const subjects = [
+    ...erased.addresses.map((address) => ({ userId: '', address })),
+    ...erased.userIds.map((userId) => ({ userId, address: null })),
+  ];
+  for (const subject of subjects) {
+    const change = removeFromDefinition(current, subject);
+    if (!change) continue;
+    current = change.definition;
+    changed = true;
+  }
+  if (!changed) return definition;
+  // Re-validated rather than cast back: the rewrite keeps the shape, and the
+  // schema is what says so.
+  return workflowDefinitionSchema.parse(current);
 }

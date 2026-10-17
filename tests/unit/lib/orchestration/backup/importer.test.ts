@@ -9,6 +9,7 @@
  * @see lib/orchestration/backup/importer.ts
  */
 
+import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // The org's provider policy (§120 t-743): approves everything unless a test
@@ -37,6 +38,10 @@ vi.mock('@/lib/orchestration/llm/org-provider-policy', async (importOriginal) =>
 // ─── Mocks (declared before imports) ────────────────────────────────────────
 
 const mockTx = {
+  // The erased-person check (t-805): advisory locks, receipts, live users
+  $executeRaw: vi.fn(),
+  dataErasureReceipt: { findMany: vi.fn() },
+  user: { findMany: vi.fn() },
   aiAgent: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
   aiCapability: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   aiWorkflow: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
@@ -259,7 +264,23 @@ function makeSettings() {
 beforeEach(() => {
   mockIsMultiTenant.mockReset();
   mockIsMultiTenant.mockReturnValue(false);
+  // Nobody named by a bundle has been erased unless a test says so
+  mockTx.$executeRaw.mockReset();
+  mockTx.$executeRaw.mockResolvedValue(1);
+  mockTx.dataErasureReceipt.findMany.mockReset();
+  mockTx.dataErasureReceipt.findMany.mockResolvedValue([]);
+  mockTx.user.findMany.mockReset();
+  mockTx.user.findMany.mockResolvedValue([]);
 });
+
+/** The receipt erasure writes for a verified address, hashed independently of the source. */
+function erasedAddressReceipt(address: string) {
+  return {
+    subjectUserId: 'gone-user',
+    subjectEmailHash: createHash('sha256').update(address.trim().toLowerCase()).digest('hex'),
+    metadata: { addressVerified: true },
+  };
+}
 
 describe('importOrchestrationConfig', () => {
   beforeEach(() => {
@@ -870,6 +891,219 @@ describe('importOrchestrationConfig', () => {
 });
 
 // ─── Knowledge tag import ────────────────────────────────────────────────────
+
+describe('importOrchestrationConfig — people whose data was erased (t-805)', () => {
+  const ERASED_ADDRESS = 'gone@example.com';
+  const ERASED_ID = 'cmerasedapprover00000000';
+
+  function notifyAndApprove(to: string[], approverUserIds: string[]) {
+    return makeWorkflow({
+      workflowDefinition: {
+        steps: [
+          {
+            id: 'notify',
+            name: 'Notify',
+            type: 'send_notification',
+            config: { channel: 'email', to, subject: 'Hi', bodyTemplate: 'x' },
+            nextSteps: [{ targetStepId: 'approve' }],
+          },
+          {
+            id: 'approve',
+            name: 'Approve',
+            type: 'human_approval',
+            config: { prompt: 'OK?', approverUserIds },
+            nextSteps: [],
+          },
+        ],
+        entryStepId: 'notify',
+        errorStrategy: 'fail',
+      },
+    });
+  }
+
+  beforeEach(() => {
+    mockTx.aiWorkflow.findUnique.mockReset();
+    mockTx.aiWorkflow.findUnique.mockResolvedValue(null);
+    mockTx.aiWorkflow.create.mockReset();
+    mockTx.aiWorkflow.create.mockResolvedValue({ id: 'wf-1' });
+    mockTx.aiWorkflow.update.mockReset();
+    mockTx.aiWorkflow.update.mockResolvedValue({ id: 'wf-1' });
+    mockTx.aiWorkflowVersion.create.mockReset();
+    mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-1', version: 1 });
+    mockTx.aiWebhookSubscription.findFirst.mockReset();
+    mockTx.aiWebhookSubscription.findFirst.mockResolvedValue(null);
+    mockTx.aiWebhookSubscription.create.mockReset();
+    mockTx.aiWebhookSubscription.create.mockResolvedValue({});
+    mockTx.aiOrchestrationSettings.upsert.mockReset();
+    mockTx.aiOrchestrationSettings.upsert.mockResolvedValue({});
+    mockTx.knowledgeTag.findMany.mockResolvedValue([]);
+    mockWorkflowSlugsHeldAnywhere.mockReset();
+    mockWorkflowSlugsHeldAnywhere.mockResolvedValue(new Set());
+    mockOrgWorkflowFindMany.mockReset();
+    mockOrgWorkflowFindMany.mockResolvedValue([]);
+    mockTx.dataErasureReceipt.findMany.mockResolvedValue([
+      erasedAddressReceipt(ERASED_ADDRESS),
+      { subjectUserId: ERASED_ID, subjectEmailHash: null, metadata: null },
+    ]);
+  });
+
+  it('imports a workflow with the erased address and approver stripped, and warns', async () => {
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        workflows: [
+          notifyAndApprove(['Gone@Example.com', 'keep@example.com'], [ERASED_ID, 'live-approver']),
+        ],
+      },
+    };
+
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const created = mockTx.aiWorkflowVersion.create.mock.calls[0]?.[0] as {
+      data: { snapshot: { steps: Array<{ config: Record<string, unknown> }> } };
+    };
+    const steps = created.data.snapshot.steps;
+    expect(steps[0].config.to).toEqual(['keep@example.com']);
+    expect(steps[1].config.approverUserIds).toEqual(['live-approver']);
+    expect(result.workflows.created).toBe(1);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/onboarding-flow.*people whose data was erased were removed/i),
+      ])
+    );
+    // Asked up front, under the locks, about the address and the approver together
+    expect(mockTx.$executeRaw).toHaveBeenCalled();
+    expect(mockTx.dataErasureReceipt.findMany.mock.calls[0]?.[0]).toMatchObject({
+      where: {
+        OR: [
+          { subjectEmailHash: { in: expect.arrayContaining([expect.any(String)]) } },
+          { subjectUserId: { in: expect.arrayContaining([ERASED_ID, 'live-approver']) } },
+        ],
+      },
+    });
+  });
+
+  it('strips the erased person from a new version of an existing workflow too', async () => {
+    mockTx.aiWorkflow.findUnique.mockResolvedValue({ id: 'wf-existing' });
+    mockTx.aiWorkflowVersion.findFirst.mockResolvedValue({ version: 1 });
+    mockTx.aiWorkflowVersion.create.mockResolvedValue({ id: 'wfv-2', version: 2 });
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, workflows: [notifyAndApprove([ERASED_ADDRESS], [ERASED_ID])] },
+    };
+
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const created = mockTx.aiWorkflowVersion.create.mock.calls[0]?.[0] as {
+      data: { snapshot: { steps: Array<{ config: Record<string, unknown> }> } };
+    };
+    expect(created.data.snapshot.steps[0].config.to).toEqual([]);
+    expect(created.data.snapshot.steps[1].config.approverUserIds).toEqual([]);
+    expect(result.warnings.some((w) => /were removed/.test(w))).toBe(true);
+  });
+
+  it('leaves a workflow that names nobody erased untouched, with no warning', async () => {
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        workflows: [notifyAndApprove(['keep@example.com'], ['live-approver'])],
+      },
+    };
+    mockTx.dataErasureReceipt.findMany.mockResolvedValue([]);
+
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const created = mockTx.aiWorkflowVersion.create.mock.calls[0]?.[0] as {
+      data: { snapshot: { steps: Array<{ config: Record<string, unknown> }> } };
+    };
+    expect(created.data.snapshot.steps[0].config.to).toEqual(['keep@example.com']);
+    expect(created.data.snapshot.steps[1].config.approverUserIds).toEqual(['live-approver']);
+    expect(result.warnings.some((w) => /were removed/.test(w))).toBe(false);
+  });
+
+  it('skips an email subscription whose address was erased, without echoing the address', async () => {
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        webhooks: [makeWebhook({ channel: 'email', url: null, emailAddress: 'GONE@Example.com' })],
+      },
+    };
+
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    expect(mockTx.aiWebhookSubscription.create).not.toHaveBeenCalled();
+    const warning = result.warnings.find((w) => /person whose data was erased/.test(w));
+    expect(warning).toBeDefined();
+    expect(warning).not.toContain('gone@example.com');
+    expect(result.webhooks.created).toBe(0);
+  });
+
+  it('imports an email subscription for a different address as before', async () => {
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        webhooks: [makeWebhook({ channel: 'email', url: null, emailAddress: 'other@example.com' })],
+      },
+    };
+
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    expect(mockTx.aiWebhookSubscription.create).toHaveBeenCalledOnce();
+    expect(result.webhooks.created).toBe(1);
+  });
+
+  it('filters the erased address out of the escalation list and warns', async () => {
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        settings: {
+          ...makeSettings(),
+          escalationConfig: {
+            emailAddresses: ['gone@example.com', 'keep@example.com'],
+            notifyOnPriority: 'high',
+          },
+        },
+      },
+    };
+
+    const result = await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    const upsert = mockTx.aiOrchestrationSettings.upsert.mock.calls[0]?.[0] as {
+      create: { escalationConfig: unknown };
+      update: { escalationConfig: unknown };
+    };
+    const expected = { emailAddresses: ['keep@example.com'], notifyOnPriority: 'high' };
+    expect(upsert.create.escalationConfig).toEqual(expected);
+    expect(upsert.update.escalationConfig).toEqual(expected);
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([expect.stringMatching(/Escalation list.*were removed/)])
+    );
+  });
+
+  it('does not look at the escalation list when the shared part is not imported', async () => {
+    const payload = {
+      ...minPayload,
+      data: {
+        ...minPayload.data,
+        settings: {
+          ...makeSettings(),
+          escalationConfig: { emailAddresses: ['gone@example.com'], notifyOnPriority: 'all' },
+        },
+      },
+    };
+
+    await importOrchestrationConfig(payload, 'user-1', OWN_SCOPE);
+
+    expect(mockTx.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
+    // Nothing else in the bundle names anyone, so no receipt was asked for
+    expect(mockTx.dataErasureReceipt.findMany).not.toHaveBeenCalled();
+  });
+});
 
 describe('importOrchestrationConfig — knowledgeTags', () => {
   beforeEach(() => {

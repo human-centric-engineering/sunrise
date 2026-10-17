@@ -30,6 +30,13 @@ The publish/draft/rollback model addresses three concrete needs:
   restore the address, and old snapshots would keep their personal data. Only
   those values change; no version is added or renumbered. See
   [Data erasure, step 8](../privacy/data-erasure.md#what-eraseuser-does-beyond-the-cascade).
+- **And no writer puts them back** (t-805). `saveDraft`, `publishDraft`,
+  `rollback` and `createInitialVersion` each refuse, inside their
+  transaction, a definition that names an erased person — so a builder tab, a
+  publish or a rollback that read a copy from before the erasure fails with a
+  `ValidationError` rather than restoring them. Reload and the stripped
+  definition saves. See
+  [Writers that read before an erasure](../privacy/data-erasure.md#writers-that-read-before-an-erasure).
 
 ## Data model
 

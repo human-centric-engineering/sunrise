@@ -18,6 +18,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { NextRequest } from 'next/server';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
@@ -30,15 +31,22 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const prisma = {
     aiWebhookSubscription: {
       findFirst: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
     },
-  },
-}));
+    // The erased-person check runs in the write's transaction (t-805)
+    $executeRaw: vi.fn(),
+    dataErasureReceipt: { findMany: vi.fn() },
+    user: { findMany: vi.fn() },
+    $transaction: vi.fn(),
+  };
+  prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
+  return { prisma };
+});
 
 vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
@@ -131,6 +139,9 @@ async function parseJson<T>(response: Response): Promise<T> {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+  vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
+  vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([]);
+  vi.mocked(prisma.user.findMany).mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -385,6 +396,71 @@ describe('PATCH /webhooks/:id', () => {
 
     expect(vi.mocked(computeChanges).mock.calls.at(-1)?.[2]).toEqual({
       ignoreKeys: ['updatedAt', 'createdAt'],
+    });
+  });
+
+  describe('erased addresses (t-805)', () => {
+    const ERASED_RECEIPT = {
+      subjectUserId: 'gone-user',
+      subjectEmailHash: createHash('sha256').update('gone@example.com').digest('hex'),
+      metadata: { addressVerified: true },
+    };
+
+    it('refuses an edit that sends an erased address: 400 on emailAddress, nothing written', async () => {
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
+        makeWebhook({ channel: 'email', url: null, emailAddress: null }) as never
+      );
+      vi.mocked(validateRequestBody).mockResolvedValue({
+        channel: 'email',
+        emailAddress: 'Gone@example.com',
+      });
+      vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([ERASED_RECEIPT] as never);
+
+      const response = await PATCH(
+        makePatchRequest({ channel: 'email', emailAddress: 'Gone@example.com' }),
+        makeParams(WEBHOOK_ID)
+      );
+      const body = await parseJson<{
+        success: boolean;
+        error: { code: string; details: Record<string, string[]> };
+      }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.details.emailAddress).toEqual([expect.stringMatching(/erased/i)]);
+      expect(prisma.aiWebhookSubscription.update).not.toHaveBeenCalled();
+      expect(logAdminAction).not.toHaveBeenCalled();
+    });
+
+    it('lets an edit that does not send an address through without asking about receipts', async () => {
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(makeWebhook() as never);
+      vi.mocked(prisma.aiWebhookSubscription.update).mockResolvedValue(
+        makeWebhook({ isActive: false }) as never
+      );
+
+      const response = await PATCH(makePatchRequest(updatePayload), makeParams(WEBHOOK_ID));
+
+      expect(response.status).toBe(200);
+      expect(prisma.dataErasureReceipt.findMany).not.toHaveBeenCalled();
+    });
+
+    it('lets an edit through when the address it sends belongs to nobody erased', async () => {
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
+        makeWebhook({ channel: 'email', url: null, emailAddress: 'old@example.com' }) as never
+      );
+      vi.mocked(validateRequestBody).mockResolvedValue({ emailAddress: 'fine@example.com' });
+      vi.mocked(prisma.aiWebhookSubscription.update).mockResolvedValue(
+        makeWebhook({ channel: 'email', url: null, emailAddress: 'fine@example.com' }) as never
+      );
+
+      const response = await PATCH(
+        makePatchRequest({ emailAddress: 'fine@example.com' }),
+        makeParams(WEBHOOK_ID)
+      );
+
+      expect(response.status).toBe(200);
+      expect(prisma.dataErasureReceipt.findMany).toHaveBeenCalledOnce();
+      expect(prisma.aiWebhookSubscription.update).toHaveBeenCalledOnce();
     });
   });
 

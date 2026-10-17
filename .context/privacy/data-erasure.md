@@ -473,10 +473,9 @@ transaction):
    steps left without a recipient. Never the address. **Not reached:** a
    workflow inside a backup bundle already downloaded is outside the database.
    A saved template is an ordinary workflow row, so it is rewritten like any
-   other. One gap is open (t-805): writers that read before the erasure and
-   write after it — a settings form (or another instance's 30 s settings
-   cache), a workflow builder tab, or a publish or rollback in flight —
-   write the copy they read back, address included.
+   other. A writer that read before the erasure and writes after it is refused
+   by the writer itself — see [Writers that read before an erasure](#writers-that-read-before-an-erasure)
+   (t-805).
 
    **Then what the definitions became at run time** (t-804), through
    `lib/privacy/run-recipients.ts`:
@@ -534,6 +533,50 @@ with a hook that counts the person's rows in both orgs.
 Apps and forks extend these same two reach-limits (residual-PII scrub, external
 resource cleanup) via registered hooks — see
 [App / fork tables relating to `User`](#app--fork-tables-relating-to-user).
+
+## Writers that read before an erasure
+
+Erasure removes a person from configuration under row locks, but a writer
+that **read before** the erasure and writes its whole copy **after** it would
+put them back, with no erasure audit trail: an open settings form, a builder
+tab, a publish or rollback in flight, a webhook or schedule edit page — or a
+backup taken before the erasure (t-805). The read is long over by then, so
+row locks cannot stop it.
+
+So each of those writers asks, inside the transaction that writes, whether
+what it is about to write names an erased person —
+`lib/privacy/erased-subjects.ts`, from the erasure receipt
+(`subjectUserId`, and `subjectEmailHash` of the normalised address):
+
+| Writer                                                                                 | Names it checks                                                   | On a match                                      |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------- |
+| `PATCH /settings`                                                                      | `escalationConfig.emailAddresses`                                 | 400 on the field                                |
+| `saveDraft`, `publishDraft`, `rollback`, `createInitialVersion` (`version-service.ts`) | every `to`, approver id and notification target in the definition | `ValidationError`, nothing written              |
+| `POST` / `PATCH /webhooks`                                                             | `emailAddress`                                                    | 400 on the field                                |
+| `POST` / `PATCH .../schedules`                                                         | every string in `inputTemplate`                                   | 400 on the field                                |
+| Backup import                                                                          | all of the above in the bundle                                    | stripped, with a warning; the import goes ahead |
+
+**Why a lock and not just a check.** A check alone races the erasure: the
+writer finds no receipt, the erasure scans and strips, the writer's write
+lands after the scan. So both take a transaction-scoped Postgres advisory
+lock per address and per user id (`lockSubjects`): the erasure at the start
+of its transaction, the writer before it checks. Whichever is first commits
+before the other reads — the writer then sees the receipt, or the erasure sees
+the write and strips it. `npm run smoke:erasure-writers` proves both orders
+against Postgres; with the erasure's lock removed, its writer-first case
+fails.
+
+**What is refused, and what is not.** A user id with a receipt, always. An
+address only when the receipt says erasure matched it as verified
+(`metadata.addressVerified`, written since t-805): erasure never strips an
+unverified address, which may be a stranger's inbox, so a writer does not
+refuse one either; a receipt from before t-805 does not say, and is not
+refused. And never an address a live, verified account holds again — a
+person erased and later signed up again may be notified like anyone else.
+
+**A fork's own writer** of a recipient — a module that stores an address or
+user id it notifies — calls `refuseErasedSubjects(tx, { addresses, userIds },
+field)` inside its write transaction, and the same guarantee holds.
 
 ## App / Fork Tables Relating to `User`
 
@@ -622,7 +665,7 @@ is an **append-only** record proving an erasure happened, without re-introducing
 the subject's PII:
 
 - `subjectUserId` — opaque; the user row is gone, so it identifies nothing on its own.
-- `subjectEmailHash` — `sha256(lowercased email)` for correlating a later
+- `subjectEmailHash` — `sha256` of the trimmed, lower-cased email, for correlating a later
   "did you erase me?" request. Not reversible; the raw email is never stored.
   It hashes the address **stored on the user row**, read inside the erasure
   transaction (t-797), not a caller's copy: a session cached across an email
@@ -630,6 +673,12 @@ the subject's PII:
   longer held. `eraseUser()`'s `userEmail` parameter is therefore deprecated
   and ignored.
 - `actorUserId`, `reason`, `erasedAt`.
+- `metadata.addressVerified` — whether erasure matched the address (it does
+  only for a verified one). Written since t-805; a writer refuses an erased
+  address only when this is `true` (see
+  [Writers that read before an erasure](#writers-that-read-before-an-erasure)).
+  Both hashes are now `subjectEmailHash()` in `lib/privacy/erased-subjects.ts`,
+  the trimmed, lower-cased form erasure matches on.
 - **No foreign keys** — the receipt must outlive every referenced row, including
   the actor if they are erased later.
 

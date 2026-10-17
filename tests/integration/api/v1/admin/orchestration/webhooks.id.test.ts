@@ -16,6 +16,7 @@
  * - CRITICAL: 500 responses do NOT leak raw error messages
  */
 
+import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, PATCH, DELETE } from '@/app/api/v1/admin/orchestration/webhooks/[id]/route';
@@ -45,15 +46,22 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const prisma = {
     aiWebhookSubscription: {
       findFirst: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
     },
-  },
-}));
+    // The erased-person check runs in the write's transaction (t-805)
+    $executeRaw: vi.fn(async () => 1),
+    dataErasureReceipt: { findMany: vi.fn(async () => []) },
+    user: { findMany: vi.fn(async () => []) },
+    $transaction: vi.fn(),
+  };
+  prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
+  return { prisma };
+});
 
 vi.mock('@/lib/security/ip', () => ({ getClientIP: vi.fn(() => '127.0.0.1') }));
 
@@ -85,6 +93,7 @@ import { prisma } from '@/lib/db/client';
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
 const WEBHOOK_ID = 'cmjbv4i3x00003wsloputgwu1';
+const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul'; // mockAdminUser's id
 const INVALID_ID = 'not-a-cuid';
 const BASE_URL = `http://localhost:3000/api/v1/admin/orchestration/webhooks/${WEBHOOK_ID}`;
 
@@ -243,6 +252,9 @@ describe('GET /api/v1/admin/orchestration/webhooks/:id', () => {
 describe('PATCH /api/v1/admin/orchestration/webhooks/:id', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
+    vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
   });
 
   describe('Authentication & Authorization', () => {
@@ -300,6 +312,46 @@ describe('PATCH /api/v1/admin/orchestration/webhooks/:id', () => {
           data: expect.objectContaining({ isActive: false }),
         })
       );
+    });
+
+    it('scopes the lookup to the caller (plus creatorless rows) and the id', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
+        makeWebhookRow() as never
+      );
+      vi.mocked(prisma.aiWebhookSubscription.update).mockResolvedValue(makeWebhookRow() as never);
+
+      await PATCH(makePatchRequest({ isActive: false }), makeParams(WEBHOOK_ID));
+
+      expect(vi.mocked(prisma.aiWebhookSubscription.findFirst)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            AND: [{ OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] }, { id: WEBHOOK_ID }],
+          },
+        })
+      );
+    });
+
+    it('refuses an edit sending an erased address with a 400 and writes nothing (t-805)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
+        makeWebhookRow({ channel: 'email', url: null, emailAddress: 'old@example.com' }) as never
+      );
+      vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([
+        {
+          subjectUserId: 'gone-user',
+          subjectEmailHash: createHash('sha256').update('gone@example.com').digest('hex'),
+          metadata: { addressVerified: true },
+        },
+      ] as never);
+
+      const response = await PATCH(
+        makePatchRequest({ emailAddress: 'gone@example.com' }),
+        makeParams(WEBHOOK_ID)
+      );
+
+      expect(response.status).toBe(400);
+      expect(vi.mocked(prisma.aiWebhookSubscription.update)).not.toHaveBeenCalled();
     });
 
     it('excludes the always-bumping updatedAt/createdAt from the audit diff (#396)', async () => {

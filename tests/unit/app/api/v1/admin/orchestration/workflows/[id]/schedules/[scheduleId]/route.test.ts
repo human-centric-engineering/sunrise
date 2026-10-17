@@ -19,6 +19,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { NextRequest } from 'next/server';
 
 // ─── Mocks (must appear before imports) ────────────────────────────────────
@@ -31,16 +32,23 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const prisma = {
     aiWorkflowSchedule: {
       findFirst: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
     },
     aiAdminAuditLog: { create: vi.fn() },
-  },
-}));
+    // The erased-person check runs in the write's transaction (t-805)
+    $executeRaw: vi.fn(),
+    dataErasureReceipt: { findMany: vi.fn() },
+    user: { findMany: vi.fn() },
+    $transaction: vi.fn(),
+  };
+  prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
+  return { prisma };
+});
 
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
@@ -64,6 +72,7 @@ import {
 } from '@/app/api/v1/admin/orchestration/workflows/[id]/schedules/[scheduleId]/route';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
@@ -191,6 +200,9 @@ describe('PATCH /workflows/:id/schedules/:scheduleId', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
+    vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
     vi.mocked(prisma.aiWorkflowSchedule.findFirst).mockResolvedValue(mockScheduleRecord);
   });
 
@@ -334,6 +346,44 @@ describe('PATCH /workflows/:id/schedules/:scheduleId', () => {
         data: expect.objectContaining({ inputTemplate: newTemplate }),
       })
     );
+  });
+
+  it('refuses a template holding an erased address with a 400 and updates nothing (t-805)', async () => {
+    vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([
+      {
+        subjectUserId: 'gone-user',
+        subjectEmailHash: createHash('sha256').update('gone@example.com').digest('hex'),
+        metadata: { addressVerified: true },
+      },
+    ] as never);
+
+    const res = await updateSchedule(
+      makePatchRequest({
+        inputTemplate: { recipients: ['keep@example.com', ' Gone@Example.com '] },
+      }),
+      makeParams(VALID_WF_ID, VALID_SCHED_ID)
+    );
+    const json = JSON.parse(await res.text());
+
+    expect(res.status).toBe(400);
+    expect(json.error.details.inputTemplate).toEqual([expect.stringMatching(/erased/i)]);
+    expect(prisma.aiWorkflowSchedule.update).not.toHaveBeenCalled();
+    expect(logAdminAction).not.toHaveBeenCalled();
+  });
+
+  it('does not consult erasure receipts when the edit leaves the template alone (t-805)', async () => {
+    vi.mocked(prisma.aiWorkflowSchedule.update).mockResolvedValue({
+      ...mockScheduleRecord,
+      name: 'Renamed',
+    });
+
+    const res = await updateSchedule(
+      makePatchRequest({ name: 'Renamed' }),
+      makeParams(VALID_WF_ID, VALID_SCHED_ID)
+    );
+
+    expect(res.status).toBe(200);
+    expect(prisma.dataErasureReceipt.findMany).not.toHaveBeenCalled();
   });
 
   it('returns 401 when request is unauthenticated', async () => {

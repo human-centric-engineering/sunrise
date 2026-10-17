@@ -17,6 +17,7 @@ import { loggableUrl } from '@/lib/logging/redact-path';
 import { auditableSubscriptionName } from '@/lib/orchestration/webhooks/destination';
 import { getClientIP } from '@/lib/security/ip';
 import { createWebhookSchema, listWebhooksQuerySchema } from '@/lib/validations/orchestration';
+import { refuseErasedSubjects } from '@/lib/privacy/erased-subjects';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { webhookSubscriptionVisibilityWhere } from '@/lib/orchestration/access/webhook-subscription-access';
 
@@ -106,23 +107,30 @@ export const POST = withAdminAuth(
       createData.emailAddress = body.emailAddress;
     }
 
-    const webhook = await prisma.aiWebhookSubscription.create({
-      data: createData,
-      select: {
-        id: true,
-        channel: true,
-        url: true,
-        emailAddress: true,
-        events: true,
-        agentIds: true,
-        workflowIds: true,
-        isActive: true,
-        description: true,
-        maxAttempts: true,
-        retryBackoffMs: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+    // A form opened before a person was erased can still hold their address
+    // (t-805): refused under the lock erasure takes.
+    const webhook = await prisma.$transaction(async (tx) => {
+      if (createData.emailAddress) {
+        await refuseErasedSubjects(tx, { addresses: [createData.emailAddress] }, 'emailAddress');
+      }
+      return tx.aiWebhookSubscription.create({
+        data: createData,
+        select: {
+          id: true,
+          channel: true,
+          url: true,
+          emailAddress: true,
+          events: true,
+          agentIds: true,
+          workflowIds: true,
+          isActive: true,
+          description: true,
+          maxAttempts: true,
+          retryBackoffMs: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
     });
 
     log.info('Webhook created', {

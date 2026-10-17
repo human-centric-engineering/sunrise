@@ -16,6 +16,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { createHash } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
@@ -28,8 +29,8 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const prisma = {
     aiWorkflow: { findUnique: vi.fn() },
     aiWorkflowSchedule: {
       findMany: vi.fn(),
@@ -43,8 +44,15 @@ vi.mock('@/lib/db/client', () => ({
     // §108: the tick sweeps per org, so the scope runner reads the active
     // orgs. One install org is what a `single` install has.
     org: { findMany: vi.fn(async () => [{ id: 'install' }]) },
-  },
-}));
+    // The erased-person check runs in the write's transaction (t-805)
+    $executeRaw: vi.fn(),
+    dataErasureReceipt: { findMany: vi.fn() },
+    user: { findMany: vi.fn() },
+    $transaction: vi.fn(),
+  };
+  prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
+  return { prisma };
+});
 
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
@@ -80,6 +88,7 @@ import {
 import { POST as tickScheduler } from '@/app/api/v1/admin/orchestration/schedules/tick/route';
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { processDueSchedules } from '@/lib/orchestration/scheduling';
 import { noteMaintenanceWork } from '@/lib/orchestration/maintenance/idle-gate';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
@@ -147,6 +156,9 @@ describe('Schedule CRUD API', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
+    vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
   });
 
   // ── List Schedules ──────────────────────────────────────────────────────
@@ -212,6 +224,53 @@ describe('Schedule CRUD API', () => {
 
       expect(res.status).toBe(201);
       expect(json.data.schedule.name).toBe('Daily run');
+    });
+
+    it('refuses a template holding an erased address with a 400 and creates nothing (t-805)', async () => {
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(mockWorkflow as never);
+      vi.mocked(prisma.aiWorkflowSchedule.count).mockResolvedValue(0);
+      vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([
+        {
+          subjectUserId: 'gone-user',
+          subjectEmailHash: createHash('sha256').update('gone@example.com').digest('hex'),
+          metadata: { addressVerified: true },
+        },
+      ] as never);
+
+      const res = await createSchedule(
+        makePostRequest({
+          name: 'Digest',
+          cronExpression: '0 9 * * *',
+          // Nested, differently cased: found by walking the whole template
+          inputTemplate: { report: { sendTo: ['Gone@Example.com'] } },
+        }),
+        { params: Promise.resolve({ id: VALID_WF_ID }) }
+      );
+      const json = JSON.parse(await res.text());
+
+      expect(res.status).toBe(400);
+      expect(json.error.details.inputTemplate).toEqual([expect.stringMatching(/erased/i)]);
+      expect(prisma.aiWorkflowSchedule.create).not.toHaveBeenCalled();
+      expect(logAdminAction).not.toHaveBeenCalled();
+    });
+
+    it('creates the schedule when its template names nobody erased (t-805)', async () => {
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(mockWorkflow as never);
+      vi.mocked(prisma.aiWorkflowSchedule.count).mockResolvedValue(0);
+      vi.mocked(prisma.aiWorkflowSchedule.create).mockResolvedValue(mockScheduleRecord);
+
+      const res = await createSchedule(
+        makePostRequest({
+          name: 'Digest',
+          cronExpression: '0 9 * * *',
+          inputTemplate: { sendTo: 'fine@example.com' },
+        }),
+        { params: Promise.resolve({ id: VALID_WF_ID }) }
+      );
+
+      expect(res.status).toBe(201);
+      expect(prisma.dataErasureReceipt.findMany).toHaveBeenCalledOnce();
+      expect(prisma.aiWorkflowSchedule.create).toHaveBeenCalledOnce();
     });
 
     it('persists the scope carrier on create when provided', async () => {

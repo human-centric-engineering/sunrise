@@ -28,8 +28,8 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const prisma = {
     aiOrchestrationSettings: {
       findUnique: vi.fn(async () => null),
       upsert: vi.fn(),
@@ -38,8 +38,15 @@ vi.mock('@/lib/db/client', () => ({
       // The matrix the registry hydrates from. Overridden per test.
       findMany: vi.fn(async () => []),
     },
-  },
-}));
+    // The erased-person check runs in the write's transaction (t-805)
+    $executeRaw: vi.fn(async () => 1),
+    dataErasureReceipt: { findMany: vi.fn(async () => []) },
+    user: { findMany: vi.fn(async () => []) },
+    $transaction: vi.fn(),
+  };
+  prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
+  return { prisma };
+});
 
 // Side-effect-only collaborators — mocked to keep the test hermetic.
 vi.mock('@/lib/orchestration/llm/settings-resolver', () => ({
@@ -131,6 +138,9 @@ async function parseJson<T>(res: Response): Promise<T> {
 describe('PATCH /settings — DB-managed model hydration (issue #302, Bug A)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
+    vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
     resetRegistry();
     resetHydrateThrottle();
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());

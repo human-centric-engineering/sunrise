@@ -30,6 +30,7 @@ import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settin
 import { getEmbeddingModels } from '@/lib/orchestration/llm/embedding-models';
 import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
 import { updateOrchestrationSettingsSchema } from '@/lib/validations/orchestration';
+import { refuseErasedSubjects } from '@/lib/privacy/erased-subjects';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   getOrchestrationSettings,
@@ -301,17 +302,29 @@ export const PATCH = withAdminAuth(
         : { disconnect: true };
     }
 
-    const row = await prisma.aiOrchestrationSettings.upsert({
-      where: { slug: 'global' },
-      create: {
-        slug: 'global',
-        defaultModels: mergedDefaults,
-        globalMonthlyBudgetUsd: body.globalMonthlyBudgetUsd ?? null,
-        searchConfig: body.searchConfig
-          ? (body.searchConfig as unknown as Prisma.InputJsonValue)
-          : Prisma.JsonNull,
-      },
-      update: updateData,
+    // The form saves its whole escalation list, so one opened before a person
+    // was erased would write their address back (t-805). Refused in the
+    // transaction that writes, under the lock erasure takes.
+    const row = await prisma.$transaction(async (tx) => {
+      if (body.escalationConfig?.emailAddresses) {
+        await refuseErasedSubjects(
+          tx,
+          { addresses: body.escalationConfig.emailAddresses },
+          'escalationConfig.emailAddresses'
+        );
+      }
+      return tx.aiOrchestrationSettings.upsert({
+        where: { slug: 'global' },
+        create: {
+          slug: 'global',
+          defaultModels: mergedDefaults,
+          globalMonthlyBudgetUsd: body.globalMonthlyBudgetUsd ?? null,
+          searchConfig: body.searchConfig
+            ? (body.searchConfig as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
+        },
+        update: updateData,
+      });
     });
 
     invalidateSettingsCache();

@@ -370,6 +370,23 @@ release process.
 
 ### Changed
 
+- **A copy read before an erasure can no longer write the person back**
+  (t-805). The settings PATCH (escalation list), the workflow draft save,
+  publish and rollback, `createInitialVersion`, webhook subscription create
+  and update, and schedule create and update now answer 400 (a
+  `ValidationError` naming the field) when what they would write names an
+  erased person: an approver id with an erasure receipt, or an address whose
+  receipt says erasure matched it as verified — unless a live, verified
+  account holds that address again. The backup importer strips such
+  recipients instead, with a warning. Erasure and each writer share a
+  transaction-scoped advisory lock per address and user id, so neither can
+  slip between the other's read and write. New `refuseErasedSubjects()`,
+  `findErasedSubjects()`, `lockSubjects()` and `subjectEmailHash()` in
+  `lib/privacy/erased-subjects.ts`, and `definitionRecipients()` in
+  `lib/privacy/config-recipients.ts`. `DataErasureReceipt.metadata` now
+  records `addressVerified`. **Forks:** a writer of your own that stores an
+  address or user id it notifies should call `refuseErasedSubjects()` inside
+  its write transaction.
 - **A webhook subscription outlives the admin who created it** (t-782).
   `AiWebhookSubscription.createdBy` is now nullable with `onDelete: SetNull`
   (it was `Cascade`), so erasing an admin no longer stops the integrations they

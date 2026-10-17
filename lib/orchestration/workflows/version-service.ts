@@ -11,6 +11,8 @@
  * See `.context/orchestration/workflow-versioning.md`.
  */
 
+import { definitionRecipients } from '@/lib/privacy/config-recipients';
+import { refuseErasedSubjects } from '@/lib/privacy/erased-subjects';
 import { Prisma } from '@prisma/client';
 import type { PrismaClient, AiWorkflowVersion, AiWorkflow } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
@@ -107,6 +109,23 @@ async function getVersionInt(client: Tx, versionId: string | null): Promise<numb
   return row?.version ?? null;
 }
 
+/**
+ * Refuse a definition that names an erased person (t-805): every writer of a
+ * draft or a version calls this inside its transaction, so a copy read before
+ * an erasure cannot write them back. See `lib/privacy/erased-subjects.ts`.
+ */
+async function refuseErasedRecipients(
+  tx: Prisma.TransactionClient,
+  definition: WorkflowDefinition,
+  field: string
+): Promise<void> {
+  await refuseErasedSubjects(
+    tx,
+    definitionRecipients(definition as unknown as Prisma.JsonValue),
+    field
+  );
+}
+
 // ─── Public API ────────────────────────────────────────────────────────────
 
 export interface SaveDraftArgs {
@@ -125,9 +144,14 @@ export async function saveDraft(args: SaveDraftArgs): Promise<AiWorkflow> {
   const { workflowId, definition, userId, clientIp } = args;
   const wf = await loadWorkflow(prisma, workflowId);
 
-  const updated = await prisma.aiWorkflow.update({
-    where: { id: workflowId },
-    data: { draftDefinition: definition as unknown as Prisma.InputJsonValue },
+  // A builder tab opened before a person was erased saves the whole draft it
+  // loaded, their address included (t-805): refused under erasure's lock.
+  const updated = await prisma.$transaction(async (tx) => {
+    await refuseErasedRecipients(tx, definition, 'draftDefinition');
+    return tx.aiWorkflow.update({
+      where: { id: workflowId },
+      data: { draftDefinition: definition as unknown as Prisma.InputJsonValue },
+    });
   });
 
   logAdminAction({
@@ -219,6 +243,9 @@ export async function publishDraft(args: PublishDraftArgs): Promise<PublishDraft
   const previousVersionInt = await getVersionInt(prisma, existing.publishedVersionId);
 
   const result = await prisma.$transaction(async (tx) => {
+    // The draft was read above, outside any lock: one read before a person was
+    // erased must not become a published version naming them (t-805).
+    await refuseErasedRecipients(tx, definition, 'draftDefinition');
     const next = await nextVersionNumber(tx, workflowId);
     const version = await tx.aiWorkflowVersion.create({
       data: {
@@ -302,6 +329,9 @@ export async function rollback(args: RollbackArgs): Promise<RollbackResult> {
   const previousVersionInt = await getVersionInt(prisma, workflow.publishedVersionId);
 
   const result = await prisma.$transaction(async (tx) => {
+    // The target snapshot was read before the transaction; erasure may have
+    // stripped it since, and the copy must not bring the person back (t-805).
+    await refuseErasedRecipients(tx, definition, 'targetVersionId');
     const next = await nextVersionNumber(tx, workflowId);
     const version = await tx.aiWorkflowVersion.create({
       data: {
@@ -351,6 +381,7 @@ export async function createInitialVersion(
   args: CreateInitialVersionArgs
 ): Promise<AiWorkflowVersion> {
   const { tx, workflowId, definition, userId } = args;
+  await refuseErasedRecipients(tx, definition, 'workflowDefinition');
   const version = await tx.aiWorkflowVersion.create({
     data: {
       workflowId,

@@ -42,7 +42,6 @@
  * best-effort side effect (object storage cannot enlist in the DB transaction).
  */
 
-import { createHash } from 'node:crypto';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
 import { isMultiTenant, runAsSystem } from '@/lib/tenancy/context';
@@ -54,6 +53,7 @@ import {
 } from '@/lib/privacy/delivery-payloads';
 import { eraseFromConfigRecipients } from '@/lib/privacy/config-recipients';
 import { eraseFromRunInputs } from '@/lib/privacy/run-recipients';
+import { lockSubjects, subjectEmailHash } from '@/lib/privacy/erased-subjects';
 import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settings';
 import {
   AWAITING_RETRY_STATUSES,
@@ -95,11 +95,6 @@ export interface EraseUserParams {
 export interface EraseUserResult {
   receiptId: string;
   erasedAt: Date;
-}
-
-/** Non-reversible correlation handle — never store the raw email on the receipt. */
-function hashEmail(email: string): string {
-  return createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
 }
 
 /**
@@ -285,6 +280,13 @@ async function eraseRows(params: EraseUserParams): Promise<{
       const addressed = webhookDeliveriesAddressedTo(account);
       const address = addressed ? normaliseAddress(account.email) : null;
 
+      // Before anything below reads configuration that names them (t-805):
+      // the advisory locks every writer of that configuration takes before it
+      // checks for an erasure receipt. Held until this transaction commits —
+      // the receipt with it — so a writer that read before the erasure either
+      // wrote first (and is stripped below) or waits and is refused.
+      await lockSubjects(tx, { addresses: address ? [address] : [], userIds: [userId] });
+
       // An email subscription that notifies this person (t-786; owner ruling
       // 2026-10-13) — a colleague's, or since t-782 their own, which outlives
       // them (`createdBy` is `SetNull`). Either would keep emailing the erased
@@ -447,9 +449,14 @@ async function eraseRows(params: EraseUserParams): Promise<{
           subjectUserId: userId,
           // The stored address, as the contact delete reads it: never the
           // caller's copy, which can be stale (t-797).
-          subjectEmailHash: hashEmail(account.email),
+          // Non-reversible correlation handle — never the raw email.
+          subjectEmailHash: subjectEmailHash(account.email),
           actorUserId,
           reason,
+          // Whether erasure matched the address (it does only when verified).
+          // A writer refuses an erased address only when this says so, since
+          // an unverified one may be a stranger's inbox (t-805).
+          metadata: { addressVerified: address !== null },
         },
       });
 

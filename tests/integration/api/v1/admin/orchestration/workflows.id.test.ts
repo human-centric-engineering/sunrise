@@ -29,15 +29,22 @@ vi.mock('next/headers', () => ({
   headers: vi.fn(() => Promise.resolve(new Headers())),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const prisma = {
     aiWorkflow: {
       findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
     },
-  },
-}));
+    // The erased-person check runs in the write's transaction (t-805)
+    $executeRaw: vi.fn(async () => 1),
+    dataErasureReceipt: { findMany: vi.fn(async () => []) },
+    user: { findMany: vi.fn(async () => []) },
+    $transaction: vi.fn(),
+  };
+  prisma.$transaction.mockImplementation((cb: (tx: typeof prisma) => unknown) => cb(prisma));
+  return { prisma };
+});
 
 vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
   logAdminAction: vi.fn(),
@@ -177,6 +184,9 @@ describe('GET /api/v1/admin/orchestration/workflows/:id', () => {
 describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.$executeRaw).mockResolvedValue(1);
+    vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([]);
+    vi.mocked(prisma.user.findMany).mockResolvedValue([]);
   });
 
   describe('Authentication & Authorization', () => {
@@ -293,6 +303,41 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
       );
 
       expect(response.status).toBe(200);
+    });
+
+    it('refuses a draft naming an erased approver with a 400 and writes nothing (t-805)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+      vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([
+        { subjectUserId: 'cmerasedapprover00000000', subjectEmailHash: null, metadata: null },
+      ] as never);
+      const draftWithErasedApprover = {
+        steps: [
+          {
+            id: 'approve',
+            name: 'Approve',
+            type: 'human_approval',
+            config: { prompt: 'OK?', approverUserIds: ['cmerasedapprover00000000'] },
+            nextSteps: [],
+          },
+        ],
+        entryStepId: 'approve',
+        errorStrategy: 'fail',
+      };
+
+      const response = await PATCH(
+        makeRequest('PATCH', { draftDefinition: draftWithErasedApprover }),
+        makeParams(WORKFLOW_ID)
+      );
+      const body = await parseJson<{
+        success: boolean;
+        error: { code: string; details: Record<string, string[]> };
+      }>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.details).toHaveProperty('draftDefinition');
+      expect(prisma.aiWorkflow.update).not.toHaveBeenCalled();
     });
   });
 
