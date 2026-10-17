@@ -16,11 +16,9 @@ import {
   activeOrgForSession,
   ensureMembership,
   initialMembershipFor,
-  installMembershipForNewUser,
-  membershipForNewUser,
+  membershipsForNewUser,
   type AcceptedInvitation,
 } from '@/lib/tenancy/membership';
-import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { getPendingSignup, setPendingSignup } from '@/lib/auth/pending-signup';
 import {
   validateInvitationToken,
@@ -107,31 +105,31 @@ export type SessionCreateData = {
  * on it. `user` is the row as it will be created, `invitation` what admitted
  * it, and `viaInvitation` whether this signup redeemed an invitation token —
  * the after hook reports it to the user-created seam, and on the OAuth path
- * the token is already consumed by then (#688). Non-blocking: a failure here
- * is logged and the after hook falls back to the install-org default, which is
- * the pre-§106-t-670 behaviour.
+ * the token is already consumed by then (#688). Non-blocking: a failure to
+ * decide is logged and the install-org default is recorded instead — what the
+ * after hook and the session self-heal would fall back to anyway, the
+ * pre-§106-t-670 behaviour — so `viaInvitation` still reaches the seam.
  */
 async function recordPendingMembership(
   user: UserCreateData,
   invitation: AcceptedInvitation | null,
   viaInvitation: boolean
 ): Promise<void> {
+  const flag = viaInvitation ? { viaInvitation } : {};
   try {
-    const membership = await membershipForNewUser(user, invitation);
-    const installMembership =
-      membership.orgId === INSTALL_ORG_ID
-        ? undefined
-        : installMembershipForNewUser(user, invitation);
-    await setPendingSignup({
-      membership,
-      ...(installMembership ? { installMembership } : {}),
-      ...(viaInvitation ? { viaInvitation } : {}),
-    });
+    await setPendingSignup({ ...(await membershipsForNewUser(user, invitation)), ...flag });
   } catch (error) {
     logger.error('Failed to decide the org membership for a new user', error, {
       email: user.email,
       invitedOrgId: invitation?.orgId ?? null,
     });
+    try {
+      await setPendingSignup({ membership: initialMembershipFor(user), ...flag });
+    } catch (fallbackError) {
+      logger.error('Failed to record the pending signup for a new user', fallbackError, {
+        email: user.email,
+      });
+    }
   }
 }
 
@@ -402,17 +400,34 @@ export async function userCreateAfterHook(
   //
   // Inline rather than a `registerUserCreatedHook` contributor: that registry
   // is the fork's seam and runs last; this is a core invariant that goes first.
+  const pending = await getPendingSignup().catch((stateError: unknown) => {
+    logger.error('Failed to read the pending signup for a new user', stateError, {
+      userId: user.id,
+      signupMethod,
+    });
+    return null;
+  });
   try {
-    const pending = await getPendingSignup();
     await ensureMembership(user.id, pending?.membership ?? initialMembershipFor(user));
-    // A user invited into another org is a member of the install org too, so
-    // suspending that org cannot lock them out of everything (#872).
-    if (pending?.installMembership) await ensureMembership(user.id, pending.installMembership);
   } catch (membershipError) {
     logger.error('Failed to create org membership for new user', membershipError, {
       userId: user.id,
       signupMethod,
     });
+  }
+  // At `single`, a user invited into another org is a member of the install
+  // org too, so suspending that org cannot lock them out of everything (#872).
+  // Its own try: the session self-heal only helps a user with NO membership,
+  // so a floor skipped because the first write failed would never be repaired.
+  if (pending?.installMembership) {
+    try {
+      await ensureMembership(user.id, pending.installMembership);
+    } catch (floorError) {
+      logger.error('Failed to create the install-org membership for new user', floorError, {
+        userId: user.id,
+        signupMethod,
+      });
+    }
   }
 
   // Record that the first-user-is-admin bootstrap has completed, the first time
@@ -522,8 +537,7 @@ export async function userCreateAfterHook(
   // here would report a successful signup to the caller as an error.
   // The OAuth before hook consumed its invitation token, so the lookup above
   // cannot see it; it recorded the acceptance on the request state (#688).
-  const viaInvitation =
-    isPasswordInvitation || (await getPendingSignup().catch(() => null))?.viaInvitation === true;
+  const viaInvitation = isPasswordInvitation || pending?.viaInvitation === true;
   await dispatchUserCreated({
     userId: user.id,
     email: user.email,

@@ -235,12 +235,12 @@ stored on the invitation's metadata (`invitationMetadataSchema`,
 existed still parses). Accepting the invitation — by password or by OAuth —
 creates the membership `membershipForNewUser` derives from it:
 
-| The invitation says…                           | The member lands as                                                   |
-| ---------------------------------------------- | --------------------------------------------------------------------- |
-| neither key                                    | install org, by the role rule above on the role it **grants**         |
-| `orgRole` (with or without `orgId: 'install'`) | refused by the route (400) — see below                                |
-| another `orgId`, org already has members       | that org, `orgRole` (default `MEMBER`), **and** the install org       |
-| another `orgId`, org has **no members yet**    | that org, `OWNER` — whatever `orgRole` said — **and** the install org |
+| The invitation says…                           | The member lands as                                                           |
+| ---------------------------------------------- | ----------------------------------------------------------------------------- |
+| neither key                                    | install org, by the role rule above on the role it **grants**                 |
+| `orgRole` (with or without `orgId: 'install'`) | refused by the route (400) — see below                                        |
+| another `orgId`, org already has members       | that org, `orgRole` (default `MEMBER`); at `single`, the install org too      |
+| another `orgId`, org has **no members yet**    | that org, `OWNER` — whatever `orgRole` said; at `single`, the install org too |
 
 **An install-org role follows the platform role, here too** (#871). The
 members API refuses to edit one, so a role an invitation set there could be
@@ -248,14 +248,22 @@ undone only by changing the platform role. The route therefore refuses an
 `orgRole` that names no other org, and `membershipForNewUser` ignores one on
 an invitation written before it did (a resend drops it).
 
-**An invitee into another org is a member of the install org as well**
-(#872), by the role rule above on the platform role the invitation grants
-(`installMembershipForNewUser`). Without it, suspending their org would lock
-them out entirely, even at `single`, and the invariant this page opens with
-would not hold. Their first session starts in the org they were invited to; a
-later one is chosen by the rule in
-[the active org](#the-active-org-which-org-a-session-acts-in), which prefers
-the install org when a user is in several.
+**At `single`, an invitee into another org is a member of the install org as
+well** (#872), by the role rule above on the platform role the invitation
+grants. `membershipsForNewUser` decides both. Without it, suspending their org
+would lock them out entirely, and the invariant this page opens with would not
+hold. Their first session starts in the org they were invited to. A later one
+follows [the active org](#the-active-org-which-org-a-session-acts-in) rule,
+which starts anyone in several orgs in the install org, the same as every
+other single-tenant user who belongs to a second org.
+
+**At `multi` they are not.** There the install org is the vendor's own: it
+holds the control plane (every org's usage, the provider policy, the Learn
+page), and a customer org's OWNER or ADMIN can invite people into their own
+org (`POST /api/v1/orgs/[id]/invitations`). An automatic install-org
+membership would let any customer admin make outsiders members of the
+vendor's org. And suspending a customer org is meant to lock its members
+out.
 
 The last row is the **per-org bootstrap**: an org nobody owns is one nobody
 can administer, so its first member owns it. It sits beside the install-scoped

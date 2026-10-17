@@ -43,7 +43,7 @@ export interface PendingSignup {
   membership: InitialMembership;
   /**
    * The install-org floor, written as well when `membership` names another
-   * org (#872). Absent when `membership` is the install org's.
+   * org on a single-tenant install (#872). See `membershipsForNewUser`.
    */
   installMembership?: InitialMembership;
   /**

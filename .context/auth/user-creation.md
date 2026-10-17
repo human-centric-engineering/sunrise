@@ -325,7 +325,7 @@ async function signInWithGoogle() {
      `runInvitedSignup(…, metadata)` so the hooks see the invitation — its
      platform role decides the install-org role (an invited ADMIN owns the
      install org), and its `orgId`/`orgRole` the membership in another org,
-     which comes with an install-org membership as well
+     which at `single` comes with an install-org membership as well
    - Email auto-verified on acceptance
    - Welcome email sent
    - Invitation token deleted

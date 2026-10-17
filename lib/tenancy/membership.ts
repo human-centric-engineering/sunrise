@@ -15,8 +15,8 @@
  * halves apply — the migration's SQL `CASE` and this function are asserted to
  * agree by `tests/unit/lib/tenancy/migration.test.ts`.
  * {@link membershipForNewUser} layers the invitation on top of it,
- * {@link installMembershipForNewUser} is the install-org floor every new user
- * gets whichever org admitted them, and
+ * {@link membershipsForNewUser} adds the install-org floor a single-tenant
+ * invitee into another org also gets, and
  * {@link activeOrgForSession} is the read side: which of a user's orgs a new
  * session starts in, and the self-heal for a user who has none.
  *
@@ -27,6 +27,7 @@ import type { PrismaClient } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { isMultiTenant } from '@/lib/tenancy/context';
 import { DEFAULT_ORG_ROLE, ORG_OWNER_ROLE, type OrgRole } from '@/lib/tenancy/roles';
 
 /** The shape better-auth hands the user hooks, as far as the role rule reads it. */
@@ -120,20 +121,52 @@ export async function membershipForNewUser(
 }
 
 /**
- * The install-org membership a new user gets, whichever org admitted them.
- *
- * Every user is a member of the install org (the identity invariant,
- * `.context/tenancy/identity.md`). A user invited straight into another org
- * gets this as well as that org's membership: without it, suspending that org
- * locks them out entirely, even on a single-tenant install (#872). The role is
+ * The install-org membership a new user gets when nothing names another org:
  * {@link initialMembershipFor}'s rule on the platform role the invitation
- * grants, for the same t-669 reason as {@link membershipForNewUser}.
+ * grants, for the t-669 reason given on {@link membershipForNewUser}.
  */
 export function installMembershipForNewUser(
   user: NewUserShape,
   invitation: AcceptedInvitation | null
 ): InitialMembership {
   return initialMembershipFor({ ...user, role: invitation?.role ?? user.role });
+}
+
+/** Every membership a new user is created with. */
+export interface NewUserMemberships {
+  /** The membership the invitation grants. Its org is the first session's. */
+  membership: InitialMembership;
+  /**
+   * The install-org floor, when `membership` names another org on a
+   * single-tenant install. Absent otherwise.
+   */
+  installMembership?: InitialMembership;
+}
+
+/**
+ * Every membership a new user gets, given the invitation that admitted them —
+ * the one statement of it, so no creation path can write one and skip the
+ * other.
+ *
+ * At `single` every user is a member of the install org (principle 1 of the
+ * tenancy design; the identity invariant, `.context/tenancy/identity.md`). A
+ * user invited straight into another org gets that floor as well: without it,
+ * suspending their org locks them out of everything (#872).
+ *
+ * At `multi` they do not. There the install org is the vendor's own, holding
+ * the control plane (every org's usage, the provider policy, the Learn page),
+ * and a customer org's admin can invite people into their org. A floor there
+ * would let any customer admin make outsiders members of the vendor's org; and
+ * suspending a customer org is meant to lock its members out.
+ */
+export async function membershipsForNewUser(
+  user: NewUserShape,
+  invitation: AcceptedInvitation | null,
+  db: Pick<PrismaClient, 'orgMembership'> = prisma
+): Promise<NewUserMemberships> {
+  const membership = await membershipForNewUser(user, invitation, db);
+  if (membership.orgId === INSTALL_ORG_ID || isMultiTenant()) return { membership };
+  return { membership, installMembership: installMembershipForNewUser(user, invitation) };
 }
 
 /**

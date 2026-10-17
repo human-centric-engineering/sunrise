@@ -123,11 +123,12 @@ export interface AuthSession {
  *
  * A handler that reconstructed one got it **wrong in the widening direction**.
  * `administersEverything()` branches on `credential` and `scopes`: an
- * `api-key` principal is judged by `hasScope(scopes, 'admin')`, a `session`
- * principal by the platform role. `withAuth` accepts a key of any scope, so
- * assuming `credential: 'session'` means a `chat`-scoped key held by a user
- * whose role is `ADMIN` is judged by the role — `subjectScope` answers `{}`
- * (every subject) where it should answer `{ userId }`. That is the credential
+ * `api-key` principal is judged by `hasScope(scopes, 'admin')` together with
+ * its owner's platform role (#746), a `session` principal by the role alone.
+ * `withAuth` accepts a key of any scope, so assuming `credential: 'session'`
+ * means a `chat`-scoped key held by a user whose role is `ADMIN` is judged by
+ * the role — `subjectScope` answers `{}` (every subject) where it should
+ * answer `{ userId }`. That is the credential
  * narrowing #542 exists to hold, undone by a plausible-looking helper.
  *
  * It was also invisible to `checkAuthorizationParity`: the guard asked
@@ -1320,9 +1321,10 @@ export function withAdminAuth(
 
       // API-key fallback (Phase 4): admin-scoped keys can hit admin
       // endpoints headlessly, with no session cookie. The key needs the
-      // `admin` scope and its owner must still be a platform admin (#746). Any key without `admin` scope is rejected
-      // here with 403 rather than falling through to the cookie path
-      // (which would 401 a key-bearing caller and confuse CI).
+      // `admin` scope, and its owner must still be a platform admin (#746).
+      // Any key without `admin` scope is rejected here with 403 rather than
+      // falling through to the cookie path (which would 401 a key-bearing
+      // caller and confuse CI).
       const apiKey = await resolveApiKey(request as NextRequest);
       let session: AuthSession;
       let principal: AuthorizationPrincipal;

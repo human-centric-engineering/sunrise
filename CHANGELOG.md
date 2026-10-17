@@ -649,15 +649,17 @@ release process.
   colleague from a stranger. It is now `true` on both ways of accepting, as
   the seam's contract already said. `PendingSignup` gains an optional
   `viaInvitation`.
-- **A user invited into another org is a member of the install org too**
-  (t-827, #872). Before, they got only that org's membership, so suspending
-  it locked them out of everything, even on a single-tenant install. Their
+- **On a single-tenant install, a user invited into another org is a member
+  of the install org too** (t-827, #872). Before, they got only that org's
+  membership, so suspending it locked them out of everything. Their
   install-org role follows the platform role the invitation grants. The new
-  `installMembershipForNewUser()` in `lib/tenancy/membership.ts` states it,
-  and `PendingSignup` gains an optional `installMembership`. Their first
-  session still starts in the invited org. Later sessions follow the existing
-  active-org rule, which prefers the install org. Users invited before this
-  release are not backfilled.
+  `membershipsForNewUser()` in `lib/tenancy/membership.ts` decides both
+  memberships, and `PendingSignup` gains an optional `installMembership`.
+  At `multi` nothing changes: the install org is the vendor's, and a customer
+  org's admin must not be able to add people to it. Their first session still
+  starts in the invited org. Later sessions follow the existing active-org
+  rule, which prefers the install org. Users invited before this release are
+  not backfilled.
 - **Protected and auth routes match on whole path segments** (t-826, #758).
   An `appProtectedRoutes` entry, and the core `/dashboard`, `/settings` and
   `/profile`, now cover the route itself and the paths beneath it, not every

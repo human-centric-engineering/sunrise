@@ -77,6 +77,7 @@ vi.mock('@/lib/auth/pending-signup', () => mockPendingSignup);
 // ---------------------------------------------------------------------------
 
 const mockEnv = {
+  TENANCY_MODE: 'single' as 'single' | 'multi',
   REQUIRE_EMAIL_VERIFICATION: undefined as boolean | undefined,
   NODE_ENV: 'test' as 'test' | 'development' | 'production',
   BETTER_AUTH_URL: 'http://localhost:3000',
@@ -1138,12 +1139,47 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         runInvitedSignup(() => userCreateBeforeHook(user, { path: '/sign-up/email' }), metadata)
       ).resolves.toEqual({ data: user });
 
-      expect(mockPendingSignup.setPendingSignup).not.toHaveBeenCalled();
+      // The install-org default is recorded instead — what the after hook and
+      // the session self-heal fall back to anyway — so the acceptance still
+      // reaches the user-created seam (#688).
+      expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
+        membership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+        viaInvitation: true,
+      });
       expect(mocks.logger.error).toHaveBeenCalledWith(
         'Failed to decide the org membership for a new user',
         expect.any(Error),
         expect.objectContaining({ invitedOrgId: OTHER_ORG })
       );
+    });
+
+    it('records no install-org floor at multi, where the install org is the vendor’s (#872)', async () => {
+      // A customer org's admin can invite people into their org; a floor here
+      // would make those outsiders members of the vendor's own org.
+      mockEnv.TENANCY_MODE = 'multi';
+      try {
+        mocks.prisma.orgMembership.count.mockResolvedValue(2);
+        const user = makeUserCreateData({ email: 'invitee@example.com', role: 'USER' });
+        const metadata = {
+          name: 'Invitee',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: new Date().toISOString(),
+          orgId: OTHER_ORG,
+        };
+
+        await runInvitedSignup(
+          () => userCreateBeforeHook(user, { path: '/sign-up/email' }),
+          metadata
+        );
+
+        expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
+          membership: { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE },
+          viaInvitation: true,
+        });
+      } finally {
+        mockEnv.TENANCY_MODE = 'single';
+      }
     });
   });
 
@@ -1257,6 +1293,33 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           { orgId: 'cmorg000000000000000other', userId: 'invited-1', role: ORG_ADMIN_ROLE },
           { orgId: INSTALL_ORG_ID, userId: 'invited-1', role: DEFAULT_ORG_ROLE },
         ]);
+      });
+
+      it.each([
+        ['the invited org’s write fails', 1],
+        ['the install-org floor’s write fails', 2],
+      ])('still attempts both memberships when %s (#872)', async (_label, failingCall) => {
+        // The session self-heal only repairs a user with NO membership, so a
+        // floor skipped because the other write failed would never come back.
+        mockPendingSignup.getPendingSignup.mockResolvedValue({
+          membership: { orgId: 'cmorg000000000000000other', role: ORG_ADMIN_ROLE },
+          installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+        });
+        const upsert = mocks.prisma.orgMembership.upsert;
+        if (failingCall === 1) {
+          upsert.mockRejectedValueOnce(new Error('db down'));
+        } else {
+          upsert.mockResolvedValueOnce({ id: 'membership-1' });
+          upsert.mockRejectedValueOnce(new Error('db down'));
+        }
+        const mockUser = makeUserCreateData({ id: 'invited-1', email: 'i@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/sign-up/email' });
+
+        expect(
+          mocks.prisma.orgMembership.upsert.mock.calls.map(([arg]) => arg.create.orgId)
+        ).toEqual(['cmorg000000000000000other', INSTALL_ORG_ID]);
+        expect(mocks.logger.error).toHaveBeenCalledTimes(1);
       });
 
       it('falls back to the install-org rule on the row when nothing was recorded', async () => {
