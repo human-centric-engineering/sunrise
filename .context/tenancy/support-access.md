@@ -28,6 +28,8 @@ audit row made inside names the grant, for the vendor and for the org (t-825).
 | Does a grant admit now?  | `verifiedSupportGrant(orgId)` in `lib/tenancy/entry.ts`                                           |
 | What support presents as | `lib/auth/support-principal.ts`                                                                   |
 | The banner               | `components/admin/support-banner.tsx`, fed by `requestSupportSession()`                           |
+| An audit row's grant     | `AiAdminAuditLog.supportGrantId` / `supportOrgId`, stamped by `logAdminAction()`                  |
+| What support did         | `GET /api/v1/orgs/[id]/support-grants/activity`, `listSupportActivity()`                          |
 
 ### Anti-patterns
 
@@ -101,7 +103,7 @@ reads as open in the history until it expires.
   suspended org stays refused as suspended. API keys never take this path.
 - **The entry.** Source `'support'`, role `ADMIN`, and `support: { grantId,
 level, expiresAt }`. The tenant context carries the same `support` field,
-  which is what the audit log reads (t-825).
+  which is what the audit log reads (see [Audit rows](#audit-rows-t-825)).
 - **What the actor is.** An org ADMIN of that org who is **not** a platform
   admin (§121 ruling 3). The guards present the default user role on the
   principal and on the session the handler gets, and `sessionPrincipal` does
@@ -144,6 +146,31 @@ level, expiresAt }`. The tenant context carries the same `support` field,
 - **Account deletion.** `DELETE /api/v1/users/me` refuses inside a support
   session: the presented role would otherwise skip its last-admin check.
 
+## Audit rows (t-825)
+
+Every admin audit row made inside a support session carries
+`supportGrantId` (the grant, `SetNull`) and `supportOrgId` (the org, no FK).
+`logAdminAction()` stamps them from the tenant context, so no route passes
+anything; the switch route stamps its `support.enter` row itself, because it
+does not enter the org. The full rules, including what is not stamped, are in
+[the audit log guide](../admin/orchestration-audit-log.md#support-rows).
+
+- **The vendor** sees a **Support** badge on those rows in the Audit Log, and
+  filters by support sessions or by one grant.
+- **The org** sees them on its Support access page, below the grants: when
+  support entered, and what they did, newest first, filterable by grant. The
+  read (`listSupportActivity`) names the grant **and** requires it to be the
+  org's, in one query. `AiAdminAuditLog` is a system model, so row isolation
+  does not bound it; that condition does, and another org's grant id matches
+  nothing. Admission is the grant list's: the org's OWNER/ADMIN acting in it,
+  or a platform admin, and never an API key.
+- **What the org gets.** Action, entity and when, the person's name, and the
+  grant. Not the IP address, which is the support person's, and not the
+  `changes` diff: the vendor's log keeps both.
+- **After the org is erased** the grant goes and `supportGrantId` with it.
+  `supportOrgId` stays, so the vendor's own log still says which rows were
+  support, and where.
+
 ## Privacy
 
 - **Subject export** (`SUBJECT_DATA_SOURCES`): `supportGrants`, attribution.
@@ -154,14 +181,19 @@ level, expiresAt }`. The tenant context carries the same `support` field,
   with the names of who granted and who ended it.
 - **Erasure.** A person's erasure nulls `grantedById` / `revokedById`. The
   org's erasure cascades its grants.
+- **Audit rows** (t-825). The support person's own subject export already
+  carries their audit rows, now with the grant and org ids, which say where
+  their act happened. Their erasure nulls `userId` and `clientIp` as before
+  and leaves the support columns, which name no one once the person is gone.
+  The org's export does not include these rows: they are the vendor's log.
 
 ## Not here
 
 - **User impersonation** (seeing exactly what one user sees) is deliberately
   not built (§121 ruling 4): support enters as themselves. It would need the
   user's consent as well as the org's.
-- **Email to the org on entry** is not in v1. The org reads entries off its
-  grant list once t-825 lands.
+- **Email to the org on entry** is not in v1. The org reads entries on its
+  Support access page.
 - **An org switcher in the console.** Support enters from the Organisations
   page and leaves from the banner. A platform admin on a platform-tier page
   during a support session is sent to the landing route, as an org admin is.
