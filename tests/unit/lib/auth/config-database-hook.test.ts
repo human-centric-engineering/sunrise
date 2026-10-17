@@ -1140,10 +1140,15 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         runInvitedSignup(() => userCreateBeforeHook(user, { path: '/sign-up/email' }), metadata)
       ).resolves.toEqual({ data: user });
 
-      // Nothing is recorded for the membership, so the after hook falls back
-      // as it always has; the acceptance was recorded first, on its own, so it
-      // still reaches the user-created seam (#688).
-      expect(mockPendingSignup.setPendingSignup).not.toHaveBeenCalled();
+      // t-836: at `single` the decision is recorded without the failed read —
+      // the org that invited them AND the install-org floor (#872), not the
+      // install org alone. The acceptance was recorded first, on its own, so
+      // it still reaches the user-created seam (#688).
+      expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledTimes(1);
+      expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
+        membership: { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE },
+        installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+      });
       expect(mockPendingSignup.setInvitationAccepted).toHaveBeenCalledTimes(1);
       expect(mocks.logger.error).toHaveBeenCalledWith(
         'Failed to decide the org membership for a new user',
@@ -1431,6 +1436,109 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
             create: { orgId: INSTALL_ORG_ID, userId: 'fallback', role: ORG_OWNER_ROLE },
           })
         );
+      });
+
+      // t-836: the before hook's record cannot be read back. At `multi` the
+      // install-org default is the vendor's own org, so an invited signup must
+      // land where it was invited or nowhere.
+      describe('when the signup record cannot be read (t-836)', () => {
+        const INVITED_ORG = 'cmorg000000000000000other';
+        const invitation = {
+          name: 'Invitee',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: new Date().toISOString(),
+          orgId: INVITED_ORG,
+          orgRole: ORG_ADMIN_ROLE,
+        };
+
+        afterEach(() => {
+          mockEnv.TENANCY_MODE = 'single';
+        });
+
+        function writtenOrgs() {
+          return mocks.prisma.orgMembership.upsert.mock.calls.map(([arg]) => arg.create.orgId);
+        }
+
+        it('at multi, a password invitee whose record read throws lands only in the invited org', async () => {
+          mockEnv.TENANCY_MODE = 'multi';
+          mockPendingSignup.getPendingSignup.mockRejectedValue(new Error('no state'));
+          const user = makeUserCreateData({ id: 'invited-1', email: 'i@example.com' });
+
+          await runInvitedSignup(
+            () => userCreateAfterHook(user, { path: '/sign-up/email' }),
+            invitation
+          );
+
+          expect(mocks.prisma.orgMembership.upsert).toHaveBeenCalledTimes(1);
+          expect(mocks.prisma.orgMembership.upsert).toHaveBeenCalledWith(
+            expect.objectContaining({
+              create: { orgId: INVITED_ORG, userId: 'invited-1', role: ORG_ADMIN_ROLE },
+            })
+          );
+        });
+
+        it('at multi, a password invitee whose record was never written lands only in the invited org', async () => {
+          // setPendingSignup threw in the before hook: the read answers null.
+          mockEnv.TENANCY_MODE = 'multi';
+          const user = makeUserCreateData({ id: 'invited-1', email: 'i@example.com' });
+
+          await runInvitedSignup(
+            () => userCreateAfterHook(user, { path: '/sign-up/email' }),
+            invitation
+          );
+
+          expect(writtenOrgs()).toEqual([INVITED_ORG]);
+        });
+
+        it('at multi, an OAuth signup with no record writes nothing and says so', async () => {
+          // The OAuth invitation rode only on the request state, so an invited
+          // signup cannot be told from a public one.
+          mockEnv.TENANCY_MODE = 'multi';
+          const user = makeUserCreateData({ id: 'oauth-1', email: 'o@example.com' });
+
+          await expect(
+            userCreateAfterHook(user, { path: '/api/auth/callback/google' })
+          ).resolves.toBeUndefined();
+
+          expect(mocks.prisma.orgMembership.upsert).not.toHaveBeenCalled();
+          expect(mocks.logger.error).toHaveBeenCalledWith(
+            expect.stringContaining('No org membership written for new user'),
+            expect.objectContaining({ userId: 'oauth-1' })
+          );
+          // The rest of the signup still completes.
+          expect(mocks.sendEmail).toHaveBeenCalled();
+        });
+
+        it('at multi, an uninvited email signup with no record still gets the install-org default', async () => {
+          // The control: the multi refusal is about not knowing the invitation,
+          // not about the install org.
+          mockEnv.TENANCY_MODE = 'multi';
+          const user = makeUserCreateData({ id: 'public-1', email: 'p@example.com' });
+
+          await userCreateAfterHook(user, { path: '/sign-up/email' });
+
+          expect(writtenOrgs()).toEqual([INSTALL_ORG_ID]);
+        });
+
+        it('at single, a password invitee with no record gets the invited org and the install floor', async () => {
+          const user = makeUserCreateData({ id: 'invited-1', email: 'i@example.com' });
+
+          await runInvitedSignup(
+            () => userCreateAfterHook(user, { path: '/sign-up/email' }),
+            invitation
+          );
+
+          expect(writtenOrgs()).toEqual([INVITED_ORG, INSTALL_ORG_ID]);
+        });
+
+        it('at single, an OAuth signup with no record keeps the install-org default', async () => {
+          const user = makeUserCreateData({ id: 'oauth-1', email: 'o@example.com' });
+
+          await userCreateAfterHook(user, { path: '/api/auth/callback/google' });
+
+          expect(writtenOrgs()).toEqual([INSTALL_ORG_ID]);
+        });
       });
 
       it('runs before every non-blocking step, so a memberless user never gets a welcome email', async () => {

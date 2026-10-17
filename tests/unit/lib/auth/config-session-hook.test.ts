@@ -126,6 +126,17 @@ describe('sessionCreateBeforeHook', () => {
     );
   });
 
+  it('logs a memberless user left unhealed at multi, and starts the session in no org (t-836)', async () => {
+    mockActiveOrgForSession.mockResolvedValue({ orgId: null, healed: false });
+
+    const result = await sessionCreateBeforeHook(sessionRow(), null);
+
+    expect(result).toEqual({ data: { activeOrgId: null } });
+    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('not healed at multi'), {
+      userId: USER_ID,
+    });
+  });
+
   it('never refuses a sign-in: a fault mints the session with a null org', async () => {
     mockActiveOrgForSession.mockRejectedValue(new Error('db down'));
 

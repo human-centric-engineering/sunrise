@@ -19,7 +19,9 @@ import {
   membershipsForNewUser,
   undecidedMembershipsForNewUser,
   type AcceptedInvitation,
+  type NewUserMemberships,
 } from '@/lib/tenancy/membership';
+import { isMultiTenant } from '@/lib/tenancy/context';
 import {
   getPendingSignup,
   setInvitationAccepted,
@@ -113,11 +115,10 @@ export type SessionCreateData = {
  * recorded first, on its own, so the after hook can report it to the
  * user-created seam whatever happens to the membership decision (#688; on the
  * OAuth path the token is already consumed by then). Non-blocking: a failure
- * to decide is logged. At `single` the after hook then falls back to the
- * install-org default, which is the pre-§106-t-670 behaviour; at `multi`,
- * where the install org is the vendor's, the decision is recorded without the
- * read that failed (`undecidedMembershipsForNewUser`, t-834), so an invited
- * person still lands in the org that invited them.
+ * to decide is logged, and the decision is recorded without the read that
+ * failed (`undecidedMembershipsForNewUser`, t-834, t-836), so an invited
+ * person still lands in the org that invited them — and, at `single`, in the
+ * install org as well.
  */
 async function recordPendingMembership(
   user: UserCreateData,
@@ -145,7 +146,6 @@ async function recordPendingMembership(
       invitedOrgId: invitation?.orgId ?? null,
     });
     memberships = undecidedMembershipsForNewUser(user, invitation);
-    if (!memberships) return;
   }
 
   try {
@@ -156,6 +156,34 @@ async function recordPendingMembership(
       invitedOrgId: invitation?.orgId ?? null,
     });
   }
+}
+
+/**
+ * The memberships to write for a new user when the before hook's record
+ * cannot be read back — the request state threw, or recording it did (t-836).
+ *
+ * Answers from what this request still knows, without the request state:
+ *
+ * - **A password signup through an invitation** carries the invitation on its
+ *   own async context (`runInvitedSignup`), so the decision is rebuilt without
+ *   its database read, exactly as for a decision that failed
+ *   (`undecidedMembershipsForNewUser`).
+ * - **An OAuth signup** carried its invitation only on the request state, and
+ *   the before hook has consumed the token. At `multi` nothing can tell an
+ *   invited signup from a public one, and the install org is the vendor's, so
+ *   this answers `null`: nothing is written, and the user is refused until a
+ *   platform admin adds them to an org. At `single` the install-org default
+ *   is safe, as it always was.
+ * - **Anything else** is an uninvited signup, whose membership is the
+ *   install-org default in either mode.
+ */
+function membershipsWithoutRecord(
+  user: UserCreateData,
+  isOAuthSignup: boolean
+): NewUserMemberships | null {
+  if (isInvitedSignup()) return undecidedMembershipsForNewUser(user, invitedSignupInvitation());
+  if (isOAuthSignup && isMultiTenant()) return null;
+  return { membership: initialMembershipFor(user) };
 }
 
 /**
@@ -420,8 +448,8 @@ export async function userCreateAfterHook(
   // WHICH membership was decided by the before hook (`recordPendingMembership`)
   // — it is the one place that knows the role and the org an invitation
   // grants for both the OAuth and the password path — and carried here on the
-  // request state. The fallback is the install-org rule on the row as created,
-  // which is what every path wrote before invitations could name an org.
+  // request state. When that record cannot be read, `membershipsWithoutRecord`
+  // answers from what this request still knows (t-836).
   //
   // Inline rather than a `registerUserCreatedHook` contributor: that registry
   // is the fork's seam and runs last; this is a core invariant that goes first.
@@ -432,26 +460,34 @@ export async function userCreateAfterHook(
     });
     return null;
   });
-  try {
-    await ensureMembership(user.id, pending?.membership ?? initialMembershipFor(user));
-  } catch (membershipError) {
-    logger.error('Failed to create org membership for new user', membershipError, {
-      userId: user.id,
-      signupMethod,
-    });
-  }
-  // At `single`, a user invited into another org is a member of the install
-  // org too, so suspending that org cannot lock them out of everything (#872).
-  // Its own try: the session self-heal only helps a user with NO membership,
-  // so a floor skipped because the first write failed would never be repaired.
-  if (pending?.installMembership) {
+  const memberships = pending ?? membershipsWithoutRecord(user, isOAuthSignup);
+  if (!memberships) {
+    logger.error(
+      'No org membership written for new user: the signup record is missing and the invitation cannot be told apart; a platform admin must add them to an org',
+      { userId: user.id, signupMethod }
+    );
+  } else {
     try {
-      await ensureMembership(user.id, pending.installMembership);
-    } catch (floorError) {
-      logger.error('Failed to create the install-org membership for new user', floorError, {
+      await ensureMembership(user.id, memberships.membership);
+    } catch (membershipError) {
+      logger.error('Failed to create org membership for new user', membershipError, {
         userId: user.id,
         signupMethod,
       });
+    }
+    // At `single`, a user invited into another org is a member of the install
+    // org too, so suspending that org cannot lock them out of everything (#872).
+    // Its own try: the session self-heal only helps a user with NO membership,
+    // so a floor skipped because the first write failed would never be repaired.
+    if (memberships.installMembership) {
+      try {
+        await ensureMembership(user.id, memberships.installMembership);
+      } catch (floorError) {
+        logger.error('Failed to create the install-org membership for new user', floorError, {
+          userId: user.id,
+          signupMethod,
+        });
+      }
     }
   }
 
@@ -871,8 +907,9 @@ export async function signupModeBeforeHook(ctx: { path?: string }): Promise<void
  *    them and is refused at entry): their only org; else the install org if
  *    they belong to it; else the org they joined most recently; else
  *    — a user with no membership at all — the install-org default is written
- *    right here (the self-heal t-669's review ruled on), and logged at
- *    `error` because it means the signup path failed upstream.
+ *    right here at `single` (the self-heal t-669's review ruled on), and
+ *    logged at `error` because it means the signup path failed upstream. At
+ *    `multi` nothing is written and the session starts with no org (t-836).
  *
  * Non-blocking, for the same reason the after hook is: a fault reading
  * memberships must not refuse a sign-in. The session is minted with
@@ -892,6 +929,12 @@ export async function sessionCreateBeforeHook(
     }
 
     const { orgId, healed } = await activeOrgForSession(session.userId);
+    if (orgId === null) {
+      logger.error(
+        'User has no org membership at sign-in; not healed at multi, so they are refused until added to an org',
+        { userId: session.userId }
+      );
+    }
     if (healed) {
       logger.error('User had no org membership at sign-in; wrote the install-org default', {
         userId: session.userId,

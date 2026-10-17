@@ -36,6 +36,7 @@ import {
   initialMembershipFor,
   membershipForNewUser,
   membershipsForNewUser,
+  undecidedMembershipsForNewUser,
 } from '@/lib/tenancy/membership';
 
 const mocks = {
@@ -296,6 +297,26 @@ describe('activeOrgForSession', () => {
     expect(mocks.orgMembership.upsert).not.toHaveBeenCalled();
   });
 
+  // t-836 (owner ruling 2026-10-17): at `multi` the install org is the
+  // vendor's own, and by sign-in nothing records where a failed invitee was
+  // invited — so the self-heal writes nothing and the guard refuses them.
+  it('at multi, a user with no membership is not healed and starts in no org', async () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    mocks.orgMembership.findMany.mockResolvedValue([]);
+    mocks.user.findUnique.mockResolvedValue({ role: DEFAULT_USER_ROLE, accountType: 'HUMAN' });
+
+    expect(await activeOrgForSession(USER_ID, db)).toEqual({ orgId: null, healed: false });
+    expect(mocks.orgMembership.upsert).not.toHaveBeenCalled();
+  });
+
+  it('at multi, a user with a membership still starts in it', async () => {
+    // The control: only the memberless arm changed at multi.
+    mockEnv.TENANCY_MODE = 'multi';
+    mocks.orgMembership.findMany.mockResolvedValue([membership(OTHER_ORG, '2026-01-01')]);
+
+    expect(await activeOrgForSession(USER_ID, db)).toEqual({ orgId: OTHER_ORG, healed: false });
+  });
+
   it('a missing user row gets the default without a write the FK would refuse', async () => {
     mocks.orgMembership.findMany.mockResolvedValue([]);
     mocks.user.findUnique.mockResolvedValue(null);
@@ -408,5 +429,37 @@ describe('backfillInstallMemberships (t-835)', () => {
     expect(store.user.findMany).not.toHaveBeenCalled();
     expect(store.orgMembership.createMany).not.toHaveBeenCalled();
     expect(rows).toEqual(before);
+  });
+});
+
+// t-834 / t-836: the decision without its database read, for a decision that
+// failed or a record that cannot be read back. It must name the invited org in
+// both modes, and add the install floor only at single.
+describe('undecidedMembershipsForNewUser', () => {
+  const invitation = { role: DEFAULT_USER_ROLE, orgId: OTHER_ORG, orgRole: ORG_ADMIN_ROLE };
+
+  it('at single, gives the invited org with its role and the install-org floor', () => {
+    expect(
+      undecidedMembershipsForNewUser({ role: DEFAULT_USER_ROLE, accountType: 'HUMAN' }, invitation)
+    ).toEqual({
+      membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE },
+      installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+    });
+  });
+
+  it('at multi, gives the invited org only — never the install org', () => {
+    mockEnv.TENANCY_MODE = 'multi';
+    expect(
+      undecidedMembershipsForNewUser({ role: DEFAULT_USER_ROLE, accountType: 'HUMAN' }, invitation)
+    ).toEqual({ membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE } });
+  });
+
+  it('with no invited org, keeps the install-org rule on the role the invitation grants', () => {
+    expect(
+      undecidedMembershipsForNewUser(
+        { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' },
+        { role: PLATFORM_ADMIN_ROLE }
+      )
+    ).toEqual({ membership: { orgId: INSTALL_ORG_ID, role: ORG_OWNER_ROLE } });
   });
 });

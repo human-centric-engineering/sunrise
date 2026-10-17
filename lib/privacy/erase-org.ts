@@ -16,8 +16,9 @@
  * membership at all keeps their account; their sessions pointing at the
  * erased org have that pointer cleared (the guard then resolves `null` to
  * the install org at `single`, and refuses with `no-org` at `multi` until
- * they are invited somewhere), and `activeOrgForSession` gives them the
- * install-org default at their next sign-in. The alternatives — cascading
+ * they are invited somewhere). At `single`, `activeOrgForSession` gives them
+ * the install-org default at their next sign-in; at `multi` it does not
+ * (t-836), so they stay refused until someone adds them to an org. The alternatives — cascading
  * the users (erases accounts nobody asked to erase, and other orgs'
  * members with them), or refusing to erase an org with members (makes
  * offboarding a two-step with a manual roster purge) — were both rejected.

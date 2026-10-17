@@ -158,22 +158,37 @@ hooks are queued and run only after the sign-up's transaction has resolved,
 so the user, the account and (for email sign-up) the session are already
 committed when this runs. A throw would not prevent a memberless user; it
 would only turn a usable signup into a 500 the person cannot act on. The
-invariant is restored on the session path instead: `sessionCreateBeforeHook`
-writes the install-org default for a user with no membership (below), and
-the guard resolves a null membership to the install org at `single` and
+invariant is restored on the session path instead: at `single`,
+`sessionCreateBeforeHook` writes the install-org default for a user with no
+membership (below); at `multi` it does not, and the user waits for a platform
+admin to add them to an org. The guard resolves a null membership to the install org at `single` and
 refuses at `multi` ([context.md](./context.md)). It is deliberately **not** a `registerUserCreatedHook`
 contributor: that registry is the fork's seam and runs last; this is a core
 invariant and runs first.
 
 **When deciding fails.** The decision reads the invited org's member count
 (for the first-member-is-OWNER bootstrap), and a failure there is logged at
-`error` and never blocks the signup. At `single` nothing is recorded and the
-after hook writes the install-org default, as it always has. At `multi` that
-default is the vendor's own org, so the before hook records
-`undecidedMembershipsForNewUser(user, invitation)` instead: the invitation's
-org with the role it names, default `MEMBER` (t-834). Only the OWNER bootstrap
-is lost, so a failure narrows a role and never widens one; an org left with
-no owner is one a platform admin fixes.
+`error` and never blocks the signup. The before hook then records
+`undecidedMembershipsForNewUser(user, invitation)`: the invitation's org with
+the role it names, default `MEMBER`, plus the install-org floor at `single`,
+exactly as the decision would have (t-834, t-836). Only the OWNER bootstrap is
+lost, so a failure narrows a role and never widens one. An org left with no
+owner is one a platform admin fixes.
+
+**When the record is missing.** If recording the decision failed, or the
+after hook cannot read it back, the after hook answers from what the request
+still knows (t-836):
+
+| Signup                                                              | `single`                    | `multi`                                |
+| ------------------------------------------------------------------- | --------------------------- | -------------------------------------- |
+| Password, through an invitation (`runInvitedSignup` still holds it) | invited org + install floor | invited org only                       |
+| OAuth (its invitation rode only on the request state)               | install-org default         | **nothing written**, logged at `error` |
+| Anything else (uninvited)                                           | install-org default         | install-org default                    |
+
+At `multi` the install org is the vendor's own, so an OAuth signup that might
+have been invited is left with no membership rather than put there. The guard
+refuses a memberless user at `multi`, and a platform admin adds them through
+`POST /api/v1/orgs/[id]/members`.
 
 Why the decision and the write are two hooks with a carrier between them:
 when a sign-up auto-signs the user in (email sign-up without verification,
@@ -346,9 +361,18 @@ verification, password reset). In order:
    one; a user whose every org is suspended starts in the most recent of them
    and is refused at entry): their only one; else the install org if they
    belong to it; else the org they joined most recently; else — **no
-   membership at all** — the install-org default is written right here (the
-   self-heal ruled in t-669's review) and logged at `error`, because it means
-   the signup path failed upstream.
+   membership at all** — at `single`, the install-org default is written right
+   here (the self-heal ruled in t-669's review) and logged at `error`, because
+   it means the signup path failed upstream.
+
+   **At `multi` nothing is written** (t-836, owner ruling 2026-10-17). The
+   session starts with no org, the guard refuses it, and the event is logged
+   at `error`. By sign-in nothing records which org invited a person whose
+   signup failed, and the default would make a customer org's invitee a
+   member of the vendor's own org. A platform admin adds them to the right
+   org instead. The same applies to an uninvited signup whose membership
+   write failed, and to a member left with no org by an org erasure. Healing
+   those correctly needs a durable record of the decided membership (t-838).
 
 Non-blocking: a fault choosing the org mints the session with `null`, which
 the guard treats as the install org at `single` and refuses at `multi`
@@ -579,7 +603,8 @@ merge-impact section promises forks.
   logged at error while the signup still completes.
 - `tests/unit/lib/tenancy/membership.test.ts` — `membershipForNewUser`'s
   table above and `activeOrgForSession`'s four arms, including that the
-  self-heal writes for a memberless user and for nobody else.
+  self-heal writes for a memberless user and for nobody else, and writes
+  nothing at `multi`; and `undecidedMembershipsForNewUser` in both modes.
 - `tests/unit/lib/auth/config-session-hook.test.ts` — the session hook's
   order (a signup in flight wins and reads nothing) and its failure shape.
 - `tests/unit/lib/auth/config-session-field.test.ts` — `activeOrgId` is not

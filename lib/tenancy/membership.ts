@@ -185,32 +185,35 @@ export async function membershipsForNewUser(
 }
 
 /**
- * What a new user is recorded as when {@link membershipsForNewUser} threw —
- * at `multi` only (t-834).
+ * What a new user is recorded as when {@link membershipsForNewUser} threw, or
+ * when the decision it recorded cannot be read back (t-834, t-836).
  *
- * The signup hooks never block on a failed decision, and with nothing
- * recorded the after hook writes the install-org default. At `single` that is
- * harmless and unchanged, so this answers `null` there. At `multi` the
- * install org is the vendor's own (see {@link membershipsForNewUser}), so a
- * person a customer org's admin invited would become a member of the vendor's
- * org and not of theirs. Instead this answers the decision without the read
- * that can fail: the invitation's org with the role it names, default
- * `MEMBER`. The one thing lost is the first-member-becomes-OWNER bootstrap,
- * which needs the member count — so the failure only ever narrows a role,
- * never widens one. A first member left as MEMBER leaves the org with no
- * owner, which a platform admin repairs on the members route (it may grant
- * OWNER); that beats a membership in the vendor's org. An invitation naming
- * no org keeps the install-org rule, judged on the role the invitation grants
- * (t-669).
+ * The signup hooks never block on a failure, so without this the after hook
+ * would write the install-org default. At `multi` the install org is the
+ * vendor's own (see {@link membershipsForNewUser}), so a person a customer
+ * org's admin invited would become a member of the vendor's org and not of
+ * theirs. At `single` they would get only the install org, and never the org
+ * that invited them.
+ *
+ * Instead this answers the decision without the read that can fail: the
+ * invitation's org with the role it names, default `MEMBER`, plus the
+ * install-org floor at `single` (#872), exactly as the decision would. The one
+ * thing lost is the first-member-becomes-OWNER bootstrap, which needs the
+ * member count — so the failure only ever narrows a role, never widens one. A
+ * first member left as MEMBER leaves the org with no owner, which a platform
+ * admin repairs on the members route (it may grant OWNER); that beats a
+ * membership in the wrong org. An invitation naming no org keeps the
+ * install-org rule, judged on the role the invitation grants (t-669).
  *
  * Pure, so it cannot fail the way the decision just did.
  */
 export function undecidedMembershipsForNewUser(
   user: NewUserShape,
   invitation: AcceptedInvitation | null
-): NewUserMemberships | null {
-  if (!isMultiTenant()) return null;
-  return { membership: membershipGiven(user, invitation, null) };
+): NewUserMemberships {
+  const membership = membershipGiven(user, invitation, null);
+  if (membership.orgId === INSTALL_ORG_ID || isMultiTenant()) return { membership };
+  return { membership, installMembership: installMembershipForNewUser(user, invitation) };
 }
 
 /**
@@ -285,14 +288,22 @@ export const INSTALL_BACKFILL_BATCH = 500;
  * nowhere would be the same refusal with a worse cookie. A user with **no
  * membership at all** — the signup
  * hook's write failed, or a fork created the row some other way — is given
- * the install-org default by {@link initialMembershipFor} right here, because
- * a session is the one thing every sign-in mints, so this is where a missing
- * membership is guaranteed to be noticed. That write is what makes t-671's
- * refusal of a memberless user at `multi` rare rather than permanent.
+ * the install-org default by {@link initialMembershipFor} right here at
+ * `single`, because a session is the one thing every sign-in mints, so this
+ * is where a missing membership is guaranteed to be noticed.
+ *
+ * **At `multi` nothing is written** (t-836, owner ruling 2026-10-17), and the
+ * answer is `orgId: null`, which the guard refuses (t-671). There the install
+ * org is the vendor's own, and by sign-in time nothing records which org
+ * invited a person whose signup failed, so the default would make a customer
+ * org's invitee a member of the vendor's org. A platform admin adds them to
+ * the right org instead (`POST /api/v1/orgs/[id]/members`). The cost: an
+ * uninvited public signup whose write failed, and a member left with no org
+ * by `eraseOrg`, are refused too rather than healed.
  *
  * Returns the org id and whether it wrote a membership, so the hook can log
- * the self-heal — it is an `error`-level event upstream, and silence here
- * would hide that the signup path is failing.
+ * the self-heal or the refusal — both are `error`-level events upstream, and
+ * silence here would hide that the signup path is failing.
  *
  * `Org.status` is read only to choose AMONG several memberships: a member of
  * one suspended and one active org starts in the active one, because the
@@ -306,7 +317,7 @@ export const INSTALL_BACKFILL_BATCH = 500;
 export async function activeOrgForSession(
   userId: string,
   db: Pick<PrismaClient, 'orgMembership' | 'user'> = prisma
-): Promise<{ orgId: string; healed: boolean }> {
+): Promise<{ orgId: string | null; healed: boolean }> {
   const all = await db.orgMembership.findMany({
     where: { userId },
     select: { orgId: true, createdAt: true, org: { select: { status: true } } },
@@ -322,6 +333,7 @@ export async function activeOrgForSession(
     return { orgId: INSTALL_ORG_ID, healed: false };
   }
   if (memberships.length > 0) return { orgId: memberships[0].orgId, healed: false };
+  if (isMultiTenant()) return { orgId: null, healed: false };
 
   const user = await db.user.findUnique({
     where: { id: userId },
