@@ -113,6 +113,14 @@ at the guard even for a row edited by hand, and such a row is admitted
 nowhere rather than refused on the admin routes and admitted, unscoped, on
 the rest.
 
+**An `admin` key works only while its owner is a platform admin** (#746).
+The guards read the owner's role on every request, so demoting the owner
+stops their admin keys at once (`withAdminAuth` at its floor, `withAuth`
+through `enterApiKeyOrg` as `admin-key-owner-not-admin`, and the default
+policy's own check). Promoting them again makes the same keys work again.
+Demotion does not revoke them. Revoke them from the owner's key list when
+the person is leaving for good.
+
 A key whose `orgId` is still `NULL` without being `admin` — minted between
 the identity migration and the backfill that re-ran it — is read as the install org at
 `single` and refused at `multi`; the backfill leaves none behind. Both migrations ship in 0.13.0, so an install upgrading

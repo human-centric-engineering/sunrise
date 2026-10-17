@@ -88,7 +88,8 @@ export type OrgRefusal =
   | { refused: 'not-a-member' }
   | { refused: 'org-suspended' }
   | { refused: 'no-org' }
-  | { refused: 'bound-admin-key' };
+  | { refused: 'bound-admin-key' }
+  | { refused: 'admin-key-owner-not-admin' };
 
 export type OrgEntryResult = OrgEntry | OrgRefusal;
 
@@ -246,6 +247,11 @@ export async function enterApiKeyOrg(
     // refused on every admin route and admitted, with NO org scope, on
     // every other one.
     if (key.orgId) return { refused: 'bound-admin-key' };
+    // An admin key is only as good as its owner's standing: one whose owner
+    // was demoted would otherwise keep running with no org scope, which at
+    // `multi` sees everything. Read per request, so re-promotion restores it
+    // (#746, owner ruling 2026-10-17). `withAdminAuth` refuses it at its floor.
+    if (!isPlatformAdmin(key.owner)) return { refused: 'admin-key-owner-not-admin' };
     return null;
   }
 

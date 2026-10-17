@@ -836,6 +836,15 @@ release process.
 
 ### Security
 
+- **An `admin`-scoped API key stops working when its owner stops being a
+  platform admin** (t-830, #746; owner ruling 2026-10-17). Before, demoting
+  an admin left their admin keys with the whole admin surface, and on any
+  other route they ran with no org scope. `withAdminAuth`, `withAuth` (through
+  `enterApiKeyOrg`, which gains the refusal `admin-key-owner-not-admin`) and
+  the default policy's platform-admin check now also require the owner's
+  current role to be `ADMIN`. Re-promoting the owner restores the keys.
+  Demotion does not revoke them. A fork whose own policy reads `viewer.scopes`
+  for `admin` should add the same owner check.
 - **A URL a customer org chooses can no longer reach the platform's own
   network** (§111 t-811). With the knowledge URL import and webhook
   subscriptions open to org admins, `checkSafeProviderUrl` was not enough:

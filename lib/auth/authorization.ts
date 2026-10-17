@@ -184,11 +184,11 @@ export interface AuthorizationPrincipal {
   /**
    * Scopes the API key carries. Absent for a browser session.
    *
-   * The default policy reads this rather than the owner's role for a key
-   * caller, because that is what the guard has always done: an `admin`-scoped
-   * key reaches admin routes whether or not its owner still holds the role.
-   * That bypass is cross-tenant by construction, which is why the design record
-   * pins the `admin` scope as **platform-only** (Q6) and why minting one
+   * The default policy reads this as well as the owner's role for a key
+   * caller: an `admin`-scoped key administers only while its owner is a
+   * platform admin (#746), so demoting the owner stops the key and re-promoting
+   * them restores it. The scope is cross-tenant by construction, which is why
+   * the design record pins it as **platform-only** (Q6) and why minting one
    * requires a platform admin with a browser session.
    */
   scopes?: readonly string[];
@@ -470,10 +470,12 @@ function warnOnceAboutUnattributed(resource: AuthorizationResource): void {
  * a divergence here; not writing one is better.
  */
 function administersEverything(viewer: AuthorizationPrincipal): boolean {
-  // An API-key caller's standing comes from the key, not from its owner's row.
-  // `withAdminAuth` has always worked this way — the scope IS the capability
-  // check — and Q6 makes that sound by keeping `admin` platform-only.
-  if (viewer.credential === 'api-key') return hasScope([...(viewer.scopes ?? [])], 'admin');
+  // An API-key caller needs both: the key's `admin` scope (a key is narrower
+  // than its owner) and an owner who is still a platform admin (#746). The
+  // owner's role is read per request, so a demotion stops the key at once.
+  if (viewer.credential === 'api-key') {
+    return hasScope([...(viewer.scopes ?? [])], 'admin') && isPlatformAdmin(viewer);
+  }
   return isPlatformAdmin(viewer);
 }
 

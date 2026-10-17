@@ -53,8 +53,14 @@ describe('administersPlatform', () => {
 
   it('is true for an admin API key, which enters no org', async () => {
     await expect(
-      administersPlatform({ userId: 'k', role: 'USER', credential: 'api-key', scopes: ['admin'] })
+      administersPlatform({ userId: 'k', role: 'ADMIN', credential: 'api-key', scopes: ['admin'] })
     ).resolves.toBe(true);
+  });
+
+  it('is false for an admin API key whose owner is no longer a platform admin (#746)', async () => {
+    await expect(
+      administersPlatform({ userId: 'k', role: 'USER', credential: 'api-key', scopes: ['admin'] })
+    ).resolves.toBe(false);
   });
 
   it('is false for an org ADMIN of the entered org — the tier that admits them is not asked', async () => {

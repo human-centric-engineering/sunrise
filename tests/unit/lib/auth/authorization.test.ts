@@ -46,10 +46,12 @@ const ADMIN: AuthorizationPrincipal = { userId: 'admin-1', role: 'ADMIN', creden
 const MEMBER: AuthorizationPrincipal = { userId: 'user-1', role: 'USER', credential: 'session' };
 const ADMIN_KEY: AuthorizationPrincipal = {
   userId: 'user-2',
-  role: 'USER',
+  role: 'ADMIN',
   credential: 'api-key',
   scopes: ['admin'],
 };
+/** An admin-scoped key whose owner has since been demoted (#746). */
+const DEMOTED_ADMIN_KEY: AuthorizationPrincipal = { ...ADMIN_KEY, role: 'USER' };
 const NARROW_KEY: AuthorizationPrincipal = {
   userId: 'user-2',
   role: 'ADMIN',
@@ -69,18 +71,19 @@ describe('the default policy reproduces the guards it replaced', () => {
     await expect(DEFAULT_AUTHORIZATION_POLICY.canAdminister(MEMBER, null, {})).resolves.toBe(false);
   });
 
-  it('answers an API-key caller from its scopes, not its owner’s role', async () => {
-    // Both halves matter and they pull in opposite directions, which is what
-    // makes this the real contract rather than a restatement of the row: the
-    // admin-scoped key belongs to a USER and is admitted; the chat-scoped key
-    // belongs to an ADMIN and is refused. `withAdminAuth` has always worked this
-    // way — the scope is the capability check — and Q6 is what keeps it sound.
+  it('answers an API-key caller from its scopes AND its owner’s role (#746)', async () => {
+    // A key needs both: the chat-scoped key of an ADMIN is refused, because a
+    // key is narrower than its owner; the admin-scoped key of an owner who was
+    // demoted is refused, because the key is only as good as their standing.
     await expect(DEFAULT_AUTHORIZATION_POLICY.canAdminister(ADMIN_KEY, null, {})).resolves.toBe(
       true
     );
     await expect(DEFAULT_AUTHORIZATION_POLICY.canAdminister(NARROW_KEY, null, {})).resolves.toBe(
       false
     );
+    await expect(
+      DEFAULT_AUTHORIZATION_POLICY.canAdminister(DEMOTED_ADMIN_KEY, null, {})
+    ).resolves.toBe(false);
   });
 
   it('refuses a key principal carrying no scopes at all', async () => {

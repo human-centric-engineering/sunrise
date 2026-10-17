@@ -187,8 +187,9 @@
  *    safe-mode machinery above reports nothing wrong. Lint catches it
  *    (`@typescript-eslint/no-misused-promises`) and #739 tracks making the gate
  *    itself refuse. Do your loading elsewhere and register synchronously.
- *  - **An `admin`-scoped API key bypasses the role check** and always has: the
- *    scope is the capability. The design record pins that scope as
+ *  - **An `admin`-scoped API key administers while its owner is a platform
+ *    admin** — the scope and the owner's current role both (#746). The
+ *    design record pins that scope as
  *    platform-only (Q6): minting one requires a platform admin with a browser
  *    session acting in the install org, an `admin` key is stored with no org,
  *    and both guards refuse a key that carries one — so "an org-bound key

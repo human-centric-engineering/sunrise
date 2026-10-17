@@ -156,14 +156,29 @@ describe('enterSessionOrg at multi', () => {
 describe('enterApiKeyOrg', () => {
   const owner = { role: 'USER', accountType: 'HUMAN' };
 
+  const adminOwner = { role: 'ADMIN', accountType: 'HUMAN' };
+
   it('an admin-scoped key is a platform credential: no org, in either mode', async () => {
     for (const mode of ['single', 'multi'] as const) {
       mockEnv.TENANCY_MODE = mode;
       expect(
-        await enterApiKeyOrg({ userId: USER.id, scopes: ['admin'], orgId: null, owner }, db)
+        await enterApiKeyOrg(
+          { userId: USER.id, scopes: ['admin'], orgId: null, owner: adminOwner },
+          db
+        )
       ).toBeNull();
     }
     expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it('refuses an admin-scoped key whose owner is no longer a platform admin, in either mode (#746)', async () => {
+    // Admitted with no org scope it would see everything at multi.
+    for (const mode of ['single', 'multi'] as const) {
+      mockEnv.TENANCY_MODE = mode;
+      expect(
+        await enterApiKeyOrg({ userId: USER.id, scopes: ['admin'], orgId: null, owner }, db)
+      ).toEqual({ refused: 'admin-key-owner-not-admin' });
+    }
   });
 
   it('an admin-scoped key BOUND to an org is refused, in either mode — the withAdminAuth floor, mirrored (t-673)', async () => {

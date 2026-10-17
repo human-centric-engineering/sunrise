@@ -126,8 +126,8 @@ describe('canAdminister — the org arm', () => {
     // The control: the same principal as a session IS admitted, so the
     // refusal above is the credential, not the fixture.
     await expect(policy.canAdminister(ORG_OWNER, ORG_ROW, { org: ORG })).resolves.toBe(true);
-    // And an admin key still administers everything, through the scope.
-    const adminKey: AuthorizationPrincipal = { ...key, scopes: ['admin'] };
+    // And an admin key of a platform admin still administers everything.
+    const adminKey: AuthorizationPrincipal = { ...key, role: 'ADMIN', scopes: ['admin'] };
     await expect(policy.canAdminister(adminKey, ORG_ROW, { org: ORG })).resolves.toBe(true);
     await expect(policy.canRead(adminKey, readTargetFor(ORG_ROW), { org: ORG })).resolves.toBe(
       true
@@ -194,10 +194,11 @@ describe('canAdminister — the tier arm (§111 t-810)', () => {
   it('refuses an org-bound API key, whatever org role rode in on it', async () => {
     const key: AuthorizationPrincipal = { ...ORG_OWNER, credential: 'api-key', scopes: ['chat'] };
     await expect(policy.canAdminister(key, null, ORG_TIER)).resolves.toBe(false);
-    // An `admin` key is a platform credential and is admitted as one.
-    await expect(policy.canAdminister({ ...key, scopes: ['admin'] }, null, ORG_TIER)).resolves.toBe(
-      true
-    );
+    // An `admin` key of a platform admin is a platform credential and is
+    // admitted as one.
+    await expect(
+      policy.canAdminister({ ...key, role: 'ADMIN', scopes: ['admin'] }, null, ORG_TIER)
+    ).resolves.toBe(true);
   });
 
   it('admits nobody new at single, where no row isolation bounds what the surface reads', async () => {
@@ -291,6 +292,7 @@ describe('byte-identical: with no org-carrying resource, org facts change no ans
   const bare: AuthorizationPrincipal[] = [
     { userId: 'admin-1', role: 'ADMIN', credential: 'session' },
     { userId: 'user-1', role: 'USER', credential: 'session' },
+    { userId: 'user-2', role: 'ADMIN', credential: 'api-key', scopes: ['admin'] },
     { userId: 'user-2', role: 'USER', credential: 'api-key', scopes: ['admin'] },
     { userId: 'user-2', role: 'ADMIN', credential: 'api-key', scopes: ['chat'] },
     { userId: 'user-3', role: null, credential: 'session' },

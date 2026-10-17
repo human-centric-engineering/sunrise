@@ -73,9 +73,10 @@ function session(role: 'USER' | 'ADMIN') {
   };
 }
 
+/** A key fixture. An admin-scoped key is owned by a platform admin (#746). */
 function apiKey(scopes: string[]) {
   return {
-    session: session('USER'),
+    session: session(scopes.includes('admin') ? 'ADMIN' : 'USER'),
     scopes,
     rateLimitRpm: null,
     orgId: null,

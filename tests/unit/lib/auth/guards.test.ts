@@ -843,8 +843,12 @@ describe('API-key fallback', () => {
     vi.mocked(headers).mockResolvedValue(new Headers());
   });
 
-  function mockApiKey(scopes: string[]): AuthSession {
-    const session = createMockSession('USER', 'apikey-owner-id');
+  /** An admin-scoped key is owned by a platform admin unless told otherwise (#746). */
+  function mockApiKey(
+    scopes: string[],
+    ownerRole: 'USER' | 'ADMIN' = scopes.includes('admin') ? 'ADMIN' : 'USER'
+  ): AuthSession {
+    const session = createMockSession(ownerRole, 'apikey-owner-id');
     vi.mocked(resolveApiKey).mockResolvedValue({
       session,
       scopes,
@@ -915,6 +919,17 @@ describe('API-key fallback', () => {
 
       expect(res.status).toBe(200);
       expect(handler).toHaveBeenCalledWith(expect.anything(), expect.objectContaining(session));
+    });
+
+    it('refuses an admin-scoped key whose owner is no longer a platform admin (#746)', async () => {
+      // Admitted, it would run with no org scope, which at multi sees everything.
+      mockApiKey(['admin'], 'USER');
+      const handler = vi.fn();
+
+      const res = await withAuth(handler, NOT_ABOUT_OWNERSHIP)(createRequest());
+
+      expect(res.status).toBe(403);
+      expect(handler).not.toHaveBeenCalled();
     });
 
     it('admits an admin-scoped key for any scope, per hasScope', async () => {
@@ -1004,6 +1019,25 @@ describe('API-key fallback', () => {
       expect(res.status).toBe(200);
       expect(handler).toHaveBeenCalledWith(expect.anything(), expect.objectContaining(session));
       expect(auth.api.getSession).not.toHaveBeenCalled();
+    });
+
+    // #746: demoting the owner stops the key on the next request, and
+    // re-promoting them restores it — the owner's role is read per request.
+    it('returns 403 for an admin-scoped key whose owner is no longer a platform admin', async () => {
+      mockApiKey(['admin'], 'USER');
+      const handler = vi.fn();
+      const res = await withAdminAuth(handler, NOT_ABOUT_OWNERSHIP)(createRequest());
+
+      expect(res.status).toBe(403);
+      expect(handler).not.toHaveBeenCalled();
+      expect(auth.api.getSession).not.toHaveBeenCalled();
+
+      mockApiKey(['admin'], 'ADMIN');
+      const again = await withAdminAuth(
+        vi.fn(async () => Response.json({ success: true, data: null })),
+        NOT_ABOUT_OWNERSHIP
+      )(createRequest());
+      expect(again.status).toBe(200);
     });
 
     it("returns 403 for an API key that doesn't include the admin scope", async () => {

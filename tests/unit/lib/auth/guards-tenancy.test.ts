@@ -89,8 +89,19 @@ function session(role: 'USER' | 'ADMIN' = 'USER', activeOrgId: string | null = n
   };
 }
 
-function apiKey(scopes: string[], orgId: string | null) {
-  return { session: session('USER'), scopes, rateLimitRpm: null, orgId, ownerAccountType: 'HUMAN' };
+/** A key fixture. An admin-scoped key is owned by a platform admin unless told otherwise (#746). */
+function apiKey(
+  scopes: string[],
+  orgId: string | null,
+  ownerRole = scopes.includes('admin') ? 'ADMIN' : 'USER'
+) {
+  return {
+    session: session(ownerRole),
+    scopes,
+    rateLimitRpm: null,
+    orgId,
+    ownerAccountType: 'HUMAN',
+  };
 }
 
 function memberOf(role: string, status: 'ACTIVE' | 'SUSPENDED' = 'ACTIVE') {
