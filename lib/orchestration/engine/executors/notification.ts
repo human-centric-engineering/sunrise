@@ -29,7 +29,7 @@ import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { sendEmail } from '@/lib/email/send';
-import { executeHttpRequest, HttpError } from '@/lib/orchestration/http';
+import { executeHttpRequest, HttpError, type HttpErrorCode } from '@/lib/orchestration/http';
 import { logger } from '@/lib/logging';
 import { loggableUrl } from '@/lib/logging/redact-path';
 import { WorkflowNotification } from '@/emails/workflow-notification';
@@ -73,6 +73,12 @@ const notificationConfigSchema = z.discriminatedUnion('channel', [
  * `workflow_failed` event. The bodyTemplate can be a multi-paragraph
  * email; truncate so the column / event payload stays bounded. */
 const FAILURE_REASON_MAX = 2000;
+
+/** A webhook receiver's reply is read only for its status. */
+const WEBHOOK_RESPONSE_MAX_BYTES = 64 * 1024;
+
+/** Transport failures a webhook send retries, though the fetch guard does not. */
+const RETRIED_TRANSPORT_FAILURES = new Set<HttpErrorCode>(['request_timeout', 'request_failed']);
 
 function deriveFailureReason(body: string): string {
   const trimmed = body.trim();
@@ -223,6 +229,8 @@ async function executeNotification(
         // The dispatch cache key, so a receiver that honours the header
         // dedups a re-drive that missed the cache.
         idempotency: { key: cacheKey },
+        // Only the status is used; a large reply is not worth reading.
+        maxResponseBytes: WEBHOOK_RESPONSE_MAX_BYTES,
         signal: ctx.signal,
         logContext: { stepId: step.id },
       });
@@ -243,24 +251,38 @@ async function executeNotification(
         costUsd: 0,
       };
     } catch (err) {
-      // The fetch guard says whether a failure is worth retrying: a refused
-      // host or a 4xx won't change on retry, a timeout or a 5xx may.
-      if (err instanceof HttpError) {
+      // A body too large to read comes after a 2xx: the receiver took it.
+      if (err instanceof HttpError && err.code === 'response_too_large') {
+        logger.info('Notification step: webhook sent; reply too large to read', {
+          stepId: step.id,
+          webhookUrl: loggableUrl(config.webhookUrl),
+        });
+        stepResult = {
+          output: { sent: true, channel: 'webhook', url: config.webhookUrl },
+          tokensUsed: 0,
+          costUsd: 0,
+        };
+      } else if (err instanceof HttpError) {
+        // A refused host or a 4xx won't change on retry; a 5xx, a timeout or
+        // a dropped connection may. The guard marks the last two final for
+        // `external_call`, but here the Idempotency-Key makes a retry safe for
+        // a receiver that honours it.
         throw new ExecutorError(
           step.id,
           'WEBHOOK_DISPATCH_ERROR',
           `Webhook send failed: ${err.message}`,
           err,
-          err.retriable
+          err.retriable || RETRIED_TRANSPORT_FAILURES.has(err.code)
+        );
+      } else {
+        throw new ExecutorError(
+          step.id,
+          'WEBHOOK_DISPATCH_ERROR',
+          `Webhook send failed: ${err instanceof Error ? err.message : String(err)}`,
+          err,
+          true
         );
       }
-      throw new ExecutorError(
-        step.id,
-        'WEBHOOK_DISPATCH_ERROR',
-        `Webhook send failed: ${err instanceof Error ? err.message : String(err)}`,
-        err,
-        true
-      );
     }
   }
 

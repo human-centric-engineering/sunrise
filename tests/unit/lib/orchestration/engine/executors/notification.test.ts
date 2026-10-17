@@ -449,6 +449,34 @@ describe('executeNotification', () => {
       });
     });
 
+    it('retries a timeout or dropped connection, which the fetch guard marks final', async () => {
+      for (const code of ['request_timeout', 'request_failed'] as const) {
+        vi.mocked(executeHttpRequest).mockRejectedValueOnce(new HttpError(code, 'gone', false));
+
+        await expect(executor(makeWebhookStep(), makeCtx())).rejects.toMatchObject({
+          code: 'WEBHOOK_DISPATCH_ERROR',
+          retriable: true,
+        });
+      }
+    });
+
+    it('reads only a small reply, and counts a 2xx with a reply too large to read as sent', async () => {
+      vi.mocked(executeHttpRequest).mockRejectedValue(
+        new HttpError('response_too_large', 'Response exceeded 65536 bytes', false)
+      );
+
+      const result = await executor(makeWebhookStep(), makeCtx());
+
+      expect(vi.mocked(executeHttpRequest).mock.calls[0][0].maxResponseBytes).toBe(64 * 1024);
+      expect(result.output).toEqual({
+        sent: true,
+        channel: 'webhook',
+        url: 'https://example.com/hook',
+      });
+      // Recorded, so a re-drive does not send it again.
+      expect(vi.mocked(recordDispatch)).toHaveBeenCalledOnce();
+    });
+
     it('fails without retry on a 4xx the receiver rejected', async () => {
       vi.mocked(executeHttpRequest).mockRejectedValue(
         new HttpError('http_error', 'HTTP 404: no_service', false, undefined, 404)
