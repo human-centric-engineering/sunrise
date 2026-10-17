@@ -144,6 +144,9 @@ export const POST = withAuth(
           expiresAt: support.expiresAt.toISOString(),
         },
         clientIp: getClientIP(request),
+        // This route does not enter the org it switches to, so there is no
+        // support context for the logger to read the stamp from (t-825).
+        support: { grantId: support.grantId, orgId },
       });
       log.info('Org switched under a support grant', {
         userId: session.user.id,

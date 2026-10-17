@@ -288,6 +288,8 @@ describe('POST /api/v1/orgs/switch under a support grant (§121 t-824)', () => {
           level: 'READ_ONLY',
           expiresAt: GRANT.expiresAt.toISOString(),
         },
+        // Stamped explicitly: this route does not enter the org (t-825).
+        support: { grantId: GRANT.id, orgId: OTHER_ORG },
       })
     );
     expect(res.headers.getSetCookie()).toEqual([

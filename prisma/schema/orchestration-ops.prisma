@@ -112,20 +112,31 @@ model AiWebhookDelivery {
 /// Fire-and-forget writes — never blocks the request. Tracks agent edits,
 /// workflow changes, knowledge uploads, settings changes, and deletions.
 model AiAdminAuditLog {
-  id         String   @id @default(cuid())
-  userId     String?
-  action     String // e.g. "agent.create", "agent.update", "workflow.delete"
-  entityType String // "agent", "workflow", "capability", "knowledge_document", "settings", "webhook"
-  entityId   String?
-  entityName String? // human-readable name at time of action
-  changes    Json? // { field: { from, to } } diff for updates
-  metadata   Json? // extra context
-  clientIp   String?
-  createdAt  DateTime @default(now())
+  id             String   @id @default(cuid())
+  userId         String?
+  action         String // e.g. "agent.create", "agent.update", "workflow.delete"
+  entityType     String // "agent", "workflow", "capability", "knowledge_document", "settings", "webhook"
+  entityId       String?
+  entityName     String? // human-readable name at time of action
+  changes        Json? // { field: { from, to } } diff for updates
+  metadata       Json? // extra context
+  clientIp       String?
+  // §121 t-825: set when the action was made inside a support session — the
+  // grant it was made under, and the org it was made in. Stamped by
+  // `logAdminAction` from the tenant context. `supportOrgId` has no FK on
+  // purpose, and is not `orgId`: this is the vendor's own log (a system
+  // model), so erasing the org nulls `supportGrantId` but leaves the row
+  // marked as support, naming where it happened.
+  supportGrantId String?
+  supportOrgId   String?
+  createdAt      DateTime @default(now())
 
-  user User? @relation("AiAdminAuditLogUser", fields: [userId], references: [id], onDelete: SetNull)
+  user         User?            @relation("AiAdminAuditLogUser", fields: [userId], references: [id], onDelete: SetNull)
+  supportGrant OrgSupportGrant? @relation(fields: [supportGrantId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+  @@index([supportGrantId, createdAt])
+  @@index([supportOrgId])
   @@index([action])
   @@index([entityType, entityId])
   @@index([createdAt])

@@ -11,6 +11,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { getTenantContext } from '@/lib/tenancy/context';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -23,6 +24,19 @@ export interface AdminAuditEntry {
   changes?: Record<string, { from: unknown; to: unknown }> | null;
   metadata?: Record<string, unknown> | null;
   clientIp?: string | null;
+  /**
+   * The support session this action was made in (§121 t-825). Leave it out:
+   * {@link logAdminAction} reads it from the tenant context. Only a caller
+   * that acts on a support session from OUTSIDE one passes it — the switch
+   * route's `support.enter`, which does not enter the org it switches to.
+   */
+  support?: AuditSupportStamp;
+}
+
+/** The grant an audit row was made under, and the org it was made in. */
+export interface AuditSupportStamp {
+  grantId: string;
+  orgId: string;
 }
 
 // ─── Secret sanitisation ────────────────────────────────────────────────────
@@ -125,9 +139,26 @@ export function computeChanges(
 // ─── Logger ─────────────────────────────────────────────────────────────────
 
 /**
+ * The support session the current call stack runs in, as an audit stamp — or
+ * `null` outside one. Read synchronously when the action is logged, not when
+ * the fire-and-forget write settles, so the stamp is the request's whatever
+ * the write's promise chain does with the async context.
+ */
+function supportStampFromContext(): AuditSupportStamp | null {
+  const context = getTenantContext();
+  if (context?.source !== 'support' || !context.support || !context.orgId) return null;
+  return { grantId: context.support.grantId, orgId: context.orgId };
+}
+
+/**
  * Log an admin action. Fire-and-forget — never throws to the caller.
+ *
+ * Inside a support session (§121 t-825) the row is stamped with the grant and
+ * the org from the tenant context, so every caller's row names the support
+ * actor's grant without the caller knowing a support session exists.
  */
 export function logAdminAction(entry: AdminAuditEntry): void {
+  const support = entry.support ?? supportStampFromContext();
   void prisma.aiAdminAuditLog
     .create({
       data: {
@@ -145,6 +176,8 @@ export function logAdminAction(entry: AdminAuditEntry): void {
           return s === null ? Prisma.JsonNull : (s as Prisma.InputJsonValue);
         })(),
         clientIp: entry.clientIp ?? null,
+        supportGrantId: support?.grantId ?? null,
+        supportOrgId: support?.orgId ?? null,
       },
     })
     .catch((err: unknown) => {

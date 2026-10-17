@@ -137,6 +137,9 @@ model OrgSupportGrant {
   grantedBy User? @relation("OrgSupportGrantGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
   revokedBy User? @relation("OrgSupportGrantRevokedBy", fields: [revokedById], references: [id], onDelete: SetNull)
 
+  /// Audit rows made under this grant (§121 t-825).
+  auditEntries AiAdminAuditLog[]
+
   @@index([orgId, expiresAt])
   @@index([grantedById])
   @@index([revokedById])
