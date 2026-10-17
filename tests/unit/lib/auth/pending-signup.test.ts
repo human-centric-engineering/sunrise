@@ -14,7 +14,12 @@ import { ORG_OWNER_ROLE, DEFAULT_ORG_ROLE } from '@/lib/tenancy/roles';
 const mockLogger = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }));
 vi.mock('@/lib/logging', () => ({ logger: mockLogger }));
 
-import { getPendingSignup, setPendingSignup } from '@/lib/auth/pending-signup';
+import {
+  getPendingSignup,
+  setInvitationAccepted,
+  setPendingSignup,
+  wasInvitationAccepted,
+} from '@/lib/auth/pending-signup';
 
 const membership = { orgId: INSTALL_ORG_ID, role: ORG_OWNER_ROLE } as const;
 
@@ -62,5 +67,38 @@ describe('pending signup', () => {
     ]);
     expect(seenA?.membership).toEqual(a);
     expect(seenB?.membership).toEqual(b);
+  });
+});
+
+describe('invitation accepted (#688)', () => {
+  it('reads false outside a better-auth request, and setting it there is a logged no-op', async () => {
+    await expect(wasInvitationAccepted()).resolves.toBe(false);
+    await setInvitationAccepted();
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('setInvitationAccepted called outside')
+    );
+    await expect(wasInvitationAccepted()).resolves.toBe(false);
+  });
+
+  it('is false on a request that never set it, and true on one that did', async () => {
+    const unset = await runWithRequestState(new WeakMap(), () => wasInvitationAccepted());
+    const set = await runWithRequestState(new WeakMap(), async () => {
+      await setInvitationAccepted();
+      return wasInvitationAccepted();
+    });
+    expect(unset).toBe(false);
+    expect(set).toBe(true);
+  });
+
+  it('holds without a pending membership, and does not leak to another request', async () => {
+    // The before hook records it first, so a failed membership decision does
+    // not lose it.
+    const seen = await runWithRequestState(new WeakMap(), async () => {
+      await setInvitationAccepted();
+      return { accepted: await wasInvitationAccepted(), pending: await getPendingSignup() };
+    });
+    const other = await runWithRequestState(new WeakMap(), () => wasInvitationAccepted());
+    expect(seen).toEqual({ accepted: true, pending: null });
+    expect(other).toBe(false);
   });
 });
