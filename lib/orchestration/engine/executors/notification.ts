@@ -29,7 +29,7 @@ import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { sendEmail } from '@/lib/email/send';
-import { executeHttpRequest, HttpError, type HttpErrorCode } from '@/lib/orchestration/http';
+import { executeHttpRequest, HttpError } from '@/lib/orchestration/http';
 import { logger } from '@/lib/logging';
 import { loggableUrl } from '@/lib/logging/redact-path';
 import { WorkflowNotification } from '@/emails/workflow-notification';
@@ -76,9 +76,6 @@ const FAILURE_REASON_MAX = 2000;
 
 /** A webhook receiver's reply is read only for its status. */
 const WEBHOOK_RESPONSE_MAX_BYTES = 64 * 1024;
-
-/** Transport failures a webhook send retries, though the fetch guard does not. */
-const RETRIED_TRANSPORT_FAILURES = new Set<HttpErrorCode>(['request_timeout', 'request_failed']);
 
 function deriveFailureReason(body: string): string {
   const trimmed = body.trim();
@@ -263,16 +260,16 @@ async function executeNotification(
           costUsd: 0,
         };
       } else if (err instanceof HttpError) {
-        // A refused host or a 4xx won't change on retry; a 5xx, a timeout or
-        // a dropped connection may. The guard marks the last two final for
-        // `external_call`, but here the Idempotency-Key makes a retry safe for
-        // a receiver that honours it.
+        // The fetch guard's verdict: a 5xx may succeed on retry. A refused
+        // host or a 4xx won't, and a timeout is not retried because the
+        // receiver may already have posted it: Slack and Teams incoming
+        // webhooks ignore the Idempotency-Key.
         throw new ExecutorError(
           step.id,
           'WEBHOOK_DISPATCH_ERROR',
           `Webhook send failed: ${err.message}`,
           err,
-          err.retriable || RETRIED_TRANSPORT_FAILURES.has(err.code)
+          err.retriable
         );
       } else {
         throw new ExecutorError(

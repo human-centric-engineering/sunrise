@@ -639,8 +639,8 @@ async function attemptWebhookDelivery(
  * bump it) sends again, and the address, so a retry after the subscription's
  * address was edited is a send to the new one. Resend refuses a reused key
  * whose request differs, so the email shows the row's `createdAt`, not the
- * body's per-attempt timestamp. Resend keeps a key for 24 hours; the
- * automatic retries all fall well inside that.
+ * body's per-attempt timestamp. Resend keeps a key for 24 hours, so a retry
+ * a policy schedules more than 24 hours after the first attempt sends again.
  */
 async function attemptEmailDelivery(
   record: AttemptRecord,

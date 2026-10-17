@@ -449,13 +449,13 @@ describe('executeNotification', () => {
       });
     });
 
-    it('retries a timeout or dropped connection, which the fetch guard marks final', async () => {
+    it('does not retry a timeout or dropped connection: the receiver may have posted it', async () => {
       for (const code of ['request_timeout', 'request_failed'] as const) {
         vi.mocked(executeHttpRequest).mockRejectedValueOnce(new HttpError(code, 'gone', false));
 
         await expect(executor(makeWebhookStep(), makeCtx())).rejects.toMatchObject({
           code: 'WEBHOOK_DISPATCH_ERROR',
-          retriable: true,
+          retriable: false,
         });
       }
     });
