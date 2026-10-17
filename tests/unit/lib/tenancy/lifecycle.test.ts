@@ -17,6 +17,7 @@ import { Prisma } from '@prisma/client';
 import { INSTALL_ORG_ID, INSTALL_ORG_SLUG } from '@/lib/tenancy/constants';
 import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
 import { PLATFORM_ADMIN_ROLE, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 const db = vi.hoisted(() => ({
   org: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
@@ -183,6 +184,34 @@ describe('createOrg', () => {
     expect(error.code).toBe('SLUG_TAKEN');
     expect(db.org.create).not.toHaveBeenCalled();
     expect(mockReconcile).not.toHaveBeenCalled();
+  });
+
+  it('answers a slug taken by a race past the pre-check as SLUG_TAKEN, like the pre-check (t-814)', async () => {
+    db.org.findUnique.mockResolvedValue(null); // free when checked
+    db.org.create.mockRejectedValue(
+      uniqueViolationError({ index: 'org_slug_key', modelName: 'Org' })
+    );
+
+    const error = await refusal(() => createOrg({ slug: 'other', name: 'x' }));
+
+    expect(error.code).toBe('SLUG_TAKEN');
+    expect(error.status).toBe(409);
+    expect(mockReconcile).not.toHaveBeenCalled();
+  });
+
+  it('leaves a unique violation on another constraint to the shared handler (t-814)', async () => {
+    db.org.findUnique.mockResolvedValue(null);
+    db.user.findUnique.mockResolvedValue(human(OWNER));
+    db.org.create.mockResolvedValue(orgRow());
+    const collision = uniqueViolationError({
+      index: 'org_membership_orgId_userId_key',
+      modelName: 'OrgMembership',
+    });
+    db.orgMembership.create.mockRejectedValue(collision);
+
+    await expect(createOrg({ slug: 'other', name: 'x', ownerUserId: OWNER })).rejects.toBe(
+      collision
+    );
   });
 
   it('refuses a missing owner, and the SERVICE account, without creating the org', async () => {

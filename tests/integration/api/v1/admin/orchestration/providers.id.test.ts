@@ -21,7 +21,6 @@ import {
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
-import { Prisma } from '@prisma/client';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -78,6 +77,7 @@ import { prisma } from '@/lib/db/client';
 import { providerUsage } from '@/lib/orchestration/admin/global-config-usage';
 import { clearCache } from '@/lib/orchestration/llm/provider-manager';
 import { hasProviderKey } from '@/lib/orchestration/llm/provider-credentials';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -419,9 +419,9 @@ describe('PATCH /api/v1/admin/orchestration/providers/:id', () => {
     it('returns 400 for P2002 slug/name conflict on PATCH', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
-      const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: '7.0.0',
+      const p2002 = uniqueViolationError({
+        index: 'ai_provider_config_slug_key',
+        modelName: 'AiProviderConfig',
       });
       vi.mocked(prisma.aiProviderConfig.update).mockRejectedValue(p2002);
 
@@ -431,6 +431,29 @@ describe('PATCH /api/v1/admin/orchestration/providers/:id', () => {
       );
 
       expect(response.status).toBe(400);
+    });
+
+    it('does not answer the slug message for a P2002 on another constraint (t-814)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.findUnique).mockResolvedValue(makeProvider());
+      const p2002 = uniqueViolationError({
+        index: 'ai_provider_model_providerSlug_modelId_key',
+        modelName: 'AiProviderModel',
+      });
+      vi.mocked(prisma.aiProviderConfig.update).mockRejectedValue(p2002);
+
+      const response = await PATCH(
+        makeRequest('PATCH', { slug: 'existing-slug' }),
+        makeParams(PROVIDER_ID)
+      );
+
+      expect(response.status).toBe(400);
+      const otherData = await parseJson<{
+        error: { code: string; message: string; details?: unknown };
+      }>(response);
+      expect(otherData.error.code).toBe('VALIDATION_ERROR');
+      expect(otherData.error.message).toBe('A record with that value already exists');
+      expect(otherData.error.details).toBeUndefined();
     });
   });
 });

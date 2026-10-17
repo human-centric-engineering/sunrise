@@ -16,6 +16,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -112,7 +113,7 @@ export const POST = withAdminAuth<{ id: string }>(
       const meta = envWarnings ? { warnings: envWarnings } : undefined;
       return successResponse(link, meta, { status: 201 });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.agentCapability)) {
         throw new ConflictError(
           `Capability ${body.capabilityId} is already attached to agent ${agentId}`
         );

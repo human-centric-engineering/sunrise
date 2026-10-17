@@ -96,7 +96,7 @@ import {
   mockAuthenticatedUser,
 } from '@/tests/helpers/auth';
 import { POST } from '@/app/api/v1/admin/orchestration/workflows/[id]/save-as-template/route';
-import { Prisma } from '@prisma/client';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -372,10 +372,10 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       // Arrange — slug appears available but create throws P2002 (race condition)
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 
-      const p2002Error = new Prisma.PrismaClientKnownRequestError(
-        'Unique constraint failed on the fields: (`slug`)',
-        { code: 'P2002', clientVersion: '7.0.0', meta: { target: ['slug'] } }
-      );
+      const p2002Error = uniqueViolationError({
+        index: 'ai_workflow_slug_key',
+        modelName: 'AiWorkflow',
+      });
       txMocks.workflowCreate.mockRejectedValue(p2002Error);
 
       // Act
@@ -386,6 +386,24 @@ describe('POST /api/v1/admin/orchestration/workflows/:id/save-as-template', () =
       expect(response.status).toBe(400);
       expect(body.success).toBe(false);
       expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.message).toBe('Template slug already exists — please try again');
+    });
+
+    it('does not answer the slug message for a P2002 on another constraint (t-814)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      txMocks.workflowCreate.mockRejectedValue(
+        uniqueViolationError({
+          index: 'ai_workflow_version_workflowId_version_key',
+          modelName: 'AiWorkflowVersion',
+        })
+      );
+
+      const response = await POST(makeRequest(), makeParams());
+      const body = await parseJson<ErrorBody>(response);
+
+      expect(response.status).toBe(400);
+      expect(body.error.code).toBe('VALIDATION_ERROR');
+      expect(body.error.message).toBe('A record with that value already exists');
     });
 
     it('should loop slug generation until a unique slug is found', async () => {

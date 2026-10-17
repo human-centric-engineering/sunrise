@@ -71,6 +71,7 @@ vi.mock('@/lib/orchestration/admin/global-config-usage', async (importOriginal) 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { providerModelUsage } from '@/lib/orchestration/admin/global-config-usage';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -427,10 +428,9 @@ describe('PATCH /api/v1/admin/orchestration/provider-models/:id', () => {
     const existing = makeModel({ isDefault: false });
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
 
-    const { Prisma: ActualPrisma } = await import('@prisma/client');
-    const p2002 = new ActualPrisma.PrismaClientKnownRequestError('Unique constraint', {
-      code: 'P2002',
-      clientVersion: '7.0.0',
+    const p2002 = uniqueViolationError({
+      index: 'ai_provider_model_slug_key',
+      modelName: 'AiProviderModel',
     });
     vi.mocked(prisma.aiProviderModel.update).mockRejectedValue(p2002);
 
@@ -442,6 +442,30 @@ describe('PATCH /api/v1/admin/orchestration/provider-models/:id', () => {
     const data = await parseJson<{ success: boolean; error: { code: string } }>(response);
     expect(data.success).toBe(false);
     expect(data.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('does not answer the slug message for a P2002 on another constraint (t-814)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const existing = makeModel({ isDefault: false });
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
+
+    const p2002 = uniqueViolationError({
+      index: 'ai_provider_model_providerSlug_modelId_key',
+      modelName: 'AiProviderModel',
+    });
+    vi.mocked(prisma.aiProviderModel.update).mockRejectedValue(p2002);
+
+    const response = await PATCH(
+      makePatchRequest(MODEL_ID, { slug: 'duplicate-slug' }),
+      routeContext(MODEL_ID)
+    );
+    expect(response.status).toBe(400);
+    const otherData = await parseJson<{
+      error: { code: string; message: string; details?: unknown };
+    }>(response);
+    expect(otherData.error.code).toBe('VALIDATION_ERROR');
+    expect(otherData.error.message).toBe('A record with that value already exists');
+    expect(otherData.error.details).toBeUndefined();
   });
 });
 

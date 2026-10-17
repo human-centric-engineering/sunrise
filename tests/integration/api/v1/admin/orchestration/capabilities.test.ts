@@ -26,7 +26,6 @@ import {
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
-import { Prisma } from '@prisma/client';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -96,6 +95,7 @@ import { prisma } from '@/lib/db/client';
 import { env } from '@/lib/env';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { capabilityDispatcher } from '@/lib/orchestration/capabilities';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -425,9 +425,9 @@ describe('POST /api/v1/admin/orchestration/capabilities', () => {
 
     it('returns 409 when slug already exists (P2002)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: '7.0.0',
+      const p2002 = uniqueViolationError({
+        index: 'ai_capability_slug_key',
+        modelName: 'AiCapability',
       });
       vi.mocked(prisma.aiCapability.create).mockRejectedValue(p2002);
 
@@ -436,6 +436,25 @@ describe('POST /api/v1/admin/orchestration/capabilities', () => {
       expect(response.status).toBe(409);
       const data = await parseJson(response);
       expect(data).toMatchObject({ success: false, error: { code: 'CONFLICT' } });
+    });
+
+    it('does not answer the slug message for a P2002 on another constraint (t-814)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const p2002 = uniqueViolationError({
+        index: 'ai_agent_capability_agentId_capabilityId_key',
+        modelName: 'AiAgentCapability',
+      });
+      vi.mocked(prisma.aiCapability.create).mockRejectedValue(p2002);
+
+      const response = await POST(makeBodyRequest('POST', VALID_CAPABILITY));
+
+      expect(response.status).toBe(400);
+      const otherData = await parseJson<{
+        error: { code: string; message: string; details?: unknown };
+      }>(response);
+      expect(otherData.error.code).toBe('VALIDATION_ERROR');
+      expect(otherData.error.message).toBe('A record with that value already exists');
+      expect(otherData.error.details).toBeUndefined();
     });
 
     it('returns 400 when executionType is api but executionHandler is not a URL', async () => {
@@ -714,9 +733,9 @@ describe('PATCH /api/v1/admin/orchestration/capabilities/:id', () => {
     it('returns 400 for P2002 slug conflict on PATCH', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(makeCapability() as never);
-      const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: '7.0.0',
+      const p2002 = uniqueViolationError({
+        index: 'ai_capability_slug_key',
+        modelName: 'AiCapability',
       });
       vi.mocked(prisma.aiCapability.update).mockRejectedValue(p2002);
 
@@ -731,6 +750,34 @@ describe('PATCH /api/v1/admin/orchestration/capabilities/:id', () => {
       );
 
       expect(response.status).toBe(400);
+    });
+
+    it('does not answer the slug message for a P2002 on another constraint (t-814)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiCapability.findUnique).mockResolvedValue(makeCapability() as never);
+      const p2002 = uniqueViolationError({
+        index: 'ai_agent_capability_agentId_capabilityId_key',
+        modelName: 'AiAgentCapability',
+      });
+      vi.mocked(prisma.aiCapability.update).mockRejectedValue(p2002);
+
+      const response = await PATCH(
+        // #509: both halves, so the request reaches the DB and fails on the
+        // unique constraint rather than on the agreement check.
+        makeByIdRequest('PATCH', {
+          slug: 'taken_slug',
+          functionDefinition: { name: 'taken_slug', description: 'd', parameters: {} },
+        }),
+        makeParams(CAPABILITY_ID)
+      );
+
+      expect(response.status).toBe(400);
+      const otherData = await parseJson<{
+        error: { code: string; message: string; details?: unknown };
+      }>(response);
+      expect(otherData.error.code).toBe('VALIDATION_ERROR');
+      expect(otherData.error.message).toBe('A record with that value already exists');
+      expect(otherData.error.details).toBeUndefined();
     });
   });
 });

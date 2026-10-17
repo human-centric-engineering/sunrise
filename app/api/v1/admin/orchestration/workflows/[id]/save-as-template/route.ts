@@ -24,6 +24,7 @@ import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { cuidSchema } from '@/lib/validations/common';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
+import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { assertWorkflowProvidersApproved } from '@/lib/orchestration/workflows/semantic-validator';
 
 const saveAsTemplateSchema = z.object({
@@ -112,7 +113,7 @@ export const POST = withAdminAuth<{ id: string }>(
     } catch (err: unknown) {
       // P2002: unique constraint violation — another workflow took the slug
       // between findFreeWorkflowSlug's probe and this create.
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.workflowSlug)) {
         throw new ValidationError('Template slug already exists — please try again', {
           slug: ['A template with this slug was just created'],
         });

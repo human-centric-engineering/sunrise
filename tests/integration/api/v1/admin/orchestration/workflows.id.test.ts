@@ -48,6 +48,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -316,9 +317,9 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
     it('returns 409 for P2002 slug conflict on PATCH', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
-      const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: '7.0.0',
+      const p2002 = uniqueViolationError({
+        index: 'ai_workflow_slug_key',
+        modelName: 'AiWorkflow',
       });
       vi.mocked(prisma.aiWorkflow.update).mockRejectedValue(p2002);
 
@@ -328,6 +329,29 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
       );
 
       expect(response.status).toBe(409);
+    });
+
+    it('does not answer the slug message for a P2002 on another constraint (t-814)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+      const p2002 = uniqueViolationError({
+        index: 'ai_workflow_version_workflowId_version_key',
+        modelName: 'AiWorkflowVersion',
+      });
+      vi.mocked(prisma.aiWorkflow.update).mockRejectedValue(p2002);
+
+      const response = await PATCH(
+        makeRequest('PATCH', { slug: 'existing-slug' }),
+        makeParams(WORKFLOW_ID)
+      );
+
+      expect(response.status).toBe(400);
+      const otherData = await parseJson<{
+        error: { code: string; message: string; details?: unknown };
+      }>(response);
+      expect(otherData.error.code).toBe('VALIDATION_ERROR');
+      expect(otherData.error.message).toBe('A record with that value already exists');
+      expect(otherData.error.details).toBeUndefined();
     });
 
     it('returns 400 when updating draftDefinition with invalid schema', async () => {

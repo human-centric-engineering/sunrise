@@ -11,6 +11,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -138,7 +139,7 @@ export const PATCH = withAdminAuth<{ id: string }>(
 
       return successResponse(workflow);
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.workflowSlug)) {
         throw new ConflictError(`Workflow with slug '${body.slug}' already exists`);
       }
       throw err;

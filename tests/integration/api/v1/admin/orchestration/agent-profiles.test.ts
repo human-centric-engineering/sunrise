@@ -55,6 +55,7 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { agentProfileUsage } from '@/lib/orchestration/admin/global-config-usage';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 const PROFILE_ID = 'cmjbv4i3x00003wsloputgwul';
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
@@ -248,10 +249,7 @@ describe('POST /api/v1/admin/orchestration/agent-profiles', () => {
   it('returns 409 on slug conflict', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.aiAgentProfile.create).mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: 'x',
-      })
+      uniqueViolationError({ index: 'ai_agent_profile_slug_key', modelName: 'AiAgentProfile' })
     );
 
     const response = await POST(makePostRequest(VALID_PAYLOAD));
@@ -259,6 +257,26 @@ describe('POST /api/v1/admin/orchestration/agent-profiles', () => {
     expect(response.status).toBe(409);
     const data = await parseJson<{ error: { message: string } }>(response);
     expect(data.error.message).toContain('support-family');
+  });
+
+  it('does not answer the slug message for a P2002 on another constraint (t-814)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.aiAgentProfile.create).mockRejectedValue(
+      uniqueViolationError({
+        index: 'ai_agent_version_agentId_version_key',
+        modelName: 'AiAgentVersion',
+      })
+    );
+
+    const response = await POST(makePostRequest(VALID_PAYLOAD));
+
+    expect(response.status).toBe(400);
+    const otherData = await parseJson<{
+      error: { code: string; message: string; details?: unknown };
+    }>(response);
+    expect(otherData.error.code).toBe('VALIDATION_ERROR');
+    expect(otherData.error.message).toBe('A record with that value already exists');
+    expect(otherData.error.details).toBeUndefined();
   });
 
   it('rejects oversize persona with a validation error', async () => {

@@ -52,6 +52,34 @@ export const UNIQUE_CONSTRAINTS = {
     model: 'AiWorkflowExecution',
     fields: ['dedupKey'],
   },
+  agentCapability: {
+    index: 'ai_agent_capability_agentId_capabilityId_key',
+    model: 'AiAgentCapability',
+    fields: ['agentId', 'capabilityId'],
+  },
+  agentProfileSlug: {
+    index: 'ai_agent_profile_slug_key',
+    model: 'AiAgentProfile',
+    fields: ['slug'],
+  },
+  capabilitySlug: { index: 'ai_capability_slug_key', model: 'AiCapability', fields: ['slug'] },
+  providerSlug: {
+    index: 'ai_provider_config_slug_key',
+    model: 'AiProviderConfig',
+    fields: ['slug'],
+  },
+  providerName: {
+    index: 'ai_provider_config_name_key',
+    model: 'AiProviderConfig',
+    fields: ['name'],
+  },
+  providerModelSlug: {
+    index: 'ai_provider_model_slug_key',
+    model: 'AiProviderModel',
+    fields: ['slug'],
+  },
+  knowledgeTagSlug: { index: 'knowledge_tag_slug_key', model: 'KnowledgeTag', fields: ['slug'] },
+  orgSlug: { index: 'org_slug_key', model: 'Org', fields: ['slug'] },
 } as const satisfies Record<string, UniqueConstraint>;
 
 /** What a P2002 says about the constraint it collided on. */

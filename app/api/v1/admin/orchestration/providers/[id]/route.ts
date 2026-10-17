@@ -17,6 +17,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -100,7 +101,10 @@ export const PATCH = withAdminAuth<{ id: string }>(
         apiKeyPresent: await hasProviderKey(updated),
       });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      if (
+        isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.providerSlug) ||
+        isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.providerName)
+      ) {
         throw new ValidationError(
           `Provider with slug '${body.slug}' or name '${body.name}' already exists`,
           {

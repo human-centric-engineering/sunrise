@@ -24,7 +24,6 @@ import {
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
-import { Prisma } from '@prisma/client';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -79,6 +78,7 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { invalidateAllAgentAccess } from '@/lib/orchestration/knowledge/resolveAgentDocumentAccess';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -246,15 +246,32 @@ describe('POST /api/v1/admin/orchestration/knowledge/tags', () => {
   it('returns 409 when slug already exists', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.knowledgeTag.create).mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: '7.0.0',
-      })
+      uniqueViolationError({ index: 'knowledge_tag_slug_key', modelName: 'KnowledgeTag' })
     );
 
     const response = await POST(makeBodyRequest('POST', { slug: 'support', name: 'Support' }));
 
     expect(response.status).toBe(409);
+  });
+
+  it('does not answer the slug message for a P2002 on another constraint (t-814)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.knowledgeTag.create).mockRejectedValue(
+      uniqueViolationError({
+        index: 'ai_knowledge_document_tag_documentId_tagId_key',
+        modelName: 'AiKnowledgeDocumentTag',
+      })
+    );
+
+    const response = await POST(makeBodyRequest('POST', { slug: 'support', name: 'Support' }));
+
+    expect(response.status).toBe(400);
+    const otherData = await parseJson<{
+      error: { code: string; message: string; details?: unknown };
+    }>(response);
+    expect(otherData.error.code).toBe('VALIDATION_ERROR');
+    expect(otherData.error.message).toBe('A record with that value already exists');
+    expect(otherData.error.details).toBeUndefined();
   });
 
   it('returns 400 when slug is missing', async () => {
@@ -334,10 +351,7 @@ describe('PATCH /api/v1/admin/orchestration/knowledge/tags/:id', () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     vi.mocked(prisma.knowledgeTag.findUnique).mockResolvedValue(makeTag());
     vi.mocked(prisma.knowledgeTag.update).mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: '7.0.0',
-      })
+      uniqueViolationError({ index: 'knowledge_tag_slug_key', modelName: 'KnowledgeTag' })
     );
 
     const response = await PATCH(
@@ -346,6 +360,30 @@ describe('PATCH /api/v1/admin/orchestration/knowledge/tags/:id', () => {
     );
 
     expect(response.status).toBe(409);
+  });
+
+  it('does not answer the slug message for a P2002 on another constraint (t-814)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    vi.mocked(prisma.knowledgeTag.findUnique).mockResolvedValue(makeTag());
+    vi.mocked(prisma.knowledgeTag.update).mockRejectedValue(
+      uniqueViolationError({
+        index: 'ai_knowledge_document_tag_documentId_tagId_key',
+        modelName: 'AiKnowledgeDocumentTag',
+      })
+    );
+
+    const response = await PATCH(
+      makeByIdRequest('PATCH', { slug: 'already-taken' }),
+      makeParams(TAG_ID)
+    );
+
+    expect(response.status).toBe(400);
+    const otherData = await parseJson<{
+      error: { code: string; message: string; details?: unknown };
+    }>(response);
+    expect(otherData.error.code).toBe('VALIDATION_ERROR');
+    expect(otherData.error.message).toBe('A record with that value already exists');
+    expect(otherData.error.details).toBeUndefined();
   });
 });
 

@@ -30,7 +30,6 @@ import {
   mockAuthenticatedUser,
   mockUnauthenticatedUser,
 } from '@/tests/helpers/auth';
-import { Prisma } from '@prisma/client';
 
 // ─── Mock dependencies ───────────────────────────────────────────────────────
 
@@ -71,6 +70,7 @@ vi.mock('@/lib/orchestration/audit/admin-audit-logger', () => ({
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { hasProviderKey } from '@/lib/orchestration/llm/provider-credentials';
+import { uniqueViolationError } from '@/tests/helpers/prisma-errors';
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -438,9 +438,9 @@ describe('POST /api/v1/admin/orchestration/providers', () => {
   describe('Conflict errors', () => {
     it('returns 409 when slug/name already exists (P2002)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
-      const p2002 = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
-        code: 'P2002',
-        clientVersion: '7.0.0',
+      const p2002 = uniqueViolationError({
+        index: 'ai_provider_config_slug_key',
+        modelName: 'AiProviderConfig',
       });
       vi.mocked(prisma.aiProviderConfig.create).mockRejectedValue(p2002);
 
@@ -449,6 +449,41 @@ describe('POST /api/v1/admin/orchestration/providers', () => {
       expect(response.status).toBe(409);
       const data = await parseJson(response);
       expect(data).toMatchObject({ success: false, error: { code: 'CONFLICT' } });
+    });
+
+    it('returns 409 when the name is taken (P2002 on the name constraint, t-814)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiProviderConfig.create).mockRejectedValue(
+        uniqueViolationError({
+          index: 'ai_provider_config_name_key',
+          modelName: 'AiProviderConfig',
+        })
+      );
+
+      const response = await POST(makePostRequest(VALID_PROVIDER));
+
+      expect(response.status).toBe(409);
+      const data = await parseJson(response);
+      expect(data).toMatchObject({ success: false, error: { code: 'CONFLICT' } });
+    });
+
+    it('does not answer the slug message for a P2002 on another constraint (t-814)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      const p2002 = uniqueViolationError({
+        index: 'ai_provider_model_providerSlug_modelId_key',
+        modelName: 'AiProviderModel',
+      });
+      vi.mocked(prisma.aiProviderConfig.create).mockRejectedValue(p2002);
+
+      const response = await POST(makePostRequest(VALID_PROVIDER));
+
+      expect(response.status).toBe(400);
+      const otherData = await parseJson<{
+        error: { code: string; message: string; details?: unknown };
+      }>(response);
+      expect(otherData.error.code).toBe('VALIDATION_ERROR');
+      expect(otherData.error.message).toBe('A record with that value already exists');
+      expect(otherData.error.details).toBeUndefined();
     });
   });
 });

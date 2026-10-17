@@ -12,6 +12,7 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { knowledgeTagCounts } from '@/lib/orchestration/admin/global-config-usage';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { administersPlatform } from '@/lib/auth/admin-viewer';
@@ -116,7 +117,7 @@ export const POST = withAdminAuth(
 
       return successResponse(tag, undefined, { status: 201 });
     } catch (err) {
-      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.knowledgeTagSlug)) {
         throw new ConflictError(`Knowledge tag with slug '${body.slug}' already exists`);
       }
       throw err;
