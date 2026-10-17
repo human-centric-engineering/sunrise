@@ -190,7 +190,9 @@ export const POST = withAdminAuth(async (request, session) => {
       adminId: session.user.id,
       pendingRole: existingInvitation.metadata.role,
     });
-    throw new ForbiddenError('Only a platform administrator can set a platform role');
+    throw new ForbiddenError(
+      'Only a platform administrator can re-send an invitation that grants a platform role'
+    );
   }
 
   // 6b. Which org this invitation joins, and as what (§106). The body's org

@@ -10,8 +10,10 @@
  * `TENANCY_MODE=multi` and writes nothing, because there the install org is
  * the vendor's own.
  *
- * Exit codes: 0 done (or nothing to do), 2 could not run (refused at `multi`,
- * or the database could not be reached).
+ * Exit codes: 0 done (or nothing to do), 2 failed: refused at `multi`, or a
+ * database error. It writes in batches, so rows from batches before the error
+ * stay written; re-running finishes the job, because it only adds what is
+ * missing.
  *
  * @see lib/tenancy/membership.ts — backfillInstallMemberships
  * @see .context/tenancy/identity.md
