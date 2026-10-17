@@ -550,12 +550,18 @@ PATCH /api/v1/users/:id
 
 - **401 Unauthorized**: No valid session
 - **403 Forbidden**: User does not have ADMIN role
+- **403 Forbidden**: The body changes `role` and the caller is not a platform admin
 - **404 Not Found**: User ID does not exist
 - **400 Validation Error**: Invalid input data or no fields provided
 - **400 SELF_ROLE_CHANGE**: Admin attempting to change their own role
 
 **Security Notes**:
 
+- Only a platform admin can change `role`, whatever the authorization policy
+  admits (t-837). A fork whose `canAdminister` lets an org's OWNER/ADMIN reach
+  this route lets them edit `name` and `emailVerified`, but not promote anyone.
+  A support session counts as not a platform admin. Sending the role the user
+  already has is not a change.
 - Admins cannot change their own role (prevents accidental self-lockout)
 - All role changes are logged with admin ID and changes made
 
