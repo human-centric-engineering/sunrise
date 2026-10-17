@@ -73,6 +73,11 @@ model AiWebhookDelivery {
   // refuse it. Its own column so no later `lastError` write can clear it;
   // `lastError` keeps the human-readable "(not retried: …)" wording.
   stoppedByErasure Boolean   @default(false)
+  // Bumped by each manual retry or DLQ replay (t-822), never by an automatic
+  // retry. An email send's Resend idempotency key names it, so a retry after a
+  // timeout that Resend in fact accepted is deduplicated, while an admin's
+  // resend is a new send.
+  sendGeneration   Int       @default(0)
 
   // Where the latest attempt was sent: the URL's origin only (no path, query,
   // userinfo or fragment), or the email address, trimmed and lower-cased. Null

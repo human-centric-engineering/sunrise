@@ -43,6 +43,11 @@ vi.mock('@/lib/email/client', () => ({
   getDefaultSender: vi.fn(() => 'Sunrise <noreply@example.com>'),
   isEmailEnabled: vi.fn(() => true),
 }));
+// A pass-through spy, so a test can read the props the email was rendered with.
+vi.mock('@/emails/event-notification', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/emails/event-notification')>();
+  return { ...actual, default: vi.fn(actual.default) };
+});
 vi.mock('@react-email/render', () => ({
   render: vi.fn().mockResolvedValue('<html>rendered</html>'),
 }));
@@ -114,6 +119,7 @@ function makeDelivery(overrides: Record<string, unknown> = {}) {
     destinationFingerprint: null,
     previousDestinations: null,
     stoppedByErasure: false,
+    sendGeneration: 0,
     ...overrides,
   };
 }
@@ -1324,8 +1330,108 @@ describe('email-channel delivery', () => {
         html: expect.stringContaining('rendered'),
       }),
       // Bounded: the SDK request is handed the timeout’s signal (t-808).
-      { signal: expect.any(AbortSignal) }
+      { signal: expect.any(AbortSignal), idempotencyKey: expect.any(String) }
     );
+  });
+
+  describe('the Resend idempotency key (t-822)', () => {
+    const createdAt = new Date('2026-10-17T09:00:00.000Z');
+    const keyOf = (call: number): string | undefined =>
+      (mockResendSend.mock.calls[call]?.[1] as { idempotencyKey?: string } | undefined)
+        ?.idempotencyKey;
+
+    /** A failed email row due for the maintenance tick. */
+    function dueEmailRow(overrides: Record<string, unknown> = {}) {
+      return {
+        ...makeDelivery({
+          status: 'failed',
+          attempts: 1,
+          nextRetryAt: new Date(Date.now() - 1_000),
+          createdAt,
+          // As the dispatch below stored it.
+          eventType: 'workflow_failed',
+          payload: { event: 'workflow_failed', data: { error: 'step exploded' } },
+          ...overrides,
+        }),
+        subscription: makeEmailSub(),
+      };
+    }
+
+    it('is the same on an automatic retry, so a timed-out send Resend accepted is not sent twice', async () => {
+      vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([makeEmailSub()] as never);
+      vi.mocked(prisma.aiWebhookDelivery.create).mockResolvedValue(makeDelivery({ createdAt }));
+      // First send: the answer never comes back, and the attempt times out.
+      vi.useFakeTimers();
+      try {
+        mockResendSend.mockImplementationOnce(() => new Promise(() => undefined));
+        const dispatched = dispatchWebhookEvent('workflow_failed', { error: 'step exploded' });
+        await vi.advanceTimersByTimeAsync(DISPATCH_TIMEOUT_MS.email);
+        await dispatched;
+      } finally {
+        vi.useRealTimers();
+      }
+
+      // The tick's retry of the same row, as its claim returns it.
+      const row = dueEmailRow();
+      vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValue([row] as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+        { ...row, status: 'pending' },
+      ] as never);
+      await processPendingRetries();
+
+      expect(mockResendSend).toHaveBeenCalledTimes(2);
+      expect(keyOf(0)).toMatch(/^webhook-delivery\/del-1\/0\/[0-9a-f]{16}$/);
+      expect(keyOf(1)).toBe(keyOf(0));
+      // Resend refuses a reused key on a different request, so both attempts
+      // render the row's own time, not the per-attempt body timestamp.
+      const { default: EventNotification } = await import('@/emails/event-notification');
+      const rendered = vi.mocked(EventNotification).mock.calls.map((c) => c[0].timestamp);
+      expect(rendered).toEqual([createdAt.toISOString(), createdAt.toISOString()]);
+      expect(mockResendSend.mock.calls[1][0]).toEqual(mockResendSend.mock.calls[0][0]);
+    });
+
+    it('changes on a manual retry or DLQ replay, whose reset bumps the send generation', async () => {
+      vi.mocked(prisma.aiWebhookDelivery.findUnique).mockResolvedValueOnce({
+        ...makeDelivery({ status: 'delivered', attempts: 1, createdAt }),
+        subscription: makeEmailSub(),
+      } as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+        makeDelivery({ status: 'pending', attempts: 0, createdAt, sendGeneration: 1 }),
+      ] as never);
+
+      await retryDelivery('del-1', { awaitDelivery: true });
+
+      expect(prisma.aiWebhookDelivery.updateManyAndReturn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ sendGeneration: { increment: 1 } }),
+        })
+      );
+      expect(mockResendSend).toHaveBeenCalledOnce();
+      expect(keyOf(0)).toMatch(/^webhook-delivery\/del-1\/1\//);
+    });
+
+    it('changes when the subscription address was edited between attempts', async () => {
+      const first = dueEmailRow();
+      vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValueOnce([first] as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+        { ...first, status: 'pending' },
+      ] as never);
+      await processPendingRetries();
+
+      const second = {
+        ...dueEmailRow(),
+        subscription: makeEmailSub({ emailAddress: 'new@example.com' }),
+      };
+      vi.mocked(prisma.aiWebhookDelivery.findMany).mockResolvedValueOnce([second] as never);
+      vi.mocked(prisma.aiWebhookDelivery.updateManyAndReturn).mockResolvedValueOnce([
+        { ...second, status: 'pending' },
+      ] as never);
+      await processPendingRetries();
+
+      expect(mockResendSend).toHaveBeenCalledTimes(2);
+      expect(keyOf(1)).not.toBe(keyOf(0));
+      expect(keyOf(1)).toMatch(/^webhook-delivery\/del-1\/0\//);
+    });
   });
 
   it('marks email delivery as delivered when Resend returns no error', async () => {
@@ -1513,7 +1619,7 @@ describe('email-channel delivery', () => {
       expect.objectContaining({
         subject: expect.stringContaining('Workflow failed · Nightly Refresh'),
       }),
-      { signal: expect.any(AbortSignal) }
+      { signal: expect.any(AbortSignal), idempotencyKey: expect.any(String) }
     );
   });
 
@@ -1526,7 +1632,7 @@ describe('email-channel delivery', () => {
       expect.objectContaining({
         subject: expect.stringContaining('Provider circuit breaker opened · anthropic'),
       }),
-      { signal: expect.any(AbortSignal) }
+      { signal: expect.any(AbortSignal), idempotencyKey: expect.any(String) }
     );
   });
 
@@ -1541,7 +1647,7 @@ describe('email-channel delivery', () => {
       expect.objectContaining({
         subject: '[Sunrise] Sunrise event: custom_unknown',
       }),
-      { signal: expect.any(AbortSignal) }
+      { signal: expect.any(AbortSignal), idempotencyKey: expect.any(String) }
     );
   });
 });

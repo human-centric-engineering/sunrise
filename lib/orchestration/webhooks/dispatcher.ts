@@ -18,7 +18,7 @@
  * changing the public API.
  */
 
-import { createHmac } from 'crypto';
+import { createHash, createHmac } from 'crypto';
 import { render } from '@react-email/render';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
@@ -231,6 +231,8 @@ export async function retryDelivery(
     data: {
       status: 'pending',
       attempts: 0,
+      // A new send, so its email gets a new idempotency key (t-822).
+      sendGeneration: { increment: 1 },
       lastError: null,
       nextRetryAt: null,
       lastAttemptAt: null,
@@ -371,8 +373,11 @@ type DeliveryOutcome =
   | { delivered: true; statusCode?: number }
   | { delivered: false; error: string; statusCode?: number; terminal?: boolean };
 
+/** What an attempt reads off its delivery row. */
+type AttemptRecord = DeliveryLike & { createdAt: Date; sendGeneration: number };
+
 async function attemptDelivery(
-  record: DeliveryLike,
+  record: AttemptRecord,
   sub: SubscriptionLike,
   body: string,
   policy: RetryPolicy
@@ -386,7 +391,7 @@ async function attemptDelivery(
 
   const outcome: DeliveryOutcome =
     sub.channel === 'email'
-      ? await attemptEmailDelivery(sub, body)
+      ? await attemptEmailDelivery(record, sub, body)
       : await attemptWebhookDelivery(sub, body);
 
   if (outcome.delivered) {
@@ -627,8 +632,21 @@ async function attemptWebhookDelivery(
  * The body parameter is the same JSON string used for webhook delivery
  * (`{ event, timestamp, data }`) — we parse it and pass the fields
  * into the template as props.
+ *
+ * The send carries a Resend idempotency key (t-822): a timed-out attempt that
+ * Resend in fact accepted is not sent again by the automatic retry. The key
+ * names the row's `sendGeneration`, so a manual retry or DLQ replay (which
+ * bump it) sends again, and the address, so a retry after the subscription's
+ * address was edited is a send to the new one. Resend refuses a reused key
+ * whose request differs, so the email shows the row's `createdAt`, not the
+ * body's per-attempt timestamp. Resend keeps a key for 24 hours; the
+ * automatic retries all fall well inside that.
  */
-async function attemptEmailDelivery(sub: SubscriptionLike, body: string): Promise<DeliveryOutcome> {
+async function attemptEmailDelivery(
+  record: AttemptRecord,
+  sub: SubscriptionLike,
+  body: string
+): Promise<DeliveryOutcome> {
   if (!sub.emailAddress) {
     return {
       delivered: false,
@@ -647,12 +665,11 @@ async function attemptEmailDelivery(sub: SubscriptionLike, body: string): Promis
   }
 
   let event: string;
-  let timestamp: string;
   let data: Record<string, unknown>;
+  const timestamp = record.createdAt.toISOString();
   try {
     const parsed = JSON.parse(body) as Record<string, unknown>;
     event = typeof parsed.event === 'string' ? parsed.event : 'unknown';
-    timestamp = typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString();
     data = toJsonRecord(parsed.data);
   } catch (err) {
     return {
@@ -667,6 +684,7 @@ async function attemptEmailDelivery(sub: SubscriptionLike, body: string): Promis
   }
 
   const to = sub.emailAddress;
+  const idempotencyKey = emailIdempotencyKey(record, to);
   try {
     // Bounded, render and send together, so the attempt ends well inside the
     // retry claim's lease and no second sender claims the row while it is
@@ -676,7 +694,10 @@ async function attemptEmailDelivery(sub: SubscriptionLike, body: string): Promis
     const result = await withTimeout(DISPATCH_TIMEOUT_MS.email, 'Email send', async (signal) => {
       const html = await render(EventNotification({ event, timestamp, data }));
       const subject = buildEmailSubject(event, data);
-      return resend.emails.send({ from: getDefaultSender(), to, subject, html }, { signal });
+      return resend.emails.send(
+        { from: getDefaultSender(), to, subject, html },
+        { signal, idempotencyKey }
+      );
     });
 
     // Resend returns `{ data: { id }, error: null }` on success.
@@ -687,6 +708,15 @@ async function attemptEmailDelivery(sub: SubscriptionLike, body: string): Promis
   } catch (err) {
     return { delivered: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * The Resend idempotency key for one send of a delivery to `to`. The address
+ * goes in as a hash: the key is stored by Resend and shown in its dashboard.
+ */
+function emailIdempotencyKey(record: AttemptRecord, to: string): string {
+  const addressHash = createHash('sha256').update(to.trim().toLowerCase()).digest('hex');
+  return `webhook-delivery/${record.id}/${record.sendGeneration}/${addressHash.slice(0, 16)}`;
 }
 
 /**

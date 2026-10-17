@@ -160,6 +160,29 @@ key/value detail table for non-action fields, a `changes` block with
 from→to colouring, and Approve/Reject buttons when the payload
 includes `approveUrl` / `rejectUrl` (i.e. `approval_required`).
 
+**An email send is deduplicated across its automatic retries (t-822).** A
+send that times out may still have been accepted by Resend, so each one
+carries a Resend idempotency key,
+`webhook-delivery/<deliveryId>/<sendGeneration>/<address hash>`:
+
+- **Automatic retries** (the in-process timer and the maintenance tick) reuse
+  the key, so a retry after a timed-out send Resend accepted does not send a
+  second email. Resend answers it with the original send.
+- **A manual retry or a DLQ replay** bumps the row's `sendGeneration` when it
+  resets the row, so it gets a new key and sends again. An admin who resends
+  means it.
+- **An edited address** gives a new key, so a retry after the subscription's
+  address changed is a send to the new address.
+- **The key lasts 24 hours** at Resend. The automatic retries all fall well
+  inside that: the backoff is capped at 86,400 s per step, but the defaults
+  are 10, 60 and 300 s. A retry later than 24 hours after its first attempt
+  is sent again.
+- **The email shows the delivery's `createdAt`**, not a per-attempt time.
+  Resend refuses a reused key on a request that differs from the first
+  (409 `invalid_idempotent_request`). For the same reason, a retry of a
+  payload an erasure redacted between attempts fails rather than sending
+  the redacted copy.
+
 ## API Endpoints
 
 Uses admin orchestration webhook endpoints:
