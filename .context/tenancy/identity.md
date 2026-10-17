@@ -267,6 +267,14 @@ follows [the active org](#the-active-org-which-org-a-session-acts-in) rule,
 which starts anyone in several orgs in the install org, the same as every
 other single-tenant user who belongs to a second org.
 
+The floor is written at signup, so an account invited into another org before
+#872 shipped has none. `npm run db:tenancy:install-floor`
+(`backfillInstallMemberships`, t-835) adds it for every user who lacks an
+install-org membership, by the same role rule on the stored platform role.
+It leaves every existing row alone, writes nothing on a second run, and
+refuses at `multi`, for the reason below. A migration cannot do this, because
+the mode is in the environment, not the database.
+
 **At `multi` they are not.** There the install org is the vendor's own: it
 holds the control plane (every org's usage, the provider policy, the Learn
 page), and a customer org's OWNER or ADMIN can invite people into their own

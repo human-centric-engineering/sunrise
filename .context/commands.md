@@ -58,6 +58,12 @@ TENANCY_APP_ROLE_PASSWORD=… npm run db:tenancy:role -- --create   # the NOBYPA
 npm run db:tenancy:role -- --drop                           # revoke, then drop it
 ```
 
+At `single` only (it refuses at `multi`), using `DATABASE_URL`:
+
+```bash
+npm run db:tenancy:install-floor   # give every user without one an install-org membership (#872 backfill; idempotent)
+```
+
 > `prisma db push` is intentionally **not** exposed as a script — it bypasses
 > migration history and lets dev/prod schemas diverge silently. Always use
 > `db:migrate:dev`. See [`database/migrations.md`](./database/migrations.md).
