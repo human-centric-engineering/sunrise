@@ -169,17 +169,15 @@ export function ProfileForm() {
 
 import { authClient } from '@/lib/auth/client'
 import { Button } from '@/components/ui/button'
-import { useRouter } from 'next/navigation'
 
 export function LogoutButton() {
-  const router = useRouter()
-
   const handleLogout = async () => {
     await authClient.signOut({
       fetchOptions: {
         onSuccess: async () => {
-          router.push('/')
-          router.refresh()
+          // Full page load: a client-side navigation would keep pages
+          // rendered for the signed-in user in the Router Cache
+          window.location.href = '/'
         },
         onError: (ctx) => {
           console.error('Logout failed:', ctx.error)
@@ -204,11 +202,8 @@ export function LogoutButton() {
 
 import { authClient } from '@/lib/auth/client'
 import { Button } from '@/components/ui/button'
-import { useRouter } from 'next/navigation'
 
 export function LogoutButton() {
-  const router = useRouter()
-
   const handleLogout = async () => {
     try {
       // Optional: Clear client-side data
@@ -221,9 +216,8 @@ export function LogoutButton() {
       // Sign out
       await authClient.signOut()
 
-      // Redirect and refresh
-      router.push('/')
-      router.refresh()
+      // Full page load, so the Router Cache goes with the session
+      window.location.href = '/'
     } catch (error) {
       console.error('Logout failed:', error)
     }

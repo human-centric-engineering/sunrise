@@ -7,7 +7,7 @@
  * - Rendering logout button with different variants
  * - User sign-out with loading state
  * - Analytics tracking (USER_LOGGED_OUT event + reset)
- * - Router navigation and refresh
+ * - Full page load to the redirect path (not a client-side navigation, #707)
  * - Error handling during logout
  *
  * @see components/auth/logout-button.tsx
@@ -17,23 +17,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { LogoutButton } from '@/components/auth/logout-button';
-import { createMockRouter, type MockRouter } from '@/tests/types/mocks';
 
 // Mock dependencies
 vi.mock('@/lib/auth/client', () => ({
   authClient: {
     signOut: vi.fn(),
   },
-}));
-
-vi.mock('next/navigation', () => ({
-  useRouter: vi.fn(() => ({
-    push: vi.fn(),
-    replace: vi.fn(),
-    refresh: vi.fn(),
-  })),
-
-  useSearchParams: () => ({ get: () => null }),
 }));
 
 vi.mock('@/lib/analytics', () => ({
@@ -59,19 +48,19 @@ vi.mock('@/lib/logging', () => ({
  * Test Suite: LogoutButton Component
  */
 describe('components/auth/logout-button', () => {
-  let mockRouter: Pick<MockRouter, 'push' | 'refresh'>;
+  const originalLocation = window.location;
   let mockAnalytics: { track: ReturnType<typeof vi.fn>; reset: ReturnType<typeof vi.fn> };
 
   beforeEach(async () => {
     vi.clearAllMocks();
 
-    // Setup mock router
-    const { useRouter } = await import('next/navigation');
-    mockRouter = {
-      push: vi.fn(),
-      refresh: vi.fn(),
-    };
-    vi.mocked(useRouter).mockReturnValue(createMockRouter({ ...mockRouter }));
+    // A full page load is an assignment to window.location.href, which jsdom
+    // cannot perform; a plain object records it instead.
+    Object.defineProperty(window, 'location', {
+      value: { href: '' },
+      writable: true,
+      configurable: true,
+    });
 
     // Setup mock analytics
     const { useAnalytics } = await import('@/lib/analytics');
@@ -90,6 +79,11 @@ describe('components/auth/logout-button', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    Object.defineProperty(window, 'location', {
+      value: originalLocation,
+      writable: true,
+      configurable: true,
+    });
   });
 
   describe('rendering', () => {
@@ -229,8 +223,7 @@ describe('components/auth/logout-button', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockRouter.push).toHaveBeenCalledWith('/');
-        expect(mockRouter.refresh).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
+        expect(window.location.href).toBe('/');
       });
     });
 
@@ -253,7 +246,7 @@ describe('components/auth/logout-button', () => {
 
       // Assert
       await waitFor(() => {
-        expect(mockRouter.push).toHaveBeenCalledWith('/login');
+        expect(window.location.href).toBe('/login');
       });
     });
 
@@ -441,11 +434,11 @@ describe('components/auth/logout-button', () => {
       // Act
       await user.click(button);
 
-      // Assert - Router should NOT be called if signOut failed
+      // Assert - no navigation if signOut failed; the button is usable again
       await waitFor(() => {
-        expect(mockRouter.push).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
-        expect(mockRouter.refresh).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called;
+        expect(button).not.toBeDisabled();
       });
+      expect(window.location.href).toBe('');
     });
   });
 

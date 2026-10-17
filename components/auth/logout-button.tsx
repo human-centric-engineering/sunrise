@@ -1,6 +1,5 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { authClient } from '@/lib/auth/client';
 import { useAnalytics, EVENTS } from '@/lib/analytics';
@@ -29,7 +28,10 @@ interface LogoutButtonProps {
 /**
  * Logout Button Component
  *
- * Handles user sign-out and redirect.
+ * Handles user sign-out and redirect, the same way as the account menu's
+ * sign-out (`UserButton`): a full page load to `redirectTo`, not a client-side
+ * navigation. A soft navigation keeps the Router Cache, so pages rendered for
+ * the signed-in user could still be shown after they signed out (#707).
  * Shows loading state during logout process.
  *
  * Usage:
@@ -44,7 +46,6 @@ export function LogoutButton({
   className,
   redirectTo = '/',
 }: LogoutButtonProps) {
-  const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const { track, reset } = useAnalytics();
 
@@ -60,9 +61,9 @@ export function LogoutButton({
           onSuccess: async () => {
             // Reset analytics identity so PostHog stops associating events with this user
             await reset();
-            // Redirect to home or login page
-            router.push(redirectTo);
-            router.refresh();
+            // Full page load, so no page rendered for the signed-in user
+            // survives in the Router Cache.
+            window.location.href = redirectTo;
           },
           onError: (ctx) => {
             logger.error('Logout failed', ctx.error);

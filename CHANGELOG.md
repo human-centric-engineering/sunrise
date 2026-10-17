@@ -638,6 +638,11 @@ release process.
 
 ### Fixed
 
+- **`LogoutButton` signs out with a full page load, as the account menu
+  does** (t-829, #707). It used `router.push()` and `router.refresh()`, which
+  keep the Router Cache, so pages rendered for the signed-in user could still
+  show after sign-out. Nothing in Sunrise mounts it. A fork that does gets the
+  same sign-out as `UserButton`.
 - **The user-created seam reports a Google or GitHub invitation acceptance as
   an invitation** (t-828, #688). `viaInvitation` was `false` on every OAuth
   signup, so a fork's `lib/app/user-created.ts` hook could not tell an invited

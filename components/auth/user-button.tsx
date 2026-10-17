@@ -83,7 +83,9 @@ export function UserButton() {
             // Track logout and reset user identity
             await track(EVENTS.USER_LOGGED_OUT);
             await reset();
-            // Hard redirect to fully clear in-memory session state (nanostore, cookie cache)
+            // Full page load, not a client-side navigation: better-auth
+            // refreshes its own session store on sign-out, but the Router
+            // Cache would keep pages rendered for the signed-in user (#707).
             window.location.href = '/';
           },
           onError: () => {
