@@ -2416,12 +2416,20 @@ async function main(): Promise<void> {
     // org is entered, and it lets the write through (ruling, 2026-10-02).
     // The key is resolved from the database; the handler is `createFlag`
     // itself, because the feature-flags route's own logger reads Next's
-    // request headers, which exist only inside a request.
+    // request headers, which exist only inside a request. Its owner is a
+    // platform admin: an admin key works only while its owner is one (#746).
+    const keyAdmin = await prisma.user.create({
+      data: {
+        name: `${PREFIX} key admin`,
+        email: `${PREFIX}-keyadmin-${stamp}@example.com`,
+        role: PLATFORM_ADMIN_ROLE,
+      },
+    });
     const rawAdminKey = `sk_${PREFIX}_${stamp}_${'a'.repeat(40)}`;
     await runAsSystem('smoke: mint an unbound admin key', () =>
       prisma.aiApiKey.create({
         data: {
-          userId: a.ownerId,
+          userId: keyAdmin.id,
           name: `${PREFIX} admin key`,
           keyHash: hashApiKey(rawAdminKey),
           keyPrefix: rawAdminKey.slice(0, 8),
