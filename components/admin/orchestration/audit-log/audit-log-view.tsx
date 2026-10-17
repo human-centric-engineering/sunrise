@@ -222,7 +222,7 @@ export function AuditLogView() {
         <Select
           value={support}
           onValueChange={(v) => {
-            setSupport(v as SupportFilter);
+            setSupport(SUPPORT_FILTERS.find((f) => f.value === v)?.value ?? 'all');
             setPage(1);
           }}
         >
