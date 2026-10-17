@@ -292,7 +292,8 @@ async function signInWithGoogle() {
 
 1. **Admin invites user** via `POST /api/v1/users/invite`
    - Provides: name, email, role — and optionally the org the invitee joins
-     (`orgId`, `orgRole`; §106). Absent ⇒ the install org
+     (`orgId`, `orgRole`; §106). Absent ⇒ the install org. `orgRole` needs an
+     `orgId` other than the install org's; the install-org role follows `role`
    - System generates secure token
    - Invitation stored in `Verification` table with metadata
    - Invitation email sent with accept link
@@ -323,7 +324,8 @@ async function signInWithGoogle() {
    - System creates user account via better-auth (stable User ID), inside
      `runInvitedSignup(…, metadata)` so the hooks see the invitation — its
      platform role decides the install-org role (an invited ADMIN owns the
-     install org), and its `orgId`/`orgRole` the membership
+     install org), and its `orgId`/`orgRole` the membership in another org,
+     which comes with an install-org membership as well
    - Email auto-verified on acceptance
    - Welcome email sent
    - Invitation token deleted

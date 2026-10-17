@@ -348,6 +348,13 @@ release process.
 
 ### Changed
 
+- **`POST /api/v1/users/invite` refuses an `orgRole` for the install org**
+  (t-831, #871). It answers 400 `VALIDATION_ERROR` when `orgRole` is sent
+  without an `orgId`, or with `orgId: 'install'`. An install-org role
+  follows the platform `role`, as the members screen already enforces.
+  `membershipForNewUser` ignores such an `orgRole` on an invitation that is
+  already pending, and a resend drops it. An `orgRole` for any other org is
+  unchanged.
 - **`eraseUser()` redacts a person's delivery payloads before its
   transaction** (t-806; owner ruling 2026-10-15). Once its callers' checks
   have passed, it redacts every webhook and event-hook delivery naming the
@@ -631,6 +638,15 @@ release process.
 
 ### Fixed
 
+- **A user invited into another org is a member of the install org too**
+  (t-827, #872). Before, they got only that org's membership, so suspending
+  it locked them out of everything, even on a single-tenant install. Their
+  install-org role follows the platform role the invitation grants. The new
+  `installMembershipForNewUser()` in `lib/tenancy/membership.ts` states it,
+  and `PendingSignup` gains an optional `installMembership`. Their first
+  session still starts in the invited org. Later sessions follow the existing
+  active-org rule, which prefers the install org. Users invited before this
+  release are not backfilled.
 - **Protected and auth routes match on whole path segments** (t-826, #758).
   An `appProtectedRoutes` entry, and the core `/dashboard`, `/settings` and
   `/profile`, now cover the route itself and the paths beneath it, not every

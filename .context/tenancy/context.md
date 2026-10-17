@@ -160,9 +160,9 @@ a Prisma mock it never needed (124 test files run them; 91 mock Prisma
 without `orgMembership`, 32 not at all). The row is kept in step with the
 projection: a platform-role change re-applies the rule to the install
 membership (ruling a, [identity.md](./identity.md#the-invariant-one-install-org-every-user-a-member)),
-and the members API refuses to edit install-org roles. The one remaining way
-the two can differ is an invitation that names an explicit `orgRole` on the
-install org, which is honoured as written.
+and the members API refuses to edit install-org roles. An invitation cannot set
+one either: the invite route refuses an install-org `orgRole`, and one written
+before it did is ignored (#871).
 
 **A support entry is a session that presents as an org ADMIN** (§121 t-824).
 The guards hand the policy and the handler the default user role in place of

@@ -128,19 +128,24 @@ describe('POST /api/v1/users/invite — org axis', () => {
     expect(prisma.org.findUnique).not.toHaveBeenCalled();
   });
 
-  it('an orgRole alone is the install org with an explicit role, and is written', async () => {
-    // Documented and honoured by membershipForNewUser; round 2 of the review
-    // dropped it by keying the body's intent on orgId only.
-    const res = await POST(request({ ...invitee, orgRole: 'ADMIN' }));
+  // A role in the install org follows the platform role, as it does on the
+  // members screen, so the body cannot set one there (#871).
+  it.each([{}, { orgId: 'install' }])(
+    'refuses an orgRole for the install org (%j) and writes nothing',
+    async (org) => {
+      const res = await POST(request({ ...invitee, ...org, orgRole: 'ADMIN' }));
+
+      expect(res.status).toBe(400);
+      expect(JSON.parse(await res.text()).error.code).toBe('VALIDATION_ERROR');
+      expect(generateInvitationToken).not.toHaveBeenCalled();
+    }
+  );
+
+  it('still accepts an orgRole for another org', async () => {
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG, orgRole: 'ADMIN' }));
 
     expect(res.status).toBe(201);
-    expect(writtenMetadata()).toMatchObject({ orgRole: 'ADMIN' });
-    expect(writtenMetadata()).not.toHaveProperty('orgId');
-    expect(JSON.parse(await res.text()).data.invitation).toMatchObject({
-      orgId: null,
-      orgRole: 'ADMIN',
-    });
-    expect(prisma.org.findUnique).not.toHaveBeenCalled();
+    expect(writtenMetadata()).toMatchObject({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
   });
 
   it('writes the org and org role it was given', async () => {
@@ -284,15 +289,16 @@ describe('POST /api/v1/users/invite — org axis', () => {
       );
     });
 
-    it('an orgRole alone in the body overrides the pending keys too', async () => {
-      pending({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
+    it('drops an install-org orgRole a pending invitation carries from before #871', async () => {
+      pending({ orgRole: 'ADMIN' });
 
-      await POST(request({ ...invitee, orgRole: 'MEMBER' }, '?resend=true'));
+      const res = await POST(request({ ...invitee }, '?resend=true'));
 
-      expect(rewritten()).toMatchObject({ orgRole: 'MEMBER' });
+      expect(res.status).toBe(201);
+      expect(rewritten()).toBeDefined();
+      expect(rewritten()).not.toHaveProperty('orgRole');
       expect(rewritten()).not.toHaveProperty('orgId');
     });
-
     it("takes the body's org when it names one — the override is explicit", async () => {
       pending({ orgId: OTHER_ORG, orgRole: 'ADMIN' });
       const another = 'cmorg00000000000000another';

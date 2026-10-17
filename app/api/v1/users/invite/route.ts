@@ -16,7 +16,8 @@
  *   - orgId: The org the invitee joins on acceptance (optional; defaults to
  *     the install org) — must exist and be ACTIVE (§106)
  *   - orgRole: Their role in that org (optional; MEMBER, or OWNER for the
- *     first member of a new org)
+ *     first member of a new org). Refused for the install org, whose role
+ *     follows the platform `role` (#871)
  *
  * Response emailStatus values:
  *   - 'sent': Email was sent successfully
@@ -58,6 +59,7 @@ import { getRouteLogger } from '@/lib/api/context';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
 import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 /**
  * POST /api/v1/users/invite
@@ -99,6 +101,16 @@ export const POST = withAdminAuth(async (request, session) => {
 
   // 3. Validate request body
   const body = await validateRequestBody(request, inviteUserSchema);
+
+  // An install-org role follows the platform role, as on the members screen,
+  // which refuses to edit it (#871). So an `orgRole` with no other org named
+  // is refused rather than stored: `role` is what sets it.
+  if (body.orgRole !== undefined && (!body.orgId || body.orgId === INSTALL_ORG_ID)) {
+    return errorResponse(
+      'A role in the main organisation follows the platform role; set role instead',
+      { code: ErrorCodes.VALIDATION_ERROR, status: 400 }
+    );
+  }
 
   // 4. Parse resend query parameter
   const url = new URL(request.url);
@@ -151,20 +163,25 @@ export const POST = withAdminAuth(async (request, session) => {
   }
 
   // 6b. Which org this invitation joins, and as what (§106). The body's org
-  // keys when it sends either of them (`orgRole` alone means the install org
-  // with an explicit role — `membershipForNewUser` honours it); else, on a
-  // resend, the pending row's — a resend re-sends THIS invitation, and the
+  // keys when it sends either of them; else, on a resend, the pending row's —
+  // a resend re-sends THIS invitation, and the
   // admin table's Resend button posts only `{ name, email, role }`, so
   // without the carry-over a bounced invitation into an org would be
   // silently re-targeted to the install org. The platform `role` has always
   // come from the body on a resend; that is unchanged.
   const bodyNamesTarget = body.orgId !== undefined || body.orgRole !== undefined;
-  const target = bodyNamesTarget
+  const named = bodyNamesTarget
     ? { orgId: body.orgId, orgRole: body.orgRole }
     : {
         orgId: existingInvitation?.metadata.orgId,
         orgRole: existingInvitation?.metadata.orgRole,
       };
+
+  // A resend can carry an install-org `orgRole` from an invitation written
+  // before the body check above refused one; drop it, so the role follows the
+  // platform role (#871).
+  const intoInstall = !named.orgId || named.orgId === INSTALL_ORG_ID;
+  const target = intoInstall ? { orgId: named.orgId, orgRole: undefined } : named;
 
   // The org is in the body (or the pending row), so this cannot be a
   // `resource` resolver on the guard (a resolver runs before the body is

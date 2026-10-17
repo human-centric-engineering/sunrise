@@ -982,6 +982,8 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledTimes(1);
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE },
+        // The install-org floor as well (#872).
+        installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
       });
     });
 
@@ -1060,6 +1062,31 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       // First member of that org → OWNER (the per-org bootstrap).
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: OTHER_ORG, role: ORG_OWNER_ROLE },
+        installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+      });
+    });
+
+    it('judges the install-org floor on the platform role the invitation grants (#872)', async () => {
+      // The row is USER until the route promotes it (t-669), so an invited
+      // platform ADMIN would land as MEMBER of the install org if judged on it.
+      mocks.prisma.orgMembership.count.mockResolvedValue(2);
+      const user = makeUserCreateData({ email: 'invitee@example.com', role: 'USER' });
+      const metadata = {
+        name: 'Invitee',
+        role: 'ADMIN',
+        invitedBy: 'admin-id',
+        invitedAt: new Date().toISOString(),
+        orgId: OTHER_ORG,
+      };
+
+      await runInvitedSignup(
+        () => userCreateBeforeHook(user, { path: '/sign-up/email' }),
+        metadata
+      );
+
+      expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
+        membership: { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE },
+        installMembership: { orgId: INSTALL_ORG_ID, role: ORG_OWNER_ROLE },
       });
     });
 
@@ -1199,6 +1226,26 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
             },
           })
         );
+      });
+
+      it('also writes the install-org floor when the recorded membership is another org (#872)', async () => {
+        mockPendingSignup.getPendingSignup.mockResolvedValue({
+          membership: { orgId: 'cmorg000000000000000other', role: ORG_ADMIN_ROLE },
+          installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+        });
+        const mockUser = makeUserCreateData({
+          id: 'invited-1',
+          email: 'i@example.com',
+          role: 'USER',
+        });
+
+        await userCreateAfterHook(mockUser, { path: '/sign-up/email' });
+
+        expect(mocks.prisma.orgMembership.upsert).toHaveBeenCalledTimes(2);
+        expect(mocks.prisma.orgMembership.upsert.mock.calls.map(([arg]) => arg.create)).toEqual([
+          { orgId: 'cmorg000000000000000other', userId: 'invited-1', role: ORG_ADMIN_ROLE },
+          { orgId: INSTALL_ORG_ID, userId: 'invited-1', role: DEFAULT_ORG_ROLE },
+        ]);
       });
 
       it('falls back to the install-org rule on the row when nothing was recorded', async () => {

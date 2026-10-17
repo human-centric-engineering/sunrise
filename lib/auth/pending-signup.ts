@@ -36,8 +36,16 @@ import type { InitialMembership } from '@/lib/tenancy/membership';
 
 /** What the before hook records for the hooks that follow it. */
 export interface PendingSignup {
-  /** The membership `userCreateAfterHook` will write for this user. */
+  /**
+   * The membership `userCreateAfterHook` will write for this user. Its org is
+   * the one the first session starts in.
+   */
   membership: InitialMembership;
+  /**
+   * The install-org floor, written as well when `membership` names another
+   * org (#872). Absent when `membership` is the install org's.
+   */
+  installMembership?: InitialMembership;
 }
 
 const pendingSignupState = defineRequestState<PendingSignup | null>(() => null);

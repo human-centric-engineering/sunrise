@@ -14,7 +14,9 @@
  * {@link initialMembershipFor} is the ONE statement of the role rule both
  * halves apply — the migration's SQL `CASE` and this function are asserted to
  * agree by `tests/unit/lib/tenancy/migration.test.ts`.
- * {@link membershipForNewUser} layers the invitation on top of it, and
+ * {@link membershipForNewUser} layers the invitation on top of it,
+ * {@link installMembershipForNewUser} is the install-org floor every new user
+ * gets whichever org admitted them, and
  * {@link activeOrgForSession} is the read side: which of a user's orgs a new
  * session starts in, and the self-heal for a user who has none.
  *
@@ -45,7 +47,10 @@ export interface AcceptedInvitation {
   role?: string | null;
   /** The org it names; absent ⇒ the install org. */
   orgId?: string | null;
-  /** The org role it names; absent ⇒ the rule's default. */
+  /**
+   * The org role it names in a non-install org; absent ⇒ the rule's default.
+   * Ignored for the install org, whose role follows the platform role (#871).
+   */
   orgRole?: OrgRole | null;
 }
 
@@ -86,7 +91,9 @@ export function initialMembershipFor(user: NewUserShape): InitialMembership {
  *   row happened to carry at creation — the password accept-invite route
  *   applies `metadata.role` only after `signUpEmail` returns, so an invited
  *   platform ADMIN judged on the row would land as `MEMBER` (t-669's finding).
- *   An explicit `orgRole` on the install org is honoured as written.
+ *   An `orgRole` on the install org is ignored: there the role follows the
+ *   platform role, as everywhere else (#871). The invite route refuses one
+ *   now; this covers an invitation written before it did.
  * - An invitation naming another org: that org. Its role is the invitation's
  *   `orgRole`, default `MEMBER` — except that **the first member of an org
  *   becomes its `OWNER`**, whatever the invitation said. That is the per-org
@@ -105,14 +112,28 @@ export async function membershipForNewUser(
 ): Promise<InitialMembership> {
   const orgId = invitation?.orgId ?? INSTALL_ORG_ID;
 
-  if (orgId === INSTALL_ORG_ID) {
-    const byRule = initialMembershipFor({ ...user, role: invitation?.role ?? user.role });
-    return invitation?.orgRole ? { orgId, role: invitation.orgRole } : byRule;
-  }
+  if (orgId === INSTALL_ORG_ID) return installMembershipForNewUser(user, invitation);
 
   const existingMembers = await db.orgMembership.count({ where: { orgId } });
   const role = existingMembers === 0 ? ORG_OWNER_ROLE : (invitation?.orgRole ?? DEFAULT_ORG_ROLE);
   return { orgId, role };
+}
+
+/**
+ * The install-org membership a new user gets, whichever org admitted them.
+ *
+ * Every user is a member of the install org (the identity invariant,
+ * `.context/tenancy/identity.md`). A user invited straight into another org
+ * gets this as well as that org's membership: without it, suspending that org
+ * locks them out entirely, even on a single-tenant install (#872). The role is
+ * {@link initialMembershipFor}'s rule on the platform role the invitation
+ * grants, for the same t-669 reason as {@link membershipForNewUser}.
+ */
+export function installMembershipForNewUser(
+  user: NewUserShape,
+  invitation: AcceptedInvitation | null
+): InitialMembership {
+  return initialMembershipFor({ ...user, role: invitation?.role ?? user.role });
 }
 
 /**

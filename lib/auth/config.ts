@@ -16,9 +16,11 @@ import {
   activeOrgForSession,
   ensureMembership,
   initialMembershipFor,
+  installMembershipForNewUser,
   membershipForNewUser,
   type AcceptedInvitation,
 } from '@/lib/tenancy/membership';
+import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { getPendingSignup, setPendingSignup } from '@/lib/auth/pending-signup';
 import {
   validateInvitationToken,
@@ -112,7 +114,11 @@ async function recordPendingMembership(
 ): Promise<void> {
   try {
     const membership = await membershipForNewUser(user, invitation);
-    await setPendingSignup({ membership });
+    const installMembership =
+      membership.orgId === INSTALL_ORG_ID
+        ? undefined
+        : installMembershipForNewUser(user, invitation);
+    await setPendingSignup({ membership, ...(installMembership ? { installMembership } : {}) });
   } catch (error) {
     logger.error('Failed to decide the org membership for a new user', error, {
       email: user.email,
@@ -387,6 +393,9 @@ export async function userCreateAfterHook(
   try {
     const pending = await getPendingSignup();
     await ensureMembership(user.id, pending?.membership ?? initialMembershipFor(user));
+    // A user invited into another org is a member of the install org too, so
+    // suspending that org cannot lock them out of everything (#872).
+    if (pending?.installMembership) await ensureMembership(user.id, pending.installMembership);
   } catch (membershipError) {
     logger.error('Failed to create org membership for new user', membershipError, {
       userId: user.id,

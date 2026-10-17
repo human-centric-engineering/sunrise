@@ -85,12 +85,18 @@ describe('membershipForNewUser', () => {
     });
   });
 
-  it('honours an explicit orgRole on the install org as written', async () => {
-    const row = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
-    expect(
-      await membershipForNewUser(row, { orgId: INSTALL_ORG_ID, orgRole: ORG_ADMIN_ROLE }, db)
-    ).toEqual({ orgId: INSTALL_ORG_ID, role: ORG_ADMIN_ROLE });
-  });
+  // The install-org role follows the platform role; an orgRole on an
+  // invitation written before the route refused one is ignored (#871).
+  it.each([{ orgId: INSTALL_ORG_ID }, {}])(
+    'ignores an orgRole on the install org (%j) and applies the platform-role rule',
+    async (org) => {
+      const row = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
+      expect(await membershipForNewUser(row, { ...org, orgRole: ORG_OWNER_ROLE }, db)).toEqual({
+        orgId: INSTALL_ORG_ID,
+        role: DEFAULT_ORG_ROLE,
+      });
+    }
+  );
 
   it('an invitation naming another org lands there with its orgRole, MEMBER by default', async () => {
     mocks.orgMembership.count.mockResolvedValue(3);
