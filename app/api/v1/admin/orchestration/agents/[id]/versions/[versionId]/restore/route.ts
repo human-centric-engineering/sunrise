@@ -56,10 +56,17 @@ import { assertAgentProvidersApproved } from '@/lib/orchestration/agents/provide
  * arbitrary JSON the DB may hold as `null`, which the PATCH schema (built for
  * user input) doesn't accept. A stored snapshot only needs them to round-trip —
  * they were validated when first written — so we don't re-validate their shape.
+ *
+ * `provider` / `model` also accept the empty string (t-820). It is a stored
+ * value meaning "resolve at runtime" (see the `AiAgent` column comments), held
+ * by any version saved while the agent was on inherit, so restoring one puts
+ * the agent back on inherit. The PATCH body still can't set it.
  */
 const versionSnapshotSchema = updateAgentObjectSchema.extend({
   metadata: z.unknown().optional(),
   providerConfig: z.unknown().optional(),
+  provider: z.union([z.literal(''), updateAgentObjectSchema.shape.provider.unwrap()]).optional(),
+  model: z.union([z.literal(''), updateAgentObjectSchema.shape.model.unwrap()]).optional(),
 });
 
 export const POST = withAdminAuth<{ id: string; versionId: string }>(
@@ -176,8 +183,9 @@ export const POST = withAdminAuth<{ id: string; versionId: string }>(
     // that the agent does not hold now must be one the org is approved for
     // (§120 t-743). A version saved before the org's grant changed would
     // otherwise restore the agent straight into refusal.
+    // An inherit snapshot names no provider, so it has none to approve.
     await assertAgentProvidersApproved(
-      { provider: snapshot.provider, fallbackProviders: snapshot.fallbackProviders },
+      { provider: snapshot.provider || undefined, fallbackProviders: snapshot.fallbackProviders },
       agent
     );
 
