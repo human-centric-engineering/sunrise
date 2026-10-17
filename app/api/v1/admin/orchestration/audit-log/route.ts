@@ -60,7 +60,7 @@ export const GET = withAdminAuth(async (request, _session) => {
   const [entries, total] = await Promise.all([
     prisma.aiAdminAuditLog.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip,
       take: limit,
       include: {

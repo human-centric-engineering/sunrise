@@ -230,11 +230,15 @@ export async function listSupportActivity(
   const where: Prisma.AiAdminAuditLogWhereInput = {
     supportGrantId: options.grantId ?? { not: null },
     supportGrant: { orgId },
+    // Redundant with the grant's org, which is what bounds the read; it lets
+    // the query use the `supportOrgId` index instead of joining every support row.
+    supportOrgId: orgId,
   };
   const [rows, total] = await Promise.all([
     db.aiAdminAuditLog.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      // `id` breaks ties so rows logged in the same millisecond page stably.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip: (options.page - 1) * options.limit,
       take: options.limit,
       select: {

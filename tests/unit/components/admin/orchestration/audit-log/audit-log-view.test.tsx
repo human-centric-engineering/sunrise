@@ -910,6 +910,29 @@ describe('AuditLogView', () => {
     await settle();
   });
 
+  it('shows "Erased user" for a row whose user was erased', async () => {
+    mockFetchSuccess([supportEntry({ userId: null, user: null })]);
+    render(<AuditLogView />);
+
+    expect(await screen.findByText('Erased user')).toBeInTheDocument();
+  });
+
+  it('drops the grant filter when "Not support sessions" is chosen', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([supportEntry()]);
+    render(<AuditLogView />);
+    await user.click(await screen.findByText('Support Bot'));
+    await user.click(screen.getByRole('button', { name: /show this grant.s actions/i }));
+    expect(lastFetchUrl()).toContain('supportGrantId=grant-9');
+
+    await user.click(screen.getByRole('combobox', { name: 'Support sessions' }));
+    await user.click(await screen.findByRole('option', { name: 'Not support sessions' }));
+
+    await waitFor(() => expect(lastFetchUrl()).toContain('support=none'));
+    expect(lastFetchUrl()).not.toContain('supportGrantId');
+    expect(screen.queryByText(/Showing actions under one support grant/)).not.toBeInTheDocument();
+  });
+
   it('offers the three support filter options', async () => {
     const user = userEvent.setup();
     mockFetchSuccess([makeEntry()]);

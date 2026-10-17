@@ -86,9 +86,10 @@ const TABLE: Row[] = [
 type Where = {
   supportGrantId?: string | { not: null };
   supportGrant?: { orgId?: string };
+  supportOrgId?: string;
 };
 
-/** Answers the delegate's `where` the way Postgres would, for the two keys the read may use. */
+/** Answers the delegate's `where` the way Postgres would, for the keys the read may use. */
 function matching(where: Where): Row[] {
   return TABLE.filter((r) => {
     const g = where.supportGrantId;
@@ -96,6 +97,8 @@ function matching(where: Where): Row[] {
     if (g && typeof g === 'object' && r.supportGrantId === null) return false;
     if (where.supportGrant?.orgId !== undefined && r.grantOrgId !== where.supportGrant.orgId)
       return false;
+    // A support row's `supportOrgId` is its grant's org (both come from the tenant context).
+    if (where.supportOrgId !== undefined && r.grantOrgId !== where.supportOrgId) return false;
     return true;
   });
 }

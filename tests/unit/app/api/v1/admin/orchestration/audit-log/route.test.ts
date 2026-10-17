@@ -187,7 +187,7 @@ describe('GET /audit-log', () => {
 
     expect(prisma.aiAdminAuditLog.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       })
     );
   });

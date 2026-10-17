@@ -186,7 +186,11 @@ export function SupportActivityTable({ orgId, grants }: SupportActivityTableProp
             {entries.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} className="text-muted-foreground py-8 text-center">
-                  {loading ? 'Loading…' : 'Support has not worked in this organisation.'}
+                  {loading
+                    ? 'Loading…'
+                    : error
+                      ? 'Nothing to show.'
+                      : 'Support has not worked in this organisation.'}
                 </TableCell>
               </TableRow>
             ) : (

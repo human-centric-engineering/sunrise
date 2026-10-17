@@ -29,7 +29,7 @@ import { ChevronLeft, ChevronRight, RefreshCw, X } from 'lucide-react';
 
 interface AuditEntry {
   id: string;
-  userId: string;
+  userId: string | null;
   action: string;
   entityType: string;
   entityId: string | null;
@@ -38,7 +38,8 @@ interface AuditEntry {
   metadata: Record<string, unknown> | null;
   clientIp: string | null;
   createdAt: string;
-  user: { id: string; name: string; email: string };
+  /** Null once the user is erased (`onDelete: SetNull`). */
+  user: { id: string; name: string; email: string } | null;
   /**
    * Set when the action was made inside a support session (§121 t-825): the
    * org it was made in, and the grant — null once that org is erased.
@@ -222,7 +223,10 @@ export function AuditLogView() {
         <Select
           value={support}
           onValueChange={(v) => {
-            setSupport(SUPPORT_FILTERS.find((f) => f.value === v)?.value ?? 'all');
+            const next = SUPPORT_FILTERS.find((f) => f.value === v)?.value ?? 'all';
+            setSupport(next);
+            // A grant's actions are all support rows: 'none' and a grant match nothing.
+            if (next === 'none') setSupportGrant(null);
             setPage(1);
           }}
         >
@@ -375,7 +379,7 @@ export function AuditLogView() {
                       )}
                   </TableCell>
                   <TableCell className="text-sm">
-                    {entry.user.name}
+                    {entry.user?.name ?? 'Erased user'}
                     {entry.supportOrgId && (
                       <Badge
                         variant="outline"

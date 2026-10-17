@@ -205,6 +205,11 @@ describe('SupportActivityTable', () => {
       'What support did could not be loaded. Please try again.'
     );
     expect(screen.queryByText('Vera Vendor')).not.toBeInTheDocument();
+    // A failed load must not read as "support never worked here".
+    expect(
+      screen.queryByText('Support has not worked in this organisation.')
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('Nothing to show.')).toBeVisible();
   });
 
   it('shows no pagination when the total fits on one page', async () => {
