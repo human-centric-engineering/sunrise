@@ -2118,6 +2118,9 @@ describe('PATCH /api/v1/users/[id] — platform role floor', () => {
     const response = await patch({ role: 'USER', name: 'Renamed' });
 
     expect(response.status).toBe(200);
+    // An unchanged role writes no install-org row (at `multi` that would make
+    // a customer org's member a member of the vendor's org).
+    expect(prisma.orgMembership.upsert).not.toHaveBeenCalled();
   });
 
   it('lets a platform admin change the role under the same policy', async () => {

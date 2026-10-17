@@ -210,7 +210,9 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
     });
     // `accountType` is not editable here (SERVICE is refused above), so the
     // row read before the update still says what kind of account this is.
-    if (body.role) {
+    // Only on an actual change: a body repeating the current role is let
+    // through the floor above, and must not write the install-org row.
+    if (body.role && body.role !== existingUser.role) {
       await syncInstallMembershipRole(
         { id, role: updated.role, accountType: existingUser.accountType },
         tx

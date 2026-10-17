@@ -179,7 +179,19 @@ export async function membershipsForNewUser(
   invitation: AcceptedInvitation | null,
   db: Pick<PrismaClient, 'orgMembership'> = prisma
 ): Promise<NewUserMemberships> {
-  const membership = await membershipForNewUser(user, invitation, db);
+  return withInstallFloor(user, invitation, await membershipForNewUser(user, invitation, db));
+}
+
+/**
+ * `membership`, plus the install-org floor when it names another org at
+ * `single` — the one statement of the floor rule for the decision and for
+ * {@link undecidedMembershipsForNewUser}.
+ */
+function withInstallFloor(
+  user: NewUserShape,
+  invitation: AcceptedInvitation | null,
+  membership: InitialMembership
+): NewUserMemberships {
   if (membership.orgId === INSTALL_ORG_ID || isMultiTenant()) return { membership };
   return { membership, installMembership: installMembershipForNewUser(user, invitation) };
 }
@@ -211,9 +223,7 @@ export function undecidedMembershipsForNewUser(
   user: NewUserShape,
   invitation: AcceptedInvitation | null
 ): NewUserMemberships {
-  const membership = membershipGiven(user, invitation, null);
-  if (membership.orgId === INSTALL_ORG_ID || isMultiTenant()) return { membership };
-  return { membership, installMembership: installMembershipForNewUser(user, invitation) };
+  return withInstallFloor(user, invitation, membershipGiven(user, invitation, null));
 }
 
 /**

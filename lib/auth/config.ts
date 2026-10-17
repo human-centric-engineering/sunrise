@@ -440,10 +440,10 @@ export async function userCreateAfterHook(
   // person cannot act on (retrying says the address is taken), and the user
   // would still be memberless. So a failure is logged at `error` — the
   // operator's signal — and the signup completes. The invariant is restored
-  // on the session path: `sessionCreateBeforeHook` below writes the
-  // install-org default for a user with no membership, and at `single` the
-  // guard resolves a null membership to the install org (t-671); at `multi`
-  // the guard refuses until a membership exists.
+  // on the session path at `single`: `sessionCreateBeforeHook` below writes
+  // the install-org default for a user with no membership, and the guard
+  // resolves a null membership to the install org (t-671). At `multi` nothing
+  // is healed (t-836) and the guard refuses until a membership exists.
   //
   // WHICH membership was decided by the before hook (`recordPendingMembership`)
   // — it is the one place that knows the role and the org an invitation
