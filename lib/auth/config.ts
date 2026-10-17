@@ -124,24 +124,37 @@ async function recordPendingMembership(
   invitation: AcceptedInvitation | null,
   viaInvitation: boolean
 ): Promise<void> {
+  // Three steps, each with its own failure: the fallback below is for a
+  // decision that failed, and must not narrow a role when only recording did.
+  if (viaInvitation) {
+    try {
+      await setInvitationAccepted();
+    } catch (error) {
+      logger.error('Failed to record the invitation acceptance for a new user', error, {
+        email: user.email,
+      });
+    }
+  }
+
+  let memberships;
   try {
-    if (viaInvitation) await setInvitationAccepted();
-    await setPendingSignup(await membershipsForNewUser(user, invitation));
+    memberships = await membershipsForNewUser(user, invitation);
   } catch (error) {
     logger.error('Failed to decide the org membership for a new user', error, {
       email: user.email,
       invitedOrgId: invitation?.orgId ?? null,
     });
-    const undecided = undecidedMembershipsForNewUser(user, invitation);
-    if (!undecided) return;
-    try {
-      await setPendingSignup(undecided);
-    } catch (fallbackError) {
-      logger.error('Failed to record the fallback org membership for a new user', fallbackError, {
-        email: user.email,
-        invitedOrgId: invitation?.orgId ?? null,
-      });
-    }
+    memberships = undecidedMembershipsForNewUser(user, invitation);
+    if (!memberships) return;
+  }
+
+  try {
+    await setPendingSignup(memberships);
+  } catch (error) {
+    logger.error('Failed to record the org membership for a new user', error, {
+      email: user.email,
+      invitedOrgId: invitation?.orgId ?? null,
+    });
   }
 }
 

@@ -412,6 +412,42 @@ describe('POST /api/v1/users/invite — platform role floor', () => {
     });
   });
 
+  function pendingInvitation(role: string) {
+    return {
+      email: invitee.email,
+      metadata: {
+        name: 'Jane Doe',
+        role,
+        invitedBy: 'admin-1',
+        invitedAt: '2026-10-01T00:00:00.000Z',
+      },
+      expiresAt: new Date(Date.now() + 86400000),
+      createdAt: new Date(),
+    };
+  }
+
+  it('refuses that caller re-sending a pending ADMIN invitation, even at the default role', async () => {
+    registerWideningPolicy();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+    vi.mocked(getValidInvitation).mockResolvedValueOnce(pendingInvitation('ADMIN'));
+
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }, '?resend=true'));
+
+    expect(res.status).toBe(403);
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+    expect(updateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  it('still lets that caller re-send a pending default-role invitation', async () => {
+    registerWideningPolicy();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+    vi.mocked(getValidInvitation).mockResolvedValueOnce(pendingInvitation('USER'));
+
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }, '?resend=true'));
+
+    expect(res.status).toBe(201);
+  });
+
   it('lets a platform admin set the ADMIN role', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 

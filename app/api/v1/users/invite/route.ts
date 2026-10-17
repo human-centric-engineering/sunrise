@@ -178,6 +178,21 @@ export const POST = withAdminAuth(async (request, session) => {
     );
   }
 
+  // The same floor for the invitation a resend replaces: re-sending a pending
+  // platform-role invitation rewrites its role and org, so it is a platform
+  // admin's to do (t-833), as the org invitations route refuses it outright.
+  if (
+    existingInvitation &&
+    existingInvitation.metadata.role !== DEFAULT_USER_ROLE &&
+    !isPlatformAdmin(session.principal)
+  ) {
+    log.warn('Resend of a platform-role invitation refused: caller is not a platform admin', {
+      adminId: session.user.id,
+      pendingRole: existingInvitation.metadata.role,
+    });
+    throw new ForbiddenError('Only a platform administrator can set a platform role');
+  }
+
   // 6b. Which org this invitation joins, and as what (§106). The body's org
   // keys when it sends either of them; else, on a resend, the pending row's —
   // a resend re-sends THIS invitation, and the

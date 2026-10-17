@@ -852,7 +852,8 @@ release process.
   an org's OWNER/ADMIN also let them invite someone as a platform `ADMIN`. A
   `role` other than the default now needs the caller to be a platform admin,
   whatever the policy said, and is a 403 otherwise; a support session counts
-  as not one. Stock Sunrise admits only platform admins to the route, so
+  as not one. So does re-sending (`?resend=true`) a pending invitation whose
+  role is not the default, since a resend rewrites its role and org. Stock Sunrise admits only platform admins to the route, so
   nothing changes there. Inviting at the default role is unchanged.
 - **An `admin`-scoped API key stops working when its owner stops being a
   platform admin** (t-830, #746; owner ruling 2026-10-17). Before, demoting

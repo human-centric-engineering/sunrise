@@ -1187,6 +1187,40 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       }
     });
 
+    it('at multi, a failure recording the acceptance does not narrow the decision', async () => {
+      // The fallback is for a decision that failed. The first member of an
+      // org whose count read works is still its OWNER.
+      mockEnv.TENANCY_MODE = 'multi';
+      try {
+        mocks.prisma.orgMembership.count.mockResolvedValue(0);
+        mockPendingSignup.setInvitationAccepted.mockRejectedValueOnce(new Error('no state'));
+        const user = makeUserCreateData({ email: 'invitee@example.com', role: 'USER' });
+        const metadata = {
+          name: 'Invitee',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: new Date().toISOString(),
+          orgId: OTHER_ORG,
+        };
+
+        await runInvitedSignup(
+          () => userCreateBeforeHook(user, { path: '/sign-up/email' }),
+          metadata
+        );
+
+        expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
+          membership: { orgId: OTHER_ORG, role: ORG_OWNER_ROLE },
+        });
+        expect(mocks.logger.error).not.toHaveBeenCalledWith(
+          'Failed to decide the org membership for a new user',
+          expect.anything(),
+          expect.anything()
+        );
+      } finally {
+        mockEnv.TENANCY_MODE = 'single';
+      }
+    });
+
     it('at multi, a failed decision with no org role named lands as MEMBER, never the OWNER bootstrap', async () => {
       mockEnv.TENANCY_MODE = 'multi';
       try {

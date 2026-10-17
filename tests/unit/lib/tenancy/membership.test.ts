@@ -32,6 +32,7 @@ vi.mock('@/lib/env', () => ({ env: mockEnv }));
 import {
   activeOrgForSession,
   backfillInstallMemberships,
+  INSTALL_BACKFILL_BATCH,
   initialMembershipFor,
   membershipForNewUser,
   membershipsForNewUser,
@@ -322,8 +323,10 @@ describe('backfillInstallMemberships (t-835)', () => {
 
   const store = {
     user: {
-      findMany: vi.fn(async () =>
-        users.filter((u) => !rows.some((r) => r.userId === u.id && r.orgId === INSTALL_ORG_ID))
+      findMany: vi.fn(async ({ take }: { take: number }) =>
+        users
+          .filter((u) => !rows.some((r) => r.userId === u.id && r.orgId === INSTALL_ORG_ID))
+          .slice(0, take)
       ),
     },
     orgMembership: {
@@ -375,6 +378,26 @@ describe('backfillInstallMemberships (t-835)', () => {
     expect(await backfillInstallMemberships(storeDb)).toEqual({ written: 0 });
     expect(store.orgMembership.createMany).not.toHaveBeenCalled();
     expect(rows).toEqual(after);
+  });
+
+  it('works through more users than one batch holds', async () => {
+    const many = Array.from({ length: INSTALL_BACKFILL_BATCH * 2 + 1 }, (_, i) => ({
+      id: `u-bulk-${String(i).padStart(4, '0')}`,
+      role: DEFAULT_USER_ROLE,
+      accountType: 'HUMAN',
+    }));
+    users.push(...many);
+    try {
+      const result = await backfillInstallMemberships(storeDb);
+
+      expect(result.written).toBe(many.length + 3);
+      expect(store.orgMembership.createMany).toHaveBeenCalledTimes(3);
+      for (const [args] of store.orgMembership.createMany.mock.calls) {
+        expect(args.data.length).toBeLessThanOrEqual(INSTALL_BACKFILL_BATCH);
+      }
+    } finally {
+      users.splice(users.length - many.length, many.length);
+    }
   });
 
   it('refuses at multi and reads or writes nothing', async () => {
