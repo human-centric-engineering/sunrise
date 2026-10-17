@@ -8,8 +8,8 @@ consent on record, and an audit trail that reads as the org's own user.
 
 A **support grant** is the org's consent instead: its OWNER lets the vendor's
 support staff in, at a level, for a stated reason and a bounded time. This
-page covers the grant and entering an org under one (t-824). How the audit
-log names the support actor on every row is §121's last task (t-825).
+page covers the grant, entering an org under one (t-824), and how every
+audit row made inside names the grant, for the vendor and for the org (t-825).
 
 ## Quick Reference
 

@@ -18,6 +18,21 @@ release process.
 
 ### Added
 
+- **Every admin audit row made in a support session names the grant and the
+  org** (§121 t-825). `AiAdminAuditLog` gains `supportGrantId` (FK to
+  `OrgSupportGrant`, `onDelete: SetNull`) and `supportOrgId` (no FK, so an
+  erased org's support rows stay marked in the vendor's log). Migration
+  `20261017120000_audit_log_support_grant`. `logAdminAction()` fills both from
+  the tenant context, so no caller changes; `AdminAuditEntry` gains an optional
+  `support` for a caller acting on a session from outside one (the switch
+  route's `support.enter`). `GET /api/v1/admin/orchestration/audit-log` rows
+  gain `supportOrgId` and `supportGrant` (with its org), and the route takes
+  `support=only|none` and `supportGrantId`; the Audit Log page marks and
+  filters support rows. New `GET /api/v1/orgs/[id]/support-grants/activity`
+  (`listSupportActivity()` in `lib/tenancy/support-grants.ts`) lists the rows
+  made under the org's own grants, and the Support access page shows them.
+  **Forks:** an audit row written straight to `prisma.aiAdminAuditLog`
+  rather than through `logAdminAction()` is not stamped.
 - **A platform admin enters a customer org under its open support grant**
   (§121 t-824). At `multi`, `enterSessionOrg` admits a platform admin who is
   not a member to an org whose grant `verifiedSupportGrant()` (new, in

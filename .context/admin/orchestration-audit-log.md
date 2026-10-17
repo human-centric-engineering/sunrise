@@ -43,6 +43,7 @@ Single client component (`AuditLogView`) — no server shell, no suspense island
 | Search input   | **Server-side** — debounced (300 ms), sent as `?q=` and applied in Prisma as an `OR` across `action`, `entityName`, and `user.name` (case-insensitive `contains`). Typing resets the page to 1.                                                                                                                                                |
 | Entity type    | Server-side filter. Options include `agent`, `workflow`, `capability`, `provider`, `mcp_api_key`, `knowledge_document`, `settings`, `experiment`, `embed_token`, `backup`, `hook` (event hooks), `webhook_subscription` (outbound subscriptions), `delivery` (manual retries), `mcp_settings`, `conversation`. Selecting one resets to page 1. |
 | Date range     | Server-side — `dateFrom` / `dateTo` sent as query params, coerced to `Date` by Zod. Inclusive on both ends (`gte` / `lte`). Changing either value resets the page to 1.                                                                                                                                                                        |
+| Support        | Server-side. **All actions**, **Support sessions only** (`?support=only`) or **Not support sessions** (`?support=none`). See [Support rows](#support-rows). Changing it resets the page to 1.                                                                                                                                                  |
 | Refresh button | Re-fetches the current page.                                                                                                                                                                                                                                                                                                                   |
 
 All entity types with audit data have corresponding entries in the filter dropdown.
@@ -92,19 +93,57 @@ Admin-guarded (`withAdminAuth`) and rate-limited via `adminLimiter`. Returns a p
 
 **Query params** (validated by `listAuditLogQuerySchema`):
 
-| Param        | Type      | Default | Notes                                                                                |
-| ------------ | --------- | ------- | ------------------------------------------------------------------------------------ |
-| `page`       | int ≥1    | `1`     | From shared `paginationQuerySchema`.                                                 |
-| `limit`      | int 1–100 | `10`    | View component hard-codes `25`.                                                      |
-| `action`     | string    | —       | Exact match on `action` (e.g. `agent.update`).                                       |
-| `entityType` | string    | —       | Exact match on `entityType`.                                                         |
-| `entityId`   | string    | —       | Scope to a single entity (e.g. agent id).                                            |
-| `userId`     | string    | —       | Scope to one admin.                                                                  |
-| `dateFrom`   | date      | —       | `gte` on `createdAt`. Coerced via `z.coerce.date()`.                                 |
-| `dateTo`     | date      | —       | `lte` on `createdAt`.                                                                |
-| `q`          | string    | —       | Case-insensitive `OR` across `action`, `entityName`, and `user.name`. Max 100 chars. |
+| Param            | Type             | Default | Notes                                                                                |
+| ---------------- | ---------------- | ------- | ------------------------------------------------------------------------------------ |
+| `page`           | int ≥1           | `1`     | From shared `paginationQuerySchema`.                                                 |
+| `limit`          | int 1–100        | `10`    | View component hard-codes `25`.                                                      |
+| `action`         | string           | —       | Exact match on `action` (e.g. `agent.update`).                                       |
+| `entityType`     | string           | —       | Exact match on `entityType`.                                                         |
+| `entityId`       | string           | —       | Scope to a single entity (e.g. agent id).                                            |
+| `userId`         | string           | —       | Scope to one admin.                                                                  |
+| `dateFrom`       | date             | —       | `gte` on `createdAt`. Coerced via `z.coerce.date()`.                                 |
+| `dateTo`         | date             | —       | `lte` on `createdAt`.                                                                |
+| `q`              | string           | —       | Case-insensitive `OR` across `action`, `entityName`, and `user.name`. Max 100 chars. |
+| `support`        | `only` \| `none` | —       | Rows with `supportOrgId` set, or rows without. Anything else is a 400.               |
+| `supportGrantId` | cuid             | —       | One grant's rows.                                                                    |
 
-Response data rows include `user: { id, name, email }`. `changes` / `metadata` come through as `Json` (arbitrary-shape objects).
+Response data rows include `user: { id, name, email }`, `supportOrgId`, and `supportGrant: { id, level, org: { id, name } } | null`. `changes` / `metadata` come through as `Json` (arbitrary-shape objects).
+
+## Support rows
+
+At `TENANCY_MODE=multi` a platform admin can work inside a customer org under
+that org's support grant ([support access](../tenancy/support-access.md)).
+Every row written during that session carries two columns that answer "what
+did support change while they were in?":
+
+| Column           | Holds                                  | When the org is erased                  |
+| ---------------- | -------------------------------------- | --------------------------------------- |
+| `supportGrantId` | The grant (FK, `onDelete: SetNull`)    | Nulled with the grant                   |
+| `supportOrgId`   | The org the action was made in (no FK) | Kept, so the row still reads as support |
+
+Both are null on every other row. `userId` is still the individual, never the
+org's own user.
+
+- **Stamped by the logger, not the caller.** `logAdminAction()` reads the
+  tenant context when it is called and stamps the row when the context's
+  source is `'support'`. It reads it synchronously, before the fire-and-forget
+  write starts, so how the write's promise settles does not matter. None of
+  its callers passes anything, and `logConversationAccess()` goes through it.
+- **The one explicit stamp.** `POST /api/v1/orgs/switch` does not enter the
+  org it switches to, so it passes `support: { grantId, orgId }` on the
+  `support.enter` row itself.
+- **Direct writes are not stamped.** A row written straight to
+  `prisma.aiAdminAuditLog` skips the logger. The platform's only direct
+  writers are erasure (`eraseUser`, `eraseFromConfigRecipients`), which no
+  support session reaches. A fork's own direct writes need the stamp passed
+  by hand.
+- **On this page.** A support row shows a **Support** badge beside the user.
+  Expanding it names the org and the grant's level, with **Show this grant's
+  actions**, which filters to that grant (`?supportGrantId=`) until the chip
+  above the table is cleared.
+- **The org's view.** The org reads its own rows on its Support access page,
+  through `GET /api/v1/orgs/[id]/support-grants/activity`. That read requires
+  the grant to be the org's, so naming another org's grant returns nothing.
 
 ## Logger library
 
@@ -130,6 +169,7 @@ interface AdminAuditEntry {
   changes?: Record<string, { from: unknown; to: unknown }> | null;
   metadata?: Record<string, unknown> | null;
   clientIp?: string | null;
+  support?: { grantId: string; orgId: string }; // leave out: read from the tenant context
 }
 ```
 
