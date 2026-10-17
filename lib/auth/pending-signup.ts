@@ -46,6 +46,11 @@ export interface PendingSignup {
    * org (#872). Absent when `membership` is the install org's.
    */
   installMembership?: InitialMembership;
+  /**
+   * True when this signup redeemed an invitation token. The OAuth before hook
+   * consumes the token, so the after hook cannot look it up (#688).
+   */
+  viaInvitation?: boolean;
 }
 
 const pendingSignupState = defineRequestState<PendingSignup | null>(() => null);

@@ -53,6 +53,11 @@ import type { InvitationRecord } from '@/lib/utils/invitation-token';
 import type { UserCreateData, DatabaseHookContext } from '@/lib/auth/config';
 import { SYSTEM_USER_EMAIL } from '@/lib/auth/constants';
 import { humanWhere } from '@/lib/auth/account';
+import {
+  registerUserCreatedHook,
+  __resetUserCreatedHooksForTests,
+  type UserCreatedContext,
+} from '@/lib/auth/user-created-hooks';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { ORG_OWNER_ROLE, ORG_ADMIN_ROLE, DEFAULT_ORG_ROLE } from '@/lib/tenancy/roles';
 
@@ -984,6 +989,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE },
         // The install-org floor as well (#872).
         installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+        viaInvitation: true,
       });
     });
 
@@ -996,6 +1002,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       expect(result.data.role).toBe('ADMIN');
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: INSTALL_ORG_ID, role: ORG_OWNER_ROLE },
+        viaInvitation: true,
       });
     });
 
@@ -1021,6 +1028,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       // …but the membership is the invitation's.
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: INSTALL_ORG_ID, role: ORG_OWNER_ROLE },
+        viaInvitation: true,
       });
     });
 
@@ -1040,6 +1048,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+        viaInvitation: true,
       });
     });
 
@@ -1063,6 +1072,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: OTHER_ORG, role: ORG_OWNER_ROLE },
         installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+        viaInvitation: true,
       });
     });
 
@@ -1087,6 +1097,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE },
         installMembership: { orgId: INSTALL_ORG_ID, role: ORG_OWNER_ROLE },
+        viaInvitation: true,
       });
     });
 
@@ -1484,6 +1495,54 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
             to: mockUser.email,
           })
         );
+      });
+    });
+
+    describe('user-created seam: viaInvitation (#688)', () => {
+      let seen: UserCreatedContext[];
+
+      beforeEach(() => {
+        seen = [];
+        __resetUserCreatedHooksForTests();
+        registerUserCreatedHook('test', (ctx) => {
+          seen.push(ctx);
+        });
+      });
+
+      afterEach(() => {
+        __resetUserCreatedHooksForTests();
+      });
+
+      it('reports an OAuth invitation acceptance as an invitation', async () => {
+        // The before hook consumed the token, so only the request state knows.
+        mockPendingSignup.getPendingSignup.mockResolvedValue({
+          membership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+          viaInvitation: true,
+        });
+        const mockUser = makeUserCreateData({ id: 'oauth-invitee', email: 'i@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
+
+        expect(seen).toEqual([
+          expect.objectContaining({
+            userId: 'oauth-invitee',
+            signupMethod: 'oauth',
+            viaInvitation: true,
+          }),
+        ]);
+      });
+
+      it('reports an uninvited OAuth signup as not an invitation', async () => {
+        mockPendingSignup.getPendingSignup.mockResolvedValue({
+          membership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+        });
+        const mockUser = makeUserCreateData({ id: 'oauth-stranger', email: 's@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
+
+        expect(seen).toEqual([
+          expect.objectContaining({ signupMethod: 'oauth', viaInvitation: false }),
+        ]);
       });
     });
 

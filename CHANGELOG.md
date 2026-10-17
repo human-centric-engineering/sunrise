@@ -638,6 +638,12 @@ release process.
 
 ### Fixed
 
+- **The user-created seam reports a Google or GitHub invitation acceptance as
+  an invitation** (t-828, #688). `viaInvitation` was `false` on every OAuth
+  signup, so a fork's `lib/app/user-created.ts` hook could not tell an invited
+  colleague from a stranger. It is now `true` on both ways of accepting, as
+  the seam's contract already said. `PendingSignup` gains an optional
+  `viaInvitation`.
 - **A user invited into another org is a member of the install org too**
   (t-827, #872). Before, they got only that org's membership, so suspending
   it locked them out of everything, even on a single-tenant install. Their
