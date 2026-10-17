@@ -11,6 +11,7 @@
  * Authentication: Admin role required.
  */
 
+import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
 import { Prisma } from '@prisma/client';
 import { isUniqueViolationOn, UNIQUE_CONSTRAINTS } from '@/lib/db/unique-violation';
 import { withAdminAuth } from '@/lib/auth/guards';
@@ -123,7 +124,7 @@ export const POST = withAdminAuth(
           where: { id: created.id },
           include: { publishedVersion: true },
         });
-      });
+      }, WRITER_TRANSACTION_OPTIONS);
 
       log.info('Workflow created', {
         workflowId: workflow.id,

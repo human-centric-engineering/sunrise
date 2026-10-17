@@ -74,7 +74,8 @@ const {
       findMany: deliveryFindMany,
       update: deliveryUpdate,
     },
-    user: { delete: userDelete, findUniqueOrThrow: userFind },
+    // `findUnique` is the run pre-pass's read (t-804), outside the transaction.
+    user: { delete: userDelete, findUniqueOrThrow: userFind, findUnique: userFind },
   };
   prismaObj.$transaction.mockImplementation(
     (callback: (tx: typeof prismaObj) => Promise<unknown>) => callback(prismaObj)
@@ -138,10 +139,16 @@ vi.mock('@/lib/privacy/config-recipients', () => ({
   eraseFromConfigRecipients: mockEraseConfig,
 }));
 // Likewise schedules and runs (run-recipients.test.ts).
-const { mockEraseRuns } = vi.hoisted(() => ({ mockEraseRuns: vi.fn() }));
+const { mockEraseRuns, mockPreRedactRuns } = vi.hoisted(() => ({
+  mockEraseRuns: vi.fn(),
+  mockPreRedactRuns: vi.fn(),
+}));
 vi.mock('@/lib/privacy/run-recipients', () => ({
   eraseFromRunInputs: mockEraseRuns,
+  preRedactSubjectFromRuns: mockPreRedactRuns,
 }));
+/** The database time the run pre-pass reports it started at. */
+const PRE_PASS_STARTED = new Date('2026-10-17T12:00:00.000Z');
 vi.mock('@/lib/orchestration/settings', () => ({
   invalidateOrchestrationSettingsCache: mockInvalidateSettings,
 }));
@@ -209,6 +216,7 @@ describe('eraseUser', () => {
     mockPreRedact.mockResolvedValue(0);
     mockEraseConfig.mockResolvedValue({ escalationListsChanged: 0, workflowsChanged: 0 });
     mockEraseRuns.mockResolvedValue({ schedulesChanged: 0, executionsRedacted: 0 });
+    mockPreRedactRuns.mockResolvedValue(PRE_PASS_STARTED);
     mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
     mockReceiptCreate.mockResolvedValue({
       id: 'receipt-1',
@@ -363,11 +371,12 @@ describe('eraseUser', () => {
 
       await eraseUser(BASE_PARAMS);
 
-      // One lock for the address, one for the user id; both before either rewrite.
-      expect(order.slice(0, 2)).toEqual(['lock', 'lock']);
+      // One statement locking the address and the user id, before either rewrite.
+      expect(order[0]).toBe('lock');
       expect(order.indexOf('config')).toBeGreaterThan(order.lastIndexOf('lock'));
       expect(order.indexOf('runs')).toBeGreaterThan(order.lastIndexOf('lock'));
-      expect(mockExecuteRaw).toHaveBeenCalledTimes(2);
+      expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+      expect(mockExecuteRaw.mock.calls[0][1]).toHaveLength(2);
     });
 
     it('locks the user id only when the address was never verified', async () => {
@@ -376,6 +385,9 @@ describe('eraseUser', () => {
       await eraseUser(BASE_PARAMS);
 
       expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+      expect(mockExecuteRaw.mock.calls[0][1]).toEqual([
+        `sunrise:erased-user:${BASE_PARAMS.userId}`,
+      ]);
     });
 
     it('records addressVerified: true on the receipt for a verified account', async () => {
@@ -1398,11 +1410,53 @@ describe('eraseUser', () => {
       await eraseUser(BASE_PARAMS);
 
       expect(mockEraseRuns).toHaveBeenCalledTimes(1);
-      expect(mockEraseRuns).toHaveBeenCalledWith(tx, {
-        userId: BASE_PARAMS.userId,
-        address: 'run@bar.com',
-        actorUserId: BASE_PARAMS.actorUserId,
-      });
+      expect(mockEraseRuns).toHaveBeenCalledWith(
+        tx,
+        {
+          userId: BASE_PARAMS.userId,
+          address: 'run@bar.com',
+          actorUserId: BASE_PARAMS.actorUserId,
+        },
+        // The pass inside the transaction reads only what the pre-pass may
+        // have missed.
+        PRE_PASS_STARTED
+      );
+      expect(mockPreRedactRuns).toHaveBeenCalledWith(
+        expect.anything(),
+        { userId: BASE_PARAMS.userId, address: 'run@bar.com' },
+        expect.any(Function)
+      );
+    });
+
+    it('reads every run inside the transaction when the pre-pass fails', async () => {
+      mockPreRedactRuns.mockRejectedValue(new Error('pre-pass down'));
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockEraseRuns).toHaveBeenCalledWith(expect.anything(), expect.anything(), null);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Erasure run pre-pass failed; the transaction redacts instead',
+        expect.objectContaining({ userId: BASE_PARAMS.userId })
+      );
+      expect(mockUserDelete).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts what the pre-pass committed with what the transaction redacted', async () => {
+      mockPreRedactRuns.mockImplementation(
+        async (_c: unknown, _s: unknown, onCommitted: (n: number) => void) => {
+          onCommitted(4);
+          onCommitted(3);
+          return PRE_PASS_STARTED;
+        }
+      );
+      mockEraseRuns.mockResolvedValue({ schedulesChanged: 0, executionsRedacted: 1 });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'User erased',
+        expect.objectContaining({ executionsRedacted: 8 })
+      );
     });
 
     it('runs after the definitions and before the user row goes, so their own runs are still there to skip', async () => {

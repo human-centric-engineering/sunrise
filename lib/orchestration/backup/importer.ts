@@ -47,14 +47,17 @@ import {
   isBuiltinTemplateSlug,
   isSystemWorkflowSlug,
 } from '@/lib/orchestration/workflows/template-catalogue';
-import { createInitialVersion } from '@/lib/orchestration/workflows/version-service';
+import {
+  createInitialVersion,
+  withoutErasedRecipients,
+} from '@/lib/orchestration/workflows/version-service';
 import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settings';
 import { invalidateSettingsCache } from '@/lib/orchestration/llm/settings-resolver';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import type { WorkflowDefinition } from '@/types/orchestration';
 import { isRecord } from '@/lib/utils';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
-import { definitionRecipients, removeFromDefinition } from '@/lib/privacy/config-recipients';
+import { definitionRecipients } from '@/lib/privacy/config-recipients';
 import { findErasedSubjects, type ErasedSubjects } from '@/lib/privacy/erased-subjects';
 import { importedAgentProviderWarnings } from '@/lib/orchestration/agents/provider-approval';
 import { findUnapprovedModelOverridesIn } from '@/lib/orchestration/workflows/semantic-validator';
@@ -643,7 +646,7 @@ async function importParsed(
         }
         const unapprovedSteps = workflowProviders.bySlug.get(wf.slug);
         if (unapprovedSteps) result.warnings.push(unapprovedSteps);
-        const definition = withoutErased(defParsed.data, erased);
+        const definition = withoutErasedRecipients(defParsed.data, erased);
         if (definition !== defParsed.data) {
           result.warnings.push(
             `Workflow '${wf.slug}': recipients or approvers belonging to people whose data was erased were removed`
@@ -965,27 +968,4 @@ function escalationWithoutErased(config: unknown, erased: ErasedSubjects): unkno
     (a) => typeof a !== 'string' || !erased.addresses.includes(normaliseAddress(a))
   );
   return kept.length === list.length ? config : { ...config, emailAddresses: kept };
-}
-
-/**
- * The definition without any erased person in it — the same object when none
- * were — removed exactly as erasure removes them (`removeFromDefinition`).
- */
-function withoutErased(definition: WorkflowDefinition, erased: ErasedSubjects): WorkflowDefinition {
-  let current: Prisma.JsonValue = definition as unknown as Prisma.JsonValue;
-  let changed = false;
-  const subjects = [
-    ...erased.addresses.map((address) => ({ userId: '', address })),
-    ...erased.userIds.map((userId) => ({ userId, address: null })),
-  ];
-  for (const subject of subjects) {
-    const change = removeFromDefinition(current, subject);
-    if (!change) continue;
-    current = change.definition;
-    changed = true;
-  }
-  if (!changed) return definition;
-  // Re-validated rather than cast back: the rewrite keeps the shape, and the
-  // schema is what says so.
-  return workflowDefinitionSchema.parse(current);
 }

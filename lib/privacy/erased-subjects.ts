@@ -75,8 +75,9 @@ export function subjectEmailHash(email: string): string {
 
 /** Whether a string could be an address at all; anything else is never looked up. */
 function looksLikeAddress(value: string): boolean {
-  const at = value.indexOf('@');
-  return at > 0 && at < value.trim().length - 1 && !value.includes('{{');
+  const trimmed = value.trim();
+  const at = trimmed.indexOf('@');
+  return at > 0 && at < trimmed.length - 1 && !trimmed.includes('{{');
 }
 
 function normalised(subjects: NamedSubjects): { addresses: string[]; userIds: string[] } {
@@ -100,9 +101,12 @@ export async function lockSubjects(tx: LockClient, subjects: NamedSubjects): Pro
     ...addresses.map((a) => `sunrise:erased-address:${a}`),
     ...userIds.map((id) => `sunrise:erased-user:${id}`),
   ].sort();
-  for (const key of keys) {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
-  }
+  if (keys.length === 0) return;
+  // One round trip for every key. The sorted subquery fixes the order the
+  // locks are taken in, so two writers naming the same people cannot
+  // deadlock on each other.
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(k, 0))
+    FROM (SELECT unnest(${keys}::text[]) AS k ORDER BY 1) AS ordered`;
 }
 
 /**
@@ -162,6 +166,18 @@ function addressWasVerified(metadata: Prisma.JsonValue): boolean {
     metadata.addressVerified === true
   );
 }
+
+/**
+ * Options for a writer's transaction that calls {@link refuseErasedSubjects}.
+ *
+ * The check waits on erasure's lock, and an erasure may hold it for its whole
+ * transaction — up to `ERASURE_TRANSACTION_TIMEOUT_MS` (60 s, in
+ * `lib/privacy/erase-user.ts`). Under Prisma's 5 s default a writer queued
+ * behind a slow erasure would time out with a 500 instead of being refused
+ * with the 400 the field shows. Ten seconds of headroom past erasure's own
+ * limit; `erased-subjects.test.ts` holds the two apart.
+ */
+export const WRITER_TRANSACTION_OPTIONS = { timeout: 70_000 } as const;
 
 /** The message a refused field carries. */
 export const ERASED_SUBJECT_MESSAGE =

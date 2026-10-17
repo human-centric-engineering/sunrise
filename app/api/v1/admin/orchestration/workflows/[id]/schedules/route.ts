@@ -12,7 +12,11 @@ import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { successResponse } from '@/lib/api/responses';
 import { validateRequestBody } from '@/lib/api/validation';
 import { getClientIP } from '@/lib/security/ip';
-import { refuseErasedSubjects, stringsIn } from '@/lib/privacy/erased-subjects';
+import {
+  refuseErasedSubjects,
+  stringsIn,
+  WRITER_TRANSACTION_OPTIONS,
+} from '@/lib/privacy/erased-subjects';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { cuidSchema } from '@/lib/validations/common';
 import { createScheduleSchema } from '@/lib/validations/orchestration';
@@ -100,7 +104,7 @@ export const POST = withAdminAuth<{ id: string }>(
           createdBy: session.user.id,
         },
       });
-    });
+    }, WRITER_TRANSACTION_OPTIONS);
 
     // A new schedule can be due sooner than an already-armed idle gate would next
     // sweep, so disarm it and let the next tick recompute the horizon (#442).

@@ -64,6 +64,19 @@ function stepConfig(def: unknown, index: number): Record<string, unknown> {
 describe('removeFromDefinition', () => {
   const subject = { userId: USER_ID, address: ADDRESS };
 
+  it('an address-only subject (empty id) never matches an empty approver entry (review round 1)', () => {
+    const definition = {
+      steps: [
+        {
+          id: 'ap',
+          type: 'human_approval',
+          config: { prompt: 'OK?', approverUserIds: ['', 'cmuser00000000000000other'] },
+        },
+      ],
+    };
+    expect(removeFromDefinition(definition, { userId: '', address: ADDRESS })).toBeNull();
+  });
+
   it('returns null for something that is not a definition', () => {
     expect(removeFromDefinition(null, subject)).toBeNull();
     expect(removeFromDefinition('x', subject)).toBeNull();

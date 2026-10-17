@@ -118,7 +118,8 @@ function approvalWithout(
 ): Prisma.JsonObject | null {
   let next = config;
   const approvers = config.approverUserIds;
-  if (Array.isArray(approvers) && approvers.includes(userId)) {
+  // `''` is the address-only subject (the importer's): it names no approver.
+  if (userId !== '' && Array.isArray(approvers) && approvers.includes(userId)) {
     next = { ...next, approverUserIds: approvers.filter((id) => id !== userId) };
   }
   const channel = config.notificationChannel;

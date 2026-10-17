@@ -10,6 +10,7 @@
  * Authentication: Admin role required.
  */
 
+import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
 import { withAdminAuth } from '@/lib/auth/guards';
 import { prisma } from '@/lib/db/client';
 import { successResponse } from '@/lib/api/responses';
@@ -109,7 +110,7 @@ export const POST = withAdminAuth<{ id: string }>(
           userId: session.user.id,
         });
         return tx.aiWorkflow.findUniqueOrThrow({ where: { id: created.id } });
-      });
+      }, WRITER_TRANSACTION_OPTIONS);
     } catch (err: unknown) {
       // P2002: unique constraint violation — another workflow took the slug
       // between findFreeWorkflowSlug's probe and this create.

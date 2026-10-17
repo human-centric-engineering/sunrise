@@ -132,7 +132,7 @@ describe('sessionCreateBeforeHook', () => {
     const result = await sessionCreateBeforeHook(sessionRow(), null);
 
     expect(result).toEqual({ data: { activeOrgId: null } });
-    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('not healed at multi'), {
+    expect(mockLogger.error).toHaveBeenCalledWith(expect.stringContaining('refused at multi'), {
       userId: USER_ID,
     });
   });

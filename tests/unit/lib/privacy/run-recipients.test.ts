@@ -15,6 +15,7 @@ import {
   ERASED_VALUE,
   RUN_PAGE_SIZE,
   eraseFromRunInputs,
+  preRedactSubjectFromRuns,
   redactPerson,
 } from '@/lib/privacy/run-recipients';
 
@@ -70,6 +71,12 @@ describe('redactPerson', () => {
       note: 'gone@bar.com is cc',
     });
     expect(change?.removed).toBe(2);
+  });
+
+  it('an empty id names nobody: empty strings in a template are left alone (review round 1)', () => {
+    expect(
+      redactPerson({ cc: '', tags: ['', 'ops'] }, { userId: '', address: ADDRESS }, '')
+    ).toBeNull();
   });
 
   it('answers null for a value that does not name them', () => {
@@ -271,5 +278,55 @@ describe('eraseFromRunInputs — runs', () => {
 
     expect((await run(tx)).executionsRedacted).toBe(0);
     expect(tx.aiWorkflowExecution.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('eraseFromRunInputs — after the pre-pass', () => {
+  it('reads only runs written since the pre-pass started, or not yet finished', async () => {
+    const since = new Date('2026-10-17T12:00:00.000Z');
+    const tx = makeTx([[]], [[]]);
+
+    await eraseFromRunInputs(
+      tx as never,
+      { userId: USER_ID, address: ADDRESS, actorUserId: ACTOR },
+      since
+    );
+
+    const execCall = tx.$queryRaw.mock.calls.find((c) =>
+      sqlOf(c).includes('ai_workflow_execution')
+    );
+    expect(execCall).toBeDefined();
+    const sql = sqlOf(execCall as unknown[]);
+    expect(sql).toContain('"updatedAt" >=');
+    expect(sql).toContain("'paused_for_approval'");
+    expect(execCall).toContain(since);
+  });
+});
+
+describe('preRedactSubjectFromRuns', () => {
+  it('commits each page in its own transaction and returns the database time it started', async () => {
+    const started = new Date('2026-10-17T12:00:00.000Z');
+    const page = (start: number, n: number): ExecutionRow[] =>
+      Array.from({ length: n }, (_, i) => ({
+        id: `exec-${String(start + i).padStart(5, '0')}`,
+        inputData: {},
+        executionTrace: [{ output: { approverUserIds: [USER_ID] } }],
+      }));
+    const tx = makeTx([], [page(0, RUN_PAGE_SIZE), page(RUN_PAGE_SIZE, 2)]);
+    const client = {
+      $queryRaw: vi.fn(async () => [{ now: started }]),
+      $transaction: vi.fn((fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
+    };
+    const committed: number[] = [];
+
+    const result = await preRedactSubjectFromRuns(
+      client as never,
+      { userId: USER_ID, address: ADDRESS },
+      (n) => committed.push(n)
+    );
+
+    expect(result).toBe(started);
+    expect(client.$transaction).toHaveBeenCalledTimes(2);
+    expect(committed).toEqual([RUN_PAGE_SIZE, 2]);
   });
 });

@@ -662,22 +662,28 @@ describe('refusing a definition that names an erased person (t-805)', () => {
     expect(logAdminAction).not.toHaveBeenCalled();
   });
 
-  it('rollback throws a ValidationError on targetVersionId and creates no version', async () => {
+  it('rollback copies the version without the erased approver, and says so in the audit row', async () => {
+    // A snapshot cannot be edited, so a refusal would block this rollback for
+    // good (t-805 review): the copy leaves the person out instead.
     vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
     vi.mocked(prisma.aiWorkflowVersion.findUnique).mockResolvedValue(
       makeVersion({ snapshot: ERASED_DEF }) as never
     );
+    txState.versionCreate.mockResolvedValue(makeVersion({ id: VERSION_ID_NEW, version: 5 }));
 
-    const error = await rollback({
-      workflowId: WORKFLOW_ID,
-      targetVersionId: VERSION_ID_V1,
-      userId: ADMIN_ID,
-    }).catch((e: unknown) => e);
+    await rollback({ workflowId: WORKFLOW_ID, targetVersionId: VERSION_ID_V1, userId: ADMIN_ID });
 
-    expect(error).toBeInstanceOf(ValidationError);
-    expect((error as ValidationError).details).toHaveProperty('targetVersionId');
-    expect(txState.versionCreate).not.toHaveBeenCalled();
-    expect(txState.workflowUpdate).not.toHaveBeenCalled();
+    expect(txState.versionCreate).toHaveBeenCalledTimes(1);
+    const [{ data }] = txState.versionCreate.mock.calls[0] as [
+      { data: { snapshot: WorkflowDefinition } },
+    ];
+    expect(data.snapshot.steps[0].config).toEqual({ prompt: 'OK?', approverUserIds: [] });
+    expect(logAdminAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'workflow.rollback',
+        metadata: expect.objectContaining({ erasedRecipientsRemoved: true }),
+      })
+    );
   });
 
   it('createInitialVersion checks on the passed transaction and creates no version', async () => {

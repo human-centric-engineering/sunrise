@@ -17,7 +17,7 @@ import { loggableUrl } from '@/lib/logging/redact-path';
 import { auditableSubscriptionName } from '@/lib/orchestration/webhooks/destination';
 import { getClientIP } from '@/lib/security/ip';
 import { createWebhookSchema, listWebhooksQuerySchema } from '@/lib/validations/orchestration';
-import { refuseErasedSubjects } from '@/lib/privacy/erased-subjects';
+import { refuseErasedSubjects, WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import { webhookSubscriptionVisibilityWhere } from '@/lib/orchestration/access/webhook-subscription-access';
 
@@ -131,7 +131,7 @@ export const POST = withAdminAuth(
           updatedAt: true,
         },
       });
-    });
+    }, WRITER_TRANSACTION_OPTIONS);
 
     log.info('Webhook created', {
       webhookId: webhook.id,

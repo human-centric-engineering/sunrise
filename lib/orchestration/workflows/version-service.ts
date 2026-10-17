@@ -11,8 +11,13 @@
  * See `.context/orchestration/workflow-versioning.md`.
  */
 
-import { definitionRecipients } from '@/lib/privacy/config-recipients';
-import { refuseErasedSubjects } from '@/lib/privacy/erased-subjects';
+import { definitionRecipients, removeFromDefinition } from '@/lib/privacy/config-recipients';
+import {
+  findErasedSubjects,
+  refuseErasedSubjects,
+  WRITER_TRANSACTION_OPTIONS,
+  type ErasedSubjects,
+} from '@/lib/privacy/erased-subjects';
 import { Prisma } from '@prisma/client';
 import type { PrismaClient, AiWorkflowVersion, AiWorkflow } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
@@ -126,6 +131,34 @@ async function refuseErasedRecipients(
   );
 }
 
+/**
+ * The definition without any erased person in it — the same object when none
+ * were — removed exactly as erasure removes them (`removeFromDefinition`).
+ * For a writer whose source cannot be edited (a rollback's target snapshot, a
+ * backup bundle), where refusing would block it for good (t-805).
+ */
+export function withoutErasedRecipients(
+  definition: WorkflowDefinition,
+  erased: ErasedSubjects
+): WorkflowDefinition {
+  let current: Prisma.JsonValue = definition as unknown as Prisma.JsonValue;
+  let changed = false;
+  const subjects = [
+    ...erased.addresses.map((address) => ({ userId: '', address })),
+    ...erased.userIds.map((userId) => ({ userId, address: null })),
+  ];
+  for (const subject of subjects) {
+    const change = removeFromDefinition(current, subject);
+    if (!change) continue;
+    current = change.definition;
+    changed = true;
+  }
+  if (!changed) return definition;
+  // Re-validated rather than cast back: the rewrite keeps the shape, and the
+  // schema is what says so.
+  return workflowDefinitionSchema.parse(current);
+}
+
 // ─── Public API ────────────────────────────────────────────────────────────
 
 export interface SaveDraftArgs {
@@ -152,7 +185,7 @@ export async function saveDraft(args: SaveDraftArgs): Promise<AiWorkflow> {
       where: { id: workflowId },
       data: { draftDefinition: definition as unknown as Prisma.InputJsonValue },
     });
-  });
+  }, WRITER_TRANSACTION_OPTIONS);
 
   logAdminAction({
     userId,
@@ -264,7 +297,7 @@ export async function publishDraft(args: PublishDraftArgs): Promise<PublishDraft
       },
     });
     return { workflow, version };
-  });
+  }, WRITER_TRANSACTION_OPTIONS);
 
   logAdminAction({
     userId,
@@ -328,16 +361,24 @@ export async function rollback(args: RollbackArgs): Promise<RollbackResult> {
   );
   const previousVersionInt = await getVersionInt(prisma, workflow.publishedVersionId);
 
+  let erasedRecipientsRemoved = false;
   const result = await prisma.$transaction(async (tx) => {
-    // The target snapshot was read before the transaction; erasure may have
-    // stripped it since, and the copy must not bring the person back (t-805).
-    await refuseErasedRecipients(tx, definition, 'targetVersionId');
+    // The target snapshot was read before the transaction, and may name a
+    // person erased since — or before t-791 stripped versions. A snapshot
+    // cannot be edited, so refusing would block this rollback for good: the
+    // copy leaves them out instead (t-805), and the audit row says so.
+    const erased = await findErasedSubjects(
+      tx,
+      definitionRecipients(definition as unknown as Prisma.JsonValue)
+    );
+    const copied = withoutErasedRecipients(definition, erased);
+    erasedRecipientsRemoved = copied !== definition;
     const next = await nextVersionNumber(tx, workflowId);
     const version = await tx.aiWorkflowVersion.create({
       data: {
         workflowId,
         version: next,
-        snapshot: definition as unknown as Prisma.InputJsonValue,
+        snapshot: copied as unknown as Prisma.InputJsonValue,
         changeSummary: changeSummary ?? `Rollback to v${target.version}`,
         createdBy: userId,
       },
@@ -347,7 +388,7 @@ export async function rollback(args: RollbackArgs): Promise<RollbackResult> {
       data: { publishedVersionId: version.id },
     });
     return { workflow: updated, version };
-  });
+  }, WRITER_TRANSACTION_OPTIONS);
 
   logAdminAction({
     userId,
@@ -358,7 +399,10 @@ export async function rollback(args: RollbackArgs): Promise<RollbackResult> {
     changes: {
       publishedVersion: { from: previousVersionInt, to: result.version.version },
     },
-    metadata: { rolledBackToVersion: target.version },
+    metadata: {
+      rolledBackToVersion: target.version,
+      ...(erasedRecipientsRemoved ? { erasedRecipientsRemoved: true } : {}),
+    },
     clientIp: clientIp ?? null,
   });
 

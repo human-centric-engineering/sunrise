@@ -507,10 +507,18 @@ transaction):
 
    Both are narrowed in SQL by the same folded substring test, or by the
    address's domain when the whole address cannot be searched, and read in
-   pages of 200 `FOR NO KEY UPDATE`. **Not reached:** a run still executing
-   holds its trace in memory and writes it whole after each step, so its next
-   write can restore what was removed. Runs are minutes long and retention
-   prunes them. The approval notification no longer logs its target address
+   pages of 200 `FOR NO KEY UPDATE`. **Runs are redacted ahead of the
+   transaction** (`preRedactSubjectFromRuns`, as deliveries are in t-806): a
+   large run table folded and searched inside the transaction's 60 s would
+   time the erasure out, and an erasure that times out erases nothing. Each
+   page commits on its own; the transaction's pass then reads only runs
+   written since the pre-pass started (on the database clock) or not yet
+   finished, and every run if the pre-pass failed. If the transaction then
+   fails, those runs stay redacted while the account still exists — accepted,
+   as for deliveries. **Not reached:** a run still executing holds its trace in
+   memory and writes it whole after each step, so a write after the
+   transaction commits can restore what was removed. Runs are minutes long and
+   retention prunes them. The approval notification no longer logs its target address
    (`dispatchApprovalNotification`), since the application log is beyond
    erasure.
 
@@ -548,13 +556,14 @@ what it is about to write names an erased person —
 `lib/privacy/erased-subjects.ts`, from the erasure receipt
 (`subjectUserId`, and `subjectEmailHash` of the normalised address):
 
-| Writer                                                                                 | Names it checks                                                   | On a match                                      |
-| -------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------- |
-| `PATCH /settings`                                                                      | `escalationConfig.emailAddresses`                                 | 400 on the field                                |
-| `saveDraft`, `publishDraft`, `rollback`, `createInitialVersion` (`version-service.ts`) | every `to`, approver id and notification target in the definition | `ValidationError`, nothing written              |
-| `POST` / `PATCH /webhooks`                                                             | `emailAddress`                                                    | 400 on the field                                |
-| `POST` / `PATCH .../schedules`                                                         | every string in `inputTemplate`                                   | 400 on the field                                |
-| Backup import                                                                          | all of the above in the bundle                                    | stripped, with a warning; the import goes ahead |
+| Writer                                                                     | Names it checks                                                   | On a match                                                                                                                                 |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PATCH /settings`                                                          | `escalationConfig.emailAddresses`                                 | 400 on the field                                                                                                                           |
+| `saveDraft`, `publishDraft`, `createInitialVersion` (`version-service.ts`) | every `to`, approver id and notification target in the definition | `ValidationError`, nothing written                                                                                                         |
+| `rollback`                                                                 | the same, in the target snapshot                                  | stripped from the copy, with `erasedRecipientsRemoved` on the audit row: a snapshot cannot be edited, so a refusal would block it for good |
+| `POST` / `PATCH /webhooks`                                                 | `emailAddress`                                                    | 400 on the field                                                                                                                           |
+| `POST` / `PATCH .../schedules`                                             | every string in `inputTemplate`                                   | 400 on the field                                                                                                                           |
+| Backup import                                                              | all of the above in the bundle                                    | stripped, with a warning; the import goes ahead                                                                                            |
 
 **Why a lock and not just a check.** A check alone races the erasure: the
 writer finds no receipt, the erasure scans and strips, the writer's write
@@ -565,6 +574,13 @@ before the other reads — the writer then sees the receipt, or the erasure sees
 the write and strips it. `npm run smoke:erasure-writers` proves both orders
 against Postgres; with the erasure's lock removed, its writer-first case
 fails.
+
+**Waiting is bounded by erasure, not by Prisma's default.** A writer may
+queue behind an erasure holding the lock for its whole transaction (up to
+60 s), so every writer's transaction runs with `WRITER_TRANSACTION_OPTIONS`
+(70 s): Prisma's 5 s default would turn the 400 the field shows into a 500.
+The keys are locked in one sorted statement, and receipts are looked up by
+`subjectEmailHash` through its own index.
 
 **What is refused, and what is not.** A user id with a receipt, always. An
 address only when the receipt says erasure matched it as verified

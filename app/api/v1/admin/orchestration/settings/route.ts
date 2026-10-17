@@ -30,7 +30,7 @@ import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settin
 import { getEmbeddingModels } from '@/lib/orchestration/llm/embedding-models';
 import { parseAudioDefault } from '@/lib/orchestration/llm/audio-default';
 import { updateOrchestrationSettingsSchema } from '@/lib/validations/orchestration';
-import { refuseErasedSubjects } from '@/lib/privacy/erased-subjects';
+import { refuseErasedSubjects, WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import {
   getOrchestrationSettings,
@@ -325,7 +325,7 @@ export const PATCH = withAdminAuth(
         },
         update: updateData,
       });
-    });
+    }, WRITER_TRANSACTION_OPTIONS);
 
     invalidateSettingsCache();
     // The singleton itself is cached for 30s now (#442) — clear it here so a save

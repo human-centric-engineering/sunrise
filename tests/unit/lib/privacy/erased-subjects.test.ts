@@ -9,6 +9,7 @@
  * @see lib/privacy/erased-subjects.ts
  */
 
+import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Prisma } from '@prisma/client';
@@ -21,6 +22,7 @@ import {
   refuseErasedSubjects,
   stringsIn,
   subjectEmailHash,
+  WRITER_TRANSACTION_OPTIONS,
 } from '@/lib/privacy/erased-subjects';
 
 type Receipt = {
@@ -52,8 +54,9 @@ function makeTx() {
 }
 
 /** The key each `$executeRaw` tagged-template call was given (its one interpolation). */
-function lockedKeys(executeRaw: ReturnType<typeof vi.fn>): unknown[] {
-  return executeRaw.mock.calls.map((call) => call[1]);
+/** The keys handed to the one lock statement (its first parameter). */
+function lockedKeys(executeRaw: ReturnType<typeof vi.fn>): unknown {
+  return executeRaw.mock.calls[0]?.[1];
 }
 
 describe('subjectEmailHash', () => {
@@ -63,7 +66,7 @@ describe('subjectEmailHash', () => {
 });
 
 describe('lockSubjects', () => {
-  it('takes one lock per distinct normalised key, in sorted order', async () => {
+  it('takes every distinct normalised key in one statement, sorted so writers cannot deadlock', async () => {
     const { tx, executeRaw } = makeTx();
 
     await lockSubjects(tx, {
@@ -77,8 +80,19 @@ describe('lockSubjects', () => {
       'sunrise:erased-user:user-a',
       'sunrise:erased-user:user-b',
     ]);
+    expect(executeRaw).toHaveBeenCalledTimes(1);
     const sql = (executeRaw.mock.calls[0][0] as string[]).join('?');
     expect(sql).toContain('pg_advisory_xact_lock');
+    // The sorted subquery is what fixes the order the locks are taken in.
+    expect(sql).toMatch(/ORDER BY/);
+  });
+
+  it('locks an address however much whitespace surrounds it (review round 1)', async () => {
+    const { tx, executeRaw } = makeTx();
+
+    await lockSubjects(tx, { addresses: ['        a@b.co'] });
+
+    expect(lockedKeys(executeRaw)).toEqual(['sunrise:erased-address:a@b.co']);
   });
 
   it('takes no lock for empty input', async () => {
@@ -134,7 +148,7 @@ describe('findErasedSubjects', () => {
 
     await findErasedSubjects(ctx.tx, { addresses: ['a@example.com'], userIds: ['u1'] });
 
-    expect(order).toEqual(['lock', 'lock', 'read']);
+    expect(order).toEqual(['lock', 'read']);
   });
 
   it('returns an address whose receipt says it was verified, spelled as normalised', async () => {
@@ -273,5 +287,18 @@ describe('stringsIn', () => {
     expect(stringsIn('x')).toEqual(['x']);
     expect(stringsIn(1)).toEqual([]);
     expect(stringsIn(null)).toEqual([]);
+  });
+});
+
+describe('WRITER_TRANSACTION_OPTIONS', () => {
+  it('outlasts the erasure transaction a writer may queue behind', () => {
+    // Read from the source rather than imported: erase-user pulls in the
+    // whole erasure graph, and only its constant matters here.
+    const source = readFileSync('lib/privacy/erase-user.ts', 'utf8');
+    const match = /export const ERASURE_TRANSACTION_TIMEOUT_MS = ([\d_]+);/.exec(source);
+    expect(match).not.toBeNull();
+    const erasureMs = Number((match?.[1] ?? '').replace(/_/g, ''));
+    expect(erasureMs).toBeGreaterThan(0);
+    expect(WRITER_TRANSACTION_OPTIONS.timeout).toBeGreaterThan(erasureMs);
   });
 });

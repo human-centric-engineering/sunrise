@@ -52,7 +52,7 @@ import {
   preRedactSubjectFromDeliveries,
 } from '@/lib/privacy/delivery-payloads';
 import { eraseFromConfigRecipients } from '@/lib/privacy/config-recipients';
-import { eraseFromRunInputs } from '@/lib/privacy/run-recipients';
+import { eraseFromRunInputs, preRedactSubjectFromRuns } from '@/lib/privacy/run-recipients';
 import { lockSubjects, subjectEmailHash } from '@/lib/privacy/erased-subjects';
 import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settings';
 import {
@@ -238,6 +238,35 @@ async function eraseRows(params: EraseUserParams): Promise<{
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  // 1d. Other people's runs that name this person (t-804), redacted ahead of
+  // the transaction one committed page at a time, for the reason 1c gives:
+  // searching a large run table inside the transaction's 60 s would time it
+  // out. The transaction's pass then reads only runs written since this
+  // started, or not yet finished. Best-effort, like 1c: on a failure the
+  // transaction's pass reads every run instead.
+  let runsChangedSince: Date | null = null;
+  let runsPreRedacted = 0;
+  try {
+    const subjectRow = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, emailVerified: true },
+    });
+    if (subjectRow) {
+      const address = webhookDeliveriesAddressedTo(subjectRow)
+        ? normaliseAddress(subjectRow.email)
+        : null;
+      runsChangedSince = await preRedactSubjectFromRuns(prisma, { userId, address }, (n) => {
+        runsPreRedacted += n;
+      });
+    }
+  } catch (error) {
+    runsChangedSince = null;
+    logger.error('Erasure run pre-pass failed; the transaction redacts instead', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   // 2. Scrub residual PII, write the receipt, and delete — atomically.
@@ -434,7 +463,11 @@ async function eraseRows(params: EraseUserParams): Promise<{
       // loudly, as above), and other people's runs — their input and trace,
       // where a run paused at an approval keeps its approvers and notification
       // target. Their own runs cascade with the user row and are not read.
-      const runRecipients = await eraseFromRunInputs(tx, { userId, address, actorUserId });
+      const runRecipients = await eraseFromRunInputs(
+        tx,
+        { userId, address, actorUserId },
+        runsChangedSince
+      );
 
       // App-registered in-transaction scrub. Runs before `tx.user.delete()` so
       // hooks can still match retained rows on `userId`, and atomically with the
@@ -484,5 +517,6 @@ async function eraseRows(params: EraseUserParams): Promise<{
     ...receipt,
     webhookPayloadsRedacted: receipt.webhookPayloadsRedacted + preRedacted.webhook,
     eventHookPayloadsRedacted: receipt.eventHookPayloadsRedacted + preRedacted.hook,
+    executionsRedacted: receipt.executionsRedacted + runsPreRedacted,
   };
 }

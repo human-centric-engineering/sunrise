@@ -79,6 +79,8 @@ model DataErasureReceipt {
   metadata         Json? // optional summary (e.g. counts)
 
   @@index([subjectUserId])
+  // Every recipient writer looks a receipt up by address hash (t-805).
+  @@index([subjectEmailHash])
   @@index([erasedAt])
   @@map("data_erasure_receipt")
 }

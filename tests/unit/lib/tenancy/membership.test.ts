@@ -20,7 +20,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { PrismaClient } from '@prisma/client';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { DEFAULT_ORG_ROLE, ORG_ADMIN_ROLE, ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
+import {
+  DEFAULT_ORG_ROLE,
+  ORG_ADMIN_ROLE,
+  ORG_OWNER_ROLE,
+  type OrgRole,
+} from '@/lib/tenancy/roles';
 import { PLATFORM_ADMIN_ROLE, DEFAULT_USER_ROLE } from '@/lib/auth/roles';
 
 vi.mock('@/lib/db/client', () => ({ prisma: {} }));
@@ -351,7 +356,14 @@ describe('activeOrgForSession', () => {
 // second run writes nothing" is asserted against state the first run changed.
 describe('backfillInstallMemberships (t-835)', () => {
   type Row = { orgId: string; userId: string; role: string };
-  const users = [
+  type BackfillUser = {
+    id: string;
+    role: string;
+    accountType: string;
+    signupOrgId?: string | null;
+    signupOrgRole?: OrgRole | null;
+  };
+  const users: BackfillUser[] = [
     { id: 'u-floorless', role: DEFAULT_USER_ROLE, accountType: 'HUMAN' },
     { id: 'u-admin', role: PLATFORM_ADMIN_ROLE, accountType: 'HUMAN' },
     { id: 'u-service', role: PLATFORM_ADMIN_ROLE, accountType: 'SERVICE' },
@@ -361,6 +373,7 @@ describe('backfillInstallMemberships (t-835)', () => {
 
   const store = {
     user: {
+      update: vi.fn(async () => undefined),
       findMany: vi.fn(async ({ take }: { take: number }) =>
         users
           .filter((u) => !rows.some((r) => r.userId === u.id && r.orgId === INSTALL_ORG_ID))
@@ -372,9 +385,18 @@ describe('backfillInstallMemberships (t-835)', () => {
         rows.push(...data);
         return { count: data.length };
       }),
+      upsert: vi.fn(async ({ create }: { create: Row }) => {
+        rows.push(create);
+        return create;
+      }),
     },
+    org: { findUnique: vi.fn(async () => ({ id: OTHER_ORG })) },
+    $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   };
-  const storeDb = store as unknown as Pick<PrismaClient, 'orgMembership' | 'user'>;
+  const storeDb = store as unknown as Pick<
+    PrismaClient,
+    'orgMembership' | 'user' | 'org' | '$transaction'
+  >;
 
   beforeEach(() => {
     rows = [
@@ -406,6 +428,35 @@ describe('backfillInstallMemberships (t-835)', () => {
       ])
     );
     expect(install).toHaveLength(4);
+  });
+
+  it('heals a user whose signup record survived into the org it names, not the floor alone (t-838)', async () => {
+    users.push({
+      id: 'u-recorded',
+      role: DEFAULT_USER_ROLE,
+      accountType: 'HUMAN',
+      signupOrgId: OTHER_ORG,
+      signupOrgRole: ORG_ADMIN_ROLE,
+    });
+    try {
+      await backfillInstallMemberships(storeDb);
+      const own = rows.filter((r) => r.userId === 'u-recorded');
+      expect(own).toEqual(
+        expect.arrayContaining([
+          { orgId: OTHER_ORG, userId: 'u-recorded', role: ORG_ADMIN_ROLE },
+          { orgId: INSTALL_ORG_ID, userId: 'u-recorded', role: DEFAULT_ORG_ROLE },
+        ])
+      );
+      expect(store.user.update).toHaveBeenCalledWith({
+        where: { id: 'u-recorded' },
+        data: { signupOrgId: null, signupOrgRole: null },
+      });
+    } finally {
+      users.splice(
+        users.findIndex((u) => u.id === 'u-recorded'),
+        1
+      );
+    }
   });
 
   it('writes nothing the second time', async () => {

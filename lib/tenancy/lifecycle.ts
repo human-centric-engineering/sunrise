@@ -481,13 +481,17 @@ export async function addMember(
     effectiveRole = members === 0 ? ORG_OWNER_ROLE : DEFAULT_ORG_ROLE;
   }
 
-  const membership = await db.orgMembership.create({
-    data: { orgId, userId, role: effectiveRole },
-    select: membershipSelect,
-  });
   // Placed by hand: their signup's record, if one survived a failed write, no
-  // longer describes them (t-838).
-  await clearSignupRecord(userId, db);
+  // longer describes them (t-838). One transaction, so the record cannot
+  // outlive the membership that made it stale.
+  const membership = await db.$transaction(async (tx) => {
+    const created = await tx.orgMembership.create({
+      data: { orgId, userId, role: effectiveRole },
+      select: membershipSelect,
+    });
+    await clearSignupRecord(userId, tx);
+    return created;
+  });
 
   logger.info('Org member added', { orgId, userId, role: effectiveRole });
   return membership;

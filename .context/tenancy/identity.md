@@ -302,8 +302,10 @@ other single-tenant user who belongs to a second org.
 The floor is written at signup, so an account invited into another org before
 #872 shipped has none. `npm run db:tenancy:install-floor`
 (`backfillInstallMemberships`, t-835) adds it for every user who lacks an
-install-org membership, by the same role rule on the stored platform role.
-It leaves every existing row alone, writes nothing on a second run, and
+install-org membership, by the same role rule on the stored platform role —
+except a user whose signup record survived a failed write (t-838), who gets
+what the record decided (the inviting org, with the floor) and loses the
+record, as at sign-in. It leaves every existing row alone, writes nothing on a second run, and
 refuses at `multi`, for the reason below. A migration cannot do this, because
 the mode is in the environment, not the database.
 

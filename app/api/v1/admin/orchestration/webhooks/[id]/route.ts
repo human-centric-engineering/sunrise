@@ -20,7 +20,7 @@ import { getClientIP } from '@/lib/security/ip';
 import { cuidSchema } from '@/lib/validations/common';
 import { updateWebhookSchema } from '@/lib/validations/orchestration';
 import { ValidationError } from '@/lib/api/errors';
-import { refuseErasedSubjects } from '@/lib/privacy/erased-subjects';
+import { refuseErasedSubjects, WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { webhookSubscriptionVisibilityWhere } from '@/lib/orchestration/access/webhook-subscription-access';
 import {
@@ -127,7 +127,7 @@ export const PATCH = withAdminAuth<{ id: string }>(
         data: body,
         select: SAFE_SELECT,
       });
-    });
+    }, WRITER_TRANSACTION_OPTIONS);
 
     log.info('Webhook updated', {
       webhookId: parsed.data,

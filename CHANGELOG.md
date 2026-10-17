@@ -30,9 +30,14 @@ release process.
   no org by `eraseOrg` or a removal) is still refused until a platform admin
   adds them. Migration `20261017140000_user_signup_record`. Both fields are
   better-auth `additionalFields` with `input: false` and `returned: false`, so
-  a sign-up or update body carrying either is a 400. **Forks:** a fork that
-  creates users without better-auth's hooks writes no record, and its users
-  heal as before.
+  a sign-up or update body carrying either is a 400. Any other membership
+  write clears the record too (`clearSignupRecord()`, called by `addMember`,
+  `createOrg` and `syncInstallMembershipRole`), so a user placed by hand and
+  later removed is never healed back; `db:tenancy:install-floor` heals a
+  surviving record rather than writing the floor alone. **Forks:** a fork
+  that creates users without better-auth's hooks writes no record, and its
+  users heal as before; one that writes `OrgMembership` rows directly should
+  call `clearSignupRecord()`.
 - **`npm run db:tenancy:install-floor`** (t-835) gives every user without an
   install-org membership one, by the platform-role rule. #872's floor is
   written at signup only, so a user invited into another org before it
@@ -377,8 +382,13 @@ release process.
   `ValidationError` naming the field) when what they would write names an
   erased person: an approver id with an erasure receipt, or an address whose
   receipt says erasure matched it as verified — unless a live, verified
-  account holds that address again. The backup importer strips such
-  recipients instead, with a warning. Erasure and each writer share a
+  account holds that address again. The backup importer and `rollback` (whose
+  source snapshot cannot be edited) strip such recipients instead, with a
+  warning or an `erasedRecipientsRemoved` audit flag. Each writer's
+  transaction runs with `WRITER_TRANSACTION_OPTIONS` (70 s) so one queued
+  behind an erasure is refused rather than timed out, and a new index on
+  `DataErasureReceipt.subjectEmailHash` (migration
+  `20261017160000_erasure_receipt_email_hash_index`) serves the lookup. Erasure and each writer share a
   transaction-scoped advisory lock per address and user id, so neither can
   slip between the other's read and write. New `refuseErasedSubjects()`,
   `findErasedSubjects()`, `lockSubjects()` and `subjectEmailHash()` in
@@ -714,7 +724,9 @@ release process.
   people's runs — `inputData` and `executionTrace`, including a run paused at
   an approval, whose approvers and notification target the approval routes
   read — lose the person's id and address. New
-  `lib/privacy/run-recipients.ts`. `dispatchApprovalNotification` no longer
+  `lib/privacy/run-recipients.ts`; runs are redacted in committed pages before
+  the erasure transaction (`preRedactSubjectFromRuns()`), as deliveries are,
+  so a large run table cannot time it out. `dispatchApprovalNotification` no longer
   logs the target address (`hasChannelTarget` instead).
 - **`LogoutButton` signs out with a full page load, as the account menu
   does** (t-829, #707). It used `router.push()` and `router.refresh()`, which

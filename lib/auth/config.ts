@@ -932,10 +932,11 @@ export async function signupModeBeforeHook(ctx: { path?: string }): Promise<void
  *    orgs (a user whose every org is suspended starts in the most recent of
  *    them and is refused at entry): their only org; else the install org if
  *    they belong to it; else the org they joined most recently; else
- *    — a user with no membership at all — the install-org default is written
- *    right here at `single` (the self-heal t-669's review ruled on), and
- *    logged at `error` because it means the signup path failed upstream. At
- *    `multi` nothing is written and the session starts with no org (t-836).
+ *    — a user with no membership at all — the self-heal: the membership
+ *    their signup recorded (t-838), in either mode, else the install-org
+ *    default at `single` (t-669's ruling); logged at `error` because it means
+ *    the signup path failed upstream. At `multi` with no record, nothing is
+ *    written and the session starts with no org (t-836).
  *
  * Non-blocking, for the same reason the after hook is: a fault reading
  * memberships must not refuse a sign-in. The session is minted with
@@ -957,15 +958,18 @@ export async function sessionCreateBeforeHook(
     const { orgId, healed } = await activeOrgForSession(session.userId);
     if (orgId === null) {
       logger.error(
-        'User has no org membership at sign-in; not healed at multi, so they are refused until added to an org',
+        'User has no org membership at sign-in and no signup record to heal from; refused at multi until added to an org',
         { userId: session.userId }
       );
     }
     if (healed) {
-      logger.error('User had no org membership at sign-in; wrote the install-org default', {
-        userId: session.userId,
-        orgId,
-      });
+      logger.error(
+        'User had no org membership at sign-in; wrote the membership their signup recorded, or the install-org default',
+        {
+          userId: session.userId,
+          orgId,
+        }
+      );
     }
     return { data: { activeOrgId: orgId } };
   } catch (error) {

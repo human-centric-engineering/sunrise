@@ -250,7 +250,7 @@ export function undecidedMembershipsForNewUser(
  * of it.
  */
 export async function backfillInstallMemberships(
-  db: Pick<PrismaClient, 'orgMembership' | 'user'> = prisma
+  db: Pick<PrismaClient, 'orgMembership' | 'user' | 'org' | '$transaction'> = prisma
 ): Promise<{ written: number }> {
   if (isMultiTenant()) {
     throw new Error(
@@ -266,18 +266,41 @@ export async function backfillInstallMemberships(
   for (;;) {
     const missing = await db.user.findMany({
       where: { orgMemberships: { none: { orgId: INSTALL_ORG_ID } } },
-      select: { id: true, role: true, accountType: true },
+      select: {
+        id: true,
+        role: true,
+        accountType: true,
+        signupOrgId: true,
+        signupOrgRole: true,
+      },
       orderBy: { id: 'asc' },
       take: INSTALL_BACKFILL_BATCH,
     });
     if (missing.length === 0) break;
 
-    const { count } = await db.orgMembership.createMany({
-      data: missing.map((user) => ({ userId: user.id, ...initialMembershipFor(user) })),
-      skipDuplicates: true,
-    });
-    written += count;
-    if (count === 0 || missing.length < INSTALL_BACKFILL_BATCH) break;
+    // A user whose signup's own write failed still has its record (t-838):
+    // give them what it decided — the inviting org with the floor — rather
+    // than the floor alone, which would stop the sign-in heal ever placing
+    // them, and leave a record a later removal would heal from.
+    const plain: typeof missing = [];
+    let healed = 0;
+    for (const user of missing) {
+      const recorded = await recordedMemberships(user.id, user, db);
+      if (!recorded) {
+        plain.push(user);
+        continue;
+      }
+      await writeNewUserMemberships(user.id, recorded, db);
+      healed += 1;
+    }
+    const { count } = plain.length
+      ? await db.orgMembership.createMany({
+          data: plain.map((user) => ({ userId: user.id, ...initialMembershipFor(user) })),
+          skipDuplicates: true,
+        })
+      : { count: 0 };
+    written += count + healed;
+    if (count + healed === 0 || missing.length < INSTALL_BACKFILL_BATCH) break;
   }
   return { written };
 }
