@@ -54,9 +54,9 @@ function makeTx() {
 }
 
 /** The key each `$executeRaw` tagged-template call was given (its one interpolation). */
-/** The keys handed to the one lock statement (its first parameter). */
-function lockedKeys(executeRaw: ReturnType<typeof vi.fn>): unknown {
-  return executeRaw.mock.calls[0]?.[1];
+/** The key each lock statement took, in the order they were taken. */
+function lockedKeys(executeRaw: ReturnType<typeof vi.fn>): unknown[] {
+  return executeRaw.mock.calls.map((call) => call[1]);
 }
 
 describe('subjectEmailHash', () => {
@@ -66,7 +66,7 @@ describe('subjectEmailHash', () => {
 });
 
 describe('lockSubjects', () => {
-  it('takes every distinct normalised key in one statement, sorted so writers cannot deadlock', async () => {
+  it('takes one lock per distinct normalised key, in sorted order, so writers cannot deadlock', async () => {
     const { tx, executeRaw } = makeTx();
 
     await lockSubjects(tx, {
@@ -80,11 +80,11 @@ describe('lockSubjects', () => {
       'sunrise:erased-user:user-a',
       'sunrise:erased-user:user-b',
     ]);
-    expect(executeRaw).toHaveBeenCalledTimes(1);
+    // One statement per key, taken in JS-sorted order: an outer target list
+    // is not guaranteed to follow a subquery's ORDER BY (review round 3).
+    expect(executeRaw).toHaveBeenCalledTimes(4);
     const sql = (executeRaw.mock.calls[0][0] as string[]).join('?');
     expect(sql).toContain('pg_advisory_xact_lock');
-    // The sorted subquery is what fixes the order the locks are taken in.
-    expect(sql).toMatch(/ORDER BY/);
   });
 
   it('locks an address however much whitespace surrounds it (review round 1)', async () => {
@@ -148,7 +148,7 @@ describe('findErasedSubjects', () => {
 
     await findErasedSubjects(ctx.tx, { addresses: ['a@example.com'], userIds: ['u1'] });
 
-    expect(order).toEqual(['lock', 'read']);
+    expect(order).toEqual(['lock', 'lock', 'read']);
   });
 
   it('returns an address whose receipt says it was verified, spelled as normalised', async () => {

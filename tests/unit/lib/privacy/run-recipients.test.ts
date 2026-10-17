@@ -13,6 +13,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { Prisma } from '@prisma/client';
 import {
   ERASED_VALUE,
+  PRE_PASS_PAGE_TIMEOUT_MS,
   RUN_CLOCK_SKEW_MS,
   RUN_PAGE_SIZE,
   eraseFromRunInputs,
@@ -110,7 +111,13 @@ type ScheduleRow = {
   orgId: string | null;
   inputTemplate: Prisma.JsonValue;
 };
-type ExecutionRow = { id: string; inputData: Prisma.JsonValue; executionTrace: Prisma.JsonValue };
+type ExecutionRow = {
+  id: string;
+  inputData: Prisma.JsonValue;
+  executionTrace: Prisma.JsonValue;
+  outputData?: Prisma.JsonValue | null;
+  errorMessage?: string | null;
+};
 
 function sqlOf(call: unknown[]): string {
   const strings = call[0] as TemplateStringsArray;
@@ -249,6 +256,32 @@ describe('eraseFromRunInputs — runs', () => {
     });
   });
 
+  it('redacts a completed run’s outputData and errorMessage too (review round 3)', async () => {
+    const done: ExecutionRow = {
+      id: 'exec-done',
+      inputData: {},
+      executionTrace: [],
+      outputData: {
+        approve: { approved: true, actor: `admin:${USER_ID}` },
+        notify: { to: ADDRESS },
+      },
+      errorMessage: `Rejected by ${USER_ID}`,
+    };
+    const tx = makeTx([[]], [[done]]);
+
+    expect((await run(tx)).executionsRedacted).toBe(1);
+    expect(tx.aiWorkflowExecution.update).toHaveBeenCalledWith({
+      where: { id: 'exec-done' },
+      data: {
+        outputData: {
+          approve: { approved: true, actor: `admin:${ERASED_VALUE}` },
+          notify: { to: ERASED_VALUE },
+        },
+        errorMessage: `Rejected by ${ERASED_VALUE}`,
+      },
+    });
+  });
+
   it('never reads the subject’s own runs: they cascade with the user row', async () => {
     const tx = makeTx([[]], [[]]);
 
@@ -339,6 +372,10 @@ describe('preRedactSubjectFromRuns', () => {
 
     expect(result).toBe(started);
     expect(client.$transaction).toHaveBeenCalledTimes(2);
+    // Not Prisma's 5 s default: a page may scan the whole table (review round 3).
+    expect(client.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: PRE_PASS_PAGE_TIMEOUT_MS,
+    });
     expect(committed).toEqual([RUN_PAGE_SIZE, 2]);
   });
 });

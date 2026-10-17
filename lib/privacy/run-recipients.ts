@@ -52,7 +52,7 @@
  * @see lib/privacy/config-recipients.ts — the definitions these runs were made from
  */
 
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 import { asciiSearchTerm, isJsonObject, type PersonMatch } from '@/lib/privacy/config-recipients';
 
@@ -64,6 +64,9 @@ export const ERASED_VALUE = '[erased]';
 
 /** Rows read per page. */
 export const RUN_PAGE_SIZE = 200;
+
+/** How long one pre-pass page may take: a full-table scan on a large install. */
+export const PRE_PASS_PAGE_TIMEOUT_MS = 5 * 60_000;
 
 /**
  * How far behind the database an app host's clock may run before a run it
@@ -276,10 +279,17 @@ async function redactExecutionsPage(
   // round 2): a run rewritten during the pre-pass by a worker whose clock runs
   // behind is still re-read. `updatedAt` is UTC wall time, compared in UTC.
   const rows = await tx.$queryRaw<
-    Array<{ id: string; inputData: Prisma.JsonValue; executionTrace: Prisma.JsonValue }>
-  >`SELECT e.id, e."inputData", e."executionTrace"
+    Array<{
+      id: string;
+      inputData: Prisma.JsonValue;
+      executionTrace: Prisma.JsonValue;
+      outputData: Prisma.JsonValue | null;
+      errorMessage: string | null;
+    }>
+  >`SELECT e.id, e."inputData", e."executionTrace", e."outputData", e."errorMessage"
      FROM ai_workflow_execution e
-     CROSS JOIN LATERAL (SELECT translate(e."inputData"::text || e."executionTrace"::text,
+     CROSS JOIN LATERAL (SELECT translate(e."inputData"::text || e."executionTrace"::text
+         || coalesce(e."outputData"::text, '') || coalesce(e."errorMessage", ''),
          'ABCDEFGHIJKLMNOPQRSTUVWXYZK', 'abcdefghijklmnopqrstuvwxyzk') AS folded) f
      WHERE e.id > ${after}
        AND e."userId" IS DISTINCT FROM ${userId}
@@ -292,14 +302,23 @@ async function redactExecutionsPage(
      ORDER BY e.id LIMIT ${RUN_PAGE_SIZE} FOR NO KEY UPDATE OF e`;
   let redacted = 0;
   for (const row of rows) {
+    // Every column a run copies them into: its input, its trace, the step
+    // outputs the engine writes to `outputData` on completion (an approval's
+    // `actor` among them), and an error message (review round 3).
     const input = redactPerson(row.inputData, subject, ERASED_VALUE);
     const trace = redactPerson(row.executionTrace, subject, ERASED_VALUE);
-    if (!input && !trace) continue;
+    const output =
+      row.outputData === null ? null : redactPerson(row.outputData, subject, ERASED_VALUE);
+    const error =
+      row.errorMessage === null ? null : redactPerson(row.errorMessage, subject, ERASED_VALUE);
+    if (!input && !trace && !output && !error) continue;
     await tx.aiWorkflowExecution.update({
       where: { id: row.id },
       data: {
         ...(input ? { inputData: input.value ?? {} } : {}),
         ...(trace ? { executionTrace: trace.value ?? [] } : {}),
+        ...(output ? { outputData: output.value ?? Prisma.DbNull } : {}),
+        ...(error && typeof error.value === 'string' ? { errorMessage: error.value } : {}),
       },
     });
     redacted += 1;
@@ -348,7 +367,12 @@ export async function preRedactSubjectFromRuns(
   const full: RunRecipientsSubject = { ...subject, actorUserId: '' };
   let after = '';
   for (;;) {
-    const page = await client.$transaction((tx) => redactExecutionsPage(tx, full, after, null));
+    // A page may scan the whole table to fill itself when the person is named
+    // in few runs, so it is not held to Prisma's 5 s default (review round 3);
+    // each page commits on its own, outside the erasure's 60 s.
+    const page = await client.$transaction((tx) => redactExecutionsPage(tx, full, after, null), {
+      timeout: PRE_PASS_PAGE_TIMEOUT_MS,
+    });
     onCommitted(page.redacted);
     if (page.size < RUN_PAGE_SIZE || page.lastId === null) break;
     after = page.lastId;

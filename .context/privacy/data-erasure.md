@@ -494,8 +494,9 @@ transaction):
      workflow and counting the values cleared, never the address. Only the
      address is matched here; an unverified account changes no schedule.
    - **Other people's runs** — a run keeps a copy of everything it was given
-     and did: `inputData` (a scheduled run's copy of the template) and
-     `executionTrace` (each step's config and output). A run **paused at an
+     and did: `inputData` (a scheduled run's copy of the template),
+     `executionTrace` (each step's config and output), `outputData` (the step
+     outputs the engine copies there on completion) and `errorMessage`. A run **paused at an
      approval** keeps its `approverUserIds` and notification target there,
      and the approval routes read them until retention prunes the run. In
      both columns the subject's id leaves every approver list, a notification
@@ -525,7 +526,10 @@ transaction):
    as for deliveries. **Not reached:** a run still executing holds its trace in
    memory and writes it whole after each step, so a write after the
    transaction commits can restore what was removed. Runs are minutes long and
-   retention prunes them. The approval notification no longer logs its target address
+   retention prunes them. Nor is a scheduler tick that read a schedule's
+   template before the erasure and creates its run after it (t-839). Each
+   pre-pass page may take up to `PRE_PASS_PAGE_TIMEOUT_MS` (5 min): it
+   commits on its own, outside the erasure's 60 s. The approval notification no longer logs its target address
    (`dispatchApprovalNotification`), since the application log is beyond
    erasure.
 
@@ -596,6 +600,11 @@ unverified address, which may be a stranger's inbox, so a writer does not
 refuse one either; a receipt from before t-805 does not say, and is not
 refused. And never an address a live, verified account holds again — a
 person erased and later signed up again may be notified like anyone else.
+
+**One wait this does not bound** (t-840): the backup importer holds the
+locks for everyone its bundle names for the whole import, so an erasure of
+one of them waits inside its own 60 s and can time out behind a long import.
+It rolls back cleanly and can be retried.
 
 **A fork's own writer** of a recipient — a module that stores an address or
 user id it notifies — calls `refuseErasedSubjects(tx, { addresses, userIds },

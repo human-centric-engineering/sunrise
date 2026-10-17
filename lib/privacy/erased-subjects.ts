@@ -104,12 +104,14 @@ export async function lockSubjects(tx: LockClient, subjects: NamedSubjects): Pro
     ...addresses.map((a) => `sunrise:erased-address:${a}`),
     ...userIds.map((id) => `sunrise:erased-user:${id}`),
   ].sort();
-  if (keys.length === 0) return;
-  // One round trip for every key. The sorted subquery fixes the order the
-  // locks are taken in, so two writers naming the same people cannot
-  // deadlock on each other.
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(k, 0))
-    FROM (SELECT unnest(${keys}::text[]) AS k ORDER BY 1) AS ordered`;
+  // One statement per key, in sorted order, so two writers naming the same
+  // people take their locks in the same order and cannot deadlock. A single
+  // statement over a sorted subquery looked cheaper, but Postgres does not
+  // promise to evaluate an outer target list in a subquery's order (review
+  // round 3). The key count is the recipients one write names: a handful.
+  for (const key of keys) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+  }
 }
 
 /**

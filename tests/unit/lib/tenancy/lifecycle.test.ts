@@ -360,6 +360,33 @@ describe('addMember', () => {
     });
   });
 
+  it('a role the caller asked for wins over the one a healed record wrote for the same org (review round 3)', async () => {
+    db.user.findUnique.mockResolvedValue({
+      ...human(OTHER),
+      signupOrgId: ORG,
+      signupOrgRole: DEFAULT_ORG_ROLE,
+    });
+    db.orgMembership.count.mockResolvedValue(3);
+    // The healed row is what the second read finds.
+    db.orgMembership.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'm1', orgId: ORG, userId: OTHER, role: DEFAULT_ORG_ROLE });
+    db.orgMembership.update.mockResolvedValue({
+      id: 'm1',
+      orgId: ORG,
+      userId: OTHER,
+      role: ORG_ADMIN_ROLE,
+    });
+
+    const membership = await addMember(ORG, OTHER, ORG_ADMIN_ROLE, AS_OWNER);
+
+    expect(membership.role).toBe(ORG_ADMIN_ROLE);
+    expect(db.orgMembership.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { role: ORG_ADMIN_ROLE } })
+    );
+    expect(db.orgMembership.create).not.toHaveBeenCalled();
+  });
+
   it('defaults to MEMBER in a populated org, and OWNER for the first member of an empty one', async () => {
     db.orgMembership.count.mockResolvedValueOnce(2);
     expect((await addMember(ORG, OTHER, undefined, AS_OWNER)).role).toBe(DEFAULT_ORG_ROLE);

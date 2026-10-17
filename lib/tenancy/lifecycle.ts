@@ -485,21 +485,28 @@ export async function addMember(
   // cleared first (t-838), in the same transaction.
   const membership = await db.$transaction(async (tx) => {
     await healSignupRecord(userId, tx);
-    // The record may have named this very org, in which case it is now written.
+    // The record may have named this very org, in which case it is now written
+    // — with the role the invitation gave. A role the caller asked for wins
+    // over it (review round 3); with none asked, the invitation's stands.
     const healed = await tx.orgMembership.findUnique({
       where: { orgId_userId: { orgId, userId } },
       select: membershipSelect,
     });
-    return (
-      healed ??
-      tx.orgMembership.create({
+    if (!healed) {
+      return tx.orgMembership.create({
         data: { orgId, userId, role: effectiveRole },
         select: membershipSelect,
-      })
-    );
+      });
+    }
+    if (role === undefined || healed.role === effectiveRole) return healed;
+    return tx.orgMembership.update({
+      where: { orgId_userId: { orgId, userId } },
+      data: { role: effectiveRole },
+      select: membershipSelect,
+    });
   });
 
-  logger.info('Org member added', { orgId, userId, role: effectiveRole });
+  logger.info('Org member added', { orgId, userId, role: membership.role });
   return membership;
 }
 

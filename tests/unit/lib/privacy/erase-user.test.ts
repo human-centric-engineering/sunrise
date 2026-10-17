@@ -371,12 +371,11 @@ describe('eraseUser', () => {
 
       await eraseUser(BASE_PARAMS);
 
-      // One statement locking the address and the user id, before either rewrite.
-      expect(order[0]).toBe('lock');
+      // One lock for the address, one for the user id; both before either rewrite.
+      expect(order.slice(0, 2)).toEqual(['lock', 'lock']);
       expect(order.indexOf('config')).toBeGreaterThan(order.lastIndexOf('lock'));
       expect(order.indexOf('runs')).toBeGreaterThan(order.lastIndexOf('lock'));
-      expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
-      expect(mockExecuteRaw.mock.calls[0][1]).toHaveLength(2);
+      expect(mockExecuteRaw).toHaveBeenCalledTimes(2);
     });
 
     it('locks the user id only when the address was never verified', async () => {
@@ -385,9 +384,7 @@ describe('eraseUser', () => {
       await eraseUser(BASE_PARAMS);
 
       expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
-      expect(mockExecuteRaw.mock.calls[0][1]).toEqual([
-        `sunrise:erased-user:${BASE_PARAMS.userId}`,
-      ]);
+      expect(mockExecuteRaw.mock.calls[0][1]).toBe(`sunrise:erased-user:${BASE_PARAMS.userId}`);
     });
 
     it('records addressVerified: true on the receipt for a verified account', async () => {
