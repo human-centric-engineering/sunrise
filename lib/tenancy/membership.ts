@@ -170,6 +170,36 @@ export async function membershipsForNewUser(
 }
 
 /**
+ * What a new user is recorded as when {@link membershipsForNewUser} threw —
+ * at `multi` only (t-834).
+ *
+ * The signup hooks never block on a failed decision, and with nothing
+ * recorded the after hook writes the install-org default. At `single` that is
+ * harmless and unchanged, so this answers `null` there. At `multi` the
+ * install org is the vendor's own (see {@link membershipsForNewUser}), so a
+ * person a customer org's admin invited would become a member of the vendor's
+ * org and not of theirs. Instead this answers the decision without the read
+ * that can fail: the invitation's org with the role it names, default
+ * `MEMBER`. The one thing lost is the first-member-becomes-OWNER bootstrap,
+ * which needs the member count — so the failure only ever narrows a role,
+ * never widens one. An invitation naming no org keeps the install-org rule,
+ * judged on the role the invitation grants (t-669).
+ *
+ * Pure, so it cannot fail the way the decision just did.
+ */
+export function undecidedMembershipsForNewUser(
+  user: NewUserShape,
+  invitation: AcceptedInvitation | null
+): NewUserMemberships | null {
+  if (!isMultiTenant()) return null;
+  const orgId = invitation?.orgId ?? INSTALL_ORG_ID;
+  if (orgId === INSTALL_ORG_ID) {
+    return { membership: installMembershipForNewUser(user, invitation) };
+  }
+  return { membership: { orgId, role: invitation?.orgRole ?? DEFAULT_ORG_ROLE } };
+}
+
+/**
  * Which org a new session for `userId` starts in — and the self-heal for a
  * user who belongs to none.
  *

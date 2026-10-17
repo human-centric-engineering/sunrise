@@ -1152,6 +1152,67 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       );
     });
 
+    // t-834: at `multi` the install-org fallback is the vendor's own org, so a
+    // failed decision must not put a customer org's invitee there.
+    it('at multi, a failed decision records the invited org without the failed read', async () => {
+      mockEnv.TENANCY_MODE = 'multi';
+      try {
+        mocks.prisma.orgMembership.count.mockRejectedValue(new Error('db down'));
+        const user = makeUserCreateData({ email: 'invitee@example.com', role: 'USER' });
+        const metadata = {
+          name: 'Invitee',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: new Date().toISOString(),
+          orgId: OTHER_ORG,
+          orgRole: ORG_ADMIN_ROLE,
+        };
+
+        await expect(
+          runInvitedSignup(() => userCreateBeforeHook(user, { path: '/sign-up/email' }), metadata)
+        ).resolves.toEqual({ data: user });
+
+        // The invitation's org and role; never the install org.
+        expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledTimes(1);
+        expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
+          membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE },
+        });
+        expect(mocks.logger.error).toHaveBeenCalledWith(
+          'Failed to decide the org membership for a new user',
+          expect.any(Error),
+          expect.objectContaining({ invitedOrgId: OTHER_ORG })
+        );
+      } finally {
+        mockEnv.TENANCY_MODE = 'single';
+      }
+    });
+
+    it('at multi, a failed decision with no org role named lands as MEMBER, never the OWNER bootstrap', async () => {
+      mockEnv.TENANCY_MODE = 'multi';
+      try {
+        mocks.prisma.orgMembership.count.mockRejectedValue(new Error('db down'));
+        const user = makeUserCreateData({ email: 'invitee@example.com', role: 'USER' });
+        const metadata = {
+          name: 'Invitee',
+          role: 'USER',
+          invitedBy: 'admin-id',
+          invitedAt: new Date().toISOString(),
+          orgId: OTHER_ORG,
+        };
+
+        await runInvitedSignup(
+          () => userCreateBeforeHook(user, { path: '/sign-up/email' }),
+          metadata
+        );
+
+        expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
+          membership: { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE },
+        });
+      } finally {
+        mockEnv.TENANCY_MODE = 'single';
+      }
+    });
+
     it('records no install-org floor at multi, where the install org is the vendor’s (#872)', async () => {
       // A customer org's admin can invite people into their org; a floor here
       // would make those outsiders members of the vendor's own org.
