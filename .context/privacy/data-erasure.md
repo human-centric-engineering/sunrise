@@ -379,8 +379,7 @@ transaction):
    owner on the payload itself (`userId`, or `embedVisitorId` for a visitor),
    so the match does not depend on the conversation or run still existing
    (t-792). **Known limit:** rows written before that change by
-   `chat_budget_exceeded_per_turn`, `workflow_notification`,
-   `workflow_budget_exceeded` and the force-fail hooks name the subject only
+   `chat_budget_exceeded_per_turn`, `workflow_budget_exceeded` and the force-fail hooks name the subject only
    by `conversationId` or `executionId`. Once the person deletes that
    conversation, or retention prunes it or the run before the delivery,
    nothing links the row to them, and erasure and subject access both miss it
