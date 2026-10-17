@@ -379,3 +379,56 @@ describe('preRedactSubjectFromRuns', () => {
     expect(committed).toEqual([RUN_PAGE_SIZE, 2]);
   });
 });
+
+describe('eraseFromRunInputs — narrowing an address SQL cannot search', () => {
+  it('narrows by the domain when the local part is not plain ASCII', async () => {
+    const tx = makeTx([[]], [[]]);
+
+    await eraseFromRunInputs(tx as never, {
+      userId: USER_ID,
+      address: 'zoë@example.com',
+      actorUserId: ACTOR,
+    });
+
+    const execCall = tx.$queryRaw.mock.calls.find((c) =>
+      sqlOf(c).includes('ai_workflow_execution')
+    );
+    // The domain is the search term, and the scan-everything flag is off.
+    expect(execCall).toContain('example.com');
+    expect(execCall).not.toContain('zoë@example.com');
+  });
+
+  it('reads every row when neither the address nor its domain can be searched', async () => {
+    const tx = makeTx([[]], [[]]);
+
+    await eraseFromRunInputs(tx as never, {
+      userId: USER_ID,
+      address: 'zoë@exämple.com',
+      actorUserId: ACTOR,
+    });
+
+    const scheduleCall = tx.$queryRaw.mock.calls.find((c) =>
+      sqlOf(c).includes('ai_workflow_schedule')
+    );
+    // scanAll is the first boolean parameter after the page cursor.
+    expect(scheduleCall).toContain(true);
+  });
+
+  it('a run with no output and no error is only rewritten where it names them', async () => {
+    const run1: ExecutionRow = {
+      id: 'exec-plain',
+      inputData: { to: ADDRESS },
+      executionTrace: [],
+      outputData: null,
+      errorMessage: null,
+    };
+    const tx = makeTx([[]], [[run1]]);
+
+    await run(tx);
+
+    expect(tx.aiWorkflowExecution.update).toHaveBeenCalledWith({
+      where: { id: 'exec-plain' },
+      data: { inputData: { to: ERASED_VALUE } },
+    });
+  });
+});
