@@ -16,6 +16,12 @@
  * literal text marker by every major spreadsheet and is rendered as
  * the original string when the cell is read by a CSV parser.
  *
+ * That only protects the first character of a cell as the reader splits
+ * it. A spreadsheet opened in a semicolon-separator locale, or a user
+ * who picks `;` or tab in the import dialog, splits on those instead of
+ * the comma. So a cell containing either is quoted as well, which keeps
+ * the text after it inside the neutralised cell (#947).
+ *
  * @see https://owasp.org/www-community/attacks/CSV_Injection
  */
 const FORMULA_TRIGGERS = ['=', '+', '-', '@', '\t', '\r'];
@@ -26,12 +32,13 @@ const FORMULA_TRIGGERS = ['=', '+', '-', '@', '\t', '\r'];
  * RFC 4180 quoting (for commas, quotes, CR and LF). A lone CR is
  * quoted too: spreadsheets treat it as a record break, so left bare it
  * would start a new cell whose first character the neutraliser never
- * saw.
+ * saw. Semicolons and tabs are quoted for the same reason, for readers
+ * that split on them.
  */
 export function csvEscape(value: string): string {
   const neutralised =
     value.length > 0 && FORMULA_TRIGGERS.includes(value.charAt(0)) ? `'${value}` : value;
-  if (/[",\r\n]/.test(neutralised)) {
+  if (/[",;\t\r\n]/.test(neutralised)) {
     return `"${neutralised.replace(/"/g, '""')}"`;
   }
   return neutralised;

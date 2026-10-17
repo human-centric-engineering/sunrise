@@ -8,10 +8,12 @@
  * and a lone CR each end a record — Excel, LibreOffice Calc and Google
  * Sheets all accept a bare CR as a record separator, so a test that
  * splits on `\n` or `\r\n` alone cannot see a record the export split
- * by accident (#768). Throws on an unclosed quoted cell rather than
+ * by accident (#768). `delimiter` is the cell separator the reader
+ * splits on: a semicolon-locale spreadsheet uses `;`, and an import
+ * dialog can pick tab (#947). Throws on an unclosed quoted cell rather than
  * folding the rest of the text into it.
  */
-export function parseCsvRecords(text: string): string[][] {
+export function parseCsvRecords(text: string, delimiter = ','): string[][] {
   const records: string[][] = [];
   let record: string[] = [];
   let cell = '';
@@ -34,7 +36,7 @@ export function parseCsvRecords(text: string): string[][] {
       }
     } else if (ch === '"' && cell === '') {
       inQuotes = true;
-    } else if (ch === ',') {
+    } else if (ch === delimiter) {
       record.push(cell);
       cell = '';
     } else if (ch === '\r' || ch === '\n') {

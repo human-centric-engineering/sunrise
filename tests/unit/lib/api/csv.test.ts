@@ -60,6 +60,30 @@ describe('csvEscape', () => {
       ]);
     });
 
+    // A reader in a semicolon-separator locale, or an import dialog set
+    // to tab, splits on that character instead of the comma. Unquoted,
+    // the text after it becomes a cell of its own whose leading `=` the
+    // neutraliser never saw (#947).
+    it.each([';', '\t'])(
+      'keeps the text after an interior %j inside the cell for a reader splitting on it',
+      (delimiter) => {
+        // No comma, quote or line break, so only the separator itself
+        // can trigger quoting.
+        const value = `thanks${delimiter}=cmd|' /C calc'!A0`;
+        const csv = ['a', 'b'].join(delimiter) + '\r\n' + [csvEscape(value), 'x'].join(delimiter);
+
+        expect(parseCsvRecords(csv, delimiter)).toEqual([
+          ['a', 'b'],
+          [value, 'x'],
+        ]);
+      }
+    );
+
+    it('wraps values containing a semicolon or a tab in double quotes', () => {
+      expect(csvEscape('a;b')).toBe('"a;b"');
+      expect(csvEscape('a\tb')).toBe('"a\tb"');
+    });
+
     it('doubles internal quotes and wraps in outer quotes', () => {
       expect(csvEscape('she said "hi"')).toBe('"she said ""hi"""');
     });
@@ -78,10 +102,9 @@ describe('csvEscape', () => {
       ['+SUM(A1:A2)', "'+SUM(A1:A2)"],
       ['-2+3', "'-2+3"],
       ['@SUM(A1:A2)', "'@SUM(A1:A2)"],
-      ['\tfoo', "'\tfoo"],
     ])('prefixes a single quote when value starts with a formula trigger', (input, expected) => {
-      // Each of the above values has no comma/quote/newline, so the
-      // RFC 4180 wrapping does not fire. We just see the leading
+      // Each of the above values has no separator, quote or line break,
+      // so the quoting does not fire. We just see the leading
       // single-quote injection-marker that spreadsheets render as a
       // text indicator and strip on read.
       expect(csvEscape(input)).toBe(expected);
@@ -95,6 +118,10 @@ describe('csvEscape', () => {
       // wraps the whole thing.
       const input = '=HYPERLINK("https://evil.example","click")';
       expect(csvEscape(input)).toBe('"\'=HYPERLINK(""https://evil.example"",""click"")"');
+    });
+
+    it('neutralises AND quotes a leading tab, which is also a separator (#947)', () => {
+      expect(csvEscape('\tfoo')).toBe('"\'\tfoo"');
     });
 
     it('neutralises AND quotes a leading carriage return', () => {
