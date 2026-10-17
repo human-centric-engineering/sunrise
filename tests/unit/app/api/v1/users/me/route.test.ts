@@ -533,6 +533,8 @@ describe('GET /api/v1/users/me', () => {
       timezone: 'UTC',
       location: null,
       preferences: null,
+      signupOrgId: null,
+      signupOrgRole: null,
       createdAt: new Date('2025-01-01'),
       updatedAt: new Date('2025-01-01'),
     };
@@ -585,6 +587,8 @@ describe('PATCH /api/v1/users/me', () => {
       timezone: 'UTC',
       location: null,
       preferences: null,
+      signupOrgId: null,
+      signupOrgRole: null,
       createdAt: new Date('2025-01-01'),
       updatedAt: new Date('2025-06-01'),
     };
@@ -643,6 +647,8 @@ describe('PATCH /api/v1/users/me — email change', () => {
     timezone: 'UTC',
     location: null,
     preferences: null,
+    signupOrgId: null,
+    signupOrgRole: null,
     createdAt: new Date('2025-01-01'),
     updatedAt: new Date('2025-06-01'),
   };

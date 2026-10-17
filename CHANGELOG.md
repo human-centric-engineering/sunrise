@@ -18,6 +18,21 @@ release process.
 
 ### Added
 
+- **A user whose signup's membership write failed is healed into the org
+  that invited them** (t-838). `User` gains `signupOrgId` and `signupOrgRole`
+  (enum `OrgRole`, both nullable, no FK): the membership the signup decided,
+  written by `userCreateBeforeHook` in the same INSERT as the user and cleared
+  in the transaction that writes the membership (new
+  `writeNewUserMemberships()` in `lib/tenancy/membership.ts`). The sign-in
+  self-heal (`activeOrgForSession`) heals from it in either mode: an invitee
+  lands in the inviting org, an uninvited signup in the install org. At
+  `TENANCY_MODE=multi` a user with no record (created by hand, or left with
+  no org by `eraseOrg` or a removal) is still refused until a platform admin
+  adds them. Migration `20261017140000_user_signup_record`. Both fields are
+  better-auth `additionalFields` with `input: false` and `returned: false`, so
+  a sign-up or update body carrying either is a 400. **Forks:** a fork that
+  creates users without better-auth's hooks writes no record, and its users
+  heal as before.
 - **`npm run db:tenancy:install-floor`** (t-835) gives every user without an
   install-org membership one, by the platform-role rule. #872's floor is
   written at signup only, so a user invited into another org before it

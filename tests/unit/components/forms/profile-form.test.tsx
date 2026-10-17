@@ -78,6 +78,8 @@ describe('components/forms/profile-form', () => {
     phone: '+1 555-0100',
     timezone: 'America/New_York',
     location: 'New York, USA',
+    signupOrgId: null,
+    signupOrgRole: null,
     preferences: {
       email: {
         marketing: false,

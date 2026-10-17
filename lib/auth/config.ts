@@ -14,13 +14,17 @@ import { logger } from '@/lib/logging';
 import { dispatchUserCreated } from '@/lib/auth/user-created-hooks';
 import {
   activeOrgForSession,
-  ensureMembership,
   initialMembershipFor,
   membershipsForNewUser,
+  membershipsFromSignupRecord,
+  signupRecordFor,
   undecidedMembershipsForNewUser,
+  writeNewUserMemberships,
   type AcceptedInvitation,
   type NewUserMemberships,
+  type SignupRecord,
 } from '@/lib/tenancy/membership';
+import { ORG_ROLES } from '@/lib/tenancy/roles';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import {
   getPendingSignup,
@@ -119,12 +123,17 @@ export type SessionCreateData = {
  * failed (`undecidedMembershipsForNewUser`, t-834, t-836), so an invited
  * person still lands in the org that invited them — and, at `single`, in the
  * install org as well.
+ *
+ * Returns the decision as the {@link SignupRecord} the before hook writes onto
+ * the user row (t-838). The request state lasts one request; the record lasts
+ * until the membership is written, so a signup whose write failed is healed at
+ * its next sign-in into the org this decided, not a default.
  */
 async function recordPendingMembership(
   user: UserCreateData,
   invitation: AcceptedInvitation | null,
   viaInvitation: boolean
-): Promise<void> {
+): Promise<SignupRecord> {
   // Three steps, each with its own failure: the fallback below is for a
   // decision that failed, and must not narrow a role when only recording did.
   if (viaInvitation) {
@@ -156,6 +165,28 @@ async function recordPendingMembership(
       invitedOrgId: invitation?.orgId ?? null,
     });
   }
+  return signupRecordFor(memberships);
+}
+
+/** The {@link SignupRecord} columns as they come back on the created row. */
+const signupRecordSchema = z.object({
+  signupOrgId: z.string().min(1).nullish(),
+  signupOrgRole: z.enum(ORG_ROLES).nullish(),
+});
+
+/**
+ * The memberships the created row's {@link SignupRecord} stands for, or `null`
+ * when the row carries none — a row the adapter returned without the columns,
+ * or one created by a path that does not run the before hook. Validated rather
+ * than cast: the row is the adapter's output, not a type this module owns.
+ */
+function membershipsFromCreatedRow(user: UserCreateData): NewUserMemberships | null {
+  const parsed = signupRecordSchema.safeParse(user);
+  if (!parsed.success) return null;
+  return membershipsFromSignupRecord(user, {
+    signupOrgId: parsed.data.signupOrgId ?? null,
+    signupOrgRole: parsed.data.signupOrgRole ?? null,
+  });
 }
 
 /**
@@ -271,8 +302,8 @@ export async function userCreateBeforeHook(
             // The row this hook consumed is the only copy of the org the
             // invitation named; hand it to the hooks that follow now.
             const invited = { ...user, role: invitedRole };
-            await recordPendingMembership(invited, invitation.metadata, true);
-            return { data: invited };
+            const record = await recordPendingMembership(invited, invitation.metadata, true);
+            return { data: { ...invited, ...record } };
           }
         }
       }
@@ -362,8 +393,8 @@ export async function userCreateBeforeHook(
           email: user.email,
         });
         const promoted = { ...user, role: PLATFORM_ADMIN_ROLE };
-        await recordPendingMembership(promoted, null, oauthInvitationAccepted);
-        return { data: promoted };
+        const record = await recordPendingMembership(promoted, null, oauthInvitationAccepted);
+        return { data: { ...promoted, ...record } };
       }
 
       // Humans already exist but the marker is missing — an upgraded database,
@@ -388,12 +419,12 @@ export async function userCreateBeforeHook(
   // `runInvitedSignup`. That route applies the invitation's platform role to
   // the row only after `signUpEmail` returns, which is why the membership is
   // decided from the invitation rather than from `user.role` here.
-  await recordPendingMembership(
+  const record = await recordPendingMembership(
     user,
     invitedSignupInvitation(),
     oauthInvitationAccepted || isInvitedSignup()
   );
-  return { data: user };
+  return { data: { ...user, ...record } };
 }
 
 /**
@@ -440,15 +471,18 @@ export async function userCreateAfterHook(
   // person cannot act on (retrying says the address is taken), and the user
   // would still be memberless. So a failure is logged at `error` — the
   // operator's signal — and the signup completes. The invariant is restored
-  // on the session path at `single`: `sessionCreateBeforeHook` below writes
-  // the install-org default for a user with no membership, and the guard
-  // resolves a null membership to the install org (t-671). At `multi` nothing
-  // is healed (t-836) and the guard refuses until a membership exists.
+  // on the session path: the before hook also wrote its decision onto the
+  // user row (`User.signupOrgId` / `signupOrgRole`, t-838), and
+  // `writeNewUserMemberships` clears it only in the transaction that writes
+  // the memberships — so a failed write leaves it, and
+  // `sessionCreateBeforeHook` heals the user from it at their next sign-in,
+  // into the org that invited them, in either mode.
   //
   // WHICH membership was decided by the before hook (`recordPendingMembership`)
   // — it is the one place that knows the role and the org an invitation
   // grants for both the OAuth and the password path — and carried here on the
-  // request state. When that record cannot be read, `membershipsWithoutRecord`
+  // request state, and on the row. When the request state cannot be read, the
+  // row's record answers; when neither can, `membershipsWithoutRecord`
   // answers from what this request still knows (t-836).
   //
   // Inline rather than a `registerUserCreatedHook` contributor: that registry
@@ -460,34 +494,26 @@ export async function userCreateAfterHook(
     });
     return null;
   });
-  const memberships = pending ?? membershipsWithoutRecord(user, isOAuthSignup);
+  const memberships =
+    pending ?? membershipsFromCreatedRow(user) ?? membershipsWithoutRecord(user, isOAuthSignup);
   if (!memberships) {
     logger.error(
       'No org membership written for new user: the signup record is missing and the invitation cannot be told apart; a platform admin must add them to an org',
       { userId: user.id, signupMethod }
     );
   } else {
+    // The memberships and the cleared record in one transaction, the install-org
+    // floor (#872, at `single`) included: if any write fails none lands and the
+    // record stays for the sign-in heal, which only runs for a user with no
+    // membership at all — so a floor skipped beside a written primary would
+    // never be repaired.
     try {
-      await ensureMembership(user.id, memberships.membership);
+      await writeNewUserMemberships(user.id, memberships);
     } catch (membershipError) {
       logger.error('Failed to create org membership for new user', membershipError, {
         userId: user.id,
         signupMethod,
       });
-    }
-    // At `single`, a user invited into another org is a member of the install
-    // org too, so suspending that org cannot lock them out of everything (#872).
-    // Its own try: the session self-heal only helps a user with NO membership,
-    // so a floor skipped because the first write failed would never be repaired.
-    if (memberships.installMembership) {
-      try {
-        await ensureMembership(user.id, memberships.installMembership);
-      } catch (floorError) {
-        logger.error('Failed to create the install-org membership for new user', floorError, {
-          userId: user.id,
-          signupMethod,
-        });
-      }
     }
   }
 
@@ -1085,6 +1111,26 @@ export const auth = betterAuth({
         // run after the parse and their return wins; `accept-invite` and the
         // admin `users/[id]` PATCH write with `prisma.user.update` directly.
         input: false,
+      },
+      // The membership the signup decided and has not yet written (t-838; see
+      // `SignupRecord` in lib/tenancy/membership.ts). Declared so the before
+      // hook's returned data reaches the INSERT. `input: false` is as
+      // load-bearing here as on `role`: the sign-in self-heal writes whatever
+      // these name, so a body-settable `signupOrgId` would let anyone sign up
+      // into any org. `returned: false` because nothing outside the server
+      // reads them. `config-role-input.test.ts` runs better-auth's own parser
+      // over these options for both.
+      signupOrgId: {
+        type: 'string',
+        required: false,
+        input: false,
+        returned: false,
+      },
+      signupOrgRole: {
+        type: 'string',
+        required: false,
+        input: false,
+        returned: false,
       },
     },
 

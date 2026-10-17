@@ -150,6 +150,8 @@ describe('GET /api/v1/users', () => {
           timezone: 'UTC',
           location: null,
           preferences: {},
+          signupOrgId: null,
+          signupOrgRole: null,
         },
         {
           id: 'user-2',
@@ -166,6 +168,8 @@ describe('GET /api/v1/users', () => {
           timezone: 'UTC',
           location: null,
           preferences: {},
+          signupOrgId: null,
+          signupOrgRole: null,
         },
       ];
 
@@ -222,6 +226,8 @@ describe('GET /api/v1/users', () => {
           timezone: 'UTC',
           location: null,
           preferences: {},
+          signupOrgId: null,
+          signupOrgRole: null,
         },
       ];
 

@@ -36,7 +36,10 @@ import {
   initialMembershipFor,
   membershipForNewUser,
   membershipsForNewUser,
+  membershipsFromSignupRecord,
+  signupRecordFor,
   undecidedMembershipsForNewUser,
+  writeNewUserMemberships,
 } from '@/lib/tenancy/membership';
 
 const mocks = {
@@ -47,11 +50,21 @@ const mocks = {
   },
   user: {
     findUnique: vi.fn(),
+    update: vi.fn(),
   },
+  org: {
+    findUnique: vi.fn(),
+  },
+  // The batch form: every operation was already issued, so the transaction is
+  // their settlement. A rejected one rejects it, as Prisma's does.
+  $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
 };
-// The three delegates' three methods are all these functions call; anything
-// else is a TypeError at the call site, which is the point of not mocking more.
-const db = mocks as unknown as Pick<PrismaClient, 'orgMembership' | 'user'>;
+// These delegates' methods are all these functions call; anything else is a
+// TypeError at the call site, which is the point of not mocking more.
+const db = mocks as unknown as Pick<
+  PrismaClient,
+  'orgMembership' | 'user' | 'org' | '$transaction'
+>;
 
 const OTHER_ORG = 'cmorg000000000000000other';
 const USER_ID = 'cmuser00000000000000user1';
@@ -63,6 +76,8 @@ beforeEach(() => {
   mocks.orgMembership.findMany.mockResolvedValue([]);
   mocks.orgMembership.upsert.mockResolvedValue(undefined);
   mocks.user.findUnique.mockResolvedValue(null);
+  mocks.user.update.mockResolvedValue(undefined);
+  mocks.org.findUnique.mockResolvedValue(null);
 });
 
 describe('membershipsForNewUser (#872)', () => {
@@ -461,5 +476,168 @@ describe('undecidedMembershipsForNewUser', () => {
         { role: PLATFORM_ADMIN_ROLE }
       )
     ).toEqual({ membership: { orgId: INSTALL_ORG_ID, role: ORG_OWNER_ROLE } });
+  });
+});
+
+// t-838: the signup's decision, recorded on the user row so a failed membership
+// write is healed into the org that invited them rather than a default.
+describe('the signup record (t-838)', () => {
+  const human = { role: DEFAULT_USER_ROLE, accountType: 'HUMAN' };
+  const cleared = { signupOrgId: null, signupOrgRole: null };
+
+  it('records the decided membership, not the floor', () => {
+    expect(
+      signupRecordFor({
+        membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE },
+        installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+      })
+    ).toEqual({ signupOrgId: OTHER_ORG, signupOrgRole: ORG_ADMIN_ROLE });
+  });
+
+  it('a record re-derives the install-org floor at single, and not at multi', () => {
+    const record = { signupOrgId: OTHER_ORG, signupOrgRole: ORG_ADMIN_ROLE };
+    expect(membershipsFromSignupRecord(human, record)).toEqual({
+      membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE },
+      installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+    });
+
+    mockEnv.TENANCY_MODE = 'multi';
+    expect(membershipsFromSignupRecord(human, record)).toEqual({
+      membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE },
+    });
+  });
+
+  it('a cleared record stands for nothing', () => {
+    expect(membershipsFromSignupRecord(human, cleared)).toBeNull();
+  });
+
+  it('writes the memberships and clears the record in one transaction', async () => {
+    await writeNewUserMemberships(
+      USER_ID,
+      {
+        membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE },
+        installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+      },
+      db
+    );
+
+    expect(mocks.$transaction).toHaveBeenCalledTimes(1);
+    const [ops] = mocks.$transaction.mock.calls[0];
+    expect(ops).toHaveLength(3);
+    expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: { orgId: OTHER_ORG, userId: USER_ID, role: ORG_ADMIN_ROLE },
+      })
+    );
+    expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: { orgId: INSTALL_ORG_ID, userId: USER_ID, role: DEFAULT_ORG_ROLE },
+      })
+    );
+    expect(mocks.user.update).toHaveBeenCalledWith({ where: { id: USER_ID }, data: cleared });
+  });
+
+  it('a failed membership write fails the transaction, so the record is not reported cleared', async () => {
+    mocks.orgMembership.upsert.mockRejectedValueOnce(new Error('connection reset'));
+
+    await expect(
+      writeNewUserMemberships(
+        USER_ID,
+        { membership: { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE } },
+        db
+      )
+    ).rejects.toThrow('connection reset');
+  });
+});
+
+describe('activeOrgForSession — healing from the signup record (t-838)', () => {
+  const recorded = (orgId: string | null, role: string | null) => ({
+    role: DEFAULT_USER_ROLE,
+    accountType: 'HUMAN',
+    signupOrgId: orgId,
+    signupOrgRole: role,
+  });
+  const cleared = { signupOrgId: null, signupOrgRole: null };
+
+  beforeEach(() => {
+    mockEnv.TENANCY_MODE = 'multi';
+    mocks.orgMembership.findMany.mockResolvedValue([]);
+  });
+
+  it('at multi, heals an invitee whose write failed into the org that invited them — not the install org', async () => {
+    mocks.user.findUnique.mockResolvedValue(recorded(OTHER_ORG, ORG_ADMIN_ROLE));
+    mocks.org.findUnique.mockResolvedValue({ id: OTHER_ORG });
+
+    expect(await activeOrgForSession(USER_ID, db)).toEqual({ orgId: OTHER_ORG, healed: true });
+    expect(mocks.orgMembership.upsert).toHaveBeenCalledTimes(1);
+    expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: { orgId: OTHER_ORG, userId: USER_ID, role: ORG_ADMIN_ROLE },
+      })
+    );
+    expect(mocks.orgMembership.upsert).not.toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ orgId: INSTALL_ORG_ID }) })
+    );
+    expect(mocks.user.update).toHaveBeenCalledWith({ where: { id: USER_ID }, data: cleared });
+    expect(mocks.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('at multi, heals an uninvited public signup whose write failed into the install org', async () => {
+    mocks.user.findUnique.mockResolvedValue(recorded(INSTALL_ORG_ID, DEFAULT_ORG_ROLE));
+    mocks.org.findUnique.mockResolvedValue({ id: INSTALL_ORG_ID });
+
+    expect(await activeOrgForSession(USER_ID, db)).toEqual({ orgId: INSTALL_ORG_ID, healed: true });
+    expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: { orgId: INSTALL_ORG_ID, userId: USER_ID, role: DEFAULT_ORG_ROLE },
+      })
+    );
+  });
+
+  it('at multi, a user with no record — e.g. left with no org by eraseOrg — is still refused', async () => {
+    // The ruling for the erased-org case: their record was cleared when their
+    // membership was first written, so nothing names an org to put them back in.
+    mocks.user.findUnique.mockResolvedValue(recorded(null, null));
+
+    expect(await activeOrgForSession(USER_ID, db)).toEqual({ orgId: null, healed: false });
+    expect(mocks.orgMembership.upsert).not.toHaveBeenCalled();
+    expect(mocks.org.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('a record naming an org erased before they signed in is cleared and heals nothing at multi', async () => {
+    mocks.user.findUnique.mockResolvedValue(recorded(OTHER_ORG, DEFAULT_ORG_ROLE));
+    mocks.org.findUnique.mockResolvedValue(null);
+
+    expect(await activeOrgForSession(USER_ID, db)).toEqual({ orgId: null, healed: false });
+    expect(mocks.orgMembership.upsert).not.toHaveBeenCalled();
+    expect(mocks.user.update).toHaveBeenCalledWith({ where: { id: USER_ID }, data: cleared });
+  });
+
+  it('at single, a record heals into the invited org with the install-org floor, not the default alone', async () => {
+    mockEnv.TENANCY_MODE = 'single';
+    mocks.user.findUnique.mockResolvedValue(recorded(OTHER_ORG, ORG_ADMIN_ROLE));
+    mocks.org.findUnique.mockResolvedValue({ id: OTHER_ORG });
+
+    expect(await activeOrgForSession(USER_ID, db)).toEqual({ orgId: OTHER_ORG, healed: true });
+    expect(mocks.orgMembership.upsert).toHaveBeenCalledTimes(2);
+    expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: { orgId: OTHER_ORG, userId: USER_ID, role: ORG_ADMIN_ROLE },
+      })
+    );
+    expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: { orgId: INSTALL_ORG_ID, userId: USER_ID, role: DEFAULT_ORG_ROLE },
+      })
+    );
+  });
+
+  it('never reads the record for a user who has a membership', async () => {
+    mocks.orgMembership.findMany.mockResolvedValue([
+      { orgId: OTHER_ORG, createdAt: new Date('2026-01-01'), org: { status: 'ACTIVE' } },
+    ]);
+
+    await activeOrgForSession(USER_ID, db);
+    expect(mocks.user.findUnique).not.toHaveBeenCalled();
   });
 });

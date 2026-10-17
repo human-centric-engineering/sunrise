@@ -286,6 +286,77 @@ export async function backfillInstallMemberships(
 export const INSTALL_BACKFILL_BATCH = 500;
 
 /**
+ * The membership a signup decided, as it is recorded on the user row (t-838):
+ * `User.signupOrgId` / `User.signupOrgRole`, written by
+ * `userCreateBeforeHook` in the same INSERT as the user, and cleared in the
+ * transaction that writes the membership ({@link writeNewUserMemberships}).
+ *
+ * So a set record means exactly one thing: this user's signup decided a
+ * membership that was never written. Nothing else sets it, and nothing reads a
+ * cleared one — which is what makes it safe to heal from. A user removed from
+ * every org later, or left with none by `eraseOrg`, has no record, and is not
+ * put back.
+ */
+export interface SignupRecord {
+  signupOrgId: string | null;
+  signupOrgRole: OrgRole | null;
+}
+
+/** The record {@link SignupRecord} describes, for the decided memberships. */
+export function signupRecordFor(memberships: NewUserMemberships): SignupRecord {
+  return {
+    signupOrgId: memberships.membership.orgId,
+    signupOrgRole: memberships.membership.role,
+  };
+}
+
+/** The cleared record, written once the membership it names exists. */
+const CLEARED_SIGNUP_RECORD: SignupRecord = { signupOrgId: null, signupOrgRole: null };
+
+/**
+ * The memberships a {@link SignupRecord} stands for, or `null` when there is
+ * none. The install-org floor (#872) is re-derived rather than stored: it is
+ * {@link withInstallFloor}'s rule on the row's own platform role, which by the
+ * time anything reads the record is the role the invitation granted.
+ */
+export function membershipsFromSignupRecord(
+  user: NewUserShape,
+  record: SignupRecord
+): NewUserMemberships | null {
+  if (!record.signupOrgId || !record.signupOrgRole) return null;
+  return withInstallFloor(user, null, {
+    orgId: record.signupOrgId,
+    role: record.signupOrgRole,
+  });
+}
+
+/**
+ * Write a new user's memberships and clear their {@link SignupRecord}, in one
+ * transaction (t-838).
+ *
+ * One transaction so the record and the memberships can never disagree: if any
+ * write fails, none lands and the record stays, so the next sign-in heals from
+ * it ({@link activeOrgForSession}); if they land, the record is gone, so a user
+ * later removed from the org is never healed back into it. The floor is in the
+ * same transaction for the same reason — the heal runs only for a user with no
+ * membership at all, so a floor skipped beside a written primary would never be
+ * repaired.
+ */
+export async function writeNewUserMemberships(
+  userId: string,
+  memberships: NewUserMemberships,
+  db: Pick<PrismaClient, 'orgMembership' | 'user' | '$transaction'> = prisma
+): Promise<void> {
+  const writes = [memberships.membership, memberships.installMembership]
+    .filter((m): m is InitialMembership => m !== undefined)
+    .map((m) => upsertMembership(userId, m, db));
+  await db.$transaction([
+    ...writes,
+    db.user.update({ where: { id: userId }, data: CLEARED_SIGNUP_RECORD }),
+  ]);
+}
+
+/**
  * Which org a new session for `userId` starts in — and the self-heal for a
  * user who belongs to none.
  *
@@ -295,21 +366,28 @@ export const INSTALL_BACKFILL_BATCH = 500;
  * means to leave); else the org they joined most recently. A user whose
  * every org is suspended starts in the most recent of those and is refused
  * at entry — suspension means they cannot act there, and starting them
- * nowhere would be the same refusal with a worse cookie. A user with **no
- * membership at all** — the signup
- * hook's write failed, or a fork created the row some other way — is given
- * the install-org default by {@link initialMembershipFor} right here at
- * `single`, because a session is the one thing every sign-in mints, so this
- * is where a missing membership is guaranteed to be noticed.
+ * nowhere would be the same refusal with a worse cookie.
  *
- * **At `multi` nothing is written** (t-836, owner ruling 2026-10-17), and the
- * answer is `orgId: null`, which the guard refuses (t-671). There the install
- * org is the vendor's own, and by sign-in time nothing records which org
- * invited a person whose signup failed, so the default would make a customer
- * org's invitee a member of the vendor's org. A platform admin adds them to
- * the right org instead (`POST /api/v1/orgs/[id]/members`). The cost: an
- * uninvited public signup whose write failed, and a member left with no org
- * by `eraseOrg`, are refused too rather than healed.
+ * A user with **no membership at all** is healed here, because a session is
+ * the one thing every sign-in mints, so this is where a missing membership is
+ * guaranteed to be noticed:
+ *
+ * - **Their signup's decision is still recorded** ({@link SignupRecord}): the
+ *   signup decided a membership and its write failed. They get exactly that
+ *   membership — the org that invited them, or the install org for an
+ *   uninvited signup — plus the floor at `single`, in either mode (t-838). A
+ *   record naming an org that no longer exists (erased before they signed in)
+ *   is cleared and treated as no record.
+ * - **No record, at `single`:** the install-org default by
+ *   {@link initialMembershipFor} — a fork created the row some other way, or
+ *   the user predates the record.
+ * - **No record, at `multi`:** nothing is written, and the answer is
+ *   `orgId: null`, which the guard refuses (t-671; t-836, owner ruling
+ *   2026-10-17). There the install org is the vendor's own, and a user with no
+ *   record is either someone a fork created by hand or a member left with no
+ *   org by `eraseOrg` or a removal — none of whom the install org is right
+ *   for. A platform admin adds them to an org
+ *   (`POST /api/v1/orgs/[id]/members`).
  *
  * Returns the org id and whether it wrote a membership, so the hook can log
  * the self-heal or the refusal — both are `error`-level events upstream, and
@@ -322,11 +400,12 @@ export const INSTALL_BACKFILL_BATCH = 500;
  * a user whose only org is suspended starts there and is refused at entry
  * (the guard, and the switch as an explicit action), and the self-heal below
  * runs only for a user with no membership at all. Suspension is enforced
- * where a request enters an org, not by hiding the org from the session.
+ * where a request enters an org, not by hiding the org from the session — so
+ * a record naming a suspended org is healed into it like any other.
  */
 export async function activeOrgForSession(
   userId: string,
-  db: Pick<PrismaClient, 'orgMembership' | 'user'> = prisma
+  db: Pick<PrismaClient, 'orgMembership' | 'user' | 'org' | '$transaction'> = prisma
 ): Promise<{ orgId: string | null; healed: boolean }> {
   const all = await db.orgMembership.findMany({
     where: { userId },
@@ -343,20 +422,47 @@ export async function activeOrgForSession(
     return { orgId: INSTALL_ORG_ID, healed: false };
   }
   if (memberships.length > 0) return { orgId: memberships[0].orgId, healed: false };
-  if (isMultiTenant()) return { orgId: null, healed: false };
 
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { role: true, accountType: true },
+    select: { role: true, accountType: true, signupOrgId: true, signupOrgRole: true },
   });
   // No user row means no session can be minted for it either; the FK on the
-  // membership would refuse the write, so answer the default and let the
-  // guard's own null handling take it from here.
-  if (!user) return { orgId: INSTALL_ORG_ID, healed: false };
+  // membership would refuse the write, so answer the mode's default and let
+  // the guard's own null handling take it from here.
+  if (!user) return { orgId: isMultiTenant() ? null : INSTALL_ORG_ID, healed: false };
+
+  const recorded = await recordedMemberships(userId, user, db);
+  if (recorded) {
+    await writeNewUserMemberships(userId, recorded, db);
+    return { orgId: recorded.membership.orgId, healed: true };
+  }
+  if (isMultiTenant()) return { orgId: null, healed: false };
 
   const membership = initialMembershipFor(user);
   await ensureMembership(userId, membership, db);
   return { orgId: membership.orgId, healed: true };
+}
+
+/**
+ * The memberships `user`'s {@link SignupRecord} stands for, when its org still
+ * exists. A record naming an org that is gone is cleared here, so it is read
+ * once rather than on every sign-in.
+ */
+async function recordedMemberships(
+  userId: string,
+  user: NewUserShape & SignupRecord,
+  db: Pick<PrismaClient, 'user' | 'org'>
+): Promise<NewUserMemberships | null> {
+  const recorded = membershipsFromSignupRecord(user, user);
+  if (!recorded) return null;
+  const org = await db.org.findUnique({
+    where: { id: recorded.membership.orgId },
+    select: { id: true },
+  });
+  if (org) return recorded;
+  await db.user.update({ where: { id: userId }, data: CLEARED_SIGNUP_RECORD });
+  return null;
 }
 
 /**
@@ -381,7 +487,16 @@ export async function ensureMembership(
   membership: InitialMembership,
   db: Pick<PrismaClient, 'orgMembership'> = prisma
 ): Promise<void> {
-  await db.orgMembership.upsert({
+  await upsertMembership(userId, membership, db);
+}
+
+/** {@link ensureMembership}'s upsert, unawaited so a transaction can batch it. */
+function upsertMembership(
+  userId: string,
+  membership: InitialMembership,
+  db: Pick<PrismaClient, 'orgMembership'>
+) {
+  return db.orgMembership.upsert({
     where: { orgId_userId: { orgId: membership.orgId, userId } },
     update: {},
     create: { orgId: membership.orgId, userId, role: membership.role },

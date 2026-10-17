@@ -88,3 +88,51 @@ describe('role at sign-up', () => {
     expect(parseUserInput(weakened, hostileBody, 'update').role).toBe(PLATFORM_ADMIN_ROLE);
   });
 });
+
+// t-838: the signup record names the org the sign-in self-heal writes a
+// membership into, so a body-settable value would let anyone sign up into any
+// org. Same parser, same real options, same control as `role` above.
+describe('the signup record at sign-up and on update (t-838)', () => {
+  const victimOrg = 'cmorg000000000000000victm';
+
+  it('declares both fields as not client-settable and not returned', () => {
+    for (const field of ['signupOrgId', 'signupOrgRole'] as const) {
+      expect(auth.options.user?.additionalFields?.[field]).toMatchObject({
+        input: false,
+        returned: false,
+      });
+    }
+  });
+
+  it('refuses a body-supplied record on create', () => {
+    // With no defaultValue there is no silent-replace arm, so the sign-up is a
+    // 400 rather than an account created with the field dropped.
+    expect(() => parseUserInput(auth.options, { signupOrgId: victimOrg }, 'create')).toThrow(
+      /signupOrgId is not allowed to be set/
+    );
+    expect(() => parseUserInput(auth.options, { signupOrgRole: 'OWNER' }, 'create')).toThrow(
+      /signupOrgRole is not allowed to be set/
+    );
+  });
+
+  it('refuses a body-supplied record on update', () => {
+    expect(() => parseUserInput(auth.options, { signupOrgId: victimOrg }, 'update')).toThrow(
+      /signupOrgId is not allowed to be set/
+    );
+    expect(() => parseUserInput(auth.options, { signupOrgRole: 'OWNER' }, 'update')).toThrow(
+      /signupOrgRole is not allowed to be set/
+    );
+  });
+
+  it('control: with input: false removed, the same parser hands the body its org', () => {
+    const fields = auth.options.user?.additionalFields;
+    const { input: _input, ...open } = fields?.signupOrgId ?? { type: 'string' as const };
+    const unsafe = {
+      ...auth.options,
+      user: { ...auth.options.user, additionalFields: { ...fields, signupOrgId: open } },
+    };
+    expect(parseUserInput(unsafe, { signupOrgId: victimOrg }, 'create').signupOrgId).toBe(
+      victimOrg
+    );
+  });
+});

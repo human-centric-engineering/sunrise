@@ -96,6 +96,8 @@ describe('POST /api/auth/send-verification-email', () => {
     timezone: null,
     location: null,
     preferences: {},
+    signupOrgId: null,
+    signupOrgRole: null,
   };
 
   // Helper to create mock request

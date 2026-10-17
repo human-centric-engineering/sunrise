@@ -160,6 +160,9 @@ vi.mock('@/lib/db/client', () => ({
       upsert: vi.fn(),
       count: vi.fn(),
     },
+    // The memberships and the cleared signup record are one batch (t-838):
+    // every operation was already issued, so the batch is their settlement.
+    $transaction: vi.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
     account: {
       findFirst: vi.fn(),
     },
@@ -213,6 +216,7 @@ interface SharedMocks {
     authBootstrap: { findUnique: MockedFn; upsert: MockedFn };
     orgMembership: { upsert: MockedFn; count: MockedFn };
     verification: { findFirst: MockedFn };
+    $transaction: MockedFn;
   };
   logger: {
     info: MockedFn;
@@ -243,6 +247,26 @@ function makeUserCreateData(
 
 describe('lib/auth/config - databaseHooks.user.create', () => {
   let mocks: SharedMocks;
+
+  /**
+   * The `user.update` calls other than the one clearing the signup record
+   * (t-838) — which `writeNewUserMemberships` issues beside the membership
+   * writes, and is asserted on its own where it matters.
+   */
+  function profileUpdates(): unknown[][] {
+    return mocks.prisma.user.update.mock.calls.filter(
+      ([args]: unknown[]) => !('signupOrgId' in ((args as { data?: object }).data ?? {}))
+    );
+  }
+
+  /**
+   * Make the preferences update — and only it — reject with `error`. The after
+   * hook's first `user.update` clears the signup record inside the membership
+   * transaction (t-838); the preferences update is the second.
+   */
+  function rejectPreferencesUpdate(error: Error): void {
+    mocks.prisma.user.update.mockResolvedValueOnce(createMockUser()).mockRejectedValueOnce(error);
+  }
   let userCreateBeforeHook: (
     user: UserCreateData,
     ctx: DatabaseHookContext
@@ -296,6 +320,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         verification: {
           findFirst: vi.mocked(db.prisma.verification.findFirst),
         },
+        $transaction: vi.mocked(db.prisma.$transaction),
       },
       logger: {
         info: vi.mocked(logging.logger.info),
@@ -590,7 +615,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       const result = await userCreateBeforeHook(mockUser, ctx);
 
       // Assert: hook returns user unchanged (no role applied, no throw)
-      expect(result).toEqual({ data: mockUser });
+      expect(result).toEqual({
+        data: { ...mockUser, signupOrgId: INSTALL_ORG_ID, signupOrgRole: DEFAULT_ORG_ROLE },
+      });
       expect(result.data.role).toBe(mockUser.role);
 
       // Assert: error logged with the thrown error
@@ -627,7 +654,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       const result = await userCreateBeforeHook(mockUser, ctx);
 
       // Assert: user returned unchanged — no role override when invitation is null
-      expect(result).toEqual({ data: mockUser });
+      expect(result).toEqual({
+        data: { ...mockUser, signupOrgId: INSTALL_ORG_ID, signupOrgRole: DEFAULT_ORG_ROLE },
+      });
       expect(result.data.role).toBe(mockUser.role);
 
       // Token is still consumed (deleteInvitationToken called before the null check)
@@ -675,7 +704,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       const result = await userCreateBeforeHook(mockUser, ctx);
 
       // Assert: hook returns user unchanged — the error was caught, not re-thrown
-      expect(result).toEqual({ data: mockUser });
+      expect(result).toEqual({
+        data: { ...mockUser, signupOrgId: INSTALL_ORG_ID, signupOrgRole: DEFAULT_ORG_ROLE },
+      });
 
       // Assert: error logged
       expect(mocks.logger.error).toHaveBeenCalledWith(
@@ -1138,7 +1169,11 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
       await expect(
         runInvitedSignup(() => userCreateBeforeHook(user, { path: '/sign-up/email' }), metadata)
-      ).resolves.toEqual({ data: user });
+      ).resolves.toEqual({
+        // The row records the decision too (t-838), so a failed membership
+        // write is healed into the invited org at the next sign-in.
+        data: { ...user, signupOrgId: OTHER_ORG, signupOrgRole: DEFAULT_ORG_ROLE },
+      });
 
       // t-836: at `single` the decision is recorded without the failed read —
       // the org that invited them AND the install-org floor (#872), not the
@@ -1175,7 +1210,9 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
         await expect(
           runInvitedSignup(() => userCreateBeforeHook(user, { path: '/sign-up/email' }), metadata)
-        ).resolves.toEqual({ data: user });
+        ).resolves.toEqual({
+          data: { ...user, signupOrgId: OTHER_ORG, signupOrgRole: ORG_ADMIN_ROLE },
+        });
 
         // The invitation's org and role; never the install org.
         expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledTimes(1);
@@ -1510,6 +1547,41 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           expect(mocks.sendEmail).toHaveBeenCalled();
         });
 
+        // t-838: the before hook writes its decision onto the row too, so a lost
+        // request state no longer leaves an OAuth invitee unplaced.
+        it('at multi, an OAuth invitee whose request state is lost is placed from the row record', async () => {
+          mockEnv.TENANCY_MODE = 'multi';
+          const user = {
+            ...makeUserCreateData({ id: 'oauth-2', email: 'o2@example.com' }),
+            signupOrgId: INVITED_ORG,
+            signupOrgRole: ORG_ADMIN_ROLE,
+          };
+
+          await userCreateAfterHook(user, { path: '/api/auth/callback/google' });
+
+          expect(writtenOrgs()).toEqual([INVITED_ORG]);
+          expect(mocks.prisma.orgMembership.upsert).toHaveBeenCalledWith(
+            expect.objectContaining({
+              create: { orgId: INVITED_ORG, userId: 'oauth-2', role: ORG_ADMIN_ROLE },
+            })
+          );
+        });
+
+        it('a malformed row record is ignored, not trusted', async () => {
+          // The row is the adapter's output; a role outside the closed set must
+          // not reach a membership write.
+          mockEnv.TENANCY_MODE = 'multi';
+          const user = {
+            ...makeUserCreateData({ id: 'oauth-3', email: 'o3@example.com' }),
+            signupOrgId: INVITED_ORG,
+            signupOrgRole: 'SUPERUSER',
+          };
+
+          await userCreateAfterHook(user, { path: '/api/auth/callback/google' });
+
+          expect(mocks.prisma.orgMembership.upsert).not.toHaveBeenCalled();
+        });
+
         it('at multi, an uninvited email signup with no record still gets the install-org default', async () => {
           // The control: the multi refusal is about not knowing the invitation,
           // not about the install org.
@@ -1549,13 +1621,36 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         // vitest numbers every mock call globally; the membership write must
         // precede the first non-blocking step and the welcome email.
         const [membership] = mocks.prisma.orgMembership.upsert.mock.invocationCallOrder;
-        const [preferences] = mocks.prisma.user.update.mock.invocationCallOrder;
+        const preferences =
+          mocks.prisma.user.update.mock.invocationCallOrder.find(
+            (_, i) => 'preferences' in (mocks.prisma.user.update.mock.calls[i]?.[0]?.data ?? {})
+          ) ?? Number.NaN;
         const [email] = mocks.sendEmail.mock.invocationCallOrder;
         expect(membership).toBeDefined();
         expect(preferences).toBeDefined();
         expect(email).toBeDefined();
         expect(membership).toBeLessThan(preferences);
         expect(membership).toBeLessThan(email);
+      });
+
+      it('writes the memberships and clears the signup record in one transaction (t-838)', async () => {
+        // One batch, so a failed write leaves the record for the sign-in heal
+        // and a written one can never be healed into again.
+        mockPendingSignup.getPendingSignup.mockResolvedValue({
+          membership: { orgId: 'cmorg000000000000000other', role: ORG_ADMIN_ROLE },
+          installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
+        });
+        const mockUser = makeUserCreateData({ id: 'tx-user', email: 'tx@example.com' });
+
+        await userCreateAfterHook(mockUser, { path: '/sign-up/email' });
+
+        expect(mocks.prisma.$transaction).toHaveBeenCalledTimes(1);
+        const [ops] = mocks.prisma.$transaction.mock.calls[0] as [unknown[]];
+        expect(ops).toHaveLength(3);
+        expect(mocks.prisma.user.update).toHaveBeenCalledWith({
+          where: { id: 'tx-user' },
+          data: { signupOrgId: null, signupOrgRole: null },
+        });
       });
 
       it('logs at error and lets the signup complete when the membership write fails', async () => {
@@ -1666,7 +1761,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         await userCreateAfterHook(mockUser, ctx);
 
         // Assert: Only ONE prisma.user.update call (preferences only, no role update)
-        const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
+        const updateCalls = profileUpdates();
         expect(updateCalls.length).toBe(1);
         expect(updateCalls[0]?.[0]).toEqual(
           expect.objectContaining({
@@ -1715,7 +1810,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         await userCreateAfterHook(mockUser, ctx);
 
         // Assert: Only ONE update call (preferences only)
-        const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
+        const updateCalls = profileUpdates();
         expect(updateCalls.length).toBe(1);
         expect(updateCalls[0]?.[0]).toEqual(
           expect.objectContaining({
@@ -1739,7 +1834,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           email: 'error@example.com',
         });
 
-        mocks.prisma.user.update.mockRejectedValueOnce(new Error('Database connection failed'));
+        rejectPreferencesUpdate(new Error('Database connection failed'));
 
         const ctx: DatabaseHookContext = { path: '/api/auth/callback/google' };
 
@@ -2075,7 +2170,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         await userCreateAfterHook(mockUser, ctx);
 
         // Assert: preferences update was first (and only) update call
-        const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
+        const updateCalls = profileUpdates();
         expect(updateCalls.length).toBe(1);
         expect(updateCalls[0]?.[0]).toEqual(
           expect.objectContaining({
@@ -2148,9 +2243,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
           email: 'prefsfail@example.com',
         });
 
-        mocks.prisma.user.update
-          .mockRejectedValueOnce(new Error('Database write failed'))
-          .mockResolvedValue(mockUser);
+        rejectPreferencesUpdate(new Error('Database write failed'));
 
         const ctx: DatabaseHookContext = { path: '/api/auth/signup' };
 
@@ -2194,7 +2287,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         await userCreateAfterHook(mockUser, ctx);
 
         // Assert: Exactly ONE prisma.user.update (preferences only — no role update)
-        const updateCalls = vi.mocked(mocks.prisma.user.update).mock.calls;
+        const updateCalls = profileUpdates();
         expect(updateCalls.length).toBe(1);
 
         expect(updateCalls[0]?.[0]).toEqual(

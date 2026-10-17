@@ -414,6 +414,8 @@ describe('POST /api/v1/users/invite', () => {
         timezone: 'UTC',
         location: null,
         preferences: {},
+        signupOrgId: null,
+        signupOrgRole: null,
       });
 
       // Act: Call the invite endpoint with existing email

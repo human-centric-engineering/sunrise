@@ -37,6 +37,17 @@ model User {
   location    String? @db.VarChar(100) // Free-form location string
   preferences Json?   @default("{}") // Email preferences as JSON
 
+  // The org membership this user's signup decided and has not yet written
+  // (t-838). Set by `userCreateBeforeHook` in the same INSERT as the row, and
+  // cleared in the transaction that writes the membership, so a set value
+  // means one thing: the signup's membership write failed. The sign-in
+  // self-heal (`activeOrgForSession`) heals from it — into the org that
+  // invited them, never the install org by default. No FK on purpose: an org
+  // erased first leaves a value the heal checks for and clears. Not
+  // client-settable (`input: false` in lib/auth/config.ts).
+  signupOrgId   String?
+  signupOrgRole OrgRole?
+
   // Relations
   sessions Session[]
   accounts Account[]
