@@ -310,4 +310,72 @@ describe('GET /audit-log', () => {
 
     expect(response.status).toBe(400);
   });
+
+  // ── Support rows (§121 t-825) ───────────────────────────────────────────
+
+  const GRANT_ID = 'cmgrant00000000000000one';
+
+  it('includes the support grant and its org on each row', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    await GET(makeRequest());
+
+    const callArg = vi.mocked(prisma.aiAdminAuditLog.findMany).mock.calls[0]?.[0];
+    expect(callArg?.include?.supportGrant).toEqual({
+      select: { id: true, level: true, org: { select: { id: true, name: true } } },
+    });
+  });
+
+  it('support=only keeps rows made in a support session — those with an org stamped', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    await GET(makeRequest('support=only'));
+
+    const callArg = vi.mocked(prisma.aiAdminAuditLog.findMany).mock.calls[0]?.[0];
+    // On the org, not the grant: a row whose org was erased keeps its org id.
+    expect(callArg?.where?.supportOrgId).toEqual({ not: null });
+    expect(vi.mocked(prisma.aiAdminAuditLog.count).mock.calls[0]?.[0]?.where).toEqual(
+      callArg?.where
+    );
+  });
+
+  it('support=none keeps only rows made outside one', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    await GET(makeRequest('support=none'));
+
+    const callArg = vi.mocked(prisma.aiAdminAuditLog.findMany).mock.calls[0]?.[0];
+    expect(callArg?.where?.supportOrgId).toBeNull();
+  });
+
+  it('supportGrantId narrows to one grant’s rows', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    await GET(makeRequest(`supportGrantId=${GRANT_ID}`));
+
+    const callArg = vi.mocked(prisma.aiAdminAuditLog.findMany).mock.calls[0]?.[0];
+    expect(callArg?.where?.supportGrantId).toBe(GRANT_ID);
+  });
+
+  it('applies no support filter by default', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    await GET(makeRequest());
+
+    const callArg = vi.mocked(prisma.aiAdminAuditLog.findMany).mock.calls[0]?.[0];
+    expect(callArg?.where).not.toHaveProperty('supportOrgId');
+    expect(callArg?.where).not.toHaveProperty('supportGrantId');
+  });
+
+  it.each(['support=all', 'support=yes', 'supportGrantId=not-a-cuid'])(
+    'rejects %s with 400',
+    async (query) => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+      const response = await GET(makeRequest(query));
+
+      expect(response.status).toBe(400);
+      expect(prisma.aiAdminAuditLog.findMany).not.toHaveBeenCalled();
+    }
+  );
 });

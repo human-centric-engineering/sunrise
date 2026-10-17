@@ -263,8 +263,14 @@ export const SUBJECT_DATA_SOURCES: SubjectDataSource[] = [
     disposition: 'export',
     // Retained (`SetNull`) rather than cascaded, but the row carries the
     // subject's own IP address, so it is their personal data while the link
-    // exists — erasure scrubs `clientIp` for exactly this reason.
-    description: 'Admin configuration changes the subject made, including the IP address recorded.',
+    // exists — erasure scrubs `clientIp` for exactly this reason. A row made in
+    // a support session (§121 t-825) also carries `supportGrantId` /
+    // `supportOrgId`: ids of the grant and the org the subject acted in, which
+    // say where the subject's own act happened and nothing of the org's. They
+    // stay on erasure for the same reason the row does: once `userId` is
+    // null they name no one, and the org reads its support history by them.
+    description:
+      'Admin configuration changes the subject made, including the IP address recorded and, for a change made while working in a customer organisation as support, which organisation and grant.',
     fetch: ({ userId }) =>
       prisma.aiAdminAuditLog.findMany({ where: { userId }, orderBy: byCreatedAt }),
   },
