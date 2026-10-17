@@ -354,3 +354,72 @@ describe('POST /api/v1/users/invite — org axis', () => {
     expect(prisma.org.findUnique).not.toHaveBeenCalled();
   });
 });
+
+// t-833: the platform role is platform standing. A fork's policy may admit an
+// org's OWNER/ADMIN to the admin guard, but that must not let them mint a
+// platform ADMIN through the invitation — only a platform admin sets a role
+// above the default, whatever the policy said.
+describe('POST /api/v1/users/invite — platform role floor', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+    vi.mocked(prisma.org.findUnique).mockResolvedValue({
+      id: OTHER_ORG,
+      status: 'ACTIVE',
+    } as never);
+  });
+
+  afterEach(() => {
+    __resetAuthorizationPolicyForTests();
+  });
+
+  /**
+   * A fork policy that lets a non-platform-admin through every admin question
+   * and reads them unrestricted, as one admitting an org's admins to the admin
+   * surfaces would (the guard insists on an ownership decision otherwise).
+   */
+  function registerWideningPolicy() {
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canAdminister: async () => true,
+      subjectScope: async () => ({}),
+    });
+  }
+
+  it('refuses a non-platform-admin setting the ADMIN role, even when the policy admits them', async () => {
+    registerWideningPolicy();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+
+    const res = await POST(request({ ...invitee, role: 'ADMIN', orgId: OTHER_ORG }));
+
+    expect(res.status).toBe(403);
+    expect(JSON.parse(await res.text()).error.code).toBe('FORBIDDEN');
+    expect(generateInvitationToken).not.toHaveBeenCalled();
+    expect(updateInvitationToken).not.toHaveBeenCalled();
+  });
+
+  it('still lets that caller invite at the default role', async () => {
+    registerWideningPolicy();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+
+    const res = await POST(request({ ...invitee, orgId: OTHER_ORG }));
+
+    expect(res.status).toBe(201);
+    expect(vi.mocked(generateInvitationToken).mock.calls[0]?.[1]).toMatchObject({
+      role: 'USER',
+      orgId: OTHER_ORG,
+    });
+  });
+
+  it('lets a platform admin set the ADMIN role', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const res = await POST(request({ ...invitee, role: 'ADMIN' }));
+
+    expect(res.status).toBe(201);
+    expect(vi.mocked(generateInvitationToken).mock.calls[0]?.[1]).toMatchObject({
+      role: 'ADMIN',
+    });
+  });
+});

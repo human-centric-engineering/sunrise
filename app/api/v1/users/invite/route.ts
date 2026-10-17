@@ -58,7 +58,7 @@ import { deliverInvitation } from '@/lib/auth/invitation-delivery';
 import { getRouteLogger } from '@/lib/api/context';
 import { inviteLimiter, createRateLimitResponse } from '@/lib/security/rate-limit';
 import { getClientIP } from '@/lib/security/ip';
-import { DEFAULT_USER_ROLE } from '@/lib/auth/roles';
+import { DEFAULT_USER_ROLE, isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 /**
@@ -110,6 +110,22 @@ export const POST = withAdminAuth(async (request, session) => {
       'A role in the main organisation follows the platform role; set role instead',
       { code: ErrorCodes.VALIDATION_ERROR, status: 400 }
     );
+  }
+
+  // The platform role is platform standing, whatever org this invitation
+  // targets: on acceptance it becomes `User.role`, and the install-org role
+  // follows from it. So only a platform admin may set anything above the
+  // default. Under Sunrise's default policy only platform admins pass the
+  // guard, so this changes nothing; it is the floor for a fork whose
+  // `canAdminister` admits an org's OWNER/ADMIN, which may narrow but never
+  // widen the platform-only surface (t-833). Read from the principal, so a
+  // support session — which presents the default role — is refused too.
+  if (body.role !== DEFAULT_USER_ROLE && !isPlatformAdmin(session.principal)) {
+    log.warn('Invitation with a platform role refused: caller is not a platform admin', {
+      adminId: session.user.id,
+      role: body.role,
+    });
+    throw new ForbiddenError('Only a platform administrator can set a platform role');
   }
 
   // 4. Parse resend query parameter
