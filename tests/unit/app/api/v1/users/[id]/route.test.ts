@@ -2036,3 +2036,99 @@ describe('GET /api/v1/users/[id] — the read decision is the policy’s', () =>
     expect(response.status).toBe(200);
   });
 });
+
+// t-837: the platform role is platform standing. A fork's policy may admit an
+// org's OWNER/ADMIN to the admin guard, but that must not let them promote
+// anyone — themselves included — to platform ADMIN through this route.
+describe('PATCH /api/v1/users/[id] — platform role floor', () => {
+  const TARGET_ID = 'cmjbv4i3x00006wsloputgwuz';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(headers).mockResolvedValue(new Headers());
+    vi.mocked(resolveApiKey).mockResolvedValue(null);
+    vi.mocked(prisma.$transaction).mockImplementation(((fn: (tx: typeof prisma) => unknown) =>
+      fn(prisma)) as never);
+    vi.mocked(prisma.orgMembership.upsert).mockResolvedValue({} as never);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: TARGET_ID,
+      name: 'Target',
+      email: 'target@example.com',
+      role: 'USER',
+      accountType: 'HUMAN',
+    } as never);
+    vi.mocked(prisma.user.update).mockImplementation((async (args: {
+      data: Record<string, unknown>;
+    }) => ({ id: TARGET_ID, name: 'Target', role: 'USER', ...args.data })) as never);
+  });
+
+  afterEach(() => {
+    __resetAuthorizationPolicyForTests();
+  });
+
+  /**
+   * A fork policy that lets a non-platform-admin through every admin question
+   * and reads them unrestricted, as one admitting an org's admins to the admin
+   * surfaces would.
+   */
+  function registerWideningPolicy() {
+    registerAuthorizationPolicy({
+      ...DEFAULT_AUTHORIZATION_POLICY,
+      canAdminister: async () => true,
+      subjectScope: async () => ({}),
+    });
+  }
+
+  function patch(body: Record<string, unknown>) {
+    return PATCH(
+      createMockRequest({ method: 'PATCH', url: 'http://localhost:3000/api/v1/users/id', body }),
+      { params: createMockParams(TARGET_ID) }
+    );
+  }
+
+  it('refuses a non-platform-admin changing a role, even when the policy admits them', async () => {
+    registerWideningPolicy();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+
+    const response = await patch({ role: 'ADMIN' });
+
+    expect(response.status).toBe(403);
+    expect((await parseResponse<ErrorResponse>(response)).error.code).toBe('FORBIDDEN');
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(prisma.orgMembership.upsert).not.toHaveBeenCalled();
+  });
+
+  it('still lets that caller edit the fields that are not the role', async () => {
+    // The control: the 403 above is about the role, not "this caller is refused".
+    registerWideningPolicy();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+
+    const response = await patch({ name: 'Renamed' });
+
+    expect(response.status).toBe(200);
+    expect(vi.mocked(prisma.user.update).mock.calls[0]?.[0]).toMatchObject({
+      data: { name: 'Renamed' },
+    });
+  });
+
+  it('lets that caller send the role the user already has', async () => {
+    registerWideningPolicy();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser('USER'));
+
+    const response = await patch({ role: 'USER', name: 'Renamed' });
+
+    expect(response.status).toBe(200);
+  });
+
+  it('lets a platform admin change the role under the same policy', async () => {
+    registerWideningPolicy();
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+
+    const response = await patch({ role: 'ADMIN' });
+
+    expect(response.status).toBe(200);
+    expect(vi.mocked(prisma.user.update).mock.calls[0]?.[0]).toMatchObject({
+      data: { role: 'ADMIN' },
+    });
+  });
+});

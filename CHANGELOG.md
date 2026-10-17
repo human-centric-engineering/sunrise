@@ -846,6 +846,15 @@ release process.
 
 ### Security
 
+- **Only a platform admin can change a platform role through
+  `PATCH /api/v1/users/[id]`** (t-837). The route wrote the body's `role`
+  for whoever passed `withAdminAuth`, so a fork whose `canAdminister` admits
+  an org's OWNER/ADMIN let them promote anyone, themselves included, to
+  platform `ADMIN`. Changing `role` now needs the caller to be a platform
+  admin, whatever the policy said, and is a 403 otherwise. A support session
+  counts as not being one. Sending the role the user already has, and
+  editing the other fields, are unchanged. Stock Sunrise admits only
+  platform admins to the route, so nothing changes there.
 - **Only a platform admin can set a platform role through
   `POST /api/v1/users/invite`** (t-833). The route wrote the body's `role`
   for whoever passed `withAdminAuth`, so a fork whose `canAdminister` admits

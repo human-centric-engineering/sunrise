@@ -14,7 +14,7 @@
 
 import { prisma } from '@/lib/db/client';
 import { successResponse, errorResponse } from '@/lib/api/responses';
-import { NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { withAuth, withAdminAuth } from '@/lib/auth/guards';
 import { eraseUser } from '@/lib/privacy/erase-user';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
@@ -157,6 +157,23 @@ export const PATCH = withAdminAuth<{ id: string }>(async (request, session, { pa
       status: 400,
       code: 'CANNOT_MODIFY_SYSTEM_ACCOUNT',
     });
+  }
+
+  // The platform role is platform standing, so only a platform admin may
+  // change it, whatever the policy said. Under Sunrise's default policy only
+  // platform admins pass the guard, so this changes nothing; it is the floor
+  // for a fork whose `canAdminister` admits an org's OWNER/ADMIN, which may
+  // narrow but never widen the platform-only surface (t-837, as t-833 for
+  // invitations). Read from the principal, so a support session — which
+  // presents the default role — is refused too. A body repeating the current
+  // role changes nothing and is let through.
+  if (body.role && body.role !== existingUser.role && !isPlatformAdmin(session.principal)) {
+    log.warn('Platform role change refused: caller is not a platform admin', {
+      adminId: session.user.id,
+      targetUserId: id,
+      role: body.role,
+    });
+    throw new ForbiddenError('Only a platform administrator can change a platform role');
   }
 
   // Prevent admin from demoting themselves
