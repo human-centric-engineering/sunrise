@@ -79,7 +79,8 @@ A platform credential — an `admin`-scoped API key — enters **no** org: no
   routes can ask, with and without org facts, and asserts identical answers.
 - **is a session grant.** An `api-key` principal never takes the arm, whatever
   `orgRole` the entry projected onto it: a key is narrower than its owner
-  (#542) and only the `admin` scope administers, through the platform check.
+  (#542) and only the `admin` scope administers, through the platform check —
+  and only while the key's owner is a platform admin (#746).
 - **reads the ownerless `this-row` of a resource that carries their org** —
   answered _before_ the once-per-kind diagnostic, because an org resource with
   no `ownerId` is a fork's steady state, not a misconfigured resolver.
