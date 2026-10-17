@@ -55,7 +55,10 @@ export interface NamedSubjects {
 
 /** The ones among {@link NamedSubjects} that belong to an erased person. */
 export interface ErasedSubjects {
-  /** As the caller spelled them, so a message can point at the value it sent. */
+  /**
+   * Normalised (`normaliseAddress()`: trimmed, lower-cased), not as the caller
+   * spelled them — compare a value against these through `normaliseAddress()`.
+   */
   addresses: string[];
   userIds: string[];
 }

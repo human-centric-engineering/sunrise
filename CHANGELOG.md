@@ -31,13 +31,13 @@ release process.
   adds them. Migration `20261017140000_user_signup_record`. Both fields are
   better-auth `additionalFields` with `input: false` and `returned: false`, so
   a sign-up or update body carrying either is a 400. Any other membership
-  write clears the record too (`clearSignupRecord()`, called by `addMember`,
-  `createOrg` and `syncInstallMembershipRole`), so a user placed by hand and
-  later removed is never healed back; `db:tenancy:install-floor` heals a
-  surviving record rather than writing the floor alone. **Forks:** a fork
-  that creates users without better-auth's hooks writes no record, and its
-  users heal as before; one that writes `OrgMembership` rows directly should
-  call `clearSignupRecord()`.
+  write pays a surviving record first and clears it (`healSignupRecord()`,
+  called by `addMember`, `createOrg` and `syncInstallMembershipRole`), so the
+  invitation is neither lost nor healed back after a removal;
+  `db:tenancy:install-floor` heals a surviving record the same way.
+  **Forks:** a fork that creates users without better-auth's hooks writes no
+  record, and its users heal as before; one that writes `OrgMembership` rows
+  directly should call `healSignupRecord()` first.
 - **`npm run db:tenancy:install-floor`** (t-835) gives every user without an
   install-org membership one, by the platform-role rule. #872's floor is
   written at signup only, so a user invited into another org before it
@@ -388,7 +388,10 @@ release process.
   transaction runs with `WRITER_TRANSACTION_OPTIONS` (70 s) so one queued
   behind an erasure is refused rather than timed out, and a new index on
   `DataErasureReceipt.subjectEmailHash` (migration
-  `20261017160000_erasure_receipt_email_hash_index`) serves the lookup. Erasure and each writer share a
+  `20261017160000_erasure_receipt_email_hash_index`) serves the lookup. In a
+  workflow draft or version an erased approver id is stripped rather than
+  refused, since the builder cannot show an id whose account is gone; an
+  erased address is still refused. Erasure and each writer share a
   transaction-scoped advisory lock per address and user id, so neither can
   slip between the other's read and write. New `refuseErasedSubjects()`,
   `findErasedSubjects()`, `lockSubjects()` and `subjectEmailHash()` in
@@ -410,7 +413,7 @@ release process.
   delivery's visibility nests its subscription's. The list and detail
   responses gain `createdBy` (null once erased), and the list marks such a row
   **Creator erased**. Erasure step 7 now also clears the subject's own email
-  subscription that emails them. **Forks:** a policy that answers the
+  subscription that emails them, verified or not. **Forks:** a policy that answers the
   ownerless kinds one by one should answer `webhookSubscription`; one that
   wants an org's admins to inherit a departed colleague's integrations widens
   it there. Code reading `createdBy` as a string must allow null.

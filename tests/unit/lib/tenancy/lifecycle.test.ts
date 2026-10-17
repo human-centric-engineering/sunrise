@@ -29,7 +29,7 @@ const db = vi.hoisted(() => ({
     count: vi.fn(),
     upsert: vi.fn(),
   },
-  user: { findUnique: vi.fn(), updateMany: vi.fn() },
+  user: { findUnique: vi.fn(), update: vi.fn() },
   $transaction: vi.fn(),
 }));
 vi.mock('@/lib/db/client', () => ({ prisma: db }));
@@ -331,11 +331,31 @@ describe('addMember', () => {
     expect(db.orgMembership.count).not.toHaveBeenCalled();
   });
 
-  it('clears a surviving signup record, so a later removal is not healed back (t-838)', async () => {
+  it('pays a surviving signup record before adding, and clears it (t-838)', async () => {
+    // Their signup decided org INVITED and its write failed; an admin now adds
+    // them to ORG. They get both, and the record goes, so a later removal
+    // from every org is never healed back.
+    const INVITED = 'cmorg000000000000000invtd';
+    db.user.findUnique.mockResolvedValue({
+      ...human(OTHER),
+      signupOrgId: INVITED,
+      signupOrgRole: ORG_ADMIN_ROLE,
+    });
+    db.org.findUnique.mockResolvedValue(orgRow());
     db.orgMembership.count.mockResolvedValue(3);
-    await addMember(ORG, OTHER, ORG_ADMIN_ROLE, AS_OWNER);
-    expect(db.user.updateMany).toHaveBeenCalledWith({
-      where: { id: OTHER, signupOrgId: { not: null } },
+
+    await addMember(ORG, OTHER, DEFAULT_ORG_ROLE, AS_OWNER);
+
+    expect(db.orgMembership.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: { orgId: INVITED, userId: OTHER, role: ORG_ADMIN_ROLE },
+      })
+    );
+    expect(db.orgMembership.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { orgId: ORG, userId: OTHER, role: DEFAULT_ORG_ROLE } })
+    );
+    expect(db.user.update).toHaveBeenCalledWith({
+      where: { id: OTHER },
       data: { signupOrgId: null, signupOrgRole: null },
     });
   });
@@ -581,7 +601,8 @@ describe('syncInstallMembershipRole (ruling a)', () => {
   it('accepts a transaction client', async () => {
     const tx = {
       orgMembership: { upsert: vi.fn().mockResolvedValue({ role: DEFAULT_ORG_ROLE }) },
-      user: { updateMany: vi.fn() },
+      user: { findUnique: vi.fn().mockResolvedValue(null) },
+      org: { findUnique: vi.fn() },
     };
     await syncInstallMembershipRole(human(OWNER), tx as never);
     expect(tx.orgMembership.upsert).toHaveBeenCalled();

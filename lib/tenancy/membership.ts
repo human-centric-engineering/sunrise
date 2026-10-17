@@ -337,22 +337,37 @@ export function signupRecordFor(memberships: NewUserMemberships): SignupRecord {
 const CLEARED_SIGNUP_RECORD: SignupRecord = { signupOrgId: null, signupOrgRole: null };
 
 /**
- * Clear `userId`'s {@link SignupRecord}, if one is set. Every writer that
- * gives a user a membership calls it (the org lifecycle's add-member,
- * create-org-with-owner and install-role sync): a record must mean only "the
- * signup's own write never landed", so once anyone has written a membership
- * for them it is gone — otherwise a user an admin placed by hand, and later
- * removed from every org, would be healed back into the org their signup once
- * named. A fork that writes `OrgMembership` rows directly calls it too.
+ * Pay what `userId`'s {@link SignupRecord} owes, if one is set, and clear it.
+ *
+ * Every writer that gives a user a membership calls it first (the org
+ * lifecycle's add-member, create-org-with-owner and install-role sync). A set
+ * record means the signup decided a membership whose write never landed, so
+ * the moment anyone writes a membership for them is the moment to grant it —
+ * the org that invited them, with the floor at `single` — rather than to drop
+ * it. Dropping it would lose the invitation for good (the sign-in heal runs
+ * only for a user with no membership at all); leaving it would let a later
+ * removal from every org heal them back into it. A record naming an org that
+ * is gone is just cleared. A fork that writes `OrgMembership` rows directly
+ * calls it too.
+ *
+ * Runs on `db` as given: pass the transaction the caller writes in, so the
+ * grant, the caller's own write and the clear land together.
  */
-export async function clearSignupRecord(
+export async function healSignupRecord(
   userId: string,
-  db: Pick<PrismaClient, 'user'> = prisma
+  db: Pick<PrismaClient, 'user' | 'org' | 'orgMembership'> = prisma
 ): Promise<void> {
-  await db.user.updateMany({
-    where: { id: userId, signupOrgId: { not: null } },
-    data: CLEARED_SIGNUP_RECORD,
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { role: true, accountType: true, signupOrgId: true, signupOrgRole: true },
   });
+  if (!user?.signupOrgId) return;
+  const recorded = await recordedMemberships(userId, user, db);
+  if (!recorded) return; // the org is gone, and recordedMemberships cleared it
+  for (const membership of [recorded.membership, recorded.installMembership]) {
+    if (membership) await upsertMembership(userId, membership, db);
+  }
+  await db.user.update({ where: { id: userId }, data: CLEARED_SIGNUP_RECORD });
 }
 
 /**

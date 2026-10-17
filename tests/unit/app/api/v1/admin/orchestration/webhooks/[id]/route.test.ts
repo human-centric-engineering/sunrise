@@ -36,6 +36,8 @@ vi.mock('@/lib/db/client', () => {
     aiWebhookSubscription: {
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
       delete: vi.fn(),
     },
     // The erased-person check runs in the write's transaction (t-805)
@@ -321,6 +323,31 @@ describe('PATCH /webhooks/:id', () => {
 
     // Assert
     expect(response.status).toBe(404);
+    expect(prisma.aiWebhookSubscription.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a stale toggle on an email subscription an erasure cleared since (review round 2)', async () => {
+    // The page read the row with its address; erasure then cleared it and
+    // switched it off. The toggle sends no address, so the update is
+    // conditional on the row still having one — and it no longer does.
+    vi.mocked(validateRequestBody).mockResolvedValue({ isActive: true });
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
+      makeWebhook({
+        channel: 'email',
+        url: null,
+        emailAddress: 'gone@example.com',
+        isActive: true,
+      }) as never
+    );
+    vi.mocked(prisma.aiWebhookSubscription.updateMany).mockResolvedValue({ count: 0 });
+
+    const response = await PATCH(makePatchRequest({ isActive: true }), makeParams(WEBHOOK_ID));
+
+    expect(response.status).toBe(400);
+    expect(prisma.aiWebhookSubscription.updateMany).toHaveBeenCalledWith({
+      where: { id: WEBHOOK_ID, emailAddress: { not: null } },
+      data: { isActive: true },
+    });
     expect(prisma.aiWebhookSubscription.update).not.toHaveBeenCalled();
   });
 

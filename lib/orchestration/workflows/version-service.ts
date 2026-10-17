@@ -13,8 +13,8 @@
 
 import { definitionRecipients, removeFromDefinition } from '@/lib/privacy/config-recipients';
 import {
+  ERASED_SUBJECT_MESSAGE,
   findErasedSubjects,
-  refuseErasedSubjects,
   WRITER_TRANSACTION_OPTIONS,
   type ErasedSubjects,
 } from '@/lib/privacy/erased-subjects';
@@ -115,20 +115,37 @@ async function getVersionInt(client: Tx, versionId: string | null): Promise<numb
 }
 
 /**
- * Refuse a definition that names an erased person (t-805): every writer of a
- * draft or a version calls this inside its transaction, so a copy read before
- * an erasure cannot write them back. See `lib/privacy/erased-subjects.ts`.
+ * The definition a writer may write, given who has been erased (t-805),
+ * checked inside its transaction under erasure's lock:
+ *
+ * - **an erased address is refused** (`ValidationError` on `field`): an admin
+ *   typed it, can see it, and can remove it — and a copy read before the
+ *   erasure is exactly what this exists to stop;
+ * - **an erased user id is stripped**, and the rest is written (review round
+ *   2). An approver id is an opaque reference the builder cannot resolve once
+ *   the account is gone, so refusing would leave the admin hunting a cuid —
+ *   and a workflow naming someone erased before t-791 stripped definitions
+ *   could then never be saved or published again.
+ *
+ * Returns the definition to write: the same object when nothing was erased.
  */
-async function refuseErasedRecipients(
+async function withoutErasedOrRefused(
   tx: Prisma.TransactionClient,
   definition: WorkflowDefinition,
   field: string
-): Promise<void> {
-  await refuseErasedSubjects(
+): Promise<WorkflowDefinition> {
+  const erased = await findErasedSubjects(
     tx,
-    definitionRecipients(definition as unknown as Prisma.JsonValue),
-    field
+    definitionRecipients(definition as unknown as Prisma.JsonValue)
   );
+  if (erased.addresses.length > 0) {
+    throw new ValidationError('A recipient belongs to a person whose data was erased', {
+      [field]: [ERASED_SUBJECT_MESSAGE],
+    });
+  }
+  return erased.userIds.length > 0
+    ? withoutErasedRecipients(definition, { addresses: [], userIds: erased.userIds })
+    : definition;
 }
 
 /**
@@ -144,7 +161,7 @@ export function withoutErasedRecipients(
   let current: Prisma.JsonValue = definition as unknown as Prisma.JsonValue;
   let changed = false;
   const subjects = [
-    ...erased.addresses.map((address) => ({ userId: '', address })),
+    ...erased.addresses.map((address) => ({ userId: null, address })),
     ...erased.userIds.map((userId) => ({ userId, address: null })),
   ];
   for (const subject of subjects) {
@@ -180,10 +197,10 @@ export async function saveDraft(args: SaveDraftArgs): Promise<AiWorkflow> {
   // A builder tab opened before a person was erased saves the whole draft it
   // loaded, their address included (t-805): refused under erasure's lock.
   const updated = await prisma.$transaction(async (tx) => {
-    await refuseErasedRecipients(tx, definition, 'draftDefinition');
+    const toWrite = await withoutErasedOrRefused(tx, definition, 'draftDefinition');
     return tx.aiWorkflow.update({
       where: { id: workflowId },
-      data: { draftDefinition: definition as unknown as Prisma.InputJsonValue },
+      data: { draftDefinition: toWrite as unknown as Prisma.InputJsonValue },
     });
   }, WRITER_TRANSACTION_OPTIONS);
 
@@ -278,13 +295,13 @@ export async function publishDraft(args: PublishDraftArgs): Promise<PublishDraft
   const result = await prisma.$transaction(async (tx) => {
     // The draft was read above, outside any lock: one read before a person was
     // erased must not become a published version naming them (t-805).
-    await refuseErasedRecipients(tx, definition, 'draftDefinition');
+    const toWrite = await withoutErasedOrRefused(tx, definition, 'draftDefinition');
     const next = await nextVersionNumber(tx, workflowId);
     const version = await tx.aiWorkflowVersion.create({
       data: {
         workflowId,
         version: next,
-        snapshot: definition as unknown as Prisma.InputJsonValue,
+        snapshot: toWrite as unknown as Prisma.InputJsonValue,
         changeSummary: changeSummary ?? null,
         createdBy: userId,
       },
@@ -425,12 +442,12 @@ export async function createInitialVersion(
   args: CreateInitialVersionArgs
 ): Promise<AiWorkflowVersion> {
   const { tx, workflowId, definition, userId } = args;
-  await refuseErasedRecipients(tx, definition, 'workflowDefinition');
+  const toWrite = await withoutErasedOrRefused(tx, definition, 'workflowDefinition');
   const version = await tx.aiWorkflowVersion.create({
     data: {
       workflowId,
       version: 1,
-      snapshot: definition as unknown as Prisma.InputJsonValue,
+      snapshot: toWrite as unknown as Prisma.InputJsonValue,
       changeSummary: 'Initial version',
       createdBy: userId,
     },

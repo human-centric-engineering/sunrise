@@ -58,7 +58,11 @@ import type { WorkflowDefinition } from '@/types/orchestration';
 import { isRecord } from '@/lib/utils';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 import { definitionRecipients } from '@/lib/privacy/config-recipients';
-import { findErasedSubjects, type ErasedSubjects } from '@/lib/privacy/erased-subjects';
+import {
+  findErasedSubjects,
+  WRITER_TRANSACTION_OPTIONS,
+  type ErasedSubjects,
+} from '@/lib/privacy/erased-subjects';
 import { importedAgentProviderWarnings } from '@/lib/orchestration/agents/provider-approval';
 import { findUnapprovedModelOverridesIn } from '@/lib/orchestration/workflows/semantic-validator';
 import {
@@ -866,7 +870,10 @@ async function importParsed(
         result.settingsUpdated = true;
       }
     },
-    { timeout: AGENT_BATCH_TRANSACTION_TIMEOUT_MS }
+    // The batch's own budget, plus the time it may wait at the start on
+    // erasure's lock for a person the bundle names (t-805, review round 2):
+    // an erasure can hold it for its whole transaction.
+    { timeout: AGENT_BATCH_TRANSACTION_TIMEOUT_MS + WRITER_TRANSACTION_OPTIONS.timeout }
   );
 
   if (result.settingsUpdated) {

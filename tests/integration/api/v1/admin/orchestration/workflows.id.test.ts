@@ -8,6 +8,7 @@
  * @see app/api/v1/admin/orchestration/workflows/[id]/route.ts
  */
 
+import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, PATCH, DELETE } from '@/app/api/v1/admin/orchestration/workflows/[id]/route';
@@ -305,28 +306,32 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
       expect(response.status).toBe(200);
     });
 
-    it('refuses a draft naming an erased approver with a 400 and writes nothing (t-805)', async () => {
+    it('refuses a draft naming an erased address with a 400 and writes nothing (t-805)', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
       vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([
-        { subjectUserId: 'cmerasedapprover00000000', subjectEmailHash: null, metadata: null },
+        {
+          subjectUserId: 'cmerasedperson0000000000',
+          subjectEmailHash: createHash('sha256').update('gone@example.com').digest('hex'),
+          metadata: { addressVerified: true },
+        },
       ] as never);
-      const draftWithErasedApprover = {
+      const draftNamingErasedAddress = {
         steps: [
           {
-            id: 'approve',
-            name: 'Approve',
-            type: 'human_approval',
-            config: { prompt: 'OK?', approverUserIds: ['cmerasedapprover00000000'] },
+            id: 'notify',
+            name: 'Notify',
+            type: 'send_notification',
+            config: { channel: 'email', to: 'Gone@Example.com', subject: 'Hi', bodyTemplate: 'x' },
             nextSteps: [],
           },
         ],
-        entryStepId: 'approve',
+        entryStepId: 'notify',
         errorStrategy: 'fail',
       };
 
       const response = await PATCH(
-        makeRequest('PATCH', { draftDefinition: draftWithErasedApprover }),
+        makeRequest('PATCH', { draftDefinition: draftNamingErasedAddress }),
         makeParams(WORKFLOW_ID)
       );
       const body = await parseJson<{
@@ -338,6 +343,49 @@ describe('PATCH /api/v1/admin/orchestration/workflows/:id', () => {
       expect(body.error.code).toBe('VALIDATION_ERROR');
       expect(body.error.details).toHaveProperty('draftDefinition');
       expect(prisma.aiWorkflow.update).not.toHaveBeenCalled();
+    });
+
+    it('saves a draft naming an erased approver id with the id stripped (review round 2)', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+      vi.mocked(prisma.aiWorkflow.findUnique).mockResolvedValue(makeWorkflow() as never);
+      vi.mocked(prisma.aiWorkflow.update).mockResolvedValue(makeWorkflow() as never);
+      vi.mocked(prisma.dataErasureReceipt.findMany).mockResolvedValue([
+        { subjectUserId: 'cmerasedapprover00000000', subjectEmailHash: null, metadata: null },
+      ] as never);
+
+      const response = await PATCH(
+        makeRequest('PATCH', {
+          draftDefinition: {
+            steps: [
+              {
+                id: 'approve',
+                name: 'Approve',
+                type: 'human_approval',
+                config: { prompt: 'OK?', approverUserIds: ['cmerasedapprover00000000'] },
+                nextSteps: [],
+              },
+            ],
+            entryStepId: 'approve',
+            errorStrategy: 'fail',
+          },
+        }),
+        makeParams(WORKFLOW_ID)
+      );
+
+      expect(response.status).toBe(200);
+      expect(prisma.aiWorkflow.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            draftDefinition: expect.objectContaining({
+              steps: [
+                expect.objectContaining({
+                  config: { prompt: 'OK?', approverUserIds: [] },
+                }),
+              ],
+            }),
+          },
+        })
+      );
     });
   });
 

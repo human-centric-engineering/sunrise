@@ -63,8 +63,8 @@ vi.mock('@/lib/db/client', () => ({
     user: {
       findUnique: vi.fn(),
       update: vi.fn(),
-      updateMany: vi.fn(),
     },
+    org: { findUnique: vi.fn() },
     // PATCH writes the role and the install-org membership in one
     // transaction (§106 ruling a); the transaction client is the double.
     orgMembership: { upsert: vi.fn() },

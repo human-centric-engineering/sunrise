@@ -54,7 +54,7 @@
 
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
-import { asciiSearchTerm } from '@/lib/privacy/config-recipients';
+import { asciiSearchTerm, isJsonObject, type PersonMatch } from '@/lib/privacy/config-recipients';
 
 /** Written on the audit row as the reason for every schedule changed here. */
 const ERASURE_REASON = 'A person this schedule named was erased.';
@@ -64,6 +64,13 @@ export const ERASED_VALUE = '[erased]';
 
 /** Rows read per page. */
 export const RUN_PAGE_SIZE = 200;
+
+/**
+ * How far behind the database an app host's clock may run before a run it
+ * rewrote during the pre-pass could be missed. Generous on purpose: a wider
+ * window only re-reads more runs, while a narrower one can leave a person in.
+ */
+export const RUN_CLOCK_SKEW_MS = 5 * 60_000;
 
 export interface RunRecipientsSubject {
   /** The person being erased. */
@@ -93,10 +100,6 @@ export interface Redaction {
   removed: number;
 }
 
-function isJsonObject(value: Prisma.JsonValue | undefined): value is Prisma.JsonObject {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /**
  * `value` without the person, or null when it does not name them. Pure.
  *
@@ -112,22 +115,30 @@ function isJsonObject(value: Prisma.JsonValue | undefined): value is Prisma.Json
  */
 export function redactPerson(
   value: Prisma.JsonValue,
-  subject: Pick<RunRecipientsSubject, 'userId' | 'address'>,
+  subject: PersonMatch,
   replacement: string
 ): Redaction | null {
   const { userId, address } = subject;
   let removed = 0;
-  // An empty id never names anyone: the address-only pass hands `''`, and an
-  // empty string in a template is not the person.
   const names = (v: Prisma.JsonValue | undefined): boolean =>
     typeof v === 'string' &&
-    ((userId !== '' && v === userId) || (address !== null && normaliseAddress(v) === address));
+    ((userId !== null && v === userId) || (address !== null && normaliseAddress(v) === address));
 
   const walk = (v: Prisma.JsonValue): Prisma.JsonValue => {
     if (typeof v === 'string') {
-      if (!names(v)) return v;
-      removed += 1;
-      return replacement;
+      if (names(v)) {
+        removed += 1;
+        return replacement;
+      }
+      // An id inside a longer string — an approval's `actor: 'admin:<id>'` —
+      // names them too (review round 2). A cuid is unique, so replacing it
+      // where it appears cannot touch anyone else; an address is not
+      // searched for inside free text, where a substring is someone else's.
+      if (userId !== null && v.includes(userId)) {
+        removed += 1;
+        return v.split(userId).join(ERASED_VALUE);
+      }
+      return v;
     }
     if (Array.isArray(v)) {
       const kept = v.filter((entry) => !names(entry));
@@ -216,7 +227,11 @@ async function eraseFromSchedules(tx: RunClient, subject: RunRecipientsSubject):
     for (const row of rows) {
       // Only the address: an input template is free-form, and an id in one is
       // not a recipient this erasure has a disposition for.
-      const change = redactPerson(row.inputTemplate, { userId: '', address: subject.address }, '');
+      const change = redactPerson(
+        row.inputTemplate,
+        { userId: null, address: subject.address },
+        ''
+      );
       if (!change) continue;
       await tx.aiWorkflowSchedule.update({
         where: { id: row.id },
@@ -256,7 +271,10 @@ async function redactExecutionsPage(
   const { userId } = subject;
   const { term, scanAll } = searchTermFor(subject.address);
   // The id is a cuid, so already lower-case in the folded text. `updatedAt` is
-  // stored as UTC wall time, so the instant is compared in UTC.
+  // stamped by the app process's clock (Prisma's @updatedAt) while `since` is
+  // the database's, so the cut-off is moved back by RUN_CLOCK_SKEW_MS (review
+  // round 2): a run rewritten during the pre-pass by a worker whose clock runs
+  // behind is still re-read. `updatedAt` is UTC wall time, compared in UTC.
   const rows = await tx.$queryRaw<
     Array<{ id: string; inputData: Prisma.JsonValue; executionTrace: Prisma.JsonValue }>
   >`SELECT e.id, e."inputData", e."executionTrace"
@@ -266,7 +284,7 @@ async function redactExecutionsPage(
      WHERE e.id > ${after}
        AND e."userId" IS DISTINCT FROM ${userId}
        AND (${since}::timestamptz IS NULL
-         OR e."updatedAt" >= (${since}::timestamptz AT TIME ZONE 'UTC')
+         OR e."updatedAt" >= ((${since}::timestamptz - ${RUN_CLOCK_SKEW_MS} * interval '1 millisecond') AT TIME ZONE 'UTC')
          OR e.status IN ('pending', 'running', 'paused_for_approval'))
        AND (${scanAll}
          OR strpos(f.folded, ${userId}) > 0

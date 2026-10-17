@@ -329,15 +329,27 @@ async function eraseRows(params: EraseUserParams): Promise<{
       // on non-ASCII case. Email subscriptions are configuration, a handful of
       // rows. First, before the delivery passes, so the window in which a
       // dispatch can still read one as active is as short as it can be.
+      //
+      // Their OWN subscription to their own account address is cleared even
+      // when that address was never verified (review round 2): they set it up
+      // to email themselves, so it is theirs either way, and since t-782 it
+      // outlives them rather than cascading.
       let subscriptionsDeactivated = 0;
-      if (address) {
+      const ownAddress = normaliseAddress(account.email);
+      {
         const candidates = await tx.aiWebhookSubscription.findMany({
-          where: { channel: 'email', emailAddress: { not: null } },
+          where: {
+            channel: 'email',
+            emailAddress: { not: null },
+            ...(address ? {} : { createdBy: userId }),
+          },
           select: { id: true, emailAddress: true, isActive: true, orgId: true, createdBy: true },
         });
-        const cleared = candidates.filter(
-          (sub) => sub.emailAddress !== null && normaliseAddress(sub.emailAddress) === address
-        );
+        const cleared = candidates.filter((sub) => {
+          if (sub.emailAddress === null) return false;
+          const to = normaliseAddress(sub.emailAddress);
+          return to === address || (sub.createdBy === userId && to === ownAddress);
+        });
         if (cleared.length > 0) {
           await tx.aiWebhookSubscription.updateMany({
             where: { id: { in: cleared.map((sub) => sub.id) } },

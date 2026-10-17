@@ -905,7 +905,12 @@ describe('DELETE /api/v1/users/:id', () => {
       expect(prisma.aiWebhookDelivery.update).not.toHaveBeenCalled();
       expect(prisma.aiWebhookDelivery.updateMany).not.toHaveBeenCalled();
       // ...nor any colleague's subscription: an unproven address may be a stranger's.
-      expect(prisma.aiWebhookSubscription.findMany).not.toHaveBeenCalled();
+      // Only their own are read, to stop one that emails themselves (t-782).
+      expect(prisma.aiWebhookSubscription.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ createdBy: expect.any(String) }),
+        })
+      );
       expect(prisma.aiWebhookSubscription.updateMany).not.toHaveBeenCalled();
       expect(prisma.aiAdminAuditLog.createMany).not.toHaveBeenCalled();
     });

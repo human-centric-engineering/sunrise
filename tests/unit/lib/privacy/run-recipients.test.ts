@@ -13,6 +13,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { Prisma } from '@prisma/client';
 import {
   ERASED_VALUE,
+  RUN_CLOCK_SKEW_MS,
   RUN_PAGE_SIZE,
   eraseFromRunInputs,
   preRedactSubjectFromRuns,
@@ -75,8 +76,17 @@ describe('redactPerson', () => {
 
   it('an empty id names nobody: empty strings in a template are left alone (review round 1)', () => {
     expect(
-      redactPerson({ cc: '', tags: ['', 'ops'] }, { userId: '', address: ADDRESS }, '')
+      redactPerson({ cc: '', tags: ['', 'ops'] }, { userId: null, address: ADDRESS }, '')
     ).toBeNull();
+  });
+
+  it('replaces their id inside a longer string, such as an approval actor label (review round 2)', () => {
+    const change = redactPerson(
+      { actor: `admin:${USER_ID}`, note: 'approved' },
+      { userId: USER_ID, address: null },
+      ERASED_VALUE
+    );
+    expect(change?.value).toEqual({ actor: `admin:${ERASED_VALUE}`, note: 'approved' });
   });
 
   it('answers null for a value that does not name them', () => {
@@ -298,6 +308,8 @@ describe('eraseFromRunInputs — after the pre-pass', () => {
     expect(execCall).toBeDefined();
     const sql = sqlOf(execCall as unknown[]);
     expect(sql).toContain('"updatedAt" >=');
+    // Moved back for app-host clock skew, since updatedAt is the app's clock.
+    expect(execCall).toContain(RUN_CLOCK_SKEW_MS);
     expect(sql).toContain("'paused_for_approval'");
     expect(execCall).toContain(since);
   });

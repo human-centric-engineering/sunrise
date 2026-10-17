@@ -405,7 +405,9 @@ transaction):
 7. **Clear their address from email subscriptions that send to it** (t-786;
    owner ruling 2026-10-13) — a colleague's, or since t-782 the subject's own,
    which outlives them. Either would keep emailing an erased person and
-   writing the address onto every new delivery. Each one
+   writing the address onto every new delivery. (Their own subscription to
+   their own account address is cleared even when it was never verified:
+   they set it up to email themselves.) Each one
    whose address matches the subject's verified address — each normalised
    by `normaliseAddress()`, the function the deliveries are recorded with,
    since a subscription stores the address as typed; compared in code, not
@@ -499,7 +501,10 @@ transaction):
      both columns the subject's id leaves every approver list, a notification
      target that is their address is removed (the channel and its type stay),
      and any other value that is their address or their id becomes
-     `[erased]`, as a delivery's destination does. Matched on the id whether
+     `[erased]`, as a delivery's destination does — their id inside a longer
+     string too, such as an approval's `actor: 'admin:<id>'` (a cuid is
+     unique; an address is not searched for inside free text, where a
+     substring may be someone else's). Matched on the id whether
      or not the address was verified. The subject's own runs cascade with the
      user row and are not read. Counted in the `User erased` log line as
      `executionsRedacted` rather than audited row by row, as redacted
@@ -513,7 +518,9 @@ transaction):
    time the erasure out, and an erasure that times out erases nothing. Each
    page commits on its own; the transaction's pass then reads only runs
    written since the pre-pass started (on the database clock) or not yet
-   finished, and every run if the pre-pass failed. If the transaction then
+   finished, and every run if the pre-pass failed. The cut-off is moved back
+   five minutes (`RUN_CLOCK_SKEW_MS`), because `updatedAt` is stamped by the
+   app host's clock and the start time is the database's. If the transaction then
    fails, those runs stay redacted while the account still exists — accepted,
    as for deliveries. **Not reached:** a run still executing holds its trace in
    memory and writes it whole after each step, so a write after the
@@ -556,14 +563,14 @@ what it is about to write names an erased person —
 `lib/privacy/erased-subjects.ts`, from the erasure receipt
 (`subjectUserId`, and `subjectEmailHash` of the normalised address):
 
-| Writer                                                                     | Names it checks                                                   | On a match                                                                                                                                 |
-| -------------------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `PATCH /settings`                                                          | `escalationConfig.emailAddresses`                                 | 400 on the field                                                                                                                           |
-| `saveDraft`, `publishDraft`, `createInitialVersion` (`version-service.ts`) | every `to`, approver id and notification target in the definition | `ValidationError`, nothing written                                                                                                         |
-| `rollback`                                                                 | the same, in the target snapshot                                  | stripped from the copy, with `erasedRecipientsRemoved` on the audit row: a snapshot cannot be edited, so a refusal would block it for good |
-| `POST` / `PATCH /webhooks`                                                 | `emailAddress`                                                    | 400 on the field                                                                                                                           |
-| `POST` / `PATCH .../schedules`                                             | every string in `inputTemplate`                                   | 400 on the field                                                                                                                           |
-| Backup import                                                              | all of the above in the bundle                                    | stripped, with a warning; the import goes ahead                                                                                            |
+| Writer                                                                     | Names it checks                                                   | On a match                                                                                                                                                                                                                          |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PATCH /settings`                                                          | `escalationConfig.emailAddresses`                                 | 400 on the field                                                                                                                                                                                                                    |
+| `saveDraft`, `publishDraft`, `createInitialVersion` (`version-service.ts`) | every `to`, approver id and notification target in the definition | an erased address: `ValidationError`, nothing written; an erased approver id: stripped, the rest written (an opaque id the builder cannot show, and a workflow naming someone erased before t-791 would otherwise never save again) |
+| `rollback`                                                                 | the same, in the target snapshot                                  | stripped from the copy, with `erasedRecipientsRemoved` on the audit row: a snapshot cannot be edited, so a refusal would block it for good                                                                                          |
+| `POST` / `PATCH /webhooks`                                                 | `emailAddress`                                                    | 400 on the field                                                                                                                                                                                                                    |
+| `POST` / `PATCH .../schedules`                                             | every string in `inputTemplate`                                   | 400 on the field                                                                                                                                                                                                                    |
+| Backup import                                                              | all of the above in the bundle                                    | stripped, with a warning; the import goes ahead                                                                                                                                                                                     |
 
 **Why a lock and not just a check.** A check alone races the erasure: the
 writer finds no receipt, the erasure scans and strips, the writer's write

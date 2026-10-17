@@ -40,7 +40,7 @@ import {
   INSTALL_BACKFILL_BATCH,
   initialMembershipFor,
   membershipForNewUser,
-  clearSignupRecord,
+  healSignupRecord,
   membershipsForNewUser,
   membershipsFromSignupRecord,
   signupRecordFor,
@@ -560,12 +560,36 @@ describe('the signup record (t-838)', () => {
     });
   });
 
-  it('clearSignupRecord writes only when a record is set', async () => {
-    await clearSignupRecord(USER_ID, db);
-    expect(mocks.user.updateMany).toHaveBeenCalledWith({
-      where: { id: USER_ID, signupOrgId: { not: null } },
-      data: cleared,
+  it('healSignupRecord grants what a surviving record decided, with the floor, and clears it', async () => {
+    mocks.user.findUnique.mockResolvedValue({
+      ...human,
+      signupOrgId: OTHER_ORG,
+      signupOrgRole: ORG_ADMIN_ROLE,
     });
+    mocks.org.findUnique.mockResolvedValue({ id: OTHER_ORG });
+
+    await healSignupRecord(USER_ID, db);
+
+    expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: { orgId: OTHER_ORG, userId: USER_ID, role: ORG_ADMIN_ROLE },
+      })
+    );
+    expect(mocks.orgMembership.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: { orgId: INSTALL_ORG_ID, userId: USER_ID, role: DEFAULT_ORG_ROLE },
+      })
+    );
+    expect(mocks.user.update).toHaveBeenCalledWith({ where: { id: USER_ID }, data: cleared });
+  });
+
+  it('healSignupRecord writes nothing for a user with no record', async () => {
+    mocks.user.findUnique.mockResolvedValue({ ...human, signupOrgId: null, signupOrgRole: null });
+
+    await healSignupRecord(USER_ID, db);
+
+    expect(mocks.orgMembership.upsert).not.toHaveBeenCalled();
+    expect(mocks.user.update).not.toHaveBeenCalled();
   });
 
   it('a cleared record stands for nothing', () => {

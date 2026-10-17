@@ -57,7 +57,7 @@ import { APIError } from '@/lib/api/errors';
 import { revokeUserSessions } from '@/lib/auth/sessions';
 import { isPlatformAdmin } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
-import { clearSignupRecord, initialMembershipFor } from '@/lib/tenancy/membership';
+import { healSignupRecord, initialMembershipFor } from '@/lib/tenancy/membership';
 import { orgIdParamSchema, type OrgSettingsPatch } from '@/lib/validations/tenancy';
 import { applyOrgSettingsPatch, definedEntries } from '@/lib/tenancy/org-settings';
 import {
@@ -261,10 +261,10 @@ export async function createOrg(
         select: orgSelect,
       });
       if (owner) {
+        await healSignupRecord(owner.id, tx);
         await tx.orgMembership.create({
           data: { orgId: created.id, userId: owner.id, role: ORG_OWNER_ROLE },
         });
-        await clearSignupRecord(owner.id, tx);
       }
       return created;
     })
@@ -481,16 +481,22 @@ export async function addMember(
     effectiveRole = members === 0 ? ORG_OWNER_ROLE : DEFAULT_ORG_ROLE;
   }
 
-  // Placed by hand: their signup's record, if one survived a failed write, no
-  // longer describes them (t-838). One transaction, so the record cannot
-  // outlive the membership that made it stale.
+  // Placed by hand: a signup record that survived a failed write is paid and
+  // cleared first (t-838), in the same transaction.
   const membership = await db.$transaction(async (tx) => {
-    const created = await tx.orgMembership.create({
-      data: { orgId, userId, role: effectiveRole },
+    await healSignupRecord(userId, tx);
+    // The record may have named this very org, in which case it is now written.
+    const healed = await tx.orgMembership.findUnique({
+      where: { orgId_userId: { orgId, userId } },
       select: membershipSelect,
     });
-    await clearSignupRecord(userId, tx);
-    return created;
+    return (
+      healed ??
+      tx.orgMembership.create({
+        data: { orgId, userId, role: effectiveRole },
+        select: membershipSelect,
+      })
+    );
   });
 
   logger.info('Org member added', { orgId, userId, role: effectiveRole });
@@ -663,8 +669,11 @@ export async function removeMember(
  */
 export async function syncInstallMembershipRole(
   user: { id: string; role: string | null; accountType: string | null },
-  db: Pick<PrismaClient, 'orgMembership' | 'user'> = prisma
+  db: Pick<PrismaClient, 'orgMembership' | 'user' | 'org'> = prisma
 ): Promise<MembershipRecord> {
+  // A surviving signup record is paid first (t-838): the floor written alone
+  // would stop the sign-in heal ever placing them in the org that invited them.
+  await healSignupRecord(user.id, db);
   const { role } = initialMembershipFor(user);
   const membership = await db.orgMembership.upsert({
     where: { orgId_userId: { orgId: INSTALL_ORG_ID, userId: user.id } },
@@ -672,7 +681,6 @@ export async function syncInstallMembershipRole(
     create: { orgId: INSTALL_ORG_ID, userId: user.id, role },
     select: membershipSelect,
   });
-  await clearSignupRecord(user.id, db);
   logger.info('Install-org role synced from platform role', { userId: user.id, role });
   return membership;
 }

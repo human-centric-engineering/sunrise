@@ -11,8 +11,9 @@
  *     for it, then sees the committed write and strips it — the address does
  *     not survive.
  *   • **Erasure first.** A writer with a copy read before the erasure (a
- *     subscription edit, a workflow draft naming the person as an approver) is
- *     refused with a 400 once the erasure has committed.
+ *     subscription edit, a workflow draft emailing the person) is refused with
+ *     a 400 once the erasure has committed; a draft naming them only as an
+ *     approver id saves with the id stripped.
  *   • **Re-registered.** Someone who signs up again with the erased address,
  *     and verifies it, may be named again.
  *   • **Unverified.** An unverified account's erased address is not refused:
@@ -197,16 +198,37 @@ async function main(): Promise<void> {
       ),
       'a subscription edit holding their address (another case, padded) is refused'
     );
+    const addressedDef = workflowDefinitionSchema.parse({
+      steps: [
+        {
+          id: 'n',
+          name: 'Notify',
+          type: 'send_notification',
+          config: { channel: 'email', to: staleAddress, subject: 'Hi', bodyTemplate: 'x' },
+          nextSteps: [],
+        },
+      ],
+      entryStepId: 'n',
+      errorStrategy: 'fail',
+    });
     check(
       await refused(() =>
-        saveDraft({ workflowId: workflow.id, definition: def, userId: admin.id })
+        saveDraft({ workflowId: workflow.id, definition: addressedDef, userId: admin.id })
       ),
-      'a builder tab naming them as an approver is refused'
+      'a builder tab emailing their address is refused'
     );
-    const draftAfter = await prisma.aiWorkflow.findUniqueOrThrow({ where: { id: workflow.id } });
+    const refusedDraft = await prisma.aiWorkflow.findUniqueOrThrow({ where: { id: workflow.id } });
     check(
-      !JSON.stringify(draftAfter.draftDefinition).includes(late.id),
-      'and the draft was not written'
+      !JSON.stringify(refusedDraft.draftDefinition)
+        .toLowerCase()
+        .includes(late.email.toLowerCase()),
+      'and that draft was not written'
+    );
+    await saveDraft({ workflowId: workflow.id, definition: def, userId: admin.id });
+    const strippedDraft = await prisma.aiWorkflow.findUniqueOrThrow({ where: { id: workflow.id } });
+    check(
+      !JSON.stringify(strippedDraft.draftDefinition).includes(late.id),
+      'a builder tab naming them as an approver saves, with their id stripped'
     );
 
     // ── 3. Re-registered and verified: may be named again ─────────────────

@@ -1183,15 +1183,35 @@ describe('eraseUser', () => {
       expect(mockAuditCreateMany).not.toHaveBeenCalled();
     });
 
-    it('reads, updates and audits nothing for an unverified address', async () => {
+    it('clears their own subscription to their own unverified address (review round 2)', async () => {
+      mockUserFind.mockResolvedValue({ email: 'Foo@bar.com', emailVerified: false });
+      mockSubFindMany.mockResolvedValue([
+        sub({ id: 'sub-own', createdBy: BASE_PARAMS.userId, emailAddress: 'foo@BAR.com' }),
+        sub({ id: 'sub-own-team', createdBy: BASE_PARAMS.userId, emailAddress: 'team@bar.com' }),
+      ]);
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockSubUpdateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['sub-own'] } },
+        data: { emailAddress: null, isActive: false },
+      });
+    });
+
+    it('for an unverified address, reads only their own subscriptions and leaves a colleague’s alone', async () => {
       mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: false });
-      mockSubFindMany.mockResolvedValue([sub({ id: 'sub-1' })]);
+      // What the scoped read would return is theirs; a colleague's is never asked for.
+      mockSubFindMany.mockResolvedValue([]);
 
       await eraseUser(BASE_PARAMS);
 
       // Population: the erasure itself ran
       expect(mockUserDelete).toHaveBeenCalledTimes(1);
-      expect(mockSubFindMany).not.toHaveBeenCalled();
+      expect(mockSubFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { channel: 'email', emailAddress: { not: null }, createdBy: BASE_PARAMS.userId },
+        })
+      );
       expect(mockSubUpdateMany).not.toHaveBeenCalled();
       expect(mockAuditCreateMany).not.toHaveBeenCalled();
       expect(mockLogger.info).toHaveBeenCalledWith(

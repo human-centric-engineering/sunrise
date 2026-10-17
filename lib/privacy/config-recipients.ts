@@ -86,6 +86,16 @@ type ConfigClient = Pick<
   '$queryRaw' | 'aiOrchestrationSettings' | 'aiWorkflow' | 'aiWorkflowVersion' | 'aiAdminAuditLog'
 >;
 
+/**
+ * Who to take out of a value: a user id, an address, or both. Either may be
+ * null — an unverified account matches on its id alone, and an address found
+ * in a bundle or a receipt has no id to go with it.
+ */
+export interface PersonMatch {
+  userId: string | null;
+  address: string | null;
+}
+
 /** What {@link removeFromDefinition} took out of one definition. */
 export interface DefinitionChange {
   definition: Prisma.JsonObject;
@@ -106,20 +116,19 @@ function matchesAddress(value: Prisma.JsonValue | undefined, address: string): b
  * question for `unknown`, but narrows to `Record<string, unknown>`, and the
  * rewritten definition must stay JSON to be written back without a cast.
  */
-function isJsonObject(value: Prisma.JsonValue | undefined): value is Prisma.JsonObject {
+export function isJsonObject(value: Prisma.JsonValue | undefined): value is Prisma.JsonObject {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** An approval step's config without the person, or null when it does not name them. */
 function approvalWithout(
   config: Prisma.JsonObject,
-  userId: string,
+  userId: string | null,
   address: string | null
 ): Prisma.JsonObject | null {
   let next = config;
   const approvers = config.approverUserIds;
-  // `''` is the address-only subject (the importer's): it names no approver.
-  if (userId !== '' && Array.isArray(approvers) && approvers.includes(userId)) {
+  if (userId !== null && Array.isArray(approvers) && approvers.includes(userId)) {
     next = { ...next, approverUserIds: approvers.filter((id) => id !== userId) };
   }
   const channel = config.notificationChannel;
@@ -138,7 +147,7 @@ function approvalWithout(
  */
 export function removeFromDefinition(
   definition: Prisma.JsonValue,
-  subject: Pick<ConfigRecipientsSubject, 'userId' | 'address'>
+  subject: PersonMatch
 ): DefinitionChange | null {
   if (!isJsonObject(definition) || !Array.isArray(definition.steps)) return null;
   const { userId, address } = subject;

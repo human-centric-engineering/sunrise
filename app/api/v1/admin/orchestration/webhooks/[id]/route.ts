@@ -122,6 +122,25 @@ export const PATCH = withAdminAuth<{ id: string }>(
       if ('emailAddress' in body && body.emailAddress) {
         await refuseErasedSubjects(tx, { addresses: [body.emailAddress] }, 'emailAddress');
       }
+      // An email subscription kept without a new address relies on the one
+      // it has — which an erasure may have cleared since `existing` was read
+      // (review round 2). Conditional on the row still having one, so a stale
+      // `{ isActive: true }` cannot re-activate what erasure switched off.
+      if (nextChannel === 'email' && !('emailAddress' in body)) {
+        const { count } = await tx.aiWebhookSubscription.updateMany({
+          where: { id: parsed.data, emailAddress: { not: null } },
+          data: body,
+        });
+        if (count === 0) {
+          throw new ValidationError('Email channel requires an emailAddress', {
+            emailAddress: ['This subscription has no address any more. Set one to save.'],
+          });
+        }
+        return tx.aiWebhookSubscription.findUniqueOrThrow({
+          where: { id: parsed.data },
+          select: SAFE_SELECT,
+        });
+      }
       return tx.aiWebhookSubscription.update({
         where: { id: parsed.data },
         data: body,
