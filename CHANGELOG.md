@@ -370,6 +370,23 @@ release process.
 
 ### Changed
 
+- **A webhook subscription outlives the admin who created it** (t-782).
+  `AiWebhookSubscription.createdBy` is now nullable with `onDelete: SetNull`
+  (it was `Cascade`), so erasing an admin no longer stops the integrations they
+  set up. Migration `20261017150000_webhook_subscription_outlives_creator`. A
+  subscription with no creator is an ownerless row: a new kind,
+  `'webhookSubscription'`, joins `UNATTRIBUTED_READ_KINDS` /
+  `UnattributedReads`, and the default policy lets platform admins see, edit,
+  test, switch off and delete it. Every webhook route scopes through the new
+  `webhookSubscriptionVisibilityWhere()` /
+  `webhookSubscriptionAccessBasis()` (`lib/orchestration/access/`), and a
+  delivery's visibility nests its subscription's. The list and detail
+  responses gain `createdBy` (null once erased), and the list marks such a row
+  **Creator erased**. Erasure step 7 now also clears the subject's own email
+  subscription that emails them. **Forks:** a policy that answers the
+  ownerless kinds one by one should answer `webhookSubscription`; one that
+  wants an org's admins to inherit a departed colleague's integrations widens
+  it there. Code reading `createdBy` as a string must allow null.
 - **At `TENANCY_MODE=multi`, a user with no org membership is no longer
   healed into the install org at sign-in** (t-836). The install org is the
   vendor's own, and a customer org's invitee whose signup failed could land

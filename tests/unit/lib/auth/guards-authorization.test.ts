@@ -625,6 +625,7 @@ describe('the handler receives the ownerless-read answer, already decided', () =
       execution: true,
       experiment: true,
       webhookDelivery: true,
+      webhookSubscription: true,
     });
   });
 
@@ -647,6 +648,7 @@ describe('the handler receives the ownerless-read answer, already decided', () =
       execution: false,
       experiment: false,
       webhookDelivery: false,
+      webhookSubscription: false,
     });
   });
 
@@ -677,6 +679,7 @@ describe('the handler receives the ownerless-read answer, already decided', () =
       execution: false,
       experiment: false,
       webhookDelivery: false,
+      webhookSubscription: false,
     });
   });
 
@@ -710,6 +713,7 @@ describe('the handler receives the ownerless-read answer, already decided', () =
       execution: true,
       experiment: true,
       webhookDelivery: true,
+      webhookSubscription: true,
     });
 
     const probes = read.filter(
@@ -745,6 +749,7 @@ describe('the handler receives the ownerless-read answer, already decided', () =
       execution: true,
       experiment: true,
       webhookDelivery: true,
+      webhookSubscription: true,
     });
   });
 

@@ -41,10 +41,10 @@ Deletion leans on Postgres referential actions (`prisma.user.delete` triggers
 them atomically and unbypassably). Relations to `User` fall into two policies —
 see the `account_deletion_erasure_cascade` migration for the full per-table list.
 
-| Policy                            | `onDelete` | What                                                                                                                                                                                                              |
-| --------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Personal data → erased**        | `Cascade`  | Sessions, accounts, conversations (+messages, embeddings, shares), workflow executions (+steps), user memory, evaluation sessions, API keys, webhook subscriptions                                                |
-| **Org config + audit → retained** | `SetNull`  | Agents, profiles, versions, invite/embed tokens, workflows (+versions, schedules, triggers), event hooks, knowledge documents, provider configs/models, experiments, admin audit log, MCP prompts/keys, cost logs |
+| Policy                            | `onDelete` | What                                                                                                                                                                                                                                             |
+| --------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Personal data → erased**        | `Cascade`  | Sessions, accounts, conversations (+messages, embeddings, shares), workflow executions (+steps), user memory, evaluation sessions, API keys                                                                                                      |
+| **Org config + audit → retained** | `SetNull`  | Agents, profiles, versions, invite/embed tokens, workflows (+versions, schedules, triggers), event hooks, webhook subscriptions (t-782), knowledge documents, provider configs/models, experiments, admin audit log, MCP prompts/keys, cost logs |
 
 **Why retain a cost log?** Different reason from the config rows beside it, and
 worth stating separately: a cost row is a **billing record**. Cascading it would
@@ -59,10 +59,19 @@ of who created it. So a departing creator's config keeps working; only the
 steps) already cascade from their parents, so only the root `User` relations
 carry the policy.
 
-**Webhook deliveries are the exception, deliberately** (§109 t-739). A
-subscription cascades with its creator, but its `AiWebhookDelivery` rows do
-not: their parent FK is `SetNull`, so they survive as the org's record of where
-its events went — the payloads are about the org's customers, not about the
+**Webhook subscriptions outlive their creator** (t-782). An integration an
+admin set up — a CRM feed, an escalation pager — must not silently stop when
+they leave, so `createdBy` is `SetNull` and the subscription keeps delivering.
+It is scoped to its creator, so once that is null it is managed by whoever the
+authorization policy permits an ownerless `webhookSubscription` — platform
+admins by default; a fork that wants an org's own admins to inherit it widens
+the policy (see [Rows nobody owns](../auth/authorization.md#rows-nobody-owns)).
+Its webhook URL and signing secret are org configuration and are kept; one of
+its email addresses that is the subject's own is cleared (step 7).
+
+**Webhook deliveries survive their subscription, deliberately** (§109 t-739).
+Their parent FK is `SetNull` too, so deleting a subscription keeps its
+`AiWebhookDelivery` rows as the org's record of where its events went — the payloads are about the org's customers, not about the
 admin who configured the subscription. Each row records its destination, and
 for a notification emailed to a person that is their own address — whoever's
 subscription sent it, and whether or not it still exists — so `eraseUser()`
@@ -393,18 +402,19 @@ transaction):
    not a `User`: their events carry `embedVisitorId` and go with the org's
    export, erasure and retention.
 
-7. **Clear their address from colleagues' email subscriptions** (t-786; owner
-   ruling 2026-10-13) — the subject's own subscriptions cascade, but another
-   admin's email-channel subscription that notifies them would keep emailing
-   an erased person and writing the address onto every new delivery. Each one
+7. **Clear their address from email subscriptions that send to it** (t-786;
+   owner ruling 2026-10-13) — a colleague's, or since t-782 the subject's own,
+   which outlives them. Either would keep emailing an erased person and
+   writing the address onto every new delivery. Each one
    whose address matches the subject's verified address — each normalised
    by `normaliseAddress()`, the function the deliveries are recorded with,
    since a subscription stores the address as typed; compared in code, not
    re-implemented in SQL, whose `btrim`/`lower` differ on tabs and non-ASCII
    case; exact, never `ILIKE` — has the address cleared and is **deactivated**, not deleted: the
-   integration stays visible to its owner, who can point it at someone else.
-   Each gets an admin audit entry, `webhook_subscription.recipient_erased`,
-   naming the subscription, its owner and org, and never the address. An
+   integration stays visible to whoever manages it, who can point it at someone
+   else. Each gets an admin audit entry, `webhook_subscription.recipient_erased`,
+   naming the subscription, its owner (null for the subject's own) and org,
+   and never the address. An
    unverified account's address matches nothing, as in steps 4 and 5. This
    runs before step 5, so the window in which a dispatch still reads the
    subscription as active is as short as it can be.

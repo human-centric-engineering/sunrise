@@ -24,7 +24,10 @@ const OTHER_ID = 'admin-2';
  * `webhookDelivery` is the only key this module reads, so the other kinds are
  * set to the OPPOSITE value: a helper reading a neighbour's key goes red.
  */
-function sessionFor(mayReadOrphans: boolean): AuthenticatedSession {
+function sessionFor(
+  mayReadOrphans: boolean,
+  mayReadOrphanSubscriptions = false
+): AuthenticatedSession {
   return {
     user: { id: ADMIN_ID, role: 'ADMIN' },
     principal: { userId: ADMIN_ID, role: 'ADMIN', credential: 'session' },
@@ -34,6 +37,7 @@ function sessionFor(mayReadOrphans: boolean): AuthenticatedSession {
       execution: !mayReadOrphans,
       experiment: !mayReadOrphans,
       webhookDelivery: mayReadOrphans,
+      webhookSubscription: mayReadOrphanSubscriptions,
     },
   } as unknown as AuthenticatedSession;
 }
@@ -50,6 +54,25 @@ describe('webhookDeliveryVisibilityWhere', () => {
 
     expect(where).toEqual({ subscription: { createdBy: ADMIN_ID } });
     expect(where).not.toHaveProperty('OR');
+  });
+
+  it('nests the subscription visibility in the mine clause, widened only by webhookSubscription', () => {
+    // webhookDelivery refused, webhookSubscription permitted: the delivery's
+    // orphan arm is gone but its subscription may still be a creatorless one.
+    expect(webhookDeliveryVisibilityWhere(sessionFor(false, true))).toEqual({
+      subscription: { OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] },
+    });
+    // The reverse: orphaned deliveries are admitted, creatorless subscriptions are not.
+    expect(webhookDeliveryVisibilityWhere(sessionFor(true, false))).toEqual({
+      OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }],
+    });
+    // Both permitted: both arms widen.
+    expect(webhookDeliveryVisibilityWhere(sessionFor(true, true))).toEqual({
+      OR: [
+        { subscription: { OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] } },
+        { subscriptionId: null },
+      ],
+    });
   });
 
   it("never names another admin's id on either branch", () => {
@@ -84,6 +107,19 @@ describe('webhookDeliveryAccessBasis', () => {
         webhookDeliveryAccessBasis({ subscription: { createdBy: OTHER_ID } }, sessionFor(permit))
       ).toBeNull();
     }
+  });
+
+  it("names a delivery of a creatorless subscription 'orphan' when webhookSubscription is permitted", () => {
+    expect(
+      webhookDeliveryAccessBasis({ subscription: { createdBy: null } }, sessionFor(false, true))
+    ).toBe('orphan');
+  });
+
+  it('refuses a delivery of a creatorless subscription when webhookSubscription is refused', () => {
+    // webhookDelivery is permitted here, so reading the wrong key would admit it.
+    expect(
+      webhookDeliveryAccessBasis({ subscription: { createdBy: null } }, sessionFor(true, false))
+    ).toBeNull();
   });
 
   it('refuses a delivery that was not found', () => {

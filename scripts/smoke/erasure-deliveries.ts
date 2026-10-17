@@ -419,14 +419,14 @@ async function main(): Promise<void> {
 
     // Colleagues' email subscriptions: to the subject (typed in another case),
     // to someone else, and to the unverified account.
-    const subscribe = async (emailAddress: string) => {
+    const subscribe = async (emailAddress: string, createdBy = colleague.id) => {
       const sub = await prisma.aiWebhookSubscription.create({
         data: {
           channel: 'email',
           emailAddress,
           events: [`${PREFIX}-${stamp}`],
           description: `${PREFIX} subscription`,
-          createdBy: colleague.id,
+          createdBy,
         },
       });
       subscriptionIds.push(sub.id);
@@ -438,6 +438,10 @@ async function main(): Promise<void> {
     const toSubjectPadded = await subscribe(` ${subject.email}\t`);
     const toOther = await subscribe(`${PREFIX}-someone-else-${stamp}@example.com`);
     const toUnverified = await subscribe(unverified.email);
+    // The subject's own (t-782): one to their own inbox, and one to a team
+    // address — the integration that must outlive them.
+    const ownToSelf = await subscribe(subject.email, subject.id);
+    const ownToTeam = await subscribe(`${PREFIX}-team-${stamp}@example.com`, subject.id);
 
     // ── 1. Subject access finds what names them ──
     console.log('Subject access, before erasure:');
@@ -677,6 +681,37 @@ async function main(): Promise<void> {
     check(
       toOtherAfter.emailAddress === toOther.emailAddress && toOtherAfter.isActive,
       'one emailing someone else is untouched'
+    );
+
+    // ── 3b. The subject's own subscriptions outlive them (t-782) ──
+    console.log('The subject’s own subscriptions:');
+    const ownToTeamAfter = await prisma.aiWebhookSubscription.findUnique({
+      where: { id: ownToTeam.id },
+    });
+    check(
+      ownToTeamAfter !== null &&
+        ownToTeamAfter.createdBy === null &&
+        ownToTeamAfter.isActive &&
+        ownToTeamAfter.emailAddress === ownToTeam.emailAddress,
+      'one to someone else survives, active and unchanged, with no creator'
+    );
+    const ownToSelfAfter = await prisma.aiWebhookSubscription.findUnique({
+      where: { id: ownToSelf.id },
+    });
+    check(
+      ownToSelfAfter !== null &&
+        ownToSelfAfter.createdBy === null &&
+        ownToSelfAfter.emailAddress === null &&
+        !ownToSelfAfter.isActive,
+      'one to their own inbox survives, cleared and deactivated'
+    );
+    const ownAudit = await prisma.aiAdminAuditLog.findMany({
+      where: { action: 'webhook_subscription.recipient_erased', entityId: ownToSelf.id },
+    });
+    auditIds.push(...ownAudit.map((a) => a.id));
+    check(
+      ownAudit.length === 1 && !JSON.stringify(ownAudit).includes(subject.id),
+      'with one audit entry that does not name them as its owner'
     );
 
     // ── 4. An unverified address touches nothing ──

@@ -16,6 +16,7 @@ import { prisma } from '@/lib/db/client';
 import { paginatedResponse } from '@/lib/api/responses';
 import { NotFoundError, ValidationError } from '@/lib/api/errors';
 import { cuidSchema } from '@/lib/validations/common';
+import { webhookSubscriptionVisibilityWhere } from '@/lib/orchestration/access/webhook-subscription-access';
 
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -31,7 +32,7 @@ export const GET = withAdminAuth<{ id: string }>(
     const id = idParsed.data;
 
     const sub = await prisma.aiWebhookSubscription.findFirst({
-      where: { id, createdBy: session.user.id },
+      where: { AND: [webhookSubscriptionVisibilityWhere(session), { id }] },
       select: { id: true },
     });
     if (!sub) throw new NotFoundError('Webhook subscription not found');
@@ -75,7 +76,7 @@ export const GET = withAdminAuth<{ id: string }>(
     ownership: {
       decidedBy: 'self',
       because:
-        "Subscriptions are scoped to the admin who created them and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
+        "Subscriptions are scoped to the admin who created them (one whose creator was erased only where the policy permits that orphan) and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
     },
   }
 );

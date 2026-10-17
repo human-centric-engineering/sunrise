@@ -251,6 +251,8 @@ export const OWNER_CLASSIFICATION = {
   AiWebhookSubscription: {
     kind: 'personal',
     owner: { column: 'createdBy' },
+    // `SetNull` since t-782: an erased creator's integration keeps running.
+    ownerless: 'webhookSubscription',
   },
   AiWebhookDelivery: {
     kind: 'personal',

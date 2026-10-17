@@ -67,6 +67,8 @@ export interface WebhookListItem {
   workflowIds: string[];
   isActive: boolean;
   description: string | null;
+  /** Null once the admin who created it was erased (t-782); it keeps running. */
+  createdBy?: string | null;
   createdAt: string;
   updatedAt: string;
   _count: { deliveries: number };
@@ -214,6 +216,15 @@ export function WebhooksTable({ initialWebhooks, initialMeta }: WebhooksTablePro
                     </Link>
                     {wh.description && (
                       <p className="text-muted-foreground text-xs">{wh.description}</p>
+                    )}
+                    {wh.createdBy === null && (
+                      <Badge
+                        variant="outline"
+                        className="mt-1 text-[10px]"
+                        title="The admin who created this subscription has been erased. It still sends events. Edit it or switch it off here."
+                      >
+                        Creator erased
+                      </Badge>
                     )}
                   </TableCell>
                   <TableCell>

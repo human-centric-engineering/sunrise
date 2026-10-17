@@ -38,6 +38,7 @@ const NO_UNATTRIBUTED_READS = {
   execution: false,
   experiment: false,
   webhookDelivery: false,
+  webhookSubscription: false,
 } as const;
 
 // ---------------------------------------------------------------------------

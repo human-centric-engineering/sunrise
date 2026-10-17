@@ -23,10 +23,12 @@
  *   6. Redact the user from every webhook and event-hook delivery whose payload
  *      names them — an event about their conversations or workflow runs, or a
  *      change they made (t-783). No FK reaches a payload.
- *   7. Clear the user's (verified) address from other admins' email
- *      subscriptions, and deactivate them, with an audit entry for each
- *      (t-786). Their own subscriptions cascade away; a colleague's that
- *      emails them would otherwise keep notifying an erased person.
+ *   7. Clear the user's (verified) address from every email subscription that
+ *      sends to it — a colleague's (t-786) or their own — and deactivate it,
+ *      with an audit entry for each. Their own subscriptions outlive them
+ *      (`createdBy` is `SetNull` since t-782, so an integration they set up
+ *      keeps running); one that emails them would otherwise keep notifying an
+ *      erased person.
  *   8. Remove the user from the escalation email list and from every workflow
  *      notification and approval step that names them, in drafts and in every
  *      published version, with an audit entry for each (t-791).
@@ -272,12 +274,13 @@ async function eraseRows(params: EraseUserParams): Promise<{
       const addressed = webhookDeliveriesAddressedTo(account);
       const address = addressed ? normaliseAddress(account.email) : null;
 
-      // A colleague's email subscription that notifies this person (t-786;
-      // owner ruling 2026-10-13). Their own subscriptions cascade with the user
-      // row; another admin's would keep emailing the erased person and writing
-      // the address onto every new delivery. Cleared and deactivated rather
-      // than deleted: the integration stays visible to its owner, who can point
-      // it somewhere else, and nothing addressed to this person is sent again.
+      // An email subscription that notifies this person (t-786; owner ruling
+      // 2026-10-13) — a colleague's, or since t-782 their own, which outlives
+      // them (`createdBy` is `SetNull`). Either would keep emailing the erased
+      // person and writing the address onto every new delivery. Cleared and
+      // deactivated rather than deleted: the integration stays visible to
+      // whoever manages it, who can point it somewhere else, and nothing
+      // addressed to this person is sent again.
       // A subscription stores the address as typed, so each is normalised here
       // by the same function the deliveries are — compared in code rather than
       // re-implemented in SQL, whose `btrim`/`lower` differ from it on tabs and
@@ -287,7 +290,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
       let subscriptionsDeactivated = 0;
       if (address) {
         const candidates = await tx.aiWebhookSubscription.findMany({
-          where: { channel: 'email', emailAddress: { not: null }, createdBy: { not: userId } },
+          where: { channel: 'email', emailAddress: { not: null } },
           select: { id: true, emailAddress: true, isActive: true, orgId: true, createdBy: true },
         });
         const cleared = candidates.filter(
@@ -314,7 +317,9 @@ async function eraseRows(params: EraseUserParams): Promise<{
               },
               metadata: {
                 reason: 'The person this subscription emailed was erased.',
-                ownerUserId: sub.createdBy,
+                // Null for the subject's own: their id is what is being erased,
+                // and the row is about to lose its creator anyway.
+                ownerUserId: sub.createdBy === userId ? null : sub.createdBy,
                 orgId: sub.orgId,
               },
             })),

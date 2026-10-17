@@ -132,6 +132,20 @@ describe('WebhooksTable', () => {
     expect(switches).toHaveLength(2);
   });
 
+  it('marks a subscription whose creator was erased, and only that one (t-782)', () => {
+    render(
+      <WebhooksTable
+        initialWebhooks={[
+          { ...MOCK_WEBHOOKS[0], createdBy: null },
+          { ...MOCK_WEBHOOKS[1], createdBy: 'admin-1' },
+        ]}
+        initialMeta={{ ...META, total: 2, totalPages: 1 }}
+      />
+    );
+
+    expect(screen.getAllByText('Creator erased')).toHaveLength(1);
+  });
+
   it('shows empty state when no webhooks', async () => {
     mockFetch.mockResolvedValue({
       ok: true,

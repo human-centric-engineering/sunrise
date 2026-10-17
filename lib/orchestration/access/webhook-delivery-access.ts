@@ -8,7 +8,9 @@
  * delivery is owned **through** its subscription. An admin may see a delivery
  * iff
  *
- *   1. its subscription is theirs (`subscription.createdBy === adminUserId`), OR
+ *   1. they may see its subscription — it is theirs, or its creator was erased
+ *      and the policy permits them that orphan
+ *      (`webhookSubscriptionVisibilityWhere`, t-782), OR
  *   2. it has **no** subscription (`subscriptionId IS NULL`) and the
  *      authorization policy permits them an unattributed read
  *      (`session.unattributedReads.webhookDelivery`).
@@ -18,9 +20,10 @@
  * `lib/auth/orphan-reads.ts`.
  *
  * **Why a null owner happens here.** `AiWebhookDelivery.subscriptionId` is
- * `onDelete: SetNull`: deleting a subscription, or erasing the admin who
- * created it (its `createdBy` cascades), keeps the delivery as the record of
- * where an event went and drops the link. Left owner-only, those rows would be
+ * `onDelete: SetNull`: deleting a subscription keeps the delivery as the
+ * record of where an event went and drops the link. (Erasing the admin who
+ * created it no longer does: since t-782 the subscription outlives its
+ * creator, ownerless, and its deliveries stay linked to it.) Left owner-only, those rows would be
  * invisible to everyone and deletable by nobody. The default policy admits
  * platform admins; a fork narrows it by registering a policy, not by editing
  * these routes.
@@ -39,13 +42,17 @@
 
 import type { Prisma } from '@prisma/client';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
+import {
+  webhookSubscriptionAccessBasis,
+  webhookSubscriptionVisibilityWhere,
+} from '@/lib/orchestration/access/webhook-subscription-access';
 
 /** Why an admin may see a webhook delivery. */
 export type WebhookDeliveryAccessBasis = 'owner' | 'orphan';
 
 /** The subset of a delivery row this module needs. */
 export interface WebhookDeliveryOwner {
-  subscription: { createdBy: string } | null;
+  subscription: { createdBy: string | null } | null;
 }
 
 /**
@@ -63,7 +70,7 @@ export interface WebhookDeliveryOwner {
 export function webhookDeliveryVisibilityWhere(
   session: AuthenticatedSession
 ): Prisma.AiWebhookDeliveryWhereInput {
-  const mine = { subscription: { createdBy: session.user.id } };
+  const mine = { subscription: webhookSubscriptionVisibilityWhere(session) };
 
   return session.unattributedReads.webhookDelivery
     ? { OR: [mine, { subscriptionId: null }] }
@@ -85,5 +92,5 @@ export function webhookDeliveryAccessBasis(
   if (delivery.subscription === null) {
     return session.unattributedReads.webhookDelivery ? 'orphan' : null;
   }
-  return delivery.subscription.createdBy === session.user.id ? 'owner' : null;
+  return webhookSubscriptionAccessBasis(delivery.subscription, session);
 }

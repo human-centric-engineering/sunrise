@@ -35,11 +35,14 @@ model AiWebhookSubscription {
   // (maxAttempts - 1) entries; the dispatcher only reads the first
   // (maxAttempts - 1) values. Each entry capped at 24h.
   retryBackoffMs Int[]    @default([10000, 60000, 300000])
-  createdBy      String
+  // Null once its creator is erased (t-782): `SetNull`, so an integration an
+  // admin set up keeps running after they leave, and the policy decides who
+  // manages it then (`webhookSubscription` in lib/auth/orphan-reads.ts).
+  createdBy      String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  user       User                @relation("AiWebhookUser", fields: [createdBy], references: [id], onDelete: Cascade)
+  user       User?               @relation("AiWebhookUser", fields: [createdBy], references: [id], onDelete: SetNull)
   deliveries AiWebhookDelivery[]
 
   orgId String? // org this row belongs to (§107); backfilled to the install org, NOT NULL is a later stage

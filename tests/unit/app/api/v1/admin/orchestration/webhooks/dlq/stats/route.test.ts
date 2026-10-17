@@ -75,7 +75,12 @@ describe('GET /webhooks/dlq/stats', () => {
     // if any one slips that's a cross-tenant data leak.
     const scope = {
       AND: [
-        { OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }] },
+        {
+          OR: [
+            { subscription: { OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] } },
+            { subscriptionId: null },
+          ],
+        },
         { status: 'exhausted' },
       ],
     };

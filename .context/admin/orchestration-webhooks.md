@@ -118,8 +118,7 @@ its reasoning live in `lib/orchestration/webhooks/destination.ts`; in short:
   `previousDestinations` (`[{ destination, destinationFingerprint, until }]`),
   so the row names every place the payload was sent.
 - **Deleting a subscription keeps its deliveries** (`subscriptionId` becomes
-  null). So does erasing the admin who created it: the subscription goes with
-  them, but the deliveries are the org's record of where its customers' data
+  null): the deliveries are the org's record of where its customers' data
   went — minus the erased person's own address, which `eraseUser()` redacts
   to `[erased]`, and minus what an event said about an erased person (see
   [data erasure](../privacy/data-erasure.md), steps 5–7). An email
@@ -134,6 +133,15 @@ its reasoning live in `lib/orchestration/webhooks/destination.ts`; in short:
   (see [Rows nobody owns](../auth/authorization.md#rows-nobody-owns)). Erasing
   the org still removes its deliveries, and retention prunes orphans by age
   like any other row.
+- **Erasing the admin who created a subscription keeps it running** (t-782).
+  `createdBy` becomes null and the subscription goes on delivering, with its
+  deliveries still linked to it; the list marks it **Creator erased**. With no
+  creator left to scope by, it is shown — and can be edited, tested, switched
+  off or deleted — by the admins the authorization policy permits an ownerless
+  `webhookSubscription`, platform admins by default, through
+  `lib/orchestration/access/webhook-subscription-access.ts`. A fork that wants
+  an org's own admins to inherit a departed colleague's integrations widens the
+  policy for that kind; nothing in the routes changes.
 - **Rows that predate recording** are filled from their subscription's
   current destination by the `022-delivery-destinations` seed unit, which is
   the best value available rather than a record. Rows whose subscription was
@@ -193,11 +201,11 @@ Uses admin orchestration webhook endpoints:
 - `PATCH /webhooks/:id` — update
 - `DELETE /webhooks/:id` — delete (its deliveries are kept; see [Where a delivery went](#where-a-delivery-went))
 - `POST /webhooks/:id/test` — send test ping event
-- `GET /webhooks/:id/deliveries` — delivery history (scoped to `session.user.id`)
+- `GET /webhooks/:id/deliveries` — delivery history (scoped to the caller's own subscriptions, plus ones whose creator was erased where the policy permits)
 - `GET /webhooks/deliveries?status=&subscriptionId=&orphaned=` — deliveries in any status across the subscriptions the caller may see, including those whose subscription was deleted (where the policy permits); the route that reaches a delivered orphan, which neither the per-subscription list nor the DLQ can
 - `POST /webhooks/deliveries/:id/retry` — retry failed delivery (verifies parent subscription ownership; 409 when the subscription was deleted, or when an erasure stopped the delivery)
 - `DELETE /webhooks/deliveries/:id` — permanently delete a delivery row (verifies parent subscription ownership, or that it was deleted; audit-logged as `webhook_delivery.delete`, naming the delivery's origin, never an email address)
-- `GET /webhooks/dlq?page=&pageSize=&subscriptionId=&eventType=&since=&until=` — list exhausted deliveries across all subscriptions the calling admin owns, plus orphaned ones. Always scoped to `status=exhausted` and that scope; filters narrow further.
+- `GET /webhooks/dlq?page=&pageSize=&subscriptionId=&eventType=&since=&until=` — list exhausted deliveries across all subscriptions the calling admin may see (their own, plus ones whose creator was erased where the policy permits), plus orphaned deliveries. Always scoped to `status=exhausted` and that scope; filters narrow further.
 - `GET /webhooks/dlq/stats` — depth signal for the health dashboard. Returns `{ exhausted24h, exhaustedTotal, oldestExhaustedAt }` over the same scope. Consumed by improvement #41 (health dashboard).
 - `POST /webhooks/dlq/replay` — bulk replay. Body either `{ deliveryIds: string[] }` (explicit selection, max 500) or `{ subscriptionId, before? }` (replay all exhausted rows for one subscription, optionally capped by `createdAt < before`). Loops `retryDelivery()` with concurrency cap of 5. Ownership filter skips rows the caller doesn't own. Audit-logged as `webhook_delivery.replay_batch`.
 

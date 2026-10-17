@@ -161,6 +161,7 @@ const NO_UNATTRIBUTED: UnattributedReads = {
   execution: false,
   experiment: false,
   webhookDelivery: false,
+  webhookSubscription: false,
 };
 
 const base = new PrismaClient({ adapter: factory });

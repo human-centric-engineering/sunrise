@@ -81,6 +81,7 @@ function reads(mayReadUnowned: boolean): UnattributedReads {
     execution: mayReadUnowned,
     experiment: mayReadUnowned,
     webhookDelivery: mayReadUnowned,
+    webhookSubscription: mayReadUnowned,
   };
 }
 

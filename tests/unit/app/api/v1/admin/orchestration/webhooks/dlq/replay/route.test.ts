@@ -101,7 +101,12 @@ describe('POST /webhooks/dlq/replay', () => {
       expect.objectContaining({
         where: {
           AND: [
-            { OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }] },
+            {
+              OR: [
+                { subscription: { OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] } },
+                { subscriptionId: null },
+              ],
+            },
             {
               id: {
                 in: [
@@ -250,7 +255,12 @@ describe('POST /webhooks/dlq/replay', () => {
     const where = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0]?.where;
     expect(where).toEqual({
       AND: [
-        { OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }] },
+        {
+          OR: [
+            { subscription: { OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] } },
+            { subscriptionId: null },
+          ],
+        },
         { id: { in: [live, orphan] } },
       ],
     });

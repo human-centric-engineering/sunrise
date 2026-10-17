@@ -17,7 +17,7 @@
  * @see app/api/v1/admin/orchestration/webhooks/[id]/route.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
@@ -70,6 +70,11 @@ import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
 import { logAdminAction, computeChanges } from '@/lib/orchestration/audit/admin-audit-logger';
 import { validateRequestBody } from '@/lib/api/validation';
+import {
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+  DEFAULT_AUTHORIZATION_POLICY,
+} from '@/lib/auth/authorization';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import { GET, PATCH, DELETE } from '@/app/api/v1/admin/orchestration/webhooks/[id]/route';
 
@@ -128,6 +133,21 @@ beforeEach(() => {
   vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
 });
 
+afterEach(() => {
+  __resetAuthorizationPolicyForTests();
+});
+
+/** A fork that lets admins manage their own subscriptions and nobody's orphans. */
+function refuseUnattributedReads(): void {
+  registerAuthorizationPolicy({
+    ...DEFAULT_AUTHORIZATION_POLICY,
+    canRead: (viewer, target, scope) =>
+      target.kind === 'unattributed'
+        ? Promise.resolve(false)
+        : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+  });
+}
+
 describe('GET /webhooks/:id', () => {
   it('returns 401 when unauthenticated', async () => {
     // Arrange
@@ -185,15 +205,49 @@ describe('GET /webhooks/:id', () => {
     // Act
     await GET(makeGetRequest(), makeParams(WEBHOOK_ID));
 
-    // Assert: query must include both the id and the owner scope
+    // Assert: the id AND the visibility clause, composed with AND. The default
+    // policy lets a platform admin reach a subscription whose creator was erased.
     expect(prisma.aiWebhookSubscription.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
-          id: WEBHOOK_ID,
-          createdBy: ADMIN_ID,
-        }),
+        where: {
+          AND: [{ OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] }, { id: WEBHOOK_ID }],
+        },
       })
     );
+  });
+
+  it('scopes to the caller alone, with no orphan arm, when the policy refuses', async () => {
+    // Arrange
+    refuseUnattributedReads();
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(null);
+
+    // Act
+    const response = await GET(makeGetRequest(), makeParams(WEBHOOK_ID));
+
+    // Assert
+    expect(response.status).toBe(404);
+    expect(prisma.aiWebhookSubscription.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { AND: [{ createdBy: ADMIN_ID }, { id: WEBHOOK_ID }] },
+      })
+    );
+  });
+
+  it('returns an orphaned subscription (createdBy null) to a policy-permitted admin', async () => {
+    // Arrange
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
+      makeWebhook({ createdBy: null }) as never
+    );
+
+    // Act
+    const response = await GET(makeGetRequest(), makeParams(WEBHOOK_ID));
+    const body = await parseJson<{ data: Record<string, unknown> }>(response);
+
+    // Assert: selected and surfaced, so the UI can tell the row has no creator
+    const callArg = vi.mocked(prisma.aiWebhookSubscription.findFirst).mock.calls[0]?.[0];
+    expect(callArg?.select).toMatchObject({ createdBy: true });
+    expect(response.status).toBe(200);
+    expect(body.data).toHaveProperty('createdBy', null);
   });
 
   it('queries with SAFE_SELECT that excludes secret', async () => {
@@ -740,5 +794,86 @@ describe('DELETE /webhooks/:id', () => {
         userId: ADMIN_ID,
       })
     );
+  });
+});
+
+describe('orphaned subscriptions (creator erased, t-782)', () => {
+  const ORPHAN_WHERE = {
+    AND: [{ OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] }, { id: WEBHOOK_ID }],
+  };
+  const OWNER_ONLY_WHERE = { AND: [{ createdBy: ADMIN_ID }, { id: WEBHOOK_ID }] };
+
+  it('PATCH looks up with the orphan arm and updates an orphan for a permitted admin', async () => {
+    // Arrange
+    vi.mocked(validateRequestBody).mockResolvedValue({ isActive: false });
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
+      makeWebhook({ createdBy: null }) as never
+    );
+    vi.mocked(prisma.aiWebhookSubscription.update).mockResolvedValue(
+      makeWebhook({ isActive: false, createdBy: null }) as never
+    );
+
+    // Act
+    const response = await PATCH(makePatchRequest({ isActive: false }), makeParams(WEBHOOK_ID));
+
+    // Assert
+    expect(response.status).toBe(200);
+    expect(prisma.aiWebhookSubscription.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: ORPHAN_WHERE })
+    );
+    expect(prisma.aiWebhookSubscription.update).toHaveBeenCalledOnce();
+  });
+
+  it('PATCH looks up owner-only and writes nothing when the policy refuses', async () => {
+    // Arrange
+    refuseUnattributedReads();
+    vi.mocked(validateRequestBody).mockResolvedValue({ isActive: false });
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(null);
+
+    // Act
+    const response = await PATCH(makePatchRequest({ isActive: false }), makeParams(WEBHOOK_ID));
+
+    // Assert
+    expect(response.status).toBe(404);
+    expect(prisma.aiWebhookSubscription.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: OWNER_ONLY_WHERE })
+    );
+    expect(prisma.aiWebhookSubscription.update).not.toHaveBeenCalled();
+  });
+
+  it('DELETE looks up with the orphan arm and deletes an orphan for a permitted admin', async () => {
+    // Arrange
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(
+      makeWebhook({ createdBy: null }) as never
+    );
+    vi.mocked(prisma.aiWebhookSubscription.delete).mockResolvedValue(makeWebhook() as never);
+
+    // Act
+    const response = await DELETE(makeDeleteRequest(), makeParams(WEBHOOK_ID));
+
+    // Assert
+    expect(response.status).toBe(200);
+    expect(prisma.aiWebhookSubscription.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: ORPHAN_WHERE })
+    );
+    expect(prisma.aiWebhookSubscription.delete).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: WEBHOOK_ID } })
+    );
+  });
+
+  it('DELETE looks up owner-only and deletes nothing when the policy refuses', async () => {
+    // Arrange
+    refuseUnattributedReads();
+    vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(null);
+
+    // Act
+    const response = await DELETE(makeDeleteRequest(), makeParams(WEBHOOK_ID));
+
+    // Assert
+    expect(response.status).toBe(404);
+    expect(prisma.aiWebhookSubscription.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: OWNER_ONLY_WHERE })
+    );
+    expect(prisma.aiWebhookSubscription.delete).not.toHaveBeenCalled();
   });
 });

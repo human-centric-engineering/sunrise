@@ -32,6 +32,7 @@ import { retryDelivery } from '@/lib/orchestration/webhooks/dispatcher';
 import { logAdminAction } from '@/lib/orchestration/audit/admin-audit-logger';
 import type { AuthenticatedSession } from '@/lib/auth/guards';
 import { webhookDeliveryVisibilityWhere } from '@/lib/orchestration/access/webhook-delivery-access';
+import { webhookSubscriptionVisibilityWhere } from '@/lib/orchestration/access/webhook-subscription-access';
 
 /** Cap concurrent in-flight retries so a large batch doesn't burst on the receiver. */
 const REPLAY_CONCURRENCY = 5;
@@ -100,7 +101,7 @@ export const POST = withAdminAuth(
     ownership: {
       decidedBy: 'self',
       because:
-        "Subscriptions are scoped to the admin who created them and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
+        "Subscriptions are scoped to the admin who created them (one whose creator was erased only where the policy permits that orphan) and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
     },
   }
 );
@@ -123,7 +124,7 @@ async function resolveTargetIds(
   }
 
   const subscription = await prisma.aiWebhookSubscription.findFirst({
-    where: { id: body.subscriptionId, createdBy: session.user.id },
+    where: { AND: [webhookSubscriptionVisibilityWhere(session), { id: body.subscriptionId }] },
     select: { id: true },
   });
   if (!subscription) return [];

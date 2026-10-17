@@ -693,9 +693,9 @@ export const GET = withAdminAuth(
 );
 ```
 
-**Make the security clause unclobberable.** `webhooks/route.ts:26-29` does the
-equivalent by putting `createdBy` in the literal and _assigning_ the optional
-filters onto it. Either shape is fine; a spread with the owner clause first is
+**Make the security clause unclobberable.** `webhooks/route.ts` does the
+equivalent by putting the visibility fragment and the optional filters side by
+side in an `AND`. Either shape is fine; a spread with the owner clause first is
 not.
 
 **Count with the same `where` as the query.** A total computed without the filter
@@ -787,18 +787,19 @@ site, which gaps you have accepted.
 declared `onDelete: SetNull`**, every one of which can hold a row an Art. 17
 erasure detached, plus the models whose rows are born ownerless.
 
-**Five models have a read path that asks the policy about it**, and those five
+**Six models have a read path that asks the policy about it**, and those six
 are what the guards precompute. The rest are admin-global — every admin reads
 every row — so there is no owner clause for an orphan to fall outside of, and
 nothing to precompute:
 
-| Model                 | Owner column                                              | `onDelete` | A null owner means                                               |
-| --------------------- | --------------------------------------------------------- | ---------- | ---------------------------------------------------------------- |
-| `AiConversation`      | `userId`                                                  | `Cascade`  | born ownerless — inbound                                         |
-| `AiWorkflowExecution` | `userId`                                                  | `Cascade`  | born ownerless — scheduled                                       |
-| `AiDataset`           | `userId`                                                  | `SetNull`  | an Art. 17 erasure detached it                                   |
-| `AiExperiment`        | `createdBy`                                               | `SetNull`  | an Art. 17 erasure detached it                                   |
-| `AiWebhookDelivery`   | `subscriptionId` (owned through `subscription.createdBy`) | `SetNull`  | its subscription was deleted, or went with its creator's erasure |
+| Model                   | Owner column                                              | `onDelete` | A null owner means                                             |
+| ----------------------- | --------------------------------------------------------- | ---------- | -------------------------------------------------------------- |
+| `AiConversation`        | `userId`                                                  | `Cascade`  | born ownerless — inbound                                       |
+| `AiWorkflowExecution`   | `userId`                                                  | `Cascade`  | born ownerless — scheduled                                     |
+| `AiDataset`             | `userId`                                                  | `SetNull`  | an Art. 17 erasure detached it                                 |
+| `AiExperiment`          | `createdBy`                                               | `SetNull`  | an Art. 17 erasure detached it                                 |
+| `AiWebhookDelivery`     | `subscriptionId` (owned through `subscription.createdBy`) | `SetNull`  | its subscription was deleted                                   |
+| `AiWebhookSubscription` | `createdBy`                                               | `SetNull`  | an Art. 17 erasure detached it, and it kept delivering (t-782) |
 
 **Born ownerless and left ownerless are disjoint by database constraint**, which
 is why the helpers give them different names — `'system'` versus `'orphan'` — and
@@ -886,13 +887,14 @@ same failure direction, one call.
 model's visible _set_ comes from a helper in `lib/orchestration/access/`, one
 module per model. That directory is the roster:
 
-| Model                 | Owner column             | Helper                                                | Bases it can return           | Reaches the policy |
-| --------------------- | ------------------------ | ----------------------------------------------------- | ----------------------------- | ------------------ |
-| `AiConversation`      | `userId`                 | `lib/orchestration/access/conversation-access.ts`     | `owner` / `shared` / `system` | from the record    |
-| `AiWorkflowExecution` | `userId`                 | `lib/orchestration/access/execution-access.ts`        | `owner` / `system`            | from the record    |
-| `AiDataset`           | `userId`                 | `lib/orchestration/access/dataset-access.ts`          | `owner` / `orphan`            | from the record    |
-| `AiExperiment`        | `createdBy`              | `lib/orchestration/access/experiment-access.ts`       | `owner` / `orphan`            | from the record    |
-| `AiWebhookDelivery`   | `subscription.createdBy` | `lib/orchestration/access/webhook-delivery-access.ts` | `owner` / `orphan`            | from the record    |
+| Model                   | Owner column             | Helper                                                    | Bases it can return           | Reaches the policy |
+| ----------------------- | ------------------------ | --------------------------------------------------------- | ----------------------------- | ------------------ |
+| `AiConversation`        | `userId`                 | `lib/orchestration/access/conversation-access.ts`         | `owner` / `shared` / `system` | from the record    |
+| `AiWorkflowExecution`   | `userId`                 | `lib/orchestration/access/execution-access.ts`            | `owner` / `system`            | from the record    |
+| `AiDataset`             | `userId`                 | `lib/orchestration/access/dataset-access.ts`              | `owner` / `orphan`            | from the record    |
+| `AiExperiment`          | `createdBy`              | `lib/orchestration/access/experiment-access.ts`           | `owner` / `orphan`            | from the record    |
+| `AiWebhookDelivery`     | `subscription.createdBy` | `lib/orchestration/access/webhook-delivery-access.ts`     | `owner` / `orphan`            | from the record    |
+| `AiWebhookSubscription` | `createdBy`              | `lib/orchestration/access/webhook-subscription-access.ts` | `owner` / `orphan`            | from the record    |
 
 **Four production call sites read the record directly rather than through a
 helper, and each is a shape a `where` fragment cannot serve.** The conversation
@@ -915,7 +917,7 @@ answering the same question through `mayReadUnattributed` and a
 `*_RESOURCE_KIND` constant, and nothing in the tree put the two side by side.
 
 Executions moved onto the record in t-685, conversations in t-686, and datasets
-and experiments in t-687, which finished the axis; webhook deliveries joined in §109 t-739. Every helper is
+and experiments in t-687, which finished the axis; webhook deliveries joined in §109 t-739, and webhook subscriptions in t-782 (a delivery's visibility nests its subscription's). Every helper is
 **synchronous** — that is what the eager resolution bought, and what lets the
 live-engine snapshot build fragments inline inside a larger object. None of them
 declares a resource-kind constant any more: the record's keys _are_
@@ -1278,9 +1280,11 @@ detail GET/PATCH/DELETE (`webhooks/[id]/route.ts`), the test action
 (`[id]/test`), the deliveries list (`[id]/deliveries`), the DLQ list, stats and
 replay through the relation (`webhooks/dlq/route.ts`, `dlq/stats`,
 `dlq/replay`), and two post-fetch comparisons on individual deliveries
-(`deliveries/[id]`, `deliveries/[id]/retry`) — **twelve sites across nine
-files**, all spelling `createdBy: session.user.id` by hand. That is the shape
-`subjectScope` + `canRead` replace with one rule.
+(`deliveries/[id]`, `deliveries/[id]/retry`). They used to be **twelve sites
+across nine files**, all spelling `createdBy: session.user.id` by hand; since
+t-782 every one goes through `webhookSubscriptionVisibilityWhere` or
+`webhookDeliveryVisibilityWhere`, which is also what lets a subscription whose
+creator was erased stay manageable.
 
 **And that qualifier is load-bearing, which is the real lesson.** This paragraph
 first read "every read of `AiWebhookSubscription`", and that was false:
@@ -1368,8 +1372,8 @@ noting it followed that precedent deliberately.
 **Stamping `createdBy` on write is not scoping, and the two are indistinguishable
 to a grep.** `createdBy: session.user.id` inside a `create`'s `data` is
 attribution; the same eight characters inside a `where` are a boundary. In the
-webhooks routes, twelve of the thirteen occurrences are the second kind and one
-is the first. That is why "we filter by `createdBy` here" is not a claim a reviewer can
+webhooks routes, twelve of the thirteen occurrences were the second kind and one
+the first, until t-782 moved the twelve into a helper. That is why "we filter by `createdBy` here" is not a claim a reviewer can
 check by searching, and why the rule wants a named function.
 
 **That is correct today and it is not a bug list.** Single-tenant Sunrise has one

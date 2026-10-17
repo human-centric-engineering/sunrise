@@ -972,19 +972,16 @@ describe('eraseUser', () => {
       };
     }
 
-    it('asks for other people’s email subscriptions only, by an exact where on the erased user', async () => {
+    it('asks for every email subscription, the erased user’s own included, with no address in the query', async () => {
       await eraseUser(BASE_PARAMS);
 
-      // The erased user's own subscriptions are excluded by the where (they
-      // cascade with the user row); the address is compared in code, so the
-      // query carries no address at all.
+      // Since t-782 the erased user's own subscriptions outlive them
+      // (`createdBy` is `SetNull`), so one that emails them is a candidate like
+      // a colleague's. The address is compared in code, so the query carries
+      // no address at all.
       expect(mockSubFindMany).toHaveBeenCalledTimes(1);
       expect(mockSubFindMany).toHaveBeenCalledWith({
-        where: {
-          channel: 'email',
-          emailAddress: { not: null },
-          createdBy: { not: BASE_PARAMS.userId },
-        },
+        where: { channel: 'email', emailAddress: { not: null } },
         select: { id: true, emailAddress: true, isActive: true, orgId: true, createdBy: true },
       });
       expect(JSON.stringify(mockSubFindMany.mock.calls)).not.toContain('insensitive');
@@ -1068,6 +1065,31 @@ describe('eraseUser', () => {
       // The log is kept through erasure and the address is what is erased
       const serialised = JSON.stringify(mockAuditCreateMany.mock.calls).toLowerCase();
       expect(serialised).not.toContain('foo@bar.com');
+    });
+
+    it('clears the erased user’s own subscription that emails them, without naming them as its owner (t-782)', async () => {
+      mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
+      mockSubFindMany.mockResolvedValue([
+        sub({ id: 'sub-own', createdBy: BASE_PARAMS.userId }),
+        sub({
+          id: 'sub-own-elsewhere',
+          createdBy: BASE_PARAMS.userId,
+          emailAddress: 'team@bar.com',
+        }),
+      ]);
+
+      await eraseUser(BASE_PARAMS);
+
+      // Their own subscription to their own inbox stops; one to someone else's
+      // keeps running — it is the integration t-782 keeps alive.
+      expect(mockSubUpdateMany).toHaveBeenCalledWith({
+        where: { id: { in: ['sub-own'] } },
+        data: { emailAddress: null, isActive: false },
+      });
+      expect(mockAuditCreateMany.mock.calls[0][0].data[0].metadata).toEqual(
+        expect.objectContaining({ ownerUserId: null })
+      );
+      expect(JSON.stringify(mockAuditCreateMany.mock.calls)).not.toContain(BASE_PARAMS.userId);
     });
 
     it('writes nothing when no subscription matches the address', async () => {

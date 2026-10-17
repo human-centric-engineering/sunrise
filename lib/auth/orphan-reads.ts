@@ -190,6 +190,11 @@ export const UNATTRIBUTED_READ_KINDS = [
    * of where an event went (§109 t-739).
    */
   'webhookDelivery',
+  /**
+   * `AiWebhookSubscription.createdBy` — `SetNull`, so null means an erasure
+   * detached it, and the integration kept running (t-782).
+   */
+  'webhookSubscription',
 ] as const;
 
 /** One of the core ownerless-capable models. See {@link UNATTRIBUTED_READ_KINDS}. */
@@ -264,6 +269,7 @@ export async function resolveUnattributedReads(
     execution: false,
     experiment: false,
     webhookDelivery: false,
+    webhookSubscription: false,
   };
   for (const kind of UNATTRIBUTED_READ_KINDS) {
     reads[kind] = await mayReadUnattributed(principal, kind);
@@ -319,6 +325,8 @@ const OWNERLESS_KIND_CONSEQUENCE: Readonly<Record<UnattributedReadKind, string>>
     'an experiment an erasure de-attributed is readable and claimable by nobody you named, and pruned by nothing.',
   webhookDelivery:
     'a webhook delivery whose subscription was deleted — the record of where an event went — is invisible to every admin you named in the dead-letter queue, and can be discarded by none of them.',
+  webhookSubscription:
+    'a webhook subscription whose creator was erased keeps delivering, but no admin you named can see it, edit it or switch it off.',
 };
 
 function isCoreKind(kind: string): kind is UnattributedReadKind {

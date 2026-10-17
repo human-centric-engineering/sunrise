@@ -44,7 +44,12 @@ import {
 const ADMIN_ID = 'cmjbv4i3x00003wsloputgwul';
 const SUB_ID = 'cmjbv4i3x00013wslsomesubid';
 
-const VISIBLE = { OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }] };
+const VISIBLE = {
+  OR: [
+    { subscription: { OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] } },
+    { subscriptionId: null },
+  ],
+};
 
 function makeRequest(qs = ''): NextRequest {
   return {

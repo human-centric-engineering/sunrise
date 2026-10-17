@@ -1065,6 +1065,7 @@ describe('resumeApprovedExecution', () => {
           execution: false,
           experiment: false,
           webhookDelivery: false,
+          webhookSubscription: false,
         },
       },
       () => resumeApprovedExecution('exec_1')

@@ -25,6 +25,7 @@ import { getResendClient, getDefaultSender, isEmailEnabled } from '@/lib/email/c
 import EventNotification from '@/emails/event-notification';
 import { render } from '@react-email/render';
 import crypto from 'crypto';
+import { webhookSubscriptionVisibilityWhere } from '@/lib/orchestration/access/webhook-subscription-access';
 
 export const POST = withAdminAuth<{ id: string }>(
   async (request, session, { params }) => {
@@ -35,7 +36,7 @@ export const POST = withAdminAuth<{ id: string }>(
       throw new ValidationError('Invalid webhook id', { id: ['Must be a valid CUID'] });
 
     const webhook = await prisma.aiWebhookSubscription.findFirst({
-      where: { id: parsed.data, createdBy: session.user.id },
+      where: { AND: [webhookSubscriptionVisibilityWhere(session), { id: parsed.data }] },
     });
     if (!webhook) throw new NotFoundError('Webhook not found');
 
@@ -240,7 +241,7 @@ export const POST = withAdminAuth<{ id: string }>(
     ownership: {
       decidedBy: 'self',
       because:
-        "Subscriptions are scoped to the admin who created them and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
+        "Subscriptions are scoped to the admin who created them (one whose creator was erased only where the policy permits that orphan) and deliveries through their subscription (an orphaned delivery only where the policy permits it), keyed on the caller's id. Never another member's.",
     },
   }
 );

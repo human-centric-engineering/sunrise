@@ -131,6 +131,7 @@ describe('the roster of kinds', () => {
       'execution',
       'experiment',
       'webhookDelivery',
+      'webhookSubscription',
     ]);
     expect(new Set(UNATTRIBUTED_READ_KINDS).size).toBe(UNATTRIBUTED_READ_KINDS.length);
   });
@@ -144,6 +145,7 @@ describe('the answer comes from the policy', () => {
       execution: true,
       experiment: true,
       webhookDelivery: true,
+      webhookSubscription: true,
     });
     await expect(resolveUnattributedReads(MEMBER)).resolves.toEqual({
       conversation: false,
@@ -151,6 +153,7 @@ describe('the answer comes from the policy', () => {
       execution: false,
       experiment: false,
       webhookDelivery: false,
+      webhookSubscription: false,
     });
   });
 
@@ -174,6 +177,7 @@ describe('the answer comes from the policy', () => {
       execution: false,
       experiment: false,
       webhookDelivery: false,
+      webhookSubscription: false,
     });
   });
 
@@ -195,6 +199,7 @@ describe('the answer comes from the policy', () => {
       execution: false,
       experiment: false,
       webhookDelivery: false,
+      webhookSubscription: false,
     });
   });
 
@@ -314,6 +319,8 @@ describe('checkOwnerlessReachability', () => {
     expect(messageFor('execution')).toContain('7-day');
     expect(messageFor('webhookDelivery')).toContain('dead-letter queue');
     expect(messageFor('webhookDelivery')).toContain('webhook delivery');
+    expect(messageFor('webhookSubscription')).toContain('creator was erased');
+    expect(messageFor('webhookSubscription')).toContain('switch it off');
   });
 
   it('passes once any one principal on the roster reaches the kind', async () => {
@@ -417,6 +424,7 @@ describe('checkOwnerlessReachability', () => {
       execution: false,
       experiment: false,
       webhookDelivery: false,
+      webhookSubscription: false,
     });
   });
 

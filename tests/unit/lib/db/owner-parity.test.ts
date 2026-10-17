@@ -35,6 +35,7 @@ const NO_UNATTRIBUTED: UnattributedReads = {
   execution: false,
   experiment: false,
   webhookDelivery: false,
+  webhookSubscription: false,
 };
 
 // The schema is all the analysis reads; the adapter is never connected.

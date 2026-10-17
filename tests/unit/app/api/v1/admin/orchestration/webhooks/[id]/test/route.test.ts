@@ -84,6 +84,11 @@ vi.mock('@/lib/brand', () => ({ BRAND: { name: 'Aurora Labs' } }));
 
 import { auth } from '@/lib/auth/config';
 import { prisma } from '@/lib/db/client';
+import {
+  registerAuthorizationPolicy,
+  __resetAuthorizationPolicyForTests,
+  DEFAULT_AUTHORIZATION_POLICY,
+} from '@/lib/auth/authorization';
 import { mockAdminUser } from '@/tests/helpers/auth';
 import { POST } from '@/app/api/v1/admin/orchestration/webhooks/[id]/test/route';
 
@@ -141,6 +146,7 @@ describe('POST /api/v1/admin/orchestration/webhooks/:id/test', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    __resetAuthorizationPolicyForTests();
   });
 
   // ── Rate limiting ───────────────────────────────────────────────────────
@@ -169,7 +175,7 @@ describe('POST /api/v1/admin/orchestration/webhooks/:id/test', () => {
   // ── Ownership & not-found ───────────────────────────────────────────────
 
   describe('Ownership filter', () => {
-    it('returns 404 when the webhook is not found and calls findFirst with both id and createdBy', async () => {
+    it('returns 404 when the webhook is not found, scoping the lookup by id AND visibility', async () => {
       // Arrange: simulate ownership mismatch — another admin's webhook looks like not found
       vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(null);
 
@@ -179,13 +185,36 @@ describe('POST /api/v1/admin/orchestration/webhooks/:id/test', () => {
       // Assert: 404 returned
       expect(response.status).toBe(404);
 
-      // Assert: the ownership scope (id + createdBy) is the security guarantee
+      // Assert: the scope is the security guarantee. The default policy lets a
+      // platform admin test-send an orphaned subscription too.
       expect(prisma.aiWebhookSubscription.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            id: WEBHOOK_ID,
-            createdBy: ADMIN_ID,
-          }),
+          where: {
+            AND: [{ OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] }, { id: WEBHOOK_ID }],
+          },
+        })
+      );
+    });
+
+    it('drops the orphan arm from the lookup when the policy refuses unattributed reads', async () => {
+      // Arrange
+      registerAuthorizationPolicy({
+        ...DEFAULT_AUTHORIZATION_POLICY,
+        canRead: (viewer, target, scope) =>
+          target.kind === 'unattributed'
+            ? Promise.resolve(false)
+            : DEFAULT_AUTHORIZATION_POLICY.canRead(viewer, target, scope),
+      });
+      vi.mocked(prisma.aiWebhookSubscription.findFirst).mockResolvedValue(null);
+
+      // Act
+      const response = await POST(makeRequest(), makeParams());
+
+      // Assert
+      expect(response.status).toBe(404);
+      expect(prisma.aiWebhookSubscription.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { AND: [{ createdBy: ADMIN_ID }, { id: WEBHOOK_ID }] },
         })
       );
     });

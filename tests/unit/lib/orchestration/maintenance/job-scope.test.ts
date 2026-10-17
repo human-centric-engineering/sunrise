@@ -119,6 +119,7 @@ describe('runScopedJob — whoever fired the tick (§115 t-803)', () => {
             execution: false,
             experiment: false,
             webhookDelivery: false,
+            webhookSubscription: false,
           },
         },
         () => runScopedJob({ name: 'demo', scope, run, foundWork: () => false })

@@ -84,7 +84,12 @@ describe('GET /webhooks/dlq', () => {
     const call = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0];
     expect(call?.where).toEqual({
       AND: [
-        { OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }] },
+        {
+          OR: [
+            { subscription: { OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] } },
+            { subscriptionId: null },
+          ],
+        },
         { status: 'exhausted' },
       ],
     });
@@ -104,7 +109,12 @@ describe('GET /webhooks/dlq', () => {
     const call = vi.mocked(prisma.aiWebhookDelivery.findMany).mock.calls[0][0];
     expect(call?.where).toEqual({
       AND: [
-        { OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }] },
+        {
+          OR: [
+            { subscription: { OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] } },
+            { subscriptionId: null },
+          ],
+        },
         {
           status: 'exhausted',
           subscriptionId: SUB_ID,
@@ -166,7 +176,12 @@ describe('GET /webhooks/dlq', () => {
     // AND, not a spread: a spread would let the filters replace the fragment's OR key.
     expect(call?.where).toEqual({
       AND: [
-        { OR: [{ subscription: { createdBy: ADMIN_ID } }, { subscriptionId: null }] },
+        {
+          OR: [
+            { subscription: { OR: [{ createdBy: ADMIN_ID }, { createdBy: null }] } },
+            { subscriptionId: null },
+          ],
+        },
         { status: 'exhausted', subscriptionId: SUB_ID },
       ],
     });
