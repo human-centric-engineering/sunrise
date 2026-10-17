@@ -11,13 +11,14 @@
  * - Expand row to reveal change diff JSON
  * - Pagination: next/prev buttons, shows page N / totalPages
  * - Refresh button re-fetches
+ * - Support rows (t-825): badge, expanded explanation, one-grant filter chip, support filter
  * - actionBadgeVariant: .create → default, .update → secondary, .delete → destructive, other → outline
  *
  * @see components/admin/orchestration/audit-log/audit-log-view.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AuditLogView } from '@/components/admin/orchestration/audit-log/audit-log-view';
 import { logger } from '@/lib/logging';
@@ -76,6 +77,8 @@ function makeEntry(overrides: Record<string, unknown> = {}) {
     clientIp: '127.0.0.1',
     createdAt: '2026-01-15T10:00:00.000Z',
     user: { id: 'user-1', name: 'Alice Admin', email: 'alice@example.com' },
+    supportOrgId: null,
+    supportGrant: null,
     ...overrides,
   };
 }
@@ -492,7 +495,7 @@ describe('AuditLogView', () => {
     render(<AuditLogView />);
     await waitFor(() => screen.getByText('Support Bot'));
 
-    await user.click(screen.getByRole('combobox'));
+    await user.click(screen.getAllByRole('combobox')[0]);
 
     expect(await screen.findByRole('option', { name: /all types/i })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^agents$/i })).toBeInTheDocument();
@@ -519,7 +522,7 @@ describe('AuditLogView', () => {
     const callsBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
 
     // Open the entity type select and choose "Agents"
-    const entityTypeSelect = screen.getByRole('combobox');
+    const entityTypeSelect = screen.getAllByRole('combobox')[0];
     await user.click(entityTypeSelect);
     await user.click(await screen.findByRole('option', { name: /^agents$/i }));
 
@@ -805,5 +808,139 @@ describe('AuditLogView', () => {
 
     expect(await screen.findByText(/server returned an error/i)).toBeInTheDocument();
     expect(screen.queryByText('Support Bot')).not.toBeInTheDocument();
+  });
+
+  // ── Support sessions (t-825) ───────────────────────────────────────────────
+
+  function supportEntry(overrides: Record<string, unknown> = {}) {
+    return makeEntry({
+      supportOrgId: 'org-acme',
+      supportGrant: { id: 'grant-9', level: 'ADMIN', org: { id: 'org-acme', name: 'Acme' } },
+      ...overrides,
+    });
+  }
+
+  it('badges support rows with "Support" and leaves other rows unbadged', async () => {
+    mockFetchSuccess([
+      supportEntry({ id: 'e-s', user: { id: 'u-v', name: 'Vera Vendor', email: 'v@x.com' } }),
+      makeEntry({ id: 'e-n' }),
+    ]);
+    render(<AuditLogView />);
+    await screen.findByText('Vera Vendor');
+
+    const [, supportRow, normalRow] = screen.getAllByRole('row');
+    expect(within(supportRow).getByText('Support')).toBeInTheDocument();
+    expect(within(normalRow).queryByText('Support')).not.toBeInTheDocument();
+  });
+
+  it('explains an admin-level support row when expanded', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([supportEntry()]);
+    render(<AuditLogView />);
+    await user.click(await screen.findByText('Support Bot'));
+
+    expect(
+      screen.getByText('Made during a support session in Acme, under a admin grant.')
+    ).toBeInTheDocument();
+  });
+
+  it('says "read-only" for a READ_ONLY grant', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([
+      supportEntry({
+        supportGrant: { id: 'grant-9', level: 'READ_ONLY', org: { id: 'org-acme', name: 'Acme' } },
+      }),
+    ]);
+    render(<AuditLogView />);
+    await user.click(await screen.findByText('Support Bot'));
+
+    expect(
+      screen.getByText('Made during a support session in Acme, under a read-only grant.')
+    ).toBeInTheDocument();
+  });
+
+  it('names the org id and offers no grant filter when the grant is erased', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([supportEntry({ supportGrant: null })]);
+    render(<AuditLogView />);
+    await user.click(await screen.findByText('Support Bot'));
+
+    expect(
+      screen.getByText('Made during a support session in erased org org-acme.')
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /show this grant.s actions/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not explain or offer the grant button on a normal row', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([makeEntry({ changes: { a: 1 } })]);
+    render(<AuditLogView />);
+    await user.click(await screen.findByText('Support Bot'));
+
+    expect(screen.queryByText(/made during a support session/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /show this grant.s actions/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it('refetches with supportGrantId, shows the chip, and clears it with "Show every grant"', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([supportEntry()], 50);
+    render(<AuditLogView />);
+    await screen.findByText(/1 \/ 2/);
+    await user.click(screen.getByRole('button', { name: /next page/i }));
+    await screen.findByText(/2 \/ 2/);
+    expect(lastFetchUrl()).not.toContain('supportGrantId');
+
+    await user.click(screen.getByText('Support Bot'));
+    await user.click(screen.getByRole('button', { name: /show this grant.s actions/i }));
+
+    expect(lastFetchUrl()).toContain('supportGrantId=grant-9');
+    expect(lastFetchUrl()).toContain('page=1');
+    expect(screen.getByText(/Showing actions under one support grant for/)).toHaveTextContent(
+      'Showing actions under one support grant for Acme'
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Show every grant' }));
+
+    expect(lastFetchUrl()).not.toContain('supportGrantId');
+    expect(screen.queryByText(/Showing actions under one support grant/)).not.toBeInTheDocument();
+    await settle();
+  });
+
+  it('offers the three support filter options', async () => {
+    const user = userEvent.setup();
+    mockFetchSuccess([makeEntry()]);
+    render(<AuditLogView />);
+    await screen.findByText('Support Bot');
+
+    await user.click(screen.getByRole('combobox', { name: 'Support sessions' }));
+
+    expect(await screen.findByRole('option', { name: 'All actions' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Support sessions only' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Not support sessions' })).toBeInTheDocument();
+  });
+
+  it.each([
+    ['Support sessions only', 'only'],
+    ['Not support sessions', 'none'],
+  ])('choosing "%s" sends support=%s', async (label, value) => {
+    const user = userEvent.setup();
+    mockFetchSuccess([makeEntry()]);
+    render(<AuditLogView />);
+    await screen.findByText('Support Bot');
+    expect(lastFetchUrl()).not.toContain('support=');
+
+    await user.click(screen.getByRole('combobox', { name: 'Support sessions' }));
+    await user.click(await screen.findByRole('option', { name: label }));
+
+    await waitFor(() => expect(lastFetchUrl()).toContain(`support=${value}`));
+
+    // Back to "All actions" drops the param again
+    await user.click(screen.getByRole('combobox', { name: 'Support sessions' }));
+    await user.click(await screen.findByRole('option', { name: 'All actions' }));
+    await waitFor(() => expect(lastFetchUrl()).not.toContain('support='));
   });
 });

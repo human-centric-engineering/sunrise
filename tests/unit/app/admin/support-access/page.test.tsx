@@ -33,6 +33,7 @@ vi.mock('@/lib/logging', () => ({
 
 const tableProps = vi.fn();
 const formProps = vi.fn();
+const activityProps = vi.fn();
 
 vi.mock('@/components/admin/support-access/support-grants-table', () => ({
   SupportGrantsTable: (props: unknown) => {
@@ -45,6 +46,13 @@ vi.mock('@/components/admin/support-access/support-grant-form', () => ({
   SupportGrantForm: (props: unknown) => {
     formProps(props);
     return <div data-testid="grant-form" />;
+  },
+}));
+
+vi.mock('@/components/admin/support-access/support-activity-table', () => ({
+  SupportActivityTable: (props: unknown) => {
+    activityProps(props);
+    return <div data-testid="activity-table" />;
   },
 }));
 
@@ -157,5 +165,36 @@ describe('SupportAccessPage', () => {
 
     expect(screen.getByRole('alert')).toHaveTextContent('could not be loaded');
     expect(screen.queryByTestId('grants-table')).not.toBeInTheDocument();
+  });
+
+  it('shows what support did, for the same org and grants, when there are grants', async () => {
+    actAs(ORG, ORG.id, 'ADMIN');
+    grantsAre([OPEN, ENDED]);
+
+    render(await SupportAccessPage());
+
+    expect(screen.getByTestId('activity-table')).toBeInTheDocument();
+    expect(activityProps).toHaveBeenCalledWith({ orgId: ORG.id, grants: [OPEN, ENDED] });
+  });
+
+  it('shows no activity table when the org has never had a grant', async () => {
+    actAs(ORG, ORG.id, 'OWNER');
+    grantsAre([]);
+
+    render(await SupportAccessPage());
+
+    expect(screen.getByTestId('grants-table')).toBeInTheDocument();
+    expect(screen.queryByTestId('activity-table')).not.toBeInTheDocument();
+    expect(activityProps).not.toHaveBeenCalled();
+  });
+
+  it('shows no activity table when the grants could not be loaded', async () => {
+    actAs(ORG, ORG.id, 'ADMIN');
+    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+
+    render(await SupportAccessPage());
+
+    expect(screen.queryByTestId('activity-table')).not.toBeInTheDocument();
+    expect(activityProps).not.toHaveBeenCalled();
   });
 });
