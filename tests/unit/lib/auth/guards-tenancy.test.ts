@@ -93,7 +93,7 @@ function session(role: 'USER' | 'ADMIN' = 'USER', activeOrgId: string | null = n
 function apiKey(
   scopes: string[],
   orgId: string | null,
-  ownerRole = scopes.includes('admin') ? 'ADMIN' : 'USER'
+  ownerRole: 'USER' | 'ADMIN' = scopes.includes('admin') ? 'ADMIN' : 'USER'
 ) {
   return {
     session: session(ownerRole),
