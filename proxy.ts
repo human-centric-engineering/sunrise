@@ -62,7 +62,7 @@ registerAppTenantResolver();
  * `appProtectedRoutes` (`lib/app/protected-routes.ts`) rather than editing this
  * literal. The two are merged below. Fork entries are normalised so a typo
  * can't silently open a gap: a trailing slash is stripped (`/projects/` still
- * matches the bare `/projects` index — matching is `startsWith`), and any entry
+ * matches the bare `/projects` index — see `matchesRoute`), and any entry
  * that isn't left as a non-empty `/`-prefixed path is dropped (in particular an
  * empty string — or a lone `/`, which normalises to empty — that would
  * otherwise match every path and lock the whole app behind the login redirect).
@@ -80,6 +80,16 @@ const protectedRoutes = [
  * Authenticated users will be redirected away from these
  */
 const authRoutes = ['/login', '/signup', '/reset-password'];
+
+/**
+ * Whether `pathname` is `route` or a path beneath it, matching on whole path
+ * segments. A bare `startsWith` would also match a public sibling that merely
+ * shares the letters — `/profiles` under `/profile`, `/settings-guide` under
+ * `/settings` — and send its signed-out visitors to the login page (#758).
+ */
+function matchesRoute(pathname: string, route: string): boolean {
+  return pathname === route || pathname.startsWith(`${route}/`);
+}
 
 /**
  * Check if a user is authenticated by looking for the better-auth session cookie
@@ -270,10 +280,10 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   const authenticated = isAuthenticated(request);
 
   // Check if the current route is protected
-  const isProtectedRoute = protectedRoutes.some((route) => pathname.startsWith(route));
+  const isProtectedRoute = protectedRoutes.some((route) => matchesRoute(pathname, route));
 
   // Check if the current route is an auth page
-  const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route));
+  const isAuthRoute = authRoutes.some((route) => matchesRoute(pathname, route));
 
   // Redirect unauthenticated users away from protected routes
   if (isProtectedRoute && !authenticated) {
@@ -296,7 +306,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse | Respon
   // in lib/auth/config.ts, because POST /api/auth/sign-up/email is reachable
   // whatever the UI renders. Marketing CTAs that still point at /signup land on
   // /login rather than a form that cannot succeed.
-  if (pathname.startsWith('/signup') && isInviteOnly()) {
+  if (matchesRoute(pathname, '/signup') && isInviteOnly()) {
     const redirectResponse = NextResponse.redirect(new URL('/login', request.url));
     redirectResponse.headers.set('x-request-id', requestId);
     return setVisitorCookie(redirectResponse);

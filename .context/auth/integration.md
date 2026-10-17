@@ -62,10 +62,14 @@ export function proxy(request: NextRequest) {
   const authenticated = isAuthenticated(request);
 
   // Check if the current route is protected
-  const isProtectedRoute = protectedRoutes.some((route) => pathname.startsWith(route));
+  const isProtectedRoute = protectedRoutes.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`)
+  );
 
   // Check if the current route is an auth page
-  const isAuthRoute = authRoutes.some((route) => pathname.startsWith(route));
+  const isAuthRoute = authRoutes.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`)
+  );
 
   // Redirect unauthenticated users away from protected routes
   if (isProtectedRoute && !authenticated) {

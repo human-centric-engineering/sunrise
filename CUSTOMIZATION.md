@@ -696,7 +696,9 @@ The proxy **merges** these with the core prefixes (`/dashboard`, `/settings`,
 "is-logged-in-at-all" edge gate; per-resource ownership/membership checks stay in
 the `withAuth` / `withAdminAuth` guards. Malformed entries (anything not starting
 with `/`, including an empty string that would otherwise match every path) are
-dropped, so a typo can't lock the whole app behind the login redirect.
+dropped, so a typo can't lock the whole app behind the login redirect. Matching
+is by whole path segment: `/projects` covers `/projects` and `/projects/…`, not
+a public `/projectsroadmap` beside it.
 
 **Agent capabilities — `lib/app/capabilities.ts`.** Fill in the auto-wired
 `initAppCapabilities()` with `registerAppCapability(new YourTool())` calls (your

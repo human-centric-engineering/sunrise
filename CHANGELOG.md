@@ -631,6 +631,14 @@ release process.
 
 ### Fixed
 
+- **Protected and auth routes match on whole path segments** (t-826, #758).
+  An `appProtectedRoutes` entry, and the core `/dashboard`, `/settings` and
+  `/profile`, now cover the route itself and the paths beneath it, not every
+  path that starts with the same letters. A public `/profiles` or
+  `/settings-guide` no longer redirects signed-out visitors to `/login`, and
+  the same rule applies to the auth-page and invite-only `/signup` redirects.
+  A fork that counted on an entry covering a longer sibling (`/app`
+  protecting `/apply`) lists that sibling itself.
 - **A `send_notification` step on the webhook channel now POSTs to its
   `webhookUrl` (t-794).** Before, it sent nothing and still reported
   `sent: true`: it broadcast a `workflow_notification` event that no
