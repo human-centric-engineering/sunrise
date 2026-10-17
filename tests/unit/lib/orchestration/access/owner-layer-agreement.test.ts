@@ -266,6 +266,11 @@ const OWNER_DISPOSITIONS: Record<string, OwnerDisposition> = {
     because: 'raw SQL keyed on the data subject, inside the export’s crossing.',
     via: 'lib/privacy/export-user.ts',
   },
+  'lib/privacy/run-recipients.ts': {
+    kind: 'no-subject',
+    because:
+      'erasure runs in the audited system scope and redacts the subject from every run, whoever owns it (t-804).',
+  },
   'lib/privacy/org-sources.ts': {
     kind: 'admitted',
     because: 'the org export reads every member’s rows inside its declared crossing.',
