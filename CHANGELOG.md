@@ -647,8 +647,9 @@ release process.
   an invitation** (t-828, #688). `viaInvitation` was `false` on every OAuth
   signup, so a fork's `lib/app/user-created.ts` hook could not tell an invited
   colleague from a stranger. It is now `true` on both ways of accepting, as
-  the seam's contract already said. `PendingSignup` gains an optional
-  `viaInvitation`.
+  the seam's contract already said. `lib/auth/pending-signup.ts` gains
+  `setInvitationAccepted()` and `wasInvitationAccepted()`, which carry it
+  between the hooks on one request.
 - **On a single-tenant install, a user invited into another org is a member
   of the install org too** (t-827, #872). Before, they got only that org's
   membership, so suspending it locked them out of everything. Their

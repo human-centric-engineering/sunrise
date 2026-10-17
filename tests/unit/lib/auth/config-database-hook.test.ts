@@ -68,6 +68,8 @@ import { ORG_OWNER_ROLE, ORG_ADMIN_ROLE, DEFAULT_ORG_ROLE } from '@/lib/tenancy/
 const mockPendingSignup = vi.hoisted(() => ({
   setPendingSignup: vi.fn(),
   getPendingSignup: vi.fn(),
+  setInvitationAccepted: vi.fn(),
+  wasInvitationAccepted: vi.fn(),
 }));
 vi.mock('@/lib/auth/pending-signup', () => mockPendingSignup);
 
@@ -332,6 +334,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
     // Default mock behavior: no signup in flight on this "request", so the
     // after hook takes its fallback arm.
     mockPendingSignup.getPendingSignup.mockResolvedValue(null);
+    mockPendingSignup.wasInvitationAccepted.mockResolvedValue(false);
     mockPendingSignup.setPendingSignup.mockResolvedValue(undefined);
   });
 
@@ -985,12 +988,14 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
       await userCreateBeforeHook(user, { path: '/api/auth/callback/google' });
 
+      // The OAuth before hook consumed the token, so it records the
+      // acceptance for the after hook (#688).
+      expect(mockPendingSignup.setInvitationAccepted).toHaveBeenCalledTimes(1);
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledTimes(1);
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: OTHER_ORG, role: ORG_ADMIN_ROLE },
         // The install-org floor as well (#872).
         installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
-        viaInvitation: true,
       });
     });
 
@@ -1003,7 +1008,6 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       expect(result.data.role).toBe('ADMIN');
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: INSTALL_ORG_ID, role: ORG_OWNER_ROLE },
-        viaInvitation: true,
       });
     });
 
@@ -1029,7 +1033,6 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       // …but the membership is the invitation's.
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: INSTALL_ORG_ID, role: ORG_OWNER_ROLE },
-        viaInvitation: true,
       });
     });
 
@@ -1049,7 +1052,6 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
-        viaInvitation: true,
       });
     });
 
@@ -1073,7 +1075,6 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: OTHER_ORG, role: ORG_OWNER_ROLE },
         installMembership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
-        viaInvitation: true,
       });
     });
 
@@ -1098,7 +1099,6 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE },
         installMembership: { orgId: INSTALL_ORG_ID, role: ORG_OWNER_ROLE },
-        viaInvitation: true,
       });
     });
 
@@ -1122,6 +1122,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
         membership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
       });
+      expect(mockPendingSignup.setInvitationAccepted).not.toHaveBeenCalled();
     });
 
     it('never blocks the signup when deciding the membership fails', async () => {
@@ -1139,13 +1140,11 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
         runInvitedSignup(() => userCreateBeforeHook(user, { path: '/sign-up/email' }), metadata)
       ).resolves.toEqual({ data: user });
 
-      // The install-org default is recorded instead — what the after hook and
-      // the session self-heal fall back to anyway — so the acceptance still
-      // reaches the user-created seam (#688).
-      expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
-        membership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
-        viaInvitation: true,
-      });
+      // Nothing is recorded for the membership, so the after hook falls back
+      // as it always has; the acceptance was recorded first, on its own, so it
+      // still reaches the user-created seam (#688).
+      expect(mockPendingSignup.setPendingSignup).not.toHaveBeenCalled();
+      expect(mockPendingSignup.setInvitationAccepted).toHaveBeenCalledTimes(1);
       expect(mocks.logger.error).toHaveBeenCalledWith(
         'Failed to decide the org membership for a new user',
         expect.any(Error),
@@ -1175,7 +1174,6 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
         expect(mockPendingSignup.setPendingSignup).toHaveBeenCalledWith({
           membership: { orgId: OTHER_ORG, role: DEFAULT_ORG_ROLE },
-          viaInvitation: true,
         });
       } finally {
         mockEnv.TENANCY_MODE = 'single';
@@ -1578,10 +1576,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
 
       it('reports an OAuth invitation acceptance as an invitation', async () => {
         // The before hook consumed the token, so only the request state knows.
-        mockPendingSignup.getPendingSignup.mockResolvedValue({
-          membership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
-          viaInvitation: true,
-        });
+        mockPendingSignup.wasInvitationAccepted.mockResolvedValue(true);
         const mockUser = makeUserCreateData({ id: 'oauth-invitee', email: 'i@example.com' });
 
         await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });
@@ -1596,9 +1591,7 @@ describe('lib/auth/config - databaseHooks.user.create', () => {
       });
 
       it('reports an uninvited OAuth signup as not an invitation', async () => {
-        mockPendingSignup.getPendingSignup.mockResolvedValue({
-          membership: { orgId: INSTALL_ORG_ID, role: DEFAULT_ORG_ROLE },
-        });
+        // wasInvitationAccepted → false is the beforeEach default.
         const mockUser = makeUserCreateData({ id: 'oauth-stranger', email: 's@example.com' });
 
         await userCreateAfterHook(mockUser, { path: '/api/auth/callback/google' });

@@ -46,11 +46,6 @@ export interface PendingSignup {
    * org on a single-tenant install (#872). See `membershipsForNewUser`.
    */
   installMembership?: InitialMembership;
-  /**
-   * True when this signup redeemed an invitation token. The OAuth before hook
-   * consumes the token, so the after hook cannot look it up (#688).
-   */
-  viaInvitation?: boolean;
 }
 
 const pendingSignupState = defineRequestState<PendingSignup | null>(() => null);
@@ -68,4 +63,27 @@ export async function setPendingSignup(pending: PendingSignup): Promise<void> {
 export async function getPendingSignup(): Promise<PendingSignup | null> {
   if (!(await hasRequestState())) return null;
   return pendingSignupState.get();
+}
+
+/**
+ * Whether this request's signup redeemed an invitation token. Kept apart from
+ * {@link PendingSignup} because it holds even when deciding the membership
+ * failed, and the OAuth before hook consumes the token, so the after hook
+ * cannot look it up (#688).
+ */
+const invitationAcceptedState = defineRequestState<boolean>(() => false);
+
+/** Record that this request's signup redeemed an invitation. */
+export async function setInvitationAccepted(): Promise<void> {
+  if (!(await hasRequestState())) {
+    logger.warn('setInvitationAccepted called outside a better-auth request; nothing recorded');
+    return;
+  }
+  await invitationAcceptedState.set(true);
+}
+
+/** Whether this request's signup redeemed an invitation; `false` outside a request. */
+export async function wasInvitationAccepted(): Promise<boolean> {
+  if (!(await hasRequestState())) return false;
+  return invitationAcceptedState.get();
 }

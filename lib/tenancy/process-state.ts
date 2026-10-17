@@ -415,10 +415,10 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   // ───────────────────────────────────────────────────────────────────────
   {
     file: 'lib/auth/pending-signup.ts',
-    holders: ['pendingSignupState'],
+    holders: ['pendingSignupState', 'invitationAcceptedState'],
     posture: 'async-local',
     keyedBy: "better-auth's own per-request state",
-    why: 'Carries the membership — and so the org id — a signup will write, between three better-auth hooks on one request; the handle is module-level, the payload is per request, which is the same shape as `invitedSignupContext` beside it.',
+    why: 'Carries the membership — and so the org id — a signup will write, and whether it redeemed an invitation, between three better-auth hooks on one request; the handles are module-level, the payload is per request, which is the same shape as `invitedSignupContext` beside it.',
   },
   {
     file: 'lib/auth/signup-mode.ts',
