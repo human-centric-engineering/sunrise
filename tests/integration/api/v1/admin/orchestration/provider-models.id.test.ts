@@ -450,7 +450,7 @@ describe('PATCH /api/v1/admin/orchestration/provider-models/:id', () => {
     vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
 
     const p2002 = uniqueViolationError({
-      index: 'ai_provider_model_providerSlug_modelId_key',
+      index: 'some_other_key',
       modelName: 'AiProviderModel',
     });
     vi.mocked(prisma.aiProviderModel.update).mockRejectedValue(p2002);
@@ -466,6 +466,30 @@ describe('PATCH /api/v1/admin/orchestration/provider-models/:id', () => {
     expect(otherData.error.code).toBe('VALIDATION_ERROR');
     expect(otherData.error.message).toBe('A record with that value already exists');
     expect(otherData.error.details).toBeUndefined();
+  });
+
+  it('names the provider and model id for a P2002 on that pair (t-814)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const existing = makeModel({ isDefault: false });
+    vi.mocked(prisma.aiProviderModel.findUnique).mockResolvedValue(existing as never);
+
+    const p2002 = uniqueViolationError({
+      index: 'ai_provider_model_providerSlug_modelId_key',
+      modelName: 'AiProviderModel',
+    });
+    vi.mocked(prisma.aiProviderModel.update).mockRejectedValue(p2002);
+
+    const response = await PATCH(
+      makePatchRequest(MODEL_ID, { slug: 'duplicate-slug' }),
+      routeContext(MODEL_ID)
+    );
+    expect(response.status).toBe(400);
+    const otherData = await parseJson<{
+      error: { code: string; message: string; details?: unknown };
+    }>(response);
+    expect(otherData.error.code).toBe('VALIDATION_ERROR');
+    expect(otherData.error.message).toBe('This provider already has a model with that model id');
+    expect(otherData.error.details).toEqual({ modelId: ['Already in use for this provider'] });
   });
 });
 

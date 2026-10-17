@@ -210,6 +210,11 @@ export const POST = withAdminAuth(
       if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.providerModelSlug)) {
         throw new ConflictError(`Provider model with slug '${body.slug}' already exists`);
       }
+      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.providerModelPair)) {
+        throw new ConflictError(
+          `Provider '${body.providerSlug}' already has a model with id '${body.modelId}'`
+        );
+      }
       throw err;
     }
   },

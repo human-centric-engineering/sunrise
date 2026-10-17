@@ -647,8 +647,10 @@ release process.
   providers, provider models, knowledge tags and agent profiles. Before, any
   unique violation in their writes was reported as a taken slug. A collision
   on any other constraint now reaches the shared handler's `400
-  VALIDATION_ERROR`. `POST /api/v1/orgs` answers a slug taken in a race past
-  its pre-check with `409 SLUG_TAKEN`, like the pre-check, not `400`.
+  VALIDATION_ERROR`, except a provider model whose provider already has that
+  model id, which says so. Creating or re-slugging an org answers a slug
+  taken in a race past its pre-check with `409 SLUG_TAKEN`, like the
+  pre-check, not `400`.
 - **Restoring an agent version saved on inherit succeeds** (t-820). `POST
   …/agents/:id/versions/:versionId/restore` refused any snapshot with an empty
   `provider` or `model` with `400 "Invalid version snapshot data"`. It now

@@ -560,7 +560,7 @@ describe('POST /api/v1/admin/orchestration/provider-models', () => {
   it('does not answer the slug message for a P2002 on another constraint (t-814)', async () => {
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
     const conflictError = uniqueViolationError({
-      index: 'ai_provider_model_providerSlug_modelId_key',
+      index: 'some_other_key',
       modelName: 'AiProviderModel',
     });
     vi.mocked(prisma.aiProviderModel.create).mockRejectedValue(conflictError);
@@ -573,6 +573,21 @@ describe('POST /api/v1/admin/orchestration/provider-models', () => {
     expect(otherData.error.code).toBe('VALIDATION_ERROR');
     expect(otherData.error.message).toBe('A record with that value already exists');
     expect(otherData.error.details).toBeUndefined();
+  });
+
+  it('names the provider and model id for a P2002 on that pair (t-814)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    const conflictError = uniqueViolationError({
+      index: 'ai_provider_model_providerSlug_modelId_key',
+      modelName: 'AiProviderModel',
+    });
+    vi.mocked(prisma.aiProviderModel.create).mockRejectedValue(conflictError);
+
+    const response = await POST(makePostRequest(validBody));
+    expect(response.status).toBe(409);
+    const pairData = await parseJson<{ error: { code: string; message: string } }>(response);
+    expect(pairData.error.code).toBe('CONFLICT');
+    expect(pairData.error.message).toContain(`already has a model with id '${validBody.modelId}'`);
   });
 
   describe('split input/output prices (t-774)', () => {

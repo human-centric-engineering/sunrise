@@ -78,6 +78,11 @@ export const UNIQUE_CONSTRAINTS = {
     model: 'AiProviderModel',
     fields: ['slug'],
   },
+  providerModelPair: {
+    index: 'ai_provider_model_providerSlug_modelId_key',
+    model: 'AiProviderModel',
+    fields: ['providerSlug', 'modelId'],
+  },
   knowledgeTagSlug: { index: 'knowledge_tag_slug_key', model: 'KnowledgeTag', fields: ['slug'] },
   orgSlug: { index: 'org_slug_key', model: 'Org', fields: ['slug'] },
 } as const satisfies Record<string, UniqueConstraint>;

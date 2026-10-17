@@ -387,10 +387,10 @@ export async function updateOrgReportingPrevious(
   const settingsPatch = patch.settings;
 
   let previousSettings: Prisma.JsonValue = current.settings;
-  const updated =
+  const write =
     settingsPatch === undefined
-      ? await db.org.update({ where: { id: orgId }, data, select: orgSelect })
-      : await db.$transaction(async (tx) => {
+      ? db.org.update({ where: { id: orgId }, data, select: orgSelect })
+      : db.$transaction(async (tx) => {
           // Re-read inside the transaction: `current` was read before the
           // slug check and is not the row this write is merging into.
           const row = await tx.org.findUnique({
@@ -408,6 +408,13 @@ export async function updateOrgReportingPrevious(
             select: orgSelect,
           });
         }, SERIALIZABLE);
+  // A rename racing another past the slug check: the same answer as the check.
+  const updated = await write.catch((err: unknown) => {
+    if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.orgSlug)) {
+      throw new OrgLifecycleError('SLUG_TAKEN', 'An organisation with that slug already exists');
+    }
+    throw err;
+  });
 
   logger.info('Org updated', {
     orgId,

@@ -236,7 +236,7 @@ async function main(): Promise<void> {
       'failed'
     );
     // Names the subject only through their run, with free text.
-    const notified = await webhook('workflow_notification', {
+    const notified = await webhook('workflow_budget_exceeded', {
       workflowId: workflow.id,
       executionId: execution.id,
       body: SECRET_TEXT,
@@ -373,7 +373,7 @@ async function main(): Promise<void> {
       },
       'failed'
     );
-    const ownedNotification = await webhook('workflow_notification', {
+    const ownedNotification = await webhook('workflow_budget_exceeded', {
       workflowId: workflow.id,
       executionId: goneRun.id,
       userId: subject.id,

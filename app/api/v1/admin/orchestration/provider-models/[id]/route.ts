@@ -153,6 +153,11 @@ export const PATCH = withAdminAuth<{ id: string }>(
           slug: ['Slug is already in use'],
         });
       }
+      if (isUniqueViolationOn(err, UNIQUE_CONSTRAINTS.providerModelPair)) {
+        throw new ValidationError('This provider already has a model with that model id', {
+          modelId: ['Already in use for this provider'],
+        });
+      }
       throw err;
     }
   },

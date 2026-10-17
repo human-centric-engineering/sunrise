@@ -291,6 +291,26 @@ describe('updateOrg', () => {
     expect((await refusal(() => updateOrg(ORG, { slug: 'taken' }))).code).toBe('SLUG_TAKEN');
     expect(db.org.update).not.toHaveBeenCalled();
   });
+
+  it('answers a rename racing another past the slug check as SLUG_TAKEN (t-814)', async () => {
+    db.org.findUnique.mockResolvedValueOnce(orgRow()).mockResolvedValueOnce(null); // free when checked
+    db.org.update.mockRejectedValue(
+      uniqueViolationError({ index: 'org_slug_key', modelName: 'Org' })
+    );
+
+    const error = await refusal(() => updateOrg(ORG, { slug: 'renamed' }));
+
+    expect(error.code).toBe('SLUG_TAKEN');
+    expect(error.status).toBe(409);
+  });
+
+  it('leaves a unique violation on another constraint of a rename to the shared handler', async () => {
+    db.org.findUnique.mockResolvedValueOnce(orgRow()).mockResolvedValueOnce(null);
+    const collision = uniqueViolationError({ index: 'some_other_key', modelName: 'Org' });
+    db.org.update.mockRejectedValue(collision);
+
+    await expect(updateOrg(ORG, { slug: 'renamed' })).rejects.toBe(collision);
+  });
 });
 
 describe('addMember', () => {
