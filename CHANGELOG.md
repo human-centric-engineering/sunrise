@@ -632,6 +632,17 @@ release process.
 
 ### Fixed
 
+- **A `send_notification` step on the webhook channel now POSTs to its
+  `webhookUrl` (t-794).** Before, it sent nothing and still reported
+  `sent: true`: it broadcast a `workflow_notification` event that no
+  subscription could select. Existing workflows with a webhook notification
+  step start sending when they take this release. The JSON body is
+  `{ text, workflowId, workflowName, executionId, stepId }`, sent through the
+  guarded outbound fetch, so the URL's host must be in
+  `ORCHESTRATION_ALLOWED_HOSTS` or the step fails. `output` gains `status`
+  (the response status). The `workflow_notification` event is no longer
+  dispatched.
+
 - **The 14 document-cleanup capabilities now seed the schema their classes
   accept** (#646): `prisma/seeds/019-cleanup-capabilities.ts` wrote a
   hand-copied `functionDefinition` that had drifted from every class

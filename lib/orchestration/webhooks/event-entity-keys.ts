@@ -42,7 +42,6 @@ export const EVENT_ENTITY_KEYS: Record<string, EventEntityKeys> = {
   approval_required: { workflow: 'workflowId' },
   workflow_budget_exceeded: { workflow: 'workflowId' },
   execution_crashed: { workflow: 'workflowId' },
-  workflow_notification: { workflow: 'workflowId' },
 
   // Unscopable — provider-level or system-wide; scoped subs always match
   circuit_breaker_opened: {},

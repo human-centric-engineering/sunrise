@@ -101,7 +101,11 @@ export function NotificationEditor({ config, onChange }: EditorProps<Notificatio
           <Label htmlFor="notification-webhook-url" className="flex items-center text-xs">
             Webhook URL{' '}
             <FieldHelp title="Webhook URL">
-              The URL to send a POST request to with the notification body as JSON payload.
+              The step sends a POST request here with a JSON body. The message is in{' '}
+              <code>text</code>, which Slack and Teams incoming webhooks read, alongside{' '}
+              <code>workflowId</code>, <code>workflowName</code>, <code>executionId</code> and{' '}
+              <code>stepId</code>. The host must be in <code>ORCHESTRATION_ALLOWED_HOSTS</code>, and
+              redirects are not followed.
             </FieldHelp>
           </Label>
           <Input

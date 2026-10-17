@@ -235,7 +235,7 @@ Fifteen executors:
 | `evaluate`          | `evaluate.ts`       | LLM rubric scorer, clamps to scale range                                                                                                                             |
 | `external_call`     | `external-call.ts`  | HTTP fetch with SSRF allowlist, outbound rate limiting, auth helpers                                                                                                 |
 | `agent_call`        | `agent-call.ts`     | loads agent config + runs ReAct tool loop via `executeAgentCall`                                                                                                     |
-| `send_notification` | `notification.ts`   | email or webhook notification with templated content                                                                                                                 |
+| `send_notification` | `notification.ts`   | email, or a POST to the step's `webhookUrl` via the guarded outbound fetch                                                                                           |
 | `orchestrator`      | `orchestrator.ts`   | AI planner → multi-agent delegation loop via `executeAgentCall`                                                                                                      |
 
 ## Error strategies

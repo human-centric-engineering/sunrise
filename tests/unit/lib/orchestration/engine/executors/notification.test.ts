@@ -22,8 +22,11 @@ vi.mock('@/lib/email/send', () => ({
   sendEmail: vi.fn(),
 }));
 
-vi.mock('@/lib/orchestration/webhooks/dispatcher', () => ({
-  dispatchWebhookEvent: vi.fn(),
+// Only the network call is mocked: `HttpError` stays real, so the executor's
+// retry mapping runs against the class the fetch guard actually throws.
+vi.mock('@/lib/orchestration/http', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/orchestration/http')>()),
+  executeHttpRequest: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/engine/llm-runner', () => ({
@@ -58,7 +61,7 @@ vi.mock('@/lib/orchestration/engine/dispatch-cache', () => ({
 import '@/lib/orchestration/engine/executors/notification'; // triggers registerStepType
 import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { sendEmail } from '@/lib/email/send';
-import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
+import { executeHttpRequest, HttpError } from '@/lib/orchestration/http';
 import { interpolatePrompt } from '@/lib/orchestration/engine/llm-runner';
 // The REAL interpolator (this module is NOT mocked — the mock above is on
 // `llm-runner`, which merely re-exports this). Used below to prove the executor
@@ -148,10 +151,10 @@ describe('executeNotification', () => {
 
   beforeEach(() => {
     vi.mocked(sendEmail).mockReset();
-    vi.mocked(dispatchWebhookEvent).mockReset();
+    vi.mocked(executeHttpRequest).mockReset();
     vi.mocked(interpolatePrompt).mockImplementation((template: string) => template);
     vi.mocked(sendEmail).mockResolvedValue({ status: 'sent', success: true });
-    vi.mocked(dispatchWebhookEvent).mockResolvedValue(undefined);
+    vi.mocked(executeHttpRequest).mockResolvedValue({ status: 200, body: 'ok', latencyMs: 5 });
   });
 
   // ── workflowName fallback ─────────────────────────────────────────────────
@@ -352,7 +355,47 @@ describe('executeNotification', () => {
   // ── Webhook channel ────────────────────────────────────────────────────────
 
   describe('webhook channel', () => {
-    it('keeps a credential in the webhook URL out of the log line and event payload, but not out of the step output (#953, t-777)', async () => {
+    it("POSTs the body to the step's own webhookUrl through the guarded fetch (t-794)", async () => {
+      const ctx = makeCtx({ workflowId: 'wf-42', executionId: 'exec-99' });
+      const step = makeWebhookStep({
+        webhookUrl: 'https://hooks.example.com/notify',
+        bodyTemplate: 'Build broke',
+      });
+
+      const result = await executor(step, ctx);
+
+      expect(vi.mocked(executeHttpRequest)).toHaveBeenCalledOnce();
+      const [req] = vi.mocked(executeHttpRequest).mock.calls[0];
+      expect(req).toMatchObject({
+        url: 'https://hooks.example.com/notify',
+        method: 'POST',
+        // The dispatch cache key, so a receiver that honours it dedups a re-drive.
+        idempotency: { key: 'exec-99:notify-2' },
+      });
+      expect(JSON.parse(req.body as string)).toEqual({
+        text: 'Build broke',
+        workflowId: 'wf-42',
+        workflowName: 'Test Workflow',
+        executionId: 'exec-99',
+        stepId: 'notify-2',
+      });
+      expect(result.output).toEqual({
+        sent: true,
+        channel: 'webhook',
+        url: 'https://hooks.example.com/notify',
+        status: 200,
+      });
+    });
+
+    it("forwards the run's abort signal to the request", async () => {
+      const controller = new AbortController();
+
+      await executor(makeWebhookStep(), makeCtx({ signal: controller.signal }));
+
+      expect(vi.mocked(executeHttpRequest).mock.calls[0][0].signal).toBe(controller.signal);
+    });
+
+    it('keeps a credential in the webhook URL out of the log line, but not out of the request or step output (#953)', async () => {
       const secret = 'AbCdEfGhIjKlMnOpQrStUvWx';
       const step = makeWebhookStep({
         webhookUrl: `https://hooks.slack.com/services/T0000/B0000/${secret}?token=qs-secret`,
@@ -360,26 +403,13 @@ describe('executeNotification', () => {
 
       const result = await executor(step, makeCtx());
 
-      // The event would be stored on every matching subscription's delivery
-      // row, so it carries only the reduced URL (t-777).
-      expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledWith(
-        'workflow_notification',
-        expect.objectContaining({
-          webhookUrl: 'https://hooks.slack.com/services/T0000/B0000/[param]',
-        })
-      );
-      const dispatched = JSON.stringify(vi.mocked(dispatchWebhookEvent).mock.calls);
-      expect(dispatched).not.toContain(secret);
-      expect(dispatched).not.toContain('qs-secret');
+      // The request has to reach the real URL, credential and all.
+      expect(vi.mocked(executeHttpRequest).mock.calls[0][0].url).toBe(step.config.webhookUrl);
       // `output` is merged into the context (`{{steps.<id>.output.url}}`) and
       // rehydrated from the trace on resume, so it keeps the working URL.
-      expect(result.output).toEqual({
-        sent: true,
-        channel: 'webhook',
-        url: step.config.webhookUrl,
-      });
+      expect(result.output).toMatchObject({ url: step.config.webhookUrl });
       expect(logger.info).toHaveBeenCalledWith(
-        'Notification step: webhook dispatched',
+        'Notification step: webhook sent',
         expect.objectContaining({
           webhookUrl: 'https://hooks.slack.com/services/T0000/B0000/[param]',
         })
@@ -389,55 +419,54 @@ describe('executeNotification', () => {
       expect(logged).not.toContain('qs-secret');
     });
 
-    it('calls dispatchWebhookEvent and returns { sent: true, channel: "webhook" }', async () => {
-      const result = await executor(makeWebhookStep(), makeCtx());
-
-      expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledOnce();
-      expect(result.output).toMatchObject({ sent: true, channel: 'webhook' });
-    });
-
-    it('passes workflowId, executionId, webhookUrl, and stepId to dispatchWebhookEvent', async () => {
-      const ctx = makeCtx({ workflowId: 'wf-42', executionId: 'exec-99' });
-      const step = makeWebhookStep({ webhookUrl: 'https://hooks.example.com/notify' });
-
-      await executor(step, ctx);
-
-      expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledWith(
-        'workflow_notification',
-        expect.objectContaining({
-          webhookUrl: 'https://hooks.example.com/notify',
-          workflowId: 'wf-42',
-          executionId: 'exec-99',
-          stepId: step.id,
-        })
+    it("does not report sent: true when the request fails, and keeps the guard's retriable flag", async () => {
+      vi.mocked(executeHttpRequest).mockRejectedValue(
+        new HttpError('http_error_retriable', 'HTTP 503: unavailable', true, undefined, 503)
       );
-    });
-
-    it("names the run's owner as userId, so erasure finds the delivery after the run is gone (t-792)", async () => {
-      await executor(makeWebhookStep(), makeCtx({ userId: 'owner-7' }));
-
-      expect(vi.mocked(dispatchWebhookEvent)).toHaveBeenCalledWith(
-        'workflow_notification',
-        expect.objectContaining({ userId: 'owner-7' })
-      );
-    });
-
-    it('throws ExecutorError(WEBHOOK_DISPATCH_ERROR, retriable) when dispatchWebhookEvent throws', async () => {
-      vi.mocked(dispatchWebhookEvent).mockRejectedValue(new Error('Network timeout'));
 
       await expect(executor(makeWebhookStep(), makeCtx())).rejects.toMatchObject({
         name: 'ExecutorError',
         code: 'WEBHOOK_DISPATCH_ERROR',
         retriable: true,
       });
+      expect(vi.mocked(recordDispatch)).not.toHaveBeenCalled();
     });
 
-    it('throws ExecutorError(WEBHOOK_DISPATCH_ERROR) when dispatchWebhookEvent throws a non-Error', async () => {
-      vi.mocked(dispatchWebhookEvent).mockRejectedValue('connection refused');
+    it('fails without retry when the host is refused by the allowlist', async () => {
+      vi.mocked(executeHttpRequest).mockRejectedValue(
+        new HttpError(
+          'host_not_allowed',
+          'Host not in ORCHESTRATION_ALLOWED_HOSTS allowlist',
+          false
+        )
+      );
 
       await expect(executor(makeWebhookStep(), makeCtx())).rejects.toMatchObject({
         name: 'ExecutorError',
         code: 'WEBHOOK_DISPATCH_ERROR',
+        retriable: false,
+        message: expect.stringContaining('ORCHESTRATION_ALLOWED_HOSTS'),
+      });
+    });
+
+    it('fails without retry on a 4xx the receiver rejected', async () => {
+      vi.mocked(executeHttpRequest).mockRejectedValue(
+        new HttpError('http_error', 'HTTP 404: no_service', false, undefined, 404)
+      );
+
+      await expect(executor(makeWebhookStep(), makeCtx())).rejects.toMatchObject({
+        code: 'WEBHOOK_DISPATCH_ERROR',
+        retriable: false,
+      });
+    });
+
+    it('treats a non-HttpError throw as retriable', async () => {
+      vi.mocked(executeHttpRequest).mockRejectedValue('connection refused');
+
+      await expect(executor(makeWebhookStep(), makeCtx())).rejects.toMatchObject({
+        name: 'ExecutorError',
+        code: 'WEBHOOK_DISPATCH_ERROR',
+        retriable: true,
       });
     });
   });
@@ -471,7 +500,7 @@ describe('executeNotification', () => {
         executor(makeWebhookStep({ webhookUrl: undefined }), makeCtx())
       ).rejects.toMatchObject({ name: 'ExecutorError', code: 'INVALID_CONFIG' });
 
-      expect(vi.mocked(dispatchWebhookEvent)).not.toHaveBeenCalled();
+      expect(vi.mocked(executeHttpRequest)).not.toHaveBeenCalled();
     });
 
     it('throws ExecutorError(INVALID_CONFIG) when channel is unknown', async () => {
@@ -487,7 +516,7 @@ describe('executeNotification', () => {
   // ── Dispatch cache integration ─────────────────────────────────────────────
 
   describe('dispatch cache integration', () => {
-    // The outer beforeEach resets sendEmail/dispatchWebhookEvent but not the
+    // The outer beforeEach resets sendEmail/executeHttpRequest but not the
     // dispatch-cache mocks. Reset them here so call-count assertions are clean.
     beforeEach(() => {
       vi.mocked(lookupDispatch).mockReset();
@@ -515,10 +544,10 @@ describe('executeNotification', () => {
       expect(result).toEqual(cached);
     });
 
-    it('cache hit (webhook path): returns cached result without calling dispatchWebhookEvent', async () => {
+    it('cache hit (webhook path): returns cached result without calling executeHttpRequest', async () => {
       // Arrange: prime the cache with a webhook-shaped result
       const cached = {
-        output: { sent: true, channel: 'webhook', url: 'https://example.com/hook' },
+        output: { sent: true, channel: 'webhook', url: 'https://example.com/hook', status: 200 },
         tokensUsed: 0,
         costUsd: 0,
       };
@@ -527,8 +556,8 @@ describe('executeNotification', () => {
       // Act
       const result = await executor(makeWebhookStep(), makeCtx());
 
-      // Assert: short-circuit — dispatchWebhookEvent never fires and no new record is written
-      expect(vi.mocked(dispatchWebhookEvent)).not.toHaveBeenCalled();
+      // Assert: short-circuit — executeHttpRequest never fires and no new record is written
+      expect(vi.mocked(executeHttpRequest)).not.toHaveBeenCalled();
       expect(vi.mocked(recordDispatch)).not.toHaveBeenCalled();
       expect(result).toEqual(cached);
     });
@@ -582,7 +611,7 @@ describe('executeNotification', () => {
     });
 
     it('cache miss (webhook path): calls recordDispatch with the webhook-shaped StepResult', async () => {
-      // Arrange: cache miss is the default (null), dispatchWebhookEvent resolves
+      // Arrange: cache miss is the default (null), executeHttpRequest resolves
       const ctx = makeCtx({ executionId: 'exec-2' });
       const step = makeWebhookStep({ webhookUrl: 'https://example.com/hook' }); // stepId: 'notify-2'
 
@@ -595,7 +624,7 @@ describe('executeNotification', () => {
         executionId: 'exec-2',
         stepId: 'notify-2',
         result: {
-          output: { sent: true, channel: 'webhook', url: 'https://example.com/hook' },
+          output: { sent: true, channel: 'webhook', url: 'https://example.com/hook', status: 200 },
           tokensUsed: 0,
           costUsd: 0,
         },
