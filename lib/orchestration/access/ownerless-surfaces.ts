@@ -302,6 +302,14 @@ export const OWNERLESS_SURFACE_EXCEPTIONS: readonly OwnerlessSurfaceException[] 
       'row has no subject, and there is no caller to scope to.',
   },
   {
+    path: 'lib/privacy/run-recipients.ts',
+    disposition: 'by-design',
+    reason:
+      'Art. 17 on schedules and runs (t-804): reads every run whose text names the data subject, ' +
+      'ownerless ones included, only to redact them inside the erasure transaction; there is no ' +
+      'caller to scope to and nothing is returned.',
+  },
+  {
     path: 'lib/privacy/org-sources.ts',
     disposition: 'by-design',
     reason:

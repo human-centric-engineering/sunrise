@@ -142,6 +142,7 @@ describe('GET /api/v1/admin/orchestration/executions/live', () => {
       execution: true,
       experiment: true,
       webhookDelivery: true,
+      webhookSubscription: true,
     });
   });
 

@@ -492,7 +492,7 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       expect(prisma.aiAdminAuditLog.createMany).not.toHaveBeenCalled();
     });
 
-    it('clears colleagues subscriptions on the STORED address, excluding the erased user, before the delivery passes and the user delete', async () => {
+    it('clears every email subscription to the STORED address, the erased user’s own included (t-782), before the delivery passes and the user delete', async () => {
       vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
       vi.mocked(prisma.user.count).mockResolvedValue(2);
       const mk = (id: string, emailAddress: string | null) => ({
@@ -519,7 +519,6 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
         where: {
           channel: 'email',
           emailAddress: { not: null },
-          createdBy: { not: SESSION_USER_ID },
         },
         select: { id: true, emailAddress: true, isActive: true, orgId: true, createdBy: true },
       });
