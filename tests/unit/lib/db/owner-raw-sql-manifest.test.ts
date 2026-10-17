@@ -63,6 +63,11 @@ const MANIFEST: ReadonlyArray<{ file: string; table: string; why: string }> = [
     table: 'ai_workflow_execution',
     why: 'Keyed on the data subject (e."userId" = the subject) to find deliveries naming their runs; it returns delivery rows, never an execution, and runs for the subject\'s own export or under the export\'s declared crossing.',
   },
+  {
+    file: 'lib/privacy/run-recipients.ts',
+    table: 'ai_workflow_execution',
+    why: "Erasure (t-804): reads other people's runs whose text names the subject, only to redact the subject from them inside the erasure transaction, which runs as the audited system scope. Nothing it reads is returned to a caller; the result is a count.",
+  },
 ];
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');

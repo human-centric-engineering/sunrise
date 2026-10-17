@@ -78,7 +78,9 @@ export function dispatchApprovalNotification(
     workflowId: opts.workflowId,
     stepId: opts.stepId,
     channelType: channel?.type ?? 'none',
-    channelTarget: channel?.target,
+    // Whether there is a target, never the target: it is often a person's
+    // address, and the application log cannot be reached by erasure (t-804).
+    hasChannelTarget: !!channel?.target,
     hasApproveUrl: !!opts.approveUrl,
     hasRejectUrl: !!opts.rejectUrl,
   });

@@ -123,9 +123,11 @@ describe('dispatchApprovalNotification', () => {
       'approval notification dispatched',
       expect.objectContaining({
         channelType: 'email',
-        channelTarget: 'admin@example.com',
+        hasChannelTarget: true,
       })
     );
+    // The target is usually a person's address, and the log outlives erasure.
+    expect(JSON.stringify(vi.mocked(logger.info).mock.calls)).not.toContain('admin@example.com');
   });
 
   it('logs "none" when no channel configured', () => {

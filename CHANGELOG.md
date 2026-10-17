@@ -690,6 +690,15 @@ release process.
 
 ### Fixed
 
+- **`eraseUser()` reaches schedules and runs that name the person** (t-804).
+  A verified address held in a schedule's `inputTemplate` is blanked (the
+  step it feeds then fails loudly, as for an emptied `to`; the schedule stays
+  enabled) and audited as `workflow_schedule.recipient_erased`. Other
+  people's runs — `inputData` and `executionTrace`, including a run paused at
+  an approval, whose approvers and notification target the approval routes
+  read — lose the person's id and address. New
+  `lib/privacy/run-recipients.ts`. `dispatchApprovalNotification` no longer
+  logs the target address (`hasChannelTarget` instead).
 - **`LogoutButton` signs out with a full page load, as the account menu
   does** (t-829, #707). It used `router.push()` and `router.refresh()`, which
   keep the Router Cache, so pages rendered for the signed-in user could still

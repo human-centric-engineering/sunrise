@@ -31,7 +31,11 @@
  *      erased person.
  *   8. Remove the user from the escalation email list and from every workflow
  *      notification and approval step that names them, in drafts and in every
- *      published version, with an audit entry for each (t-791).
+ *      published version, with an audit entry for each (t-791). Then blank
+ *      their address in every schedule's input template (audited), and redact
+ *      them from other people's runs — their input, and their trace, where a
+ *      run paused at an approval keeps its approvers and notification target
+ *      (t-804).
  *
  * The scrub, contact delete, receipt, and user delete run in one transaction
  * so they commit or roll back together. Avatar cleanup runs first as a
@@ -49,6 +53,7 @@ import {
   preRedactSubjectFromDeliveries,
 } from '@/lib/privacy/delivery-payloads';
 import { eraseFromConfigRecipients } from '@/lib/privacy/config-recipients';
+import { eraseFromRunInputs } from '@/lib/privacy/run-recipients';
 import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settings';
 import {
   AWAITING_RETRY_STATUSES,
@@ -147,6 +152,8 @@ export async function eraseUser(params: EraseUserParams): Promise<EraseUserResul
     subscriptionsDeactivated: receipt.subscriptionsDeactivated,
     escalationListsChanged: receipt.escalationListsChanged,
     workflowsChanged: receipt.workflowsChanged,
+    schedulesChanged: receipt.schedulesChanged,
+    executionsRedacted: receipt.executionsRedacted,
   });
   // The settings row is cached in-process (#442); a list just rewritten should
   // not be served stale to the settings page.
@@ -183,12 +190,16 @@ async function eraseRows(params: EraseUserParams): Promise<{
   webhookPayloadsRedacted: number;
   /** The same, for event-hook deliveries. */
   eventHookPayloadsRedacted: number;
-  /** Other admins' email subscriptions cleared and deactivated. */
+  /** Email subscriptions — a colleague's or their own — cleared and deactivated. */
   subscriptionsDeactivated: number;
   /** Settings rows whose escalation list named the user. */
   escalationListsChanged: number;
   /** Workflows with a draft or a published version that named the user. */
   workflowsChanged: number;
+  /** Schedules whose input template held the user's address (t-804). */
+  schedulesChanged: number;
+  /** Other people's runs whose input or trace named the user (t-804). */
+  executionsRedacted: number;
 }> {
   const { userId, actorUserId, reason } = params;
 
@@ -416,6 +427,13 @@ async function eraseRows(params: EraseUserParams): Promise<{
         actorUserId,
       });
 
+      // What the definitions became at run time (t-804): a schedule's input
+      // template holding their address (blanked, so the step it feeds fails
+      // loudly, as above), and other people's runs — their input and trace,
+      // where a run paused at an approval keeps its approvers and notification
+      // target. Their own runs cascade with the user row and are not read.
+      const runRecipients = await eraseFromRunInputs(tx, { userId, address, actorUserId });
+
       // App-registered in-transaction scrub. Runs before `tx.user.delete()` so
       // hooks can still match retained rows on `userId`, and atomically with the
       // delete — a throw here rolls the entire erasure back.
@@ -447,6 +465,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
         eventHookPayloadsRedacted,
         subscriptionsDeactivated,
         ...configRecipients,
+        ...runRecipients,
       };
     },
     // The delivery match scales with the person's history — every chat event

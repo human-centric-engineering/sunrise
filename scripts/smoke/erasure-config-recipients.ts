@@ -1,11 +1,12 @@
 /**
- * Erasure smoke: configuration that names the person (t-791).
+ * Erasure smoke: configuration, schedules and runs that name the person
+ * (t-791, t-804).
  *
  * Proves against real Postgres what the mocked unit tests cannot: that the
- * JSON containment filter `eraseFromConfigRecipients` narrows with
- * (`path: ['steps'], array_contains`) really finds a workflow draft and its
- * published versions by a step nested inside the `steps` array, and that the
- * rewrite lands on the rows.
+ * raw-SQL narrowing `eraseFromConfigRecipients` and `eraseFromRunInputs` use
+ * (a `translate()`-folded substring test, with a containment fallback for an
+ * address SQL cannot fold) really finds the rows that name the person, and
+ * that the rewrite lands on them.
  *
  *   • a verified subject is removed from the escalation list (webhook kept),
  *     from a notification step's `to` in the draft and in a published version,
@@ -14,6 +15,10 @@
  *     subject's, are untouched; one audit row lands per workflow;
  *   • an unverified subject keeps their address everywhere, and is still
  *     removed as an approver;
+ *   • a schedule's input template loses the address (blanked where it stood
+ *     alone) and stays enabled; a colleague's run paused at an approval loses
+ *     the subject's id and address and stays paused; the subject's own run
+ *     cascades (t-804);
  *   • erasing the escalation list's only recipient leaves it empty and keeps
  *     the webhook.
  *
@@ -27,6 +32,7 @@
  *   npm run smoke:erasure-config
  */
 
+import { isDeepStrictEqual } from 'node:util';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { eraseUser } from '@/lib/privacy/erase-user';
@@ -188,6 +194,51 @@ async function main(): Promise<void> {
     });
     workflowIds.push(lookalike.id);
 
+    // What the definitions became at run time (t-804): a schedule's input
+    // template, a colleague's run paused at an approval, and the subject's own
+    // run, which cascades and must not be read.
+    const schedule = await prisma.aiWorkflowSchedule.create({
+      data: {
+        workflowId: workflow.id,
+        name: `${PREFIX} schedule`,
+        cronExpression: '0 9 * * 1',
+        orgId: INSTALL_ORG_ID,
+        inputTemplate: { userEmail: typed, cc: [COLLEAGUE, typed.trim()], region: 'eu' },
+      },
+    });
+    const pausedRun = await prisma.aiWorkflowExecution.create({
+      data: {
+        workflowId: workflow.id,
+        orgId: INSTALL_ORG_ID,
+        userId: other.id,
+        status: 'paused_for_approval',
+        currentStep: 'ap',
+        inputData: { userEmail: typed },
+        executionTrace: [
+          {
+            stepId: 'ap',
+            stepType: 'human_approval',
+            status: 'awaiting_approval',
+            output: {
+              approverUserIds: [subject.id, other.id],
+              notificationChannel: { type: 'email', target: typed },
+            },
+            input: approval('ap', [subject.id, other.id], typed).config,
+          },
+        ],
+      },
+    });
+    const ownRun = await prisma.aiWorkflowExecution.create({
+      data: {
+        workflowId: workflow.id,
+        orgId: INSTALL_ORG_ID,
+        userId: subject.id,
+        status: 'completed',
+        inputData: { userEmail: typed },
+        executionTrace: [],
+      },
+    });
+
     // ── Verified subject ──────────────────────────────────────────────────
     console.log('verified subject');
     const result = await eraseUser({
@@ -273,6 +324,44 @@ async function main(): Promise<void> {
         },
       })) >= 1,
       'the escalation change is audited'
+    );
+
+    // ── Schedules and runs (t-804) ────────────────────────────────────────
+    console.log('schedules and runs');
+    const scheduleAfter = await prisma.aiWorkflowSchedule.findUniqueOrThrow({
+      where: { id: schedule.id },
+    });
+    check(
+      // jsonb orders keys, so compared structurally.
+      isDeepStrictEqual(scheduleAfter.inputTemplate, {
+        userEmail: '',
+        cc: [COLLEAGUE],
+        region: 'eu',
+      }),
+      "the schedule's template loses the address, blanked where it stood alone"
+    );
+    check(scheduleAfter.isEnabled, 'and the schedule stays enabled');
+    check(
+      (await prisma.aiAdminAuditLog.count({
+        where: { action: 'workflow_schedule.recipient_erased', entityId: schedule.id },
+      })) === 1,
+      'with one audit entry'
+    );
+    const pausedAfter = await prisma.aiWorkflowExecution.findUniqueOrThrow({
+      where: { id: pausedRun.id },
+    });
+    const pausedText = JSON.stringify(pausedAfter).toLowerCase();
+    check(
+      !pausedText.includes(subject.email.toLowerCase()) && !pausedText.includes(subject.id),
+      'a colleague’s paused run no longer holds their address or their id'
+    );
+    check(
+      pausedText.includes(other.id) && pausedAfter.status === 'paused_for_approval',
+      'and keeps its other approver, still paused'
+    );
+    check(
+      (await prisma.aiWorkflowExecution.findUnique({ where: { id: ownRun.id } })) === null,
+      'their own run went with them'
     );
 
     // ── Unverified subject ────────────────────────────────────────────────
@@ -437,6 +526,10 @@ async function main(): Promise<void> {
         where: {
           OR: [
             { action: 'workflow.recipient_erased', entityId: { in: workflowIds } },
+            {
+              action: 'workflow_schedule.recipient_erased',
+              createdAt: { gte: new Date(stamp) },
+            },
             {
               action: 'settings.escalation_recipient_erased',
               createdAt: { gte: new Date(stamp) },

@@ -473,15 +473,47 @@ transaction):
    steps left without a recipient. Never the address. **Not reached:** a
    workflow inside a backup bundle already downloaded is outside the database.
    A saved template is an ordinary workflow row, so it is rewritten like any
-   other. Two gaps are open. First (t-804), data that is not a definition: a
-   literal address in a schedule's `inputTemplate`, which a template recipient
-   such as `{{input.userEmail}}` resolves to, and a run already paused at an
-   approval, whose stored approval payload and trace keep the person's id
-   (`approverUserIds`) and any notification target address. Second (t-805),
-   writers that read before the erasure and write after it: a settings form
-   (or another instance's 30 s settings cache), a workflow builder tab, or a
-   publish or rollback in flight writes the copy it read back, address
-   included.
+   other. One gap is open (t-805): writers that read before the erasure and
+   write after it — a settings form (or another instance's 30 s settings
+   cache), a workflow builder tab, or a publish or rollback in flight —
+   write the copy they read back, address included.
+
+   **Then what the definitions became at run time** (t-804), through
+   `lib/privacy/run-recipients.ts`:
+
+   - **A schedule's `inputTemplate`** — free-form JSON handed to every tick
+     as the run's input, and the documented home of a per-user schedule's
+     literal address (`{ userEmail: 'x@co.com' }`, read by a
+     `{{input.userEmail}}` recipient). A value that is the subject's verified
+     address is blanked to `''`, or taken out of a list: the disposition t-791
+     gave a step's `to`, so the step it feeds has no recipient and fails when
+     it runs. The schedule stays **enabled**, so the failure is seen rather
+     than the workflow quietly stopping. Each change is audited as
+     `workflow_schedule.recipient_erased`, naming the schedule and its
+     workflow and counting the values cleared, never the address. Only the
+     address is matched here; an unverified account changes no schedule.
+   - **Other people's runs** — a run keeps a copy of everything it was given
+     and did: `inputData` (a scheduled run's copy of the template) and
+     `executionTrace` (each step's config and output). A run **paused at an
+     approval** keeps its `approverUserIds` and notification target there,
+     and the approval routes read them until retention prunes the run. In
+     both columns the subject's id leaves every approver list, a notification
+     target that is their address is removed (the channel and its type stay),
+     and any other value that is their address or their id becomes
+     `[erased]`, as a delivery's destination does. Matched on the id whether
+     or not the address was verified. The subject's own runs cascade with the
+     user row and are not read. Counted in the `User erased` log line as
+     `executionsRedacted` rather than audited row by row, as redacted
+     deliveries are: runs are records, not configuration.
+
+   Both are narrowed in SQL by the same folded substring test, or by the
+   address's domain when the whole address cannot be searched, and read in
+   pages of 200 `FOR NO KEY UPDATE`. **Not reached:** a run still executing
+   holds its trace in memory and writes it whole after each step, so its next
+   write can restore what was removed. Runs are minutes long and retention
+   prunes them. The approval notification no longer logs its target address
+   (`dispatchApprovalNotification`), since the application log is beyond
+   erasure.
 
 **At `multi`, a person's rows in every org go** (§107 t-748). The cascades are
 FK actions, which row-level security does not filter, so `user.delete` removes

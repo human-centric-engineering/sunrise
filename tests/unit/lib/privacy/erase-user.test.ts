@@ -132,6 +132,11 @@ const { mockEraseConfig, mockInvalidateSettings } = vi.hoisted(() => ({
 vi.mock('@/lib/privacy/config-recipients', () => ({
   eraseFromConfigRecipients: mockEraseConfig,
 }));
+// Likewise schedules and runs (run-recipients.test.ts).
+const { mockEraseRuns } = vi.hoisted(() => ({ mockEraseRuns: vi.fn() }));
+vi.mock('@/lib/privacy/run-recipients', () => ({
+  eraseFromRunInputs: mockEraseRuns,
+}));
 vi.mock('@/lib/orchestration/settings', () => ({
   invalidateOrchestrationSettingsCache: mockInvalidateSettings,
 }));
@@ -197,6 +202,7 @@ describe('eraseUser', () => {
     mockEraseDeliveries.mockResolvedValue(0);
     mockPreRedact.mockResolvedValue(0);
     mockEraseConfig.mockResolvedValue({ escalationListsChanged: 0, workflowsChanged: 0 });
+    mockEraseRuns.mockResolvedValue({ schedulesChanged: 0, executionsRedacted: 0 });
     mockUserFind.mockResolvedValue({ email: 'foo@bar.com', emailVerified: true });
     mockReceiptCreate.mockResolvedValue({
       id: 'receipt-1',
@@ -1317,6 +1323,65 @@ describe('eraseUser', () => {
       expect(mockReceiptCreate).not.toHaveBeenCalled();
       expect(mockUserDelete).not.toHaveBeenCalled();
       expect(mockInvalidateSettings).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('schedules and runs that name the user (t-804)', () => {
+    it('passes the transaction client, the id, the stored normalised address and the actor', async () => {
+      const tx = { ...mockPrisma };
+      mockPrisma.$transaction.mockImplementation(
+        (callback: (client: typeof tx) => Promise<unknown>) => callback(tx)
+      );
+      mockUserFind.mockResolvedValue({ email: ' Run@Bar.COM ', emailVerified: true });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockEraseRuns).toHaveBeenCalledTimes(1);
+      expect(mockEraseRuns).toHaveBeenCalledWith(tx, {
+        userId: BASE_PARAMS.userId,
+        address: 'run@bar.com',
+        actorUserId: BASE_PARAMS.actorUserId,
+      });
+    });
+
+    it('runs after the definitions and before the user row goes, so their own runs are still there to skip', async () => {
+      const callOrder: string[] = [];
+      mockEraseConfig.mockImplementation(async () => {
+        callOrder.push('config');
+        return { escalationListsChanged: 0, workflowsChanged: 0 };
+      });
+      mockEraseRuns.mockImplementation(async () => {
+        callOrder.push('runs');
+        return { schedulesChanged: 0, executionsRedacted: 0 };
+      });
+      mockUserDelete.mockImplementation(async () => {
+        callOrder.push('user.delete');
+        return {};
+      });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(callOrder).toEqual(['config', 'runs', 'user.delete']);
+    });
+
+    it('logs both counts', async () => {
+      mockEraseRuns.mockResolvedValue({ schedulesChanged: 2, executionsRedacted: 5 });
+
+      await eraseUser(BASE_PARAMS);
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'User erased',
+        expect.objectContaining({ schedulesChanged: 2, executionsRedacted: 5 })
+      );
+    });
+
+    it('a failed redaction rolls the erasure back', async () => {
+      mockEraseRuns.mockRejectedValue(new Error('run redaction failed'));
+
+      await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('run redaction failed');
+
+      expect(mockReceiptCreate).not.toHaveBeenCalled();
+      expect(mockUserDelete).not.toHaveBeenCalled();
     });
   });
 
