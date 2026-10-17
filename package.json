@@ -54,6 +54,7 @@
     "db:tenancy:enable": "tsx --env-file=.env.local scripts/db/tenancy-enable.ts --enable",
     "db:tenancy:disable": "tsx --env-file=.env.local scripts/db/tenancy-enable.ts --disable",
     "db:tenancy:role": "tsx --env-file=.env.local scripts/db/tenancy-role.ts",
+    "db:tenancy:install-floor": "tsx --env-file=.env.local scripts/db/tenancy-install-floor.ts",
     "smoke:chat": "tsx --env-file=.env.local scripts/smoke/chat.ts",
     "smoke:orchestration": "tsx --env-file=.env.local scripts/smoke/orchestration.ts",
     "smoke:hybrid-search": "tsx --env-file=.env.local scripts/smoke/knowledge-hybrid-search.ts",

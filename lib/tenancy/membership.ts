@@ -200,6 +200,51 @@ export function undecidedMembershipsForNewUser(
 }
 
 /**
+ * Give every user who lacks one an install-org membership — at `single` only
+ * (t-835).
+ *
+ * #872's floor (see {@link membershipsForNewUser}) is written at signup, so
+ * it covers only accounts created after it shipped. Someone who accepted an
+ * invitation into another org before then has only that org's membership,
+ * and suspending that org locks them out of everything. No migration can
+ * repair it: the mode lives in the environment, not the database, and at
+ * `multi` the floor must not be written. So this is an operator command,
+ * `npm run db:tenancy:install-floor`.
+ *
+ * The role is {@link initialMembershipFor}'s rule on the stored platform role,
+ * the same rule every other install-org row was written by. Idempotent: it
+ * reads who is missing and writes only those, so a second run finds nobody
+ * and writes nothing; `skipDuplicates` covers a signup landing between the
+ * read and the write. An existing install-org row is never touched, role
+ * included.
+ *
+ * Throws at `multi`, before reading anything: there the install org is the
+ * vendor's own, and a floor would make every customer org's members members
+ * of it.
+ */
+export async function backfillInstallMemberships(
+  db: Pick<PrismaClient, 'orgMembership' | 'user'> = prisma
+): Promise<{ written: number }> {
+  if (isMultiTenant()) {
+    throw new Error(
+      'Refusing to backfill install-org memberships at TENANCY_MODE=multi: the install org is the vendor’s own'
+    );
+  }
+
+  const missing = await db.user.findMany({
+    where: { orgMemberships: { none: { orgId: INSTALL_ORG_ID } } },
+    select: { id: true, role: true, accountType: true },
+  });
+  if (missing.length === 0) return { written: 0 };
+
+  const { count } = await db.orgMembership.createMany({
+    data: missing.map((user) => ({ userId: user.id, ...initialMembershipFor(user) })),
+    skipDuplicates: true,
+  });
+  return { written: count };
+}
+
+/**
  * Which org a new session for `userId` starts in — and the self-heal for a
  * user who belongs to none.
  *
