@@ -151,11 +151,6 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     why: 'cost aggregation windows',
   },
   {
-    file: 'lib/orchestration/scheduling/scheduler.ts',
-    calls: 2,
-    why: 'row locks a tick takes before it re-reads what its run is made from (t-839): `SELECT 1 … FOR SHARE` on the published version and `FOR NO KEY UPDATE` on the schedule, each one row by id, which Prisma has no call for; both tables are org-owned and the tick runs per org, so the policy filters them like any read',
-  },
-  {
     file: 'lib/privacy/config-recipients.ts',
     calls: 3,
     why: 'erasure (t-791): the settings singleton (a global model, no org) and the workflow drafts and versions that could name the person, read FOR UPDATE and narrowed by a text search Prisma cannot express; deliberately system-scoped at multi, since a person must be removed from every org’s workflows, like every erasure read',
@@ -167,8 +162,8 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
   },
   {
     file: 'lib/privacy/erased-subjects.ts',
-    calls: 1,
-    why: 'the advisory lock erasure and every recipient writer share (t-805): `pg_advisory_xact_lock(hashtextextended(key, 0))`, which Prisma has no call for; it touches no table, so RLS has nothing to filter',
+    calls: 3,
+    why: 'the advisory lock erasure and every recipient writer share (t-805): `pg_advisory_xact_lock(hashtextextended(key, 0))`, taken by a writer and by erasure’s wait outside its transaction, and `pg_try_advisory_xact_lock`, which erasure tries inside it (t-840); Prisma has no call for either, and they touch no table, so RLS has nothing to filter',
   },
   {
     file: 'lib/privacy/run-recipients.ts',

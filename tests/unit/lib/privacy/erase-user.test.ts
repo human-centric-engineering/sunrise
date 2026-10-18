@@ -26,6 +26,7 @@ const {
   mockContactCount,
   mockReceiptCreate,
   mockExecuteRaw,
+  mockQueryRaw,
   mockUserDelete,
   mockUserFind,
   mockDeliveryUpdateMany,
@@ -46,6 +47,10 @@ const {
     erasedAt: new Date('2026-01-01T00:00:00.000Z'),
   });
   const executeRaw = vi.fn().mockResolvedValue(1);
+  // tryLockSubjects() asks for each lock without waiting (t-840): free unless a
+  // test says otherwise. Nothing else here reads raw SQL — the delivery and run
+  // passes are mocked whole.
+  const queryRaw = vi.fn().mockResolvedValue([{ locked: true }]);
   const userDelete = vi.fn().mockResolvedValue({ id: 'user-1' });
   // The address as the user row holds it — what the contact delete matches on.
   const deliveryUpdateMany = vi.fn().mockResolvedValue({ count: 0 });
@@ -65,6 +70,7 @@ const {
     $transaction: vi.fn(),
     // lockSubjects() takes advisory locks through this (t-805)
     $executeRaw: executeRaw,
+    $queryRaw: queryRaw,
     aiAdminAuditLog: { updateMany, createMany: auditCreateMany },
     contactSubmission: { deleteMany: contactDeleteMany, count: contactCount },
     dataErasureReceipt: { create: receiptCreate },
@@ -96,6 +102,7 @@ const {
     mockContactCount: contactCount,
     mockReceiptCreate: receiptCreate,
     mockExecuteRaw: executeRaw,
+    mockQueryRaw: queryRaw,
     mockUserDelete: userDelete,
     mockUserFind: userFind,
     mockDeliveryUpdateMany: deliveryUpdateMany,
@@ -169,7 +176,11 @@ vi.mock('@/lib/storage/upload', () => ({
 // Import under test (AFTER all vi.mock() calls)
 // ---------------------------------------------------------------------------
 
-import { eraseUser, ERASURE_TRANSACTION_TIMEOUT_MS } from '@/lib/privacy/erase-user';
+import {
+  eraseUser,
+  ERASURE_TRANSACTION_TIMEOUT_MS,
+  SUBJECT_LOCK_TRIES,
+} from '@/lib/privacy/erase-user';
 import { SUBJECT_LOCK_WAIT_MS } from '@/lib/privacy/erased-subjects';
 import { getTenantContext, runAsOrg } from '@/lib/tenancy/context';
 
@@ -204,6 +215,7 @@ describe('eraseUser', () => {
     mockIsStorageEnabled.mockReturnValue(false);
     mockDeleteByPrefix.mockResolvedValue({ deleted: 1 });
     mockExecuteRaw.mockResolvedValue(1);
+    mockQueryRaw.mockResolvedValue([{ locked: true }]);
     mockUpdateMany.mockResolvedValue({ count: 1 });
     mockContactDeleteMany.mockResolvedValue({ count: 1 });
     mockContactCount.mockResolvedValue(0);
@@ -357,15 +369,10 @@ describe('eraseUser', () => {
   describe('writer locks and receipt metadata (t-805)', () => {
     it('takes the advisory locks before any configuration is read or rewritten', async () => {
       const order: string[] = [];
-      mockPrisma.$transaction.mockImplementation(
-        (callback: (tx: typeof mockPrisma) => Promise<unknown>) => {
-          order.push('transaction');
-          return callback(mockPrisma);
-        }
-      );
-      mockExecuteRaw.mockImplementation(async () => {
+      // Tried, not waited for (t-840): free here, so the first try takes them.
+      mockQueryRaw.mockImplementation(async () => {
         order.push('lock');
-        return 1;
+        return [{ locked: true }];
       });
       mockEraseConfig.mockImplementation(async () => {
         order.push('config');
@@ -378,20 +385,12 @@ describe('eraseUser', () => {
 
       await eraseUser(BASE_PARAMS);
 
-      // One lock for the address, one for the user id: waited for in a
-      // transaction of their own (t-840), then taken again in the erasure's,
-      // before either rewrite.
-      expect(order.slice(0, 6)).toEqual([
-        'transaction',
-        'lock',
-        'lock',
-        'transaction',
-        'lock',
-        'lock',
-      ]);
+      // One lock for the address, one for the user id; both before either rewrite.
+      expect(order.slice(0, 2)).toEqual(['lock', 'lock']);
       expect(order.indexOf('config')).toBeGreaterThan(order.lastIndexOf('lock'));
       expect(order.indexOf('runs')).toBeGreaterThan(order.lastIndexOf('lock'));
-      expect(mockExecuteRaw).toHaveBeenCalledTimes(4);
+      expect(mockQueryRaw).toHaveBeenCalledTimes(2);
+      expect(mockExecuteRaw).not.toHaveBeenCalled();
     });
 
     it('locks the user id only when the address was never verified', async () => {
@@ -399,11 +398,8 @@ describe('eraseUser', () => {
 
       await eraseUser(BASE_PARAMS);
 
-      // Waited for, then taken: the user id's lock only, both times.
-      expect(mockExecuteRaw.mock.calls.map((call) => call[1])).toEqual([
-        `sunrise:erased-user:${BASE_PARAMS.userId}`,
-        `sunrise:erased-user:${BASE_PARAMS.userId}`,
-      ]);
+      expect(mockQueryRaw).toHaveBeenCalledTimes(1);
+      expect(mockQueryRaw.mock.calls[0][1]).toBe(`sunrise:erased-user:${BASE_PARAMS.userId}`);
     });
 
     it('records addressVerified: true on the receipt for a verified account', async () => {
@@ -444,9 +440,8 @@ describe('eraseUser', () => {
     // Act
     await eraseUser(BASE_PARAMS);
 
-    // Assert — the callback was passed to $transaction: the erasure's is the
-    // second, after the wait for writers' locks (t-840)
-    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
+    // Assert — the callback was passed to $transaction
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
     expect(txCallbackCaptured).not.toBeNull();
 
     // All three steps ran through the tx object that was passed into the callback
@@ -1329,63 +1324,137 @@ describe('eraseUser', () => {
     });
   });
 
-  it('runs the erasure transaction with the 60s timeout, not Prisma’s 5s default', async () => {
-    await eraseUser(BASE_PARAMS);
+  describe('a writer holding the person’s lock (t-840)', () => {
+    const ADDRESS_KEY = 'sunrise:erased-address:foo@bar.com';
+    const USER_KEY = `sunrise:erased-user:${BASE_PARAMS.userId}`;
 
-    expect(ERASURE_TRANSACTION_TIMEOUT_MS).toBe(60_000);
-    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(2);
-    expect(mockPrisma.$transaction).toHaveBeenLastCalledWith(expect.any(Function), {
-      timeout: ERASURE_TRANSACTION_TIMEOUT_MS,
-    });
-  });
-
-  describe('waiting for writers ahead of the transaction (t-840)', () => {
-    it('waits for the person’s locks after the pre-passes and before the erasure transaction opens', async () => {
+    /** Records each transaction by its timeout, and each lock it tries or takes. */
+    function recordLocks(tryAnswers: boolean[]) {
       const order: string[] = [];
-      mockPreRedactRuns.mockImplementation(async () => {
-        order.push('run pre-pass');
-        return new Date('2026-01-01T00:00:00.000Z');
-      });
       mockPrisma.$transaction.mockImplementation(
         (callback: (tx: typeof mockPrisma) => Promise<unknown>, options: { timeout: number }) => {
           order.push(`transaction:${options.timeout}`);
           return callback(mockPrisma);
         }
       );
+      mockQueryRaw.mockImplementation(async (_strings: unknown, key: string) => {
+        const locked = tryAnswers.shift() ?? true;
+        order.push(`try:${key}:${String(locked)}`);
+        return [{ locked }];
+      });
       mockExecuteRaw.mockImplementation(async (_strings: unknown, key: string) => {
-        order.push(`lock:${key}`);
+        order.push(`wait:${key}`);
         return 1;
+      });
+      return order;
+    }
+
+    it('on a held lock, rolls back, waits outside the transaction, and tries again', async () => {
+      // The address is free, the user id is held, then both are free.
+      const order = recordLocks([true, false]);
+
+      const result = await eraseUser(BASE_PARAMS);
+
+      expect(order).toEqual([
+        `transaction:${ERASURE_TRANSACTION_TIMEOUT_MS}`,
+        `try:${ADDRESS_KEY}:true`,
+        `try:${USER_KEY}:false`,
+        // Each lock waited for on its own, so none is held while waiting for
+        // the next.
+        `transaction:${SUBJECT_LOCK_WAIT_MS}`,
+        `wait:${ADDRESS_KEY}`,
+        `transaction:${SUBJECT_LOCK_WAIT_MS}`,
+        `wait:${USER_KEY}`,
+        `transaction:${ERASURE_TRANSACTION_TIMEOUT_MS}`,
+        `try:${ADDRESS_KEY}:true`,
+        `try:${USER_KEY}:true`,
+      ]);
+      expect(result.receiptId).toBe('receipt-1');
+      expect(mockUserDelete).toHaveBeenCalledTimes(1);
+      expect(mockReceiptCreate).toHaveBeenCalledTimes(1);
+    });
+
+    it('nothing past the lock runs in a try that found it held', async () => {
+      recordLocks([false]);
+      const configRewrittenInTry: number[] = [];
+      let tries = 0;
+      mockPrisma.$transaction.mockImplementation(
+        async (
+          callback: (tx: typeof mockPrisma) => Promise<unknown>,
+          options: { timeout: number }
+        ) => {
+          if (options.timeout === ERASURE_TRANSACTION_TIMEOUT_MS) tries += 1;
+          return callback(mockPrisma);
+        }
+      );
+      mockEraseConfig.mockImplementation(async () => {
+        configRewrittenInTry.push(tries);
+        return { escalationListsChanged: 0, workflowsChanged: 0 };
       });
 
       await eraseUser(BASE_PARAMS);
 
-      // The wait is its own transaction, on the long budget, taking exactly the
-      // locks the erasure then takes inside its 60 s one.
-      expect(order).toEqual([
-        'run pre-pass',
-        `transaction:${SUBJECT_LOCK_WAIT_MS}`,
-        'lock:sunrise:erased-address:foo@bar.com',
-        `lock:sunrise:erased-user:${BASE_PARAMS.userId}`,
-        `transaction:${ERASURE_TRANSACTION_TIMEOUT_MS}`,
-        'lock:sunrise:erased-address:foo@bar.com',
-        `lock:sunrise:erased-user:${BASE_PARAMS.userId}`,
-      ]);
-      expect(SUBJECT_LOCK_WAIT_MS).toBeGreaterThan(ERASURE_TRANSACTION_TIMEOUT_MS);
+      // Configuration is rewritten only in the try that holds the locks.
+      expect(tries).toBe(2);
+      expect(configRewrittenInTry).toEqual([2]);
     });
 
-    it('goes ahead when the wait fails, logging it: the transaction then waits instead', async () => {
-      mockPrisma.$transaction.mockImplementationOnce(async () => {
-        throw new Error('Transaction already closed');
-      });
+    it(`waits inside the transaction on try ${SUBJECT_LOCK_TRIES}, so a lock that keeps being taken cannot hold it off for good`, async () => {
+      const order = recordLocks(Array<boolean>(10).fill(false));
+
+      await eraseUser(BASE_PARAMS);
+
+      const erasureTries = order.filter(
+        (e) => e === `transaction:${ERASURE_TRANSACTION_TIMEOUT_MS}`
+      );
+      expect(erasureTries).toHaveLength(SUBJECT_LOCK_TRIES);
+      // The last try takes the locks with the waiting call, inside its transaction.
+      expect(order.slice(-3)).toEqual([
+        `transaction:${ERASURE_TRANSACTION_TIMEOUT_MS}`,
+        `wait:${ADDRESS_KEY}`,
+        `wait:${USER_KEY}`,
+      ]);
+      expect(mockUserDelete).toHaveBeenCalledTimes(1);
+    });
+
+    it('logs a failed wait without the address, and tries again', async () => {
+      recordLocks([false]);
+      mockPrisma.$transaction.mockImplementation(
+        async (
+          callback: (tx: typeof mockPrisma) => Promise<unknown>,
+          options: { timeout: number }
+        ) => {
+          if (options.timeout === SUBJECT_LOCK_WAIT_MS)
+            throw new Error('Transaction already closed');
+          return callback(mockPrisma);
+        }
+      );
 
       const result = await eraseUser(BASE_PARAMS);
 
       expect(result.receiptId).toBe('receipt-1');
-      expect(mockUserDelete).toHaveBeenCalledTimes(1);
       expect(mockLogger.error).toHaveBeenCalledWith(
-        'Erasure could not wait for writers ahead of its transaction',
+        'Erasure could not wait for a writer holding the person’s lock',
         { userId: BASE_PARAMS.userId, error: 'Transaction already closed' }
       );
+      expect(JSON.stringify(mockLogger.error.mock.calls)).not.toContain('foo@bar.com');
+    });
+
+    it('does not retry any other failure', async () => {
+      mockEraseConfig.mockRejectedValueOnce(new Error('config pass failed'));
+
+      await expect(eraseUser(BASE_PARAMS)).rejects.toThrow('config pass failed');
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('runs the erasure transaction with the 60s timeout, not Prisma’s 5s default', async () => {
+    await eraseUser(BASE_PARAMS);
+
+    expect(ERASURE_TRANSACTION_TIMEOUT_MS).toBe(60_000);
+    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      timeout: ERASURE_TRANSACTION_TIMEOUT_MS,
     });
   });
 
@@ -1680,8 +1749,6 @@ describe('eraseUser', () => {
       expect(callOrder).toEqual([
         'pre:webhook:prisma',
         'pre:hook:prisma',
-        // The wait for writers' locks (t-840), then the erasure's own.
-        'transaction',
         'transaction',
         'final:webhook',
         'final:hook',

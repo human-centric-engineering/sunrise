@@ -23,6 +23,8 @@ import {
   stringsIn,
   subjectEmailHash,
   SUBJECT_LOCK_WAIT_MS,
+  SubjectLocksBusyError,
+  tryLockSubjects,
   waitForSubjectLocks,
   WRITER_TRANSACTION_OPTIONS,
 } from '@/lib/privacy/erased-subjects';
@@ -115,29 +117,77 @@ describe('lockSubjects', () => {
   });
 });
 
-describe('waitForSubjectLocks (t-840)', () => {
-  it('takes the same sorted locks in a transaction of its own, with the long wait budget, and nothing else', async () => {
-    const { tx, executeRaw, receiptFindMany, userFindMany } = makeTx();
-    const $transaction = vi.fn(
-      async (callback: (client: TxClient) => Promise<unknown>, _options: { timeout: number }) =>
-        callback(tx)
-    );
-    const client = { $transaction } as unknown as Parameters<typeof waitForSubjectLocks>[0];
+describe('tryLockSubjects (t-840)', () => {
+  function makeTryTx(answers: boolean[]) {
+    const queryRaw = vi.fn(async (_strings: TemplateStringsArray, _key: string) => [
+      { locked: answers.shift() ?? true },
+    ]);
+    return {
+      tx: { $queryRaw: queryRaw } as unknown as Parameters<typeof tryLockSubjects>[0],
+      queryRaw,
+    };
+  }
 
-    await waitForSubjectLocks(client, {
-      addresses: [' Gone@Example.com '],
-      userIds: ['user-1'],
-    });
+  it('tries every key, sorted, with the non-waiting lock, and says true when it got them all', async () => {
+    const { tx, queryRaw } = makeTryTx([true, true]);
 
-    expect($transaction).toHaveBeenCalledTimes(1);
-    expect($transaction.mock.calls[0][1]).toEqual({ timeout: SUBJECT_LOCK_WAIT_MS });
-    expect(lockedKeys(executeRaw)).toEqual([
+    await expect(
+      tryLockSubjects(tx, { addresses: [' Gone@Example.com '], userIds: ['user-1'] })
+    ).resolves.toBe(true);
+
+    expect(queryRaw.mock.calls.map((call) => call[1])).toEqual([
       'sunrise:erased-address:gone@example.com',
       'sunrise:erased-user:user-1',
     ]);
-    // A wait, not a check: no receipt or user is read.
-    expect(receiptFindMany).not.toHaveBeenCalled();
-    expect(userFindMany).not.toHaveBeenCalled();
+    expect(queryRaw.mock.calls[0][0].join('?')).toContain('pg_try_advisory_xact_lock');
+  });
+
+  it('stops at the first key someone else holds and says false', async () => {
+    const { tx, queryRaw } = makeTryTx([false, true]);
+
+    await expect(
+      tryLockSubjects(tx, { addresses: ['gone@example.com'], userIds: ['user-1'] })
+    ).resolves.toBe(false);
+
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads a missing row as not locked', async () => {
+    const tx = {
+      $queryRaw: vi.fn().mockResolvedValue([]),
+    } as unknown as Parameters<typeof tryLockSubjects>[0];
+
+    await expect(tryLockSubjects(tx, { userIds: ['user-1'] })).resolves.toBe(false);
+  });
+});
+
+describe('waitForSubjectLocks (t-840)', () => {
+  it('waits for each key in a transaction of its own, so none is held while it waits for the next', async () => {
+    const executeRaw = vi.fn().mockResolvedValue(1);
+    const opened: Array<{ timeout: number; keys: unknown[] }> = [];
+    const $transaction = vi.fn(
+      async (
+        callback: (client: { $executeRaw: typeof executeRaw }) => Promise<unknown>,
+        options: { timeout: number }
+      ) => {
+        const before = executeRaw.mock.calls.length;
+        await callback({ $executeRaw: executeRaw });
+        opened.push({
+          timeout: options.timeout,
+          keys: executeRaw.mock.calls.slice(before).map((call) => call[1]),
+        });
+      }
+    );
+    const client = { $transaction } as unknown as Parameters<typeof waitForSubjectLocks>[0];
+
+    await waitForSubjectLocks(client, { addresses: [' Gone@Example.com '], userIds: ['user-1'] });
+
+    expect(opened).toEqual([
+      { timeout: SUBJECT_LOCK_WAIT_MS, keys: ['sunrise:erased-address:gone@example.com'] },
+      { timeout: SUBJECT_LOCK_WAIT_MS, keys: ['sunrise:erased-user:user-1'] },
+    ]);
+    // The waiting lock, not the try.
+    expect(executeRaw.mock.calls[0][0].join('?')).toContain('pg_advisory_xact_lock(');
   });
 
   it('propagates a failed wait to the caller', async () => {
@@ -147,6 +197,17 @@ describe('waitForSubjectLocks (t-840)', () => {
     await expect(waitForSubjectLocks(client, { userIds: ['user-1'] })).rejects.toThrow(
       'Transaction already closed'
     );
+  });
+});
+
+describe('SubjectLocksBusyError', () => {
+  it('carries the subjects to wait for', () => {
+    const subjects = { addresses: ['gone@example.com'], userIds: ['user-1'] };
+    const error = new SubjectLocksBusyError(subjects);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.name).toBe('SubjectLocksBusyError');
+    expect(error.subjects).toBe(subjects);
   });
 });
 

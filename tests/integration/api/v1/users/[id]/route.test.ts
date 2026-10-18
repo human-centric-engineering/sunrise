@@ -678,7 +678,11 @@ describe('DELETE /api/v1/users/:id', () => {
     // No colleague subscription matches and no delivery payload names the user.
     vi.mocked(prisma.aiWebhookSubscription.findMany).mockResolvedValue([]);
     vi.mocked(prisma.aiWebhookSubscription.updateMany).mockResolvedValue({ count: 0 });
-    vi.mocked(prisma.$queryRaw).mockResolvedValue([] as never);
+    // Every lock erasure tries is free (t-840); every other raw read finds nothing.
+    vi.mocked(prisma.$queryRaw).mockImplementation(((strings: TemplateStringsArray) =>
+      Promise.resolve(
+        strings.join('').includes('pg_try_advisory_xact_lock') ? [{ locked: true }] : []
+      )) as never);
     vi.mocked(prisma.$executeRaw).mockResolvedValue(0);
     vi.mocked(prisma.aiAdminAuditLog.createMany).mockResolvedValue({ count: 0 });
     // eraseUser reads the stored address for the contact delete. Deliberately
@@ -771,9 +775,8 @@ describe('DELETE /api/v1/users/:id', () => {
 
       // ---- DB-state readback: prove the real eraseUser ran its $transaction flow ----
 
-      // 1. $transaction was invoked (i.e. eraseUser reached the atomic-commit step):
-      // once to wait for writers' locks (t-840), once for the erasure itself
-      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      // 1. $transaction was invoked (i.e. eraseUser reached the atomic-commit step)
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
 
       // 2. Residual-PII scrub: clientIp nulled on retained audit rows for this user
       expect(prisma.aiAdminAuditLog.updateMany).toHaveBeenCalledWith({
