@@ -746,7 +746,7 @@ release process.
   that one stay held until the transaction ends. An import holding a row the erasure
   needs, rather than the person's lock, can still time it out. **Forks:** an
   erasure queued behind a writer now takes as long as that writer, up to
-  150 s per wait, where before it failed at 60 s. A route that calls
+  150 s per lock waited for, where before it failed at 60 s. A route that calls
   `eraseUser()` on a host with a short request limit may want to run it in the
   background.
 - **`LogoutButton` signs out with a full page load, as the account menu

@@ -594,10 +594,12 @@ the insert, so it cannot deadlock with an erasure or a workflow delete.
 **Why a lock and not just a check.** A check alone races the erasure: the
 writer finds no receipt, the erasure scans and strips, the writer's write
 lands after the scan. So both take a transaction-scoped Postgres advisory
-lock per address and per user id (`lockSubjects`): the erasure at the start
-of its transaction, the writer before it checks. Whichever is first commits
-before the other reads — the writer then sees the receipt, or the erasure sees
-the write and strips it. `npm run smoke:erasure-writers` proves both orders
+lock per address and per user id: the writer before it checks
+(`lockSubjects`), the erasure straight after it reads the user row, before it
+writes or reads anything else. The erasure only tries the lock, and on a miss
+rolls back and waits outside its transaction (below). Whichever holds the lock
+first commits before the other reads — the writer then sees the receipt, or
+the erasure sees the write and strips it. `npm run smoke:erasure-writers` proves both orders
 against Postgres; with the erasure's lock removed, its writer-first case
 fails.
 
@@ -625,7 +627,9 @@ erase nothing. The erasure transaction only tries the person's locks
 anything. On a miss it throws `SubjectLocksBusyError`, which rolls back nothing
 but that read, and `eraseUser()` waits outside it (`waitForSubjectLocks`, each
 lock in its own transaction, bounded by Postgres's `lock_timeout` at
-`SUBJECT_LOCK_WAIT_MS`, 150 s), then runs it again. A writer that queued
+`SUBJECT_LOCK_WAIT_MS`, 150 s, so up to 300 s for an address and an id), then
+runs it again. Every lock wait inside the erasure transaction is bounded the
+same way, at its 60 s. A writer that queued
 during the wait gets the lock first, so this can repeat. The last of
 `SUBJECT_LOCK_TRIES` (3) tries waits inside the transaction, as every try did
 before, so a lock that keeps being taken cannot hold the erasure off for good;
