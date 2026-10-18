@@ -516,6 +516,22 @@ describe('RunDetailView', () => {
       }
     });
 
+    it('shows what was thrown when the worker crashed on the run', async () => {
+      makeFetchMock(() =>
+        buildRun({
+          status: 'failed',
+          summary: { error: 'worker_unexpected_error', message: 'Error: connection reset' },
+        })
+      );
+      render(<RunDetailView runId="run-1" />);
+      await screen.findByText(/^Summary$/);
+
+      expect(
+        screen.getByText('worker_unexpected_error: Error: connection reset')
+      ).toBeInTheDocument();
+      expect(screen.getByText(/No metrics were aggregated/)).toBeInTheDocument();
+    });
+
     it('shows an empty-cases hint when there are no case results', async () => {
       makeFetchMock(
         () => buildRun({ status: 'completed' }),

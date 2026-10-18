@@ -742,16 +742,20 @@ release process.
   the caller's own. It now uses `executionVisibilityWhere`, the executions
   list's rule: on a default install every admin sees decisions on those runs.
   A fork whose authorization policy refuses unattributed reads narrows this
-  page too, where before the page ignored the policy. The `known-gap` entry
-  leaves `OWNERLESS_SURFACE_EXCEPTIONS`.
+  page too, where before the page ignored the policy. It now scans only runs
+  whose trace holds an approval step, so frequent scheduled runs cannot crowd
+  decisions out of its 1000-run window. The `known-gap` entry leaves
+  `OWNERLESS_SURFACE_EXCEPTIONS`.
 
 - **An evaluation run where no grader scored a single case is now `failed`**
-  (t-847, #921). When the subject ran but every grader or judge threw (a judge
-  with no provider, a judge outage), no case carried an `errorCode`, so the run
-  ended `completed` with nothing scored, and the cost estimator sampled it as a
-  good run. It now ends `failed` with `summary.note = 'no_scores_recorded'`. A
-  run where any metric scored at least one case still completes, and
-  `all_cases_failed` is unchanged.
+  (t-847, #921). When the subject ran but no grader returned a score (every
+  grader or judge threw, as with a judge that has no provider, or skipped), no
+  case carried an `errorCode`, so the run ended `completed` with nothing
+  scored, and the cost estimator sampled it as a good run. It now ends
+  `failed` with `summary.note = 'no_scores_recorded'`, plus `casesFailed` and
+  `dominantErrorCode` when some cases also errored. A run where any metric
+  scored at least one case still completes, and `all_cases_failed` is
+  unchanged.
 
 - **The maintenance tick's background tasks keep running after the route
   responds** (t-844). The route left them as a floating promise, which a

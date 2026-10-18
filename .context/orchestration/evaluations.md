@@ -124,10 +124,12 @@ Per-tick lifecycle:
    total judge spend, mark `completed` — or `failed` when **every** case
    errored (`errorCode` set on all rows), with `summary.note = 'all_cases_failed'`,
    `summary.casesFailed` and `summary.dominantErrorCode` (the most frequent
-   case `errorCode`). It is also `failed` when the cases ran but no metric
-   scored a single one, which is what happens when every grader or judge
-   throws: `summary.note = 'no_scores_recorded'`, and each case's
-   `metricScores` carries the `Grader threw: …` reasoning. Partial failure
+   case `errorCode`). It is also `failed` when no metric scored a single
+   case, which is what happens when every grader or judge throws or skips:
+   `summary.note = 'no_scores_recorded'`, with `casesFailed` and
+   `dominantErrorCode` when some cases also errored. Each case's
+   `metricScores` carries the reasoning (`Grader threw: …`, or the grader's
+   own skip reason). Partial failure
    stays `completed`; read `progress.casesFailed` and the per-case
    `errorCode`.
 

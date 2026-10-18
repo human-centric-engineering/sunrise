@@ -392,7 +392,11 @@ describe('processPendingEvaluationRuns — case failures', () => {
 
     const markCall = mockedMarkTerminal.mock.calls[0];
     expect(markCall[1]).toBe('failed');
-    expect(markCall[2].summary.note).toBe('no_scores_recorded');
+    expect(markCall[2].summary).toMatchObject({
+      note: 'no_scores_recorded',
+      casesFailed: 1,
+      dominantErrorCode: 'timeout',
+    });
   });
 
   it('keeps a run completed when one case scored and the rest went unscored', async () => {

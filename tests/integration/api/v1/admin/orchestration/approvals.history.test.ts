@@ -141,8 +141,23 @@ describe('GET /api/v1/admin/orchestration/approvals/history', () => {
       AND: [
         { OR: [{ userId: mockAdminUser().user.id }, { userId: null }] },
         { status: { not: 'paused_for_approval' } },
+        { executionTrace: { array_contains: [{ stepType: 'human_approval' }] } },
       ],
     });
+  });
+
+  it('scans only runs with an approval step, so scheduled runs cannot fill the window', async () => {
+    // With ownerless runs admitted, a schedule running every minute would
+    // otherwise take all 1000 scan slots with runs that have no approval,
+    // pushing older decisions off the page. The jsonb containment keeps them
+    // out of the scan, and the newest-first cap still applies to the rest.
+    await GET(makeRequest());
+
+    const args = vi.mocked(prisma.aiWorkflowExecution.findMany).mock.calls[0]?.[0];
+    expect((args?.where as { AND: unknown[] }).AND).toContainEqual({
+      executionTrace: { array_contains: [{ stepType: 'human_approval' }] },
+    });
+    expect(args).toMatchObject({ orderBy: { updatedAt: 'desc' }, take: 1000 });
   });
 
   it('classifies token actors and leaves approverName null', async () => {

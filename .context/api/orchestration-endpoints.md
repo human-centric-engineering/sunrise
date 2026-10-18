@@ -596,7 +596,7 @@ Past approval decisions, flattened from `human_approval` trace entries to one ro
 
 Query parameters: `page`, `limit`, `decision`, `medium`, `q` (text search over workflow / step / approver), `dateFrom`, `dateTo`, and `format=csv` for CSV export (otherwise JSON).
 
-CSV mode streams `text/csv` with a date-stamped filename header — the admin UI's history table consumes it via `URL.createObjectURL` for download. Scoped by `executionVisibilityWhere`, like the executions list: decisions on the caller's own runs and, where the policy permits ownerless reads (every admin, on a default install), on scheduled and inbound runs nobody owns. Decisions on another admin's run stay out, including one the caller was named as approver on. A named approver can act on such a run but not find it on the read surfaces (see above).
+CSV mode streams `text/csv` with a date-stamped filename header — the admin UI's history table consumes it via `URL.createObjectURL` for download. Scoped by `executionVisibilityWhere`, like the executions list: decisions on the caller's own runs and, where the policy permits ownerless reads (every admin, on a default install), on scheduled and inbound runs nobody owns. Decisions on another admin's run stay out, including one the caller was named as approver on. A named approver can act on such a run but not find it on the read surfaces (see above). The query reads only runs whose trace holds a `human_approval` step, newest first, up to 1000.
 
 ---
 

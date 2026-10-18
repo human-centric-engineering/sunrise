@@ -61,14 +61,20 @@ export const GET = withAdminAuth(
     });
 
     // Pull the smallest reasonable set of executions — those the caller may
-    // see, in a decidable post-pause state — and let the in-memory pass do
-    // the JSON walk + decision/medium/date filtering. Prisma JSON filters
-    // can't usefully match nested step shapes, so the SQL stage just trims
-    // by visibility + status; the in-memory pass does the rest, bounded by
-    // `MAX_EXECUTIONS_SCANNED`. The status filter sits in an `AND` beside the
-    // visibility clause so it narrows rather than replacing that clause's `OR`.
+    // see, in a decidable post-pause state, whose trace holds an approval
+    // step — and let the in-memory pass do the decision/medium/date
+    // filtering, bounded by `MAX_EXECUTIONS_SCANNED`. The trace filter is a
+    // jsonb containment (`@>`): without it, a schedule running every minute
+    // fills the scan budget with ownerless runs that have no approval, and
+    // older decisions drop out of the page. The filters sit in an `AND`
+    // beside the visibility clause so they narrow rather than replacing that
+    // clause's `OR`.
     const where: Prisma.AiWorkflowExecutionWhereInput = {
-      AND: [executionVisibilityWhere(session), { status: { not: 'paused_for_approval' } }],
+      AND: [
+        executionVisibilityWhere(session),
+        { status: { not: 'paused_for_approval' } },
+        { executionTrace: { array_contains: [{ stepType: 'human_approval' }] } },
+      ],
     };
 
     const executions = await prisma.aiWorkflowExecution.findMany({

@@ -53,7 +53,8 @@ interface RunDetail {
 /**
  * Only a run that reached aggregation has `metricSlugs` and `stats`. A run the
  * worker failed before then (dataset changed, invalid metric configs, preflight)
- * carries just a `note`, plus `error` for a preflight failure (#922).
+ * carries just a `note`, plus `error` for a preflight failure; a run the worker
+ * crashed on carries `error` and `message` (#922).
  */
 interface RunSummary {
   metricSlugs?: string[];
@@ -73,7 +74,10 @@ interface RunSummary {
   totalJudgeTokens?: { input: number; output: number };
   note?: string;
   dominantErrorCode?: string;
+  /** Preflight failures carry the reason here; a worker crash, its code. */
   error?: string;
+  /** With `error: 'worker_unexpected_error'`: what was thrown. */
+  message?: string;
 }
 
 interface CaseResult {
@@ -372,7 +376,7 @@ export function RunDetailView({ runId }: { runId: string }): React.ReactElement 
               </Table>
             ) : (
               <p className="text-muted-foreground text-sm">
-                No metrics were aggregated: the run stopped before any case was scored.
+                No metrics were aggregated for this run.
               </p>
             )}
             {run.summary.note ? (
@@ -382,7 +386,10 @@ export function RunDetailView({ runId }: { runId: string }): React.ReactElement 
               </p>
             ) : null}
             {run.summary.error ? (
-              <p className="text-destructive mt-1 text-xs">{run.summary.error}</p>
+              <p className="text-destructive mt-1 text-xs">
+                {run.summary.error}
+                {run.summary.message ? `: ${run.summary.message}` : ''}
+              </p>
             ) : null}
           </CardContent>
         </Card>
