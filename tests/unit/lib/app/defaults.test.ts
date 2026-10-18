@@ -77,6 +77,10 @@ import {
   __resetAppOrgSourceRegistryForTests,
 } from '@/lib/privacy/org-source-registry';
 import { getAppJobs, __resetAppJobsForTests } from '@/lib/orchestration/maintenance/app-jobs';
+import {
+  getErasureCleanupHooks,
+  __resetErasureCleanupHooksForTests,
+} from '@/lib/privacy/erasure-hooks';
 import { getEffectiveRateLimitPolicy, RATE_LIMIT_POLICY } from '@/lib/security/rate-limit-policy';
 import {
   hasProviderEligibilityResolver,
@@ -348,6 +352,15 @@ const SEAM_DEFAULTS: SeamDefault[] = [
       __resetAppJobsForTests();
       // getAppJobs() triggers the lazy init, so this exercises the REAL seam.
       expect(getAppJobs()).toEqual([]);
+    },
+  },
+  {
+    seam: 'lib/app/erasure.ts',
+    risk: 'a stray hook would run inside every account erasure on every install \u2014 deleting external data, or scrubbing rows, that the install never asked it to touch',
+    assert: () => {
+      __resetErasureCleanupHooksForTests();
+      // getErasureCleanupHooks() triggers the lazy init, so this exercises the REAL seam.
+      expect(getErasureCleanupHooks()).toEqual([]);
     },
   },
   {
