@@ -140,7 +140,25 @@ Called automatically by the unified maintenance tick **before** `reapZombieExecu
 
 ### Unified Maintenance Tick (admin-auth required, **preferred**)
 
-`POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call. **Returns `202 Accepted`** as soon as `processDueSchedules()` has claimed and fired any due schedules; the remaining ten tasks run as a fire-and-forget background chain inside the same overlap guard and log per-task results when they settle. Each background task also has a minimum interval, so most ticks run only a subset — see the table below.
+`POST /api/v1/admin/orchestration/maintenance/tick` — runs all periodic maintenance tasks in one call. **Returns `202 Accepted`** as soon as `processDueSchedules()` has claimed and fired any due schedules; the remaining ten tasks run as a background chain inside the same overlap guard and log per-task results when they settle. Each background task also has a minimum interval, so most ticks run only a subset — see the table below.
+
+`GET` on the same path does the same, but accepts **an admin API key only** and refuses a browser session with `403`. It exists for Vercel Cron, which can send nothing but a `GET` with `Authorization: Bearer $CRON_SECRET`. A session is refused because a session cookie travels with a cross-site link, so a `GET` that accepted one would let any page make a signed-in admin's browser fire a tick.
+
+**The background chain runs under `after()` (t-844).** On a serverless host the invocation can be frozen as soon as the response is sent, which would silently stop every task below. `runMaintenanceTick()` returns the chain as `background`, and the route passes it to Next's `after()`, which keeps the invocation alive until it settles (Vercel runs it under `waitUntil`). The route sets `maxDuration = 300`, matching the chain's five-minute watchdog. `after()` is not called inside `run-tick.ts` because the dev ticker in `instrumentation.ts` runs outside any request, where `after()` throws; there the chain runs on the long-lived process. A caller of `runMaintenanceTick()` from a request handler must hand `background` to `after()` the same way. The chain never rejects.
+
+#### Every production host needs an external cron
+
+The in-process ticker in `instrumentation.ts` runs **only in development**. In production nothing calls the tick unless something outside the app does, on every host: Vercel, a container, or a VPS. Without it the app serves traffic and `/api/health` reports OK, but schedules never fire, retries never drain, stuck runs are never reaped and retention never runs.
+
+Call it every minute with an admin API key (`admin` scope, minted by a platform admin — see [API Keys](./api-keys.md)):
+
+```bash
+# crontab on a VPS or container host, or any external scheduler that can POST
+* * * * * curl -fsS -X POST -H "Authorization: Bearer sk_..." \
+  https://yourdomain/api/v1/admin/orchestration/maintenance/tick
+```
+
+On Vercel, set `CRON_SECRET` to the key and add the cron to `vercel.json` — see [Vercel: Maintenance tick cron](../deployment/platforms/vercel.md#maintenance-tick-cron), which also covers the Hobby plan's once-a-day limit. Per-platform notes are in [hosting requirements](./meta/hosting-requirements.md).
 
 1. `processDueSchedules()` — workflow cron schedules **(awaited synchronously)**
 2. `processPendingRetries()` — webhook subscription delivery retry queue _(background)_

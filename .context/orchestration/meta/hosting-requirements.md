@@ -188,7 +188,7 @@ The scheduler is **stateless and pull-driven**:
 | `/api/v1/admin/orchestration/maintenance/tick` | Every minute      | **Preferred — one entry covers everything.** Claims due schedules synchronously, then runs eight housekeeping tasks in the background: webhook retries, hook retries, orphan sweep, zombie reaper, embedding backfill, retention pruning, orphaned-pending recovery, evaluation runs. Each has its own minimum interval, and a tick with nothing to do returns without touching the database at all. |
 | `/api/v1/admin/orchestration/schedules/tick`   | Every minute      | **Legacy.** Only runs `processDueSchedules()`. Use only if you want the housekeeping tasks driven from a separate cron entry.                                                                                                                                                                                                                                                                        |
 
-A single cron entry hitting `/maintenance/tick` is sufficient. Both endpoints are HTTP POSTs, require admin auth (session or API key with admin scope), and are idempotent within a tick window. **Any host that can issue a `curl` on a cron** can drive this — Vercel Cron, Render Cron Jobs, Fly Machines cron, system `cron`, or a third-party pinger like cron-job.org. There is no in-process cron daemon, by design (`lib/orchestration/scheduling/scheduler.ts`).
+A single cron entry hitting `/maintenance/tick` is sufficient. Both endpoints take an HTTP POST, require admin auth (session or API key with admin scope), and are idempotent within a tick window. `/maintenance/tick` also takes a GET with an admin API key only, because Vercel Cron can send nothing else (see [Vercel](../../deployment/platforms/vercel.md#maintenance-tick-cron)). **Any host that can issue a `curl` on a cron** can drive this — Vercel Cron, Render Cron Jobs, Fly Machines cron, system `cron`, or a third-party pinger like cron-job.org. There is no in-process cron daemon, by design (`lib/orchestration/scheduling/scheduler.ts`).
 
 ```bash
 * * * * * curl -fsS -X POST \
@@ -206,7 +206,7 @@ The scheduler does **not** require a singleton instance — the optimistic-lock 
 
 **What stops working if you forget to wire this up.** Scheduled workflows never fire. Webhook and event-hook delivery retries never drain. Stale `running` executions are never reaped. Conversation, cost-log, and audit-log retention is never enforced. Failed message embeddings are never re-tried. Orphaned `pending` executions sit forever. The app keeps serving traffic and `/api/health` reports OK — the failure is **silent**. Treat the cron entry as a deploy-time requirement, not an optional add-on.
 
-> **Per-platform note.** The platform deployment guides under `.context/deployment/platforms/` (Vercel, Render, Railway, Docker self-hosted) currently focus on web/DB setup and do not include cron wiring. Until they do, treat the cron entry as a manual step you must add in your platform's cron UI, in `vercel.json`, or via `crontab -e` on a VPS. The bundled `docker-compose.prod.yml` does **not** include a cron sidecar — run host `cron` against the published port, or add a sidecar.
+> **Per-platform note.** The Vercel guide has the cron wiring ([Maintenance tick cron](../../deployment/platforms/vercel.md#maintenance-tick-cron)). The other platform guides under `.context/deployment/platforms/` (Render, Railway, Docker self-hosted) focus on web/DB setup and do not include it yet, so treat the cron entry as a manual step you must add in your platform's cron UI, in `vercel.json`, or via `crontab -e` on a VPS. The bundled `docker-compose.prod.yml` does **not** include a cron sidecar — run host `cron` against the published port, or add a sidecar.
 
 ---
 
@@ -339,7 +339,7 @@ For a reader who hasn't deployed before, the difference between platforms is mos
 3. In the project settings, set the build command to `npm run build && npm run db:migrate:deploy`.
 4. Provision a database: in Vercel's Storage tab, click "Create Postgres" — it auto-fills `DATABASE_URL`. Or paste a connection string from Neon / Supabase.
 5. Add the other env vars from `.env.example` (`BETTER_AUTH_SECRET`, etc.).
-6. Add a Vercel Cron entry hitting `/api/v1/admin/orchestration/maintenance/tick` every minute.
+6. Add a Vercel Cron entry hitting `/api/v1/admin/orchestration/maintenance/tick` every minute, with `CRON_SECRET` set to an admin API key — see [the Vercel guide](../../deployment/platforms/vercel.md#maintenance-tick-cron). A per-minute cron needs the Pro plan.
 7. Push to `main`. It deploys.
 
 You do not need to know what nginx, Docker, or supervisord are.

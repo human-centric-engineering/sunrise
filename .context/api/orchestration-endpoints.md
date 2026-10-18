@@ -155,7 +155,7 @@ Validation schemas for every request body / query live in `lib/validations/orche
 | `/knowledge/documents/:id/confirm` | POST | Confirm a PDF preview and proceed with chunking | 5.1 |
 | `/hooks` | GET, POST | List / create event hooks | 5.1 |
 | `/hooks/:id` | GET, PATCH, DELETE | Read / update / delete an event hook | 5.1 |
-| `/maintenance/tick` | POST | Trigger maintenance (retention, retries, schedules) | 5.1 |
+| `/maintenance/tick` | POST, GET | Trigger maintenance (retention, retries, schedules); GET takes an admin API key only, for Vercel Cron | 5.1 |
 | `/mcp/settings` | GET, PATCH | MCP server configuration | 6 |
 | `/mcp/tools` | GET | List MCP-exposed tools | 6 |
 | `/mcp/tools/:id` | PATCH | Toggle / configure MCP tool exposure | 6 |
