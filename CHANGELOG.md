@@ -741,7 +741,9 @@ release process.
   `SUBJECT_LOCK_TRIES` (3, exported from `lib/privacy/erase-user.ts`) waits
   inside, as before. New in `lib/privacy/erased-subjects.ts`:
   `tryLockSubjects()`, `waitForSubjectLocks()`, `SubjectLocksBusyError` and
-  `SUBJECT_LOCK_WAIT_MS` (150 s per lock). An import holding a row the erasure
+  `SUBJECT_LOCK_WAIT_MS` (150 s per lock). `tryLockSubjects()` returns false
+  on a held lock, and a caller must then roll back: the keys it took before
+  that one stay held until the transaction ends. An import holding a row the erasure
   needs, rather than the person's lock, can still time it out. **Forks:** an
   erasure queued behind a writer now takes as long as that writer, up to
   150 s per wait, where before it failed at 60 s. A route that calls

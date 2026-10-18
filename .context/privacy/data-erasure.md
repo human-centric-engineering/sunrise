@@ -582,9 +582,13 @@ what it is about to write names an erased person —
 
 The tick reads its schedules at the top of the tick, and an erasure can commit
 before it creates the run. So it creates the run, and claims the schedule's
-firing, in one transaction that checks the receipts first. A run that cannot
-be created leaves the firing for the next tick. It takes no row lock before the
-insert, so it cannot deadlock with an erasure or a workflow delete.
+firing, in one transaction that checks the receipts first. Unlike the other
+writers it only **tries** the locks (`tryLockSubjects`): a schedule whose
+person is locked by an erasure or a backup import is left, unclaimed, for the
+next tick, rather than holding up every other due schedule while it waits. Any
+other failure to create the run still claims the firing, so a broken schedule
+fails once per firing, not on every tick. The tick takes no row lock before
+the insert, so it cannot deadlock with an erasure or a workflow delete.
 `npm run smoke:erasure-writers` runs both orders against a real tick.
 
 **Why a lock and not just a check.** A check alone races the erasure: the
@@ -617,14 +621,23 @@ backup importer holds the locks for everyone its bundle names for the whole
 import (`IMPORT_TRANSACTION_TIMEOUT_MS`, up to 130 s), so an erasure that
 waited inside its 60 s transaction could time out behind a long import and
 erase nothing. The erasure transaction only tries the person's locks
-(`tryLockSubjects`). On a miss it throws `SubjectLocksBusyError` and rolls
-back before anything past the lock has run, and `eraseUser()` waits outside it
-(`waitForSubjectLocks`, each lock in its own transaction, up to
-`SUBJECT_LOCK_WAIT_MS`, 150 s), then runs it again. A second import that queued
+(`tryLockSubjects`), straight after it reads the user row and before it writes
+anything. On a miss it throws `SubjectLocksBusyError`, which rolls back nothing
+but that read, and `eraseUser()` waits outside it (`waitForSubjectLocks`, each
+lock in its own transaction, bounded by Postgres's `lock_timeout` at
+`SUBJECT_LOCK_WAIT_MS`, 150 s), then runs it again. A writer that queued
 during the wait gets the lock first, so this can repeat. The last of
 `SUBJECT_LOCK_TRIES` (3) tries waits inside the transaction, as every try did
-before, so a lock that keeps being taken cannot hold the erasure off for good.
-A failed wait is logged, and the next try finds out for itself.
+before, so a lock that keeps being taken cannot hold the erasure off for good;
+a busy error from that try is thrown, not retried. A failed wait is logged,
+and the next try finds out for itself.
+
+**Why not simply wait inside a longer transaction.** It would keep the
+erasure's place in the queue, but its transaction would then outlast the
+writers' 70 s, which have to outlast it. The importer's 130 s includes that
+70 s, and erasure has to outlast the importer. So once erasure's transaction
+includes its wait, no set of timeouts satisfies all three. Trying keeps the
+time erasure holds the lock within its 60 s.
 
 This covers the subject locks only. An import that holds a **row** the erasure
 also needs still makes it wait inside its 60 s: for example, an import that
