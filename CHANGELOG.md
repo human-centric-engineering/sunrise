@@ -372,6 +372,14 @@ release process.
   `provider-model-auditor` agent's instructions and the audit template's
   prompts and approval screen are updated; the next seed publishes a new
   version of the system audit workflow.
+- **A shared mode for the erasure locks** (t-841). `lockSubjects()` and
+  `findErasedSubjects()` in `lib/privacy/erased-subjects.ts` take an optional
+  `{ shared: true }`: the lock then excludes an erasure, which takes it
+  exclusively, but not other shared holders. Core's workflow notification step
+  and approval pause use it, so two sends to one address do not queue on each
+  other. Without the option the lock is exclusive, as before. `sendEmail()`
+  (`lib/email/send.ts`) takes an optional `signal` and `idempotencyKey`, passed
+  to Resend.
 
 ### Changed
 

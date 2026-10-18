@@ -18,6 +18,7 @@ import {
   RUN_PAGE_SIZE,
   eraseFromRunInputs,
   preRedactSubjectFromRuns,
+  redactErased,
   redactPerson,
 } from '@/lib/privacy/run-recipients';
 
@@ -25,6 +26,31 @@ const USER_ID = 'cmuser00000000000000erase';
 const ADDRESS = 'gone@bar.com';
 const ACTOR = 'cmuser00000000000000actor';
 const subject = { userId: USER_ID, address: ADDRESS };
+
+describe('redactErased (t-841)', () => {
+  it('applies the run rule for every erased address and id', () => {
+    const pause = {
+      prompt: 'Approve the send to x',
+      previous: { to: 'Gone@Example.com', cc: ['keep@example.com'] },
+      approverUserIds: ['cmgone', 'cmkept'],
+      notificationChannel: { type: 'email', target: 'gone@example.com' },
+      actor: 'admin:cmgone',
+    };
+
+    expect(redactErased(pause, { addresses: ['gone@example.com'], userIds: ['cmgone'] })).toEqual({
+      prompt: 'Approve the send to x',
+      previous: { to: ERASED_VALUE, cc: ['keep@example.com'] },
+      approverUserIds: ['cmkept'],
+      notificationChannel: { type: 'email' },
+      actor: `admin:${ERASED_VALUE}`,
+    });
+  });
+
+  it('returns the same value when it names none of them', () => {
+    const value = { approverUserIds: ['cmkept'] };
+    expect(redactErased(value, { addresses: ['x@example.com'], userIds: ['y'] })).toBe(value);
+  });
+});
 
 describe('redactPerson', () => {
   it('takes their id out of an approver list and their address off a notification channel', () => {

@@ -534,17 +534,24 @@ transaction):
 
    - **A `send_notification` email step** checks its resolved recipients
      against the receipts, under the subjects' locks, in the transaction it
-     sends in, and holds the locks until the send settles. Whichever of the
+     sends in, and holds the locks until the send settles. It takes them
+     shared, so two sends to one address run side by side; only an erasure,
+     which takes them exclusively, waits — and once queued it is not overtaken
+     by a later send. Whichever of the
      send and the erasure takes a lock first finishes before the other reads:
      the erased recipient is left out, or the email went before the erasure
      committed. A step left with no recipient fails (`RECIPIENT_ERASED`, not
      retried), as one whose `to` erasure emptied does; one left with some
      sends to them, and its output counts the rest (`recipientsLeftOut`). The
      send is bounded (15 s) so the locks are let go, and carries a Resend
-     idempotency key so a retry after a timeout is not delivered twice.
-   - **An approval pause** is a writer: under the same locks it takes an
-     erased approver and an erased notification target out of its payload and
-     its trace entry, by erasure's rule, before it writes the paused row, and
+     idempotency key so a retry after a timeout is not delivered twice. A
+     step past its own `timeoutMs`, or in a cancelled run, sends nothing: the
+     engine gives up on a timed-out step without stopping it.
+   - **An approval pause** is a writer: under the same locks, shared, it
+     redacts anyone erased from its payload and its trace entry by the rule
+     erasure applies to a run (`redactErased`) — out of the approver list, the
+     notification target removed, any other value that is their address or id
+     `[erased]` — before it writes the paused row, and
      the hook, webhook and streamed events carry what it wrote. The approval
      notification does not log its target address
      (`dispatchApprovalNotification`), since the application log is beyond

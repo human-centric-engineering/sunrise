@@ -487,11 +487,66 @@ describe('executeNotification', () => {
       const second = vi.mocked(sendEmail).mock.calls[1][0];
 
       expect(first.signal).toBeInstanceOf(AbortSignal);
-      expect(first.idempotencyKey).toMatch(
-        /^workflow-notification\/exec-1\/notify-1\/[0-9a-f]{16}$/
-      );
+      expect(first.idempotencyKey).toMatch(/^workflow-notification\/[0-9a-f]{32}$/);
       // A different list is a different request, so a different key.
       expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+    });
+
+    it('takes the lock shared, so sends to one address do not queue on each other', async () => {
+      const statements: string[] = [];
+      tx.$executeRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+        statements.push(strings.join('?'));
+        return 1;
+      });
+
+      await executor(makeEmailStep(), makeCtx());
+
+      expect(statements.some((q) => q.includes('pg_advisory_xact_lock_shared('))).toBe(true);
+      expect(statements.some((q) => /pg_advisory_xact_lock\(/.test(q))).toBe(false);
+    });
+
+    it('sends nothing once the step is past its own timeoutMs, and waits no longer than it', async () => {
+      vi.useFakeTimers();
+      try {
+        const lockWaits: string[] = [];
+        tx.$executeRaw.mockImplementation(
+          async (strings: TemplateStringsArray, ...values: unknown[]) => {
+            if (strings.join('?').includes('lock_timeout')) lockWaits.push(String(values[0]));
+            return 1;
+          }
+        );
+        // The lock wait outlasts the step's 5 s timeout.
+        tx.dataErasureReceipt.findMany.mockImplementation(async () => {
+          vi.advanceTimersByTime(6_000);
+          return [];
+        });
+
+        const err = await executor(makeEmailStep({ timeoutMs: 5_000 }), makeCtx()).catch(
+          (e: unknown) => e
+        );
+
+        expect(lockWaits).toEqual(['5000ms']);
+        expect(err).toMatchObject({ code: 'STEP_TIMED_OUT', retriable: false });
+        expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps the key within Resend's 256 characters for a long step id", async () => {
+      await executor({ ...makeEmailStep(), id: 'x'.repeat(400) }, makeCtx());
+
+      expect(vi.mocked(sendEmail).mock.calls[0][0].idempotencyKey?.length).toBeLessThanOrEqual(256);
+    });
+
+    it('changes the key when the rendered email changes, so an edited retry is not refused', async () => {
+      await executor(makeEmailStep({ bodyTemplate: 'First wording' }), makeCtx());
+      await executor(makeEmailStep({ bodyTemplate: 'First wording' }), makeCtx());
+      await executor(makeEmailStep({ bodyTemplate: 'Edited wording' }), makeCtx());
+      const [a, b, c] = vi.mocked(sendEmail).mock.calls.map(([o]) => o.idempotencyKey);
+
+      expect(a).toBe(b); // a retry of the same send keeps it
+      expect(c).not.toBe(a);
     });
 
     it('sends nothing when the run was cancelled while the step waited for the lock', async () => {

@@ -43,9 +43,11 @@
  */
 
 import { Prisma } from '@prisma/client';
+import { z } from 'zod';
 import { createLogger, type Logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
-import { approvalRecipients, approvalWithoutErased } from '@/lib/privacy/config-recipients';
+import { approvalRecipients } from '@/lib/privacy/config-recipients';
+import { redactErased } from '@/lib/privacy/run-recipients';
 import { isRecord } from '@/lib/utils';
 import {
   boundLockWaits,
@@ -2309,14 +2311,17 @@ export class OrchestrationEngine {
       // (t-841). The pause writes them into the run and sends them on in the
       // events below, so it is a writer like any other (t-805): under erasure's
       // lock, anyone with a receipt is taken out of the payload and the trace
-      // entry, by erasure's own rule, before the paused row is written.
+      // entry, by the rule erasure applies to a run (`redactErased`), before the
+      // paused row is written.
       const named = approvalPayload ? approvalRecipients(approvalPayload) : null;
       const result =
         named && (named.addresses.length > 0 || named.userIds.length > 0)
           ? await prisma.$transaction(
               async (tx) => {
                 await boundLockWaits(tx, SUBJECT_LOCK_WAIT_MS);
-                const erased = await findErasedSubjects(tx, named);
+                // Shared: other pauses and sends naming the same people need not
+                // wait for this one; only an erasure must.
+                const erased = await findErasedSubjects(tx, named, { shared: true });
                 if (erased.addresses.length > 0 || erased.userIds.length > 0) {
                   approvalPayload = withoutErasedInPause(trace, stepId, approvalPayload, erased);
                   // Never the address or the id: they are what was erased.
@@ -2549,7 +2554,8 @@ function sleep(ms: number): Promise<void> {
 /**
  * The approval payload without the people in `erased`, and the paused step's
  * trace entry — its config (`input`) and its payload (`output`), which the
- * approval routes read approvers from — rewritten to match, in place (t-841).
+ * approval routes read approvers from — rewritten to match, in place, by the
+ * rule erasure applies to a run (t-841).
  */
 function withoutErasedInPause(
   trace: ExecutionTraceEntry[],
@@ -2559,8 +2565,22 @@ function withoutErasedInPause(
 ): Record<string, unknown> | undefined {
   const entry = trace.findLast((e) => e.stepId === stepId && e.status === 'awaiting_approval');
   if (entry) {
-    if (isRecord(entry.input)) entry.input = approvalWithoutErased(entry.input, erased);
-    if (isRecord(entry.output)) entry.output = approvalWithoutErased(entry.output, erased);
+    if (entry.input !== undefined) entry.input = redactErased(toJson(entry.input), erased);
+    entry.output = redactErased(toJson(entry.output), erased);
   }
-  return payload ? approvalWithoutErased(payload, erased) : payload;
+  if (!payload) return payload;
+  const redacted = redactErased(toJson(payload), erased);
+  return isRecord(redacted) ? redacted : payload;
+}
+
+const jsonValueSchema = z.json();
+
+/**
+ * `value` as the JSON it is persisted as: the trace and the payload are
+ * written to a JSON column, so this is the value erasure later reads.
+ */
+function toJson(value: unknown): Prisma.JsonValue {
+  if (value === undefined) return null;
+  const parsed: unknown = JSON.parse(JSON.stringify(value));
+  return jsonValueSchema.parse(parsed);
 }

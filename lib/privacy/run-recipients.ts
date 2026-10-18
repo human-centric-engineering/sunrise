@@ -55,6 +55,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 import { asciiSearchTerm, isJsonObject, type PersonMatch } from '@/lib/privacy/config-recipients';
+import type { ErasedSubjects } from '@/lib/privacy/erased-subjects';
 
 /** Written on the audit row as the reason for every schedule changed here. */
 const ERASURE_REASON = 'A person this schedule named was erased.';
@@ -165,6 +166,24 @@ export function redactPerson(
 
   const next = walk(value);
   return removed === 0 ? null : { value: next, removed };
+}
+
+/**
+ * `value` without anyone in `erased`, by the rule erasure applies to a run
+ * ({@link redactPerson} with {@link ERASED_VALUE}): the same value when it
+ * names none of them. For a writer holding a copy of a run read before the
+ * erasure — the approval pause (t-841).
+ */
+export function redactErased(value: Prisma.JsonValue, erased: ErasedSubjects): Prisma.JsonValue {
+  const subjects: PersonMatch[] = [
+    ...erased.addresses.map((address) => ({ userId: null, address })),
+    ...erased.userIds.map((userId) => ({ userId, address: null })),
+  ];
+  let current = value;
+  for (const subject of subjects) {
+    current = redactPerson(current, subject, ERASED_VALUE)?.value ?? current;
+  }
+  return current;
 }
 
 /**

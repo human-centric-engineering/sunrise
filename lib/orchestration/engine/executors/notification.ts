@@ -163,13 +163,22 @@ async function sendToLiveRecipients(
   to: string | string[],
   send: (to: string | string[], signal: AbortSignal, idempotencyKey: string) => Promise<SendResult>,
   ctx: Readonly<ExecutionContext>,
-  stepId: string
+  stepId: string,
+  { content, deadline }: { content: string; deadline: number | null }
 ): Promise<{ result: SendResult; to: string | string[]; leftOut: number }> {
   const list = Array.isArray(to) ? to : [to];
+  // A step with its own `timeoutMs` waits for the locks no longer than that:
+  // the engine gives up on it then, without aborting it (review round 2).
+  const lockWaitMs =
+    deadline === null
+      ? SUBJECT_LOCK_WAIT_MS
+      : Math.max(1, Math.min(SUBJECT_LOCK_WAIT_MS, deadline - Date.now()));
   return prisma.$transaction(
     async (tx) => {
-      await boundLockWaits(tx, SUBJECT_LOCK_WAIT_MS);
-      const erased = await findErasedSubjects(tx, { addresses: list });
+      await boundLockWaits(tx, lockWaitMs);
+      // Shared: sends to the same address need not wait for each other, only
+      // for an erasure, which takes the lock exclusively (review round 2).
+      const erased = await findErasedSubjects(tx, { addresses: list }, { shared: true });
       const gone = new Set(erased.addresses);
       const kept = list.filter((address) => !gone.has(normaliseAddress(address)));
       if (kept.length === 0) {
@@ -188,8 +197,18 @@ async function sendToLiveRecipients(
           leftOut: list.length - kept.length,
         });
       }
-      // The lock wait above does not watch the run's signal: a run cancelled
-      // while it waited sends nothing (review round 1).
+      // The lock wait above watches neither the run's signal nor the step's
+      // timeout. A run cancelled while it waited sends nothing (review round 1),
+      // and nor does a step the engine has already timed out (round 2).
+      if (deadline !== null && Date.now() >= deadline) {
+        throw new ExecutorError(
+          stepId,
+          'STEP_TIMED_OUT',
+          'The step timed out before the send',
+          undefined,
+          false
+        );
+      }
       if (ctx.signal?.aborted) {
         throw new ExecutorError(
           stepId,
@@ -203,7 +222,8 @@ async function sendToLiveRecipients(
       const result = await withTimeout(
         EMAIL_SEND_TIMEOUT_MS,
         'Email send',
-        (signal) => send(sendTo, signal, emailIdempotencyKey(ctx.executionId, stepId, kept)),
+        (signal) =>
+          send(sendTo, signal, emailIdempotencyKey(ctx.executionId, stepId, kept, content)),
         ctx.signal
       );
       return { result, to: sendTo, leftOut: list.length - kept.length };
@@ -217,15 +237,26 @@ async function sendToLiveRecipients(
 type SendResult = Awaited<ReturnType<typeof sendEmail>>;
 
 /**
- * Resend's idempotency key for this step's send. The recipients go in as a
- * hash, so a send to a different list (someone erased between tries) is a new
- * request rather than one Resend refuses for differing.
+ * Resend's idempotency key for this step's send: a hash of the run, the step,
+ * the recipients and the rendered subject and body. Resend refuses a reused
+ * key whose request differs, so anything that changes the request changes the
+ * key — a list someone was erased from between tries, or a retry-step after
+ * the template was edited (review round 2) — while a retry of the same send
+ * keeps it. Hashed, so a long step id cannot push it past Resend's 256
+ * characters.
  */
-function emailIdempotencyKey(executionId: string, stepId: string, to: string[]): string {
+function emailIdempotencyKey(
+  executionId: string,
+  stepId: string,
+  to: string[],
+  content: string
+): string {
   const hash = createHash('sha256')
-    .update(to.map((address) => normaliseAddress(address)).join('\n'))
+    .update(
+      JSON.stringify([executionId, stepId, to.map((address) => normaliseAddress(address)), content])
+    )
     .digest('hex');
-  return `workflow-notification/${executionId}/${stepId}/${hash.slice(0, 16)}`;
+  return `workflow-notification/${hash.slice(0, 32)}`;
 }
 
 // ─── Executor ───────────────────────────────────────────────────────────────
@@ -259,6 +290,10 @@ async function executeNotification(
     return cached;
   }
 
+  // The engine abandons a step at its `timeoutMs` without aborting it.
+  const deadline =
+    typeof step.config.timeoutMs === 'number' ? Date.now() + step.config.timeoutMs : null;
+
   const parsed = notificationConfigSchema.safeParse(step.config);
   if (!parsed.success) {
     throw new ExecutorError(
@@ -291,7 +326,8 @@ async function executeNotification(
             idempotencyKey,
           }),
         ctx,
-        step.id
+        step.id,
+        { content: `${subject}\n${body}`, deadline }
       );
 
       if (result.status === 'failed') {

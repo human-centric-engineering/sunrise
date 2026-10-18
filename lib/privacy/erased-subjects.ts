@@ -111,20 +111,41 @@ function subjectKeys(subjects: NamedSubjects): string[] {
   ].sort();
 }
 
+/** How {@link lockSubjects} holds a lock. */
+export interface LockOptions {
+  /**
+   * Share the lock with other shared holders (t-841). For a sender, which must
+   * exclude an erasure but not other senders: two notifications to the same
+   * address run side by side, and an erasure, which takes the lock
+   * exclusively, still waits for both — and, once it is queued, is not
+   * overtaken by a sender that arrives after it. Writers that rewrite
+   * configuration keep the exclusive lock.
+   */
+  shared?: boolean;
+}
+
 /**
  * Take the transaction-scoped advisory lock for every address and user id in
  * `subjects`, in sorted order. Held until the transaction ends. Called by
  * {@link findErasedSubjects} before it reads, and by erasure when it has run
  * out of tries ({@link tryLockSubjects}).
  */
-export async function lockSubjects(tx: LockClient, subjects: NamedSubjects): Promise<void> {
+export async function lockSubjects(
+  tx: LockClient,
+  subjects: NamedSubjects,
+  options: LockOptions = {}
+): Promise<void> {
   // One statement per key, in sorted order, so two writers naming the same
   // people take their locks in the same order and cannot deadlock. A single
   // statement over a sorted subquery looked cheaper, but Postgres does not
   // promise to evaluate an outer target list in a subquery's order (review
   // round 3). The key count is the recipients one write names: a handful.
   for (const key of subjectKeys(subjects)) {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+    if (options.shared) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtextextended(${key}, 0))`;
+    } else {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+    }
   }
 }
 
@@ -204,11 +225,12 @@ export class SubjectLocksBusyError extends Error {
  */
 export async function findErasedSubjects(
   tx: CheckClient,
-  subjects: NamedSubjects
+  subjects: NamedSubjects,
+  options: LockOptions = {}
 ): Promise<ErasedSubjects> {
   const { addresses, userIds } = normalised(subjects);
   if (addresses.length === 0 && userIds.length === 0) return { addresses: [], userIds: [] };
-  await lockSubjects(tx, { addresses, userIds });
+  await lockSubjects(tx, { addresses, userIds }, options);
 
   const byHash = new Map(addresses.map((a) => [subjectEmailHash(a), a]));
   const receipts = await tx.dataErasureReceipt.findMany({

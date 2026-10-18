@@ -367,8 +367,31 @@ describe('pauseForApproval event emission', () => {
       await collect(new OrchestrationEngine(), makeWorkflow(namingDefinition()));
 
       expect(prisma.$transaction).toHaveBeenCalledOnce();
+      // Shared: only an erasure, never another pause or send, must wait for it.
+      const statements = tx.$executeRaw.mock.calls.map(([strings]) =>
+        (strings as TemplateStringsArray).join('?')
+      );
+      expect(statements.filter((q) => q.includes('pg_advisory_xact_lock_shared('))).toHaveLength(3);
       // One lock per key it names: two approver ids and the address.
       expect(order).toEqual(['lock', 'lock', 'lock', 'write']);
+    });
+
+    it("redacts them elsewhere in the payload by erasure's run rule, as the run row is", async () => {
+      registerStepType('human_approval', async (step) => {
+        throw new PausedForApproval(step.id, {
+          prompt: 'Please approve',
+          previous: { to: 'gone@example.com' },
+          ...named,
+        });
+      });
+
+      await collect(new OrchestrationEngine(), makeWorkflow(namingDefinition()));
+
+      const entry = pausedTrace().find((e) => e.status === 'awaiting_approval');
+      expect(entry?.output).toMatchObject({ previous: { to: '[erased]' } });
+      await vi.waitFor(() => expect(dispatchWebhookEvent).toHaveBeenCalled());
+      const webhookPayload = vi.mocked(dispatchWebhookEvent).mock.calls[0][1];
+      expect(JSON.stringify(webhookPayload)).not.toMatch(/gone@example\.com/i);
     });
 
     it('opens no transaction for an approval that names nobody', async () => {
