@@ -27,6 +27,14 @@ import {
 
 // ─── Module mocks ────────────────────────────────────────────────────────────
 
+// `after()` throws outside a real request scope. Recorded rather than run: the
+// background chain is already running when the route hands it over (t-844).
+const mockAfter = vi.hoisted(() => vi.fn());
+vi.mock('next/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/server')>()),
+  after: mockAfter,
+}));
+
 vi.mock('@/lib/auth/config', () => ({
   auth: { api: { getSession: vi.fn() } },
 }));
@@ -206,6 +214,8 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     const response = await POST(makeRequest());
 
     expect(response.status).toBe(202);
+    // The background chain is kept alive past the response, not left floating.
+    expect(mockAfter).toHaveBeenCalledWith(expect.any(Promise));
     const body = await parseJson<{
       success: boolean;
       data: { schedules: unknown; backgroundTasks: string[]; durationMs: number };
