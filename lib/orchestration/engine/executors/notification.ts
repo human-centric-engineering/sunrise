@@ -5,7 +5,9 @@
  *   - `channel: 'email' | 'webhook'` — notification channel.
  *   - `to: string | string[]` — email recipients. Each may be a literal address
  *     or a `{{…}}` template resolved per run (e.g. `{{input.userEmail}}`); the
- *     resolved value is validated as an email at runtime.
+ *     resolved value is validated as an email at runtime. A recipient whose
+ *     data was erased since the run started is left out when it sends; a step
+ *     with none left fails (t-841, `sendToLiveRecipients`).
  *   - `subject?: string` — email subject (required for email channel).
  *   - `bodyTemplate: string` — message body with `{{input}}` interpolation.
  *   - `webhookUrl?: string` — target URL (required for webhook channel). The
@@ -17,6 +19,7 @@
  * variables in `to`, `subject`, and `bodyTemplate`.
  */
 
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { StepResult, WorkflowStep } from '@/types/orchestration';
 import type { ExecutionContext } from '@/lib/orchestration/engine/context';
@@ -34,6 +37,13 @@ import { logger } from '@/lib/logging';
 import { loggableUrl } from '@/lib/logging/redact-path';
 import { WorkflowNotification } from '@/emails/workflow-notification';
 import { notificationToSchema } from '@/lib/validations/orchestration';
+import { prisma } from '@/lib/db/client';
+import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
+import {
+  boundLockWaits,
+  findErasedSubjects,
+  SUBJECT_LOCK_WAIT_MS,
+} from '@/lib/privacy/erased-subjects';
 
 // ─── Config schema ──────────────────────────────────────────────────────────
 
@@ -73,6 +83,19 @@ const notificationConfigSchema = z.discriminatedUnion('channel', [
  * `workflow_failed` event. The bodyTemplate can be a multi-paragraph
  * email; truncate so the column / event payload stays bounded. */
 const FAILURE_REASON_MAX = 2000;
+
+/**
+ * How long an email send may take. The erasure lock is held until it settles
+ * (`sendToLiveRecipients`), so it has to end; the same bound the email
+ * delivery channel uses (`DISPATCH_TIMEOUT_MS.email`, t-808).
+ */
+export const EMAIL_SEND_TIMEOUT_MS = 15_000;
+
+/**
+ * The transaction a send runs in: a wait for the recipients' locks, then the
+ * send, with room to commit.
+ */
+const SEND_TRANSACTION_TIMEOUT_MS = SUBJECT_LOCK_WAIT_MS + EMAIL_SEND_TIMEOUT_MS + 10_000;
 
 /** A webhook receiver's reply is read only for its status. */
 const WEBHOOK_RESPONSE_MAX_BYTES = 64 * 1024;
@@ -116,6 +139,104 @@ function resolveRecipients(
   };
 
   return Array.isArray(to) ? to.map(resolveOne) : resolveOne(to);
+}
+
+/**
+ * Send to the recipients who have not been erased (t-841).
+ *
+ * A run holds its definition and input in memory from the moment it starts, so
+ * a person erased while it runs is still named by the step's `to`. So, in one
+ * transaction: take erasure's lock for each recipient, leave out anyone with an
+ * erasure receipt, and send — holding the locks until the send has settled.
+ * Whichever of this and an erasure takes the lock first finishes before the
+ * other reads: either the receipt is seen and the person is left out, or the
+ * email went before the erasure committed. Erasure only tries the lock, and
+ * waits outside its own transaction when it is busy (t-840).
+ *
+ * The send is bounded, so the locks are let go; a send that timed out may have
+ * been accepted, so it carries an idempotency key and a retry of the step is
+ * not delivered twice. A step whose every recipient was erased fails, not
+ * retried, as one whose `to` erasure emptied does.
+ */
+async function sendToLiveRecipients(
+  to: string | string[],
+  send: (to: string | string[], signal: AbortSignal, idempotencyKey: string) => Promise<SendResult>,
+  ctx: Readonly<ExecutionContext>,
+  stepId: string
+): Promise<{ result: SendResult; to: string | string[]; leftOut: number }> {
+  const list = Array.isArray(to) ? to : [to];
+  return prisma.$transaction(
+    async (tx) => {
+      await boundLockWaits(tx, SUBJECT_LOCK_WAIT_MS);
+      const erased = await findErasedSubjects(tx, { addresses: list });
+      const gone = new Set(erased.addresses);
+      const kept = list.filter((address) => !gone.has(normaliseAddress(address)));
+      if (kept.length === 0) {
+        throw new ExecutorError(
+          stepId,
+          'RECIPIENT_ERASED',
+          'Every recipient of this notification belongs to a person whose data was erased',
+          undefined,
+          false
+        );
+      }
+      if (kept.length < list.length) {
+        // Never the address: it is what was erased.
+        logger.warn('Notification step: left out recipients whose data was erased', {
+          stepId,
+          leftOut: list.length - kept.length,
+        });
+      }
+      const sendTo = Array.isArray(to) ? kept : kept[0];
+      const result = await withTimeout(EMAIL_SEND_TIMEOUT_MS, ctx.signal, (signal) =>
+        send(sendTo, signal, emailIdempotencyKey(ctx.executionId, stepId, kept))
+      );
+      return { result, to: sendTo, leftOut: list.length - kept.length };
+    },
+    { timeout: SEND_TRANSACTION_TIMEOUT_MS }
+  );
+}
+
+type SendResult = Awaited<ReturnType<typeof sendEmail>>;
+
+/**
+ * Resend's idempotency key for this step's send. The recipients go in as a
+ * hash, so a send to a different list (someone erased between tries) is a new
+ * request rather than one Resend refuses for differing.
+ */
+function emailIdempotencyKey(executionId: string, stepId: string, to: string[]): string {
+  const hash = createHash('sha256')
+    .update(to.map((address) => normaliseAddress(address)).join('\n'))
+    .digest('hex');
+  return `workflow-notification/${executionId}/${stepId}/${hash.slice(0, 16)}`;
+}
+
+/**
+ * `run`, rejected if it has not settled within `ms`; the signal it is handed
+ * aborts then, or when the run is cancelled. The race ends the wait even if
+ * something ignores the signal.
+ */
+async function withTimeout<T>(
+  ms: number,
+  cancelled: AbortSignal | undefined,
+  run: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  const controller = new AbortController();
+  const onCancel = (): void => controller.abort();
+  cancelled?.addEventListener('abort', onCancel, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`Email send timed out after ${ms} ms`));
+    }, ms);
+  });
+  try {
+    return await Promise.race([run(controller.signal), expired]);
+  } finally {
+    clearTimeout(timer);
+    cancelled?.removeEventListener('abort', onCancel);
+  }
 }
 
 // ─── Executor ───────────────────────────────────────────────────────────────
@@ -167,13 +288,22 @@ async function executeNotification(
   if (config.channel === 'email') {
     // Interpolate + validate the recipient(s) before any send. Throws a
     // non-retriable ExecutorError if a resolved address isn't a valid email.
-    const to = resolveRecipients(config.to, ctx, step.id);
+    const resolved = resolveRecipients(config.to, ctx, step.id);
+    const subject = interpolatePrompt(config.subject, ctx, step.id);
     try {
-      const result = await sendEmail({
-        to,
-        subject: interpolatePrompt(config.subject, ctx, step.id),
-        react: WorkflowNotification({ body, workflowName }),
-      });
+      const { result, to } = await sendToLiveRecipients(
+        resolved,
+        (sendTo, signal, idempotencyKey) =>
+          sendEmail({
+            to: sendTo,
+            subject,
+            react: WorkflowNotification({ body, workflowName }),
+            signal,
+            idempotencyKey,
+          }),
+        ctx,
+        step.id
+      );
 
       if (result.status === 'failed') {
         throw new ExecutorError(

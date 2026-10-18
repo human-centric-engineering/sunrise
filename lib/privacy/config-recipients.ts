@@ -61,6 +61,8 @@
 
 import type { Prisma } from '@prisma/client';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
+import type { ErasedSubjects } from '@/lib/privacy/erased-subjects';
+import { isRecord } from '@/lib/utils';
 
 /** Written on the audit row as the reason for every change made here. */
 const ERASURE_REASON = 'A person this configuration named was erased.';
@@ -107,7 +109,7 @@ export interface DefinitionChange {
   emptiedStepIds: string[];
 }
 
-function matchesAddress(value: Prisma.JsonValue | undefined, address: string): boolean {
+function matchesAddress(value: unknown, address: string): boolean {
   return typeof value === 'string' && normaliseAddress(value) === address;
 }
 
@@ -120,24 +122,64 @@ export function isJsonObject(value: Prisma.JsonValue | undefined): value is Pris
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** An approval step's config without the person, or null when it does not name them. */
-function approvalWithout(
-  config: Prisma.JsonObject,
+/**
+ * An approval step's config without the person, or null when it does not name
+ * them. Also takes the payload a paused run carries, which has the same two
+ * fields (t-841).
+ */
+function approvalWithout<T extends Record<string, unknown>>(
+  config: T,
   userId: string | null,
   address: string | null
-): Prisma.JsonObject | null {
+): T | null {
   let next = config;
   const approvers = config.approverUserIds;
   if (userId !== null && Array.isArray(approvers) && approvers.includes(userId)) {
     next = { ...next, approverUserIds: approvers.filter((id) => id !== userId) };
   }
   const channel = config.notificationChannel;
-  if (address !== null && isJsonObject(channel) && matchesAddress(channel.target, address)) {
+  if (address !== null && isRecord(channel) && matchesAddress(channel.target, address)) {
     // The channel and its type stay; only where it pointed goes.
     const { target: _erased, ...rest } = channel;
     next = { ...next, notificationChannel: rest };
   }
   return next === config ? null : next;
+}
+
+/**
+ * An approval step's config, or a paused run's approval payload, without any
+ * of `erased` in it: removed exactly as erasure removes them from a definition.
+ * The same object when it names none of them (t-841).
+ */
+export function approvalWithoutErased<T extends Record<string, unknown>>(
+  config: T,
+  erased: ErasedSubjects
+): T {
+  let current = config;
+  for (const address of erased.addresses) {
+    current = approvalWithout(current, null, address) ?? current;
+  }
+  for (const userId of erased.userIds) {
+    current = approvalWithout(current, userId, null) ?? current;
+  }
+  return current;
+}
+
+/**
+ * The approver ids and notification target an approval step's config, or a
+ * paused run's approval payload, names. Tolerant of either being malformed.
+ */
+export function approvalRecipients(config: Record<string, unknown>): {
+  addresses: string[];
+  userIds: string[];
+} {
+  const userIds: string[] = [];
+  if (Array.isArray(config.approverUserIds)) {
+    for (const id of config.approverUserIds) if (typeof id === 'string') userIds.push(id);
+  }
+  const channel = config.notificationChannel;
+  const addresses = isRecord(channel) && typeof channel.target === 'string' ? [channel.target] : [];
+  return { addresses, userIds };
 }
 
 /**
@@ -222,13 +264,9 @@ export function definitionRecipients(definition: Prisma.JsonValue | undefined): 
       }
     }
     if (step.type === 'human_approval') {
-      if (Array.isArray(config.approverUserIds)) {
-        for (const id of config.approverUserIds) if (typeof id === 'string') userIds.push(id);
-      }
-      const channel = config.notificationChannel;
-      if (isJsonObject(channel) && typeof channel.target === 'string') {
-        addresses.push(channel.target);
-      }
+      const named = approvalRecipients(config);
+      addresses.push(...named.addresses);
+      userIds.push(...named.userIds);
     }
   }
   return { addresses, userIds };

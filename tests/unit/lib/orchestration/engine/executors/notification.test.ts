@@ -56,6 +56,20 @@ vi.mock('@/lib/orchestration/engine/dispatch-cache', () => ({
   recordDispatch: vi.fn().mockResolvedValue(true),
 }));
 
+// The send runs in a transaction holding erasure's lock (t-841). The real
+// `findErasedSubjects` runs against this fake client, so the matching (the
+// normalised address, the receipt hash, verified-only) is the code's own.
+const tx = vi.hoisted(() => ({
+  $executeRaw: vi.fn(),
+  dataErasureReceipt: { findMany: vi.fn() },
+  user: { findMany: vi.fn() },
+}));
+vi.mock('@/lib/db/client', () => ({
+  prisma: {
+    $transaction: vi.fn((run: (client: typeof tx) => Promise<unknown>) => run(tx)),
+  },
+}));
+
 // ─── Imports after mocks ─────────────────────────────────────────────────────
 
 import '@/lib/orchestration/engine/executors/notification'; // triggers registerStepType
@@ -70,6 +84,9 @@ import { interpolatePrompt as realInterpolatePrompt } from '@/lib/orchestration/
 import { ExecutorError } from '@/lib/orchestration/engine/errors';
 import { lookupDispatch, recordDispatch } from '@/lib/orchestration/engine/dispatch-cache';
 import { logger } from '@/lib/logging';
+import { prisma } from '@/lib/db/client';
+import { subjectEmailHash, SUBJECT_LOCK_WAIT_MS } from '@/lib/privacy/erased-subjects';
+import { EMAIL_SEND_TIMEOUT_MS } from '@/lib/orchestration/engine/executors/notification';
 
 type StepExecutorFn = (
   step: WorkflowStep,
@@ -155,7 +172,21 @@ describe('executeNotification', () => {
     vi.mocked(interpolatePrompt).mockImplementation((template: string) => template);
     vi.mocked(sendEmail).mockResolvedValue({ status: 'sent', success: true });
     vi.mocked(executeHttpRequest).mockResolvedValue({ status: 200, body: 'ok', latencyMs: 5 });
+    tx.$executeRaw.mockReset().mockResolvedValue(1);
+    tx.dataErasureReceipt.findMany.mockReset().mockResolvedValue([]);
+    tx.user.findMany.mockReset().mockResolvedValue([]);
   });
+
+  /** Erasure receipts for `addresses`, as erasure writes them for a verified address. */
+  function erased(...addresses: string[]): void {
+    tx.dataErasureReceipt.findMany.mockResolvedValue(
+      addresses.map((address) => ({
+        subjectUserId: `gone-${address}`,
+        subjectEmailHash: subjectEmailHash(address),
+        metadata: { addressVerified: true },
+      }))
+    );
+  }
 
   // ── workflowName fallback ─────────────────────────────────────────────────
 
@@ -349,6 +380,131 @@ describe('executeNotification', () => {
       vi.mocked(sendEmail).mockRejectedValue(inner);
 
       await expect(executor(makeEmailStep(), makeCtx())).rejects.toBe(inner);
+    });
+  });
+
+  // ── Erased recipients (t-841) ──────────────────────────────────────────────
+  // A run holds its definition from the moment it starts, so a person erased
+  // while it runs is still in the step's `to`.
+
+  describe('erased recipients (t-841)', () => {
+    it('does not email a recipient erased since the run started', async () => {
+      erased('gone@example.com');
+
+      await executor(makeEmailStep({ to: ['Gone@Example.com', 'kept@example.com'] }), makeCtx());
+
+      expect(vi.mocked(sendEmail)).toHaveBeenCalledOnce();
+      expect(vi.mocked(sendEmail)).toHaveBeenCalledWith(
+        expect.objectContaining({ to: ['kept@example.com'] })
+      );
+      // Counted, never named.
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'Notification step: left out recipients whose data was erased',
+        { stepId: 'notify-1', leftOut: 1 }
+      );
+    });
+
+    it('fails, not retried, when every recipient was erased, and sends nothing', async () => {
+      erased('gone@example.com');
+
+      const err = await executor(makeEmailStep({ to: 'gone@example.com' }), makeCtx()).catch(
+        (e: unknown) => e
+      );
+
+      expect(err).toBeInstanceOf(ExecutorError);
+      expect(err).toMatchObject({ code: 'RECIPIENT_ERASED', retriable: false });
+      expect((err as Error).message).not.toContain('gone@example.com');
+      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+      expect(vi.mocked(recordDispatch)).not.toHaveBeenCalled();
+    });
+
+    it('keeps a single recipient a string when it is not erased', async () => {
+      erased('someone-else@example.com');
+
+      await executor(makeEmailStep({ to: 'user@example.com' }), makeCtx());
+
+      expect(vi.mocked(sendEmail)).toHaveBeenCalledWith(
+        expect.objectContaining({ to: 'user@example.com' })
+      );
+    });
+
+    it('emails an address whose erasure never matched it as verified', async () => {
+      tx.dataErasureReceipt.findMany.mockResolvedValue([
+        {
+          subjectUserId: 'gone-1',
+          subjectEmailHash: subjectEmailHash('user@example.com'),
+          metadata: {},
+        },
+      ]);
+
+      await executor(makeEmailStep({ to: 'user@example.com' }), makeCtx());
+
+      expect(vi.mocked(sendEmail)).toHaveBeenCalledOnce();
+    });
+
+    it('takes the lock and sends inside one transaction, so an erasure waits for the send', async () => {
+      const order: string[] = [];
+      tx.$executeRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+        order.push(strings.join('?').includes('pg_advisory_xact_lock') ? 'lock' : 'bound');
+        return 1;
+      });
+      vi.mocked(prisma.$transaction).mockImplementationOnce(
+        async (run: (client: typeof tx) => Promise<unknown>) => {
+          const result = await run(tx);
+          order.push('commit');
+          return result;
+        }
+      );
+      vi.mocked(sendEmail).mockImplementationOnce(async () => {
+        order.push('send');
+        return { status: 'sent', success: true };
+      });
+
+      await executor(makeEmailStep(), makeCtx());
+
+      expect(order).toEqual(['bound', 'lock', 'send', 'commit']);
+      // The transaction outlasts a full lock wait plus the bounded send.
+      expect(vi.mocked(prisma.$transaction).mock.calls[0][1]).toEqual({
+        timeout: expect.any(Number),
+      });
+      const { timeout } = vi.mocked(prisma.$transaction).mock.calls[0][1] as { timeout: number };
+      expect(timeout).toBeGreaterThan(SUBJECT_LOCK_WAIT_MS + EMAIL_SEND_TIMEOUT_MS);
+    });
+
+    it('sends with an abort signal and an idempotency key that names the recipients', async () => {
+      await executor(makeEmailStep({ to: ['a@example.com', 'b@example.com'] }), makeCtx());
+      const first = vi.mocked(sendEmail).mock.calls[0][0];
+
+      erased('b@example.com');
+      await executor(makeEmailStep({ to: ['a@example.com', 'b@example.com'] }), makeCtx());
+      const second = vi.mocked(sendEmail).mock.calls[1][0];
+
+      expect(first.signal).toBeInstanceOf(AbortSignal);
+      expect(first.idempotencyKey).toMatch(
+        /^workflow-notification\/exec-1\/notify-1\/[0-9a-f]{16}$/
+      );
+      // A different list is a different request, so a different key.
+      expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+    });
+
+    it('gives up on a send that does not settle, aborting it, as a retriable failure', async () => {
+      vi.useFakeTimers();
+      try {
+        let signal: AbortSignal | undefined;
+        vi.mocked(sendEmail).mockImplementationOnce((options) => {
+          signal = options.signal;
+          return new Promise(() => undefined);
+        });
+
+        const pending = executor(makeEmailStep(), makeCtx()).catch((e: unknown) => e);
+        await vi.advanceTimersByTimeAsync(EMAIL_SEND_TIMEOUT_MS);
+        const err = await pending;
+
+        expect(signal?.aborted).toBe(true);
+        expect(err).toMatchObject({ code: 'EMAIL_DELIVERY_ERROR', retriable: true });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

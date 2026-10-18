@@ -85,6 +85,43 @@ describe('lib/email/send', () => {
       );
     });
 
+    it('passes an abort signal and an idempotency key to Resend when given (t-841)', async () => {
+      const { isEmailEnabled, getResendClient } = await import('@/lib/email/client');
+      vi.mocked(isEmailEnabled).mockReturnValue(true);
+      const mockSend = vi.fn().mockResolvedValue({ data: { id: 'email-123' } });
+      vi.mocked(getResendClient).mockReturnValue({ emails: { send: mockSend } } as any);
+      const signal = new AbortController().signal;
+
+      await sendEmail({
+        to: 'user@example.com',
+        subject: 'Test Email',
+        react: createMockEmail(),
+        signal,
+        idempotencyKey: 'key-1',
+      });
+
+      expect(mockSend).toHaveBeenCalledWith(expect.objectContaining({ to: ['user@example.com'] }), {
+        signal,
+        idempotencyKey: 'key-1',
+      });
+    });
+
+    it('returns failed, not a throw, when the send is aborted (t-841)', async () => {
+      const { isEmailEnabled, getResendClient } = await import('@/lib/email/client');
+      vi.mocked(isEmailEnabled).mockReturnValue(true);
+      const mockSend = vi.fn().mockRejectedValue(new DOMException('aborted', 'AbortError'));
+      vi.mocked(getResendClient).mockReturnValue({ emails: { send: mockSend } } as any);
+
+      const result = await sendEmail({
+        to: 'user@example.com',
+        subject: 'Test Email',
+        react: createMockEmail(),
+        signal: AbortSignal.abort(),
+      });
+
+      expect(result).toMatchObject({ success: false, status: 'failed', error: 'aborted' });
+    });
+
     it('should send email successfully with multiple recipients', async () => {
       const { isEmailEnabled, getResendClient } = await import('@/lib/email/client');
 

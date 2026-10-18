@@ -12,15 +12,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ─── Mocks (declared before the engine import) ──────────────────────────────
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
-    aiWorkflowExecution: {
-      create: vi.fn(),
-      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-      findUnique: vi.fn(),
-    },
-  },
+// A pause naming people runs in a transaction under erasure's lock (t-841).
+// The real `findErasedSubjects` runs against `tx`; the paused-row write goes
+// through the same `updateMany` mock either way.
+const tx = vi.hoisted(() => ({
+  $executeRaw: vi.fn(),
+  dataErasureReceipt: { findMany: vi.fn() },
+  user: { findMany: vi.fn() },
 }));
+vi.mock('@/lib/db/client', () => {
+  const aiWorkflowExecution = {
+    create: vi.fn(),
+    updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    findUnique: vi.fn(),
+  };
+  return {
+    prisma: {
+      aiWorkflowExecution,
+      $transaction: vi.fn((run: (client: unknown) => Promise<unknown>) =>
+        run({ ...tx, aiWorkflowExecution })
+      ),
+    },
+  };
+});
 
 vi.mock('@/lib/orchestration/hooks/registry', () => ({
   emitHookEvent: vi.fn(),
@@ -57,6 +71,7 @@ import { claimLease, startHeartbeat } from '@/lib/orchestration/engine/lease';
 import { prisma } from '@/lib/db/client';
 import { emitHookEvent } from '@/lib/orchestration/hooks/registry';
 import { dispatchWebhookEvent } from '@/lib/orchestration/webhooks/dispatcher';
+import { subjectEmailHash } from '@/lib/privacy/erased-subjects';
 import type { ExecutionEvent, WorkflowDefinition } from '@/types/orchestration';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -133,6 +148,10 @@ describe('pauseForApproval event emission', () => {
     // accumulate across tests. claimLease is only used on resume; not exercised here.
     vi.mocked(claimLease).mockResolvedValue('lease-token-test');
     vi.mocked(startHeartbeat).mockReturnValue(vi.fn());
+
+    tx.$executeRaw.mockResolvedValue(1);
+    tx.dataErasureReceipt.findMany.mockResolvedValue([]);
+    tx.user.findMany.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -254,5 +273,113 @@ describe('pauseForApproval event emission', () => {
 
     expect(hookCalls).toHaveLength(1);
     expect(webhookCalls).toHaveLength(1);
+  });
+
+  // ── People erased while the run was in flight (t-841) ─────────────────────
+
+  describe('a person erased since the run started', () => {
+    const named = {
+      approverUserIds: ['gone-user', 'kept-user'],
+      notificationChannel: { type: 'email', target: 'Gone@Example.com' },
+    };
+
+    function namingDefinition(): WorkflowDefinition {
+      const definition = approvalDefinition();
+      definition.steps[0].config = { prompt: 'Please approve', ...named };
+      return definition;
+    }
+
+    beforeEach(() => {
+      // Both erased: the id outright, the address as erasure matched it, verified.
+      tx.dataErasureReceipt.findMany.mockResolvedValue([
+        { subjectUserId: 'gone-user', subjectEmailHash: null, metadata: {} },
+        {
+          subjectUserId: 'other',
+          subjectEmailHash: subjectEmailHash('gone@example.com'),
+          metadata: { addressVerified: true },
+        },
+      ]);
+      registerStepType('human_approval', async (step) => {
+        throw new PausedForApproval(step.id, { prompt: 'Please approve', ...named });
+      });
+    });
+
+    function pausedTrace(): Array<Record<string, unknown>> {
+      const call = vi
+        .mocked(prisma.aiWorkflowExecution.updateMany)
+        .mock.calls.find(
+          ([args]) => (args as { data: { status?: string } }).data.status === 'paused_for_approval'
+        );
+      if (!call) throw new Error('the paused row was never written');
+      return (call[0] as { data: { executionTrace: Array<Record<string, unknown>> } }).data
+        .executionTrace;
+    }
+
+    it('writes the paused row without them, in the trace entry the approval routes read', async () => {
+      await collect(new OrchestrationEngine(), makeWorkflow(namingDefinition()));
+
+      const entry = pausedTrace().find((e) => e.status === 'awaiting_approval');
+      expect(entry?.output).toMatchObject({
+        approverUserIds: ['kept-user'],
+        notificationChannel: { type: 'email' },
+      });
+      expect(entry?.input).toMatchObject({
+        approverUserIds: ['kept-user'],
+        notificationChannel: { type: 'email' },
+      });
+      expect(JSON.stringify(entry)).not.toMatch(/gone-user|gone@example\.com/i);
+    });
+
+    it('sends neither of them in the hook, the webhook or the streamed event', async () => {
+      const events = await collect(new OrchestrationEngine(), makeWorkflow(namingDefinition()));
+
+      const hookPayload = vi
+        .mocked(emitHookEvent)
+        .mock.calls.find(([name]) => name === 'workflow.paused_for_approval')?.[1];
+      expect(hookPayload).toMatchObject({
+        approverUserIds: ['kept-user'],
+        notificationChannel: { type: 'email' },
+      });
+      await vi.waitFor(() => expect(dispatchWebhookEvent).toHaveBeenCalled());
+      const webhookPayload = vi.mocked(dispatchWebhookEvent).mock.calls[0][1];
+      const streamed = events.find((e) => e.type === 'approval_required');
+      for (const payload of [hookPayload, webhookPayload, streamed]) {
+        expect(JSON.stringify(payload)).not.toMatch(/gone-user|gone@example\.com/i);
+      }
+      expect(JSON.stringify(streamed)).toContain('kept-user');
+    });
+
+    it('checks under the lock, inside the transaction that writes the row', async () => {
+      const order: string[] = [];
+      tx.$executeRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+        if (strings.join('?').includes('pg_advisory_xact_lock')) order.push('lock');
+        return 1;
+      });
+      vi.mocked(prisma.aiWorkflowExecution.updateMany).mockImplementation((async (
+        args: unknown
+      ) => {
+        if ((args as { data: { status?: string } }).data.status === 'paused_for_approval') {
+          order.push('write');
+        }
+        return { count: 1 };
+      }) as never);
+
+      await collect(new OrchestrationEngine(), makeWorkflow(namingDefinition()));
+
+      expect(prisma.$transaction).toHaveBeenCalledOnce();
+      // One lock per key it names: two approver ids and the address.
+      expect(order).toEqual(['lock', 'lock', 'lock', 'write']);
+    });
+
+    it('opens no transaction for an approval that names nobody', async () => {
+      registerStepType('human_approval', async (step) => {
+        throw new PausedForApproval(step.id, { prompt: 'approve', notificationChannel: 'slack' });
+      });
+
+      await collect(new OrchestrationEngine(), makeWorkflow(approvalDefinition()));
+
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.dataErasureReceipt.findMany).not.toHaveBeenCalled();
+    });
   });
 });

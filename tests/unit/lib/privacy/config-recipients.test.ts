@@ -14,6 +14,8 @@ import { describe, it, expect, vi } from 'vitest';
 import type { Prisma } from '@prisma/client';
 
 import {
+  approvalRecipients,
+  approvalWithoutErased,
   asciiSearchTerm,
   definitionRecipients,
   eraseFromConfigRecipients,
@@ -261,6 +263,42 @@ describe('definitionRecipients (t-805)', () => {
     expect(definitionRecipients(null)).toEqual({ addresses: [], userIds: [] });
     expect(definitionRecipients(undefined)).toEqual({ addresses: [], userIds: [] });
     expect(definitionRecipients({ steps: 'nope' })).toEqual({ addresses: [], userIds: [] });
+  });
+});
+
+describe('approvalWithoutErased / approvalRecipients (t-841)', () => {
+  const payload = {
+    prompt: 'Approve?',
+    approverUserIds: [USER_ID, OTHER_ID],
+    notificationChannel: { type: 'email', target: 'Gone@Example.com', metadata: { a: 'b' } },
+  };
+
+  it('names the approvers and the target, as definitionRecipients does for a step', () => {
+    expect(approvalRecipients(payload)).toEqual({
+      addresses: ['Gone@Example.com'],
+      userIds: [USER_ID, OTHER_ID],
+    });
+    expect(approvalRecipients({ notificationChannel: 'slack', approverUserIds: 'x' })).toEqual({
+      addresses: [],
+      userIds: [],
+    });
+  });
+
+  it("removes an erased approver and target by erasure's rule, keeping the rest", () => {
+    const result = approvalWithoutErased(payload, { addresses: [ADDRESS], userIds: [USER_ID] });
+
+    expect(result).toEqual({
+      prompt: 'Approve?',
+      approverUserIds: [OTHER_ID],
+      notificationChannel: { type: 'email', metadata: { a: 'b' } },
+    });
+    expect(payload.approverUserIds).toEqual([USER_ID, OTHER_ID]); // not mutated
+  });
+
+  it('returns the same object when it names none of them', () => {
+    expect(approvalWithoutErased(payload, { addresses: ['x@example.com'], userIds: ['y'] })).toBe(
+      payload
+    );
   });
 });
 

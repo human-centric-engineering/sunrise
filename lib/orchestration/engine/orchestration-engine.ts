@@ -45,6 +45,14 @@
 import { Prisma } from '@prisma/client';
 import { createLogger, type Logger } from '@/lib/logging';
 import { prisma } from '@/lib/db/client';
+import { approvalRecipients, approvalWithoutErased } from '@/lib/privacy/config-recipients';
+import { isRecord } from '@/lib/utils';
+import {
+  boundLockWaits,
+  findErasedSubjects,
+  SUBJECT_LOCK_WAIT_MS,
+  type ErasedSubjects,
+} from '@/lib/privacy/erased-subjects';
 import {
   executionTraceEntrySchema,
   stepErrorConfigSchema,
@@ -1163,7 +1171,7 @@ export class OrchestrationEngine {
             : undefined;
         const paused = await this.pauseForApproval(lease, ctx, trace, step.id, approvalData);
         if (paused) {
-          yield approvalRequired(step.id, err.payload);
+          yield approvalRequired(step.id, paused.approvalPayload ?? err.payload);
         }
         return { failed: false, paused: true, terminal: true, nextIds: [] };
       }
@@ -1539,7 +1547,9 @@ export class OrchestrationEngine {
           batchApprovalData
         );
         if (batchPausedOk) {
-          allEvents.push(approvalRequired(step.id, outcome.value.payload));
+          allEvents.push(
+            approvalRequired(step.id, batchPausedOk.approvalPayload ?? outcome.value.payload)
+          );
         }
         batchPaused = true;
         continue;
@@ -2259,37 +2269,69 @@ export class OrchestrationEngine {
   }
 
   /**
-   * Apply the paused-state write atomically with the lease clear. Returns `true` when the
-   * UPDATE landed (we owned the lease and the row tipped to PAUSED_FOR_APPROVAL) and `false`
+   * Apply the paused-state write atomically with the lease clear. Returns the approval
+   * payload as written — without anyone erased since the run started (t-841) — when the
+   * UPDATE landed (we owned the lease and the row tipped to PAUSED_FOR_APPROVAL), and `null`
    * when `updateMany` returned `count: 0` (orphan handoff) or the write threw. Callers MUST
-   * honour the return value: yielding `approvalRequired` on a `false` return would surface a
+   * honour the return value: yielding `approvalRequired` on a `null` return would surface a
    * second SSE event for a row another host is driving — same single-owner-event contract as
-   * `finalize`.
+   * `finalize` — and should yield the returned payload, not the one they passed in.
    */
   private async pauseForApproval(
     lease: LeaseHandle,
     ctx: ExecutionContext,
     trace: ExecutionTraceEntry[],
     stepId: string,
-    approvalPayload?: Record<string, unknown>
-  ): Promise<boolean> {
+    payload?: Record<string, unknown>
+  ): Promise<{ approvalPayload?: Record<string, unknown> } | null> {
     const { executionId, token } = lease;
+    let approvalPayload = payload;
     try {
       // Atomic terminal-state-and-lease-clear: the row stops being driven the moment its
       // status flips, so a separate clear UPDATE would leave a brief window where the
       // orphan sweep could mistake a paused row for a stuck-running one.
-      const result = await prisma.aiWorkflowExecution.updateMany({
-        where: { id: executionId, leaseToken: token },
-        data: {
-          status: WorkflowStatus.PAUSED_FOR_APPROVAL,
-          currentStep: stepId,
-          executionTrace: trace as unknown as Prisma.InputJsonValue,
-          totalTokensUsed: ctx.totalTokensUsed,
-          totalCostUsd: ctx.totalCostUsd,
-          leaseToken: null,
-          leaseExpiresAt: null,
-        },
-      });
+      const pause = (client: Pick<Prisma.TransactionClient, 'aiWorkflowExecution'>) =>
+        client.aiWorkflowExecution.updateMany({
+          where: { id: executionId, leaseToken: token },
+          data: {
+            status: WorkflowStatus.PAUSED_FOR_APPROVAL,
+            currentStep: stepId,
+            executionTrace: trace as unknown as Prisma.InputJsonValue,
+            totalTokensUsed: ctx.totalTokensUsed,
+            totalCostUsd: ctx.totalCostUsd,
+            leaseToken: null,
+            leaseExpiresAt: null,
+          },
+        });
+
+      // A run holds its definition from the moment it starts, so an approver or
+      // notification target erased since then is still in this step's config
+      // (t-841). The pause writes them into the run and sends them on in the
+      // events below, so it is a writer like any other (t-805): under erasure's
+      // lock, anyone with a receipt is taken out of the payload and the trace
+      // entry, by erasure's own rule, before the paused row is written.
+      const named = approvalPayload ? approvalRecipients(approvalPayload) : null;
+      const result =
+        named && (named.addresses.length > 0 || named.userIds.length > 0)
+          ? await prisma.$transaction(
+              async (tx) => {
+                await boundLockWaits(tx, SUBJECT_LOCK_WAIT_MS);
+                const erased = await findErasedSubjects(tx, named);
+                if (erased.addresses.length > 0 || erased.userIds.length > 0) {
+                  approvalPayload = withoutErasedInPause(trace, stepId, approvalPayload, erased);
+                  // Never the address or the id: they are what was erased.
+                  ctx.logger.warn('pauseForApproval: left out people whose data was erased', {
+                    executionId,
+                    stepId,
+                    addresses: erased.addresses.length,
+                    userIds: erased.userIds.length,
+                  });
+                }
+                return pause(tx);
+              },
+              { timeout: SUBJECT_LOCK_WAIT_MS + 10_000 }
+            )
+          : await pause(prisma);
       if (result.count === 0) {
         // Lease lost — the orphan sweep handed this row to a new owner who is now the
         // source of truth. Suppress notification + hook + webhook + approvalRequired event
@@ -2300,11 +2342,11 @@ export class OrchestrationEngine {
           executionId,
           stepId,
         });
-        return false;
+        return null;
       }
     } catch (err) {
       ctx.logger.error('pauseForApproval: DB update failed', err, { executionId });
-      return false; // Don't emit events if DB update failed
+      return null; // Don't emit events if DB update failed
     }
 
     const rawTimeout = approvalPayload?.timeoutMinutes;
@@ -2361,7 +2403,7 @@ export class OrchestrationEngine {
         workflowName: workflowDisplay.name,
       });
     })();
-    return true;
+    return { approvalPayload };
   }
 
   /**
@@ -2502,4 +2544,23 @@ function attachRetryToTrace(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * The approval payload without the people in `erased`, and the paused step's
+ * trace entry — its config (`input`) and its payload (`output`), which the
+ * approval routes read approvers from — rewritten to match, in place (t-841).
+ */
+function withoutErasedInPause(
+  trace: ExecutionTraceEntry[],
+  stepId: string,
+  payload: Record<string, unknown> | undefined,
+  erased: ErasedSubjects
+): Record<string, unknown> | undefined {
+  const entry = trace.findLast((e) => e.stepId === stepId && e.status === 'awaiting_approval');
+  if (entry) {
+    if (isRecord(entry.input)) entry.input = approvalWithoutErased(entry.input, erased);
+    if (isRecord(entry.output)) entry.output = approvalWithoutErased(entry.output, erased);
+  }
+  return payload ? approvalWithoutErased(payload, erased) : payload;
 }
