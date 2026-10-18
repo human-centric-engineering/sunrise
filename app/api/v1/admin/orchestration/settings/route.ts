@@ -188,6 +188,13 @@ export const PATCH = withAdminAuth(
     // (see the refine on `updateOrchestrationSettingsSchema`). The schema catches
     // a whole-form save; this catches a patch that moves one side only, which is
     // what the API surface allows and the UI does not do.
+    //
+    // Only a body that names one of the two is checked, as on the org route
+    // (`incoherentRetentionPair`): a row persisted before #839 tightened the
+    // rule (finite cost logs, executions kept for ever) must not 400 a PATCH
+    // that changes something unrelated, such as the budget.
+    const touchesRetentionPair =
+      body.costLogRetentionDays !== undefined || body.executionRetentionDays !== undefined;
     const effectiveCostLogDays =
       body.costLogRetentionDays !== undefined
         ? body.costLogRetentionDays
@@ -196,7 +203,10 @@ export const PATCH = withAdminAuth(
       body.executionRetentionDays !== undefined
         ? body.executionRetentionDays
         : (existing?.executionRetentionDays ?? null);
-    if (!costLogsOutliveExecutions(effectiveCostLogDays, effectiveExecutionDays)) {
+    if (
+      touchesRetentionPair &&
+      !costLogsOutliveExecutions(effectiveCostLogDays, effectiveExecutionDays)
+    ) {
       const keeping =
         effectiveExecutionDays === null
           ? 'executions you are keeping for ever'

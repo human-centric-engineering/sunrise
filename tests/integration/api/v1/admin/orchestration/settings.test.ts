@@ -746,6 +746,20 @@ describe('Admin Orchestration — /settings', () => {
       expect(prisma.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
     });
 
+    it('does not refuse an unrelated PATCH over a persisted pre-#839 incoherent pair', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow({ costLogRetentionDays: 90, executionRetentionDays: null }) as never
+      );
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ globalMonthlyBudgetUsd: 500 }) as never
+      );
+
+      const res = await PATCH(makePatch({ globalMonthlyBudgetUsd: 500 }));
+
+      expect(res.status).toBe(200);
+      expect(prisma.aiOrchestrationSettings.upsert).toHaveBeenCalledTimes(1);
+    });
+
     it('accepts keeping both for ever', async () => {
       vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
         makeSettingsRow({ costLogRetentionDays: 90, executionRetentionDays: 90 }) as never

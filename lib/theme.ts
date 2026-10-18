@@ -35,7 +35,7 @@ export function resolveTheme(stored: Theme | null, prefersDark: boolean): Theme 
 /**
  * Runs before first paint so the page never flashes the wrong theme. It reads
  * storage and never writes it. Keep it in step with `resolveTheme` —
- * `tests/unit/lib/theme.test.ts` runs both over the same inputs.
+ * `tests/unit/lib/theme.test.tsx` runs both over the same inputs.
  */
 export const NO_FLASH_THEME_SCRIPT = `
 (function() {

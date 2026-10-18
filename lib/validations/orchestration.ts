@@ -2921,7 +2921,7 @@ export function costLogsOutliveExecutions(
   return executionRetentionDays !== null && costLogRetentionDays >= executionRetentionDays;
 }
 
-export const RETENTION_PAIR_MESSAGE =
+const RETENTION_PAIR_MESSAGE =
   'Cost log retention must be at least as long as execution retention, or the cost breakdown empties out for executions you are still keeping. Lengthen it, or leave it blank to keep cost logs for ever.';
 
 export const updateOrchestrationSettingsSchema = z
