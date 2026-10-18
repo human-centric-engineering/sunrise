@@ -15,6 +15,8 @@
  *     nothing.
  *   • **Erasure first.** An import of a bundle naming someone already erased
  *     strips them, with a warning.
+ *   • **The try.** `tryLockSubjects()` says false for a lock another session
+ *     holds and true once it is free, which the erasure's retry relies on.
  *
  * Takes a little over a minute: the stall has to outlast
  * `ERASURE_TRANSACTION_TIMEOUT_MS`. Everything it creates is a
@@ -28,6 +30,8 @@
 import { prisma } from '@/lib/db/client';
 import { ERASURE_TRANSACTION_TIMEOUT_MS, eraseUser } from '@/lib/privacy/erase-user';
 import { importOrchestrationConfig } from '@/lib/orchestration/backup/importer';
+import { lockSubjects, tryLockSubjects } from '@/lib/privacy/erased-subjects';
+import { holdWorkflowRow, lockWaiters, sleep, until } from '@/scripts/smoke/lock-waits';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { runAsOrg } from '@/lib/tenancy/context';
 
@@ -47,24 +51,6 @@ async function dbReachable(): Promise<boolean> {
 function check(cond: boolean, msg: string): void {
   if (!cond) throw new Error(`assertion failed: ${msg}`);
   console.log(`  ✓ ${msg}`);
-}
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Sessions in this database waiting on a lock right now. */
-async function lockWaiters(): Promise<number> {
-  const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
-    SELECT count(*)::int AS n FROM pg_stat_activity
-    WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-  return row.n;
-}
-
-async function until(done: () => Promise<boolean>, ms: number, what: string): Promise<void> {
-  const deadline = Date.now() + ms;
-  while (!(await done())) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await sleep(50);
-  }
 }
 
 /** A bundle restoring `slug` with a step that emails `to`. */
@@ -152,55 +138,87 @@ async function main(): Promise<void> {
     });
     workflowIds.push(workflow.id);
 
+    // ── 0. The try reports a held lock as held ─────────────────────────────
+    console.log('the try');
+    const probe = { userIds: [`${PREFIX}-probe-${stamp}`] };
+    let releaseProbe = (): void => undefined;
+    const probeReleased = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    const probeHolder = prisma.$transaction(
+      async (tx) => {
+        await lockSubjects(tx, probe);
+        await probeReleased;
+      },
+      { timeout: 30_000 }
+    );
+    try {
+      await sleep(200);
+      check(
+        !(await prisma.$transaction((tx) => tryLockSubjects(tx, probe))),
+        'a lock another session holds is reported as held'
+      );
+    } finally {
+      releaseProbe();
+      await probeHolder;
+    }
+    check(
+      await prisma.$transaction((tx) => tryLockSubjects(tx, probe)),
+      'and as taken once it is free'
+    );
+
     // ── 1. A long import naming the person: the erasure waits it out ──────
     console.log(
       `import first, held for ${Math.round(ERASURE_TRANSACTION_TIMEOUT_MS / 1000) + 3} s`
     );
     const named = await person('named');
     const waitersBefore = await lockWaiters();
-    let releaseWorkflow = (): void => undefined;
-    const released = new Promise<void>((resolve) => {
-      releaseWorkflow = resolve;
-    });
     // The import writes a new version of this workflow; the version's foreign
     // key is checked against this row, so the import stalls there, holding the
     // locks it took at its start for everyone the bundle names.
-    const holder = prisma.$transaction(
-      async (tx) => {
-        await tx.$executeRaw`SELECT 1 FROM ai_workflow WHERE id = ${workflow.id} FOR UPDATE`;
-        await released;
-      },
-      { timeout: ERASURE_TRANSACTION_TIMEOUT_MS + 30_000 }
-    );
-    await sleep(100);
+    const hold = holdWorkflowRow(workflow.id, ERASURE_TRANSACTION_TIMEOUT_MS + 30_000);
     let importCommittedAt = 0;
-    const imported = importOrchestrationConfig(
-      bundleNaming(slug, named.email),
-      admin.id,
-      SCOPE
-    ).then((result) => {
-      importCommittedAt = Date.now();
-      return result;
-    });
-    await until(async () => (await lockWaiters()) > waitersBefore, 10_000, 'the import to stall');
+    let erasureFinishedAt = 0;
+    try {
+      await sleep(100);
+      const imported = importOrchestrationConfig(
+        bundleNaming(slug, named.email),
+        admin.id,
+        SCOPE
+      ).then((result) => {
+        importCommittedAt = Date.now();
+        return result;
+      });
+      await until(async () => (await lockWaiters()) > waitersBefore, 10_000, 'the import to stall');
 
-    const erasureStartedAt = Date.now();
-    const erasure = eraseUser({ userId: named.id, actorUserId: admin.id, reason: 'admin_action' });
-    // Outlast the erasure's own transaction budget before letting the import
-    // finish: an erasure that waited inside its transaction has timed out by now.
-    await sleep(ERASURE_TRANSACTION_TIMEOUT_MS + 3_000);
-    releaseWorkflow();
-    const [, importResult, erased] = await Promise.all([holder, imported, erasure]);
-    const erasureFinishedAt = Date.now();
-    receiptIds.push(erased.receiptId);
-    userIds.splice(userIds.indexOf(named.id), 1);
+      const erasureStartedAt = Date.now();
+      const erasure = eraseUser({
+        userId: named.id,
+        actorUserId: admin.id,
+        reason: 'admin_action',
+      }).then((result) => {
+        erasureFinishedAt = Date.now();
+        return result;
+      });
+      // Outlast the erasure's own transaction budget before letting the import
+      // finish: an erasure that waited inside its transaction has timed out by
+      // now.
+      await sleep(ERASURE_TRANSACTION_TIMEOUT_MS + 3_000);
+      check(erasureFinishedAt === 0, 'the erasure is still waiting while the import runs');
+      hold.release();
+      const [, importResult, erased] = await Promise.all([hold.held, imported, erasure]);
+      receiptIds.push(erased.receiptId);
+      userIds.splice(userIds.indexOf(named.id), 1);
 
-    check(importResult.workflows.updated === 1, 'the import ran');
-    check(
-      erasureFinishedAt - erasureStartedAt > ERASURE_TRANSACTION_TIMEOUT_MS,
-      'the erasure waited longer than its transaction may run'
-    );
-    check(erasureFinishedAt >= importCommittedAt, 'and completed once the import committed');
+      check(importResult.workflows.updated === 1, 'the import ran');
+      check(
+        erasureFinishedAt - erasureStartedAt > ERASURE_TRANSACTION_TIMEOUT_MS,
+        'the erasure succeeded after waiting longer than its transaction may run'
+      );
+      check(erasureFinishedAt >= importCommittedAt, 'and finished after the import committed');
+    } finally {
+      hold.release();
+    }
     check(
       !(await versionsName(workflow.id, named.email)),
       'the erasure took the person out of the version the import wrote'
