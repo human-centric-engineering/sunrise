@@ -12,11 +12,13 @@
  *   2. Editing the subscription changes nothing on the row; a retry after the
  *      edit records the new destination and keeps the old one in
  *      `previousDestinations`.
- *   3. Erasing the admin who created the subscription deletes the subscription
- *      (its `createdBy` cascade) but not the delivery, whose destination stays.
- *      A retry of that orphan is refused and leaves the row untouched. An
- *      email-channel subscription the admin pointed at their own address keeps
- *      its delivery too, but with the address redacted to `[erased]`.
+ *   3. Erasing the admin who created the subscription keeps the subscription,
+ *      with no creator (`createdBy` is `SetNull`, t-782). An email-channel
+ *      subscription the admin pointed at their own address is kept too, with
+ *      the address cleared and switched off, and its delivery's address is
+ *      redacted to `[erased]`. Deleting the webhook subscription then keeps its
+ *      delivery, whose destination stays; a retry of that orphan is refused
+ *      and leaves the row untouched.
  *   4. The same for an event hook: the delivery records its URL, and survives
  *      the hook's deletion.
  *   5. The org export carries the orphaned rows without the URL secret.
@@ -255,7 +257,7 @@ async function main(): Promise<void> {
       data: { status: 'failed', nextRetryAt: new Date(Date.now() + 60_000) },
     });
 
-    // ── 3. Erase the creator: the subscription goes, the delivery stays ──
+    // ── 3. Erase the creator: the subscriptions stay, without them ──
     console.log('Erasing the subscription creator:');
     const erased = await eraseUser({
       userId: user.id,
@@ -265,13 +267,17 @@ async function main(): Promise<void> {
     receiptId = erased.receiptId;
     userId = null;
     const subAfter = await prisma.aiWebhookSubscription.findUnique({ where: { id: sub.id } });
-    check(subAfter === null, 'the subscription was deleted with its creator');
-    subscriptionId = null;
-    const orphan = await prisma.aiWebhookDelivery.findUnique({ where: { id: sent.id } });
-    check(orphan !== null, 'the delivery survived');
-    check(orphan?.subscriptionId === null, 'its subscription link is now null');
-    check(orphan?.destination === retried.destination, 'its destination is intact');
-    emailSubscriptionId = null;
+    check(
+      subAfter !== null && subAfter.createdBy === null,
+      'the subscription outlived its creator, with no creator'
+    );
+    const emailSubAfter = await prisma.aiWebhookSubscription.findUnique({
+      where: { id: emailSub.id },
+    });
+    check(
+      emailSubAfter !== null && emailSubAfter.emailAddress === null && !emailSubAfter.isActive,
+      'the self-notify subscription is kept, with its address cleared and switched off'
+    );
     const redacted = await prisma.aiWebhookDelivery.findUnique({
       where: { id: selfNotified.id },
     });
@@ -286,6 +292,15 @@ async function main(): Promise<void> {
         (redacted.lastError ?? '').includes('not retried: recipient erased'),
       'and its pending retry is stopped, keeping the real error'
     );
+
+    // Deleting the subscription, as whoever manages it now may: Postgres keeps
+    // the delivery (`ON DELETE SET NULL`) as the record of where it went.
+    await prisma.aiWebhookSubscription.delete({ where: { id: sub.id } });
+    subscriptionId = null;
+    const orphan = await prisma.aiWebhookDelivery.findUnique({ where: { id: sent.id } });
+    check(orphan !== null, 'the delivery survived its subscription’s deletion');
+    check(orphan?.subscriptionId === null, 'its subscription link is now null');
+    check(orphan?.destination === retried.destination, 'its destination is intact');
 
     const orphanRetry = await retryDelivery(sent.id, { awaitDelivery: true });
     const afterOrphanRetry = await prisma.aiWebhookDelivery.findUniqueOrThrow({
