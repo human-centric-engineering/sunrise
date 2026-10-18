@@ -418,7 +418,8 @@ release process.
   `costLogRetentionDays` was accepted, and the cost breakdown emptied out under
   executions still on file. They now answer 400 for it, the same rule the org
   route already applied. Cost logs kept for ever (`null`) still pass against any
-  execution window. **Forks:** a client that sets one window alone may now be
+  execution window, and a PATCH that names neither window is not checked, so a
+  pair saved under the old rule does not block unrelated saves. **Forks:** a client that sets one window alone may now be
   refused against the stored other half; set `costLogRetentionDays: null` too,
   or give executions a finite window.
 - **The site follows the device's light or dark setting until a visitor picks
