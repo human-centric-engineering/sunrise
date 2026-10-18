@@ -41,6 +41,8 @@ vi.mock('@/lib/db/client', () => {
     // The scheduler creates the run and claims the schedule in one
     // transaction (t-839); the callback gets this same object.
     $transaction: vi.fn(),
+    // Its lock_timeout setting (review round 3).
+    $executeRaw: vi.fn().mockResolvedValue(1),
     aiWorkflowSchedule: {
       findMany: vi.fn(),
       updateMany: vi.fn(),

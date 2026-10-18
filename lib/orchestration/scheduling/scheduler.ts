@@ -34,6 +34,7 @@ import { withoutErasedRecipients } from '@/lib/orchestration/workflows/version-s
 import { definitionRecipients } from '@/lib/privacy/config-recipients';
 import { blankAddressInTemplate } from '@/lib/privacy/run-recipients';
 import {
+  boundLockWaits,
   findErasedSubjects,
   stringsIn,
   tryLockSubjects,
@@ -89,6 +90,15 @@ export function sanitiseHookErrorMessage(message: string): string {
   if (noPaths.length <= HOOK_ERROR_MAX_LEN) return noPaths;
   return noPaths.slice(0, HOOK_ERROR_MAX_LEN - 1) + '…';
 }
+
+/**
+ * How long the run's transaction waits for a lock (its claim on the
+ * schedule): inside `WRITER_TRANSACTION_OPTIONS`, past an erasure's 60 s.
+ */
+const CLAIM_LOCK_WAIT_MS = WRITER_TRANSACTION_OPTIONS.timeout - 5_000;
+
+/** How long the claim after a failed run waits: inside Prisma's 5 s default. */
+const FALLBACK_CLAIM_LOCK_WAIT_MS = 4_000;
 
 /** Thrown to roll back a run whose schedule another tick claimed first. */
 class ScheduleAlreadyClaimed extends Error {}
@@ -408,6 +418,10 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
       let created: { execution: AiWorkflowExecution; erased: ErasedSubjects };
       try {
         created = await prisma.$transaction(async (tx) => {
+          // The claim's wait gives up inside the transaction's budget, so one
+          // schedule cannot hold up the rest of the sweep past it (review
+          // round 3).
+          await boundLockWaits(tx, CLAIM_LOCK_WAIT_MS);
           if (!(await tryLockSubjects(tx, subjects))) throw new ScheduleSubjectsBusy();
           const erased = await findErasedSubjects(tx, subjects);
           const execution = await tx.aiWorkflowExecution.create({
@@ -436,20 +450,37 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
           continue;
         }
         if (err instanceof ScheduleSubjectsBusy) {
-          logger.info(
+          // Still counted as processed: the maintenance tick reads a sweep
+          // that processed nothing as idle, and could then skip ticks past
+          // this firing (review round 3). A warning, so a schedule held off
+          // tick after tick is seen.
+          logger.warn(
             'Scheduler: a person this schedule names is locked; leaving it for the next tick',
-            {
-              scheduleId: schedule.id,
-            }
+            { scheduleId: schedule.id }
           );
-          result.processed--;
           continue;
         }
         // Any other failure claims the firing on its own, as before the
         // claim moved into the transaction, so a schedule whose run cannot be
         // created fails once per firing rather than on every tick (review
-        // round 2). The failure itself is recorded below.
-        await prisma.aiWorkflowSchedule.updateMany(claim).catch(() => undefined);
+        // round 2). The failure itself is recorded below, unless another
+        // tick claimed the firing first and ran it.
+        const fallback = await prisma
+          .$transaction(async (tx) => {
+            await boundLockWaits(tx, FALLBACK_CLAIM_LOCK_WAIT_MS);
+            return tx.aiWorkflowSchedule.updateMany(claim);
+          })
+          .catch((claimError: unknown) => {
+            logger.warn('Scheduler: could not claim a firing whose run failed; it is tried again', {
+              scheduleId: schedule.id,
+              error: claimError instanceof Error ? claimError.message : String(claimError),
+            });
+            return null;
+          });
+        if (fallback?.count === 0) {
+          skipClaimed();
+          continue;
+        }
         throw err;
       }
       const { execution, erased } = created;

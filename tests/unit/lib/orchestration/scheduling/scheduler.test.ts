@@ -69,10 +69,12 @@ const mockFindErasedSubjects = vi.hoisted(() =>
 const mockTryLockSubjects = vi.hoisted(() =>
   vi.fn(async (_tx: unknown, _subjects: unknown) => true)
 );
+const mockBoundLockWaits = vi.hoisted(() => vi.fn(async (_tx: unknown, _ms: number) => undefined));
 vi.mock('@/lib/privacy/erased-subjects', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/privacy/erased-subjects')>()),
   findErasedSubjects: mockFindErasedSubjects,
   tryLockSubjects: mockTryLockSubjects,
+  boundLockWaits: mockBoundLockWaits,
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -759,14 +761,60 @@ describe('processDueSchedules', () => {
 
       const result = await processDueSchedules();
 
-      expect(result).toEqual({ processed: 0, succeeded: 0, failed: 0, errors: [] });
+      // Still processed, so the maintenance tick does not read the sweep as
+      // idle and skip ticks past this firing (review round 3).
+      expect(result).toEqual({ processed: 1, succeeded: 0, failed: 0, errors: [] });
       expect(mockFindErasedSubjects).not.toHaveBeenCalled();
       expect(prisma.aiWorkflowExecution.create).not.toHaveBeenCalled();
       expect(prisma.aiWorkflowSchedule.updateMany).not.toHaveBeenCalled();
       expect(mockExecute).not.toHaveBeenCalled();
-      expect(logger.info).toHaveBeenCalledWith(
+      expect(logger.warn).toHaveBeenCalledWith(
         'Scheduler: a person this schedule names is locked; leaving it for the next tick',
         { scheduleId: 'sched_1' }
+      );
+    });
+
+    it('bounds every lock wait in the run’s transaction inside its budget', async () => {
+      vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([makeSchedule()] as never);
+      vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({ id: 'exec_1' } as never);
+
+      await processDueSchedules();
+
+      const [tx, lockWaitMs] = mockBoundLockWaits.mock.calls[0];
+      const options = vi.mocked(prisma.$transaction).mock.calls[0][1] as { timeout: number };
+      expect(tx).toBe(prisma);
+      expect(lockWaitMs).toBeGreaterThan(60_000);
+      expect(lockWaitMs).toBeLessThan(options.timeout);
+    });
+
+    it('does not count a failure when another tick claimed and ran the firing first', async () => {
+      vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([makeSchedule()] as never);
+      vi.mocked(prisma.aiWorkflowExecution.create).mockRejectedValueOnce(
+        new Error('Transaction already closed')
+      );
+      vi.mocked(prisma.aiWorkflowSchedule.updateMany).mockResolvedValue({ count: 0 });
+
+      const result = await processDueSchedules();
+
+      expect(result).toEqual({ processed: 0, succeeded: 0, failed: 0, errors: [] });
+    });
+
+    it('logs a claim that fails after a failed run, and still records the run’s failure', async () => {
+      vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([makeSchedule()] as never);
+      vi.mocked(prisma.aiWorkflowExecution.create).mockRejectedValueOnce(
+        new Error('insert failed')
+      );
+      vi.mocked(prisma.aiWorkflowSchedule.updateMany).mockRejectedValueOnce(
+        new Error('canceling statement due to lock timeout')
+      );
+
+      const result = await processDueSchedules();
+
+      expect(result.failed).toBe(1);
+      expect(result.errors).toEqual([{ scheduleId: 'sched_1', error: 'insert failed' }]);
+      expect(logger.warn).toHaveBeenCalledWith(
+        'Scheduler: could not claim a firing whose run failed; it is tried again',
+        { scheduleId: 'sched_1', error: 'canceling statement due to lock timeout' }
       );
     });
 
