@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { renderToString } from 'react-dom/server';
 
 import { ThemeProvider, useTheme } from '@/hooks/use-theme';
 import {
@@ -129,4 +130,63 @@ describe('the no-flash script and the hook', () => {
       });
     }
   }
+});
+
+describe('when storage is blocked', () => {
+  /** Private mode / sandboxed frame: touching `localStorage` at all throws. */
+  function blockStorage() {
+    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('The operation is insecure.', 'SecurityError');
+    });
+  }
+
+  it('still applies a pick for this page view', () => {
+    fakeDevice(false);
+    blockStorage();
+    const { result } = renderTheme();
+
+    act(() => result.current.setTheme('dark'));
+
+    expect(result.current.theme).toBe('dark');
+    expect(document.documentElement.classList.contains('dark')).toBe(true);
+  });
+
+  it('treats an unreadable store as no pick, and follows the device', () => {
+    // A stored pick that would win if it could be read.
+    localStorage.setItem(THEME_STORAGE_KEY, 'light');
+    fakeDevice(true);
+    blockStorage();
+
+    expect(readStoredTheme()).toBeNull();
+    expect(renderTheme().result.current.theme).toBe('dark');
+  });
+});
+
+describe('on the server', () => {
+  it('renders light without touching window', () => {
+    function Probe() {
+      return <span>{useTheme().theme}</span>;
+    }
+    vi.stubGlobal('window', undefined);
+    try {
+      expect(
+        renderToString(
+          <ThemeProvider>
+            <Probe />
+          </ThemeProvider>
+        )
+      ).toContain('light');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('useTheme', () => {
+  it('throws outside a ThemeProvider', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => renderHook(() => useTheme())).toThrow(
+      'useTheme must be used within a ThemeProvider'
+    );
+  });
 });
