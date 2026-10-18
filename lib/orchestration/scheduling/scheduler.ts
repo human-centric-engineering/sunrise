@@ -29,6 +29,7 @@ import {
   resolveWorkflowDisplay,
 } from '@/lib/orchestration/webhooks/payload-context';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
+import { WRITER_TRANSACTION_OPTIONS } from '@/lib/privacy/erased-subjects';
 
 /**
  * Compute the next run time from a cron expression, relative to a base date.
@@ -244,7 +245,9 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
           slug: true,
           isActive: true,
           maxCostPerExecutionUsd: true,
-          publishedVersion: { select: { id: true, snapshot: true } },
+          // The snapshot is read with the input template, inside the
+          // transaction that creates the run (t-839).
+          publishedVersion: { select: { id: true } },
         },
       },
     },
@@ -338,21 +341,58 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
       // The value is the one the schema comment already documented; the
       // scheduler simply never wrote it. `AiWorkflowSchedule.createdBy`
       // still records who set the schedule up.
-      const execution = await prisma.aiWorkflowExecution.create({
-        data: {
-          workflowId: schedule.workflow.id,
-          versionId: publishedVersion.id,
-          status: WorkflowStatus.PENDING,
-          inputData: schedule.inputTemplate ?? {},
-          executionTrace: [],
-          userId: null,
-          triggerSource: 'schedule',
-          ...(scheduleScope ? { scope: scheduleScope } : {}),
-          ...(effectiveBudgetLimitUsd !== undefined
-            ? { budgetLimitUsd: effectiveBudgetLimitUsd }
-            : {}),
-        },
-      });
+      //
+      // Made from what the schedule and its version say *now*, not at the
+      // top of the tick (t-839). An erasure committing in between blanks the
+      // person's address in the template and takes them out of the version
+      // (t-804, t-791), and a run made from the earlier copy would still
+      // email them. So both rows are locked and read again in the
+      // transaction that inserts the run: version before schedule, the order
+      // erasure locks them in, so neither can wait on the other in a cycle.
+      // An erasure already past them holds them until it commits, and this
+      // reads what it wrote. One that has not reached them waits for this to
+      // commit, then finds the new run among the unfinished ones it redacts.
+      // An erasure can hold the rows for its whole transaction, so this waits
+      // past its 60 s, as every writer that queues behind one does.
+      const created = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT 1 FROM ai_workflow_version WHERE id = ${publishedVersion.id} FOR SHARE`;
+        await tx.$executeRaw`SELECT 1 FROM ai_workflow_schedule WHERE id = ${schedule.id} FOR NO KEY UPDATE`;
+        const version = await tx.aiWorkflowVersion.findUnique({
+          where: { id: publishedVersion.id },
+          select: { snapshot: true },
+        });
+        const current = await tx.aiWorkflowSchedule.findUnique({
+          where: { id: schedule.id },
+          select: { inputTemplate: true },
+        });
+        // Deleted since the tick read it: there is nothing to run.
+        if (!version || !current) return null;
+        const execution = await tx.aiWorkflowExecution.create({
+          data: {
+            workflowId: schedule.workflow.id,
+            versionId: publishedVersion.id,
+            status: WorkflowStatus.PENDING,
+            inputData: current.inputTemplate ?? {},
+            executionTrace: [],
+            userId: null,
+            triggerSource: 'schedule',
+            ...(scheduleScope ? { scope: scheduleScope } : {}),
+            ...(effectiveBudgetLimitUsd !== undefined
+              ? { budgetLimitUsd: effectiveBudgetLimitUsd }
+              : {}),
+          },
+        });
+        return { execution, snapshot: version.snapshot };
+      }, WRITER_TRANSACTION_OPTIONS);
+
+      if (!created) {
+        logger.info('Scheduler: schedule or its version deleted since the tick read it, skipping', {
+          scheduleId: schedule.id,
+        });
+        result.processed--;
+        continue;
+      }
+      const { execution, snapshot } = created;
 
       logger.info('Scheduler: created execution, invoking engine', {
         scheduleId: schedule.id,
@@ -363,7 +403,7 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
       });
 
       // Parse the workflow definition; mark execution failed if invalid
-      const defParsed = workflowDefinitionSchema.safeParse(publishedVersion.snapshot);
+      const defParsed = workflowDefinitionSchema.safeParse(snapshot);
       if (!defParsed.success) {
         logger.error('Scheduler: invalid workflow definition', {
           scheduleId: schedule.id,

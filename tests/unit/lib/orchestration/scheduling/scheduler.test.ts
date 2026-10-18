@@ -19,11 +19,27 @@ import {
 
 // ─── Mocks ──────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const prisma = {
+    // The run is created in a transaction that first locks and re-reads the
+    // schedule and its version (t-839). The callback gets this same object,
+    // so `tx.X === prisma.X`.
+    $transaction: vi.fn(),
+    $executeRaw: vi.fn().mockResolvedValue(1),
+    aiWorkflowVersion: {
+      findUnique: vi.fn().mockResolvedValue({
+        snapshot: {
+          steps: [{ id: 'step1', type: 'llm_call', config: {} }],
+          entryStepId: 'step1',
+          errorStrategy: 'fail',
+        },
+      }),
+    },
     aiWorkflowSchedule: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
+      // The re-read inside the transaction; the default matches makeSchedule().
+      findUnique: vi.fn().mockResolvedValue({ inputTemplate: { topic: 'test' } }),
       updateMany: vi.fn(),
     },
     aiWorkflowExecution: {
@@ -47,8 +63,12 @@ vi.mock('@/lib/db/client', () => ({
     aiOrchestrationSettings: {
       findUnique: vi.fn().mockResolvedValue(null),
     },
-  },
-}));
+  };
+  prisma.$transaction.mockImplementation((callback: (tx: typeof prisma) => Promise<unknown>) =>
+    callback(prisma)
+  );
+  return { prisma };
+});
 
 vi.mock('@/lib/logging', () => ({
   logger: {
@@ -542,6 +562,9 @@ describe('processDueSchedules', () => {
   it('uses inputTemplate as empty object when null', async () => {
     const schedule = makeSchedule({ inputTemplate: null });
     vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+    vi.mocked(prisma.aiWorkflowSchedule.findUnique).mockResolvedValueOnce({
+      inputTemplate: null,
+    } as never);
     vi.mocked(prisma.aiWorkflowExecution.create).mockResolvedValue({
       id: 'e',
       inputData: {},
@@ -580,7 +603,7 @@ describe('processDueSchedules', () => {
     expect(logger.info).not.toHaveBeenCalledWith('Scheduler: tick complete', expect.anything());
   });
 
-  it('includes the published version snapshot in findMany select', async () => {
+  it('reads only the published version id up front; the snapshot is read with the run (t-839)', async () => {
     vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([]);
 
     await processDueSchedules();
@@ -590,12 +613,129 @@ describe('processDueSchedules', () => {
         include: {
           workflow: {
             select: expect.objectContaining({
-              publishedVersion: { select: { id: true, snapshot: true } },
+              publishedVersion: { select: { id: true } },
             }),
           },
         },
       })
     );
+  });
+
+  describe('a tick that read before an erasure (t-839)', () => {
+    it('makes the run from the template and version as they are now, not as the tick first read them', async () => {
+      // The tick read the schedule while it still named the person; an erasure
+      // then blanked the template and rewrote the version before the run was
+      // created. The run must carry what the erasure left.
+      const schedule = makeSchedule({ inputTemplate: { userEmail: 'erased@example.com' } });
+      vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+      vi.mocked(prisma.aiWorkflowSchedule.findUnique).mockResolvedValueOnce({
+        inputTemplate: { userEmail: '' },
+      } as never);
+      const erasedSnapshot = { ...VALID_DEFINITION, entryStepId: 'after-erasure' };
+      vi.mocked(prisma.aiWorkflowVersion.findUnique).mockResolvedValueOnce({
+        snapshot: erasedSnapshot,
+      } as never);
+      vi.mocked(prisma.aiWorkflowExecution.create).mockImplementationOnce((async (args: {
+        data: { inputData: unknown };
+      }) => ({ id: 'exec_1', inputData: args.data.inputData })) as never);
+
+      const result = await processDueSchedules();
+
+      expect(result.succeeded).toBe(1);
+      const call = vi.mocked(prisma.aiWorkflowExecution.create).mock.calls[0][0] as {
+        data: { inputData: unknown };
+      };
+      expect(call.data.inputData).toEqual({ userEmail: '' });
+      expect(prisma.aiWorkflowSchedule.findUnique).toHaveBeenCalledWith({
+        where: { id: 'sched_1' },
+        select: { inputTemplate: true },
+      });
+      expect(prisma.aiWorkflowVersion.findUnique).toHaveBeenCalledWith({
+        where: { id: 'wfv_1' },
+        select: { snapshot: true },
+      });
+      // The engine runs the version as re-read, not a copy from the tick's start.
+      expect(workflowDefinitionSchema.safeParse).toHaveBeenCalledWith(erasedSnapshot);
+      expect(mockExecute).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'wf_1', definition: VALID_DEFINITION }),
+        { userEmail: '' },
+        expect.objectContaining({ resumeFromExecutionId: 'exec_1' })
+      );
+    });
+
+    it('locks the version, then the schedule, then reads and inserts, all in one transaction', async () => {
+      const order: string[] = [];
+      const schedule = makeSchedule();
+      vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+      const lock = (async (strings: TemplateStringsArray) => {
+        order.push(`lock:${strings.join('?').replace(/\s+/g, ' ').trim()}`);
+        return 1;
+      }) as never;
+      vi.mocked(prisma.$executeRaw).mockImplementationOnce(lock).mockImplementationOnce(lock);
+      vi.mocked(prisma.aiWorkflowVersion.findUnique).mockImplementationOnce((async () => {
+        order.push('read:version');
+        return { snapshot: VALID_DEFINITION };
+      }) as never);
+      vi.mocked(prisma.aiWorkflowSchedule.findUnique).mockImplementationOnce((async () => {
+        order.push('read:schedule');
+        return { inputTemplate: { topic: 'test' } };
+      }) as never);
+      let inTransaction = false;
+      vi.mocked(prisma.$transaction).mockImplementationOnce(
+        async (callback: (tx: typeof prisma) => Promise<unknown>) => {
+          inTransaction = true;
+          try {
+            return await callback(prisma);
+          } finally {
+            inTransaction = false;
+            order.push('commit');
+          }
+        }
+      );
+      const createdInside = vi.fn();
+      vi.mocked(prisma.aiWorkflowExecution.create).mockImplementationOnce((async () => {
+        createdInside(inTransaction);
+        order.push('create');
+        return { id: 'exec_1', inputData: {} };
+      }) as never);
+
+      await processDueSchedules();
+
+      // Version before schedule: the order erasure locks them in, so a tick
+      // and an erasure cannot each hold one the other is waiting for.
+      expect(order).toEqual([
+        'lock:SELECT 1 FROM ai_workflow_version WHERE id = ? FOR SHARE',
+        'lock:SELECT 1 FROM ai_workflow_schedule WHERE id = ? FOR NO KEY UPDATE',
+        'read:version',
+        'read:schedule',
+        'create',
+        'commit',
+      ]);
+      expect(vi.mocked(prisma.$executeRaw).mock.calls.map((call) => call.slice(1))).toEqual([
+        ['wfv_1'],
+        ['sched_1'],
+      ]);
+      expect(createdInside).toHaveBeenCalledWith(true);
+      // Waits out an erasure holding the rows for its whole 60 s transaction.
+      const options = vi.mocked(prisma.$transaction).mock.calls[0][1] as { timeout: number };
+      expect(options.timeout).toBeGreaterThan(60_000);
+    });
+
+    it('skips without creating a run when the schedule was deleted since the tick read it', async () => {
+      const schedule = makeSchedule();
+      vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+      vi.mocked(prisma.aiWorkflowSchedule.findUnique).mockResolvedValueOnce(null);
+
+      const result = await processDueSchedules();
+
+      expect(prisma.aiWorkflowExecution.create).not.toHaveBeenCalled();
+      expect(mockExecute).not.toHaveBeenCalled();
+      expect(result).toEqual({ processed: 0, succeeded: 0, failed: 0, errors: [] });
+      expect(logger.info).toHaveBeenCalledWith(
+        'Scheduler: schedule or its version deleted since the tick read it, skipping',
+        { scheduleId: 'sched_1' }
+      );
+    });
   });
 
   it('records failure when the workflow has no published version (publish/draft model)', async () => {
