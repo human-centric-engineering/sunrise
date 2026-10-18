@@ -164,7 +164,7 @@ describe('tryLockSubjects (t-840)', () => {
 describe('waitForSubjectLocks (t-840)', () => {
   it('waits for each key in a transaction of its own, so none is held while it waits for the next', async () => {
     const executeRaw = vi.fn().mockResolvedValue(1);
-    const opened: Array<{ timeout: number; keys: unknown[] }> = [];
+    const opened: Array<{ timeout: number; statements: string[] }> = [];
     const $transaction = vi.fn(
       async (
         callback: (client: { $executeRaw: typeof executeRaw }) => Promise<unknown>,
@@ -174,7 +174,9 @@ describe('waitForSubjectLocks (t-840)', () => {
         await callback({ $executeRaw: executeRaw });
         opened.push({
           timeout: options.timeout,
-          keys: executeRaw.mock.calls.slice(before).map((call) => call[1]),
+          statements: executeRaw.mock.calls
+            .slice(before)
+            .map((call) => `${(call[0] as string[]).join('?').trim()} | ${String(call[1])}`),
         });
       }
     );
@@ -182,12 +184,20 @@ describe('waitForSubjectLocks (t-840)', () => {
 
     await waitForSubjectLocks(client, { addresses: [' Gone@Example.com '], userIds: ['user-1'] });
 
-    expect(opened).toEqual([
-      { timeout: SUBJECT_LOCK_WAIT_MS, keys: ['sunrise:erased-address:gone@example.com'] },
-      { timeout: SUBJECT_LOCK_WAIT_MS, keys: ['sunrise:erased-user:user-1'] },
+    const lockTimeout = `SELECT set_config('lock_timeout', ?, true) | ${SUBJECT_LOCK_WAIT_MS}ms`;
+    expect(opened.map((t) => t.statements)).toEqual([
+      [
+        lockTimeout,
+        'SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) | sunrise:erased-address:gone@example.com',
+      ],
+      [
+        lockTimeout,
+        'SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) | sunrise:erased-user:user-1',
+      ],
     ]);
-    // The waiting lock, not the try.
-    expect(executeRaw.mock.calls[0][0].join('?')).toContain('pg_advisory_xact_lock(');
+    // Postgres's lock_timeout bounds the wait, inside Prisma's own timeout,
+    // which does not cancel a statement already waiting (review round 2).
+    for (const t of opened) expect(t.timeout).toBeGreaterThan(SUBJECT_LOCK_WAIT_MS);
   });
 
   it('propagates a failed wait to the caller', async () => {

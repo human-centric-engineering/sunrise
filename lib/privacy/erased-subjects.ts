@@ -20,11 +20,20 @@
  * no receipt, and write after an erasure that had already started — and that
  * erasure's scan, which ran before the write, would not see it. Each side
  * therefore takes a transaction-scoped Postgres advisory lock per address and
- * per user id it touches ({@link lockSubjects}) before it reads: the erasure
- * at the start of its transaction, the writer before its check. Whichever gets
- * there first commits before the other reads, so either the writer sees the
- * receipt, or the erasure sees the write and strips it. Keys are taken in
- * sorted order, so two writers cannot deadlock on each other.
+ * per user id it touches before it reads: the writer before its check
+ * ({@link lockSubjects}), the erasure near the start of its transaction.
+ * Whichever gets there first commits before the other reads, so either the
+ * writer sees the receipt, or the erasure sees the write and strips it. Keys
+ * are taken in sorted order, so two writers cannot deadlock on each other.
+ *
+ * **Erasure does not queue for the lock inside its transaction** (t-840). Its
+ * transaction has 60 s, and a backup import holds the locks for everyone its
+ * bundle names for up to 130 s. So erasure tries them
+ * ({@link tryLockSubjects}); on a miss it rolls back, waits outside
+ * ({@link waitForSubjectLocks}) and tries again, and only its last try waits
+ * inside. A writer that queues while erasure waits outside can go first. A
+ * scheduler tick also only tries, and leaves a busy firing for the next tick
+ * (t-839).
  *
  * **What is refused.**
  *   • A **user id** with a receipt: always. The account is gone; an approver
@@ -121,10 +130,12 @@ export async function lockSubjects(tx: LockClient, subjects: NamedSubjects): Pro
 
 /**
  * Take every lock {@link lockSubjects} would, without waiting for any (t-840).
- * False as soon as one is held by someone else; the ones already taken are
- * released when the caller rolls back. Erasure uses this so that it never
- * waits inside its 60 s transaction: a backup import holds the locks for
- * everyone its bundle names for the whole import, up to 130 s.
+ * False as soon as one is held by someone else.
+ *
+ * **On false the caller must roll back.** The keys taken before the busy one
+ * stay held until the transaction ends, so committing other work after a
+ * false would keep them from every writer and erasure until then. Erasure and
+ * the scheduler tick both throw to roll back.
  */
 export async function tryLockSubjects(
   tx: Pick<Prisma.TransactionClient, '$queryRaw'>,
@@ -159,8 +170,13 @@ export async function waitForSubjectLocks(
 ): Promise<void> {
   for (const key of subjectKeys(subjects)) {
     await client.$transaction(
-      (tx) => tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`,
-      { timeout: SUBJECT_LOCK_WAIT_MS }
+      async (tx) => {
+        // Prisma's timeout does not cancel a statement already waiting on a
+        // lock (review round 2): Postgres's own lock_timeout does.
+        await tx.$executeRaw`SELECT set_config('lock_timeout', ${`${SUBJECT_LOCK_WAIT_MS}ms`}, true)`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
+      },
+      { timeout: SUBJECT_LOCK_WAIT_MS + 5_000 }
     );
   }
 }

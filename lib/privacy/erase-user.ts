@@ -309,7 +309,10 @@ async function eraseRows(params: EraseUserParams): Promise<{
         executionsRedacted: receipt.executionsRedacted + runsPreRedacted,
       };
     } catch (error) {
-      if (!(error instanceof SubjectLocksBusyError)) throw error;
+      // The last try waited for the locks, so a busy error from it is not
+      // ours (a fork's hook can throw one): never retried, or this would not
+      // end.
+      if (lastTry || !(error instanceof SubjectLocksBusyError)) throw error;
       // Best-effort, like the pre-passes: if the wait fails, the next try
       // finds out for itself.
       try {
@@ -336,6 +339,35 @@ async function eraseInTransaction(
   waitForLocks: boolean
 ) {
   const { userId, actorUserId, reason } = params;
+  // The address is read from the user row, as the export reads it, not taken
+  // from `userEmail`: a caller's copy can be stale (a cached session that
+  // predates an email change).
+  const account = await tx.user.findUniqueOrThrow({
+    where: { id: userId },
+    select: { email: true, emailVerified: true },
+  });
+
+  // Every step below that matches the person's address does so on the rule
+  // subject access uses (`webhookDeliveriesAddressedTo`): exact on the
+  // normalised address, never `ILIKE`, and only for a verified address — an
+  // unverified one may be a stranger's inbox. Computed once, from the user row.
+  const addressed = webhookDeliveriesAddressedTo(account);
+  const address = addressed ? normaliseAddress(account.email) : null;
+
+  // Before anything below reads configuration that names them, or writes
+  // anything (t-805): the advisory locks every writer of that configuration
+  // takes before it checks for an erasure receipt. Held until this
+  // transaction commits — the receipt with it — so a writer that read before
+  // the erasure either wrote first (and is stripped below) or waits and is
+  // refused. Only tried until the last try (t-840): see `eraseRows`. First, so
+  // a try that finds a lock held has nothing to roll back.
+  const subjects = { addresses: address ? [address] : [], userIds: [userId] };
+  if (waitForLocks) {
+    await lockSubjects(tx, subjects);
+  } else if (!(await tryLockSubjects(tx, subjects))) {
+    throw new SubjectLocksBusyError(subjects);
+  }
+
   // Retained admin-audit rows keep their IP after `userId` is SetNull'd.
   await tx.aiAdminAuditLog.updateMany({
     where: { userId },
@@ -346,17 +378,11 @@ async function eraseInTransaction(
   // cascade below never reaches them. The export hands these same rows to
   // the subject as their personal data, so they go — matched exactly, never
   // case-insensitively: an `ILIKE` here would delete a stranger's messages.
-  // The address is read from the user row, as the export reads it, not taken
-  // from `userEmail`: a caller's copy can be stale (a cached session that
-  // predates an email change), and then this would delete the old address's
-  // messages and leave the ones the export calls the subject's. An
-  // unverified address matches nothing — the form proves nothing about who
-  // typed it, so they may be a stranger's. A system model, so no org scope
-  // is needed at either tenancy mode.
-  const account = await tx.user.findUniqueOrThrow({
-    where: { id: userId },
-    select: { email: true, emailVerified: true },
-  });
+  // Matched on the stored address read above, for the reason given there:
+  // a stale one would delete the old address's messages and leave the ones
+  // the export calls the subject's. An unverified address matches nothing —
+  // the form proves nothing about who typed it, so they may be a stranger's.
+  // A system model, so no org scope is needed at either tenancy mode.
   const where = contactSubmissionsOf(account);
   const contacts = where ? await tx.contactSubmission.deleteMany({ where }) : { count: 0 };
   // Unverified: count what is being left, so the warning below fires only
@@ -365,26 +391,6 @@ async function eraseInTransaction(
   const left = where
     ? 0
     : await tx.contactSubmission.count({ where: contactSubmissionsUnder(account.email) });
-
-  // Both steps below match the person's address on the rule subject access
-  // uses (`webhookDeliveriesAddressedTo`): exact on the normalised address,
-  // never `ILIKE`, and only for a verified address — an unverified one may
-  // be a stranger's inbox. Computed once, from the user row.
-  const addressed = webhookDeliveriesAddressedTo(account);
-  const address = addressed ? normaliseAddress(account.email) : null;
-
-  // Before anything below reads configuration that names them (t-805):
-  // the advisory locks every writer of that configuration takes before it
-  // checks for an erasure receipt. Held until this transaction commits —
-  // the receipt with it — so a writer that read before the erasure either
-  // wrote first (and is stripped below) or waits and is refused. Only tried
-  // until the last try (t-840): see `eraseRows`.
-  const subjects = { addresses: address ? [address] : [], userIds: [userId] };
-  if (waitForLocks) {
-    await lockSubjects(tx, subjects);
-  } else if (!(await tryLockSubjects(tx, subjects))) {
-    throw new SubjectLocksBusyError(subjects);
-  }
 
   // An email subscription that notifies this person (t-786; owner ruling
   // 2026-10-13) — a colleague's, or since t-782 their own, which outlives
