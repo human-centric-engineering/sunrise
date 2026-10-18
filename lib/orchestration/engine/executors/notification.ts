@@ -291,7 +291,7 @@ async function executeNotification(
     const resolved = resolveRecipients(config.to, ctx, step.id);
     const subject = interpolatePrompt(config.subject, ctx, step.id);
     try {
-      const { result, to } = await sendToLiveRecipients(
+      const { result, to, leftOut } = await sendToLiveRecipients(
         resolved,
         (sendTo, signal, idempotencyKey) =>
           sendEmail({
@@ -322,7 +322,13 @@ async function executeNotification(
       });
 
       stepResult = {
-        output: { sent: true, channel: 'email', status: result.status },
+        output: {
+          sent: true,
+          channel: 'email',
+          status: result.status,
+          // How many were left out as erased, so the trace shows why; never who.
+          ...(leftOut > 0 ? { recipientsLeftOut: leftOut } : {}),
+        },
         tokensUsed: 0,
         costUsd: 0,
       };

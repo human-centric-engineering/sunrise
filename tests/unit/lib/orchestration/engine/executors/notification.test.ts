@@ -205,6 +205,7 @@ describe('executeNotification', () => {
     it('calls sendEmail and returns { sent: true, channel: "email" }', async () => {
       const result = await executor(makeEmailStep(), makeCtx());
 
+      expect(result.output).not.toHaveProperty('recipientsLeftOut');
       expect(vi.mocked(sendEmail)).toHaveBeenCalledOnce();
       expect(result.output).toMatchObject({ sent: true, channel: 'email' });
       expect(result.tokensUsed).toBe(0);
@@ -391,8 +392,12 @@ describe('executeNotification', () => {
     it('does not email a recipient erased since the run started', async () => {
       erased('gone@example.com');
 
-      await executor(makeEmailStep({ to: ['Gone@Example.com', 'kept@example.com'] }), makeCtx());
+      const result = await executor(
+        makeEmailStep({ to: ['Gone@Example.com', 'kept@example.com'] }),
+        makeCtx()
+      );
 
+      expect(result.output).toMatchObject({ sent: true, recipientsLeftOut: 1 });
       expect(vi.mocked(sendEmail)).toHaveBeenCalledOnce();
       expect(vi.mocked(sendEmail)).toHaveBeenCalledWith(
         expect.objectContaining({ to: ['kept@example.com'] })
@@ -448,13 +453,13 @@ describe('executeNotification', () => {
         order.push(strings.join('?').includes('pg_advisory_xact_lock') ? 'lock' : 'bound');
         return 1;
       });
-      vi.mocked(prisma.$transaction).mockImplementationOnce(
-        async (run: (client: typeof tx) => Promise<unknown>) => {
-          const result = await run(tx);
-          order.push('commit');
-          return result;
-        }
-      );
+      vi.mocked(prisma.$transaction).mockImplementationOnce((async (
+        run: (client: typeof tx) => Promise<unknown>
+      ) => {
+        const result = await run(tx);
+        order.push('commit');
+        return result;
+      }) as never);
       vi.mocked(sendEmail).mockImplementationOnce(async () => {
         order.push('send');
         return { status: 'sent', success: true };
