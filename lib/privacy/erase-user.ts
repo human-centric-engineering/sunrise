@@ -55,6 +55,7 @@ import {
 import { eraseFromConfigRecipients } from '@/lib/privacy/config-recipients';
 import { eraseFromRunInputs, preRedactSubjectFromRuns } from '@/lib/privacy/run-recipients';
 import {
+  boundLockWaits,
   lockSubjects,
   subjectEmailHash,
   SubjectLocksBusyError,
@@ -339,6 +340,11 @@ async function eraseInTransaction(
   waitForLocks: boolean
 ) {
   const { userId, actorUserId, reason } = params;
+  // Every lock wait below, the last try's wait for the person's locks among
+  // them, gives up within the transaction's budget: Prisma's timeout alone
+  // would leave a waiting statement running past it (review round 3).
+  await boundLockWaits(tx, ERASURE_TRANSACTION_TIMEOUT_MS);
+
   // The address is read from the user row, as the export reads it, not taken
   // from `userEmail`: a caller's copy can be stale (a cached session that
   // predates an email change).

@@ -390,7 +390,10 @@ describe('eraseUser', () => {
       expect(order.indexOf('config')).toBeGreaterThan(order.lastIndexOf('lock'));
       expect(order.indexOf('runs')).toBeGreaterThan(order.lastIndexOf('lock'));
       expect(mockQueryRaw).toHaveBeenCalledTimes(2);
-      expect(mockExecuteRaw).not.toHaveBeenCalled();
+      // Nothing waited for: the one other raw statement bounds lock waits.
+      expect(mockExecuteRaw).toHaveBeenCalledTimes(1);
+      expect((mockExecuteRaw.mock.calls[0][0] as string[]).join('?')).toContain('lock_timeout');
+      expect(mockExecuteRaw.mock.calls[0][1]).toBe(`${ERASURE_TRANSACTION_TIMEOUT_MS}ms`);
     });
 
     it('locks the user id only when the address was never verified', async () => {

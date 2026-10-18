@@ -150,6 +150,17 @@ export async function tryLockSubjects(
 }
 
 /**
+ * Make every lock wait for the rest of this transaction give up after `ms`:
+ * Postgres's `lock_timeout`, transaction-local. Prisma's own transaction
+ * timeout does not cancel a statement already waiting on a lock (review
+ * round 2), so a transaction that may wait sets this to stay within its
+ * budget.
+ */
+export async function boundLockWaits(tx: LockClient, ms: number): Promise<void> {
+  await tx.$executeRaw`SELECT set_config('lock_timeout', ${`${ms}ms`}, true)`;
+}
+
+/**
  * How long {@link waitForSubjectLocks} may wait for one lock. The longest
  * anyone holds one is a backup import, for its whole transaction
  * (`IMPORT_TRANSACTION_TIMEOUT_MS`, 130 s, in
@@ -171,9 +182,7 @@ export async function waitForSubjectLocks(
   for (const key of subjectKeys(subjects)) {
     await client.$transaction(
       async (tx) => {
-        // Prisma's timeout does not cancel a statement already waiting on a
-        // lock (review round 2): Postgres's own lock_timeout does.
-        await tx.$executeRaw`SELECT set_config('lock_timeout', ${`${SUBJECT_LOCK_WAIT_MS}ms`}, true)`;
+        await boundLockWaits(tx, SUBJECT_LOCK_WAIT_MS);
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
       },
       { timeout: SUBJECT_LOCK_WAIT_MS + 5_000 }
