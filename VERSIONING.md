@@ -111,6 +111,7 @@ covered by the version contract.
   - `lib/app/db-drift.ts` → `registerAppDriftProbes()` — drift-probe registry (primitives in `lib/db/drift-probes.ts`)
   - `lib/app/emails.ts` → `emailOverrides` — transactional-email template overrides
   - `lib/app/env.ts` → `appEnvSchema` — app env registry
+  - `lib/app/erasure.ts` → `initAppErasureHooks()` — Art. 17 erasure cleanup hooks (primitive: `registerErasureCleanupHook()` in `lib/privacy/erasure-hooks.ts`)
   - `lib/app/eslint.config.mjs` — the fork's own ESLint tier config, spread into the root config
   - `lib/app/evaluations.ts` → `initAppGraders()` — evaluation grader registry
   - `lib/app/footer.ts` → `footerCopyright` — footer copyright line

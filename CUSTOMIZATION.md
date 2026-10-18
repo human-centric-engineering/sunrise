@@ -456,6 +456,7 @@ small and conflict-free.)
 | `lib/app/emails.ts`                        | auth email template overrides                                         | `lib/email/registry.ts` (server)                                                                                      |
 | `lib/app/bootstrap.ts`                     | one-time server boot work (`initApp`)                                 | `instrumentation.ts` `register()` (server, all envs)                                                                  |
 | `lib/app/user-created.ts`                  | react to a new account (`initAppUserCreatedHooks`)                    | better-auth `user.create.after` (server)                                                                              |
+| `lib/app/erasure.ts`                       | erasure cleanup for your data (`initAppErasureHooks`)                 | `eraseUser()` via `getErasureCleanupHooks()` (server)                                                                 |
 | `lib/app/jobs.ts`                          | recurring background work (`initAppJobs`)                             | the maintenance tick (server)                                                                                         |
 | `lib/app/eslint.config.mjs`                | ESLint import-boundary blocks (fork tiers)                            | root `eslint.config.mjs` spread (lint)                                                                                |
 | `lib/app/knowledge-access-contributors.ts` | extra docs for a restricted agent                                     | `resolveAgentDocumentAccess()` (server route-handler)                                                                 |
@@ -1032,8 +1033,8 @@ ALTER TABLE "AppUserProfile"
 > only reviews `@relation onDelete`, and your table has none. Skip the migration
 > FK and `prisma.user.delete()` either orphans your rows (a silent GDPR retention
 > violation) or throws `P2003` (erasure breaks for every user). For residual-PII
-> scrub or external cleanup the cascade can't reach, register a hook with
-> `lib/privacy/erasure-hooks.ts`. Full pattern:
+> scrub or external cleanup the cascade can't reach, register a hook from
+> `initAppErasureHooks()` in `lib/app/erasure.ts`. Full pattern:
 > [`.context/privacy/data-erasure.md`](./.context/privacy/data-erasure.md#app--fork-tables-relating-to-user).
 
 That hand-written FK is a **Prisma-unmodelled object**: Prisma computes desired

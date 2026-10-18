@@ -1,9 +1,9 @@
 # Fork Init Seams
 
-Seventeen of the `lib/app/*` scaffolds Sunrise ships are reached the same way: a
+Eighteen of the `lib/app/*` scaffolds Sunrise ships are reached the same way: a
 core registry runs the fork's `initApp*()` function **once, lazily, before its
 first read**. (Most of `lib/app/` is not this — the majority of those files are
-value and config scaffolds with no init function at all, and two of the nineteen
+value and config scaffolds with no init function at all, and two of the twenty
 `initApp*` exports are different shapes; see below.)
 That lets a fork accumulate registrations at module-import time without a startup
 hook, and without core needing to know which bundle realm got there first.
@@ -57,6 +57,7 @@ Three properties come with it:
 | `capabilities.ts`                  | `initAppCapabilities`                | `lib/orchestration/capabilities/registry.ts`                | roll back, log, **re-raise**   |
 | `context-contributors.ts`          | `initAppContextContributors`         | `lib/orchestration/chat/context-builder.ts`                 | roll back, log, degrade        |
 | `data-export.ts`                   | `initAppSubjectSources`              | `lib/privacy/subject-source-registry.ts`                    | roll back, log, **remembered** |
+| `erasure.ts`                       | `initAppErasureHooks`                | `lib/privacy/erasure-hooks.ts`                              | roll back, log, degrade        |
 | `evaluations.ts`                   | `initAppGraders`                     | `lib/orchestration/evaluations/graders/registry.ts`         | roll back, log, degrade        |
 | `guard-event-contributors.ts`      | `initAppGuardEventContributors`      | `lib/orchestration/chat/guard-events.ts`                    | roll back, log, degrade        |
 | `guard-floor-contributors.ts`      | `initAppGuardFloorContributors`      | `lib/orchestration/chat/guard-floor.ts`                     | roll back, log, degrade        |

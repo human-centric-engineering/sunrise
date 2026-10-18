@@ -731,26 +731,29 @@ So the migration FK with an explicit `ON DELETE` is **mandatory**, not optional.
 A `CASCADE` FK is erased automatically by `prisma.user.delete()`. But, exactly as
 for Sunrise's own tables, the cascade **cannot** (1) scrub residual PII left in
 columns of `SET NULL` retained rows, or (2) delete external resources (object
-storage, search indexes) keyed to the user. For those, register a hook with
-`lib/privacy/erasure-hooks.ts` — it runs inside the same `eraseUser()` flow,
-with no edit to the service:
+storage, search indexes) keyed to the user. For those, register a hook from `initAppErasureHooks()` in
+`lib/app/erasure.ts` — it runs inside the same `eraseUser()` flow, with no edit
+to the service:
 
 ```ts
+// lib/app/erasure.ts
 import { registerErasureCleanupHook } from '@/lib/privacy/erasure-hooks';
 
-registerErasureCleanupHook({
-  name: 'app-hub',
-  // Best-effort, BEFORE the transaction (like avatar cleanup). A throw is
-  // logged and swallowed — it can never block the user's erasure.
-  async cleanupExternal({ userId }) {
-    await deleteAppBlobsFor(userId);
-  },
-  // INSIDE the transaction, BEFORE the user row is deleted, so it can still
-  // match on userId and commits atomically — a throw rolls the erasure back.
-  async scrubInTransaction({ tx, userId }) {
-    await tx.appHubAuditEntry.updateMany({ where: { userId }, data: { actorIp: null } });
-  },
-});
+export function initAppErasureHooks(): void {
+  registerErasureCleanupHook({
+    name: 'app-hub',
+    // Best-effort, BEFORE the transaction (like avatar cleanup). A throw is
+    // logged and swallowed — it can never block the user's erasure.
+    async cleanupExternal({ userId }) {
+      await deleteAppBlobsFor(userId);
+    },
+    // INSIDE the transaction, BEFORE the user row is deleted, so it can still
+    // match on userId and commits atomically — a throw rolls the erasure back.
+    async scrubInTransaction({ tx, userId }) {
+      await tx.appHubAuditEntry.updateMany({ where: { userId }, data: { actorIp: null } });
+    },
+  });
+}
 ```
 
 **A fork table keyed by email (no `userId` at all) is the `ContactSubmission`
@@ -761,8 +764,17 @@ writer takes an address nobody proved (a public form), also read
 `emailVerified` and match nothing when it is false, as `contactSubmissionsOf()`
 does.
 
-Register once at startup (alongside the app's capability registration), then add
-an assertion to `scripts/smoke/erasure.ts` proving the app table is erased or
+`getErasureCleanupHooks()` runs `initAppErasureHooks()` once, before its first
+read, in the module graph `eraseUser()` runs in. Keep it synchronous: register
+there, and do the async work inside the hook. A throw rolls back every hook it
+registered and is logged; erasure then runs without them.
+
+Registering from `initApp()` (`lib/app/bootstrap.ts`) also works: the registry
+is held on `globalThis`, so it is one store across `instrumentation.ts` and the
+route handlers. Before #691 it was not, and a hook registered there was never
+run. Prefer the seam — it is the documented place, and it gets the rollback.
+
+Then add an assertion to `scripts/smoke/erasure.ts` proving the app table is erased or
 de-attributed against a real DB — the same proof the core tables get.
 
 ## Erasure Receipt (Accountability)

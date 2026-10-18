@@ -709,9 +709,9 @@ export const PROCESS_STATE: readonly ProcessStateDeclaration[] = [
   },
   {
     file: 'lib/privacy/erasure-hooks.ts',
-    holders: ['hooks'],
+    holders: ['globalForErasureHooks', 'hooks', 'appInit'],
     posture: 'no-tenant-data',
-    why: 'Erasure cleanup callbacks a fork registers from code.',
+    why: 'Erasure cleanup callbacks a fork registers from code, on globalThis because instrumentation.ts and the request path are separate module graphs.',
   },
   {
     file: 'lib/privacy/subject-source-registry.ts',

@@ -18,6 +18,16 @@ release process.
 
 ### Added
 
+- **`lib/app/erasure.ts` → `initAppErasureHooks()`, a seam for erasure cleanup
+  hooks** (t-854, #691). `getErasureCleanupHooks()` runs it once before its
+  first read, through `createAppInitGate`, so a throw rolls its hooks back and
+  is logged. The registry is now held on `globalThis` too. Before, it was a
+  plain module `Map`, and `instrumentation.ts` loads in a different module graph
+  from the route handlers that call `eraseUser()`: a hook registered from
+  `initApp()`, as `.context/privacy/data-erasure.md` said to, was never run,
+  and nothing was logged. **Forks:** a hook registered from `initApp()` now
+  runs with no change on your side; moving it into `initAppErasureHooks()` is
+  the documented place and adds the rollback.
 - **`GET /api/v1/admin/orchestration/maintenance/tick`, for Vercel Cron**
   (t-844). Vercel Cron only sends a `GET` with `Authorization: Bearer
   $CRON_SECRET`; set `CRON_SECRET` to an admin API key and it drives the tick
