@@ -163,15 +163,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
 **Initialization Order:**
 
-1. Check `localStorage` for saved theme preference
-2. If not found, check system preference via `prefers-color-scheme`
-3. Save detected preference to `localStorage`
-4. Default to `light` if running server-side
+1. Check `localStorage` for a theme the visitor picked
+2. If none, use the device setting via `prefers-color-scheme`, and keep following
+   it when the device switches
+3. Default to `light` if running server-side
+
+Both steps live in `lib/theme.ts` (`resolveTheme`), shared with the root
+layout's no-flash script so the first paint and the hook agree.
 
 **Side Effects:**
 
 - Adds/removes `light` or `dark` class on `<html>` element
-- Persists theme choice to `localStorage`
+- Writes `localStorage` only when `setTheme` is called. The device setting is
+  never stored, so a visitor who never uses the toggle keeps following the
+  device (#756).
 
 ### useTheme Hook
 

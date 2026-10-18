@@ -1,8 +1,14 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 
-type Theme = 'dark' | 'light';
+import {
+  PREFERS_DARK_QUERY,
+  THEME_STORAGE_KEY,
+  readStoredTheme,
+  resolveTheme,
+  type Theme,
+} from '@/lib/theme';
 
 interface ThemeContextValue {
   theme: Theme;
@@ -11,39 +17,47 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
+function devicePrefersDark(): boolean {
+  return window.matchMedia(PREFERS_DARK_QUERY).matches;
+}
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  // Initialize theme from localStorage, system preferences, or default to light
-  const [theme, setTheme] = useState<Theme>(() => {
-    if (typeof window !== 'undefined') {
-      // Check localStorage first
-      const stored = localStorage.getItem('theme') as Theme | null;
-      if (stored === 'light' || stored === 'dark') {
-        return stored;
-      }
+  // The visitor's explicit pick, and the device's setting, kept apart: only the
+  // pick is ever stored, so a visitor who never picks keeps following the
+  // device (#756). See `lib/theme.ts`.
+  const [stored, setStored] = useState<Theme | null>(() =>
+    typeof window === 'undefined' ? null : readStoredTheme()
+  );
+  const [prefersDark, setPrefersDark] = useState<boolean>(() =>
+    typeof window === 'undefined' ? false : devicePrefersDark()
+  );
+  const theme = resolveTheme(stored, prefersDark);
 
-      // Check system preferences
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const systemTheme: Theme = prefersDark ? 'dark' : 'light';
-
-      // Save system preference to localStorage
-      localStorage.setItem('theme', systemTheme);
-      return systemTheme;
-    }
-    return 'light';
-  });
+  useEffect(() => {
+    const query = window.matchMedia(PREFERS_DARK_QUERY);
+    const onChange = (event: MediaQueryListEvent) => {
+      // Re-read storage too: a pick made in another tab outranks the device.
+      setStored(readStoredTheme());
+      setPrefersDark(event.matches);
+    };
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
 
   useEffect(() => {
     const root = window.document.documentElement;
-
-    // Remove existing theme classes
     root.classList.remove('light', 'dark');
-
-    // Add current theme class
     root.classList.add(theme);
-
-    // Save to localStorage
-    localStorage.setItem('theme', theme);
   }, [theme]);
+
+  const setTheme = useCallback((next: Theme) => {
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // Storage blocked: the pick still applies for this page view.
+    }
+    setStored(next);
+  }, []);
 
   return <ThemeContext.Provider value={{ theme, setTheme }}>{children}</ThemeContext.Provider>;
 }

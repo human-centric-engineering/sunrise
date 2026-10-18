@@ -4,6 +4,7 @@ import { headers } from 'next/headers';
 import '@/app/globals.css';
 import '@/app/brand-theme.css'; // fork-owned per-surface palette; must cascade after globals
 import { ThemeProvider } from '@/hooks/use-theme';
+import { NO_FLASH_THEME_SCRIPT } from '@/lib/theme';
 import { ErrorHandlingProvider } from '@/app/error-handling-provider';
 import { ConsentProvider } from '@/lib/consent';
 import { CookieBanner } from '@/components/cookie-consent';
@@ -45,21 +46,7 @@ export default async function RootLayout({
           nonce={nonce}
           suppressHydrationWarning
           dangerouslySetInnerHTML={{
-            __html: `
-              (function() {
-                try {
-                  const stored = localStorage.getItem('theme');
-                  if (stored === 'light' || stored === 'dark') {
-                    document.documentElement.classList.add(stored);
-                  } else {
-                    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                    const theme = prefersDark ? 'dark' : 'light';
-                    document.documentElement.classList.add(theme);
-                    localStorage.setItem('theme', theme);
-                  }
-                } catch (e) {}
-              })();
-            `,
+            __html: NO_FLASH_THEME_SCRIPT,
           }}
         />
       </head>

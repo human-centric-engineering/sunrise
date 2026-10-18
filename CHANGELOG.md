@@ -411,6 +411,14 @@ release process.
   execution window. **Forks:** a client that sets one window alone may now be
   refused against the stored other half; set `costLogRetentionDays: null` too,
   or give executions a finite window.
+- **The site follows the device's light or dark setting until a visitor picks
+  one** (t-853, #756). The root layout's no-flash script and `ThemeProvider`
+  used to save the device setting to `localStorage` on the first page load, as
+  though the visitor had chosen it, so a device that later switched was never
+  followed. Now only `setTheme` writes the stored theme, and with nothing
+  stored the provider follows `prefers-color-scheme` changes. Both resolve
+  through `lib/theme.ts`. Visitors who already have a stored value keep it, so
+  the change shows for new visitors only.
 - **A copy read before an erasure can no longer write the person back**
   (t-805). The settings PATCH (escalation list), the workflow draft save,
   publish and rollback, `createInitialVersion`, webhook subscription create
