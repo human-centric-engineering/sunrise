@@ -53,7 +53,7 @@ import {
 } from '@/lib/privacy/delivery-payloads';
 import { eraseFromConfigRecipients } from '@/lib/privacy/config-recipients';
 import { eraseFromRunInputs, preRedactSubjectFromRuns } from '@/lib/privacy/run-recipients';
-import { lockSubjects, subjectEmailHash } from '@/lib/privacy/erased-subjects';
+import { lockSubjects, subjectEmailHash, waitForSubjectLocks } from '@/lib/privacy/erased-subjects';
 import { invalidateOrchestrationSettingsCache } from '@/lib/orchestration/settings';
 import {
   AWAITING_RETRY_STATUSES,
@@ -248,6 +248,9 @@ async function eraseRows(params: EraseUserParams): Promise<{
   // transaction's pass reads every run instead.
   let runsChangedSince: Date | null = null;
   let runsPreRedacted = 0;
+  // The address the transaction will lock and match, when verified. Read again
+  // there; this copy only tells 1e which lock to wait for.
+  let preReadAddress: string | null = null;
   try {
     const subjectRow = await prisma.user.findUnique({
       where: { id: userId },
@@ -257,6 +260,7 @@ async function eraseRows(params: EraseUserParams): Promise<{
       const address = webhookDeliveriesAddressedTo(subjectRow)
         ? normaliseAddress(subjectRow.email)
         : null;
+      preReadAddress = address;
       runsChangedSince = await preRedactSubjectFromRuns(prisma, { userId, address }, (n) => {
         runsPreRedacted += n;
       });
@@ -264,6 +268,23 @@ async function eraseRows(params: EraseUserParams): Promise<{
   } catch (error) {
     runsChangedSince = null;
     logger.error('Erasure run pre-pass failed; the transaction redacts instead', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  // 1e. Wait for any writer holding this person's locks before the
+  // transaction opens, not inside it (t-840). A backup import naming them holds
+  // the locks for the whole import, and a wait inside would spend the
+  // transaction's 60 s. Released again at once and retaken inside. Best-effort,
+  // like the pre-passes: if this fails, the transaction waits instead.
+  try {
+    await waitForSubjectLocks(prisma, {
+      addresses: preReadAddress ? [preReadAddress] : [],
+      userIds: [userId],
+    });
+  } catch (error) {
+    logger.error('Erasure could not wait for writers ahead of its transaction', {
       userId,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -313,7 +334,8 @@ async function eraseRows(params: EraseUserParams): Promise<{
       // the advisory locks every writer of that configuration takes before it
       // checks for an erasure receipt. Held until this transaction commits —
       // the receipt with it — so a writer that read before the erasure either
-      // wrote first (and is stripped below) or waits and is refused.
+      // wrote first (and is stripped below) or waits and is refused. 1e
+      // already waited out any holder, so this is normally immediate.
       await lockSubjects(tx, { addresses: address ? [address] : [], userIds: [userId] });
 
       // An email subscription that notifies this person (t-786; owner ruling

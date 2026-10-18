@@ -22,6 +22,8 @@ import {
   refuseErasedSubjects,
   stringsIn,
   subjectEmailHash,
+  SUBJECT_LOCK_WAIT_MS,
+  waitForSubjectLocks,
   WRITER_TRANSACTION_OPTIONS,
 } from '@/lib/privacy/erased-subjects';
 
@@ -110,6 +112,41 @@ describe('lockSubjects', () => {
     await lockSubjects(tx, { addresses: ['{{input.email}}', 'no-at-sign', '@x', 'x@'] });
 
     expect(executeRaw).not.toHaveBeenCalled();
+  });
+});
+
+describe('waitForSubjectLocks (t-840)', () => {
+  it('takes the same sorted locks in a transaction of its own, with the long wait budget, and nothing else', async () => {
+    const { tx, executeRaw, receiptFindMany, userFindMany } = makeTx();
+    const $transaction = vi.fn(
+      async (callback: (client: TxClient) => Promise<unknown>, _options: { timeout: number }) =>
+        callback(tx)
+    );
+    const client = { $transaction } as unknown as Parameters<typeof waitForSubjectLocks>[0];
+
+    await waitForSubjectLocks(client, {
+      addresses: [' Gone@Example.com '],
+      userIds: ['user-1'],
+    });
+
+    expect($transaction).toHaveBeenCalledTimes(1);
+    expect($transaction.mock.calls[0][1]).toEqual({ timeout: SUBJECT_LOCK_WAIT_MS });
+    expect(lockedKeys(executeRaw)).toEqual([
+      'sunrise:erased-address:gone@example.com',
+      'sunrise:erased-user:user-1',
+    ]);
+    // A wait, not a check: no receipt or user is read.
+    expect(receiptFindMany).not.toHaveBeenCalled();
+    expect(userFindMany).not.toHaveBeenCalled();
+  });
+
+  it('propagates a failed wait to the caller', async () => {
+    const $transaction = vi.fn().mockRejectedValue(new Error('Transaction already closed'));
+    const client = { $transaction } as unknown as Parameters<typeof waitForSubjectLocks>[0];
+
+    await expect(waitForSubjectLocks(client, { userIds: ['user-1'] })).rejects.toThrow(
+      'Transaction already closed'
+    );
   });
 });
 

@@ -43,7 +43,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { ValidationError } from '@/lib/api/errors';
 import { normaliseAddress } from '@/lib/orchestration/webhooks/destination';
 
@@ -112,6 +112,31 @@ export async function lockSubjects(tx: LockClient, subjects: NamedSubjects): Pro
   for (const key of keys) {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
   }
+}
+
+/**
+ * How long {@link waitForSubjectLocks} may wait. The longest anyone holds a
+ * subject's lock is a backup import, for its whole transaction
+ * (`IMPORT_TRANSACTION_TIMEOUT_MS`, 130 s, in
+ * `lib/orchestration/backup/importer.ts`); its test holds the two apart.
+ */
+export const SUBJECT_LOCK_WAIT_MS = 150_000;
+
+/**
+ * Wait until no one holds the lock for any of `subjects`, then let them go at
+ * once (t-840). Erasure calls this before it opens its own transaction, so a
+ * wait behind a long backup import does not spend that transaction's 60 s: an
+ * erasure that times out erases nothing. The locks are taken again inside the
+ * transaction and held to its commit; a writer that takes one in between is
+ * waited for there, as before.
+ */
+export async function waitForSubjectLocks(
+  client: Pick<PrismaClient, '$transaction'>,
+  subjects: NamedSubjects
+): Promise<void> {
+  await client.$transaction((tx) => lockSubjects(tx, subjects), {
+    timeout: SUBJECT_LOCK_WAIT_MS,
+  });
 }
 
 /**

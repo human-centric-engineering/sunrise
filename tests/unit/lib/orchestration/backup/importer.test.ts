@@ -123,9 +123,11 @@ vi.mock('@/lib/orchestration/llm/settings-resolver', async (importOriginal) => (
 
 import {
   IMPORTED_FROM_SLUG_KEY,
+  IMPORT_TRANSACTION_TIMEOUT_MS,
   importOrchestrationConfig,
   isWorkflowSlugConflict,
 } from '@/lib/orchestration/backup/importer';
+import { SUBJECT_LOCK_WAIT_MS } from '@/lib/privacy/erased-subjects';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/db/client';
 import { getTenantContext } from '@/lib/tenancy/context';
@@ -945,6 +947,23 @@ describe('importOrchestrationConfig — people whose data was erased (t-805)', (
       erasedAddressReceipt(ERASED_ADDRESS),
       { subjectUserId: ERASED_ID, subjectEmailHash: null, metadata: null },
     ]);
+  });
+
+  it('holds the locks no longer than erasure waits for them ahead of its transaction (t-840)', async () => {
+    const payload = {
+      ...minPayload,
+      data: { ...minPayload.data, workflows: [notifyAndApprove([ERASED_ADDRESS], [])] },
+    };
+
+    await importOrchestrationConfig(payload, 'user-1', SHARED_SCOPE);
+
+    // The import takes the locks at the start of this transaction and holds
+    // them to its end, so an erasure waiting for SUBJECT_LOCK_WAIT_MS outlasts
+    // any import rather than timing out behind a long one.
+    expect(prisma.$transaction).toHaveBeenLastCalledWith(expect.any(Function), {
+      timeout: IMPORT_TRANSACTION_TIMEOUT_MS,
+    });
+    expect(SUBJECT_LOCK_WAIT_MS).toBeGreaterThan(IMPORT_TRANSACTION_TIMEOUT_MS);
   });
 
   it('imports a workflow with the erased address and approver stripped, and warns', async () => {

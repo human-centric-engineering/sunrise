@@ -74,6 +74,16 @@ import {
 
 const BACKUP_VERSION_LABEL = 'Overwritten by backup import';
 
+/**
+ * How long the import transaction may run: the agent batch's own budget, plus
+ * the time it may wait at the start on erasure's lock for a person the bundle
+ * names (t-805, review round 2), since an erasure can hold it for its whole
+ * transaction. The import holds those locks for as long as this, so erasure
+ * waits for them for longer (`SUBJECT_LOCK_WAIT_MS`, t-840).
+ */
+export const IMPORT_TRANSACTION_TIMEOUT_MS =
+  AGENT_BATCH_TRANSACTION_TIMEOUT_MS + WRITER_TRANSACTION_OPTIONS.timeout;
+
 export interface ImportResult {
   agents: { created: number; updated: number };
   capabilities: { created: number; updated: number };
@@ -870,10 +880,7 @@ async function importParsed(
         result.settingsUpdated = true;
       }
     },
-    // The batch's own budget, plus the time it may wait at the start on
-    // erasure's lock for a person the bundle names (t-805, review round 2):
-    // an erasure can hold it for its whole transaction.
-    { timeout: AGENT_BATCH_TRANSACTION_TIMEOUT_MS + WRITER_TRANSACTION_OPTIONS.timeout }
+    { timeout: IMPORT_TRANSACTION_TIMEOUT_MS }
   );
 
   if (result.settingsUpdated) {
