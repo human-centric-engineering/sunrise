@@ -243,9 +243,14 @@ the setup is:
   cookie travels with a cross-site link, a bearer header does not.
 - **The work after the response is kept alive.** The route returns `202` as
   soon as due schedules are claimed and passes the rest to Next's `after()`,
-  which Vercel runs under `waitUntil`. The route sets `maxDuration = 300`,
-  which is the Fluid compute default and maximum on every plan, and matches the
-  tick's own five-minute watchdog.
+  which Vercel runs under `waitUntil`. The route sets `maxDuration = 300`, the
+  Fluid compute default and the Hobby plan's ceiling. That budget covers the
+  whole invocation, the schedules sweep and the background tasks together.
+  With many orgs, a slow sweep leaves the background tasks less time, and a
+  task cut off mid-run finishes on a later tick. On Pro you can raise it to 800
+  in `app/api/v1/admin/orchestration/maintenance/tick/route.ts`.
+- **A `HEAD` request is refused with `405`**, so an uptime probe that holds the
+  key cannot fire a tick.
 - **Rotating the key.** Mint a new key, update `CRON_SECRET`, redeploy, then
   revoke the old key. The key stops working if its owner stops being a
   platform admin.

@@ -23,7 +23,8 @@ release process.
   $CRON_SECRET`; set `CRON_SECRET` to an admin API key and it drives the tick
   with no proxy. The `GET` accepts an admin API key only and refuses a browser
   session with `403`, so a cross-site link cannot make a signed-in admin fire a
-  tick. `POST` is unchanged. See `.context/deployment/platforms/vercel.md`.
+  tick. `HEAD` answers `405` rather than running the `GET`. `POST` is
+  unchanged. See `.context/deployment/platforms/vercel.md`.
 
 - **A user whose signup's membership write failed is healed into the org
   that invited them** (t-838). `User` gains `signupOrgId` and `signupOrgRole`
@@ -739,8 +740,8 @@ release process.
   responds** (t-844). The route left them as a floating promise, which a
   serverless host can freeze once the `202` is sent, silently stopping
   schedules recovery, retries, the reaper and retention. They now run under
-  Next's `after()`, and the route sets `maxDuration = 300` to match the
-  chain's watchdog. `runMaintenanceTick()` returns the chain as `background`;
+  Next's `after()`, and the route sets `maxDuration = 300` (Vercel's Fluid
+  default and the Hobby ceiling) for the sweep and the chain together. `runMaintenanceTick()` returns the chain as `background`;
   a fork calling it from its own request handler must pass that to `after()`.
 
 - **`eraseUser()` reaches schedules and runs that name the person** (t-804).

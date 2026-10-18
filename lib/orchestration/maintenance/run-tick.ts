@@ -309,9 +309,11 @@ export async function runMaintenanceTick(
       });
     })
     .catch((err: unknown) => {
-      // Only the completion log line itself can land here. Contained so
-      // `background` never rejects: `after()` would report it as a failed
-      // request, and the dev ticker would leave it unhandled.
+      // Anything the summary step above throws: reading a job's result,
+      // spreading its summary, the gate (which contains its own errors), or the
+      // log line. Contained so `background` never rejects: `after()` would
+      // report it as a failed request, and the dev ticker would leave it
+      // unhandled.
       logger.error('Maintenance tick: background chain failed', {
         error: err instanceof Error ? err.message : String(err),
       });

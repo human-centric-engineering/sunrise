@@ -137,6 +137,7 @@ import { __resetIdleGateForTests } from '@/lib/orchestration/maintenance/idle-ga
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import {
   GET,
+  HEAD,
   POST,
   __test_setTickRunning,
 } from '@/app/api/v1/admin/orchestration/maintenance/tick/route';
@@ -360,7 +361,9 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       mockResolveApiKey.mockResolvedValue(adminApiKey());
       mockIdleSweep();
       await GET(makeRequest('', 'GET'));
-      await new Promise((resolve) => setImmediate(resolve));
+      // The first tick's chain is what arms the gate; wait for that chain
+      // itself rather than for an arbitrary number of turns.
+      await (mockAfter.mock.calls[0][0] as Promise<void>);
 
       const idle = await GET(makeRequest('', 'GET'));
       expect(idle.status).toBe(200);
@@ -379,6 +382,16 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
       expect(body.error.message).toMatch(/API key only/);
       expect(processDueSchedules).not.toHaveBeenCalled(); // test-review:accept no_arg_called — refused before the tick
       expect(mockAfter).not.toHaveBeenCalled();
+    });
+
+    it('answers HEAD with 405 and runs nothing, rather than Next running the GET', async () => {
+      mockResolveApiKey.mockResolvedValue(adminApiKey());
+
+      const response = HEAD();
+
+      expect(response.status).toBe(405);
+      expect(response.headers.get('Allow')).toBe('GET, POST');
+      expect(processDueSchedules).not.toHaveBeenCalled(); // test-review:accept no_arg_called — HEAD never ticks
     });
 
     it('returns 401 with neither a key nor a session', async () => {

@@ -19,6 +19,10 @@
  * the invocation can be frozen as soon as the response is sent; `after()`
  * keeps it alive until the chain settles, for up to `maxDuration`.
  *
+ * **No HEAD.** Next answers an unexported HEAD by running the GET handler, so
+ * an uptime probe holding the cron key would fire a full tick. HEAD answers
+ * 405 instead.
+ *
  * **Why a GET.** Vercel Cron only sends GET, with `Authorization: Bearer
  * $CRON_SECRET`. Setting `CRON_SECRET` to an admin API key lets it call this
  * route with no proxy in between. The GET refuses a browser session: a session
@@ -42,9 +46,13 @@ import {
 } from '@/lib/orchestration/maintenance/run-tick';
 
 /**
- * The same budget as the background chain's watchdog (`BACKGROUND_TASK_MAX_MS`
- * in `run-tick.ts`), so `after()` is not cut off before the watchdog would
- * have called the chain overrun. A host whose plan allows less caps it there.
+ * The whole invocation's budget: the awaited schedules sweep, then the
+ * background chain under `after()`. 300 s is the Vercel Fluid compute default
+ * and the Hobby plan's ceiling, so it deploys on every plan. It is **not** the
+ * watchdog's budget: the watchdog (`BACKGROUND_TASK_MAX_MS` in `run-tick.ts`)
+ * gives the sweep and the chain five minutes each, so a slow sweep leaves the
+ * chain less than the watchdog allows. A Pro host with many orgs can raise this
+ * to 800.
  */
 export const maxDuration = 300;
 
@@ -78,7 +86,7 @@ async function tick(request: NextRequest): Promise<Response> {
   );
 }
 
-export const POST = withAdminAuth((request) => tick(request));
+export const POST = withAdminAuth(tick);
 
 export const GET = withAdminAuth((request, session: AuthenticatedSession) => {
   if (!isApiKeySession(session)) {
@@ -86,3 +94,7 @@ export const GET = withAdminAuth((request, session: AuthenticatedSession) => {
   }
   return tick(request);
 });
+
+export function HEAD(): Response {
+  return new Response(null, { status: 405, headers: { Allow: 'GET, POST' } });
+}
