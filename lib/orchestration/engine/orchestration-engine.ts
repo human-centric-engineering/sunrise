@@ -2322,6 +2322,9 @@ export class OrchestrationEngine {
                 // Shared: other pauses and sends naming the same people need not
                 // wait for this one; only an erasure must.
                 const erased = await findErasedSubjects(tx, named, { shared: true });
+                // The bound is for the subject locks only; the row write below
+                // waits as it always has (review round 3).
+                await boundLockWaits(tx, 0);
                 if (erased.addresses.length > 0 || erased.userIds.length > 0) {
                   approvalPayload = withoutErasedInPause(trace, stepId, approvalPayload, erased);
                   // Never the address or the id: they are what was erased.

@@ -565,6 +565,53 @@ describe('executeNotification', () => {
       expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
     });
 
+    it('does not retry a send the run was cancelled during', async () => {
+      const controller = new AbortController();
+      vi.mocked(sendEmail).mockImplementationOnce(async () => {
+        controller.abort();
+        return { status: 'failed', success: false, error: 'aborted' };
+      });
+
+      const err = await executor(makeEmailStep(), makeCtx({ signal: controller.signal })).catch(
+        (e: unknown) => e
+      );
+
+      expect(err).toMatchObject({ code: 'EXECUTION_ABORTED', retriable: false });
+    });
+
+    it('opens no transaction for a retry of a cancelled run', async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      const err = await executor(makeEmailStep(), makeCtx({ signal: controller.signal })).catch(
+        (e: unknown) => e
+      );
+
+      expect(err).toMatchObject({ code: 'EXECUTION_ABORTED' });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("ends the send at the step's deadline, not 15 s after it", async () => {
+      vi.useFakeTimers();
+      try {
+        let signal: AbortSignal | undefined;
+        vi.mocked(sendEmail).mockImplementationOnce((options) => {
+          signal = options.signal;
+          return new Promise(() => undefined);
+        });
+
+        const pending = executor(makeEmailStep({ timeoutMs: 2_000 }), makeCtx()).catch(
+          (e: unknown) => e
+        );
+        await vi.advanceTimersByTimeAsync(2_000);
+        await pending;
+
+        expect(signal?.aborted).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('logs how many it emailed, never the addresses', async () => {
       await executor(makeEmailStep({ to: ['a@example.com', 'b@example.com'] }), makeCtx());
 

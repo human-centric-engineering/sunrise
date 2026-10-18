@@ -175,7 +175,7 @@ export async function tryLockSubjects(
  * Postgres's `lock_timeout`, transaction-local. Prisma's own transaction
  * timeout does not cancel a statement already waiting on a lock (review
  * round 2), so a transaction that may wait sets this to stay within its
- * budget.
+ * budget. `0` lifts the bound again for what follows.
  */
 export async function boundLockWaits(tx: LockClient, ms: number): Promise<void> {
   await tx.$executeRaw`SELECT set_config('lock_timeout', ${`${ms}ms`}, true)`;

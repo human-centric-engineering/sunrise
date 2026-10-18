@@ -372,6 +372,11 @@ describe('pauseForApproval event emission', () => {
         (strings as TemplateStringsArray).join('?')
       );
       expect(statements.filter((q) => q.includes('pg_advisory_xact_lock_shared('))).toHaveLength(3);
+      // The lock-wait bound is lifted before the row write, which waits as before.
+      const bounds = tx.$executeRaw.mock.calls
+        .filter(([strings]) => (strings as TemplateStringsArray).join('?').includes('lock_timeout'))
+        .map((call) => call[1]);
+      expect(bounds).toEqual(['150000ms', '0ms']);
       // One lock per key it names: two approver ids and the address.
       expect(order).toEqual(['lock', 'lock', 'lock', 'write']);
     });

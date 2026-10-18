@@ -167,6 +167,9 @@ async function sendToLiveRecipients(
   { content, deadline }: { content: string; deadline: number | null }
 ): Promise<{ result: SendResult; to: string | string[]; leftOut: number }> {
   const list = Array.isArray(to) ? to : [to];
+  // A retry of a cancelled run's step does not open a transaction to wait in
+  // (review round 3).
+  if (ctx.signal?.aborted) throw aborted(stepId);
   // A step with its own `timeoutMs` waits for the locks no longer than that:
   // the engine gives up on it then, without aborting it (review round 2).
   const lockWaitMs =
@@ -209,18 +212,13 @@ async function sendToLiveRecipients(
           false
         );
       }
-      if (ctx.signal?.aborted) {
-        throw new ExecutorError(
-          stepId,
-          'EXECUTION_ABORTED',
-          'The run was cancelled before the send',
-          undefined,
-          false
-        );
-      }
+      if (ctx.signal?.aborted) throw aborted(stepId);
       const sendTo = Array.isArray(to) ? kept : kept[0];
       const result = await withTimeout(
-        EMAIL_SEND_TIMEOUT_MS,
+        // No later than the step's deadline either (review round 3).
+        deadline === null
+          ? EMAIL_SEND_TIMEOUT_MS
+          : Math.max(1, Math.min(EMAIL_SEND_TIMEOUT_MS, deadline - Date.now())),
         'Email send',
         (signal) =>
           send(sendTo, signal, emailIdempotencyKey(ctx.executionId, stepId, kept, content)),
@@ -235,6 +233,17 @@ async function sendToLiveRecipients(
 }
 
 type SendResult = Awaited<ReturnType<typeof sendEmail>>;
+
+/** The run was cancelled: not retried, since a retry would be cancelled too. */
+function aborted(stepId: string): ExecutorError {
+  return new ExecutorError(
+    stepId,
+    'EXECUTION_ABORTED',
+    'The run was cancelled before the send',
+    undefined,
+    false
+  );
+}
 
 /**
  * Resend's idempotency key for this step's send: a hash of the run, the step,
@@ -265,6 +274,11 @@ async function executeNotification(
   step: WorkflowStep,
   ctx: Readonly<ExecutionContext>
 ): Promise<StepResult> {
+  // The engine abandons a step at its `timeoutMs` without aborting it. Taken
+  // first, so it is no later than the engine's own timer (review round 3).
+  const deadline =
+    typeof step.config.timeoutMs === 'number' ? Date.now() + step.config.timeoutMs : null;
+
   // Crash-safe re-run: if a prior attempt of this step already sent the
   // email/webhook and recorded its result, return the cached StepResult and
   // skip re-firing. The cache key is `${executionId}:${stepId}`. See
@@ -289,10 +303,6 @@ async function executeNotification(
     });
     return cached;
   }
-
-  // The engine abandons a step at its `timeoutMs` without aborting it.
-  const deadline =
-    typeof step.config.timeoutMs === 'number' ? Date.now() + step.config.timeoutMs : null;
 
   const parsed = notificationConfigSchema.safeParse(step.config);
   if (!parsed.success) {
@@ -330,6 +340,8 @@ async function executeNotification(
         { content: `${subject}\n${body}`, deadline }
       );
 
+      // A send the run's cancel aborted reports failed: not a send to retry.
+      if (result.status === 'failed' && ctx.signal?.aborted) throw aborted(step.id);
       if (result.status === 'failed') {
         throw new ExecutorError(
           step.id,

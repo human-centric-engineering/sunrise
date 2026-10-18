@@ -557,7 +557,10 @@ transaction):
      (`dispatchApprovalNotification`), since the application log is beyond
      erasure.
 
-   **Not reached:** the rest of the trace. The engine writes it whole after
+   **Not reached:** the approval events are sent after the pause commits
+   and its locks are let go, so an erasure that ran from start to finish in
+   that gap of milliseconds would not see the delivery they create. And the
+   rest of the trace. The engine writes it whole after
    each step, so a checkpoint written after the transaction commits can
    restore what was removed from an earlier step's entry. Runs are minutes
    long and retention prunes them; t-843 is the fix. A tick that read a
