@@ -3503,6 +3503,54 @@ describe('updateOrchestrationSettingsSchema', () => {
       expect(result.data.embedAllowedOrigins).toEqual(['https://partner.com']);
     }
   });
+
+  describe('retention pair (#839)', () => {
+    // `null` is "keep for ever". Executions kept for ever outlive any finite
+    // cost-log window, so their cost breakdown empties out once the logs age
+    // past it — the pair the old `== null` short-circuit let through.
+    it('rejects executions kept for ever with a finite cost-log window', () => {
+      const result = updateOrchestrationSettingsSchema.safeParse({
+        costLogRetentionDays: 90,
+        executionRetentionDays: null,
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0].path).toEqual(['costLogRetentionDays']);
+        expect(result.error.issues[0].message).toMatch(/leave it blank to keep cost logs for ever/);
+      }
+    });
+
+    it('accepts cost logs kept for ever against any execution window', () => {
+      for (const executionRetentionDays of [null, 30, 3650]) {
+        const result = updateOrchestrationSettingsSchema.safeParse({
+          costLogRetentionDays: null,
+          executionRetentionDays,
+        });
+        expect(result.success).toBe(true);
+      }
+    });
+
+    it('rejects a shorter cost-log window and accepts an equal one', () => {
+      expect(
+        updateOrchestrationSettingsSchema.safeParse({
+          costLogRetentionDays: 30,
+          executionRetentionDays: 90,
+        }).success
+      ).toBe(false);
+      expect(
+        updateOrchestrationSettingsSchema.safeParse({
+          costLogRetentionDays: 90,
+          executionRetentionDays: 90,
+        }).success
+      ).toBe(true);
+    });
+
+    it('leaves a patch carrying one side only to the route', () => {
+      expect(
+        updateOrchestrationSettingsSchema.safeParse({ executionRetentionDays: null }).success
+      ).toBe(true);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

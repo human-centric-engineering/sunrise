@@ -536,6 +536,10 @@ describe('Admin Orchestration — /settings', () => {
     });
 
     it('updates costLogRetentionDays', async () => {
+      // A finite cost-log window needs a finite execution window under it (#839).
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow({ executionRetentionDays: 90 }) as never
+      );
       vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
         makeSettingsRow({ costLogRetentionDays: 90 }) as never
       );
@@ -710,6 +714,49 @@ describe('Admin Orchestration — /settings', () => {
       );
 
       const res = await PATCH(makePatch({ executionRetentionDays: 3650 }));
+
+      expect(res.status).toBe(200);
+    });
+
+    // #839: null is "keep for ever", so executions kept for ever outlive any
+    // finite cost-log window. The old check skipped the pair when either side
+    // was null, which let exactly this through.
+    it('rejects keeping executions for ever against a PERSISTED finite cost-log window (400)', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow({ costLogRetentionDays: 90, executionRetentionDays: 90 }) as never
+      );
+
+      const res = await PATCH(makePatch({ executionRetentionDays: null }));
+
+      expect(res.status).toBe(400);
+      const body = await parseJson<{ error: { message: string } }>(res);
+      expect(body.error.message).toContain('executions you are keeping for ever');
+      expect(body.error.message).toContain('set it to null to keep cost logs for ever');
+      expect(prisma.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
+    });
+
+    it('rejects a finite cost-log window when executions are PERSISTED as kept for ever (400)', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow({ costLogRetentionDays: null, executionRetentionDays: null }) as never
+      );
+
+      const res = await PATCH(makePatch({ costLogRetentionDays: 90 }));
+
+      expect(res.status).toBe(400);
+      expect(prisma.aiOrchestrationSettings.upsert).not.toHaveBeenCalled();
+    });
+
+    it('accepts keeping both for ever', async () => {
+      vi.mocked(prisma.aiOrchestrationSettings.findUnique).mockResolvedValue(
+        makeSettingsRow({ costLogRetentionDays: 90, executionRetentionDays: 90 }) as never
+      );
+      vi.mocked(prisma.aiOrchestrationSettings.upsert).mockResolvedValue(
+        makeSettingsRow({ costLogRetentionDays: null, executionRetentionDays: null }) as never
+      );
+
+      const res = await PATCH(
+        makePatch({ costLogRetentionDays: null, executionRetentionDays: null })
+      );
 
       expect(res.status).toBe(200);
     });

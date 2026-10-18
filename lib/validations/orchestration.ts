@@ -2904,6 +2904,26 @@ export const escalationConfigWriteSchema = escalationConfigSchema.extend({
     .optional(),
 });
 
+/**
+ * Whether a cost-log window covers an execution window. `null` means "keep for
+ * ever" on either side.
+ *
+ * Asymmetric on purpose: cost logs kept for ever always cover, but executions
+ * kept for ever do not survive a finite cost-log window — the breakdown under
+ * them empties out once the logs age past it (#839). Same rule as
+ * `incoherentRetentionPair` on the org route and `warnOnIncoherentRetention`.
+ */
+export function costLogsOutliveExecutions(
+  costLogRetentionDays: number | null,
+  executionRetentionDays: number | null
+): boolean {
+  if (costLogRetentionDays === null) return true;
+  return executionRetentionDays !== null && costLogRetentionDays >= executionRetentionDays;
+}
+
+export const RETENTION_PAIR_MESSAGE =
+  'Cost log retention must be at least as long as execution retention, or the cost breakdown empties out for executions you are still keeping. Lengthen it, or leave it blank to keep cost logs for ever.';
+
 export const updateOrchestrationSettingsSchema = z
   .object({
     // `z.partialRecord` (not `z.record`) so admins can save a subset of
@@ -3117,17 +3137,15 @@ export const updateOrchestrationSettingsSchema = z
    * This catches the whole-form save the settings UI sends. A patch that
    * carries only one of the two is checked against the persisted value in the
    * settings route — the schema can't see the current row from here.
+   *
+   * Executions kept for ever (`null`) need cost logs kept for ever too.
    */
   .refine(
     (v) =>
-      v.costLogRetentionDays == null ||
-      v.executionRetentionDays == null ||
-      v.costLogRetentionDays >= v.executionRetentionDays,
-    {
-      message:
-        'Cost log retention must be at least as long as execution retention, or the cost breakdown empties out for executions you are still keeping',
-      path: ['costLogRetentionDays'],
-    }
+      v.costLogRetentionDays === undefined ||
+      v.executionRetentionDays === undefined ||
+      costLogsOutliveExecutions(v.costLogRetentionDays, v.executionRetentionDays),
+    { message: RETENTION_PAIR_MESSAGE, path: ['costLogRetentionDays'] }
   );
 
 // ============================================================================

@@ -24,6 +24,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldHelp } from '@/components/ui/field-help';
 import { isSafeProviderUrl } from '@/lib/security/safe-url';
+import { costLogsOutliveExecutions } from '@/lib/validations/orchestration';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -156,15 +157,16 @@ const settingsFormSchema = z
    */
   .refine(
     (v) => {
-      const costLog = Number(v.costLogRetentionDays);
-      const execution = Number(v.executionRetentionDays);
-      // Blank means "never prune this class" — no coupling to break.
-      if (!v.costLogRetentionDays || !v.executionRetentionDays) return true;
+      // Blank means "never prune this class". A blank cost log always covers;
+      // a blank execution window does not survive a finite cost-log one (#839).
+      const costLog = v.costLogRetentionDays ? Number(v.costLogRetentionDays) : null;
+      const execution = v.executionRetentionDays ? Number(v.executionRetentionDays) : null;
       if (Number.isNaN(costLog) || Number.isNaN(execution)) return true;
-      return costLog >= execution;
+      return costLogsOutliveExecutions(costLog, execution);
     },
     {
-      message: 'Must be at least as long as execution retention, or cost breakdowns empty out',
+      message:
+        'Must be at least as long as execution retention, or cost breakdowns empty out. Leave blank to keep cost logs for ever.',
       path: ['costLogRetentionDays'],
     }
   );
@@ -892,7 +894,8 @@ export function SettingsForm({
                 Finished workflow executions (completed, failed, or cancelled) older than this are
                 automatically deleted, along with their steps, dispatches, and inbound-trigger
                 payloads. In-flight and awaiting-approval executions are never deleted. Leave blank
-                to keep all history indefinitely.
+                to keep all history indefinitely — if you do, leave cost log retention blank too, or
+                older executions lose their cost breakdown.
               </FieldHelp>
             </Label>
             <Input

@@ -401,6 +401,16 @@ release process.
   read, with a log line saying it must be synchronous. Drop the `async` and do
   the async work elsewhere. `initApp` in `lib/app/bootstrap.ts` is the boot
   hook and may stay async. See `.context/architecture/fork-init-seams.md`.
+- **The global settings refuse keeping executions for ever while cost logs
+  expire** (t-852, #839). `PATCH /api/v1/admin/orchestration/settings`, its
+  schema and the settings form used to skip the retention pair check when
+  either side was `null`, so `executionRetentionDays: null` with a finite
+  `costLogRetentionDays` was accepted, and the cost breakdown emptied out under
+  executions still on file. They now answer 400 for it, the same rule the org
+  route already applied. Cost logs kept for ever (`null`) still pass against any
+  execution window. **Forks:** a client that sets one window alone may now be
+  refused against the stored other half; set `costLogRetentionDays: null` too,
+  or give executions a finite window.
 - **A copy read before an erasure can no longer write the person back**
   (t-805). The settings PATCH (escalation list), the workflow draft save,
   publish and rollback, `createInitialVersion`, webhook subscription create

@@ -156,26 +156,25 @@ are unaffected; it's the per-execution drill-down that empties.
 against anything; **executions** kept for ever violate it against every finite
 cost-log window, because they outlive all of them. So the only coherent way to
 keep executions for ever is to keep cost logs for ever too. Reading both nulls
-as "unset, therefore uncoupled" is a real defect, and it is still present on the
-global side — see the table below.
+as "unset, therefore uncoupled" was a real defect on the global side, fixed in
+#839.
 
 Unlike the evaluation coupling below, this one is **enforced in code**, in four
-places, and they do not all enforce the same rule yet:
+places, and all four now enforce the same rule — the first three through
+`costLogsOutliveExecutions` in `lib/validations/orchestration.ts`, the org route
+through its own `incoherentRetentionPair`:
 
 | Where                                                          | Catches a short cost-log window | Catches `executionRetentionDays: null` |
 | -------------------------------------------------------------- | ------------------------------- | -------------------------------------- |
-| The settings form, client-side                                 | yes                             | no                                     |
-| `updateOrchestrationSettingsSchema`'s refine (whole-form save) | yes                             | no                                     |
-| The settings PATCH route, against the persisted row            | yes                             | no                                     |
+| The settings form, client-side                                 | yes                             | yes                                    |
+| `updateOrchestrationSettingsSchema`'s refine (whole-form save) | yes                             | yes                                    |
+| The settings PATCH route, against the persisted row            | yes                             | yes                                    |
 | The org PATCH route, against the **effective** pair (§108)     | yes                             | yes                                    |
 
-The three `no`s are one inherited hole, filed against the global surface rather
-than widened from a per-org task.
-
-Three states get past whichever of those apply: an install configured before
-the checks existed and never re-saved; an org whose stored slice is made
-incoherent later by a change to the global row it inherits the other half from;
-and a global `executionRetentionDays: null` set through any of the first three.
+Two states get past whichever of those apply: an install configured before
+the checks existed (or before #839) and never re-saved; and an org whose stored
+slice is made incoherent later by a change to the global row it inherits the
+other half from.
 So `enforceRetentionPolicies()` also logs a warning once per sweep, per org,
 naming the org whose pair is wrong — and that warning **does** know the
 asymmetry.

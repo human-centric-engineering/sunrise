@@ -356,6 +356,57 @@ describe('SettingsForm', () => {
       expect(apiClient.patch).not.toHaveBeenCalled();
     });
 
+    it('blocks submit when executions are kept for ever but cost logs are not (#839)', async () => {
+      // Blank execution retention means "keep for ever", which outlives any
+      // finite cost-log window. The old refine passed whenever either was blank.
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+
+      render(
+        <SettingsForm
+          initialSettings={{
+            ...FULL_SETTINGS,
+            costLogRetentionDays: 90,
+            executionRetentionDays: null,
+          }}
+        />
+      );
+
+      const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      expect(
+        await screen.findByText(/leave blank to keep cost logs for ever/i)
+      ).toBeInTheDocument();
+      expect(apiClient.patch).not.toHaveBeenCalled();
+    });
+
+    it('allows submit when cost logs are kept for ever against a finite execution window', async () => {
+      const { apiClient } = await import('@/lib/api/client');
+      vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
+
+      render(
+        <SettingsForm
+          initialSettings={{
+            ...FULL_SETTINGS,
+            costLogRetentionDays: null,
+            executionRetentionDays: 90,
+          }}
+        />
+      );
+
+      const form = screen.getByRole('button', { name: /save settings/i }).closest('form');
+      await act(async () => {
+        fireEvent.submit(form!);
+      });
+
+      await waitFor(() => {
+        expect(apiClient.patch).toHaveBeenCalled();
+      });
+    });
+
     it('allows submit when the two retention windows are equal', async () => {
       const { apiClient } = await import('@/lib/api/client');
       vi.mocked(apiClient.patch).mockResolvedValue({ success: true });
