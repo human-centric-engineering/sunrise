@@ -62,8 +62,8 @@ Called every ~60 seconds by an external cron job hitting `POST /api/v1/admin/orc
 1. Queries enabled schedules where `nextRunAt <= now` (max 50 per tick)
 2. Skips schedules whose workflow is inactive
 3. Claims the schedule via **optimistic lock**: `updateMany WHERE id = :id AND nextRunAt = :originalNextRunAt` — if `count === 0`, another tick already claimed it (prevents double-fire in multi-instance deployments)
-4. Creates `AiWorkflowExecution` with status `pending`, `inputTemplate` as `inputData`, `triggerSource: 'schedule'`, and **`userId: null`** — see [Attribution](#attribution) below
-5. Validates the workflow definition via `workflowDefinitionSchema.safeParse()` — marks execution as `failed` if invalid
+4. Creates `AiWorkflowExecution` with status `pending`, `inputTemplate` as `inputData`, `triggerSource: 'schedule'`, and **`userId: null`** — see [Attribution](#attribution) below. The run is created in a transaction that first locks the published version (`FOR SHARE`) and then the schedule (`FOR NO KEY UPDATE`), and reads the template and the snapshot again. An erasure that commits after step 1 blanks the person's address in the template and removes them from the version, so a run made from step 1's copy would still email them (t-839). The transaction can wait up to 70 s (`WRITER_TRANSACTION_OPTIONS`) for an erasure holding those rows. A schedule or version deleted since step 1 is skipped. See [`privacy/data-erasure.md`](../privacy/data-erasure.md)
+5. Validates the workflow definition (the snapshot as re-read in step 4) via `workflowDefinitionSchema.safeParse()` — marks execution as `failed` if invalid
 6. **Invokes the orchestration engine** via `drainEngine()` (fire-and-forget) with `resumeFromExecutionId` so the engine picks up the `pending` row and transitions it through `running` to `completed`/`failed`
 
 Returns `{ processed, succeeded, failed, errors }`.
