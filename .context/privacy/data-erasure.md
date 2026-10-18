@@ -526,8 +526,11 @@ transaction):
    as for deliveries. **Not reached:** a run still executing holds its trace in
    memory and writes it whole after each step, so a write after the
    transaction commits can restore what was removed. Runs are minutes long and
-   retention prunes them. Nor is a scheduler tick that read a schedule's
-   template before the erasure and creates its run after it (t-839). Each
+   retention prunes them. A scheduler tick that read a schedule before the
+   erasure is: it creates its run in a transaction that locks the published
+   version and then the schedule (the order erasure locks them in) and reads
+   both again, so the run is made from what the erasure left, or, if the tick
+   got there first, the erasure waits for the run and redacts it (t-839). Each
    pre-pass page may take up to `PRE_PASS_PAGE_TIMEOUT_MS` (5 min): it
    commits on its own, outside the erasure's 60 s. The approval notification no longer logs its target address
    (`dispatchApprovalNotification`), since the application log is beyond
@@ -576,6 +579,13 @@ what it is about to write names an erased person —
 | `POST` / `PATCH .../schedules`                                             | every string in `inputTemplate`                                   | 400 on the field                                                                                                                                                                                                                    |
 | Backup import                                                              | all of the above in the bundle                                    | stripped, with a warning; the import goes ahead                                                                                                                                                                                     |
 
+A **scheduler tick** is the one writer that checks nothing: it does not take
+the subject locks, but re-reads the schedule's template and its version under
+row locks in the transaction that creates the run (t-839, see step 8 above).
+`npm run smoke:erasure-writers` stalls a real tick between its read and its
+insert and runs an erasure meanwhile; without those row locks its run lands
+naming the erased address.
+
 **Why a lock and not just a check.** A check alone races the erasure: the
 writer finds no receipt, the erasure scans and strips, the writer's write
 lands after the scan. So both take a transaction-scoped Postgres advisory
@@ -590,8 +600,8 @@ fails.
 queue behind an erasure holding the lock for its whole transaction (up to
 60 s), so every writer's transaction runs with `WRITER_TRANSACTION_OPTIONS`
 (70 s): Prisma's 5 s default would turn the 400 the field shows into a 500.
-The keys are locked in one sorted statement, and receipts are looked up by
-`subjectEmailHash` through its own index.
+The keys are locked one statement per key, in sorted order, and receipts are
+looked up by `subjectEmailHash` through its own index.
 
 **What is refused, and what is not.** A user id with a receipt, always. An
 address only when the receipt says erasure matched it as verified
@@ -601,10 +611,18 @@ refuse one either; a receipt from before t-805 does not say, and is not
 refused. And never an address a live, verified account holds again — a
 person erased and later signed up again may be notified like anyone else.
 
-**One wait this does not bound** (t-840): the backup importer holds the
-locks for everyone its bundle names for the whole import, so an erasure of
-one of them waits inside its own 60 s and can time out behind a long import.
-It rolls back cleanly and can be retried.
+**Erasure waits for a writer before its transaction opens** (t-840). The
+backup importer holds the locks for everyone its bundle names for the whole
+import (`IMPORT_TRANSACTION_TIMEOUT_MS`, up to 130 s), so an erasure that
+waited inside its 60 s transaction could time out behind a long import and
+erase nothing. Erasure first waits for the person's locks in a transaction of
+its own (`waitForSubjectLocks`, up to `SUBJECT_LOCK_WAIT_MS`, 150 s), lets
+them go, then takes them again inside its transaction. A writer that takes one
+in that gap of milliseconds is still waited for inside. The wait is
+best-effort: if it fails, it is logged and the transaction waits instead.
+`npm run smoke:erasure-long-import` holds a real import open for longer than
+erasure's 60 s and checks that the erasure completes after it; it takes a
+little over a minute.
 
 **A fork's own writer** of a recipient — a module that stores an address or
 user id it notifies — calls `refuseErasedSubjects(tx, { addresses, userIds },

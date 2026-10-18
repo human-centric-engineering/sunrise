@@ -69,6 +69,7 @@
     "smoke:erasure-deliveries": "tsx --env-file=.env.local scripts/smoke/erasure-deliveries.ts",
     "smoke:erasure-config": "tsx --env-file=.env.local scripts/smoke/erasure-config-recipients.ts",
     "smoke:erasure-writers": "tsx --env-file=.env.local scripts/smoke/erasure-stale-writers.ts",
+    "smoke:erasure-long-import": "tsx --env-file=.env.local scripts/smoke/erasure-long-import.ts",
     "smoke:tenancy": "tsx --env-file=.env.local scripts/smoke/tenancy.ts",
     "smoke:tenancy-isolation": "tsx --env-file=.env.local scripts/smoke/tenancy-isolation.ts",
     "smoke:send-message-target": "tsx --env-file=.env.local scripts/smoke/send-message-target.ts",

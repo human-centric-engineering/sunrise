@@ -731,6 +731,17 @@ release process.
   the erasure transaction (`preRedactSubjectFromRuns()`), as deliveries are,
   so a large run table cannot time it out. `dispatchApprovalNotification` no longer
   logs the target address (`hasChannelTarget` instead).
+- **`eraseUser()` no longer times out behind a long backup import** (t-840).
+  The importer holds the erasure locks for everyone its bundle names for the
+  whole import, up to 130 s (now `IMPORT_TRANSACTION_TIMEOUT_MS` in
+  `lib/orchestration/backup/importer.ts`), and an erasure that waited for one
+  inside its 60 s transaction failed. `eraseUser()` now waits for the person's
+  locks before its transaction opens, for up to 150 s, then takes them again
+  inside. New `waitForSubjectLocks()` and `SUBJECT_LOCK_WAIT_MS` in
+  `lib/privacy/erased-subjects.ts`. **Forks:** an erasure queued behind a
+  writer can take up to 150 s longer than before. A route that calls
+  `eraseUser()` on a host with a short request limit may want to run it in the
+  background.
 - **`LogoutButton` signs out with a full page load, as the account menu
   does** (t-829, #707). It used `router.push()` and `router.refresh()`, which
   keep the Router Cache, so pages rendered for the signed-in user could still

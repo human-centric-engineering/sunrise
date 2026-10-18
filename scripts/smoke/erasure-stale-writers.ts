@@ -18,6 +18,15 @@
  *     and verifies it, may be named again.
  *   • **Unverified.** An unverified account's erased address is not refused:
  *     erasure never matched it, and it may be a stranger's inbox.
+ *   • **A scheduler tick** (t-839). A real `processDueSchedules()` reads a
+ *     schedule whose template emails the person, then stalls just before its
+ *     run lands (this script holds the workflow row, which the run's insert
+ *     needs). An erasure runs meanwhile. Without the tick's row locks the
+ *     erasure finishes first and the run then lands naming the person; with
+ *     them the erasure waits for the run and redacts it. Skipped when other
+ *     schedules are due, since a tick would fire them too. The workflow is
+ *     deliberately unrunnable, so the tick marks its run failed and sends
+ *     nothing.
  *
  * Everything it creates is a `smoke-test-writers-*` row, removed on every path.
  * Skips cleanly (exit 0) when no database is reachable.
@@ -31,6 +40,7 @@ import { ValidationError } from '@/lib/api/errors';
 import { eraseUser } from '@/lib/privacy/erase-user';
 import { refuseErasedSubjects } from '@/lib/privacy/erased-subjects';
 import { saveDraft } from '@/lib/orchestration/workflows/version-service';
+import { processDueSchedules } from '@/lib/orchestration/scheduling';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { runAsOrg } from '@/lib/tenancy/context';
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
@@ -54,6 +64,23 @@ function check(cond: boolean, msg: string): void {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Sessions in this database waiting on a lock right now. */
+async function lockWaiters(): Promise<number> {
+  const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+    SELECT count(*)::int AS n FROM pg_stat_activity
+    WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+  return row.n;
+}
+
+/** Poll `done` every 50 ms until it holds; throw after `ms`. */
+async function until(done: () => Promise<boolean> | boolean, ms: number, what: string) {
+  const deadline = Date.now() + ms;
+  while (!(await done())) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await sleep(50);
+  }
+}
+
 async function refused(write: () => Promise<unknown>): Promise<boolean> {
   try {
     await write();
@@ -73,6 +100,7 @@ async function main(): Promise<void> {
   const userIds: string[] = [];
   const subscriptionIds: string[] = [];
   const workflowIds: string[] = [];
+  const scheduleIds: string[] = [];
   const receiptIds: string[] = [];
 
   const person = (name: string, emailVerified: boolean, email?: string) =>
@@ -262,13 +290,139 @@ async function main(): Promise<void> {
       'an unverified account’s address is not refused'
     );
 
+    // ── 5. A scheduler tick that read before the erasure (t-839) ──────────
+    console.log('scheduler tick');
+    const otherDue = await prisma.aiWorkflowSchedule.count({
+      where: { isEnabled: true, nextRunAt: { lte: new Date() } },
+    });
+    if (otherDue > 0) {
+      console.log(
+        `  – skipped: ${otherDue} schedule(s) already due here, and a tick would run them`
+      );
+    } else {
+      const scheduled = await person('scheduled', true);
+      // No entryStepId, so the tick creates its run and then marks it failed
+      // rather than starting the engine: nothing is sent.
+      const unrunnable = {
+        steps: [
+          {
+            id: 'n',
+            name: 'Notify',
+            type: 'send_notification',
+            config: { channel: 'email', to: scheduled.email, subject: 'Hi', bodyTemplate: 'x' },
+            nextSteps: [],
+          },
+        ],
+        errorStrategy: 'fail',
+      };
+      check(
+        !workflowDefinitionSchema.safeParse(unrunnable).success,
+        'the scheduled workflow cannot start the engine'
+      );
+      const tickWorkflow = await prisma.aiWorkflow.create({
+        data: {
+          name: `${PREFIX} tick workflow`,
+          slug: `${PREFIX}-tick-${stamp}`,
+          description: 'smoke',
+          orgId: INSTALL_ORG_ID,
+          draftDefinition: { steps: [] },
+          createdBy: admin.id,
+        },
+      });
+      workflowIds.push(tickWorkflow.id);
+      const tickVersion = await prisma.aiWorkflowVersion.create({
+        data: {
+          workflowId: tickWorkflow.id,
+          version: 1,
+          snapshot: unrunnable,
+          createdBy: admin.id,
+        },
+      });
+      await prisma.aiWorkflow.update({
+        where: { id: tickWorkflow.id },
+        data: { publishedVersionId: tickVersion.id },
+      });
+      const schedule = await prisma.aiWorkflowSchedule.create({
+        data: {
+          workflowId: tickWorkflow.id,
+          name: `${PREFIX} schedule`,
+          cronExpression: '0 0 1 1 *',
+          inputTemplate: { userEmail: scheduled.email },
+          isEnabled: true,
+          nextRunAt: new Date(Date.now() - 60_000),
+          createdBy: admin.id,
+          orgId: INSTALL_ORG_ID,
+        },
+      });
+      scheduleIds.push(schedule.id);
+
+      const waitersBefore = await lockWaiters();
+      // Hold the workflow row: the run's insert checks its foreign key against
+      // it, so the tick stalls there, after it has read the schedule.
+      let releaseWorkflow = (): void => undefined;
+      const released = new Promise<void>((resolve) => {
+        releaseWorkflow = resolve;
+      });
+      const holder = prisma.$transaction(
+        async (tx) => {
+          await tx.$executeRaw`SELECT 1 FROM ai_workflow WHERE id = ${tickWorkflow.id} FOR UPDATE`;
+          await released;
+        },
+        { timeout: 60_000 }
+      );
+      await sleep(100);
+      const tick = processDueSchedules();
+      await until(async () => (await lockWaiters()) > waitersBefore, 10_000, 'the tick to stall');
+
+      let erasureSettled = false;
+      const erasure = eraseUser({
+        userId: scheduled.id,
+        actorUserId: admin.id,
+        reason: 'admin_action',
+      }).finally(() => {
+        erasureSettled = true;
+      });
+      // The erasure either finishes (nothing stops it) or queues behind the
+      // tick's row locks. Either way the tick goes on only after that.
+      await until(
+        async () => erasureSettled || (await lockWaiters()) > waitersBefore + 1,
+        30_000,
+        'the erasure to finish or queue'
+      );
+      const erasureWaitedForTick = !erasureSettled;
+      releaseWorkflow();
+      const [, tickResult, scheduledResult] = await Promise.all([holder, tick, erasure]);
+      receiptIds.push(scheduledResult.receiptId);
+      userIds.splice(userIds.indexOf(scheduled.id), 1);
+      console.log(
+        `  (the erasure ${erasureWaitedForTick ? 'waited for' : 'finished before'} the run)`
+      );
+
+      check(tickResult.processed === 1, 'the tick ran the schedule');
+      const runs = await prisma.aiWorkflowExecution.findMany({
+        where: { workflowId: tickWorkflow.id },
+      });
+      check(runs.length === 1, 'the tick created one run');
+      check(
+        !JSON.stringify(runs[0].inputData).toLowerCase().includes(scheduled.email.toLowerCase()),
+        'the run does not name the erased address'
+      );
+      const scheduleAfter = await prisma.aiWorkflowSchedule.findUniqueOrThrow({
+        where: { id: schedule.id },
+      });
+      check(
+        JSON.stringify(scheduleAfter.inputTemplate) === JSON.stringify({ userEmail: '' }),
+        'the schedule’s template was blanked'
+      );
+    }
+
     console.log('\n✓ smoke:erasure-writers passed');
   } finally {
     await prisma.aiAdminAuditLog
       .deleteMany({
         where: {
           OR: [
-            { entityId: { in: [...subscriptionIds, ...workflowIds] } },
+            { entityId: { in: [...subscriptionIds, ...workflowIds, ...scheduleIds] } },
             { action: 'workflow.draft.save', entityId: { in: workflowIds } },
           ],
         },
