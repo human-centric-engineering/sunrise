@@ -47,8 +47,15 @@ export const POST = withAuth<{ slug: string }>(
     }
 
     const agent = await prisma.aiAgent.findFirst({
-      // As the chat handler loads it: a platform slug is its system row.
-      where: { slug, isActive: true, ...platformSlugWhere(slug) },
+      // As the stream route loads it: a hidden agent is not found, so this
+      // answer cannot tell an internal agent from an unknown slug (#894).
+      // A platform slug is its system row.
+      where: {
+        slug,
+        isActive: true,
+        visibility: { in: ['public', 'invite_only'] },
+        ...platformSlugWhere(slug),
+      },
       select: { id: true, visibility: true },
     });
 

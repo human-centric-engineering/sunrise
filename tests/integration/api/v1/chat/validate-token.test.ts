@@ -130,8 +130,44 @@ describe('POST /api/v1/chat/agents/:slug/validate-token', () => {
     });
 
     expect(prisma.aiAgent.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { slug: 'quiz-master', isActive: true, isSystem: true } })
+      expect.objectContaining({
+        where: {
+          slug: 'quiz-master',
+          isActive: true,
+          visibility: { in: ['public', 'invite_only'] },
+          isSystem: true,
+        },
+      })
     );
+  });
+
+  it('answers a hidden agent exactly as an unknown slug (#894)', async () => {
+    vi.mocked(auth.api.getSession).mockResolvedValue(mockAuthenticatedUser());
+    // Stand in for the database: one active internal agent, matched by
+    // whatever visibility filter the route asks with.
+    const rows = [{ id: 'agent-hidden', slug: 'my-bot', isActive: true, visibility: 'internal' }];
+    vi.mocked(prisma.aiAgent.findFirst).mockImplementation((async (args: {
+      where: { slug: string; visibility?: { in: string[] } };
+    }) => {
+      const row = rows.find(
+        (r) =>
+          r.slug === args.where.slug &&
+          r.isActive &&
+          (!args.where.visibility || args.where.visibility.in.includes(r.visibility))
+      );
+      return row ? { id: row.id, visibility: row.visibility } : null;
+    }) as never);
+
+    const hidden = await POST(makeRequest({ inviteToken: 'tok123' }), routeContext);
+    const unknown = await POST(makeRequest({ inviteToken: 'tok123' }), {
+      params: Promise.resolve({ slug: 'no-such-bot' }),
+    });
+
+    expect(hidden.status).toBe(unknown.status);
+    const hiddenBody = await parseJson<{ data: unknown }>(hidden);
+    expect(hiddenBody).toEqual(await parseJson<{ data: unknown }>(unknown));
+    expect(hiddenBody.data).toEqual({ valid: false, reason: 'Agent not found' });
+    expect(prisma.aiAgentInviteToken.findFirst).not.toHaveBeenCalled();
   });
 
   it('returns valid for active token', async () => {
