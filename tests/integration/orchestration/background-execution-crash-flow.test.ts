@@ -38,16 +38,11 @@ vi.mock('@/lib/security/ip', () => ({
 
 vi.mock('@/lib/db/client', () => {
   const prisma = {
-    // The scheduler creates the run in a transaction that locks and re-reads
-    // the schedule and its version (t-839); the callback gets this object.
+    // The scheduler creates the run and claims the schedule in one
+    // transaction (t-839); the callback gets this same object.
     $transaction: vi.fn(),
-    $executeRaw: vi.fn().mockResolvedValue(1),
-    aiWorkflowVersion: {
-      findUnique: vi.fn().mockResolvedValue({ snapshot: {} }),
-    },
     aiWorkflowSchedule: {
       findMany: vi.fn(),
-      findUnique: vi.fn().mockResolvedValue({ inputTemplate: { topic: 'test' } }),
       updateMany: vi.fn(),
     },
     aiWorkflowExecution: {
