@@ -22,6 +22,7 @@ import { createHash, createHmac } from 'crypto';
 import { render } from '@react-email/render';
 import { prisma } from '@/lib/db/client';
 import { logger } from '@/lib/logging';
+import { withTimeout } from '@/lib/utils/with-timeout';
 import { loggableUrl } from '@/lib/logging/redact-path';
 import { checkSafeProviderUrl } from '@/lib/security/safe-url';
 import {
@@ -717,30 +718,6 @@ async function attemptEmailDelivery(
 function emailIdempotencyKey(record: AttemptRecord, to: string): string {
   const addressHash = createHash('sha256').update(to.trim().toLowerCase()).digest('hex');
   return `webhook-delivery/${record.id}/${record.sendGeneration}/${addressHash.slice(0, 16)}`;
-}
-
-/**
- * `run`, rejected with "`label` timed out after N ms" if it has not settled
- * within `ms`; the signal it is handed aborts at the same moment.
- */
-async function withTimeout<T>(
-  ms: number,
-  label: string,
-  run: (signal: AbortSignal) => Promise<T>
-): Promise<T> {
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(new Error(`${label} timed out after ${ms} ms`));
-    }, ms);
-  });
-  try {
-    return await Promise.race([run(controller.signal), expired]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /**

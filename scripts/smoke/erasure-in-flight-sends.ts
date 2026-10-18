@@ -35,6 +35,7 @@ import '@/lib/orchestration/engine/executors';
 import { lockWaiters, sleep, until } from '@/scripts/smoke/lock-waits';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { runAsOrg } from '@/lib/tenancy/context';
+import { executionTraceSchema } from '@/lib/validations/orchestration';
 import type { ExecutionTraceEntry, WorkflowDefinition } from '@/types/orchestration';
 
 const PREFIX = 'smoke-test-sends';
@@ -73,7 +74,7 @@ async function traceOf(executionId: string): Promise<ExecutionTraceEntry[]> {
     where: { id: executionId },
     select: { executionTrace: true },
   });
-  return row.executionTrace as unknown as ExecutionTraceEntry[];
+  return executionTraceSchema.parse(row.executionTrace);
 }
 
 function notify(id: string, to: string | string[], next: string[]) {

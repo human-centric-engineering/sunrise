@@ -34,6 +34,7 @@ import { registerStepType } from '@/lib/orchestration/engine/executor-registry';
 import { sendEmail } from '@/lib/email/send';
 import { executeHttpRequest, HttpError } from '@/lib/orchestration/http';
 import { logger } from '@/lib/logging';
+import { withTimeout } from '@/lib/utils/with-timeout';
 import { loggableUrl } from '@/lib/logging/redact-path';
 import { WorkflowNotification } from '@/emails/workflow-notification';
 import { notificationToSchema } from '@/lib/validations/orchestration';
@@ -187,13 +188,29 @@ async function sendToLiveRecipients(
           leftOut: list.length - kept.length,
         });
       }
+      // The lock wait above does not watch the run's signal: a run cancelled
+      // while it waited sends nothing (review round 1).
+      if (ctx.signal?.aborted) {
+        throw new ExecutorError(
+          stepId,
+          'EXECUTION_ABORTED',
+          'The run was cancelled before the send',
+          undefined,
+          false
+        );
+      }
       const sendTo = Array.isArray(to) ? kept : kept[0];
-      const result = await withTimeout(EMAIL_SEND_TIMEOUT_MS, ctx.signal, (signal) =>
-        send(sendTo, signal, emailIdempotencyKey(ctx.executionId, stepId, kept))
+      const result = await withTimeout(
+        EMAIL_SEND_TIMEOUT_MS,
+        'Email send',
+        (signal) => send(sendTo, signal, emailIdempotencyKey(ctx.executionId, stepId, kept)),
+        ctx.signal
       );
       return { result, to: sendTo, leftOut: list.length - kept.length };
     },
-    { timeout: SEND_TRANSACTION_TIMEOUT_MS }
+    // maxWait: a connection may be slow to come free while other sends hold
+    // theirs; past Prisma's 2 s default that would fail the send (round 1).
+    { timeout: SEND_TRANSACTION_TIMEOUT_MS, maxWait: 10_000 }
   );
 }
 
@@ -209,34 +226,6 @@ function emailIdempotencyKey(executionId: string, stepId: string, to: string[]):
     .update(to.map((address) => normaliseAddress(address)).join('\n'))
     .digest('hex');
   return `workflow-notification/${executionId}/${stepId}/${hash.slice(0, 16)}`;
-}
-
-/**
- * `run`, rejected if it has not settled within `ms`; the signal it is handed
- * aborts then, or when the run is cancelled. The race ends the wait even if
- * something ignores the signal.
- */
-async function withTimeout<T>(
-  ms: number,
-  cancelled: AbortSignal | undefined,
-  run: (signal: AbortSignal) => Promise<T>
-): Promise<T> {
-  const controller = new AbortController();
-  const onCancel = (): void => controller.abort();
-  cancelled?.addEventListener('abort', onCancel, { once: true });
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(new Error(`Email send timed out after ${ms} ms`));
-    }, ms);
-  });
-  try {
-    return await Promise.race([run(controller.signal), expired]);
-  } finally {
-    clearTimeout(timer);
-    cancelled?.removeEventListener('abort', onCancel);
-  }
 }
 
 // ─── Executor ───────────────────────────────────────────────────────────────
@@ -315,9 +304,11 @@ async function executeNotification(
         );
       }
 
+      // A count, not the addresses: the application log is beyond erasure
+      // (review round 1; `sendEmail` logs them under a redacted key).
       logger.info('Notification step: email sent', {
         stepId: step.id,
-        to,
+        recipients: Array.isArray(to) ? to.length : 1,
         status: result.status,
       });
 

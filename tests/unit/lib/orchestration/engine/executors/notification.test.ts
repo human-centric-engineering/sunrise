@@ -471,6 +471,8 @@ describe('executeNotification', () => {
       // The transaction outlasts a full lock wait plus the bounded send.
       expect(vi.mocked(prisma.$transaction).mock.calls[0][1]).toEqual({
         timeout: expect.any(Number),
+        // Waits past Prisma's 2 s default for a connection to come free.
+        maxWait: 10_000,
       });
       const { timeout } = vi.mocked(prisma.$transaction).mock.calls[0][1] as { timeout: number };
       expect(timeout).toBeGreaterThan(SUBJECT_LOCK_WAIT_MS + EMAIL_SEND_TIMEOUT_MS);
@@ -490,6 +492,33 @@ describe('executeNotification', () => {
       );
       // A different list is a different request, so a different key.
       expect(second.idempotencyKey).not.toBe(first.idempotencyKey);
+    });
+
+    it('sends nothing when the run was cancelled while the step waited for the lock', async () => {
+      const controller = new AbortController();
+      // The run is cancelled during the lock wait, before the send.
+      tx.dataErasureReceipt.findMany.mockImplementation(async () => {
+        controller.abort();
+        return [];
+      });
+
+      const err = await executor(makeEmailStep(), makeCtx({ signal: controller.signal })).catch(
+        (e: unknown) => e
+      );
+
+      expect(err).toMatchObject({ code: 'EXECUTION_ABORTED', retriable: false });
+      expect(vi.mocked(sendEmail)).not.toHaveBeenCalled();
+    });
+
+    it('logs how many it emailed, never the addresses', async () => {
+      await executor(makeEmailStep({ to: ['a@example.com', 'b@example.com'] }), makeCtx());
+
+      expect(vi.mocked(logger.info)).toHaveBeenCalledWith('Notification step: email sent', {
+        stepId: 'notify-1',
+        recipients: 2,
+        status: 'sent',
+      });
+      expect(JSON.stringify(vi.mocked(logger.info).mock.calls)).not.toContain('a@example.com');
     });
 
     it('gives up on a send that does not settle, aborting it, as a retriable failure', async () => {

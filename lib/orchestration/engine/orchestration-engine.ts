@@ -2329,7 +2329,7 @@ export class OrchestrationEngine {
                 }
                 return pause(tx);
               },
-              { timeout: SUBJECT_LOCK_WAIT_MS + 10_000 }
+              { timeout: SUBJECT_LOCK_WAIT_MS + 10_000, maxWait: 10_000 }
             )
           : await pause(prisma);
       if (result.count === 0) {
