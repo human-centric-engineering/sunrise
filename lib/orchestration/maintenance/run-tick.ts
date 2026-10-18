@@ -9,6 +9,13 @@
  * task chain, and per-task logging. Callers receive the schedules
  * result and a `skipped` flag so the HTTP route can shape its response.
  *
+ * **The background chain is handed back, not left floating (t-844).** On a
+ * serverless host, work still running after the response can be frozen or
+ * killed, so the route passes `background` to Next's `after()`, which keeps
+ * the invocation alive until it settles. `after()` is not called here because
+ * the dev ticker in `instrumentation.ts` runs outside any request, where
+ * `after()` throws; there the promise simply runs on the long-lived process.
+ *
  * The background tasks themselves live in `platform-jobs.ts`, each with a
  * minimum interval — a task held back by its interval reports `'skipped'` in
  * the completion log line rather than being omitted (#442).
@@ -87,6 +94,12 @@ export interface TickResult {
   resumesAtMs?: number;
   /** Result of the awaited schedules sweep — undefined when `skipped`. */
   schedules?: ScheduleResult;
+  /**
+   * The background chain, settling once every task has finished and the
+   * overlap guard is released. Never rejects. Undefined when `skipped`. A
+   * request handler must pass it to `after()` (see the file header).
+   */
+  background?: Promise<void>;
   /** Tick start time (epoch ms). */
   startMs: number;
 }
@@ -164,7 +177,8 @@ async function maybeArmIdleGate({
 
 /**
  * Run one maintenance tick. The schedules sweep is awaited; the rest of
- * the chain settles in the background under the overlap guard.
+ * the chain settles in the background under the overlap guard, and is
+ * returned as `background` for the caller to keep alive.
  */
 export async function runMaintenanceTick(
   options: RunMaintenanceTickOptions = {}
@@ -255,7 +269,7 @@ export async function runMaintenanceTick(
 
   rearmWatchdog();
 
-  void Promise.allSettled([
+  const background = Promise.allSettled([
     // Sunrise's own tasks, each gated by its own minimum interval (#442) and
     // entering its own tenant scope (§108). The helper contains per-task
     // failures itself, so a rejection here would mean the registry rather than
@@ -294,6 +308,14 @@ export async function runMaintenanceTick(
         totalDurationMs: Date.now() - startMs,
       });
     })
+    .catch((err: unknown) => {
+      // Only the completion log line itself can land here. Contained so
+      // `background` never rejects: `after()` would report it as a failed
+      // request, and the dev ticker would leave it unhandled.
+      logger.error('Maintenance tick: background chain failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    })
     .finally(() => {
       clearTimeout(watchdogId);
       if (currentTickToken === myTickToken) {
@@ -301,5 +323,5 @@ export async function runMaintenanceTick(
       }
     });
 
-  return { skipped: false, schedules, startMs };
+  return { skipped: false, schedules, background, startMs };
 }

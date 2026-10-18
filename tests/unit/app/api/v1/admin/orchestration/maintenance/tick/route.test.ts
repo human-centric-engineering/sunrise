@@ -25,6 +25,24 @@ import { NextRequest } from 'next/server';
 
 // ─── Module mocks ───────────────────────────────────────────────────────────
 
+// `after()` throws outside a real request scope. Recorded rather than run: the
+// chain is already running by the time it is handed over, so recording is
+// enough to prove the route keeps it alive instead of leaving it floating
+// (t-844).
+const mockAfter = vi.hoisted(() => vi.fn());
+vi.mock('next/server', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/server')>()),
+  after: mockAfter,
+}));
+
+// The GET takes an admin API key only. Left real, `resolveApiKey` answers null
+// for every request here, so the session path the POST tests use is unchanged.
+const mockResolveApiKey = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/auth/api-keys', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/auth/api-keys')>()),
+  resolveApiKey: mockResolveApiKey,
+}));
+
 vi.mock('@/lib/auth/config', () => ({
   auth: { api: { getSession: vi.fn() } },
 }));
@@ -118,17 +136,41 @@ import { __resetPlatformJobsForTests } from '@/lib/orchestration/maintenance/pla
 import { __resetIdleGateForTests } from '@/lib/orchestration/maintenance/idle-gate';
 import { mockAdminUser, mockUnauthenticatedUser } from '@/tests/helpers/auth';
 import {
+  GET,
   POST,
   __test_setTickRunning,
 } from '@/app/api/v1/admin/orchestration/maintenance/tick/route';
+import { API_KEY_SESSION_ID_PREFIX } from '@/lib/auth/api-keys';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function makeRequest(query = ''): NextRequest {
+function makeRequest(query = '', method: 'POST' | 'GET' = 'POST'): NextRequest {
   return new NextRequest(
     `http://localhost:3000/api/v1/admin/orchestration/maintenance/tick${query}`,
-    { method: 'POST' }
+    { method }
   );
+}
+
+/** What `resolveApiKey` answers for a valid, unbound admin key. */
+function adminApiKey() {
+  const admin = mockAdminUser();
+  return {
+    session: { ...admin, session: { ...admin.session, id: `${API_KEY_SESSION_ID_PREFIX}key-1` } },
+    scopes: ['admin'],
+    rateLimitRpm: null,
+    orgId: null,
+    ownerAccountType: 'HUMAN',
+  };
+}
+
+/** Has this promise settled yet? Checked after the microtask queue drains. */
+async function isSettled(promise: Promise<unknown>): Promise<boolean> {
+  let settled = false;
+  void promise.then(() => {
+    settled = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  return settled;
 }
 
 async function parseJson<T>(response: Response): Promise<T> {
@@ -188,6 +230,7 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     __resetIdleGateForTests();
 
     vi.mocked(auth.api.getSession).mockResolvedValue(mockAdminUser());
+    mockResolveApiKey.mockResolvedValue(null);
 
     vi.mocked(processDueSchedules).mockResolvedValue(DEFAULT_SCHEDULE_RESULT);
     vi.mocked(processPendingRetries).mockResolvedValue(DEFAULT_RETRY_RESULT);
@@ -250,6 +293,103 @@ describe('POST /api/v1/admin/orchestration/maintenance/tick', () => {
     await new Promise((resolve) => setImmediate(resolve));
     return response;
   }
+
+  // ── after() — the chain outlives the response (t-844) ─────────────────────
+
+  describe('background chain under after()', () => {
+    it('hands the chain to after(), which settles only once the chain does', async () => {
+      // Hold one background task open so "the chain" and "the response" are
+      // distinguishable moments.
+      const retention = createDeferred<typeof DEFAULT_RETENTION_RESULT>();
+      vi.mocked(enforceRetentionPolicies).mockReturnValue(retention.promise);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(202);
+      expect(mockAfter).toHaveBeenCalledTimes(1);
+      const handed: unknown = mockAfter.mock.calls[0][0];
+      expect(handed).toBeInstanceOf(Promise);
+      const background = handed as Promise<unknown>;
+
+      // The response is out, but the chain it handed over is still running.
+      expect(await isSettled(background)).toBe(false);
+      expect(logger.info).not.toHaveBeenCalledWith(
+        'Maintenance tick background tasks completed',
+        expect.anything()
+      );
+
+      retention.resolve(DEFAULT_RETENTION_RESULT);
+      await background;
+
+      // Settling is the chain finishing: its completion line is written and the
+      // overlap guard released, so the next tick runs.
+      expect(logger.info).toHaveBeenCalledWith(
+        'Maintenance tick background tasks completed',
+        expect.objectContaining({ retention: DEFAULT_RETENTION_RESULT })
+      );
+      expect((await POST(makeRequest())).status).toBe(202);
+    });
+
+    it('hands nothing to after() when the tick is skipped', async () => {
+      __test_setTickRunning(true);
+
+      const response = await POST(makeRequest());
+
+      expect(response.status).toBe(200);
+      expect(mockAfter).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── GET — Vercel Cron, admin API key only ────────────────────────────────
+
+  describe('GET', () => {
+    it('runs the tick for an admin API key and hands the chain to after()', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
+      mockResolveApiKey.mockResolvedValue(adminApiKey());
+
+      const response = await GET(makeRequest('', 'GET'));
+      const body = await parseJson<{ data: { schedules: unknown } }>(response);
+
+      expect(response.status).toBe(202);
+      expect(body.data.schedules).toEqual(DEFAULT_SCHEDULE_RESULT);
+      expect(processDueSchedules).toHaveBeenCalledTimes(1);
+      expect(mockAfter).toHaveBeenCalledWith(expect.any(Promise));
+    });
+
+    it('honours ?force=1 like the POST', async () => {
+      mockResolveApiKey.mockResolvedValue(adminApiKey());
+      mockIdleSweep();
+      await GET(makeRequest('', 'GET'));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      const idle = await GET(makeRequest('', 'GET'));
+      expect(idle.status).toBe(200);
+
+      const forced = await GET(makeRequest('?force=1', 'GET'));
+      expect(forced.status).toBe(202);
+    });
+
+    it('refuses a browser session, running nothing', async () => {
+      // An admin cookie session — what a cross-site navigation would carry.
+      const response = await GET(makeRequest('', 'GET'));
+      const body = await parseJson<{ error: { code: string; message: string } }>(response);
+
+      expect(response.status).toBe(403);
+      expect(body.error.code).toBe('FORBIDDEN');
+      expect(body.error.message).toMatch(/API key only/);
+      expect(processDueSchedules).not.toHaveBeenCalled(); // test-review:accept no_arg_called — refused before the tick
+      expect(mockAfter).not.toHaveBeenCalled();
+    });
+
+    it('returns 401 with neither a key nor a session', async () => {
+      vi.mocked(auth.api.getSession).mockResolvedValue(mockUnauthenticatedUser());
+
+      const response = await GET(makeRequest('', 'GET'));
+
+      expect(response.status).toBe(401);
+      expect(processDueSchedules).not.toHaveBeenCalled(); // test-review:accept no_arg_called — refused before the tick
+    });
+  });
 
   // ── Authentication ───────────────────────────────────────────────────────
 

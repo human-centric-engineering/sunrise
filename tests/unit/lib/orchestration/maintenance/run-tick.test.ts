@@ -325,3 +325,59 @@ describe('runMaintenanceTick — guards', () => {
     );
   });
 });
+
+describe('runMaintenanceTick — the background chain it hands back (t-844)', () => {
+  it('returns the chain, which settles only after every task and releases the guard', async () => {
+    let finishPlatform!: (value: { summary: Record<string, unknown>; foundWork: boolean }) => void;
+    vi.mocked(runDuePlatformJobs).mockReturnValue(
+      new Promise((resolve) => {
+        finishPlatform = resolve;
+      })
+    );
+
+    const result = await runMaintenanceTick();
+    expect(result.background).toBeInstanceOf(Promise);
+
+    // Still running: the guard is held, so a second tick is turned away.
+    let settled = false;
+    void result.background?.then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect((await runMaintenanceTick({ force: true })).reason).toBe('previous tick still running');
+
+    finishPlatform({ summary: { a: 1 }, foundWork: true });
+    await result.background;
+
+    expect(logger.info).toHaveBeenCalledWith(
+      'Maintenance tick background tasks completed',
+      expect.objectContaining({ a: 1 })
+    );
+    expect((await runMaintenanceTick({ force: true })).skipped).toBe(false);
+  });
+
+  it('never rejects: a failure writing the completion line is logged and the guard released', async () => {
+    vi.mocked(logger.info).mockImplementation((message: string) => {
+      if (message === 'Maintenance tick background tasks completed') throw new Error('sink down');
+    });
+
+    const result = await runMaintenanceTick();
+    await expect(result.background).resolves.toBeUndefined();
+
+    expect(logger.error).toHaveBeenCalledWith('Maintenance tick: background chain failed', {
+      error: 'sink down',
+    });
+    vi.mocked(logger.info).mockImplementation(() => undefined);
+    expect((await runMaintenanceTick({ force: true })).skipped).toBe(false);
+  });
+
+  it('hands back no chain when the tick is skipped', async () => {
+    __test_setTickRunning(true);
+
+    const result = await runMaintenanceTick();
+
+    expect(result.skipped).toBe(true);
+    expect(result.background).toBeUndefined();
+  });
+});
