@@ -736,6 +736,14 @@ release process.
 
 ### Fixed
 
+- **An evaluation run where no grader scored a single case is now `failed`**
+  (t-847, #921). When the subject ran but every grader or judge threw (a judge
+  with no provider, a judge outage), no case carried an `errorCode`, so the run
+  ended `completed` with nothing scored, and the cost estimator sampled it as a
+  good run. It now ends `failed` with `summary.note = 'no_scores_recorded'`. A
+  run where any metric scored at least one case still completes, and
+  `all_cases_failed` is unchanged.
+
 - **The maintenance tick's background tasks keep running after the route
   responds** (t-844). The route left them as a floating promise, which a
   serverless host can freeze once the `202` is sent, silently stopping

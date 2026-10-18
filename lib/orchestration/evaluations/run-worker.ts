@@ -22,7 +22,8 @@
  *      the next tick resumes from the next unprocessed case.
  *   6. When every case has a result: compute aggregate summary,
  *      log the run-level cost rollup, mark `status='completed'` (or
- *      `'failed'` with `summary.note = 'all_cases_failed'` when every case errored).
+ *      `'failed'` with `summary.note = 'all_cases_failed'` when every case errored,
+ *      or `'no_scores_recorded'` when no metric scored a single case).
  *
  * Concurrency-safe: the worker is single-tick-scoped and the claim
  * step ensures only one worker can hold a run's lease at a time.
@@ -280,11 +281,21 @@ async function driveRun(run: ClaimedRun): Promise<RunOutcome> {
   // row carries its errorCode.
   const failedCodes = allResults.flatMap((r) => (r.errorCode ? [r.errorCode] : []));
   const allCasesFailed = allResults.length > 0 && failedCodes.length === allResults.length;
-  const outcome: RunOutcome = allCasesFailed ? 'failed' : 'completed';
+  // The subject can run cleanly while every grader throws (a judge with no
+  // provider, a judge outage). No case carries an errorCode then, so the check
+  // above passes, but nothing was scored and the run is just as empty (#921).
+  const nothingScored =
+    allResults.length > 0 &&
+    !allCasesFailed &&
+    metricConfigs.length > 0 &&
+    Object.values(summary.stats).every((s) => s.scoredCount === 0);
+  const outcome: RunOutcome = allCasesFailed || nothingScored ? 'failed' : 'completed';
   if (allCasesFailed) {
     summary.note = 'all_cases_failed';
     summary.casesFailed = failedCodes.length;
     summary.dominantErrorCode = dominantErrorCode(failedCodes);
+  } else if (nothingScored) {
+    summary.note = 'no_scores_recorded';
   }
   await markTerminal(run.id, outcome, { summary, totalCostUsd: totalCost });
 

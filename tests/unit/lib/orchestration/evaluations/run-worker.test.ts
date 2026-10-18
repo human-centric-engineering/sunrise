@@ -222,9 +222,10 @@ describe('processPendingEvaluationRuns — happy path', () => {
     contains.slug = 'contains';
     mockedGetGrader.mockImplementation((slug: string) => (slug === 'contains' ? contains : exact));
 
-    // After all cases written, the final findMany returns the rows used
-    // for aggregate stats. Each row carries metricScores with both keys.
-    findManyResults.mockResolvedValueOnce([
+    // The first findMany is the resume cursor (nothing done yet); the
+    // second, after all cases are written, returns the rows used for
+    // aggregate stats. Each row carries metricScores with both keys.
+    findManyResults.mockResolvedValueOnce([]).mockResolvedValueOnce([
       {
         metricScores: {
           exact_match: { score: 1, passed: true },
@@ -355,6 +356,55 @@ describe('processPendingEvaluationRuns — case failures', () => {
       note: 'all_cases_failed',
       dominantErrorCode: 'no_provider_configured',
     });
+  });
+
+  // The subject ran, so no case carries an errorCode, but every grader threw:
+  // nothing was scored, and the run must not read as a clean result (#921).
+  const unscoredRow = {
+    metricScores: { exact_match: { score: null, reasoning: 'Grader threw: judge meltdown' } },
+    subjectMetadata: {},
+    costUsd: 0.001,
+    errorCode: null,
+  };
+
+  it('marks the run failed with no_scores_recorded when no grader scored any case', async () => {
+    setupRun(2);
+    findManyResults.mockResolvedValueOnce([]).mockResolvedValueOnce([unscoredRow, unscoredRow]);
+
+    const result = await processPendingEvaluationRuns();
+
+    expect(result).toEqual({ claimed: 1, completed: 0, released: 0, failed: 1, cancelled: 0 });
+    const markCall = mockedMarkTerminal.mock.calls[0];
+    expect(markCall[1]).toBe('failed');
+    expect(markCall[2].summary.note).toBe('no_scores_recorded');
+    expect(markCall[2].summary.stats.exact_match.scoredCount).toBe(0);
+    // The note is the cases-errored one's sibling, not a variant of it.
+    expect(markCall[2].summary.casesFailed).toBeUndefined();
+  });
+
+  it('marks the run failed with no_scores_recorded when errored and unscored cases mix', async () => {
+    setupRun(2);
+    findManyResults
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([failedRow('timeout'), unscoredRow]);
+
+    await processPendingEvaluationRuns();
+
+    const markCall = mockedMarkTerminal.mock.calls[0];
+    expect(markCall[1]).toBe('failed');
+    expect(markCall[2].summary.note).toBe('no_scores_recorded');
+  });
+
+  it('keeps a run completed when one case scored and the rest went unscored', async () => {
+    setupRun(2);
+    findManyResults.mockResolvedValueOnce([]).mockResolvedValueOnce([unscoredRow, okRow]);
+
+    await processPendingEvaluationRuns();
+
+    const markCall = mockedMarkTerminal.mock.calls[0];
+    expect(markCall[1]).toBe('completed');
+    expect(markCall[2].summary.note).toBeUndefined();
+    expect(markCall[2].summary.stats.exact_match.scoredCount).toBe(1);
   });
 
   it('keeps a partially failed run completed with no note', async () => {
