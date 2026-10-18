@@ -4,21 +4,21 @@
  * `lib/orchestration/access/execution-access.ts` used to hard-code the answer —
  * every admin saw every schedule- and inbound-triggered run. That is right on a
  * single-tenant install and wrong under a customer tier, and no policy could
- * reach it. This file is the proof that it now can (t-685), and that the four
- * surfaces move **together**.
+ * reach it. This file is the proof that it now can (t-685), and that the read
+ * surfaces move **together** (approval history joined them with #773).
  *
  * Together is the point, and it is why these live in one file rather than one
- * case each in four. A list that hides a scheduled run while its detail route
- * still opens it, or a sidebar badge counting rows the list refuses to show, is
- * a divergence **nothing else here can catch** — and four separate cases would
- * each pass while the set of them disagreed.
+ * case in each route's own. A list that hides a scheduled run while its detail
+ * route still opens it, or a sidebar badge counting rows the list refuses to
+ * show, is a divergence **nothing else here can catch** — and separate cases
+ * would each pass while the set of them disagreed.
  *
  * `checkAuthorizationParity` is not that safety net, despite the family
  * resemblance. It relates `canRead`'s `'subject'` arm to `subjectScope` within
  * one policy (`AuthorizationPolicy.canRead`'s docblock says the other two arms
  * are outside the relation, and `'unattributed'` is the only arm exercised here),
  * and it compares a policy's two faces rather than two routes. Nothing
- * mechanical checks that these four surfaces agree. This file is the check.
+ * mechanical checks that these surfaces agree. This file is the check.
  *
  * The real `withAdminAuth` runs here: only `auth.api.getSession` is mocked, so
  * the guard resolves `session.unattributedReads` from the registered policy the
@@ -107,6 +107,7 @@ import { GET as executionCounts } from '@/app/api/v1/admin/orchestration/executi
 import { GET as executionDetail } from '@/app/api/v1/admin/orchestration/executions/[id]/route';
 import { GET as dashboardStats } from '@/app/api/v1/admin/orchestration/observability/dashboard-stats/route';
 import { POST as approveExecution } from '@/app/api/v1/admin/orchestration/executions/[id]/approve/route';
+import { GET as approvalHistory } from '@/app/api/v1/admin/orchestration/approvals/history/route';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -191,7 +192,7 @@ afterEach(() => {
   __resetAuthorizationPolicyForTests();
 });
 
-// ─── The four read surfaces ───────────────────────────────────────────────────
+// ─── The read surfaces ───────────────────────────────────────────────────────
 
 describe('a policy that denies unattributed reads', () => {
   it('drops system-owned runs from the executions list', async () => {
@@ -236,6 +237,18 @@ describe('a policy that denies unattributed reads', () => {
     }
     const recentWhere = vi.mocked(prisma.aiWorkflowExecution.findMany).mock.calls[0]?.[0]?.where;
     expect(boundaryOf(recentWhere)).toEqual({ userId: ADMIN_ID });
+  });
+
+  it('drops them from approval history (#773)', async () => {
+    // Approval history used to key on the caller's id alone, so it never
+    // admitted system runs, and never asked the policy either. It now takes
+    // the same clause as the list, so a narrowing policy narrows it with the
+    // rest.
+    const response = await approvalHistory(makeRequest('/approvals/history'));
+    expect(response.status).toBe(200);
+
+    const where = vi.mocked(prisma.aiWorkflowExecution.findMany).mock.calls[0]?.[0]?.where;
+    expect(boundaryOf(where)).toEqual({ userId: ADMIN_ID });
   });
 
   it('404s the detail route for a system-owned run', async () => {

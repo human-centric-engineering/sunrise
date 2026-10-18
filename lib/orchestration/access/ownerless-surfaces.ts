@@ -116,17 +116,6 @@ export const MIN_REASON_LENGTH = 20;
  * are history; the roster test is the current answer.
  */
 export const OWNERLESS_SURFACE_EXCEPTIONS: readonly OwnerlessSurfaceException[] = [
-  // ── Known gaps — the check exists because these were found by chance ──────
-  {
-    path: 'app/api/v1/admin/orchestration/approvals/history/route.ts',
-    disposition: 'known-gap',
-    tracking: '#773',
-    reason:
-      'hard-codes `userId: session.user.id`, so every approval decision on a scheduled ' +
-      'or inbound run is missing from approval history on every install — including ' +
-      "the caller's own decisions. Found one directory sideways during #774.",
-  },
-
   // ── Admin surfaces that scope by a road the helper does not offer ─────────
   {
     path: 'lib/orchestration/chat/conversation-semantic-search.ts',

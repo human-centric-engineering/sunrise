@@ -543,8 +543,9 @@ should go through the helper and does not yet, which must name the issue or
 task that closes it and is reported as stale the moment the file starts
 importing the helper. The first pass (t-692) measured 54 files touching the
 three models — 23 through the helpers, 29 by design, and two known gaps:
-`approvals/history` (#773) and the analytics service, which t-694 has since
-moved through the helper, so the roster now carries **one**. Three earlier
+`approvals/history` and the analytics service. t-694 moved the analytics
+service through the helper and #773 moved approval history, so the roster
+carries **none**. Three earlier
 coverage claims on this page were each written from the files their author had
 read and each was wrong; this is what replaces them. **It raises the floor; it
 is not a proof** — a file that imports the helper and runs an unscoped query

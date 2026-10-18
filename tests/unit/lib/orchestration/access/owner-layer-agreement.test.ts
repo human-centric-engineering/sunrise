@@ -166,10 +166,6 @@ type OwnerDisposition =
   | { kind: 'admitted'; because: string; via?: string };
 
 const OWNER_DISPOSITIONS: Record<string, OwnerDisposition> = {
-  'app/api/v1/admin/orchestration/approvals/history/route.ts': {
-    kind: 'confined',
-    because: 'keyed on `userId: session.user.id` (the known gap is that it is too narrow).',
-  },
   'lib/orchestration/chat/conversation-semantic-search.ts': {
     kind: 'confined',
     because: "raw SQL predicated on the helper's arms; in the raw-SQL manifest.",

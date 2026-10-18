@@ -3,8 +3,11 @@
  *
  * GET /api/v1/admin/orchestration/approvals/history
  *
- * Returns the calling admin's historical approval decisions, flattened to
- * one row per decided `human_approval` step. Approvals are derived from
+ * Returns the approval decisions on every run the calling admin may see,
+ * flattened to one row per decided `human_approval` step. Which runs those
+ * are is `executionVisibilityWhere`'s answer, the same as the executions
+ * list: the caller's own, plus scheduled and inbound runs (nobody owns those)
+ * where the authorization policy permits it (#773). Approvals are derived from
  * `AiWorkflowExecution.executionTrace` — the same source the engine
  * mutates when `executeApproval` / `executeRejection` run — so no schema
  * changes are needed and tokens-only decisions still surface (just
@@ -27,6 +30,7 @@ import { prisma } from '@/lib/db/client';
 import { csvEscape } from '@/lib/api/csv';
 import { paginatedResponse } from '@/lib/api/responses';
 import { getRouteLogger } from '@/lib/api/context';
+import { executionVisibilityWhere } from '@/lib/orchestration/access/execution-access';
 import { approvalHistoryQuerySchema } from '@/lib/validations/orchestration';
 import { executionTraceSchema } from '@/lib/validations/orchestration';
 import type { ApprovalHistoryEntry, ExecutionTraceEntry } from '@/types/orchestration';
@@ -56,15 +60,15 @@ export const GET = withAdminAuth(
       format: searchParams.get('format') ?? undefined,
     });
 
-    // Caller-scoped. Pull the smallest reasonable set of executions —
-    // anything in a decidable post-pause state — and let the in-memory pass
-    // do the JSON walk + decision/medium/date filtering. Prisma JSON
-    // filters can't usefully match nested step shapes, so the SQL stage
-    // just trims by ownership + status; the in-memory pass does the rest,
-    // bounded by `MAX_EXECUTIONS_SCANNED`.
+    // Pull the smallest reasonable set of executions — those the caller may
+    // see, in a decidable post-pause state — and let the in-memory pass do
+    // the JSON walk + decision/medium/date filtering. Prisma JSON filters
+    // can't usefully match nested step shapes, so the SQL stage just trims
+    // by visibility + status; the in-memory pass does the rest, bounded by
+    // `MAX_EXECUTIONS_SCANNED`. The status filter sits in an `AND` beside the
+    // visibility clause so it narrows rather than replacing that clause's `OR`.
     const where: Prisma.AiWorkflowExecutionWhereInput = {
-      userId: session.user.id,
-      status: { not: 'paused_for_approval' },
+      AND: [executionVisibilityWhere(session), { status: { not: 'paused_for_approval' } }],
     };
 
     const executions = await prisma.aiWorkflowExecution.findMany({
@@ -168,7 +172,8 @@ export const GET = withAdminAuth(
     tier: 'org',
     ownership: {
       decidedBy: 'self',
-      because: 'Lists only decisions on executions this caller owns, keyed on their id.',
+      because:
+        "Lists decisions only on executions this caller may see: their own, and an ownerless (scheduled or inbound) run where the policy permits it, keyed on the caller's id.",
     },
   }
 );

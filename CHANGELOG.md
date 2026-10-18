@@ -736,6 +736,15 @@ release process.
 
 ### Fixed
 
+- **Approval history shows decisions on scheduled and inbound runs** (t-849,
+  #773). `GET /api/v1/admin/orchestration/approvals/history` read only runs the
+  caller owned, so every decision on a run nobody owns was missing, including
+  the caller's own. It now uses `executionVisibilityWhere`, the executions
+  list's rule: on a default install every admin sees decisions on those runs.
+  A fork whose authorization policy refuses unattributed reads narrows this
+  page too, where before the page ignored the policy. The `known-gap` entry
+  leaves `OWNERLESS_SURFACE_EXCEPTIONS`.
+
 - **An evaluation run where no grader scored a single case is now `failed`**
   (t-847, #921). When the subject ran but every grader or judge threw (a judge
   with no provider, a judge outage), no case carried an `errorCode`, so the run

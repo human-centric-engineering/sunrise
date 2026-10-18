@@ -128,6 +128,23 @@ describe('GET /api/v1/admin/orchestration/approvals/history', () => {
     });
   });
 
+  it('reads runs nobody owns as well as the caller’s own on a default install (#773)', async () => {
+    // Scheduled and inbound runs have `userId = null`. Keyed on the caller's
+    // id alone, every decision on them, the caller's own included, was
+    // missing. The default policy admits ownerless reads, so the clause is the
+    // executions list's: own OR nobody's. The status filter sits in its own
+    // `AND` arm so it cannot replace that `OR`.
+    await GET(makeRequest());
+
+    const where = vi.mocked(prisma.aiWorkflowExecution.findMany).mock.calls[0]?.[0]?.where;
+    expect(where).toEqual({
+      AND: [
+        { OR: [{ userId: mockAdminUser().user.id }, { userId: null }] },
+        { status: { not: 'paused_for_approval' } },
+      ],
+    });
+  });
+
   it('classifies token actors and leaves approverName null', async () => {
     vi.mocked(prisma.aiWorkflowExecution.findMany).mockResolvedValueOnce([
       makeExecution([
