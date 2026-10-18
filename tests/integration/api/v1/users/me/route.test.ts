@@ -315,8 +315,9 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       expect(body.success).toBe(true);
       expect(body.data.deleted).toBe(true);
 
-      // The real eraseUser opened a transaction — proves the erase chain ran
-      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      // The real eraseUser opened its transactions — proves the erase chain ran:
+      // the wait for writers' locks (t-840), then the erasure itself
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
 
       // Inside $transaction: eraseUser scrubs residual PII on retained audit rows
       // before the userId FK is nulled by the cascade. Asserting the exact where/data
@@ -582,8 +583,8 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       // Admin gate skipped — count not consulted for non-admins
       expect(prisma.user.count).not.toHaveBeenCalled(); // test-review:accept no_arg_called — error-path guard: function must not be called
 
-      // eraseUser still ran: $transaction was called
-      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      // eraseUser still ran: the lock wait (t-840) and the erasure transaction
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
 
       // eraseUser called user.delete with the session's user ID
       expect(prisma.user.delete).toHaveBeenCalledWith({

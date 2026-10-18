@@ -36,10 +36,18 @@ vi.mock('@/lib/security/ip', () => ({
   getClientIP: vi.fn(() => '127.0.0.1'),
 }));
 
-vi.mock('@/lib/db/client', () => ({
-  prisma: {
+vi.mock('@/lib/db/client', () => {
+  const prisma = {
+    // The scheduler creates the run in a transaction that locks and re-reads
+    // the schedule and its version (t-839); the callback gets this object.
+    $transaction: vi.fn(),
+    $executeRaw: vi.fn().mockResolvedValue(1),
+    aiWorkflowVersion: {
+      findUnique: vi.fn().mockResolvedValue({ snapshot: {} }),
+    },
     aiWorkflowSchedule: {
       findMany: vi.fn(),
+      findUnique: vi.fn().mockResolvedValue({ inputTemplate: { topic: 'test' } }),
       updateMany: vi.fn(),
     },
     aiWorkflowExecution: {
@@ -51,8 +59,12 @@ vi.mock('@/lib/db/client', () => ({
     aiOrchestrationSettings: {
       findUnique: vi.fn().mockResolvedValue(null),
     },
-  },
-}));
+  };
+  prisma.$transaction.mockImplementation((callback: (tx: typeof prisma) => Promise<unknown>) =>
+    callback(prisma)
+  );
+  return { prisma };
+});
 
 vi.mock('@/lib/logging', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },

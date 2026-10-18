@@ -151,6 +151,11 @@ const ALLOWLIST: ReadonlyArray<{ file: string; calls: number; why: string }> = [
     why: 'cost aggregation windows',
   },
   {
+    file: 'lib/orchestration/scheduling/scheduler.ts',
+    calls: 2,
+    why: 'row locks a tick takes before it re-reads what its run is made from (t-839): `SELECT 1 … FOR SHARE` on the published version and `FOR NO KEY UPDATE` on the schedule, each one row by id, which Prisma has no call for; both tables are org-owned and the tick runs per org, so the policy filters them like any read',
+  },
+  {
     file: 'lib/privacy/config-recipients.ts',
     calls: 3,
     why: 'erasure (t-791): the settings singleton (a global model, no org) and the workflow drafts and versions that could name the person, read FOR UPDATE and narrowed by a text search Prisma cannot express; deliberately system-scoped at multi, since a person must be removed from every org’s workflows, like every erasure read',

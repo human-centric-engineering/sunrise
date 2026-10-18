@@ -771,8 +771,9 @@ describe('DELETE /api/v1/users/:id', () => {
 
       // ---- DB-state readback: prove the real eraseUser ran its $transaction flow ----
 
-      // 1. $transaction was invoked (i.e. eraseUser reached the atomic-commit step)
-      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      // 1. $transaction was invoked (i.e. eraseUser reached the atomic-commit step):
+      // once to wait for writers' locks (t-840), once for the erasure itself
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
 
       // 2. Residual-PII scrub: clientIp nulled on retained audit rows for this user
       expect(prisma.aiAdminAuditLog.updateMany).toHaveBeenCalledWith({
