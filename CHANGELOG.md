@@ -391,6 +391,16 @@ release process.
 
 ### Changed
 
+- **An `initApp*` registration seam that returns a promise is refused, as if
+  it had thrown** (t-851, #739). `createAppInitGate` used to log and report
+  `'ok'`, so an async `initAppAuthorizationPolicy` that rejected left the
+  install on the default policy instead of safe mode, and an async
+  `initAppSubjectSources` never made `exportUserData()` refuse. The gate now
+  rolls the registry back, settles `'failed'` and runs `onFailure`.
+  **Forks:** an async seam that happened to work is now disabled at its first
+  read, with a log line saying it must be synchronous. Drop the `async` and do
+  the async work elsewhere. `initApp` in `lib/app/bootstrap.ts` is the boot
+  hook and may stay async. See `.context/architecture/fork-init-seams.md`.
 - **A copy read before an erasure can no longer write the person back**
   (t-805). The settings PATCH (escalation list), the workflow draft save,
   publish and rollback, `createInitialVersion`, webhook subscription create

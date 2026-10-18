@@ -160,24 +160,33 @@ that appears at boot and then vanishes leaves the deployment looking healthy.
 
 `init: () => void` does **not** stop you writing `export async function
 initAppJobs()` — TypeScript lets a function returning anything satisfy a `void`
-return, so it compiles. The gate then sees the promise rather than the work: it
-latches `'ok'` the instant the call returns, the rollback has nothing to roll
-back, and registrations made after your first `await` land outside the gate
-entirely.
+return, so it compiles. The gate cannot vouch for one: the call returns before
+the work does, registrations made after your first `await` land outside the
+rollback, and a later rejection happens after the gate has already answered.
 
 This is easier to reach than it sounds, because core sets the pattern:
 `lib/app/bootstrap.ts` ships `export async function initApp()`, and every fork's
 copy is async. That one is the **boot** hook and is meant to be async; the lazy
 registry seams are not.
 
-**Lint catches this, and it is the guard to rely on**:
+**So the gate refuses an async seam, as if it had thrown** (#739): it rolls back
+what the init registered, settles `'failed'`, logs that the seam must be
+synchronous, and runs `onFailure`. A rejection that arrives later is logged
+rather than reaching the process. It used to log and report `'ok'` instead,
+which mattered most for the seams that do more than degrade: they act only from
+`onFailure`, so an async `initAppAuthorizationPolicy` that rejected left the
+install on Sunrise's default policy rather than safe mode, with nothing saying
+so. Refusing does break an async seam that happened to register everything
+before its first `await` — it was outside the guarantee either way, and a
+failure at boot is the cheaper way to find out.
+
+Two limits. Refusing rather than awaiting is deliberate: every read through the
+gate is synchronous, so there is nothing to await in. And the gate has no hold
+on code that runs after it answers, so a registration your continuation makes
+_after_ the rollback can still land. **Lint is the guard to rely on**:
 `@typescript-eslint/no-misused-promises` rejects `init: <async fn>` at the gate
-call site, so an async seam fails `npm run lint` in your fork. Sunrise does not
-refuse an async seam at runtime — refusing would break a fork whose seam
-otherwise works, and rolling back mid-flight would race the continuation. It
-logs, loudly, that the guarantee does not apply, and attaches a handler so a
-rejection reaches the log rather than the process. Do the async work elsewhere
-and register synchronously.
+call site, so an async seam fails `npm run lint` in your fork. Do the async work
+elsewhere and register synchronously.
 
 ## What this does NOT cover
 

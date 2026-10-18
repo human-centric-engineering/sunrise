@@ -21,6 +21,12 @@
  * `lib/app/leaf-bootstrap.ts`) so a leaf-on-framework fork can still hook boot
  * without colliding on this file.
  *
+ * **This is the only `lib/app/` hook that may be async.** Do not copy its
+ * `async` onto the `initApp*` registration seams (`initAppJobs`,
+ * `initAppAuthorizationPolicy`, …): those must be synchronous, and one that
+ * returns a promise is refused and disabled at its first read. See
+ * `.context/architecture/fork-init-seams.md` — "A seam must be synchronous".
+ *
  * Full guide: CUSTOMIZATION.md §4 · the reserved `/framework` fork tier.
  */
 export async function initApp(): Promise<void> {

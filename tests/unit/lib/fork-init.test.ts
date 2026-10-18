@@ -279,7 +279,7 @@ describe('createAppInitGate', () => {
       error: 'the failure handler blew up',
     });
   });
-  it('says so when a seam is async, because the guarantee does not survive it', async () => {
+  it('refuses an async seam: rolls back, settles failed, runs onFailure (#739)', () => {
     // `init: () => void` does not stop `export async function initAppJobs()` at
     // the TYPE level — TypeScript lets any return type satisfy `void`, and
     // eslint rejects a cast here as unnecessary, which is the hazard
@@ -288,26 +288,39 @@ describe('createAppInitGate', () => {
     // fork that does not lint, or that turns that rule off. And it is a pattern core
     // set: `lib/app/bootstrap.ts` ships `export async function initApp()`, and
     // every fork's copy is async.
-    const registry = new Map<string, string>();
+    const registry = new Map<string, string>([['core', 'built-in']]);
+    const onFailure = vi.fn();
     const gate = createAppInitGate({
       label: 'probe: initAppProbe',
       subject: 'app probes',
       // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the point
-      init: () => Promise.resolve(),
+      init: () => {
+        registry.set('fork', 'registered before the first await');
+        return Promise.resolve();
+      },
       snapshot: () => new Map(registry),
       restore: (before) => restoreMap(registry, before),
+      onFailure,
     });
 
-    // Still reported 'ok' — the sync part ran, and refusing would break a fork
-    // whose async seam otherwise works. But it is no longer silent.
-    expect(gate.ensure()).toBe('ok');
+    // Refused like a throw (#739). It used to log and report 'ok', but the two
+    // seams that do more than degrade act only from `onFailure`, so an async
+    // authorization init that rejected left the install on the widest default
+    // policy with safe mode silent.
+    expect(gate.ensure()).toBe('failed');
+    expect([...registry.entries()]).toEqual([['core', 'built-in']]);
+    expect(onFailure).toHaveBeenCalledTimes(1);
+    expect(onFailure.mock.calls[0][0]).toBeInstanceOf(Error);
     expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining('must be synchronous'),
-      expect.objectContaining({ hint: expect.stringContaining('after the first await') })
+      'probe: initAppProbe returned a promise — this seam must be synchronous; app probes rolled back and disabled',
+      expect.objectContaining({ hint: expect.stringContaining('register synchronously') })
     );
+    // Latched like a throw: not re-run, onFailure not re-fired.
+    expect(gate.ensure()).toBe('failed');
+    expect(onFailure).toHaveBeenCalledTimes(1);
   });
 
-  it("routes an async seam's rejection to the log instead of the process", async () => {
+  it("routes a refused async seam's rejection to the log instead of the process", async () => {
     const registry = new Map<string, string>();
     const gate = createAppInitGate({
       label: 'probe: initAppProbe',
@@ -318,14 +331,13 @@ describe('createAppInitGate', () => {
       restore: (before) => restoreMap(registry, before),
     });
 
-    gate.ensure();
+    expect(gate.ensure()).toBe('failed');
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining('rejected after returning — nothing was rolled back'),
-      { error: 'late boom' }
-    );
+    expect(logger.error).toHaveBeenCalledWith('probe: initAppProbe rejected after it was refused', {
+      error: 'late boom',
+    });
   });
 
   it('survives a seam whose return value has a hostile `then` accessor', () => {

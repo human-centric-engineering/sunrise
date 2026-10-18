@@ -394,6 +394,20 @@ describe('registerAppSubjectSources', () => {
       );
     });
 
+    it('treats an async init as a throw: rolled back, and the export refuses (#739)', () => {
+      // The gate used to read the returned promise as success, so the flag that
+      // makes `exportUserData()` refuse was never set — `onFailure` is the only
+      // thing that sets it.
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the point
+      seam(() => {
+        registerAppSubjectSources({ tier: 'app', sources: [VALID] });
+        return Promise.resolve();
+      });
+
+      expect(getAppSubjectSources()).toEqual([]);
+      expect(appSubjectDeclarationsFailed()).toBe(true);
+    });
+
     it('does not retry on the next read', () => {
       seam(() => {
         throw new Error('typo in the manifest');

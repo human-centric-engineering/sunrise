@@ -173,11 +173,55 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
       return state;
     }
 
+    if (isThenable(returned)) return refuseAsync(before, returned);
+
     initReturned = true;
 
     state = 'ok';
-    warnIfAsync(label, returned);
     runCallback(label, 'onSuccess', () => onSuccess?.(before), 'the init itself succeeded');
+    return state;
+  }
+
+  /**
+   * An init that returned a promise is a failed init (#739), not a success.
+   *
+   * The gate cannot vouch for one: it would latch `'ok'` the instant the call
+   * returns, with nothing after the first `await` inside the rollback, and a
+   * later rejection never reaching `onFailure`. That last part is not cosmetic.
+   * `authorization` selects `SAFE_MODE_POLICY` and `subject-sources` refuses to
+   * build an Art. 15 bundle ONLY from `onFailure`, so an async policy init that
+   * rejected left the install on Sunrise's widest default policy for good, with
+   * safe mode reporting nothing wrong.
+   *
+   * So it takes the throw path: roll back, settle `'failed'`, log, `onFailure`.
+   * Refusing rather than awaiting, because every seam but `initApp` is
+   * documented as synchronous and the registries' reads are synchronous — there
+   * is nothing to await in. This does break an async seam that happened to
+   * register everything before its first `await`; that seam was already outside
+   * the guarantee, and failing it loudly at boot is the cheaper way to learn so.
+   *
+   * Registrations the continuation makes after the rollback can still land: the
+   * gate has no hold on code that runs later. The lint rule
+   * (`no-misused-promises`) is what stops the shape at the call site; this is
+   * the backstop for a fork that does not lint.
+   */
+  function refuseAsync(before: S, returned: unknown): AppInitState {
+    // First, so a rejection reaches the log rather than the process even if
+    // something below throws into the backstop.
+    void Promise.resolve(returned).catch((err: unknown) => {
+      logger.error(`${label} rejected after it was refused`, { error: describeThrown(err) });
+    });
+
+    restore(before);
+    state = 'failed';
+    logger.error(
+      `${label} returned a promise — this seam must be synchronous; ${subject} rolled back and disabled`,
+      {
+        hint: 'Do the async work elsewhere and register synchronously. `initApp` in lib/app/bootstrap.ts is the one seam that may be async.',
+      }
+    );
+    const err = new Error(`${label} returned a promise; seams must be synchronous`);
+    runCallback(label, 'onFailure', () => onFailure?.(err));
     return state;
   }
 
@@ -229,8 +273,9 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
         // once `initReturned` is true this settles to `'ok'` and skips it.
         //
         // The `'ok'` arm is unreachable today — everything after
-        // `initReturned = true` is either guarded (`isThenable`, `runCallback`)
-        // or a `logger.error` call. It is written this way for the code the
+        // `initReturned = true` is a guarded `runCallback`. The async refusal
+        // runs BEFORE it, so a throw from there settles `'failed'` and fires
+        // `onFailure` here, which `refuseAsync` had not yet reached. It is written this way for the code the
         // backstop exists for, and there is deliberately no test pinning it:
         // a test that cannot be made to fail is worse than none.
         if (state === 'failed') runCallback(label, 'onFailure', () => onFailure?.(err));
@@ -246,54 +291,13 @@ export function createAppInitGate<S>(options: AppInitGateOptions<S>): AppInitGat
 }
 
 /**
- * Say so when a seam is async, because the guarantee does not survive it.
- *
- * `init: () => void` does not stop a fork writing `export async function
- * initAppJobs()` at the TYPE level: TypeScript lets a function returning
- * anything satisfy a `void` return, so it compiles. The gate would then see the
- * promise, not the work — latching `'ok'` the instant the call returns, with
- * nothing for the rollback to roll back and an unhandled rejection.
- *
- * **Lint is the real guard**, and it works: `@typescript-eslint/no-misused-promises`
- * rejects `init: <async fn>` at the call site, which is where a fork's async
- * seam would surface. This check is the backstop for a fork that does not lint,
- * or that turns that rule off.
- *
- * That shape is more reachable than it looks: `lib/app/bootstrap.ts` ships
- * `export async function initApp()`, and every fork's copy is async, so an
- * author following the pattern core established gets a silently unguaranteed
- * seam. This does not try to fix it — rolling back mid-flight would race the
- * continuation, and refusing outright would break a fork whose async seam
- * otherwise works. It removes the silence, and attaches a handler so the
- * rejection reaches the log rather than the process.
- *
- * The real answer is a seam contract that cannot express this. Tracked with the
- * rest of the registration-shape work.
- */
-function warnIfAsync(label: string, returned: unknown): void {
-  if (!isThenable(returned)) return;
-
-  logger.error(
-    `${label} returned a promise — this seam must be synchronous, and the all-or-nothing rollback does NOT apply to it`,
-    {
-      hint: 'Registrations made after the first await land outside the gate. Do the async work elsewhere and register synchronously.',
-    }
-  );
-  void Promise.resolve(returned).catch((err: unknown) => {
-    logger.error(`${label} rejected after returning — nothing was rolled back`, {
-      error: describeThrown(err),
-    });
-  });
-}
-
-/**
  * Whether a seam's return value looks like a promise.
  *
  * Guarded, because reading `.then` runs fork code: a Proxy trap or a getter can
- * throw, and this is called after the verdict is settled and outside the init's
- * own try/catch. Anything unreadable is treated as not-a-promise — the outer
- * backstop in `ensure()` would catch it either way, but a hostile accessor is
- * not a gate failure and should not be logged as one.
+ * throw, and this is called outside the init's own try/catch. Anything
+ * unreadable is treated as not-a-promise — the outer backstop in `ensure()`
+ * would catch it either way, but a hostile accessor is not a gate failure and
+ * should not be logged as one.
  */
 function isThenable(returned: unknown): boolean {
   try {
