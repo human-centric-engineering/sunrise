@@ -32,10 +32,11 @@ import {
 import { workflowDefinitionSchema } from '@/lib/validations/orchestration';
 import { withoutErasedRecipients } from '@/lib/orchestration/workflows/version-service';
 import { definitionRecipients } from '@/lib/privacy/config-recipients';
-import { redactPerson } from '@/lib/privacy/run-recipients';
+import { blankAddressInTemplate } from '@/lib/privacy/run-recipients';
 import {
   findErasedSubjects,
   stringsIn,
+  tryLockSubjects,
   WRITER_TRANSACTION_OPTIONS,
   type ErasedSubjects,
 } from '@/lib/privacy/erased-subjects';
@@ -92,9 +93,12 @@ export function sanitiseHookErrorMessage(message: string): string {
 /** Thrown to roll back a run whose schedule another tick claimed first. */
 class ScheduleAlreadyClaimed extends Error {}
 
+/** Thrown to roll back a run whose people are locked by an erasure or a writer (t-839). */
+class ScheduleSubjectsBusy extends Error {}
+
 /**
- * `template` with every erased address blanked, as erasure blanks it in a
- * schedule's template (t-804): `''`, or taken out of a list.
+ * `template` with every erased address blanked, by the rule erasure applies
+ * to a schedule's template (`blankAddressInTemplate`, t-804).
  */
 function withoutErasedAddresses(
   template: Prisma.JsonValue,
@@ -102,7 +106,7 @@ function withoutErasedAddresses(
 ): Prisma.JsonValue {
   let value = template;
   for (const address of erased.addresses) {
-    value = redactPerson(value, { userId: null, address }, '')?.value ?? value;
+    value = blankAddressInTemplate(value, address)?.value ?? value;
   }
   return value;
 }
@@ -381,23 +385,31 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
       // and an erased person taken out of the definition the engine runs, as
       // erasure did to the rows. An erasure that has not committed waits for
       // this transaction, then redacts the new run with the other unfinished
-      // ones. No row is locked before the insert, so neither an erasure nor a
-      // workflow delete can end up waiting on this while it waits on them.
+      // ones.
+      //
+      // The locks are only tried. One held by an erasure or a backup import
+      // (up to 130 s) is left for the next tick, firing unclaimed, rather
+      // than waited for here, where it would hold up every other due
+      // schedule behind it (review round 2). No row is locked before the
+      // insert, so neither an erasure nor a workflow delete can end up
+      // waiting on this while it waits on them.
       //
       // The claim comes last, after the insert: the insert's foreign-key
       // check holds a share lock on the workflow, which a workflow delete
       // waits for before it reaches the schedule. Claimed first, the two
-      // could each wait for the other. The transaction waits out an erasure
-      // holding the locks for its whole 60 s, as every writer that checks the
-      // receipts does.
+      // could each wait for the other. The claim can still wait for an
+      // erasure rewriting this schedule, for up to its 60 s, so the
+      // transaction has a writer's budget.
+      const named = definitionRecipients(publishedVersion.snapshot);
+      const subjects = {
+        addresses: [...stringsIn(schedule.inputTemplate), ...named.addresses],
+        userIds: named.userIds,
+      };
       let created: { execution: AiWorkflowExecution; erased: ErasedSubjects };
       try {
         created = await prisma.$transaction(async (tx) => {
-          const named = definitionRecipients(publishedVersion.snapshot);
-          const erased = await findErasedSubjects(tx, {
-            addresses: [...stringsIn(schedule.inputTemplate), ...named.addresses],
-            userIds: named.userIds,
-          });
+          if (!(await tryLockSubjects(tx, subjects))) throw new ScheduleSubjectsBusy();
+          const erased = await findErasedSubjects(tx, subjects);
           const execution = await tx.aiWorkflowExecution.create({
             data: {
               workflowId: schedule.workflow.id,
@@ -419,9 +431,26 @@ export async function processDueSchedules(): Promise<ScheduleProcessResult> {
           return { execution, erased };
         }, WRITER_TRANSACTION_OPTIONS);
       } catch (err) {
-        if (!(err instanceof ScheduleAlreadyClaimed)) throw err;
-        skipClaimed();
-        continue;
+        if (err instanceof ScheduleAlreadyClaimed) {
+          skipClaimed();
+          continue;
+        }
+        if (err instanceof ScheduleSubjectsBusy) {
+          logger.info(
+            'Scheduler: a person this schedule names is locked; leaving it for the next tick',
+            {
+              scheduleId: schedule.id,
+            }
+          );
+          result.processed--;
+          continue;
+        }
+        // Any other failure claims the firing on its own, as before the
+        // claim moved into the transaction, so a schedule whose run cannot be
+        // created fails once per firing rather than on every tick (review
+        // round 2). The failure itself is recorded below.
+        await prisma.aiWorkflowSchedule.updateMany(claim).catch(() => undefined);
+        throw err;
       }
       const { execution, erased } = created;
       if (erased.addresses.length > 0 || erased.userIds.length > 0) {

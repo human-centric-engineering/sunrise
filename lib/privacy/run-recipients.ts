@@ -167,6 +167,20 @@ export function redactPerson(
   return removed === 0 ? null : { value: next, removed };
 }
 
+/**
+ * A schedule's input template with `address` blanked, or null when it does
+ * not name it: erasure's disposition for a template, shared with a scheduler
+ * tick that holds a copy read before the erasure (t-839). Only the address:
+ * an input template is free-form, and an id in one is not a recipient erasure
+ * has a disposition for.
+ */
+export function blankAddressInTemplate(
+  template: Prisma.JsonValue,
+  address: string | null
+): Redaction | null {
+  return redactPerson(template, { userId: null, address }, '');
+}
+
 /** The domain of an address, for narrowing when the whole address cannot be searched. */
 function domainOf(address: string): string | null {
   const at = address.lastIndexOf('@');
@@ -228,13 +242,7 @@ async function eraseFromSchedules(tx: RunClient, subject: RunRecipientsSubject):
          AND (${scanAll} OR (${term}::text IS NOT NULL AND strpos(f.folded, ${term}::text) > 0))
        ORDER BY s.id LIMIT ${RUN_PAGE_SIZE} FOR NO KEY UPDATE OF s`;
     for (const row of rows) {
-      // Only the address: an input template is free-form, and an id in one is
-      // not a recipient this erasure has a disposition for.
-      const change = redactPerson(
-        row.inputTemplate,
-        { userId: null, address: subject.address },
-        ''
-      );
+      const change = blankAddressInTemplate(row.inputTemplate, subject.address);
       if (!change) continue;
       await tx.aiWorkflowSchedule.update({
         where: { id: row.id },

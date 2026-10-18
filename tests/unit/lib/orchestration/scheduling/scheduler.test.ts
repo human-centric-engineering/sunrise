@@ -65,9 +65,14 @@ const mockFindErasedSubjects = vi.hoisted(() =>
     userIds: [] as string[],
   }))
 );
+// The locks are only tried (review round 2): free unless a test says otherwise.
+const mockTryLockSubjects = vi.hoisted(() =>
+  vi.fn(async (_tx: unknown, _subjects: unknown) => true)
+);
 vi.mock('@/lib/privacy/erased-subjects', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/privacy/erased-subjects')>()),
   findErasedSubjects: mockFindErasedSubjects,
+  tryLockSubjects: mockTryLockSubjects,
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -656,6 +661,10 @@ describe('processDueSchedules', () => {
           }
         }
       );
+      mockTryLockSubjects.mockImplementationOnce(async (tx: unknown) => {
+        order.push(`try:${String(inTransaction && tx === prisma)}`);
+        return true;
+      });
       mockFindErasedSubjects.mockImplementationOnce(async (tx: unknown) => {
         order.push(`check:${String(inTransaction && tx === prisma)}`);
         return { addresses: [], userIds: [] };
@@ -671,8 +680,9 @@ describe('processDueSchedules', () => {
 
       await processDueSchedules();
 
-      // Checked under the locks, then the run, then the claim: one transaction.
-      expect(order).toEqual(['check:true', 'create:true', 'claim:true']);
+      // Locks tried, receipts checked, then the run, then the claim: one transaction.
+      expect(order).toEqual(['try:true', 'check:true', 'create:true', 'claim:true']);
+      expect(mockTryLockSubjects.mock.calls[0][1]).toEqual(mockFindErasedSubjects.mock.calls[0][1]);
       const subjects = mockFindErasedSubjects.mock.calls[0][1] as {
         addresses: string[];
         userIds: string[];
@@ -681,7 +691,7 @@ describe('processDueSchedules', () => {
         expect.arrayContaining(['Gone@Example.com', 'someone@example.com'])
       );
       expect(subjects.userIds).toEqual(['approver-1']);
-      // Waits out an erasure holding the locks for its whole 60 s.
+      // The claim can wait out an erasure rewriting the schedule for its 60 s.
       const options = vi.mocked(prisma.$transaction).mock.calls[0][1] as { timeout: number };
       expect(options.timeout).toBeGreaterThan(60_000);
     });
@@ -742,17 +752,42 @@ describe('processDueSchedules', () => {
       expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain(ERASED);
     });
 
-    it('leaves the firing unclaimed when the run cannot be created, so the next tick tries again', async () => {
+    it('leaves a firing whose people are locked for the next tick: unclaimed, and not a failure', async () => {
+      const schedule = makeSchedule({ inputTemplate: { userEmail: 'busy@example.com' } });
+      vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
+      mockTryLockSubjects.mockResolvedValueOnce(false);
+
+      const result = await processDueSchedules();
+
+      expect(result).toEqual({ processed: 0, succeeded: 0, failed: 0, errors: [] });
+      expect(mockFindErasedSubjects).not.toHaveBeenCalled();
+      expect(prisma.aiWorkflowExecution.create).not.toHaveBeenCalled();
+      expect(prisma.aiWorkflowSchedule.updateMany).not.toHaveBeenCalled();
+      expect(mockExecute).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith(
+        'Scheduler: a person this schedule names is locked; leaving it for the next tick',
+        { scheduleId: 'sched_1' }
+      );
+    });
+
+    it('still claims the firing when the run cannot be created, so it fails once per firing, not every tick', async () => {
       const schedule = makeSchedule();
       vi.mocked(prisma.aiWorkflowSchedule.findMany).mockResolvedValue([schedule] as never);
       vi.mocked(prisma.aiWorkflowExecution.create).mockRejectedValueOnce(
-        new Error('Transaction already closed')
+        new Error('value too long for column')
       );
 
       const result = await processDueSchedules();
 
       expect(result.failed).toBe(1);
-      expect(prisma.aiWorkflowSchedule.updateMany).not.toHaveBeenCalled();
+      expect(result.errors).toEqual([
+        { scheduleId: 'sched_1', error: 'value too long for column' },
+      ]);
+      // Claimed once, on its own, after the transaction failed.
+      expect(prisma.aiWorkflowSchedule.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.aiWorkflowSchedule.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'sched_1', nextRunAt: schedule.nextRunAt } })
+      );
       expect(mockExecute).not.toHaveBeenCalled();
     });
   });
