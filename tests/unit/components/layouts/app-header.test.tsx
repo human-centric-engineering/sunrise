@@ -14,6 +14,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { AppHeader } from '@/components/layouts/app-header';
+import { BRAND } from '@/lib/brand';
 
 vi.mock('@/components/layouts/header-actions', () => ({
   HeaderActions: () => <div data-testid="header-actions" />,
@@ -28,10 +29,10 @@ describe('AppHeader', () => {
     expect(screen.getByTestId('header-actions')).toBeInTheDocument();
   });
 
-  it('defaults the brand link to the root', () => {
-    render(<AppHeader logoText="Acme" />);
+  it('defaults the brand link to the root and its text to the BrandMark', () => {
+    render(<AppHeader />);
 
-    expect(screen.getByRole('link', { name: 'Acme' })).toHaveAttribute('href', '/');
+    expect(screen.getByRole('link', { name: BRAND.name })).toHaveAttribute('href', '/');
   });
 
   it('lets a long brand truncate instead of pushing the actions off-screen', () => {
