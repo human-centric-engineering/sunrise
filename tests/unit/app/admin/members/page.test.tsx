@@ -3,6 +3,11 @@
 /**
  * Admin — Members page (§111 t-813).
  *
+ * A roster that cannot be loaded (5xx, success:false, no response) renders
+ * the page's own "could not be loaded" alert in the table's place, and is
+ * logged — never an empty roster (#518). Only `serverFetch` is faked: the
+ * real parser and `loadServerData` run.
+ *
  * @see app/admin/members/page.tsx
  */
 
@@ -14,9 +19,10 @@ vi.mock('@/lib/auth/admin-page-viewer', () => ({
   requestPrincipal: vi.fn(),
 }));
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -42,9 +48,10 @@ vi.mock('@/components/admin/members/member-invite-form', () => ({
 
 import MembersPage from '@/app/admin/members/page';
 import { requestActingOrg, requestPrincipal } from '@/lib/auth/admin-page-viewer';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 const MEMBERS = [
   { id: 'u-1', name: 'A', email: 'a@x.test', role: 'OWNER', joinedAt: '2026-01-01T00:00:00.000Z' },
@@ -62,16 +69,12 @@ describe('MembersPage', () => {
 
   it('fetches the members of the entered org, names it, and hands roster and viewer to the table', async () => {
     actAs({ id: 'org-entered', name: 'Acme' });
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: { members: MEMBERS },
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ members: MEMBERS }));
 
     render(await MembersPage());
 
     expect(serverFetch).toHaveBeenCalledTimes(1);
-    expect(serverFetch).toHaveBeenCalledWith('/api/v1/orgs/org-entered/members');
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe('/api/v1/orgs/org-entered/members');
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Members of Acme');
     expect(tableProps).toHaveBeenCalledWith({
       orgId: 'org-entered',
@@ -82,11 +85,9 @@ describe('MembersPage', () => {
   });
 
   it('points to Users in the install org, and only there', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: { members: MEMBERS },
-    } as never);
+    vi.mocked(serverFetch).mockImplementation(() =>
+      Promise.resolve(apiSuccess({ members: MEMBERS }))
+    );
 
     actAs({ id: INSTALL_ORG_ID, name: 'Install' });
     const { unmount } = render(await MembersPage());
@@ -101,11 +102,7 @@ describe('MembersPage', () => {
   it('passes a null currentUserId when there is no principal', async () => {
     vi.mocked(requestActingOrg).mockResolvedValue({ id: 'org-entered', name: 'Acme' });
     vi.mocked(requestPrincipal).mockResolvedValue(null);
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: { members: MEMBERS },
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ members: MEMBERS }));
 
     render(await MembersPage());
 
@@ -124,28 +121,26 @@ describe('MembersPage', () => {
     expect(screen.queryByTestId('invite-form')).not.toBeInTheDocument();
   });
 
-  it('shows the could-not-be-loaded alert when the fetch is not ok', async () => {
+  it('shows the could-not-be-loaded alert, and logs, when the members API answers 500', async () => {
     actAs({ id: 'org-entered', name: 'Acme' });
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
     render(await MembersPage());
 
     expect(screen.getByRole('alert')).toHaveTextContent('could not be loaded');
     expect(screen.queryByTestId('members-table')).not.toBeInTheDocument();
-    expect(parseApiResponse).not.toHaveBeenCalled();
+    // Before #518 a non-OK answer was not logged at all.
+    expect(logger.error).toHaveBeenCalled();
   });
 
   it('shows the alert when the body is unsuccessful', async () => {
     actAs({ id: 'org-entered', name: 'Acme' });
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'X', message: 'x' },
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(200));
 
     render(await MembersPage());
 
     expect(screen.getByRole('alert')).toHaveTextContent('could not be loaded');
+    expect(screen.queryByTestId('members-table')).not.toBeInTheDocument();
   });
 
   it('logs and shows the alert when the fetch throws', async () => {
@@ -156,6 +151,17 @@ describe('MembersPage', () => {
     render(await MembersPage());
 
     expect(screen.getByRole('alert')).toHaveTextContent('could not be loaded');
-    expect(logger.error).toHaveBeenCalledWith('members page: fetch failed', failure);
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), failure, expect.any(Object));
+  });
+
+  it('renders an empty roster as an empty table, not as a failure', async () => {
+    actAs({ id: 'org-entered', name: 'Acme' });
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ members: [] }));
+
+    render(await MembersPage());
+
+    expect(screen.getByTestId('members-table')).toBeInTheDocument();
+    expect(tableProps).toHaveBeenCalledWith(expect.objectContaining({ members: [] }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });

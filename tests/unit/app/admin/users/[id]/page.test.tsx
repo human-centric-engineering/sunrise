@@ -14,23 +14,34 @@
  * - Displays correct navigation links
  * - Shows user initials in avatar fallback
  * - Handles notFound when session is missing
- * - Handles notFound when user is not found
+ * - Handles notFound when the user does not exist (404, or an id the API
+ *   rejects with 400) — and only then: any other failure throws to the error
+ *   boundary instead of reading as a missing user (#518)
  * - Generates correct metadata
+ *
+ * Only `serverFetch` is faked: the real parser and `lib/api/server-load.ts` run.
  *
  * @see app/admin/users/[id]/page.tsx
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import AdminUserProfilePage, { generateMetadata } from '@/app/admin/users/[id]/page';
 import { createMockSession } from '@/tests/types/mocks';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 import type { AdminUser } from '@/types/admin';
 
 /**
  * Mock dependencies
  */
-vi.mock('next/headers', () => ({
-  cookies: vi.fn(),
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
+  serverFetch: vi.fn(),
+}));
+
+vi.mock('@/lib/logging', () => ({
+  logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 
 vi.mock('next/navigation', () => ({
@@ -44,18 +55,16 @@ vi.mock('@/lib/auth/utils', () => ({
   getServerSession: vi.fn(),
 }));
 
-vi.mock('@/lib/env', () => ({
-  env: { BETTER_AUTH_URL: 'http://localhost:3000' },
-}));
-
 // Mock ClientDate component to avoid client-side complexity
 vi.mock('@/components/ui/client-date', () => ({
   ClientDate: ({ date }: { date: Date }) => <span>{date.toLocaleDateString()}</span>,
 }));
 
-import { cookies } from 'next/headers';
 import { notFound } from 'next/navigation';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { getServerSession } from '@/lib/auth/utils';
+import { logger } from '@/lib/logging';
 
 /**
  * Test Suite: Admin User Profile Page
@@ -63,15 +72,8 @@ import { getServerSession } from '@/lib/auth/utils';
  * Tests the async Server Component that displays read-only user profile.
  */
 describe('AdminUserProfilePage', () => {
-  /**
-   * Mock fetch globally for API calls
-   */
-  const mockFetch = vi.fn();
-  const originalFetch = global.fetch;
-
   beforeEach(() => {
     vi.clearAllMocks();
-    global.fetch = mockFetch as any;
 
     // Default: Authenticated session
     vi.mocked(getServerSession).mockResolvedValue(
@@ -79,18 +81,6 @@ describe('AdminUserProfilePage', () => {
         user: { id: 'admin-id', email: 'admin@example.com', role: 'ADMIN' },
       })
     );
-
-    // Default: Cookies setup
-    vi.mocked(cookies).mockResolvedValue({
-      getAll: () => [
-        { name: 'session', value: 'session-token' },
-        { name: 'auth', value: 'auth-token' },
-      ],
-    } as any);
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
   });
 
   /**
@@ -137,32 +127,22 @@ describe('AdminUserProfilePage', () => {
    * Helper: Mock successful API response
    */
   function mockUserApiResponse(user: AdminUser) {
-    mockFetch.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        success: true,
-        data: {
-          ...user,
-          createdAt: user.createdAt.toISOString(),
-          updatedAt: user.updatedAt.toISOString(),
-        },
-      }),
-    });
+    vi.mocked(serverFetch).mockResolvedValue(
+      apiSuccess({
+        ...user,
+        createdAt: user.createdAt.toISOString(),
+        updatedAt: user.updatedAt.toISOString(),
+      })
+    );
   }
 
   /**
    * Helper: Mock failed API response
    */
   function mockUserApiError(status = 404) {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      status,
-      json: async () => ({
-        success: false,
-        error: { message: 'User not found' },
-      }),
-    });
+    vi.mocked(serverFetch).mockResolvedValue(
+      apiFailure(status, status === 404 ? 'NOT_FOUND' : 'INTERNAL_ERROR')
+    );
   }
 
   /**
@@ -206,16 +186,8 @@ describe('AdminUserProfilePage', () => {
       const Component = await AdminUserProfilePage({ params });
       render(Component);
 
-      // Assert: Verify fetch was called with correct URL and headers
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/api/v1/users/user-123',
-        expect.objectContaining({
-          headers: {
-            Cookie: 'session=session-token; auth=auth-token',
-          },
-          cache: 'no-store',
-        })
-      );
+      // Assert: the user's own endpoint was read
+      expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe('/api/v1/users/user-123');
     });
   });
 
@@ -233,31 +205,44 @@ describe('AdminUserProfilePage', () => {
       expect(notFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
 
-    it('should call notFound when API returns success: false', async () => {
-      // Arrange: API returns success: false
-      mockFetch.mockResolvedValue({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          success: false,
-          error: { message: 'User not found' },
-        }),
-      });
-      const params = Promise.resolve({ id: 'user-123' });
+    it('should call notFound when the API rejects the id as malformed (400)', async () => {
+      mockUserApiError(400);
+      const params = Promise.resolve({ id: 'not-a-cuid' });
 
-      // Act & Assert
       await expect(AdminUserProfilePage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
       expect(notFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
     });
+  });
 
-    it('should call notFound when fetch throws', async () => {
-      // Arrange: Fetch throws error
-      mockFetch.mockRejectedValue(new Error('Network error'));
+  /**
+   * A failed load is a failure, not a missing user (#518)
+   */
+  describe('load failure', () => {
+    it('throws to the error boundary, not notFound(), when the API answers 500', async () => {
+      mockUserApiError(500);
       const params = Promise.resolve({ id: 'user-123' });
 
-      // Act & Assert
-      await expect(AdminUserProfilePage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
-      expect(notFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
+      await expect(AdminUserProfilePage({ params })).rejects.toBeInstanceOf(ServerLoadError);
+      expect(notFound).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalled();
+    });
+
+    it('throws to the error boundary when the API answers success: false', async () => {
+      vi.mocked(serverFetch).mockResolvedValue(apiFailure(200));
+      const params = Promise.resolve({ id: 'user-123' });
+
+      await expect(AdminUserProfilePage({ params })).rejects.toBeInstanceOf(ServerLoadError);
+      expect(notFound).not.toHaveBeenCalled();
+    });
+
+    it('throws to the error boundary, and logs, when the fetch rejects', async () => {
+      const failure = new Error('Network error');
+      vi.mocked(serverFetch).mockRejectedValue(failure);
+      const params = Promise.resolve({ id: 'user-123' });
+
+      await expect(AdminUserProfilePage({ params })).rejects.toBeInstanceOf(ServerLoadError);
+      expect(notFound).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledWith(expect.any(String), failure, expect.any(Object));
     });
   });
 

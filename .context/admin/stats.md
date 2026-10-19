@@ -49,8 +49,8 @@ Two details that are easy to get wrong when adapting this card:
   bare label renders the same word over the same number twice. Only a rebranded
   fork would notice.
 - **A `null` stats payload renders an explicit "unavailable" message**, not an
-  empty card. The overview page's `getStats()` returns `null` on any fetch
-  failure, and a broken stats API must not look like a healthy deployment on the
+  empty card. The overview page passes `null` when its `loadServerData()` call
+  fails, and a broken stats API must not look like a healthy deployment on the
   page an operator opens _because_ something is wrong.
 
 It is a server component: the overview page already awaits the stats it needs, so
@@ -209,33 +209,23 @@ graph TD
 
 ## Server-Side Data Fetching
 
-The page uses the `serverFetch` utility for authenticated server-side requests:
+The page loads the stats with `loadServerData()` (see [Loading a page's data](../api/examples.md#loading-a-pages-data)), which forwards cookies through `serverFetch` and logs any failure:
 
 ```typescript
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
 import { API } from '@/lib/api/endpoints';
+import { loadServerData } from '@/lib/api/server-load';
 
-async function getStats(): Promise<SystemStats | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.STATS);
-    if (!res.ok) return null;
-    const data = await parseApiResponse<SystemStats>(res);
-    return data.success ? data.data : null;
-  } catch {
-    return null;
-  }
-}
+const result = await loadServerData<SystemStats>(API.ADMIN.STATS);
+const stats = result.ok ? result.data : null;
 ```
-
-**Note**: `serverFetch` handles cookie forwarding internally, so you don't need to manually extract and forward cookies from the cookie store.
 
 ## Error Handling
 
-Graceful degradation when stats unavailable:
+The stats are one panel among three, so a failed load does not throw:
 
-- Returns `null` on fetch failure
-- `StatsCards` renders loading skeletons when `stats` is `null`
-- No error thrown to user - dashboard remains functional
+- The stat cards are replaced by `<LoadFailedNotice what="user statistics">`, whose **Try again** re-fetches. (Before #518 they rendered loading skeletons forever.)
+- `SystemInfo` gets `null` and says the stats request failed
+- The System Status panel fetches its own data and is unaffected
 
 ## Related Documentation
 

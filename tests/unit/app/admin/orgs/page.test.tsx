@@ -3,15 +3,21 @@
 /**
  * Admin — Organisations list page (§120 t-745).
  *
+ * The org list is what the page exists to show, so a failed load throws to
+ * the admin error boundary instead of rendering the table's empty state
+ * (#518). Only `serverFetch` is faked: the real parser and
+ * `requireServerData` run.
+ *
  * @see app/admin/orgs/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -25,8 +31,10 @@ vi.mock('next/link', () => ({
 }));
 
 import OrgsPage from '@/app/admin/orgs/page';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 const ACME = {
   id: 'cmorg00000000000000grant',
@@ -44,15 +52,11 @@ describe('OrgsPage', () => {
   });
 
   it('renders every org from the admin orgs endpoint', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: { orgs: [ACME] },
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ orgs: [ACME] }));
 
     render(await OrgsPage());
 
-    expect(serverFetch).toHaveBeenCalledWith('/api/v1/admin/orgs');
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe('/api/v1/admin/orgs');
     expect(screen.getByRole('heading', { name: /Organisations/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Acme' })).toHaveAttribute(
       'href',
@@ -60,20 +64,34 @@ describe('OrgsPage', () => {
     );
   });
 
-  it('renders the empty state when the fetch is refused', async () => {
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+  it('renders a genuinely empty list as the empty state', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ orgs: [] }));
 
     render(await OrgsPage());
 
     expect(screen.getByText('No organisations could be loaded.')).toBeInTheDocument();
   });
 
-  it('renders the empty state, and logs, when the fetch throws', async () => {
-    vi.mocked(serverFetch).mockRejectedValue(new Error('network'));
+  // ── A failed load is a failure, not an empty table (#518) ───────────────
 
-    render(await OrgsPage());
+  it('throws to the error boundary when the orgs API answers 500', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
-    expect(screen.getByText('No organisations could be loaded.')).toBeInTheDocument();
-    expect(logger.error).toHaveBeenCalledWith('orgs list page: fetch failed', expect.any(Error));
+    await expect(OrgsPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  it('throws when the orgs API refuses the caller', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(403, 'FORBIDDEN'));
+
+    await expect(OrgsPage()).rejects.toBeInstanceOf(ServerLoadError);
+  });
+
+  it('throws, and logs, when the fetch rejects', async () => {
+    const failure = new Error('network');
+    vi.mocked(serverFetch).mockRejectedValue(failure);
+
+    await expect(OrgsPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), failure, expect.any(Object));
   });
 });

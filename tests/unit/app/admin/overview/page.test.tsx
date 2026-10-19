@@ -3,23 +3,18 @@
 /**
  * Unit Tests: AdminOverviewPage (app/admin/overview/page.tsx)
  *
- * The page had no test at all before #531 put `SystemInfo` on it. Its whole job
- * is `getStats()` — three failure branches that all collapse to `null` — and
- * then handing that one value to three children. So the branches ARE the page,
- * and an untested `getStats()` is an untested page.
- *
- * What each branch has to hold:
- * - `res.ok` false → `null`
- * - `body.success` false → `null`
- * - `serverFetch` throws → `null` (the `catch` — a rejected promise, not a
- *   thrown-synchronously error, because that is how a fetch fails)
+ * The page's whole job is loading the stats and handing them to its children.
+ * The stats are one panel among three, so a failed load (a 500, a
+ * `success:false` body, no response at all) must not throw, and must not look
+ * like data either (#518):
+ * - the stat cards are replaced by a "Couldn't load" notice (`role="alert"`) —
+ *   before #518 they rendered loading skeletons forever
+ * - `SystemInfo` gets `null`, for which it renders an explicit "unavailable"
+ *   message, so "the stats API is down" and "this deployment is fine" do not
+ *   render the same
  * - happy path → the parsed stats reach the children
  *
- * `null` matters more here than it looks: `SystemInfo` renders an explicit
- * "unavailable" message for it rather than an empty card, so "the stats API is
- * down" and "this deployment is fine" must not render the same. That is the
- * property these tests pin, on the page an operator opens *because* something is
- * wrong.
+ * Only `serverFetch` is faked: the real parser and `loadServerData` run.
  *
  * No auth-redirect test: the admin guard lives in `app/admin/layout.tsx`, which
  * has its own.
@@ -32,9 +27,14 @@ import { render, screen } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
+}));
+
+vi.mock('@/lib/logging', () => ({
+  logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
 }));
 
 // Stub the three children and record the `stats` each one received. Stubbing
@@ -62,8 +62,10 @@ vi.mock('@/components/status/status-page', () => ({
 // ─── Imports (after mocks) ────────────────────────────────────────────────────
 
 import AdminOverviewPage from '@/app/admin/overview/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
 import { API } from '@/lib/api/endpoints';
+import { logger } from '@/lib/logging';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 import type { SystemStats } from '@/types/admin';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -85,14 +87,6 @@ const STATS: SystemStats = {
   },
 };
 
-function okResponse(): Response {
-  return { ok: true } as Response;
-}
-
-function notOkResponse(): Response {
-  return { ok: false } as Response;
-}
-
 /** The `stats` prop a stubbed child received, parsed back out of the DOM. */
 function statsPassedTo(testId: string): unknown {
   const raw = screen.getByTestId(testId).getAttribute('data-stats');
@@ -106,52 +100,50 @@ describe('AdminOverviewPage', () => {
     vi.clearAllMocks();
   });
 
-  // ── getStats: the three ways it yields null ──────────────────────────────
+  // ── A failed load is a failure, not data (#518) ─────────────────────────
 
-  it('passes null to the children when the stats response is not ok', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+  /** The failed-load notice must stand where the stat cards would be. */
+  function expectStatsFailedNotice(): void {
+    expect(screen.queryByTestId('stats-cards')).not.toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load user statistics/i);
+    expect(statsPassedTo('system-info')).toBeNull();
+  }
+
+  it('shows a failed-load notice in place of the stat cards when the stats API answers 500', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
     render(await AdminOverviewPage());
 
-    expect(statsPassedTo('system-info')).toBeNull();
-    expect(statsPassedTo('stats-cards')).toBeNull();
-    // `parseApiResponse` must not even be reached — the page returns on `!res.ok`.
-    expect(parseApiResponse).not.toHaveBeenCalled();
+    expectStatsFailedNotice();
+    expect(logger.error).toHaveBeenCalled();
+    // The rest of the dashboard still renders.
+    expect(screen.getByTestId('status-page')).toBeInTheDocument();
   });
 
-  it('passes null to the children when the response body reports failure', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'fail' },
-    } as never);
+  it('shows the notice when the response body reports failure', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(200));
 
     render(await AdminOverviewPage());
 
-    expect(statsPassedTo('system-info')).toBeNull();
-    expect(statsPassedTo('stats-cards')).toBeNull();
+    expectStatsFailedNotice();
   });
 
-  it('passes null to the children — and does not throw — when the fetch rejects', async () => {
-    // A rejected promise, which is how `fetch` actually fails. The page's
-    // `catch` has to swallow it: an unhandled rejection here is a 500 on the
-    // admin dashboard because one panel's data source is down.
-    vi.mocked(serverFetch).mockRejectedValue(new Error('ECONNREFUSED'));
-
-    await expect(AdminOverviewPage()).resolves.toBeTruthy();
+  it('shows the notice — and does not throw — when the fetch rejects', async () => {
+    // A rejected promise, which is how `fetch` actually fails. One panel's
+    // data source being down must not 500 the admin dashboard.
+    const fetchErr = new Error('ECONNREFUSED');
+    vi.mocked(serverFetch).mockRejectedValue(fetchErr);
 
     render(await AdminOverviewPage());
-    expect(statsPassedTo('system-info')).toBeNull();
+
+    expectStatsFailedNotice();
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), fetchErr, expect.any(Object));
   });
 
   // ── getStats: happy path ─────────────────────────────────────────────────
 
   it('hands the fetched stats to both StatsCards and SystemInfo', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: STATS,
-    } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(STATS));
 
     render(await AdminOverviewPage());
 
@@ -160,15 +152,15 @@ describe('AdminOverviewPage', () => {
     // notice it dropping another.
     expect(statsPassedTo('stats-cards')).toEqual(STATS);
     expect(statsPassedTo('system-info')).toEqual(STATS);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('reads the admin stats endpoint, not some other route', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: STATS } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(STATS));
 
     render(await AdminOverviewPage());
 
-    expect(serverFetch).toHaveBeenCalledWith(API.ADMIN.STATS);
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe(API.ADMIN.STATS);
   });
 
   // ── Composition ──────────────────────────────────────────────────────────
@@ -177,8 +169,7 @@ describe('AdminOverviewPage', () => {
     // `SystemInfo` is the whole operator-visibility half of #531. A page that
     // silently stopped rendering it would leave the platform version with no
     // surface at all, and every other assertion here would still pass.
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: STATS } as never);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(STATS));
 
     render(await AdminOverviewPage());
 

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
 import { API } from '@/lib/api/endpoints';
+import { requireServerData } from '@/lib/api/server-load';
+import { parsePaginationMeta } from '@/lib/validations/common';
 import { LogsViewer } from '@/components/admin/logs-viewer';
 import type { LogEntry } from '@/types/admin';
 import type { PaginationMeta } from '@/types/api';
@@ -13,46 +14,26 @@ export const metadata: Metadata = {
 };
 
 /**
- * Fetch logs from API
+ * Fetch logs from API. A failed load throws to the admin error boundary
+ * rather than rendering an empty log (#518).
  */
 async function getLogs(): Promise<{
   logs: LogEntry[];
   meta: PaginationMeta;
 }> {
-  try {
-    const res = await serverFetch(API.ADMIN.LOGS + `?limit=${DEFAULT_PAGE_LIMIT}`);
+  const { data, meta } = await requireServerData<LogEntry[]>(
+    API.ADMIN.LOGS + `?limit=${DEFAULT_PAGE_LIMIT}`
+  );
 
-    if (!res.ok) {
-      return {
-        logs: [],
-        meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
-      };
-    }
-
-    const data = await parseApiResponse<LogEntry[]>(res);
-
-    if (!data.success) {
-      return {
-        logs: [],
-        meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
-      };
-    }
-
-    return {
-      logs: data.data,
-      meta: (data.meta as PaginationMeta) || {
-        page: 1,
-        limit: DEFAULT_PAGE_LIMIT,
-        total: data.data.length,
-        totalPages: 1,
-      },
-    };
-  } catch {
-    return {
-      logs: [],
-      meta: { page: 1, limit: DEFAULT_PAGE_LIMIT, total: 0, totalPages: 0 },
-    };
-  }
+  return {
+    logs: data,
+    meta: parsePaginationMeta(meta) ?? {
+      page: 1,
+      limit: DEFAULT_PAGE_LIMIT,
+      total: data.length,
+      totalPages: 1,
+    },
+  };
 }
 
 /**

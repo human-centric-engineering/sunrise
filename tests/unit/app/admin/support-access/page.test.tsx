@@ -7,6 +7,9 @@
  * the grant form to an owner of the entered org only (the vendor never sees
  * it), the list to everyone it admits, and a plain explanation in place of
  * either at `single` and in the install org — where it fetches nothing.
+ * Grants that cannot be loaded render the page's own alert, and are logged,
+ * never an empty list (#518). Only `serverFetch` is faked: the real parser and
+ * `loadServerData` run.
  *
  * @see app/admin/support-access/page.tsx
  */
@@ -19,9 +22,10 @@ vi.mock('@/lib/auth/admin-page-viewer', () => ({
   requestPrincipal: vi.fn(),
 }));
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 const multi = vi.hoisted(() => ({ on: true }));
@@ -58,8 +62,10 @@ vi.mock('@/components/admin/support-access/support-activity-table', () => ({
 
 import SupportAccessPage from '@/app/admin/support-access/page';
 import { requestActingOrg, requestPrincipal } from '@/lib/auth/admin-page-viewer';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 const ORG = { id: 'org-entered', name: 'Acme' };
 const OPEN = { id: 'g-1', open: true };
@@ -71,8 +77,7 @@ function actAs(org: { id: string; name: string } | null, orgId: string | null, o
 }
 
 function grantsAre(grants: unknown[]) {
-  vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-  vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: { grants } } as never);
+  vi.mocked(serverFetch).mockResolvedValue(apiSuccess({ grants }));
 }
 
 describe('SupportAccessPage', () => {
@@ -87,7 +92,7 @@ describe('SupportAccessPage', () => {
 
     render(await SupportAccessPage());
 
-    expect(serverFetch).toHaveBeenCalledWith('/api/v1/orgs/org-entered/support-grants');
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe('/api/v1/orgs/org-entered/support-grants');
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Support access for Acme');
     expect(formProps).toHaveBeenCalledWith({ orgId: ORG.id, replacesOpenGrant: true });
     expect(tableProps).toHaveBeenCalledWith({ orgId: ORG.id, grants: [OPEN, ENDED] });
@@ -149,7 +154,7 @@ describe('SupportAccessPage', () => {
     // Without the list the page cannot say whether granting replaces an open
     // grant, so it offers no grant rather than one that might silently replace.
     actAs(ORG, ORG.id, 'OWNER');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
     render(await SupportAccessPage());
 
@@ -159,12 +164,26 @@ describe('SupportAccessPage', () => {
 
   it('says so when the grants could not be loaded', async () => {
     actAs(ORG, ORG.id, 'ADMIN');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
     render(await SupportAccessPage());
 
     expect(screen.getByRole('alert')).toHaveTextContent('could not be loaded');
     expect(screen.queryByTestId('grants-table')).not.toBeInTheDocument();
+    // Before #518 a non-OK answer was not logged at all.
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  it('says so, and logs, when the fetch rejects', async () => {
+    actAs(ORG, ORG.id, 'ADMIN');
+    const failure = new Error('ECONNREFUSED');
+    vi.mocked(serverFetch).mockRejectedValue(failure);
+
+    render(await SupportAccessPage());
+
+    expect(screen.getByRole('alert')).toHaveTextContent('could not be loaded');
+    expect(screen.queryByTestId('grants-table')).not.toBeInTheDocument();
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), failure, expect.any(Object));
   });
 
   it('shows what support did, for the same org and grants, when there are grants', async () => {
@@ -190,7 +209,7 @@ describe('SupportAccessPage', () => {
 
   it('shows no activity table when the grants could not be loaded', async () => {
     actAs(ORG, ORG.id, 'ADMIN');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
     render(await SupportAccessPage());
 

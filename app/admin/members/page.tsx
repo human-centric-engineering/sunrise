@@ -4,9 +4,8 @@ import Link from 'next/link';
 import { MemberInviteForm } from '@/components/admin/members/member-invite-form';
 import { MembersTable, type OrgMember } from '@/components/admin/members/members-table';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { loadServerData } from '@/lib/api/server-load';
 import { requestActingOrg, requestPrincipal } from '@/lib/auth/admin-page-viewer';
-import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 export const metadata: Metadata = {
@@ -22,17 +21,12 @@ export const metadata: Metadata = {
  * and Organisations stay the platform's. A thin shell over
  * `GET /api/v1/orgs/[id]/members`. The members routes and the invitations
  * route decide who may do what, and this page adds no rule of its own.
+ * A roster that cannot be loaded says so in the table's place, never as an
+ * empty roster; `loadServerData` logs the failure (#518).
  */
 async function getMembers(orgId: string): Promise<OrgMember[] | null> {
-  try {
-    const res = await serverFetch(API.ORGS.members(orgId));
-    if (!res.ok) return null;
-    const body = await parseApiResponse<{ members: OrgMember[] }>(res);
-    return body.success && Array.isArray(body.data?.members) ? body.data.members : null;
-  } catch (err) {
-    logger.error('members page: fetch failed', err);
-    return null;
-  }
+  const result = await loadServerData<{ members: OrgMember[] }>(API.ORGS.members(orgId));
+  return result.ok && Array.isArray(result.data?.members) ? result.data.members : null;
 }
 
 export default async function MembersPage() {

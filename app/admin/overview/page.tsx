@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
 import { API } from '@/lib/api/endpoints';
+import { loadServerData } from '@/lib/api/server-load';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { StatsCards } from '@/components/admin/stats-cards';
 import { SystemInfo } from '@/components/admin/system-info';
 import { StatusPage } from '@/components/status/status-page';
@@ -12,37 +13,29 @@ export const metadata: Metadata = {
 };
 
 /**
- * Fetch admin stats from API
- */
-async function getStats(): Promise<SystemStats | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.STATS);
-
-    if (!res.ok) {
-      return null;
-    }
-
-    const data = await parseApiResponse<SystemStats>(res);
-    return data.success ? data.data : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Admin Overview Page (Phase 4.4)
  *
  * Main dashboard with system statistics and status.
+ *
+ * The stats are one panel among three, so a failed load does not throw:
+ * the stat cards are replaced by a "Couldn't load" notice (`loadServerData`
+ * logs the failure), and `SystemInfo` gets `null`, for which it says the
+ * stats request failed. The status panel fetches its own data (#518).
  */
 export default async function AdminOverviewPage() {
-  const stats = await getStats();
+  const result = await loadServerData<SystemStats>(API.ADMIN.STATS);
+  const stats = result.ok ? result.data : null;
 
   return (
     <div className="space-y-8">
       {/* Stats Cards */}
       <section>
         <h2 className="mb-4 text-lg font-semibold">User Statistics</h2>
-        <StatsCards stats={stats} />
+        {result.ok ? (
+          <StatsCards stats={result.data} />
+        ) : (
+          <LoadFailedNotice what="user statistics" />
+        )}
       </section>
 
       {/* System Status */}

@@ -5,15 +5,22 @@
  * the provider list and its usage this month against its cap (§110 t-790),
  * fetched in parallel.
  *
+ * The org is the detail record: only a 404 (or an id that cannot name an org,
+ * a 400) is the not-found page, and any other failure throws to the error
+ * boundary (#518). The policy, providers and usage keep their own "could not
+ * be loaded" text, and every failure is logged. Only `serverFetch` is faked:
+ * the real parser and `lib/api/server-load.ts` run.
+ *
  * @see app/admin/orgs/[id]/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -38,8 +45,11 @@ vi.mock('next/link', () => ({
 }));
 
 import OrgPage from '@/app/admin/orgs/[id]/page';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { notFound } from 'next/navigation';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 const ID = 'cmorg00000000000000grant';
 const ORG_PATH = `/api/v1/admin/orgs/${ID}`;
@@ -54,21 +64,17 @@ const USAGE_PATH = `/api/v1/admin/orchestration/costs/orgs?orgId=${ID}`;
  */
 function serve(bodies: Record<string, unknown>, metas: Record<string, unknown> = {}) {
   vi.mocked(serverFetch).mockImplementation(async (path: string) => {
-    const body = bodies[path];
-    const status =
-      typeof body === 'number' ? body : body === null || body === undefined ? 404 : 200;
-    return { ok: status === 200, status, path } as unknown as Response;
-  });
-  vi.mocked(parseApiResponse).mockImplementation((async (res: { path: string }) => {
-    const data = bodies[res.path];
+    const data = bodies[path];
+    if (data === null || data === undefined) return apiFailure(404, 'NOT_FOUND');
+    if (typeof data === 'number') return apiFailure(data);
     // A list with no meta given is one complete page, as the API reports it.
     const meta =
-      metas[res.path] ??
+      metas[path] ??
       (Array.isArray(data)
         ? { page: 1, limit: 100, total: data.length, totalPages: 1 }
         : undefined);
-    return { success: true, data, meta };
-  }) as never);
+    return apiSuccess(data, meta);
+  });
 }
 
 const ORG = { id: ID, slug: 'acme', name: 'Acme', status: 'ACTIVE', members: [{ id: 'u1' }] };
@@ -126,15 +132,20 @@ describe('OrgPage', () => {
     render(await OrgPage({ params }));
 
     expect(screen.getByText(/approved providers could not be loaded/)).toBeInTheDocument();
-    expect(logger.error).toHaveBeenCalledWith(
-      'org page: provider policy fetch failed',
-      expect.any(Error),
-      { path: POLICY_PATH }
-    );
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), expect.any(Error), {
+      path: POLICY_PATH,
+    });
   });
 
   it('is a 404 when the org does not exist', async () => {
     serve({ [ORG_PATH]: null, [POLICY_PATH]: null, [PROVIDERS_PATH]: PROVIDERS });
+
+    await expect(OrgPage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
+    expect(notFound).toHaveBeenCalledOnce();
+  });
+
+  it('is a 404 when the id cannot name an org (the API answers 400)', async () => {
+    serve({ [ORG_PATH]: 400, [POLICY_PATH]: 400, [PROVIDERS_PATH]: PROVIDERS });
 
     await expect(OrgPage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
   });
@@ -142,9 +153,25 @@ describe('OrgPage', () => {
   it('sends any other failure to load the org to the error boundary, not to a 404', async () => {
     serve({ [ORG_PATH]: 500, [POLICY_PATH]: POLICY, [PROVIDERS_PATH]: PROVIDERS });
 
-    await expect(OrgPage({ params })).rejects.toThrow(
-      'Organisation could not be loaded (HTTP 500)'
-    );
+    await expect(OrgPage({ params })).rejects.toBeInstanceOf(ServerLoadError);
+    expect(notFound).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), undefined, {
+      path: ORG_PATH,
+      status: 500,
+      code: 'INTERNAL_ERROR',
+    });
+  });
+
+  it('sends a fetch that throws for the org to the error boundary', async () => {
+    serve({ [POLICY_PATH]: POLICY, [PROVIDERS_PATH]: PROVIDERS });
+    const answer = vi.mocked(serverFetch).getMockImplementation()!;
+    vi.mocked(serverFetch).mockImplementation(async (path: string) => {
+      if (path === ORG_PATH) throw new Error('ECONNREFUSED');
+      return answer(path);
+    });
+
+    await expect(OrgPage({ params })).rejects.toBeInstanceOf(ServerLoadError);
+    expect(notFound).not.toHaveBeenCalled();
   });
 
   it('lists providers from every page, so each can be granted or revoked', async () => {
@@ -213,13 +240,18 @@ describe('OrgPage', () => {
   });
 
   it('says the providers could not be loaded rather than offering an empty set to save', async () => {
-    serve({ [ORG_PATH]: ORG, [POLICY_PATH]: null, [PROVIDERS_PATH]: PROVIDERS });
+    serve({ [ORG_PATH]: ORG, [POLICY_PATH]: 500, [PROVIDERS_PATH]: PROVIDERS });
 
     render(await OrgPage({ params }));
 
     expect(screen.getByText(/approved providers could not be loaded/)).toBeInTheDocument();
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Save/ })).not.toBeInTheDocument();
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), undefined, {
+      path: POLICY_PATH,
+      status: 500,
+      code: 'INTERNAL_ERROR',
+    });
   });
 
   it('says so when the provider list cannot be loaded either', async () => {
@@ -263,7 +295,7 @@ describe('OrgPage', () => {
 
       render(await OrgPage({ params }));
 
-      expect(serverFetch).toHaveBeenCalledWith(USAGE_PATH);
+      expect(vi.mocked(serverFetch).mock.calls.map((call) => call[0])).toContain(USAGE_PATH);
       expect(screen.getByTestId('org-usage-summary')).toBeInTheDocument();
       expect(screen.getByText('Spend (2026-10)')).toBeInTheDocument();
       expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '80');
@@ -283,6 +315,8 @@ describe('OrgPage', () => {
         screen.getByText('Usage can only be viewed from the install organisation.')
       ).toBeInTheDocument();
       expect(screen.queryByTestId('org-usage-summary')).not.toBeInTheDocument();
+      // An expected refusal, not a failure.
+      expect(logger.error).not.toHaveBeenCalled();
     });
 
     it('says the usage could not be loaded when the fetch fails, and still renders the rest', async () => {
@@ -297,6 +331,11 @@ describe('OrgPage', () => {
 
       expect(screen.getByText(/usage could not be loaded/)).toBeInTheDocument();
       expect(screen.getByRole('checkbox', { name: /Anthropic/ })).toBeChecked();
+      // Before #518 a non-OK usage answer was not logged.
+      expect(logger.error).toHaveBeenCalledWith('org page: usage fetch failed', undefined, {
+        orgId: ID,
+        status: 500,
+      });
     });
   });
 });

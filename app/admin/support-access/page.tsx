@@ -7,9 +7,8 @@ import {
   type SupportGrantRow,
 } from '@/components/admin/support-access/support-grants-table';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { loadServerData } from '@/lib/api/server-load';
 import { requestActingOrg, requestPrincipal } from '@/lib/auth/admin-page-viewer';
-import { logger } from '@/lib/logging';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { isMultiTenant } from '@/lib/tenancy/context';
 import { ORG_OWNER_ROLE } from '@/lib/tenancy/roles';
@@ -27,18 +26,13 @@ export const metadata: Metadata = {
  * do what. The grant form is shown to an owner of this org only, because the
  * API refuses anyone else, platform admins included — the vendor does not
  * grant itself access. Revoke is offered to everyone who can see the list.
- * Below the grants, what support did under them (t-825).
+ * Below the grants, what support did under them (t-825). Grants that cannot
+ * be loaded say so in the list's place, never as "no grants";
+ * `loadServerData` logs the failure (#518).
  */
 async function getGrants(orgId: string): Promise<SupportGrantRow[] | null> {
-  try {
-    const res = await serverFetch(API.ORGS.supportGrants(orgId));
-    if (!res.ok) return null;
-    const body = await parseApiResponse<{ grants: SupportGrantRow[] }>(res);
-    return body.success && Array.isArray(body.data?.grants) ? body.data.grants : null;
-  } catch (err) {
-    logger.error('support access page: fetch failed', err);
-    return null;
-  }
+  const result = await loadServerData<{ grants: SupportGrantRow[] }>(API.ORGS.supportGrants(orgId));
+  return result.ok && Array.isArray(result.data?.grants) ? result.data.grants : null;
 }
 
 function Unavailable({ children }: { children: React.ReactNode }) {

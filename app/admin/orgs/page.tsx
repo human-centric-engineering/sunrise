@@ -3,8 +3,7 @@ import type { Metadata } from 'next';
 import { OrgsTable, type OrgListItem } from '@/components/admin/orgs/orgs-table';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 
 export const metadata: Metadata = {
@@ -16,19 +15,13 @@ export const metadata: Metadata = {
  * Admin — Organisations list (§120 t-745).
  *
  * Thin server shell over `GET /api/v1/admin/orgs`, the enriched list. The
- * admin tree is platform-admin only, and so is the route. A fetch failure
- * renders the table's empty state rather than throwing.
+ * admin tree is platform-admin only, and so is the route. A failed load
+ * throws to the admin error boundary rather than rendering the table's empty
+ * state (#518).
  */
 async function getOrgs(): Promise<OrgListItem[]> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORGS);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<{ orgs: OrgListItem[] }>(res);
-    return body.success && Array.isArray(body.data?.orgs) ? body.data.orgs : [];
-  } catch (err) {
-    logger.error('orgs list page: fetch failed', err);
-    return [];
-  }
+  const { data } = await requireServerData<{ orgs: OrgListItem[] }>(API.ADMIN.ORGS);
+  return Array.isArray(data?.orgs) ? data.orgs : [];
 }
 
 export default async function OrgsPage() {
