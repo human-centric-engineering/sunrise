@@ -4,11 +4,10 @@
  * Unit Tests: CapabilitiesListPage (app/admin/orchestration/capabilities/page.tsx)
  *
  * Branch coverage targets:
- * - getCapabilities: res.ok false → { capabilities: [], meta: EMPTY_META }
- * - getCapabilities: body.success false → { capabilities: [], meta: EMPTY_META }
- * - getCapabilities: serverFetch throws → empty + logger.error
- * - getCapabilities: happy path → data + meta forwarded to CapabilitiesTable
- * - parsePaginationMeta returns null → EMPTY_META fallback
+ * - a failed load (5xx, success:false, no response) throws to the error
+ *   boundary instead of rendering an empty table (#518)
+ * - happy path → data + meta forwarded to CapabilitiesTable
+ * - an empty list is rendered as an empty list, with EMPTY_META when meta is missing
  * - availableCategories derivation: mixed categories → deduplicated + sorted set
  * - availableCategories derivation: null/undefined categories filtered out
  * - No auth-redirect test: per gotcha #21, auth guard lives in the admin layout.
@@ -21,17 +20,14 @@ import { render, screen } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
   logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
-}));
-
-vi.mock('@/lib/validations/common', () => ({
-  parsePaginationMeta: vi.fn(),
 }));
 
 // Stub CapabilitiesTable — inspect the props passed to it
@@ -45,6 +41,7 @@ vi.mock('@/components/admin/orchestration/capabilities-table', () => ({
       data-testid="capabilities-table"
       data-capabilities-count={String(props.initialCapabilities.length)}
       data-categories={JSON.stringify(props.availableCategories)}
+      data-meta={JSON.stringify(props.initialMeta)}
     />
   ),
 }));
@@ -62,20 +59,13 @@ vi.mock('next/link', () => ({
 // ─── Imports (after mocks) ─────────────────────────────────────────────────────
 
 import CapabilitiesListPage from '@/app/admin/orchestration/capabilities/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
-import { parsePaginationMeta } from '@/lib/validations/common';
 import { API } from '@/lib/api/endpoints';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function okResponse(): Response {
-  return { ok: true } as Response;
-}
-
-function notOkResponse(): Response {
-  return { ok: false } as Response;
-}
 
 const mockMeta = { page: 1, limit: 25, total: 5, totalPages: 1 };
 
@@ -86,102 +76,62 @@ describe('CapabilitiesListPage', () => {
     vi.clearAllMocks();
   });
 
-  // ── getCapabilities: res.ok false ────────────────────────────────────────
+  // ── A failed load is a failure, not an empty table (#518) ───────────────
 
-  it('passes empty capabilities list when res.ok is false', async () => {
-    // Arrange
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
-    vi.mocked(parsePaginationMeta).mockReturnValue(mockMeta);
+  it('throws to the error boundary when the capabilities API answers 500', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
-    // Act
-    render(await CapabilitiesListPage());
-
-    // Assert: table receives empty list
-    const table = screen.getByTestId('capabilities-table');
-    expect(table).toHaveAttribute('data-capabilities-count', '0');
+    await expect(CapabilitiesListPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalled();
   });
 
-  // ── getCapabilities: body.success false ──────────────────────────────────
+  it('throws when the capabilities API answers success:false', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(200));
 
-  it('passes empty capabilities list when body.success is false', async () => {
-    // Arrange
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'fail' },
-    } as never);
-    vi.mocked(parsePaginationMeta).mockReturnValue(mockMeta);
-
-    // Act
-    render(await CapabilitiesListPage());
-
-    // Assert
-    const table = screen.getByTestId('capabilities-table');
-    expect(table).toHaveAttribute('data-capabilities-count', '0');
+    await expect(CapabilitiesListPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  // ── getCapabilities: serverFetch throws ──────────────────────────────────
-
-  it('logs error and passes empty capabilities when serverFetch throws', async () => {
-    // Arrange
+  it('throws and logs when serverFetch rejects', async () => {
     const fetchErr = new Error('Network failure');
     vi.mocked(serverFetch).mockRejectedValue(fetchErr);
-    vi.mocked(parsePaginationMeta).mockReturnValue(mockMeta);
 
-    // Act
-    render(await CapabilitiesListPage());
-
-    // Assert: error logged + empty state
-    expect(logger.error).toHaveBeenCalledWith(
-      'capabilities list page: initial fetch failed',
-      fetchErr
-    );
-    const table = screen.getByTestId('capabilities-table');
-    expect(table).toHaveAttribute('data-capabilities-count', '0');
+    await expect(CapabilitiesListPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), fetchErr, expect.any(Object));
   });
 
   // ── getCapabilities: happy path ───────────────────────────────────────────
 
-  it('forwards capabilities data to CapabilitiesTable when fetch succeeds', async () => {
-    // Arrange
+  it('forwards capabilities data and meta to CapabilitiesTable when fetch succeeds', async () => {
     const mockCapabilities = [
       { id: 'cap-1', name: 'Search', category: 'retrieval', _agents: [] },
       { id: 'cap-2', name: 'Send email', category: 'notifications', _agents: [] },
     ];
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: mockCapabilities,
-      meta: mockMeta,
-    } as never);
-    vi.mocked(parsePaginationMeta).mockReturnValue(mockMeta);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockCapabilities, mockMeta));
 
-    // Act
     render(await CapabilitiesListPage());
 
-    // Assert: 2 capabilities forwarded to table
     const table = screen.getByTestId('capabilities-table');
     expect(table).toHaveAttribute('data-capabilities-count', '2');
+    expect(JSON.parse(table.getAttribute('data-meta') ?? 'null')).toEqual(mockMeta);
   });
 
-  // ── parsePaginationMeta returns null → EMPTY_META fallback ───────────────
+  // ── An empty list with no meta → EMPTY_META fallback ─────────────────────
 
-  it('falls back to EMPTY_META when parsePaginationMeta returns null', async () => {
-    // Arrange
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-      meta: null,
-    } as never);
-    vi.mocked(parsePaginationMeta).mockReturnValue(null);
+  it('renders an empty list as an empty list, with EMPTY_META when meta is missing', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
-    // Act — page should render without crashing; EMPTY_META is the fallback
     render(await CapabilitiesListPage());
 
-    // Assert: page renders with 0 capabilities
     const table = screen.getByTestId('capabilities-table');
     expect(table).toHaveAttribute('data-capabilities-count', '0');
+    expect(JSON.parse(table.getAttribute('data-meta') ?? 'null')).toEqual({
+      page: 1,
+      limit: 25,
+      total: 0,
+      totalPages: 1,
+    });
+    const categories = JSON.parse(table.getAttribute('data-categories') ?? '["x"]') as string[];
+    expect(categories).toEqual([]);
   });
 
   // ── availableCategories derivation ───────────────────────────────────────
@@ -195,15 +145,8 @@ describe('CapabilitiesListPage', () => {
       { id: 'cap-4', name: 'No category', category: null, _agents: [] },
       { id: 'cap-5', name: 'API call', category: 'api', _agents: [] },
     ];
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: mockCapabilities,
-      meta: mockMeta,
-    } as never);
-    vi.mocked(parsePaginationMeta).mockReturnValue(mockMeta);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockCapabilities, mockMeta));
 
-    // Act
     render(await CapabilitiesListPage());
 
     // Assert: deduplicated ("retrieval" once), null filtered, alphabetically sorted
@@ -213,20 +156,12 @@ describe('CapabilitiesListPage', () => {
   });
 
   it('passes empty categories array when all capabilities have null category', async () => {
-    // Arrange
     const mockCapabilities = [
       { id: 'cap-1', name: 'Search', category: null, _agents: [] },
       { id: 'cap-2', name: 'Lookup', category: null, _agents: [] },
     ];
-    vi.mocked(serverFetch).mockResolvedValue(okResponse());
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: mockCapabilities,
-      meta: mockMeta,
-    } as never);
-    vi.mocked(parsePaginationMeta).mockReturnValue(mockMeta);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(mockCapabilities, mockMeta));
 
-    // Act
     render(await CapabilitiesListPage());
 
     // Assert: null categories filtered → empty array
@@ -235,30 +170,14 @@ describe('CapabilitiesListPage', () => {
     expect(categories).toEqual([]);
   });
 
-  it('passes empty categories array when no capabilities are loaded', async () => {
-    // Arrange — fetch fails → capabilities = []
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
-
-    // Act
-    render(await CapabilitiesListPage());
-
-    // Assert: no capabilities → no categories
-    const table = screen.getByTestId('capabilities-table');
-    const categories = JSON.parse(table.getAttribute('data-categories') ?? '["x"]') as string[];
-    expect(categories).toEqual([]);
-  });
-
   // ── serverFetch endpoint verification ─────────────────────────────────────
 
   it('calls the capabilities endpoint with page=1 and limit=25', async () => {
-    // Arrange
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
-    // Act
     await CapabilitiesListPage();
 
-    // Assert: the correct endpoint was used
-    expect(serverFetch).toHaveBeenCalledWith(
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe(
       `${API.ADMIN.ORCHESTRATION.CAPABILITIES}?page=1&limit=25`
     );
   });
@@ -266,7 +185,7 @@ describe('CapabilitiesListPage', () => {
   // ── Heading and breadcrumb ────────────────────────────────────────────────
 
   it('renders the Capabilities heading', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await CapabilitiesListPage());
 
@@ -274,7 +193,7 @@ describe('CapabilitiesListPage', () => {
   });
 
   it('renders a breadcrumb link to /admin/orchestration', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(notOkResponse());
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     render(await CapabilitiesListPage());
 

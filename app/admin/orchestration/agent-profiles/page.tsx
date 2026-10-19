@@ -5,8 +5,7 @@ import { Plus, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 import type { AgentProfileRow } from '@/components/admin/orchestration/agent-profile-form';
 import {
   SharedSettingsEditOnly,
@@ -20,16 +19,12 @@ export const metadata: Metadata = {
   description: 'Reusable persona, brand voice, and guardrails that agents inherit.',
 };
 
+/** A failed load throws to the admin error boundary, not "No profiles yet" (#518). */
 async function getProfiles(): Promise<ProfileListRow[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENT_PROFILES}?page=1&limit=50`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<ProfileListRow[]>(res);
-    return body.success ? body.data : [];
-  } catch (err) {
-    logger.error('agent-profiles page: list fetch failed', err);
-    return [];
-  }
+  const { data } = await requireServerData<ProfileListRow[]>(
+    `${API.ADMIN.ORCHESTRATION.AGENT_PROFILES}?page=1&limit=50`
+  );
+  return data;
 }
 
 export default async function AgentProfilesListPage() {

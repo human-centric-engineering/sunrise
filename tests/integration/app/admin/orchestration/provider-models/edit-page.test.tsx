@@ -12,14 +12,16 @@
  * - Hides seed-managed warning when isDefault is false
  * - Shows success banner when ?created=1 query param is present
  * - Hides success banner when ?created query param is absent
- * - Calls notFound() when model fetch returns null
- * - Graceful behaviour when fetch rejects
+ * - Calls notFound() on a 404, and only on a 404: a 500 or a network
+ *   failure throws to the error boundary instead (#518)
  *
  * @see app/admin/orchestration/provider-models/[id]/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -38,9 +40,10 @@ vi.mock('next/navigation', () => ({
   useSearchParams: vi.fn(() => ({ get: vi.fn(() => null) })),
 }));
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -119,12 +122,8 @@ describe('EditProviderModelPage (server component)', () => {
   });
 
   it('renders model name in heading', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: makeModel(),
-    } as never);
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(makeModel()));
 
     const { default: EditPage } =
       await import('@/app/admin/orchestration/provider-models/[id]/page');
@@ -140,12 +139,8 @@ describe('EditProviderModelPage (server component)', () => {
   });
 
   it('shows seed-managed warning when isDefault is true', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: makeModel({ isDefault: true }),
-    } as never);
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(makeModel({ isDefault: true })));
 
     const { default: EditPage } =
       await import('@/app/admin/orchestration/provider-models/[id]/page');
@@ -162,12 +157,8 @@ describe('EditProviderModelPage (server component)', () => {
   });
 
   it('hides seed-managed warning when isDefault is false', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: makeModel({ isDefault: false }),
-    } as never);
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(makeModel({ isDefault: false })));
 
     const { default: EditPage } =
       await import('@/app/admin/orchestration/provider-models/[id]/page');
@@ -183,12 +174,8 @@ describe('EditProviderModelPage (server component)', () => {
   });
 
   it('shows success banner when ?created=1', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: makeModel(),
-    } as never);
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(makeModel()));
 
     const { default: EditPage } =
       await import('@/app/admin/orchestration/provider-models/[id]/page');
@@ -204,12 +191,8 @@ describe('EditProviderModelPage (server component)', () => {
   });
 
   it('hides success banner when created param is absent', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: makeModel(),
-    } as never);
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(makeModel()));
 
     const { default: EditPage } =
       await import('@/app/admin/orchestration/provider-models/[id]/page');
@@ -224,13 +207,9 @@ describe('EditProviderModelPage (server component)', () => {
     expect(screen.queryByText(/model created successfully/i)).not.toBeInTheDocument();
   });
 
-  it('calls notFound() when model fetch returns null', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'Not found' },
-    } as never);
+  it('calls notFound() when the model does not exist', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(404, 'NOT_FOUND'));
 
     const { default: EditPage } =
       await import('@/app/admin/orchestration/provider-models/[id]/page');
@@ -241,11 +220,32 @@ describe('EditProviderModelPage (server component)', () => {
         searchParams: Promise.resolve({}),
       })
     ).rejects.toThrow('NEXT_NOT_FOUND');
-    expect(mockNotFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
+    expect(mockNotFound).toHaveBeenCalledOnce();
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe(
+      '/api/v1/admin/orchestration/provider-models/nonexistent'
+    );
   });
 
-  it('calls notFound() when serverFetch rejects', async () => {
+  it('throws to the error boundary, not notFound(), when the load fails', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
+
+    const { default: EditPage } =
+      await import('@/app/admin/orchestration/provider-models/[id]/page');
+
+    await expect(
+      EditPage({
+        params: Promise.resolve({ id: 'model-1' }),
+        searchParams: Promise.resolve({}),
+      })
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(mockNotFound).not.toHaveBeenCalled();
+  });
+
+  it('throws to the error boundary, not notFound(), when serverFetch rejects', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
     vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
 
     const { default: EditPage } =
@@ -256,23 +256,7 @@ describe('EditProviderModelPage (server component)', () => {
         params: Promise.resolve({ id: 'model-1' }),
         searchParams: Promise.resolve({}),
       })
-    ).rejects.toThrow('NEXT_NOT_FOUND');
-    expect(mockNotFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
-  });
-
-  it('calls notFound() when serverFetch returns not ok', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
-
-    const { default: EditPage } =
-      await import('@/app/admin/orchestration/provider-models/[id]/page');
-
-    await expect(
-      EditPage({
-        params: Promise.resolve({ id: 'model-1' }),
-        searchParams: Promise.resolve({}),
-      })
-    ).rejects.toThrow('NEXT_NOT_FOUND');
-    expect(mockNotFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(mockNotFound).not.toHaveBeenCalled();
   });
 });

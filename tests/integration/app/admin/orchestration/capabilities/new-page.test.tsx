@@ -9,7 +9,8 @@
  * Test Coverage:
  * - Renders the create-mode form shell
  * - "Create capability" submit button visible
- * - Graceful render when serverFetch rejects (categories fall back to empty)
+ * - A failed categories load still renders the form, with a visible
+ *   "Couldn't load" notice rather than a silently empty dropdown (#518)
  *
  * @see app/admin/orchestration/capabilities/new/page.tsx
  */
@@ -17,11 +18,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -76,12 +80,8 @@ describe('NewCapabilityPage (server component)', () => {
   });
 
   it('renders "Create capability" submit button', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     const { default: NewCapabilityPage } =
       await import('@/app/admin/orchestration/capabilities/new/page');
@@ -94,12 +94,8 @@ describe('NewCapabilityPage (server component)', () => {
   });
 
   it('renders a form element', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     const { default: NewCapabilityPage } =
       await import('@/app/admin/orchestration/capabilities/new/page');
@@ -110,12 +106,8 @@ describe('NewCapabilityPage (server component)', () => {
   });
 
   it('renders the name input field', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: [],
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     const { default: NewCapabilityPage } =
       await import('@/app/admin/orchestration/capabilities/new/page');
@@ -127,28 +119,9 @@ describe('NewCapabilityPage (server component)', () => {
     });
   });
 
-  it('renders without throwing when categories fetch fails', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
-
-    const { default: NewCapabilityPage } =
-      await import('@/app/admin/orchestration/capabilities/new/page');
-
-    let thrown = false;
-    try {
-      render(await NewCapabilityPage());
-    } catch {
-      thrown = true;
-    }
-
-    expect(thrown).toBe(false);
-    expect(screen.getByRole('button', { name: /create capability/i })).toBeInTheDocument();
-  });
-
   it('renders breadcrumb navigation links', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: [] });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     const { default: NewCapabilityPage } =
       await import('@/app/admin/orchestration/capabilities/new/page');
@@ -159,69 +132,58 @@ describe('NewCapabilityPage (server component)', () => {
     expect(screen.getByRole('link', { name: /capabilities/i })).toBeInTheDocument();
   });
 
-  // ── Fallback branches ──────────────────────────────────────────────────────
+  it('shows no load-failed notice when the categories load succeeds', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
-  describe('fallback branches', () => {
-    it('renders when serverFetch rejects (network error)', async () => {
-      // Arrange: fetch rejects entirely
+    const { default: NewCapabilityPage } =
+      await import('@/app/admin/orchestration/capabilities/new/page');
+
+    render(await NewCapabilityPage());
+
+    expect(screen.queryByText(/couldn.t load/i)).not.toBeInTheDocument();
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe(
+      '/api/v1/admin/orchestration/capabilities?page=1&limit=100'
+    );
+  });
+
+  // ── A failed categories load is shown, not hidden (#518) ───────────────────
+
+  describe('when the categories load fails', () => {
+    it.each([
+      ['the API answers 500', () => Promise.resolve(apiFailure(500))],
+      ['the API answers success:false', () => Promise.resolve(apiFailure(200))],
+      ['serverFetch rejects', () => Promise.reject(new Error('Network error'))],
+    ])('still renders the form, with a notice, when %s', async (_label, answer) => {
       const { serverFetch } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
-
-      const { default: NewCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/new/page');
-
-      // Act: should not throw
-      render(await NewCapabilityPage());
-
-      // Assert: structural stability
-      expect(screen.getByRole('button', { name: /create capability/i })).toBeInTheDocument();
-    });
-
-    it('renders when categories fetch returns res.ok=false', async () => {
-      // Arrange: categories endpoint returns a non-ok response
-      const { serverFetch } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+      vi.mocked(serverFetch).mockImplementation(answer);
 
       const { default: NewCapabilityPage } =
         await import('@/app/admin/orchestration/capabilities/new/page');
 
       render(await NewCapabilityPage());
 
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /couldn.t load existing capability categories/i
+      );
       expect(screen.getByRole('button', { name: /create capability/i })).toBeInTheDocument();
     });
+  });
 
-    it('renders when parseApiResponse returns success=false', async () => {
-      // Arrange: fetch ok, but parse returns failure
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: false,
-        error: { message: 'Parse failed', code: 'PARSE_ERROR' },
-      });
-
-      const { default: NewCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/new/page');
-
-      render(await NewCapabilityPage());
-
-      expect(screen.getByRole('button', { name: /create capability/i })).toBeInTheDocument();
-    });
-
+  describe('category derivation', () => {
     it('filters out falsy categories (exercises filter(Boolean) predicate false arm)', async () => {
       // Arrange: capability list includes items with empty string and null categories.
-      // The page does: body.data.map(c => c.category).filter(Boolean)
+      // The page does: data.map(c => c.category).filter(Boolean)
       // — the filter predicate's false arm fires for '' and null entries.
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: true,
-        data: [
+      const { serverFetch } = await import('@/lib/api/server-fetch');
+      vi.mocked(serverFetch).mockResolvedValue(
+        apiSuccess([
           { category: 'api' },
           { category: '' }, // falsy — filter removes this
           { category: 'search' },
           { category: null }, // falsy — filter removes this
-        ],
-      });
+        ])
+      );
 
       const { default: NewCapabilityPage } =
         await import('@/app/admin/orchestration/capabilities/new/page');

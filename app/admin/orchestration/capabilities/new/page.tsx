@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { CapabilityForm } from '@/components/admin/orchestration/capability-form';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { loadServerData } from '@/lib/api/server-load';
 import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 import type { AiCapability } from '@/types/prisma';
 
@@ -18,20 +18,16 @@ export const metadata: Metadata = {
  *
  * Thin server shell. Fetches the existing capability list once so the
  * Basic-tab category `<Select>` can populate from whatever categories
- * are already in use. Fetch failure falls back to an empty category
- * list; the form still works (admins can enter a new category).
+ * are already in use. The form works without them (admins can enter a
+ * new category), so a failed load shows `<LoadFailedNotice>` above the
+ * form and leaves the dropdown with only "+ New category…" (#518).
  */
-async function getAvailableCategories(): Promise<string[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.CAPABILITIES}?page=1&limit=100`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<AiCapability[]>(res);
-    if (!body.success) return [];
-    return Array.from(new Set(body.data.map((c) => c.category).filter(Boolean))).sort();
-  } catch (err) {
-    logger.error('new capability page: categories fetch failed', err);
-    return [];
-  }
+async function getAvailableCategories(): Promise<string[] | null> {
+  const result = await loadServerData<AiCapability[]>(
+    `${API.ADMIN.ORCHESTRATION.CAPABILITIES}?page=1&limit=100`
+  );
+  if (!result.ok) return null;
+  return Array.from(new Set(result.data.map((c) => c.category).filter(Boolean))).sort();
 }
 
 export default async function NewCapabilityPage() {
@@ -53,7 +49,9 @@ export default async function NewCapabilityPage() {
 
       <SharedSettingsReadOnlyNotice />
 
-      <CapabilityForm mode="create" availableCategories={availableCategories} />
+      {availableCategories === null && <LoadFailedNotice what="existing capability categories" />}
+
+      <CapabilityForm mode="create" availableCategories={availableCategories ?? []} />
     </div>
   );
 }

@@ -39,7 +39,7 @@ The known-provider catalogue lives in `lib/orchestration/llm/known-providers.ts`
 | `/admin/orchestration/providers/new`  | `app/admin/orchestration/providers/new/page.tsx`  | Create shell                         |
 | `/admin/orchestration/providers/[id]` | `app/admin/orchestration/providers/[id]/page.tsx` | Edit shell, `notFound()` on missing  |
 
-All three are async server components via `serverFetch()` + `parseApiResponse()`. Fetch failures fall back to an empty grid and are logged with `logger.error`.
+The list and edit pages load through `requireServerData()` (`lib/api/server-load.ts`). A failed load of the provider list or the model matrix throws to the admin error boundary, which logs it and offers **Try again** — never an empty grid. On the edit page only a 404 renders `notFound()`; any other failure reaches the error boundary (#518).
 
 ## List page — cards, not a table
 

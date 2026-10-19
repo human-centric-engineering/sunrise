@@ -7,8 +7,8 @@
  * effective defaults, then hands them to <AgentForm mode="create">.
  * These tests pin the wiring contract: the right prefetch helpers are
  * called, their return values flow through to AgentForm, the
- * breadcrumb is rendered, and the page tolerates either fetch
- * returning null.
+ * breadcrumb is rendered, the page tolerates either fetch returning
+ * null, and a failed profile list shows a "Couldn't load" notice (#518).
  *
  * @see app/admin/orchestration/agents/new/page.tsx
  */
@@ -37,6 +37,7 @@ vi.mock('@/components/admin/orchestration/agent-form', () => ({
     providers: unknown;
     models: unknown;
     effectiveDefaults: unknown;
+    profiles?: unknown;
   }) => (
     <div
       data-testid="agent-form"
@@ -44,6 +45,7 @@ vi.mock('@/components/admin/orchestration/agent-form', () => ({
       data-providers={JSON.stringify(props.providers)}
       data-models={JSON.stringify(props.models)}
       data-defaults={JSON.stringify(props.effectiveDefaults)}
+      data-profiles={JSON.stringify(props.profiles)}
     />
   ),
 }));
@@ -54,13 +56,19 @@ vi.mock('next/link', () => ({
   ),
 }));
 
-// The page also calls an inline getAgentProfiles() that goes through
-// serverFetch -> parseApiResponse against the agent-profiles endpoint.
-// Stub both so the prefetch resolves to an empty profiles list instead
-// of escaping to a real fetch that happy-dom holds open until timeout.
-vi.mock('@/lib/api/server-fetch', () => ({
-  serverFetch: vi.fn(async () => new Response(null, { status: 200 })),
-  parseApiResponse: vi.fn(async () => ({ success: true, data: [] })),
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+}));
+
+vi.mock('@/lib/logging', () => ({
+  logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+}));
+
+// The page also loads the agent-profiles list itself. Only the network is
+// faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
+  serverFetch: vi.fn(),
 }));
 
 // ─── Imports (after mocks) ─────────────────────────────────────────────────
@@ -71,6 +79,8 @@ import {
   getAgentModels,
   getEffectiveAgentDefaults,
 } from '@/lib/orchestration/prefetch-helpers';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 import type { AiProviderConfig } from '@/types/prisma';
 import type { ModelOption } from '@/lib/orchestration/prefetch-helpers';
 
@@ -79,6 +89,7 @@ import type { ModelOption } from '@/lib/orchestration/prefetch-helpers';
 describe('NewAgentPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
   });
 
   it('exports a static metadata object with the page title', () => {
@@ -165,5 +176,34 @@ describe('NewAgentPage', () => {
     const form = screen.getByTestId('agent-form');
     expect(form.getAttribute('data-providers')).toBe('null');
     expect(form.getAttribute('data-models')).toBe('null');
+  });
+
+  it('passes the loaded profiles to AgentForm', async () => {
+    const profiles = [{ id: 'p1', name: 'Support Family' }];
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(profiles));
+    vi.mocked(getProviders).mockResolvedValue(null);
+    vi.mocked(getAgentModels).mockResolvedValue(null);
+
+    render(await NewAgentPage());
+
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe(
+      '/api/v1/admin/orchestration/agent-profiles?page=1&limit=100'
+    );
+    expect(screen.getByTestId('agent-form')).toHaveAttribute(
+      'data-profiles',
+      JSON.stringify(profiles)
+    );
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('shows a notice, and still renders the form, when the profile list fails to load', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
+    vi.mocked(getProviders).mockResolvedValue(null);
+    vi.mocked(getAgentModels).mockResolvedValue(null);
+
+    render(await NewAgentPage());
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load agent profiles/i);
+    expect(screen.getByTestId('agent-form')).toHaveAttribute('data-profiles', '[]');
   });
 });

@@ -10,7 +10,9 @@
  * - Renders heading with valid serverFetch response
  * - Renders each provider card with correct names
  * - "+ Add provider" link present
- * - Graceful no-throw when fetch rejects
+ * - A real empty provider list renders the empty state
+ * - A failed load of either tab's rows throws to the error boundary
+ *   instead of rendering an empty list (#518)
  *
  * @see app/admin/orchestration/providers/page.tsx
  */
@@ -18,11 +20,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -114,6 +119,14 @@ const MOCK_PROVIDERS = [
   makeProvider('prov-3', 'Ollama', { apiKeyPresent: false, isLocal: true }),
 ];
 
+/** Answer the providers and provider-models fetches by path. */
+async function mockApi(answers: { providers: () => Response; models: () => Response }) {
+  const { serverFetch } = await import('@/lib/api/server-fetch');
+  vi.mocked(serverFetch).mockImplementation((path: string) =>
+    Promise.resolve(path.includes('/provider-models') ? answers.models() : answers.providers())
+  );
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('ProvidersListPage (server component)', () => {
@@ -126,12 +139,7 @@ describe('ProvidersListPage (server component)', () => {
   });
 
   it('renders "Providers" heading', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    // First call: providers; second call: models
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS } as never)
-      .mockResolvedValueOnce({ success: true, data: [] } as never);
+    await mockApi({ providers: () => apiSuccess(MOCK_PROVIDERS), models: () => apiSuccess([]) });
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 
@@ -141,11 +149,7 @@ describe('ProvidersListPage (server component)', () => {
   });
 
   it('renders each provider name in a card', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS } as never)
-      .mockResolvedValueOnce({ success: true, data: [] } as never);
+    await mockApi({ providers: () => apiSuccess(MOCK_PROVIDERS), models: () => apiSuccess([]) });
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 
@@ -159,11 +163,7 @@ describe('ProvidersListPage (server component)', () => {
   });
 
   it('renders "+ Add provider" link', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_PROVIDERS } as never)
-      .mockResolvedValueOnce({ success: true, data: [] } as never);
+    await mockApi({ providers: () => apiSuccess(MOCK_PROVIDERS), models: () => apiSuccess([]) });
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 
@@ -174,9 +174,8 @@ describe('ProvidersListPage (server component)', () => {
     });
   });
 
-  it('renders empty state when fetch returns not ok', async () => {
-    const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+  it('renders the empty state when no providers are configured', async () => {
+    await mockApi({ providers: () => apiSuccess([]), models: () => apiSuccess([]) });
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 
@@ -186,36 +185,49 @@ describe('ProvidersListPage (server component)', () => {
     expect(screen.getByText(/no providers configured yet/i)).toBeInTheDocument();
   });
 
-  it('returns empty arrays when parseApiResponse returns success: false', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'INTERNAL', message: 'DB error' },
-    } as never);
+  it("requests both tabs' rows", async () => {
+    await mockApi({ providers: () => apiSuccess([]), models: () => apiSuccess([]) });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+
+    const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
+    await ProvidersListPage();
+
+    const paths = vi.mocked(serverFetch).mock.calls.map((c) => c[0]);
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        '/api/v1/admin/orchestration/providers?page=1&limit=50',
+        '/api/v1/admin/orchestration/provider-models?page=1&limit=100&isActive=true',
+      ])
+    );
+  });
+
+  it('throws to the error boundary when the providers API answers 500', async () => {
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    const { logger } = await import('@/lib/logging');
+    await mockApi({ providers: () => apiFailure(500), models: () => apiSuccess([]) });
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 
-    render(await ProvidersListPage());
-
-    expect(screen.getByRole('heading', { name: /^providers$/i })).toBeInTheDocument();
-    expect(screen.getByText(/no providers configured yet/i)).toBeInTheDocument();
+    await expect(ProvidersListPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalled();
   });
 
-  it('does not throw when fetch rejects', async () => {
+  it('throws to the error boundary when the model matrix API fails', async () => {
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    await mockApi({ providers: () => apiSuccess(MOCK_PROVIDERS), models: () => apiFailure(200) });
+
+    const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
+
+    await expect(ProvidersListPage()).rejects.toBeInstanceOf(ServerLoadError);
+  });
+
+  it('throws to the error boundary when serverFetch rejects', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
     vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
 
     const { default: ProvidersListPage } = await import('@/app/admin/orchestration/providers/page');
 
-    let thrown = false;
-    try {
-      render(await ProvidersListPage());
-    } catch {
-      thrown = true;
-    }
-
-    expect(thrown).toBe(false);
-    expect(screen.getByRole('heading', { name: /^providers$/i })).toBeInTheDocument();
+    await expect(ProvidersListPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 });

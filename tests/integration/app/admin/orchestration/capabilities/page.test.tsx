@@ -10,8 +10,9 @@
  * - Renders heading and description with valid serverFetch response
  * - Renders table rows from pre-fetched data
  * - "+ New Capability" link present
- * - Empty state when serverFetch returns null data
- * - Graceful no-throw when every fetch rejects
+ * - Empty state when the API returns an empty list
+ * - A failed load throws to the error boundary instead of rendering
+ *   "No capabilities found" (#518)
  *
  * @see app/admin/orchestration/capabilities/page.tsx
  */
@@ -19,11 +20,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -111,13 +115,8 @@ describe('CapabilitiesListPage (server component)', () => {
   });
 
   it('renders "Capabilities" heading', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_CAPABILITIES,
-      meta: MOCK_META,
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(MOCK_CAPABILITIES, MOCK_META));
 
     const { default: CapabilitiesListPage } =
       await import('@/app/admin/orchestration/capabilities/page');
@@ -128,13 +127,8 @@ describe('CapabilitiesListPage (server component)', () => {
   });
 
   it('renders capability names from pre-fetched data', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_CAPABILITIES,
-      meta: MOCK_META,
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(MOCK_CAPABILITIES, MOCK_META));
 
     const { default: CapabilitiesListPage } =
       await import('@/app/admin/orchestration/capabilities/page');
@@ -149,13 +143,8 @@ describe('CapabilitiesListPage (server component)', () => {
   });
 
   it('renders "+ New Capability" link', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: MOCK_CAPABILITIES,
-      meta: MOCK_META,
-    });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(MOCK_CAPABILITIES, MOCK_META));
 
     const { default: CapabilitiesListPage } =
       await import('@/app/admin/orchestration/capabilities/page');
@@ -167,9 +156,9 @@ describe('CapabilitiesListPage (server component)', () => {
     });
   });
 
-  it('renders empty state when serverFetch returns not ok', async () => {
+  it('renders the empty state when there are no capabilities', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess([]));
 
     const { default: CapabilitiesListPage } =
       await import('@/app/admin/orchestration/capabilities/page');
@@ -180,21 +169,25 @@ describe('CapabilitiesListPage (server component)', () => {
     expect(screen.getByText(/no capabilities found/i)).toBeInTheDocument();
   });
 
-  it('does not throw when serverFetch rejects', async () => {
+  it('throws to the error boundary when the capabilities API answers 500', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
+
+    const { default: CapabilitiesListPage } =
+      await import('@/app/admin/orchestration/capabilities/page');
+
+    await expect(CapabilitiesListPage()).rejects.toBeInstanceOf(ServerLoadError);
+  });
+
+  it('throws to the error boundary when serverFetch rejects', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
     vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
 
     const { default: CapabilitiesListPage } =
       await import('@/app/admin/orchestration/capabilities/page');
 
-    let thrown = false;
-    try {
-      render(await CapabilitiesListPage());
-    } catch {
-      thrown = true;
-    }
-
-    expect(thrown).toBe(false);
-    expect(screen.getByRole('heading', { name: /^capabilities$/i })).toBeInTheDocument();
+    await expect(CapabilitiesListPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 });

@@ -7,15 +7,21 @@
  * `app/admin/orchestration/capabilities/[id]/page.tsx`.
  *
  * Test Coverage:
- * - Mock serverFetch for capability GET + /capabilities/:id/agents in parallel
+ * - serverFetch answered by path for the capability GET, /capabilities/:id/agents,
+ *   the category list and the quarantine attribution, with real Responses
  * - Asserts edit form is pre-filled with fixture capability name
- * - Asserts notFound() is called when capability GET returns null
+ * - Asserts notFound() is called on a 404, and only on a 404: a 500 on the
+ *   capability or its agent-usage list throws to the error boundary (#518)
+ * - A failed category list shows a "Couldn't load" notice; the form still renders
+ * - A failed attribution load omits the attribution line
  *
  * @see app/admin/orchestration/capabilities/[id]/page.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -34,9 +40,10 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => ({ get: () => null }),
 }));
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -120,6 +127,51 @@ const MOCK_CAPABILITY_SOFT_QUARANTINE_EXPIRED = {
 
 const MOCK_USED_BY = [{ id: 'agent-1', name: 'Alpha Bot', slug: 'alpha-bot' }];
 
+type Answer = () => Promise<Response>;
+
+const ok =
+  (data: unknown, meta?: unknown): Answer =>
+  () =>
+    Promise.resolve(apiSuccess(data, meta));
+const fail =
+  (status = 500): Answer =>
+  () =>
+    Promise.resolve(apiFailure(status, status === 404 ? 'NOT_FOUND' : 'INTERNAL_ERROR'));
+const reject = (): Answer => () => Promise.reject(new Error('Network error'));
+
+/** Answer each of the page's four fetches by path. */
+async function mockApi({
+  capability = ok(MOCK_CAPABILITY),
+  usedBy = ok([]),
+  categories = ok([]),
+  attribution = ok({ attribution: null }),
+}: {
+  capability?: Answer;
+  usedBy?: Answer;
+  categories?: Answer;
+  attribution?: Answer;
+} = {}) {
+  const { serverFetch } = await import('@/lib/api/server-fetch');
+  vi.mocked(serverFetch).mockImplementation((path: string) => {
+    if (path.endsWith('/agents')) return usedBy();
+    if (path.endsWith('/quarantine-attribution')) return attribution();
+    if (path.includes('?page=')) return categories();
+    return capability();
+  });
+}
+
+async function renderPage(id = 'cap-edit-id') {
+  const { default: EditCapabilityPage } =
+    await import('@/app/admin/orchestration/capabilities/[id]/page');
+  render(await EditCapabilityPage({ params: Promise.resolve({ id }) }));
+}
+
+async function loadPage(id = 'cap-edit-id') {
+  const { default: EditCapabilityPage } =
+    await import('@/app/admin/orchestration/capabilities/[id]/page');
+  return EditCapabilityPage({ params: Promise.resolve({ id }) });
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('EditCapabilityPage (server component)', () => {
@@ -132,36 +184,38 @@ describe('EditCapabilityPage (server component)', () => {
   });
 
   it('renders form pre-filled with capability name in edit mode', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY }) // capability
-      .mockResolvedValueOnce({ success: true, data: MOCK_USED_BY }) // usedBy
-      .mockResolvedValueOnce({ success: true, data: [] }); // categories
+    await mockApi({ usedBy: ok(MOCK_USED_BY) });
 
-    const { default: EditCapabilityPage } =
-      await import('@/app/admin/orchestration/capabilities/[id]/page');
-
-    render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+    await renderPage();
 
     await waitFor(() => {
       const nameInput = screen.getByRole<HTMLInputElement>('textbox', { name: /^name/i });
       expect(nameInput.value).toBe('Search Knowledge Base');
     });
+    expect(screen.queryByText(/couldn.t load/i)).not.toBeInTheDocument();
+  });
+
+  it('requests the capability, its agents, the category list and the attribution', async () => {
+    await mockApi();
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+
+    await renderPage();
+
+    const paths = vi.mocked(serverFetch).mock.calls.map((c) => c[0]);
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        '/api/v1/admin/orchestration/capabilities/cap-edit-id',
+        '/api/v1/admin/orchestration/capabilities/cap-edit-id/agents',
+        '/api/v1/admin/orchestration/capabilities?page=1&limit=100',
+        '/api/v1/admin/orchestration/capabilities/cap-edit-id/quarantine-attribution',
+      ])
+    );
   });
 
   it('renders "Save changes" button in edit mode', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY })
-      .mockResolvedValueOnce({ success: true, data: [] })
-      .mockResolvedValueOnce({ success: true, data: [] });
+    await mockApi();
 
-    const { default: EditCapabilityPage } =
-      await import('@/app/admin/orchestration/capabilities/[id]/page');
-
-    render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+    await renderPage();
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
@@ -169,17 +223,9 @@ describe('EditCapabilityPage (server component)', () => {
   });
 
   it('slug input pre-filled and disabled in edit mode', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse)
-      .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY })
-      .mockResolvedValueOnce({ success: true, data: [] })
-      .mockResolvedValueOnce({ success: true, data: [] });
+    await mockApi();
 
-    const { default: EditCapabilityPage } =
-      await import('@/app/admin/orchestration/capabilities/[id]/page');
-
-    render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+    await renderPage();
 
     await waitFor(() => {
       const slugInput = screen.getByRole<HTMLInputElement>('textbox', { name: /^slug/i });
@@ -188,214 +234,102 @@ describe('EditCapabilityPage (server component)', () => {
     });
   });
 
-  it('calls notFound() when capability fetch returns null', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { message: 'Not found', code: 'NOT_FOUND' },
-    });
+  // ── Not found vs failed (#518) ─────────────────────────────────────────────
 
-    const { default: EditCapabilityPage } =
-      await import('@/app/admin/orchestration/capabilities/[id]/page');
+  it('calls notFound() when the capability does not exist', async () => {
+    // The agents sub-route 404s for a missing capability too.
+    await mockApi({ capability: fail(404), usedBy: fail(404) });
 
-    await expect(
-      EditCapabilityPage({ params: Promise.resolve({ id: 'nonexistent-id' }) })
-    ).rejects.toThrow('NEXT_NOT_FOUND');
-
-    expect(mockNotFound).toHaveBeenCalledOnce();
+    await expect(loadPage('nonexistent-id')).rejects.toThrow('NEXT_NOT_FOUND');
+    expect(mockNotFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard;
   });
 
-  // ── Fallback branches ──────────────────────────────────────────────────────
+  it('throws to the error boundary, not notFound(), when the capability load fails', async () => {
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    await mockApi({ capability: fail(500) });
 
-  describe('usedBy / categories fallback branches', () => {
-    it('renders when usedBy fetch rejects (network error on secondary fetch)', async () => {
-      // Arrange: capability fetch succeeds; usedBy rejects; categories ok
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      let callCount = 0;
-      vi.mocked(serverFetch).mockImplementation(() => {
-        callCount++;
-        if (callCount === 2) throw new Error('Network error');
-        return Promise.resolve({ ok: true } as Response);
-      });
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY }) // capability
-        .mockResolvedValueOnce({ success: true, data: [] }); // categories
+    await expect(loadPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(mockNotFound).not.toHaveBeenCalled();
+  });
 
-      const { default: EditCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/[id]/page');
+  it('throws to the error boundary when the capability fetch rejects', async () => {
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    await mockApi({ capability: reject() });
 
-      // Act: should not throw — usedBy falls back to []
-      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+    await expect(loadPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(mockNotFound).not.toHaveBeenCalled();
+  });
 
-      // Assert: structural stability
-      await waitFor(() => {
-        expect(screen.getByRole('textbox', { name: /^name/i })).toBeInTheDocument();
-      });
-    });
+  // The usage list feeds "Used by" and the quarantine card's "Will affect N
+  // agents": rendered from a failed load, both would state zero as fact.
+  it.each([
+    ['answers 500', fail(500)],
+    ['answers success:false', fail(200)],
+    ['rejects', reject()],
+  ])('throws to the error boundary when the agent-usage list %s', async (_label, usedBy) => {
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    await mockApi({ usedBy });
 
-    it('renders when usedBy fetch returns res.ok=false', async () => {
-      // Arrange: capability ok, usedBy !ok, categories ok
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      let callCount = 0;
-      vi.mocked(serverFetch).mockImplementation(() => {
-        callCount++;
-        if (callCount === 2) return Promise.resolve({ ok: false } as Response);
-        return Promise.resolve({ ok: true } as Response);
-      });
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY })
-        .mockResolvedValueOnce({ success: true, data: [] }); // categories
+    await expect(loadPage()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(mockNotFound).not.toHaveBeenCalled();
+  });
 
-      const { default: EditCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/[id]/page');
+  // ── Category list: secondary, shown as failed (#518) ───────────────────────
 
-      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+  describe('when the category list fails to load', () => {
+    it.each([
+      ['answers 500', fail(500)],
+      ['answers success:false', fail(200)],
+      ['rejects', reject()],
+    ])('still renders the form, with a notice, when it %s', async (_label, categories) => {
+      await mockApi({ usedBy: ok(MOCK_USED_BY), categories });
 
-      await waitFor(() => {
-        expect(screen.getByRole('textbox', { name: /^name/i })).toBeInTheDocument();
-      });
-    });
+      await renderPage();
 
-    it('renders when categories parseApiResponse returns success=false', async () => {
-      // Arrange: capability and usedBy succeed; categories parse fails
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY })
-        .mockResolvedValueOnce({ success: true, data: MOCK_USED_BY })
-        .mockResolvedValueOnce({
-          success: false,
-          error: { message: 'Parse failed', code: 'PARSE_ERROR' },
-        });
-
-      const { default: EditCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/[id]/page');
-
-      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
-
-      // Page still renders with empty categories
-      await waitFor(() => {
-        expect(screen.getByRole('textbox', { name: /^name/i })).toBeInTheDocument();
-      });
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /couldn.t load existing capability categories/i
+      );
+      expect(screen.getByRole('textbox', { name: /^name/i })).toBeInTheDocument();
     });
   });
 
   // ── getQuarantineAttribution error paths ────────────────────────────────────
 
   describe('getQuarantineAttribution fallback paths', () => {
-    it('renders quarantine card WITHOUT attribution when serverFetch throws', async () => {
-      // Arrange: 3 parallel fetches succeed; quarantine attribution fetch throws.
-      // Set up serverFetch and parseApiResponse directly (no helper) to avoid
-      // stacking mock queues that could spill into subsequent tests.
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      let fetchCallCount = 0;
-      vi.mocked(serverFetch).mockImplementation(() => {
-        fetchCallCount++;
-        if (fetchCallCount === 4) throw new Error('Network error on attribution');
-        return Promise.resolve({ ok: true } as Response);
-      });
-      // Only 3 parseApiResponse calls happen — the 4th serverFetch throws before
-      // parseApiResponse is ever reached inside getQuarantineAttribution.
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY_SOFT_QUARANTINED })
-        .mockResolvedValueOnce({ success: true, data: [] })
-        .mockResolvedValueOnce({ success: true, data: [] });
+    it.each([
+      ['rejects', reject()],
+      ['answers 500', fail(500)],
+      ['answers success:false', fail(200)],
+    ])('renders quarantine card WITHOUT attribution when the fetch %s', async (_l, attribution) => {
+      await mockApi({ capability: ok(MOCK_CAPABILITY_SOFT_QUARANTINED), attribution });
 
-      const { default: EditCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/[id]/page');
+      await renderPage();
 
-      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
-
-      // Assert: quarantine card renders (capability is quarantined) but attribution
-      // section is absent — the page degraded gracefully from the fetch error
       await waitFor(() => {
         // QuarantinedView renders the "Lift quarantine" button
         expect(screen.getByRole('button', { name: /lift quarantine/i })).toBeInTheDocument();
         // No audit attribution paragraph
         expect(screen.queryByLabelText('Audit attribution')).not.toBeInTheDocument();
       });
-      // The error was logged, not thrown
+      // The failure was logged (by the loader), not thrown
       const { logger } = await import('@/lib/logging');
-      expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
-        'edit capability page: quarantine attribution fetch failed',
-        expect.any(Error),
-        { capabilityId: 'cap-edit-id' }
+      const loggedPaths = vi.mocked(logger.error).mock.calls.map((c) => c[2]);
+      expect(loggedPaths).toContainEqual(
+        expect.objectContaining({
+          path: '/api/v1/admin/orchestration/capabilities/cap-edit-id/quarantine-attribution',
+        })
       );
     });
 
-    it('renders quarantine card WITHOUT attribution when serverFetch returns ok=false', async () => {
-      // Arrange: 3 parallel fetches succeed; attribution endpoint returns !ok
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      let fetchCallCount = 0;
-      vi.mocked(serverFetch).mockImplementation(() => {
-        fetchCallCount++;
-        if (fetchCallCount === 4) return Promise.resolve({ ok: false } as Response);
-        return Promise.resolve({ ok: true } as Response);
-      });
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY_SOFT_QUARANTINED })
-        .mockResolvedValueOnce({ success: true, data: [] })
-        .mockResolvedValueOnce({ success: true, data: [] });
-      // parseApiResponse is never called for the 4th serverFetch because !ok short-circuits
-
-      const { default: EditCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/[id]/page');
-
-      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
-
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /lift quarantine/i })).toBeInTheDocument();
-        expect(screen.queryByLabelText('Audit attribution')).not.toBeInTheDocument();
-      });
-    });
-
-    it('renders quarantine card WITHOUT attribution when parseApiResponse returns success=false', async () => {
-      // Arrange: all 4 fetches succeed (ok: true); attribution parse returns success=false
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY_SOFT_QUARANTINED })
-        .mockResolvedValueOnce({ success: true, data: [] })
-        .mockResolvedValueOnce({ success: true, data: [] })
-        .mockResolvedValueOnce({
-          success: false,
-          error: { message: 'Attribution parse error', code: 'PARSE_ERROR' },
-        }); // attribution — success: false → null attribution
-
-      const { default: EditCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/[id]/page');
-
-      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
-
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /lift quarantine/i })).toBeInTheDocument();
-        expect(screen.queryByLabelText('Audit attribution')).not.toBeInTheDocument();
-      });
-    });
-
     it('renders quarantine card WITH attribution when attribution fetch succeeds', async () => {
-      // Arrange: all 4 fetches succeed; attribution returns actorName
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY_SOFT_QUARANTINED })
-        .mockResolvedValueOnce({ success: true, data: [] })
-        .mockResolvedValueOnce({ success: true, data: [] })
-        .mockResolvedValueOnce({
-          success: true,
-          data: {
-            attribution: {
-              at: '2026-05-01T10:00:00.000Z',
-              actorName: 'Alice Admin',
-            },
-          },
-        }); // attribution — success: true with actorName
+      await mockApi({
+        capability: ok(MOCK_CAPABILITY_SOFT_QUARANTINED),
+        attribution: ok({
+          attribution: { at: '2026-05-01T10:00:00.000Z', actorName: 'Alice Admin' },
+        }),
+      });
 
-      const { default: EditCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/[id]/page');
-
-      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+      await renderPage();
 
       // Assert: attribution paragraph rendered — the page passed the attribution prop
       // to CapabilityQuarantineCard and the QuarantinedView used it
@@ -411,18 +345,9 @@ describe('EditCapabilityPage (server component)', () => {
     it('places quarantine card ABOVE the form when capability is actively quarantined', async () => {
       // Arrange: quarantined-soft with no expiry → isQuarantined === true
       // → {isQuarantined && quarantineCard} renders BEFORE <CapabilityForm>
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY_SOFT_QUARANTINED })
-        .mockResolvedValueOnce({ success: true, data: [] })
-        .mockResolvedValueOnce({ success: true, data: [] })
-        .mockResolvedValueOnce({ success: true, data: { attribution: null } });
+      await mockApi({ capability: ok(MOCK_CAPABILITY_SOFT_QUARANTINED) });
 
-      const { default: EditCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/[id]/page');
-
-      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+      await renderPage();
 
       await waitFor(() => {
         // "Lift quarantine" button signals QuarantinedView is rendered
@@ -432,8 +357,6 @@ describe('EditCapabilityPage (server component)', () => {
       });
 
       // Assert DOM order: quarantine card (QuarantinedView) must come BEFORE the form.
-      // "Lift quarantine" is inside the quarantine card; the name input is inside the form.
-      // Walk all interactive elements in tree order and verify liftButton index < nameInput index.
       const liftButton = screen.getByRole('button', { name: /lift quarantine/i });
       const nameInput = screen.getByRole('textbox', { name: /^name/i });
       const allElements = Array.from(document.querySelectorAll('button, input'));
@@ -447,19 +370,9 @@ describe('EditCapabilityPage (server component)', () => {
     it('places quarantine card BELOW the form when capability is active (no quarantine)', async () => {
       // Arrange: quarantineState=null → ?? 'active' → isQuarantined === false
       // → {!isQuarantined && quarantineCard} renders AFTER <CapabilityForm>
-      const capabilityWithNullState = { ...MOCK_CAPABILITY, quarantineState: null };
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: capabilityWithNullState })
-        .mockResolvedValueOnce({ success: true, data: [] })
-        .mockResolvedValueOnce({ success: true, data: [] })
-        .mockResolvedValueOnce({ success: true, data: { attribution: null } });
+      await mockApi({ capability: ok({ ...MOCK_CAPABILITY, quarantineState: null }) });
 
-      const { default: EditCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/[id]/page');
-
-      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+      await renderPage();
 
       await waitFor(() => {
         // ActiveView renders "Emergency disable (quarantine)" toggle
@@ -468,10 +381,8 @@ describe('EditCapabilityPage (server component)', () => {
       });
 
       // Assert DOM order: the quarantine card (ActiveView) must come AFTER the form.
-      // The name input is inside the form; "Emergency disable" span is inside the card.
       const emergencyDisable = screen.getByText('Emergency disable (quarantine)');
       const nameInput = screen.getByRole('textbox', { name: /^name/i });
-      // Walk all inputs and spans in tree order to verify nameInput index < emergencyDisable index.
       const allTextNodes = Array.from(document.querySelectorAll('input, span'));
       const nameIndex = allTextNodes.indexOf(nameInput);
       const disableIndex = allTextNodes.indexOf(emergencyDisable);
@@ -481,26 +392,15 @@ describe('EditCapabilityPage (server component)', () => {
     });
 
     it('load-bearing bug probe: past-expiry quarantine is treated as active — card placed BELOW form', async () => {
-      // This test guards the regression described in page.tsx lines 114–119.
-      //
       // quarantineState='quarantined-soft' but quarantineUntil is 2020-01-01 (past).
       // resolveQuarantineState returns 'active' (auto-expiry), so isQuarantined === false.
       // The page MUST agree with the dispatcher: card goes BELOW the form.
       // If the page naively checks the stored quarantineState column instead of
       // calling resolveQuarantineState, it would place the card above the form —
       // lying about the runtime behaviour.
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY_SOFT_QUARANTINE_EXPIRED })
-        .mockResolvedValueOnce({ success: true, data: [] })
-        .mockResolvedValueOnce({ success: true, data: [] })
-        .mockResolvedValueOnce({ success: true, data: { attribution: null } });
+      await mockApi({ capability: ok(MOCK_CAPABILITY_SOFT_QUARANTINE_EXPIRED) });
 
-      const { default: EditCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/[id]/page');
-
-      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+      await renderPage();
 
       await waitFor(() => {
         // ActiveView is rendered (not QuarantinedView) because effective state is 'active'
@@ -511,7 +411,6 @@ describe('EditCapabilityPage (server component)', () => {
       });
 
       // Assert DOM order: card (ActiveView) comes AFTER form — same contract as active capability.
-      // If this fails, the page is reading the raw column instead of the effective state.
       const emergencyDisable = screen.getByText('Emergency disable (quarantine)');
       const nameInput = screen.getByRole('textbox', { name: /^name/i });
       const allTextNodes = Array.from(document.querySelectorAll('input, span'));
@@ -525,17 +424,11 @@ describe('EditCapabilityPage (server component)', () => {
 
   describe('agents in other organisations (§107 t-752)', () => {
     async function renderWithUsedByMeta(meta: Record<string, unknown> | undefined) {
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse)
-        .mockResolvedValueOnce({ success: true, data: MOCK_CAPABILITY_SOFT_QUARANTINED })
-        .mockResolvedValueOnce({ success: true, data: MOCK_USED_BY, meta })
-        .mockResolvedValueOnce({ success: true, data: [] })
-        .mockResolvedValueOnce({ success: true, data: { attribution: null } });
-
-      const { default: EditCapabilityPage } =
-        await import('@/app/admin/orchestration/capabilities/[id]/page');
-      render(await EditCapabilityPage({ params: Promise.resolve({ id: 'cap-edit-id' }) }));
+      await mockApi({
+        capability: ok(MOCK_CAPABILITY_SOFT_QUARANTINED),
+        usedBy: ok(MOCK_USED_BY, meta),
+      });
+      await renderPage();
     }
 
     it('reads meta.otherOrgAgentCount and counts it into the affected agents', async () => {

@@ -10,7 +10,8 @@
  *   - Renders each profile row (name link, slug, agent count)
  *   - "+ New profile" CTA link present
  *   - Empty-state message when no profiles exist
- *   - Tolerates fetch failure (no throw, empty list shown)
+ *   - A failed load throws to the error boundary instead of showing
+ *     "No profiles yet" (#518)
  *
  * @see app/admin/orchestration/agent-profiles/page.tsx
  */
@@ -18,9 +19,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -71,13 +75,9 @@ describe('AgentProfilesListPage (server component)', () => {
   beforeEach(() => vi.clearAllMocks());
   afterEach(() => vi.restoreAllMocks());
 
-  async function renderPage(profiles: ReturnType<typeof makeProfile>[] | null = MOCK_PROFILES) {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: profiles,
-    } as never);
+  async function renderPage(profiles: ReturnType<typeof makeProfile>[] = MOCK_PROFILES) {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(profiles));
     const { default: Page } = await import('@/app/admin/orchestration/agent-profiles/page');
     render(await Page());
   }
@@ -116,43 +116,32 @@ describe('AgentProfilesListPage (server component)', () => {
     expect(screen.getByText(/Create a profile to share persona/i)).toBeInTheDocument();
   });
 
-  it('returns empty list when serverFetch returns not ok (no throw)', async () => {
+  it('throws to the error boundary when the profiles API answers 500', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    const { logger } = await import('@/lib/logging');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
     const { default: Page } = await import('@/app/admin/orchestration/agent-profiles/page');
 
-    render(await Page());
-
-    expect(screen.getByRole('heading', { name: /agent profiles/i })).toBeInTheDocument();
-    expect(screen.getByText(/no profiles yet/i)).toBeInTheDocument();
+    await expect(Page()).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalled();
   });
 
-  it('returns empty list when parseApiResponse reports success: false', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'INTERNAL', message: 'DB error' },
-    } as never);
+  it('throws when the profiles API answers success:false', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(200));
     const { default: Page } = await import('@/app/admin/orchestration/agent-profiles/page');
 
-    render(await Page());
-
-    expect(screen.getByText(/no profiles yet/i)).toBeInTheDocument();
+    await expect(Page()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  it('does not throw when serverFetch rejects', async () => {
+  it('throws when serverFetch rejects', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
     vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
     const { default: Page } = await import('@/app/admin/orchestration/agent-profiles/page');
 
-    let thrown = false;
-    try {
-      render(await Page());
-    } catch {
-      thrown = true;
-    }
-    expect(thrown).toBe(false);
-    expect(screen.getByRole('heading', { name: /agent profiles/i })).toBeInTheDocument();
+    await expect(Page()).rejects.toBeInstanceOf(ServerLoadError);
   });
 });

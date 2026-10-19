@@ -2,26 +2,14 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { AgentForm, type AgentProfileSummary } from '@/components/admin/orchestration/agent-form';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { loadServerData } from '@/lib/api/server-load';
 import {
   getAgentModels,
   getEffectiveAgentDefaults,
   getProviders,
 } from '@/lib/orchestration/prefetch-helpers';
-
-async function getAgentProfiles(): Promise<AgentProfileSummary[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENT_PROFILES}?page=1&limit=100`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<AgentProfileSummary[]>(res);
-    return body.success ? body.data : [];
-  } catch (err) {
-    logger.error('new agent page: profiles fetch failed', err);
-    return [];
-  }
-}
 
 export const metadata: Metadata = {
   title: 'New agent · AI Orchestration',
@@ -38,7 +26,9 @@ export const metadata: Metadata = {
  * models the operator has actually added — avoids the runtime "provider
  * unavailable" trap that the broader registry view permitted. Both
  * fetches are null-safe — on failure the form falls back to free-text
- * inputs with a warning banner.
+ * inputs with a warning banner. A failed profile list shows
+ * `<LoadFailedNotice>` above the form, which then hides its profile
+ * picker as it does when no profiles exist (#518).
  */
 
 export default async function NewAgentPage() {
@@ -46,7 +36,9 @@ export default async function NewAgentPage() {
     getProviders(),
     getAgentModels(),
     getEffectiveAgentDefaults({ provider: '', model: '' }),
-    getAgentProfiles(),
+    loadServerData<AgentProfileSummary[]>(
+      `${API.ADMIN.ORCHESTRATION.AGENT_PROFILES}?page=1&limit=100`
+    ),
   ]);
 
   return (
@@ -63,12 +55,14 @@ export default async function NewAgentPage() {
         <span>New</span>
       </nav>
 
+      {!profiles.ok && <LoadFailedNotice what="agent profiles" />}
+
       <AgentForm
         mode="create"
         providers={providers}
         models={models}
         effectiveDefaults={effectiveDefaults}
-        profiles={profiles}
+        profiles={profiles.ok ? profiles.data : []}
       />
     </div>
   );

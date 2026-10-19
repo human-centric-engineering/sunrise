@@ -1,14 +1,12 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 
 import {
   ProviderModelForm,
   type ProviderModelData,
 } from '@/components/admin/orchestration/provider-model-form';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { requireServerData } from '@/lib/api/server-load';
 import { SharedSettingsReadOnlyNotice } from '@/components/admin/shared-settings-access';
 
 export const metadata: Metadata = {
@@ -21,25 +19,15 @@ interface Props {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
-async function getModel(id: string): Promise<ProviderModelData | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.providerModelById(id));
-    if (!res.ok) return null;
-    const body = await parseApiResponse<ProviderModelData>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('provider model edit page: fetch failed', { id, err });
-    return null;
-  }
-}
-
 export default async function EditProviderModelPage({ params, searchParams }: Props) {
   const { id } = await params;
   const query = await searchParams;
   const justCreated = query.created === '1';
-  const model = await getModel(id);
-
-  if (!model) notFound();
+  // A 404 is a missing model; any other failure reaches the error boundary.
+  const { data: model } = await requireServerData<ProviderModelData>(
+    API.ADMIN.ORCHESTRATION.providerModelById(id),
+    { notFound: true }
+  );
 
   return (
     <div className="space-y-6">

@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
 
 import {
   AgentForm,
@@ -16,9 +15,9 @@ import {
   type QuarantinedCapabilityForAgent,
 } from '@/components/admin/orchestration/agents/quarantined-capabilities-banner';
 import { UnapprovedProvidersBanner } from '@/components/admin/orchestration/agents/unapproved-providers-banner';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { loadServerData, requireServerData } from '@/lib/api/server-load';
 import {
   getAgentModels,
   getEffectiveAgentDefaults,
@@ -31,7 +30,8 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const agent = await getAgent(id);
+  const result = await loadServerData<AgentWithGrants>(API.ADMIN.ORCHESTRATION.agentById(id));
+  const agent = result.ok ? result.data : null;
   return {
     title: agent ? `Edit ${agent.name} · AI Orchestration` : 'Edit agent · AI Orchestration',
     description: 'Edit an existing AI agent.',
@@ -48,86 +48,35 @@ export async function generateMetadata({
  * picker. An agent whose saved model is no longer in the matrix still
  * surfaces it in the dropdown as a legacy option so the operator
  * doesn't silently lose the selection on edit (handled in
- * `agent-form.tsx`). Missing agent → `notFound()`. Provider/model
+ * `agent-form.tsx`). A 404 on the agent → `notFound()`; any other
+ * failure throws to the admin error boundary (#518). Provider/model
  * fetch failures are tolerated — the form renders with text-input
- * fallbacks.
+ * fallbacks and a warning banner. A failed profile list, quarantine
+ * list or evaluation trend shows `<LoadFailedNotice>` in that panel's
+ * place: an empty quarantine banner would read as "none quarantined".
  */
-
-async function getAgent(id: string): Promise<AgentWithGrants | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.agentById(id));
-    if (!res.ok) return null;
-    const body = await parseApiResponse<AgentWithGrants>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('edit agent page: agent fetch failed', err, { id });
-    return null;
-  }
-}
-
-async function getAgentProfiles(): Promise<AgentProfileSummary[]> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENT_PROFILES}?page=1&limit=100`);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<AgentProfileSummary[]>(res);
-    return body.success ? body.data : [];
-  } catch (err) {
-    logger.error('edit agent page: profiles fetch failed', err);
-    return [];
-  }
-}
-
-/**
- * Quarantined capabilities the agent is currently bound to. Calls the
- * admin API; the route applies read-time auto-expiry via the shared
- * `resolveQuarantineState` so the rule lives in exactly one place.
- *
- * Returns [] on any failure — the banner is informational and must not
- * block the page render.
- */
-async function getQuarantinedCapabilitiesForAgent(
-  agentId: string
-): Promise<QuarantinedCapabilityForAgent[]> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.agentQuarantinedCapabilities(agentId));
-    if (!res.ok) return [];
-    const body = await parseApiResponse<{ items: QuarantinedCapabilityForAgent[] }>(res);
-    // Defensive: existing page-level mocks (e.g. the EditAgentPage tests)
-    // return a generic body shape that doesn't include `items`. The
-    // banner expects an array, so always normalise.
-    if (!body.success || !Array.isArray(body.data?.items)) return [];
-    return body.data.items;
-  } catch (err) {
-    logger.error('edit agent page: quarantined-capabilities fetch failed', err, { agentId });
-    return [];
-  }
-}
-
-async function getEvaluationTrend(id: string): Promise<EvaluationTrendPoint[]> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.agentEvaluationTrend(id));
-    if (!res.ok) return [];
-    const body = await parseApiResponse<{ points: EvaluationTrendPoint[] }>(res);
-    if (!body.success) return [];
-    return Array.isArray(body.data?.points) ? body.data.points : [];
-  } catch (err) {
-    logger.error('edit agent page: evaluation trend fetch failed', err, { id });
-    return [];
-  }
-}
 
 export default async function EditAgentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [agent, providers, models, trend, profiles, quarantinedCapabilities] = await Promise.all([
-    getAgent(id),
-    getProviders(),
-    getAgentModels(),
-    getEvaluationTrend(id),
-    getAgentProfiles(),
-    getQuarantinedCapabilitiesForAgent(id),
-  ]);
-
-  if (!agent) notFound();
+  const [{ data: agent }, providers, models, trend, profiles, quarantinedCapabilities] =
+    await Promise.all([
+      requireServerData<AgentWithGrants>(API.ADMIN.ORCHESTRATION.agentById(id), {
+        notFound: true,
+      }),
+      getProviders(),
+      getAgentModels(),
+      loadServerData<{ points: EvaluationTrendPoint[] }>(
+        API.ADMIN.ORCHESTRATION.agentEvaluationTrend(id)
+      ),
+      loadServerData<AgentProfileSummary[]>(
+        `${API.ADMIN.ORCHESTRATION.AGENT_PROFILES}?page=1&limit=100`
+      ),
+      // The route applies read-time auto-expiry via the shared
+      // `resolveQuarantineState`, so the rule lives in exactly one place.
+      loadServerData<{ items: QuarantinedCapabilityForAgent[] }>(
+        API.ADMIN.ORCHESTRATION.agentQuarantinedCapabilities(id)
+      ),
+    ]);
 
   const effectiveDefaults = await getEffectiveAgentDefaults({
     provider: agent.provider,
@@ -153,9 +102,19 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
         unapproved={agent._unapprovedProviders ?? []}
       />
 
-      <QuarantinedCapabilitiesBanner items={quarantinedCapabilities} />
+      {quarantinedCapabilities.ok && Array.isArray(quarantinedCapabilities.data.items) ? (
+        <QuarantinedCapabilitiesBanner items={quarantinedCapabilities.data.items} />
+      ) : (
+        <LoadFailedNotice what="quarantined capabilities" />
+      )}
 
-      <EvaluationTrendChart points={trend} />
+      {trend.ok && Array.isArray(trend.data.points) ? (
+        <EvaluationTrendChart points={trend.data.points} />
+      ) : (
+        <LoadFailedNotice what="the evaluation trend" />
+      )}
+
+      {!profiles.ok && <LoadFailedNotice what="agent profiles" />}
 
       <AgentForm
         mode="edit"
@@ -163,7 +122,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
         providers={providers}
         models={models}
         effectiveDefaults={effectiveDefaults}
-        profiles={profiles}
+        profiles={profiles.ok ? profiles.data : []}
       />
     </div>
   );

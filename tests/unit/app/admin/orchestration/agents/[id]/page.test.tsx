@@ -6,12 +6,15 @@
  * Tests the admin "Edit Agent" server component page.
  *
  * Test Coverage:
- * - notFound() path — agent not found (res.ok false, body.success false, fetch throws)
+ * - notFound() on a 404, and only on a 404: a 500, success:false or a network
+ *   failure throws to the error boundary instead (#518)
  * - Happy path — agent found, renders breadcrumb and AgentForm with correct props
  * - serverFetch called with the correct agentById endpoint
  * - generateMetadata — title variants for found and missing agents
  * - Provider / model data flow — values passed through to AgentForm
  * - Provider / model failure tolerance — null values passed when prefetch fails
+ * - Quarantine list / evaluation trend / profiles failures — a "Couldn't load"
+ *   notice in the panel's place, never an empty all-clear (#518)
  *
  * @see app/admin/orchestration/agents/[id]/page.tsx
  */
@@ -21,9 +24,10 @@ import { render, screen } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -52,6 +56,7 @@ vi.mock('@/components/admin/orchestration/agent-form', () => ({
     agent?: { id: string; name: string };
     providers: unknown;
     models: unknown;
+    profiles?: unknown;
   }) => (
     <div
       data-testid="agent-form"
@@ -60,6 +65,7 @@ vi.mock('@/components/admin/orchestration/agent-form', () => ({
       data-agent-name={props.agent?.name}
       data-providers={JSON.stringify(props.providers)}
       data-models={JSON.stringify(props.models)}
+      data-profiles={JSON.stringify(props.profiles)}
     />
   ),
 }));
@@ -68,6 +74,7 @@ vi.mock('next/navigation', () => ({
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
   useSearchParams: () => ({ get: () => null }),
 }));
 
@@ -80,11 +87,13 @@ vi.mock('next/link', () => ({
 // ─── Imports (after mocks) ─────────────────────────────────────────────────
 
 import EditAgentPage, { generateMetadata } from '@/app/admin/orchestration/agents/[id]/page';
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
+import { serverFetch } from '@/lib/api/server-fetch';
+import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { notFound } from 'next/navigation';
 import { getProviders, getAgentModels } from '@/lib/orchestration/prefetch-helpers';
 import { API } from '@/lib/api/endpoints';
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 import type { AiAgent, AiProviderConfig } from '@/types/prisma';
 import type { ModelOption } from '@/lib/orchestration/prefetch-helpers';
 
@@ -152,6 +161,42 @@ const mockModels: ModelOption[] = [
   { provider: 'anthropic', id: 'claude-haiku-3-5', tier: 'budget' },
 ];
 
+type Answer = () => Promise<Response>;
+
+const ok =
+  (data: unknown): Answer =>
+  () =>
+    Promise.resolve(apiSuccess(data));
+const fail =
+  (status = 500): Answer =>
+  () =>
+    Promise.resolve(apiFailure(status, status === 404 ? 'NOT_FOUND' : 'INTERNAL_ERROR'));
+const reject = (): Answer => () => Promise.reject(new Error('Network failure'));
+
+/** Answer each of the page's own fetches by path. */
+function mockApi({
+  agent = ok(createMockAgent()),
+  trend = ok({ points: [] }),
+  profiles = ok([]),
+  quarantined = ok({ items: [] }),
+}: { agent?: Answer; trend?: Answer; profiles?: Answer; quarantined?: Answer } = {}) {
+  vi.mocked(serverFetch).mockImplementation((path: string) => {
+    if (path.endsWith('/evaluation-trend')) return trend();
+    if (path.endsWith('/quarantined-capabilities')) return quarantined();
+    if (path.includes('/agent-profiles')) return profiles();
+    return agent();
+  });
+}
+
+const QUARANTINED_ITEM = {
+  capabilityId: 'cap-1',
+  capabilitySlug: 'web-search',
+  capabilityName: 'Web Search',
+  mode: 'quarantined-soft',
+  reason: 'Vendor outage',
+  expiresAt: null,
+};
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('EditAgentPage', () => {
@@ -162,66 +207,47 @@ describe('EditAgentPage', () => {
     vi.mocked(getAgentModels).mockResolvedValue(mockModels);
   });
 
-  // ── notFound paths ─────────────────────────────────────────────────────────
+  // ── Not found vs failed (#518) ─────────────────────────────────────────────
 
   describe('notFound behavior', () => {
-    it('calls notFound when res.ok is false', async () => {
-      // Arrange
-      vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
-      const params = Promise.resolve({ id: 'agent-123' });
+    it('calls notFound when the agent does not exist', async () => {
+      mockApi({ agent: fail(404) });
 
-      // Act & Assert
-      await expect(EditAgentPage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
+      await expect(EditAgentPage({ params: Promise.resolve({ id: 'agent-999' }) })).rejects.toThrow(
+        'NEXT_NOT_FOUND'
+      );
       expect(notFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard
     });
 
-    it('calls notFound when body.success is false', async () => {
-      // Arrange
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: false,
-        error: { code: 'NOT_FOUND', message: 'Agent not found' },
-      } as never);
-      const params = Promise.resolve({ id: 'agent-999' });
+    it.each([
+      ['answers 500', fail(500)],
+      ['answers success:false', fail(200)],
+      ['rejects', reject()],
+    ])(
+      'throws to the error boundary, not notFound(), when the agent fetch %s',
+      async (_l, agent) => {
+        mockApi({ agent });
 
-      // Act & Assert
-      await expect(EditAgentPage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
-      expect(notFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard
-    });
-
-    it('calls notFound when serverFetch throws and logs the error', async () => {
-      // Arrange
-      const fetchError = new Error('Network failure');
-      vi.mocked(serverFetch).mockRejectedValue(fetchError);
-      const params = Promise.resolve({ id: 'agent-123' });
-
-      // Act & Assert
-      await expect(EditAgentPage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
-      expect(notFound).toHaveBeenCalled(); // test-review:accept no_arg_called — callback-fired guard
-      expect(logger.error).toHaveBeenCalledWith('edit agent page: agent fetch failed', fetchError, {
-        id: 'agent-123',
-      });
-    });
+        await expect(
+          EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) })
+        ).rejects.toBeInstanceOf(ServerLoadError);
+        expect(notFound).not.toHaveBeenCalled();
+        expect(logger.error).toHaveBeenCalled();
+      }
+    );
   });
 
   // ── serverFetch endpoint verification ─────────────────────────────────────
 
   describe('serverFetch endpoint', () => {
     it('calls serverFetch with the correct agentById endpoint', async () => {
-      // Arrange
       const agentId = 'agent-abc';
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: true,
-        data: createMockAgent({ id: agentId }),
-      } as never);
-      const params = Promise.resolve({ id: agentId });
+      mockApi({ agent: ok(createMockAgent({ id: agentId })) });
 
-      // Act
-      render(await EditAgentPage({ params }));
+      render(await EditAgentPage({ params: Promise.resolve({ id: agentId }) }));
 
-      // Assert: the correct URL was used to fetch the agent
-      expect(serverFetch).toHaveBeenCalledWith(API.ADMIN.ORCHESTRATION.agentById(agentId));
+      const paths = vi.mocked(serverFetch).mock.calls.map((c) => c[0]);
+      expect(paths).toContain(API.ADMIN.ORCHESTRATION.agentById(agentId));
     });
   });
 
@@ -229,29 +255,21 @@ describe('EditAgentPage', () => {
 
   describe('happy path rendering', () => {
     it('renders AgentForm in edit mode with the fetched agent', async () => {
-      // Arrange
-      const agent = createMockAgent({ id: 'agent-123', name: 'Support Bot' });
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: agent } as never);
-      const params = Promise.resolve({ id: 'agent-123' });
+      mockApi({ agent: ok(createMockAgent({ id: 'agent-123', name: 'Support Bot' })) });
 
-      // Act
-      render(await EditAgentPage({ params }));
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
 
-      // Assert: AgentForm rendered in edit mode with the correct agent
       const form = screen.getByTestId('agent-form');
       expect(form).toHaveAttribute('data-mode', 'edit');
       expect(form).toHaveAttribute('data-agent-id', 'agent-123');
       expect(form).toHaveAttribute('data-agent-name', 'Support Bot');
+      expect(screen.queryByText(/couldn.t load/i)).not.toBeInTheDocument();
     });
 
     it('shows why an agent stranded by its org provider policy cannot respond (§120 t-745)', async () => {
-      const agent = {
-        ...createMockAgent({ provider: 'openai' }),
-        _unapprovedProviders: ['openai'],
-      };
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: agent } as never);
+      mockApi({
+        agent: ok({ ...createMockAgent({ provider: 'openai' }), _unapprovedProviders: ['openai'] }),
+      });
 
       render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
 
@@ -260,9 +278,7 @@ describe('EditAgentPage', () => {
     });
 
     it('shows no provider banner for an agent its org may run', async () => {
-      const agent = { ...createMockAgent(), _unapprovedProviders: [] };
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: agent } as never);
+      mockApi({ agent: ok({ ...createMockAgent(), _unapprovedProviders: [] }) });
 
       render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
 
@@ -271,67 +287,105 @@ describe('EditAgentPage', () => {
     });
 
     it('passes providers from getProviders to AgentForm', async () => {
-      // Arrange
-      const agent = createMockAgent();
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: agent } as never);
+      mockApi();
       vi.mocked(getProviders).mockResolvedValue(mockProviders);
-      const params = Promise.resolve({ id: 'agent-123' });
 
-      // Act
-      render(await EditAgentPage({ params }));
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
 
-      // Assert: providers from getProviders are forwarded to AgentForm
       const form = screen.getByTestId('agent-form');
       expect(form).toHaveAttribute('data-providers', JSON.stringify(mockProviders));
     });
 
     it('passes models from getAgentModels to AgentForm', async () => {
-      // Arrange
-      const agent = createMockAgent();
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: agent } as never);
+      mockApi();
       vi.mocked(getAgentModels).mockResolvedValue(mockModels);
-      const params = Promise.resolve({ id: 'agent-123' });
 
-      // Act
-      render(await EditAgentPage({ params }));
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
 
-      // Assert: models from getAgentModels are forwarded to AgentForm
       const form = screen.getByTestId('agent-form');
       expect(form).toHaveAttribute('data-models', JSON.stringify(mockModels));
     });
 
     it('passes null providers to AgentForm when getProviders fails', async () => {
-      // Arrange — page tolerates provider fetch failures (form falls back to text inputs)
-      const agent = createMockAgent();
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: agent } as never);
+      // Page tolerates provider fetch failures (form falls back to text inputs + warning)
+      mockApi();
       vi.mocked(getProviders).mockResolvedValue(null);
-      const params = Promise.resolve({ id: 'agent-123' });
 
-      // Act
-      render(await EditAgentPage({ params }));
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
 
-      // Assert: null is forwarded to AgentForm — form handles fallback
       const form = screen.getByTestId('agent-form');
       expect(form).toHaveAttribute('data-providers', 'null');
     });
 
     it('passes null models to AgentForm when getAgentModels fails', async () => {
-      // Arrange — page tolerates model registry fetch failures
-      const agent = createMockAgent();
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: agent } as never);
+      mockApi();
       vi.mocked(getAgentModels).mockResolvedValue(null);
-      const params = Promise.resolve({ id: 'agent-123' });
 
-      // Act
-      render(await EditAgentPage({ params }));
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
 
-      // Assert: null is forwarded to AgentForm — form handles fallback
       const form = screen.getByTestId('agent-form');
       expect(form).toHaveAttribute('data-models', 'null');
+    });
+  });
+
+  // ── Secondary panels: a failure is shown, never an empty all-clear (#518) ──
+
+  describe('secondary panels', () => {
+    it('renders the quarantined-capabilities banner when the agent has quarantined tools', async () => {
+      mockApi({ quarantined: ok({ items: [QUARANTINED_ITEM] }) });
+
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
+
+      expect(screen.getByText('Web Search')).toBeInTheDocument();
+      expect(screen.queryByText(/couldn.t load/i)).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ['answers 500', fail(500)],
+      ['rejects', reject()],
+    ])(
+      'shows a notice in place of the quarantine banner when its fetch %s',
+      async (_l, quarantined) => {
+        mockApi({ quarantined });
+
+        render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
+
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          /couldn.t load quarantined capabilities/i
+        );
+        // The rest of the page still works.
+        expect(screen.getByTestId('agent-form')).toBeInTheDocument();
+      }
+    );
+
+    it('shows a notice in place of the evaluation trend when its fetch fails', async () => {
+      mockApi({ trend: fail(500) });
+
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load the evaluation trend/i);
+      expect(screen.getByTestId('agent-form')).toBeInTheDocument();
+    });
+
+    it('passes the loaded profiles to AgentForm', async () => {
+      const profiles = [{ id: 'p1', name: 'Support Family' }];
+      mockApi({ profiles: ok(profiles) });
+
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
+
+      expect(screen.getByTestId('agent-form')).toHaveAttribute(
+        'data-profiles',
+        JSON.stringify(profiles)
+      );
+    });
+
+    it('shows a notice above the form when the profiles fetch fails', async () => {
+      mockApi({ profiles: fail(500) });
+
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load agent profiles/i);
+      expect(screen.getByTestId('agent-form')).toHaveAttribute('data-profiles', '[]');
     });
   });
 
@@ -339,46 +393,28 @@ describe('EditAgentPage', () => {
 
   describe('breadcrumb navigation', () => {
     it('renders link to /admin/orchestration in breadcrumb', async () => {
-      // Arrange
-      const agent = createMockAgent({ name: 'Support Bot' });
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: agent } as never);
-      const params = Promise.resolve({ id: 'agent-123' });
+      mockApi({ agent: ok(createMockAgent({ name: 'Support Bot' })) });
 
-      // Act
-      render(await EditAgentPage({ params }));
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
 
-      // Assert
       const orchLink = screen.getByRole('link', { name: 'AI Orchestration' });
       expect(orchLink).toHaveAttribute('href', '/admin/orchestration');
     });
 
     it('renders link to /admin/orchestration/agents in breadcrumb', async () => {
-      // Arrange
-      const agent = createMockAgent({ name: 'Support Bot' });
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: agent } as never);
-      const params = Promise.resolve({ id: 'agent-123' });
+      mockApi({ agent: ok(createMockAgent({ name: 'Support Bot' })) });
 
-      // Act
-      render(await EditAgentPage({ params }));
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
 
-      // Assert
       const agentsLink = screen.getByRole('link', { name: 'Agents' });
       expect(agentsLink).toHaveAttribute('href', '/admin/orchestration/agents');
     });
 
     it('renders the agent name as the last breadcrumb segment', async () => {
-      // Arrange
-      const agent = createMockAgent({ name: 'Support Bot' });
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({ success: true, data: agent } as never);
-      const params = Promise.resolve({ id: 'agent-123' });
+      mockApi({ agent: ok(createMockAgent({ name: 'Support Bot' })) });
 
-      // Act
-      render(await EditAgentPage({ params }));
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-123' }) }));
 
-      // Assert: agent name shown as non-link breadcrumb tail
       expect(screen.getByText('Support Bot')).toBeInTheDocument();
     });
   });
@@ -387,42 +423,27 @@ describe('EditAgentPage', () => {
 
   describe('generateMetadata', () => {
     it('returns edit title with agent name when agent is found', async () => {
-      // Arrange
-      vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: true,
-        data: createMockAgent({ name: 'My Agent' }),
-      } as never);
-      const params = Promise.resolve({ id: 'agent-123' });
+      mockApi({ agent: ok(createMockAgent({ name: 'My Agent' })) });
 
-      // Act
-      const metadata = await generateMetadata({ params });
+      const metadata = await generateMetadata({ params: Promise.resolve({ id: 'agent-123' }) });
 
-      // Assert: title uses the agent name
       expect(metadata.title).toBe('Edit My Agent · AI Orchestration');
     });
 
     it('returns fallback title when agent is not found', async () => {
-      // Arrange — res.ok false → getAgent returns null
-      vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
-      const params = Promise.resolve({ id: 'nonexistent' });
+      mockApi({ agent: fail(404) });
 
-      // Act
-      const metadata = await generateMetadata({ params });
+      const metadata = await generateMetadata({ params: Promise.resolve({ id: 'nonexistent' }) });
 
-      // Assert: fallback title used when agent cannot be loaded
       expect(metadata.title).toBe('Edit agent · AI Orchestration');
     });
 
-    it('returns the correct description', async () => {
-      // Arrange
-      vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
-      const params = Promise.resolve({ id: 'agent-123' });
+    it('returns fallback title, without throwing, when the agent load fails', async () => {
+      mockApi({ agent: fail(500) });
 
-      // Act
-      const metadata = await generateMetadata({ params });
+      const metadata = await generateMetadata({ params: Promise.resolve({ id: 'agent-123' }) });
 
-      // Assert
+      expect(metadata.title).toBe('Edit agent · AI Orchestration');
       expect(metadata.description).toBe('Edit an existing AI agent.');
     });
   });

@@ -8,7 +8,8 @@
  *
  * Test Coverage:
  * - Renders the create form from the prefetched providers and model matrix
- * - Form renders in create mode with free-text fallback when fetches fail
+ * - Form renders in create mode with free-text fallback when provider/model fetches fail
+ * - A failed profile list shows a "Couldn't load" notice above the form (#518)
  * - The effective-defaults preview seeds the provider and model on create
  *
  * @see app/admin/orchestration/agents/new/page.tsx
@@ -18,11 +19,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -123,51 +127,35 @@ const MOCK_MODELS = [
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
+type Answer = () => Promise<Response>;
+
+const ok =
+  (data: unknown): Answer =>
+  () =>
+    Promise.resolve(apiSuccess(data));
+const fail =
+  (status = 500): Answer =>
+  () =>
+    Promise.resolve(apiFailure(status));
+const reject = (): Answer => () => Promise.reject(new Error('Network error'));
+
 /**
- * URL-aware fetch dispatch. The page makes ≥3 parallel `serverFetch`
- * calls inside `Promise.all` (providers + 2× provider-models + profiles).
- * The previous `mockResolvedValueOnce` queue pattern matched by invocation
- * order, which is non-deterministic under load and intermittently mismatched
- * the providers response onto a different fetch.
- *
- * Dispatch on URL substring + sort patterns by length descending so
- * `/provider-models` beats `/providers` when both could match.
+ * URL-aware fetch dispatch. The page makes ≥4 parallel `serverFetch` calls
+ * inside `Promise.all` (providers + 2× provider-models + profiles), so
+ * answering by invocation order is non-deterministic under load.
+ * `/provider-models` is checked before `/providers`, which prefixes it.
  */
-type EndpointResponse = { ok?: boolean; success?: boolean; data?: unknown; error?: unknown };
-function setupServerFetch(
-  serverFetch: ReturnType<typeof vi.fn>,
-  parseApiResponse: ReturnType<typeof vi.fn>,
-  routes: Record<string, EndpointResponse>
-): void {
-  const patterns = Object.entries(routes).sort((a, b) => b[0].length - a[0].length);
-  const dispatch = (url: string | URL): Response => {
-    const urlStr = typeof url === 'string' ? url : url.toString();
-    for (const [pattern, resp] of patterns) {
-      if (urlStr.includes(pattern)) {
-        if (resp.ok === false) return { ok: false } as Response;
-        const body = JSON.stringify({
-          success: resp.success !== false,
-          data: resp.data,
-          ...(resp.error ? { error: resp.error } : {}),
-        });
-        return new Response(body, {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-    }
-    return new Response(JSON.stringify({ success: true, data: [] }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  };
-  vi.mocked(serverFetch).mockImplementation(((url: string | URL) =>
-    Promise.resolve(dispatch(url))) as never);
-  vi.mocked(parseApiResponse).mockImplementation(((res: Response) => {
-    if (!res.ok)
-      return Promise.resolve({ success: false, error: { message: 'not ok', code: 'NOT_OK' } });
-    return res.json();
-  }) as never);
+async function mockApi({
+  providers = ok(MOCK_PROVIDERS),
+  models = ok(MOCK_MODELS),
+  profiles = ok([]),
+}: { providers?: Answer; models?: Answer; profiles?: Answer } = {}) {
+  const { serverFetch } = await import('@/lib/api/server-fetch');
+  vi.mocked(serverFetch).mockImplementation((path: string) => {
+    if (path.includes('/agent-profiles')) return profiles();
+    if (path.includes('/provider-models')) return models();
+    return providers();
+  });
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -184,11 +172,7 @@ describe('NewAgentPage (server component)', () => {
   });
 
   it('renders "New agent" heading in create mode', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    setupServerFetch(serverFetch as never, parseApiResponse as never, {
-      '/provider-models': { data: MOCK_MODELS },
-      '/providers': { data: MOCK_PROVIDERS },
-    });
+    await mockApi();
 
     const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
 
@@ -200,11 +184,7 @@ describe('NewAgentPage (server component)', () => {
   });
 
   it('renders Create agent submit button', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    setupServerFetch(serverFetch as never, parseApiResponse as never, {
-      '/provider-models': { data: MOCK_MODELS },
-      '/providers': { data: MOCK_PROVIDERS },
-    });
+    await mockApi();
 
     const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
 
@@ -216,14 +196,10 @@ describe('NewAgentPage (server component)', () => {
   });
 
   it('starts the form on the effective-defaults preview the page resolved', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     const { getEffectiveAgentDefaults } = await import('@/lib/orchestration/prefetch-helpers');
     // Preview the SECOND provider, so a selection can only have come from the
     // preview — not from the form defaulting to the first or only one.
-    setupServerFetch(serverFetch as never, parseApiResponse as never, {
-      '/provider-models': { data: MOCK_MODELS },
-      '/providers': { data: MOCK_PROVIDERS },
-    });
+    await mockApi();
     vi.mocked(getEffectiveAgentDefaults).mockResolvedValue({
       provider: 'openai',
       model: 'gpt-4o',
@@ -249,36 +225,35 @@ describe('NewAgentPage (server component)', () => {
     expect(modelSelect).not.toHaveTextContent(/gpt-4o-mini/i);
   });
 
-  it('renders with free-text fallback when provider fetch fails', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    // All fetches return !ok → page falls back to free-text inputs
-    setupServerFetch(serverFetch as never, parseApiResponse as never, {
-      '/provider-models': { ok: false },
-      '/providers': { ok: false },
-    });
+  it('renders with free-text fallback when provider and model fetches fail', async () => {
+    // Providers and models answer 500 → the form falls back to free-text inputs
+    await mockApi({ providers: fail(500), models: fail(500) });
 
     const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
 
-    let thrown = false;
-    try {
-      render(await NewAgentPage());
-    } catch {
-      thrown = true;
-    }
+    render(await NewAgentPage());
 
-    expect(thrown).toBe(false);
     // The form contains both a submit `<button type=submit>` and a top-of-page
     // "Create agent" heading link in some contexts. Match the submit button
     // specifically to avoid false multiples.
     expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
   });
 
+  it('shows no load-failed notice when every fetch succeeds', async () => {
+    await mockApi();
+
+    const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
+
+    render(await NewAgentPage());
+
+    expect(screen.queryByText(/couldn.t load/i)).not.toBeInTheDocument();
+  });
+
   // ── Fallback branches ──────────────────────────────────────────────────────
 
   describe('fallback branches', () => {
     it('renders correctly when serverFetch rejects (network error)', async () => {
-      const { serverFetch } = await import('@/lib/api/server-fetch');
-      vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
+      await mockApi({ providers: reject(), models: reject(), profiles: reject() });
 
       const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
 
@@ -288,14 +263,8 @@ describe('NewAgentPage (server component)', () => {
       expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
     });
 
-    it('renders correctly when provider fetch returns res.ok=false', async () => {
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      // /providers fails; /provider-models succeeds. URL-aware dispatch is
-      // order-safe even though they share a prefix because longest-pattern wins.
-      setupServerFetch(serverFetch as never, parseApiResponse as never, {
-        '/provider-models': { data: MOCK_MODELS },
-        '/providers': { ok: false },
-      });
+    it('renders correctly when the provider fetch answers 500', async () => {
+      await mockApi({ providers: fail(500) });
 
       const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
 
@@ -305,15 +274,8 @@ describe('NewAgentPage (server component)', () => {
       expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
     });
 
-    it('renders correctly when model parseApiResponse returns success=false', async () => {
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      setupServerFetch(serverFetch as never, parseApiResponse as never, {
-        '/provider-models': {
-          success: false,
-          error: { message: 'Registry error', code: 'SERVICE_ERROR' },
-        },
-        '/providers': { data: MOCK_PROVIDERS },
-      });
+    it('renders correctly when the model fetch answers success=false', async () => {
+      await mockApi({ models: fail(200) });
 
       const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
 
@@ -323,69 +285,22 @@ describe('NewAgentPage (server component)', () => {
       expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
     });
 
-    it('renders correctly when agent-profiles parseApiResponse returns success=false', async () => {
-      // Covers the body.success === false branch of `return body.success ? body.data : [];`
-      // (sibling of the !res.ok short-circuit). parseApiResponse succeeds in returning,
-      // but the body envelope reports failure — page must still render with profiles: [].
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+    // A failed profile list is shown, logged, and the form still works (#518).
+    it.each([
+      ['answers success=false', fail(200)],
+      ['answers 500', fail(500)],
+      ['rejects', reject()],
+    ])('shows a notice when the agent-profiles fetch %s', async (_label, profiles) => {
       const { logger } = await import('@/lib/logging');
-
-      setupServerFetch(serverFetch as never, parseApiResponse as never, {
-        '/provider-models': { data: MOCK_MODELS },
-        '/providers': { data: MOCK_PROVIDERS },
-        '/agent-profiles': {
-          success: false,
-          error: { message: 'Profile service down', code: 'SERVICE_ERROR' },
-        },
-      });
+      await mockApi({ profiles });
 
       const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
 
       render(await NewAgentPage());
 
-      expect(screen.getByRole('heading', { name: /new agent/i })).toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load agent profiles/i);
       expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
-      // Same differentiator as the !res.ok test: this branch is silent (returns []
-      // via the ternary). The catch branch is the only one that logs. If the ternary
-      // were removed and body.data was accessed when success=false, the destructure
-      // could explode (depends on the body shape), surfacing into the catch and logging.
-      expect(logger.error).not.toHaveBeenCalled();
-    });
-
-    it('renders correctly when agent-profiles fetch returns res.ok=false', async () => {
-      // Covers the silent short-circuit `if (!res.ok) return [];` in getAgentProfiles().
-      // Unlike the catch branch, this path does NOT call logger.error — that assertion
-      // differentiates the two [] return paths: !res.ok (silent) vs catch (logged).
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      const { logger } = await import('@/lib/logging');
-
-      // /provider-models and /providers succeed normally; /agent-profiles returns !ok.
-      // Pattern length order: /agent-profiles (15) > /provider-models (15, tie but no
-      // overlap) > /providers (10) — no collision risk.
-      setupServerFetch(serverFetch as never, parseApiResponse as never, {
-        '/provider-models': { data: MOCK_MODELS },
-        '/providers': { data: MOCK_PROVIDERS },
-        '/agent-profiles': { ok: false },
-      });
-
-      const { default: NewAgentPage } = await import('@/app/admin/orchestration/agents/new/page');
-
-      let thrown = false;
-      try {
-        render(await NewAgentPage());
-      } catch {
-        thrown = true;
-      }
-
-      // Page must not throw — the !res.ok guard silently returns [].
-      expect(thrown).toBe(false);
-      // Content assertions confirm the page rendered normally, not into an error state.
-      expect(screen.getByRole('heading', { name: /new agent/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^create agent$/i })).toBeInTheDocument();
-      // logger.error must NOT have been called — proves the silent !res.ok branch fired,
-      // not the catch branch (which logs). If the guard were removed and parseApiResponse
-      // threw on a non-OK Response, the catch would log and this assertion would fail.
-      expect(logger.error).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalled();
     });
   });
 });

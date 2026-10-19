@@ -28,8 +28,10 @@ composition order in the rendered LLM system message.
 | `/admin/orchestration/agent-profiles/new`  | `app/admin/orchestration/agent-profiles/new/page.tsx`  | Create shell                           |
 | `/admin/orchestration/agent-profiles/[id]` | `app/admin/orchestration/agent-profiles/[id]/page.tsx` | Edit shell, `notFound()` on missing id |
 
-All three are async server components via `serverFetch()` + `parseApiResponse()`. Fetch failures
-fall back to empty state and log via `logger.error`.
+The list and edit pages are async server components that load through `requireServerData()`
+(`lib/api/server-load.ts`). A failed load throws to the admin error boundary, which logs it and
+offers **Try again** — the list never shows "No profiles yet" for a failure. On the edit page only
+a 404 from the API renders `notFound()`; any other failure reaches the error boundary (#518).
 
 ## List page
 

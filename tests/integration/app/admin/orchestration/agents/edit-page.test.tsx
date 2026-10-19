@@ -8,7 +8,11 @@
  *
  * Test Coverage:
  * - Renders form pre-filled with agent data in edit mode
- * - Calls notFound() when agent is null
+ * - Calls notFound() on a 404, and only on a 404: a 500 throws to the error
+ *   boundary instead (#518)
+ * - A failed quarantine list / evaluation trend / profile list shows a
+ *   "Couldn't load" notice in its place; the form still renders
+ * - Provider / model failures keep the form's free-text fallback
  * - An inheriting agent shows the effective-defaults preview, not a selection
  *
  * @see app/admin/orchestration/agents/[id]/page.tsx
@@ -17,6 +21,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -35,9 +41,10 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => ({ get: () => null }),
 }));
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -138,56 +145,49 @@ const MOCK_MODELS = [
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
 
+type Answer = () => Promise<Response>;
+
+const ok =
+  (data: unknown): Answer =>
+  () =>
+    Promise.resolve(apiSuccess(data));
+const fail =
+  (status = 500): Answer =>
+  () =>
+    Promise.resolve(apiFailure(status, status === 404 ? 'NOT_FOUND' : 'INTERNAL_ERROR'));
+const reject = (): Answer => () => Promise.reject(new Error('Network error'));
+
 /**
- * The page makes ≥6 parallel `serverFetch` calls inside `Promise.all`
- * (agent + providers + 2× provider-models + evaluation-trend + profiles).
- * The previous `mockResolvedValueOnce` queue pattern matched responses by
- * invocation order, which is non-deterministic under load — under the
- * full test suite it could drift, causing the wrong response to land on
- * the agent fetch and crashing downstream code (e.g. `agent.provider`
- * undefined → TypeError in getEffectiveAgentDefaults).
- *
- * This helper dispatches on URL substring so order doesn't matter.
- * `parseApiResponse` is then mocked to read the JSON body of whatever
- * Response it receives, preserving end-to-end fidelity.
+ * The page makes ≥7 parallel `serverFetch` calls inside `Promise.all`
+ * (agent + providers + 2× provider-models + evaluation-trend + profiles +
+ * quarantined-capabilities). Answering by invocation order is
+ * non-deterministic under load, so this dispatches on the path, with the
+ * sub-resources checked before the agent itself (whose path prefixes them).
  */
-type EndpointResponse = { ok?: boolean; success?: boolean; data?: unknown; error?: unknown };
-function setupServerFetch(
-  serverFetch: ReturnType<typeof vi.fn>,
-  parseApiResponse: ReturnType<typeof vi.fn>,
-  routes: Record<string, EndpointResponse>
-): void {
-  // Sort by pattern length descending so the most specific pattern wins —
-  // otherwise `/providers` would also match `/provider-models`.
-  const patterns = Object.entries(routes).sort((a, b) => b[0].length - a[0].length);
-  const dispatch = (url: string | URL): Response => {
-    const urlStr = typeof url === 'string' ? url : url.toString();
-    for (const [pattern, resp] of patterns) {
-      if (urlStr.includes(pattern)) {
-        const body = JSON.stringify({
-          success: resp.success !== false,
-          data: resp.data,
-          ...(resp.error ? { error: resp.error } : {}),
-        });
-        return new Response(body, {
-          status: resp.ok === false ? 500 : 200,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-    }
-    // Safe default for unspecified endpoints (e.g. evaluation-trend, profiles)
-    return new Response(JSON.stringify({ success: true, data: [] }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  };
-  vi.mocked(serverFetch).mockImplementation(((url: string | URL) =>
-    Promise.resolve(dispatch(url))) as never);
-  vi.mocked(parseApiResponse).mockImplementation(((res: Response) => {
-    if (!res.ok)
-      return Promise.resolve({ success: false, error: { message: 'not ok', code: 'NOT_OK' } });
-    return res.json();
-  }) as never);
+async function mockApi({
+  agent = ok(MOCK_AGENT),
+  providers = ok(MOCK_PROVIDERS),
+  models = ok(MOCK_MODELS),
+  trend = ok({ points: [] }),
+  profiles = ok([]),
+  quarantined = ok({ items: [] }),
+}: {
+  agent?: Answer;
+  providers?: Answer;
+  models?: Answer;
+  trend?: Answer;
+  profiles?: Answer;
+  quarantined?: Answer;
+} = {}) {
+  const { serverFetch } = await import('@/lib/api/server-fetch');
+  vi.mocked(serverFetch).mockImplementation((path: string) => {
+    if (path.includes('/evaluation-trend')) return trend();
+    if (path.includes('/quarantined-capabilities')) return quarantined();
+    if (path.includes('/agent-profiles')) return profiles();
+    if (path.includes('/provider-models')) return models();
+    if (path.includes('/providers')) return providers();
+    return agent();
+  });
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -204,12 +204,7 @@ describe('EditAgentPage (server component)', () => {
   });
 
   it('renders agent name as heading in edit mode', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    setupServerFetch(serverFetch as never, parseApiResponse as never, {
-      '/agents/agent-edit-id': { data: MOCK_AGENT },
-      '/providers': { data: MOCK_PROVIDERS },
-      '/provider-models': { data: MOCK_MODELS },
-    });
+    await mockApi();
 
     const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 
@@ -221,12 +216,7 @@ describe('EditAgentPage (server component)', () => {
   });
 
   it('shows "Save changes" button in edit mode', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    setupServerFetch(serverFetch as never, parseApiResponse as never, {
-      '/agents/agent-edit-id': { data: MOCK_AGENT },
-      '/providers': { data: MOCK_PROVIDERS },
-      '/provider-models': { data: MOCK_MODELS },
-    });
+    await mockApi();
 
     const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 
@@ -238,12 +228,7 @@ describe('EditAgentPage (server component)', () => {
   });
 
   it('slug field is pre-filled and disabled in edit mode', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    setupServerFetch(serverFetch as never, parseApiResponse as never, {
-      '/agents/agent-edit-id': { data: MOCK_AGENT },
-      '/providers': { data: MOCK_PROVIDERS },
-      '/provider-models': { data: MOCK_MODELS },
-    });
+    await mockApi();
 
     const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 
@@ -257,13 +242,8 @@ describe('EditAgentPage (server component)', () => {
   });
 
   it('previews the resolved provider and model for an agent that inherits them', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
     const { getEffectiveAgentDefaults } = await import('@/lib/orchestration/prefetch-helpers');
-    setupServerFetch(serverFetch as never, parseApiResponse as never, {
-      '/agents/agent-edit-id': { data: { ...MOCK_AGENT, provider: '', model: '' } },
-      '/providers': { data: MOCK_PROVIDERS },
-      '/provider-models': { data: MOCK_MODELS },
-    });
+    await mockApi({ agent: ok({ ...MOCK_AGENT, provider: '', model: '' }) });
     vi.mocked(getEffectiveAgentDefaults).mockResolvedValue({
       provider: 'anthropic',
       model: 'claude-opus-4-6',
@@ -296,15 +276,9 @@ describe('EditAgentPage (server component)', () => {
     expect(screen.queryByText(/saving now would keep/i)).not.toBeInTheDocument();
   });
 
-  it('calls notFound() when agent fetch returns null', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    setupServerFetch(serverFetch as never, parseApiResponse as never, {
-      '/agents/nonexistent-id': {
-        ok: false,
-        success: false,
-        error: { message: 'Not found', code: 'NOT_FOUND' },
-      },
-    });
+  it('calls notFound() when the agent does not exist', async () => {
+    await mockApi({ agent: fail(404) });
+    const { serverFetch } = await import('@/lib/api/server-fetch');
 
     const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 
@@ -313,29 +287,80 @@ describe('EditAgentPage (server component)', () => {
     ).rejects.toThrow('NEXT_NOT_FOUND');
 
     expect(mockNotFound).toHaveBeenCalledOnce();
+    expect(vi.mocked(serverFetch).mock.calls.map((c) => c[0])).toContain(
+      '/api/v1/admin/orchestration/agents/nonexistent-id'
+    );
+  });
+
+  it('throws to the error boundary, not notFound(), when the agent load fails', async () => {
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    await mockApi({ agent: fail(500) });
+
+    const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
+
+    await expect(
+      EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) })
+    ).rejects.toBeInstanceOf(ServerLoadError);
+    expect(mockNotFound).not.toHaveBeenCalled();
+  });
+
+  // ── Secondary panels (#518) ────────────────────────────────────────────────
+
+  describe('secondary panel failures', () => {
+    it('shows a notice in place of the quarantine banner when its load fails', async () => {
+      await mockApi({ quarantined: fail(500) });
+
+      const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
+
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /couldn.t load quarantined capabilities/i
+      );
+      expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    });
+
+    it('shows a notice in place of the evaluation trend when its load fails', async () => {
+      await mockApi({ trend: reject() });
+
+      const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
+
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load the evaluation trend/i);
+      expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    });
+
+    it('shows a notice when the profile list fails to load', async () => {
+      await mockApi({ profiles: fail(500) });
+
+      const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
+
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load agent profiles/i);
+      expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    });
+
+    it('shows no notice when every panel loads', async () => {
+      await mockApi();
+
+      const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
+
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/couldn.t load/i)).not.toBeInTheDocument();
+    });
   });
 
   // ── Fallback branches ──────────────────────────────────────────────────────
 
   describe('provider/model fetch fallbacks', () => {
     it('renders with null providers when provider fetch rejects', async () => {
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      // URL-aware mock: the provider fetch throws, everything else succeeds.
-      vi.mocked(serverFetch).mockImplementation((url: string | URL) => {
-        const urlStr = typeof url === 'string' ? url : url.toString();
-        if (urlStr.includes('/providers') && !urlStr.includes('provider-models')) {
-          return Promise.reject(new Error('Network error'));
-        }
-        const body = (data: unknown): Response =>
-          new Response(JSON.stringify({ success: true, data }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        if (urlStr.includes('/agents/agent-edit-id')) return Promise.resolve(body(MOCK_AGENT));
-        if (urlStr.includes('/provider-models')) return Promise.resolve(body(MOCK_MODELS));
-        return Promise.resolve(body([]));
-      });
-      vi.mocked(parseApiResponse).mockImplementation(((res: Response) => res.json()) as never);
+      await mockApi({ providers: reject() });
 
       const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 
@@ -346,29 +371,8 @@ describe('EditAgentPage (server component)', () => {
       });
     });
 
-    it('renders with null providers when provider fetch returns res.ok=false', async () => {
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      // /providers and /provider-models share a prefix, so use explicit URL
-      // matching instead of substring-based setupServerFetch.
-      vi.mocked(serverFetch).mockImplementation((url: string | URL) => {
-        const urlStr = typeof url === 'string' ? url : url.toString();
-        const body = (data: unknown): Response =>
-          new Response(JSON.stringify({ success: true, data }), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          });
-        if (urlStr.includes('/agents/agent-edit-id')) return Promise.resolve(body(MOCK_AGENT));
-        if (urlStr.includes('/provider-models')) return Promise.resolve(body(MOCK_MODELS));
-        if (urlStr.endsWith('/admin/orchestration/providers')) {
-          return Promise.resolve({ ok: false } as Response);
-        }
-        return Promise.resolve(body([]));
-      });
-      vi.mocked(parseApiResponse).mockImplementation(((res: Response) => {
-        if (!res.ok)
-          return Promise.resolve({ success: false, error: { message: 'not ok', code: 'NOT_OK' } });
-        return res.json();
-      }) as never);
+    it('renders with null providers when provider fetch answers 500', async () => {
+      await mockApi({ providers: fail(500) });
 
       const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 
@@ -379,16 +383,8 @@ describe('EditAgentPage (server component)', () => {
       });
     });
 
-    it('renders with null models when model parseApiResponse returns success=false', async () => {
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      setupServerFetch(serverFetch as never, parseApiResponse as never, {
-        '/agents/agent-edit-id': { data: MOCK_AGENT },
-        '/provider-models': {
-          success: false,
-          error: { message: 'Registry unavailable', code: 'SERVICE_ERROR' },
-        },
-        '/providers': { data: MOCK_PROVIDERS },
-      });
+    it('renders with null models when the model fetch answers success=false', async () => {
+      await mockApi({ models: fail(200) });
 
       const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
 

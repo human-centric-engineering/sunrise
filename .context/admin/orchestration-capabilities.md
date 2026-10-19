@@ -10,7 +10,7 @@ Admin list/create/edit flows for `AiCapability`. Landed in Phase 4 Session 4.3. 
 | `/admin/orchestration/capabilities/new`  | `app/admin/orchestration/capabilities/new/page.tsx`  | Create shell, prefetches category hints |
 | `/admin/orchestration/capabilities/[id]` | `app/admin/orchestration/capabilities/[id]/page.tsx` | Edit shell, `notFound()` on missing     |
 
-All three are async server components using `serverFetch()` + `parseApiResponse()`. Fetch failures are tolerated — the list falls back to an empty state, the edit page falls back to `notFound()`, and real errors are surfaced via `logger.error` (never `console.*`).
+All three are async server components that load through `lib/api/server-load.ts`, which logs every failure. A failed load of the list, or of the capability on the edit page, throws to the admin error boundary (**Try again** re-fetches) — never an empty table, and only a 404 from the API renders `notFound()` (#518).
 
 ## List page
 
@@ -58,9 +58,9 @@ Row **Delete** opens `<DeleteCapabilityDialog>` (inline `AlertDialog`). The dial
 
 ## Create & edit pages
 
-**`new/page.tsx`** is a thin server shell that fetches the first 100 capabilities once to derive `availableCategories` (used by the form's Basic-tab category Select). Fetch failure falls back to an empty array — the form still works because admins can always enter a new category.
+**`new/page.tsx`** is a thin server shell that fetches the first 100 capabilities once to derive `availableCategories` (used by the form's Basic-tab category Select). A failed load shows a "Couldn't load existing capability categories" notice above the form and leaves the dropdown with only "+ New category…" — the form still works because admins can always enter a new category.
 
-**`[id]/page.tsx`** fetches the capability, its agent-usage list, and the category hint list in parallel. A `null` capability triggers `notFound()`. Failures on the other two fetches degrade gracefully (empty chip card, empty dropdown).
+**`[id]/page.tsx`** fetches the capability, its agent-usage list, and the category hint list in parallel. A 404 on the capability (or on its agent-usage list, which 404s for the same reason) triggers `notFound()`; any other failure of either throws to the error boundary. The usage list is required because the "Used by" card and the quarantine card's "Will affect N agents" would otherwise state zero agents as fact. A failed category list shows the same notice as the new page; a failed quarantine-attribution load just omits the "quarantined by" line.
 
 Both render `<CapabilityForm>` — see [`capability-form.md`](./capability-form.md) for the 4-tab walkthrough.
 

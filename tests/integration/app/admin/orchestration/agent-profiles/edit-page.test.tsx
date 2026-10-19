@@ -8,7 +8,8 @@
  * Covers:
  *   - Fetches the profile and renders <AgentProfileForm mode="edit" />
  *   - Pre-fills the form from the API response
- *   - Calls notFound() when the API returns a non-ok response
+ *   - Calls notFound() on a 404, and only on a 404: a 500 or a network
+ *     failure throws to the error boundary instead (#518)
  *
  * @see app/admin/orchestration/agent-profiles/[id]/page.tsx
  */
@@ -16,9 +17,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-vi.mock('@/lib/api/server-fetch', () => ({
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/logging', () => ({
@@ -78,12 +82,8 @@ describe('EditAgentProfilePage (server component)', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('renders the edit form pre-filled from the API response', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: true,
-      data: makeProfile(),
-    } as never);
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    vi.mocked(serverFetch).mockResolvedValue(apiSuccess(makeProfile()));
 
     const { default: Page } = await import('@/app/admin/orchestration/agent-profiles/[id]/page');
 
@@ -100,29 +100,47 @@ describe('EditAgentProfilePage (server component)', () => {
     expect(screen.getByRole('textbox', { name: /^slug/i })).toBeDisabled();
   });
 
-  it('calls notFound() when serverFetch returns not ok', async () => {
+  it('calls notFound() when the profile does not exist', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: false } as Response);
+    const { notFound } = await import('next/navigation');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(404, 'NOT_FOUND'));
 
     const { default: Page } = await import('@/app/admin/orchestration/agent-profiles/[id]/page');
 
     await expect(Page({ params: Promise.resolve({ id: 'missing' }) })).rejects.toThrow(
       'NEXT_NOT_FOUND'
+    );
+    expect(notFound).toHaveBeenCalledOnce();
+    expect(vi.mocked(serverFetch).mock.calls[0][0]).toBe(
+      '/api/v1/admin/orchestration/agent-profiles/missing'
     );
   });
 
-  it('calls notFound() when parseApiResponse reports success: false', async () => {
-    const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue({ ok: true } as Response);
-    vi.mocked(parseApiResponse).mockResolvedValue({
-      success: false,
-      error: { code: 'NOT_FOUND', message: 'gone' },
-    } as never);
+  it('throws to the error boundary, not notFound(), when the load fails', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    const { notFound } = await import('next/navigation');
+    vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
     const { default: Page } = await import('@/app/admin/orchestration/agent-profiles/[id]/page');
 
-    await expect(Page({ params: Promise.resolve({ id: 'missing' }) })).rejects.toThrow(
-      'NEXT_NOT_FOUND'
+    await expect(Page({ params: Promise.resolve({ id: 'p1' }) })).rejects.toBeInstanceOf(
+      ServerLoadError
     );
+    expect(notFound).not.toHaveBeenCalled();
+  });
+
+  it('throws to the error boundary when serverFetch rejects', async () => {
+    const { serverFetch } = await import('@/lib/api/server-fetch');
+    const { ServerLoadError } = await import('@/lib/api/server-load');
+    const { notFound } = await import('next/navigation');
+    vi.mocked(serverFetch).mockRejectedValue(new Error('Network error'));
+
+    const { default: Page } = await import('@/app/admin/orchestration/agent-profiles/[id]/page');
+
+    await expect(Page({ params: Promise.resolve({ id: 'p1' }) })).rejects.toBeInstanceOf(
+      ServerLoadError
+    );
+    expect(notFound).not.toHaveBeenCalled();
   });
 });

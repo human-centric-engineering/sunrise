@@ -5,9 +5,8 @@ import Link from 'next/link';
 import { CapabilitiesTable } from '@/components/admin/orchestration/capabilities-table';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { requireServerData } from '@/lib/api/server-load';
 import { parsePaginationMeta } from '@/lib/validations/common';
-import { logger } from '@/lib/logging';
 import type { AiCapabilityListItem } from '@/types/orchestration';
 import type { PaginationMeta } from '@/types/api';
 
@@ -28,27 +27,18 @@ const EMPTY_META: PaginationMeta = {
  * Admin — Capabilities list page (Phase 4 Session 4.3).
  *
  * Thin server component that pre-renders the first page of capabilities
- * via `serverFetch` and hands the result to `<CapabilitiesTable>` for
- * client-side search / filter / sort / pagination. Fetch failures never
- * throw — the table renders an empty state so the page is still usable.
+ * and hands the result to `<CapabilitiesTable>` for
+ * client-side search / filter / sort / pagination. A failed load throws to
+ * the admin error boundary rather than rendering an empty table (#518).
  */
 async function getCapabilities(): Promise<{
   capabilities: AiCapabilityListItem[];
   meta: PaginationMeta;
 }> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.CAPABILITIES}?page=1&limit=25`);
-    if (!res.ok) return { capabilities: [], meta: EMPTY_META };
-    const body = await parseApiResponse<AiCapabilityListItem[]>(res);
-    if (!body.success) return { capabilities: [], meta: EMPTY_META };
-    return {
-      capabilities: body.data,
-      meta: parsePaginationMeta(body.meta) ?? EMPTY_META,
-    };
-  } catch (err) {
-    logger.error('capabilities list page: initial fetch failed', err);
-    return { capabilities: [], meta: EMPTY_META };
-  }
+  const { data, meta } = await requireServerData<AiCapabilityListItem[]>(
+    `${API.ADMIN.ORCHESTRATION.CAPABILITIES}?page=1&limit=25`
+  );
+  return { capabilities: data, meta: parsePaginationMeta(meta) ?? EMPTY_META };
 }
 
 export default async function CapabilitiesListPage() {
