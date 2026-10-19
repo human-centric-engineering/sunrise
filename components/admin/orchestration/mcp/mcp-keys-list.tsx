@@ -231,15 +231,15 @@ export function McpKeysList({ initialKeys }: McpKeysListProps) {
                 <Label htmlFor="key-name">
                   Name
                   <FieldHelp title="Key Name">
-                    A descriptive name to identify this key (e.g. &quot;Claude Desktop&quot;,
-                    &quot;CI Pipeline&quot;).
+                    A descriptive name to identify this key (e.g. &quot;Cursor&quot;, &quot;CI
+                    Pipeline&quot;).
                   </FieldHelp>
                 </Label>
                 <Input
                   id="key-name"
                   value={newKeyName}
                   onChange={(e) => setNewKeyName(e.target.value)}
-                  placeholder="e.g. Claude Desktop"
+                  placeholder="e.g. Cursor"
                 />
               </div>
 

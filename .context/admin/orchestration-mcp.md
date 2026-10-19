@@ -62,7 +62,7 @@ Self-service API key management with SHA-256 hashing.
 
 | Field               | Required | Notes                                                           |
 | ------------------- | -------- | --------------------------------------------------------------- |
-| Name                | Yes      | Descriptive label (e.g. "Claude Desktop")                       |
+| Name                | Yes      | Descriptive label (e.g. "Cursor")                               |
 | Scopes              | Yes (≥1) | `tools:list`, `tools:execute`, `resources:read`, `prompts:read` |
 | Expiry              | No       | Optional datetime; expired keys are auto-rejected               |
 | Rate Limit Override | No       | Per-key requests/min override                                   |
