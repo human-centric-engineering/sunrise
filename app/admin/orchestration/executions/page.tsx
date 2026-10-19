@@ -5,7 +5,7 @@ import { ExecutionsListView } from '@/components/admin/orchestration/executions-
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
-import { requireServerData } from '@/lib/api/server-load';
+import { loadServerData, requireServerData } from '@/lib/api/server-load';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import type { LiveEngineSnapshotView } from '@/components/admin/orchestration/live-engine-dashboard';
@@ -52,15 +52,16 @@ async function getExecutions(
 }
 
 /**
- * Also required, for a platform viewer: the live-engine cards render a
- * snapshot as counts, so a failed load passed through as zeros would read
- * as "nothing running, nothing orphaned" (#518).
+ * A panel, for a platform viewer: `null` when it failed, and the view shows
+ * a notice in the live-engine cards' place. The cards render a snapshot as
+ * counts, so a failed load passed through as zeros would read as "nothing
+ * running, nothing orphaned" (#518); the list still renders.
  */
-async function getInitialSnapshot(): Promise<LiveEngineSnapshotView> {
-  const { data } = await requireServerData<LiveEngineSnapshotView>(
+async function getInitialSnapshot(): Promise<LiveEngineSnapshotView | null> {
+  const result = await loadServerData<LiveEngineSnapshotView>(
     API.ADMIN.ORCHESTRATION.EXECUTIONS_LIVE_SNAPSHOT
   );
-  return data;
+  return result.ok ? result.data : null;
 }
 
 export default async function ExecutionsListPage({ searchParams }: PageProps) {
@@ -71,8 +72,8 @@ export default async function ExecutionsListPage({ searchParams }: PageProps) {
     typeof resolvedParams.status === 'string' ? resolvedParams.status : undefined;
   // Three parallel reads: executions page, live-engine snapshot, and
   // the settings singleton (for the stuck-step threshold). The
-  // snapshot and threshold are both required by the dashboard above
-  // the table; the page fans them all so the user sees one paint.
+  // snapshot and threshold both feed the dashboard above the table; the
+  // page fans them all so the user sees one paint.
   //
   // An org admin (§111 t-812) gets the table alone: the live engine is
   // the platform's, its route refuses them, so its snapshot is not

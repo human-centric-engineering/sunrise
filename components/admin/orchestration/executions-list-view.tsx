@@ -19,6 +19,11 @@
  * describe engine state the platform runs for every org, and the row
  * controls act on it, so neither is theirs. Their table lists their own
  * org's executions, as the list route already scopes it.
+ *
+ * When the page could not load the initial snapshot, `<LoadFailedNotice>`
+ * takes the cards' place and the dashboard is not mounted (#518). Mounting
+ * it would show the snapshot as counts ("0 running") until its first poll
+ * succeeded; the notice's "Try again" re-runs the page's load instead.
  */
 
 import { useCallback, useRef, type ReactElement } from 'react';
@@ -29,12 +34,17 @@ import {
   type LiveEngineSnapshotView,
 } from '@/components/admin/orchestration/live-engine-dashboard';
 import { ExecutionsTable } from '@/components/admin/orchestration/executions-table';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import type { AdminViewerTier } from '@/lib/auth/admin-tier';
 import type { PaginationMeta } from '@/types/api';
 import type { ExecutionListItem } from '@/types/orchestration';
 
 export interface ExecutionsListViewProps {
-  initialSnapshot: LiveEngineSnapshotView;
+  /**
+   * The live-engine snapshot the cards start from. `null` means it failed to
+   * load: the cards are replaced by a notice and do not poll.
+   */
+  initialSnapshot: LiveEngineSnapshotView | null;
   initialExecutions: ExecutionListItem[];
   initialMeta: PaginationMeta;
   initialWorkflowId?: string;
@@ -77,13 +87,16 @@ export function ExecutionsListView({
 
   return (
     <div className="space-y-6">
-      {platform && (
-        <LiveEngineDashboard
-          initial={initialSnapshot}
-          stuckThresholdMins={stuckThresholdMins}
-          onCardClick={handleCardClick}
-        />
-      )}
+      {platform &&
+        (initialSnapshot ? (
+          <LiveEngineDashboard
+            initial={initialSnapshot}
+            stuckThresholdMins={stuckThresholdMins}
+            onCardClick={handleCardClick}
+          />
+        ) : (
+          <LoadFailedNotice what="the live engine snapshot" />
+        ))}
       <div ref={tableSectionRef}>
         <ExecutionsTable
           initialExecutions={initialExecutions}

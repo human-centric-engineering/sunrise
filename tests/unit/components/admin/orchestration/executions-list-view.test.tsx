@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
 import { ExecutionsListView } from '@/components/admin/orchestration/executions-list-view';
+import { API } from '@/lib/api/endpoints';
 import type { LiveEngineSnapshotView } from '@/components/admin/orchestration/live-engine-dashboard';
 import type { PaginationMeta } from '@/types/api';
 import type { ExecutionListItem } from '@/types/orchestration';
@@ -174,5 +175,56 @@ describe('ExecutionsListView', () => {
     expect(screen.getByText(/Execution ID/i)).toBeInTheDocument();
     expect(screen.queryByText(/Provider in-flight/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^Orphaned$/i)).not.toBeInTheDocument();
+  });
+
+  describe('when the live snapshot failed to load (#518)', () => {
+    it('shows a notice in the cards’ place and still renders the table', () => {
+      render(
+        <ExecutionsListView
+          initialSnapshot={null}
+          initialExecutions={[makeExecution()]}
+          initialMeta={META}
+          stuckThresholdMins={5}
+        />
+      );
+
+      expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load the live engine snapshot");
+      // No cards, so no "0 running" read from a load that failed.
+      expect(screen.queryByText(/^Running$/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Provider in-flight/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/Execution ID/i)).toBeInTheDocument();
+    });
+
+    it('does not mount the dashboard, so nothing polls the snapshot', () => {
+      render(
+        <ExecutionsListView
+          initialSnapshot={null}
+          initialExecutions={[]}
+          initialMeta={META}
+          stuckThresholdMins={5}
+        />
+      );
+
+      const snapshotCalls = vi.mocked(global.fetch).mock.calls.filter(([input]) => {
+        const url = input instanceof Request ? input.url : input.toString();
+        return url.includes(API.ADMIN.ORCHESTRATION.EXECUTIONS_LIVE_SNAPSHOT);
+      });
+      expect(snapshotCalls).toHaveLength(0);
+    });
+
+    it('shows an org viewer no notice: the cards were never theirs', () => {
+      render(
+        <ExecutionsListView
+          initialSnapshot={null}
+          initialExecutions={[makeExecution()]}
+          initialMeta={META}
+          stuckThresholdMins={5}
+          viewerTier="org"
+        />
+      );
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.getByText(/Execution ID/i)).toBeInTheDocument();
+    });
   });
 });

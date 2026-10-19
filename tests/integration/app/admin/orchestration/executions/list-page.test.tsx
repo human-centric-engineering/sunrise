@@ -5,8 +5,9 @@
  *
  * Tests the server-component page at `app/admin/orchestration/executions/page.tsx`:
  * its three reads (the executions page, the live-engine snapshot, the
- * stuck-step threshold), what a failed read does — it throws to the error
- * boundary rather than showing an empty list or zero counts (#518) — and the org
+ * stuck-step threshold), what a failed read does — a failed list throws to
+ * the error boundary rather than showing an empty list, and a failed snapshot
+ * reaches the view as `null`, never as zero counts (#518) — and the org
  * admin's half (§111 t-812) — the table alone, with no live-engine snapshot
  * fetched.
  *
@@ -46,7 +47,7 @@ vi.mock('next/link', () => ({
 
 vi.mock('@/components/admin/orchestration/executions-list-view', () => ({
   ExecutionsListView: (props: {
-    initialSnapshot: { running: { count: number } };
+    initialSnapshot: { running: { count: number } } | null;
     initialExecutions: { id: string }[];
     initialMeta: { total: number };
     initialWorkflowId?: string;
@@ -56,7 +57,7 @@ vi.mock('@/components/admin/orchestration/executions-list-view', () => ({
   }) => (
     <div
       data-testid="executions-list-view"
-      data-running={props.initialSnapshot.running.count}
+      data-running={props.initialSnapshot ? props.initialSnapshot.running.count : 'failed'}
       data-executions={props.initialExecutions.map((e) => e.id).join(',')}
       data-total={props.initialMeta.total}
       data-workflow-id={props.initialWorkflowId ?? ''}
@@ -155,10 +156,15 @@ describe('ExecutionsListPage — the platform’s view', () => {
     await expect(page()).rejects.toBeInstanceOf(ServerLoadError);
   });
 
-  it('throws rather than showing zero counts when the live snapshot read fails', async () => {
+  it('renders the list and passes a failed live snapshot as null, not zero counts', async () => {
     answer({ snapshot: async () => apiFailure(500) });
 
-    await expect(page()).rejects.toBeInstanceOf(ServerLoadError);
+    render(await page());
+
+    const view = screen.getByTestId('executions-list-view');
+    expect(view).toHaveAttribute('data-running', 'failed');
+    expect(view).toHaveAttribute('data-executions', 'exec-1,exec-2');
+    expect(logger.error).toHaveBeenCalled();
   });
 
   it('throws and logs when a read rejects', async () => {

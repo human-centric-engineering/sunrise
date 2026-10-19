@@ -6,7 +6,7 @@ import {
 } from '@/components/admin/orchestration/analytics/analytics-view';
 import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { API } from '@/lib/api/endpoints';
-import { loadServerData, requireServerData, type LoadResult } from '@/lib/api/server-load';
+import { loadServerData, type LoadResult } from '@/lib/api/server-load';
 import type {
   TopicEntry,
   UnansweredEntry,
@@ -34,13 +34,13 @@ function buildQuery(params: Record<string, string | string[] | undefined>): stri
 }
 
 /*
- * A failed load never renders as an empty state (#518). `<AnalyticsView>`
- * renders missing topics, unanswered questions and content gaps as "No topic
- * data yet", "No unanswered questions found" and "No content gaps detected",
- * so those three are required: their failure throws to the error boundary.
- * Engagement figures show "—" when unknown, which already reads as unknown.
- * The feedback summary and the agent filter options are panels the page can
- * live without: each failure shows `<LoadFailedNotice>` above the view.
+ * A failed load never renders as an empty state (#518), and no single
+ * analytics endpoint takes the page down. Topics, unanswered questions and
+ * content gaps reach `<AnalyticsView>` as `null` when they fail, and that
+ * panel shows `<LoadFailedNotice>` in place of an empty state ("No content
+ * gaps detected") that would read as an all-clear. Engagement figures show
+ * "—" when unknown, which already reads as unknown. The feedback summary and
+ * the agent filter options each show `<LoadFailedNotice>` above the view.
  */
 
 async function getEngagement(query: string): Promise<EngagementMetrics | null> {
@@ -50,18 +50,18 @@ async function getEngagement(query: string): Promise<EngagementMetrics | null> {
   return result.ok ? result.data.metrics : null;
 }
 
-async function getTopics(query: string): Promise<TopicEntry[]> {
-  const { data } = await requireServerData<{ topics: TopicEntry[] }>(
+async function getTopics(query: string): Promise<TopicEntry[] | null> {
+  const result = await loadServerData<{ topics: TopicEntry[] }>(
     `${API.ADMIN.ORCHESTRATION.ANALYTICS_TOPICS}${query}`
   );
-  return data.topics;
+  return result.ok ? result.data.topics : null;
 }
 
-async function getUnanswered(query: string): Promise<UnansweredEntry[]> {
-  const { data } = await requireServerData<{ questions: UnansweredEntry[] }>(
+async function getUnanswered(query: string): Promise<UnansweredEntry[] | null> {
+  const result = await loadServerData<{ questions: UnansweredEntry[] }>(
     `${API.ADMIN.ORCHESTRATION.ANALYTICS_UNANSWERED}${query}`
   );
-  return data.questions;
+  return result.ok ? result.data.questions : null;
 }
 
 async function getFeedback(query: string): Promise<LoadResult<FeedbackSummary>> {
@@ -71,11 +71,11 @@ async function getFeedback(query: string): Promise<LoadResult<FeedbackSummary>> 
   return result.ok ? { ...result, data: result.data.feedback } : result;
 }
 
-async function getContentGaps(query: string): Promise<ContentGap[]> {
-  const { data } = await requireServerData<{ gaps: ContentGap[] }>(
+async function getContentGaps(query: string): Promise<ContentGap[] | null> {
+  const result = await loadServerData<{ gaps: ContentGap[] }>(
     `${API.ADMIN.ORCHESTRATION.ANALYTICS_CONTENT_GAPS}${query}`
   );
-  return data.gaps;
+  return result.ok ? result.data.gaps : null;
 }
 
 async function getAgents(): Promise<LoadResult<AgentOption[]>> {

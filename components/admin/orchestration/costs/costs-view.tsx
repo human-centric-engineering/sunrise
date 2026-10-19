@@ -24,11 +24,17 @@
  * An org viewer (§111 t-812) sees their org's spend and none of the
  * platform-ops half: no per-org table and no link to the global budget
  * settings, neither of which they may use.
+ *
+ * `alerts: null` means the budget alerts failed to load: `<LoadFailedNotice>`
+ * takes the alerts panel's place, because its empty state ("No agents are
+ * currently over 80% of their monthly budget") would read as an all-clear
+ * (#518). The other panels still render.
  */
 
 import Link from 'next/link';
 import { Settings as SettingsIcon } from 'lucide-react';
 
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { BudgetAlertsList } from '@/components/admin/orchestration/costs/budget-alerts-list';
 import { CostMethodology } from '@/components/admin/orchestration/costs/cost-methodology';
 import { CostSummaryCards } from '@/components/admin/orchestration/costs/cost-summary-cards';
@@ -56,7 +62,12 @@ interface PerModelDaily {
 
 export interface CostsViewProps {
   summary: CostSummary | null;
+  /**
+   * Agents at or over 80% of their monthly budget. `null` means it failed to
+   * load: the alerts panel shows a notice instead of "no agents over budget".
+   */
   alerts: BudgetAlert[] | null;
+  /** The global cap's state, from the same load as `alerts`. */
   globalCap: GlobalCapStatus | null;
   perModel: PerModelDaily[] | null;
   models: ModelInfo[] | null;
@@ -86,7 +97,11 @@ export function CostsView({
     <div className="space-y-8">
       <CostSummaryCards summary={summary} />
 
-      <BudgetAlertsList alerts={alerts} globalCap={globalCap} />
+      {alerts ? (
+        <BudgetAlertsList alerts={alerts} globalCap={globalCap} />
+      ) : (
+        <LoadFailedNotice what="budget alerts" />
+      )}
 
       <CostTrendChart trend={summary?.trend ?? null} perModel={perModel} models={models} />
 

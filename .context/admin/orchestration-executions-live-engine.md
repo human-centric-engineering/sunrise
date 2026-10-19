@@ -54,7 +54,11 @@ The Provider in-flight card is process-wide on purpose: the in-flight counter ha
 The bottom of the page shows the snapshot's `generatedAt` plus the
 poll interval. On a transient fetch failure the last-good snapshot
 stays visible and a red banner names the error — the page does not
-crash or zero out on a single flaky poll.
+crash or zero out on a single flaky poll. If the page's initial
+snapshot load fails, a "Couldn't load the live engine snapshot" notice
+takes the cards' place and the dashboard does not mount or poll — it
+never shows "0 running" from a failed load — while the executions list
+still renders; the notice's **Try again** re-runs the load (#518).
 
 ## The Step age column on the executions list
 

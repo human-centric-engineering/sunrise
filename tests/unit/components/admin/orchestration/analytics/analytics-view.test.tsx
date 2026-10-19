@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   AnalyticsView,
@@ -47,10 +47,10 @@ vi.mock('@/components/ui/date-picker', () => ({
 // Minimal mock data
 const baseProps: AnalyticsViewProps = {
   engagement: null,
-  topics: null,
-  unanswered: null,
+  topics: [],
+  unanswered: [],
   feedback: null,
-  contentGaps: null,
+  contentGaps: [],
   agents: [],
   filters: { from: '2026-03-21', to: '2026-04-20', agentId: '' },
 };
@@ -62,8 +62,9 @@ describe('AnalyticsView', () => {
 
   // ── Existing tests (keep — do not modify) ──────────────────────────────────
 
-  it('renders without data (null-safe)', () => {
+  it('renders real empty lists as their empty states, with no notice', () => {
     render(<AnalyticsView {...baseProps} />);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByTestId('engagement-cards')).toBeInTheDocument();
     expect(screen.getByTestId('analytics-filters')).toBeInTheDocument();
     expect(screen.getByText('No topic data yet.')).toBeInTheDocument();
@@ -429,5 +430,63 @@ describe('AnalyticsView', () => {
     // The non-zero bar should have minHeight: 4px
     const nonZeroBar = bars[1] as HTMLElement;
     expect(nonZeroBar.style.minHeight).toBe('4px');
+  });
+
+  // ── A panel whose load failed (#518) ────────────────────────────────────────
+
+  describe('a panel whose load failed (null)', () => {
+    const TOPICS = [{ content: 'How to reset password', count: 42, lastAsked: new Date() }];
+    const GAPS = [{ topic: 'integrations', queryCount: 20, unansweredCount: 15, gapRatio: 0.75 }];
+    const UNANSWERED = [
+      {
+        messageId: 'msg_1',
+        conversationId: 'c1',
+        agentId: 'a1',
+        agentName: 'Support Bot',
+        userMessage: 'How do I connect to Stripe?',
+        assistantReply: "I'm not sure about that.",
+        matchedPhrase: "I'm not sure",
+        createdAt: new Date('2026-04-15'),
+      },
+    ];
+
+    it('shows a notice in the topics panel, not "No topic data yet", and keeps the others', () => {
+      render(
+        <AnalyticsView {...baseProps} topics={null} contentGaps={GAPS} unanswered={UNANSWERED} />
+      );
+
+      const panel = screen.getByTestId('popular-topics');
+      expect(within(panel).getByRole('alert')).toHaveTextContent("Couldn't load popular topics");
+      expect(screen.queryByText('No topic data yet.')).not.toBeInTheDocument();
+      expect(screen.getAllByRole('alert')).toHaveLength(1);
+      expect(screen.getByText('integrations')).toBeInTheDocument();
+      expect(screen.getByText('How do I connect to Stripe?')).toBeInTheDocument();
+    });
+
+    it('shows a notice in the content gaps panel, not "No content gaps detected"', () => {
+      render(
+        <AnalyticsView {...baseProps} topics={TOPICS} contentGaps={null} unanswered={UNANSWERED} />
+      );
+
+      const panel = screen.getByTestId('content-gaps');
+      expect(within(panel).getByRole('alert')).toHaveTextContent("Couldn't load content gaps");
+      expect(screen.queryByText('No content gaps detected.')).not.toBeInTheDocument();
+      expect(screen.getAllByRole('alert')).toHaveLength(1);
+      expect(screen.getByText('How to reset password')).toBeInTheDocument();
+      expect(screen.getByText('How do I connect to Stripe?')).toBeInTheDocument();
+    });
+
+    it('shows a notice in the unanswered panel, not "No unanswered questions found"', () => {
+      render(<AnalyticsView {...baseProps} topics={TOPICS} contentGaps={GAPS} unanswered={null} />);
+
+      const panel = screen.getByTestId('unanswered-questions');
+      expect(within(panel).getByRole('alert')).toHaveTextContent(
+        "Couldn't load unanswered questions"
+      );
+      expect(screen.queryByText('No unanswered questions found.')).not.toBeInTheDocument();
+      expect(screen.getAllByRole('alert')).toHaveLength(1);
+      expect(screen.getByText('How to reset password')).toBeInTheDocument();
+      expect(screen.getByText('integrations')).toBeInTheDocument();
+    });
   });
 });

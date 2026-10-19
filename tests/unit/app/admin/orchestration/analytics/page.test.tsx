@@ -31,7 +31,6 @@ vi.mock('next/link', () => ({
 
 import AnalyticsPage, { metadata } from '@/app/admin/orchestration/analytics/page';
 import { serverFetch } from '@/lib/api/server-fetch';
-import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { API } from '@/lib/api/endpoints';
 import { apiFailure, apiSuccess } from '@/tests/helpers/api';
@@ -167,30 +166,46 @@ describe('AnalyticsPage', () => {
     expect(props.agents).toEqual(mockAgents);
   });
 
-  // 4. A failed load is a failure, not an empty panel (#518)
+  // 4. A failed load is a failure, not an empty panel (#518) — but one panel's
+  // failure never takes the page down.
   it.each([
     ['topics', API.ADMIN.ORCHESTRATION.ANALYTICS_TOPICS],
-    ['unanswered questions', API.ADMIN.ORCHESTRATION.ANALYTICS_UNANSWERED],
-    ['content gaps', API.ADMIN.ORCHESTRATION.ANALYTICS_CONTENT_GAPS],
+    ['unanswered', API.ADMIN.ORCHESTRATION.ANALYTICS_UNANSWERED],
+    ['contentGaps', API.ADMIN.ORCHESTRATION.ANALYTICS_CONTENT_GAPS],
   ])(
-    'throws to the error boundary when %s fail (their empty state reads as "none")',
-    async (_label, endpoint) => {
+    'renders the rest of the page and passes %s as null (the panel shows a notice) when it fails',
+    async (prop, endpoint) => {
       setupFetch({ [endpoint]: () => apiFailure(500) });
 
-      await expect(AnalyticsPage({ searchParams: Promise.resolve({}) })).rejects.toBeInstanceOf(
-        ServerLoadError
-      );
+      render(await AnalyticsPage({ searchParams: Promise.resolve({}) }));
+
+      const props = getRenderedProps();
+      expect(props[prop]).toBeNull();
+      const others = {
+        topics: mockTopics,
+        unanswered: mockUnanswered,
+        contentGaps: mockContentGaps,
+      };
+      for (const [key, value] of Object.entries(others)) {
+        if (key !== prop) expect(props[key]).toEqual(value);
+      }
+      expect(props.feedback).toEqual(mockFeedback);
       expect(logger.error).toHaveBeenCalled();
     }
   );
 
-  it('throws when serverFetch rejects for a required panel', async () => {
+  it('renders the page with every analytics panel null when every read rejects', async () => {
     const err = new Error('Network failure');
     vi.mocked(serverFetch).mockRejectedValue(err);
 
-    await expect(AnalyticsPage({ searchParams: Promise.resolve({}) })).rejects.toBeInstanceOf(
-      ServerLoadError
-    );
+    render(await AnalyticsPage({ searchParams: Promise.resolve({}) }));
+
+    const props = getRenderedProps();
+    expect(props.topics).toBeNull();
+    expect(props.unanswered).toBeNull();
+    expect(props.contentGaps).toBeNull();
+    expect(props.engagement).toBeNull();
+    expect(props.feedback).toBeNull();
     expect(logger.error).toHaveBeenCalledWith(expect.any(String), err, expect.any(Object));
   });
 

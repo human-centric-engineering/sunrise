@@ -5,6 +5,8 @@
  *
  * Test Coverage:
  * - Renders all sub-sections without crashing when all props are null
+ *   (except the alerts: null there means they failed to load)
+ * - A failed alerts load (null) shows a notice in the alerts panel's place
  * - Renders all sub-sections without crashing with populated props
  * - Passes summary to CostSummaryCards and BudgetAlertsList
  * - Passes trend and perModel to CostTrendChart
@@ -157,7 +159,9 @@ describe('CostsView', () => {
       );
 
       expect(screen.getByTestId('cost-summary-cards')).toBeInTheDocument();
-      expect(screen.getByTestId('budget-alerts-list')).toBeInTheDocument();
+      // `alerts: null` means they failed to load: the panel is a notice.
+      expect(screen.queryByTestId('budget-alerts-list')).not.toBeInTheDocument();
+      expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load budget alerts");
       expect(screen.getByTestId('cost-trend-chart')).toBeInTheDocument();
       expect(screen.getByTestId('per-agent-cost-table')).toBeInTheDocument();
       expect(screen.getByTestId('per-model-breakdown-table')).toBeInTheDocument();
@@ -299,6 +303,42 @@ describe('CostsView', () => {
       const el = screen.getByTestId('pricing-reference');
       expect(el).toHaveAttribute('data-has-fetched-at', 'true');
       expect(el).toHaveAttribute('data-has-models', 'true');
+    });
+  });
+
+  describe('budget alerts that failed to load (#518)', () => {
+    it('shows a notice in the alerts panel’s place and still renders the other panels', () => {
+      render(
+        <CostsView
+          summary={MOCK_SUMMARY}
+          alerts={null}
+          globalCap={null}
+          perModel={PER_MODEL}
+          models={MOCK_MODELS}
+        />
+      );
+
+      expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load budget alerts");
+      expect(screen.queryByTestId('budget-alerts-list')).not.toBeInTheDocument();
+      expect(screen.getByTestId('cost-summary-cards')).toHaveAttribute('data-has-summary', 'true');
+      expect(screen.getByTestId('cost-trend-chart')).toHaveAttribute('data-has-trend', 'true');
+      expect(screen.getByTestId('per-agent-cost-table')).toHaveAttribute('data-has-rows', 'true');
+      expect(screen.getByTestId('local-vs-cloud-panel')).toBeInTheDocument();
+    });
+
+    it('renders a real empty alert list through BudgetAlertsList, with no notice', () => {
+      render(
+        <CostsView
+          summary={MOCK_SUMMARY}
+          alerts={[]}
+          globalCap={null}
+          perModel={PER_MODEL}
+          models={MOCK_MODELS}
+        />
+      );
+
+      expect(screen.getByTestId('budget-alerts-list')).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
   });
 

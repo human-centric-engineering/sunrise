@@ -42,13 +42,16 @@ export const metadata: Metadata = {
  * platform-ops half — each org's usage and the settings card for the global
  * budget — is not fetched or rendered for them, and its routes refuse them.
  *
- * A failed load never renders as an empty state (#518). `<CostsView>` renders
- * a missing summary or alert list as "no spend" and "no agents over budget",
- * so those two are required: their failure throws to the error boundary. The
- * per-model breakdown, the model registry and the per-org table are panels
- * the page can live without: each failure shows `<LoadFailedNotice>` above
- * the view. A 403 from `/costs/orgs` is the expected refusal described above
- * and hides the table without a notice.
+ * A failed load never renders as an empty state (#518). The summary is the
+ * page's main data — it feeds the totals, the trend, both breakdown tables
+ * and the local-vs-cloud panel, and `<CostsView>` renders a missing one as
+ * "no spend" — so its failure throws to the error boundary. The budget
+ * alerts reach the view as `null` when they fail, and it shows
+ * `<LoadFailedNotice>` in the alerts panel's place rather than "no agents
+ * over budget". The per-model breakdown, the model registry and the per-org
+ * table are panels the page can live without: each failure shows
+ * `<LoadFailedNotice>` above the view. A 403 from `/costs/orgs` is the
+ * expected refusal described above and hides the table without a notice.
  */
 
 interface AlertsResponse {
@@ -89,14 +92,15 @@ export default async function CostsPage() {
 
   // Settings are no longer needed here — the default-models form moved
   // to the Settings page; the Costs page keeps a footer link to it.
-  const [{ data: summary }, { data: alertsResponse }, perModel, modelsResponse, orgUsage] =
-    await Promise.all([
+  const [{ data: summary }, alertsResponse, perModel, modelsResponse, orgUsage] = await Promise.all(
+    [
       requireServerData<CostSummary>(API.ADMIN.ORCHESTRATION.COSTS_SUMMARY),
-      requireServerData<AlertsResponse>(API.ADMIN.ORCHESTRATION.COSTS_ALERTS),
+      loadServerData<AlertsResponse>(API.ADMIN.ORCHESTRATION.COSTS_ALERTS),
       getPerModel30Day(),
       loadServerData<ModelsResponse>(API.ADMIN.ORCHESTRATION.MODELS),
       platform ? loadServerData<OrgUsageReport>(API.ADMIN.ORCHESTRATION.COSTS_ORGS) : null,
-    ]);
+    ]
+  );
 
   return (
     <div className="space-y-8">
@@ -138,8 +142,8 @@ export default async function CostsPage() {
 
       <CostsView
         summary={summary}
-        alerts={alertsResponse.alerts}
-        globalCap={alertsResponse.globalCap}
+        alerts={alertsResponse.ok ? alertsResponse.data.alerts : null}
+        globalCap={alertsResponse.ok ? alertsResponse.data.globalCap : null}
         perModel={perModel.ok ? perModel.data.rows : null}
         models={modelsResponse.ok ? modelsResponse.data.models : null}
         registryFetchedAt={modelsResponse.ok ? modelsResponse.data.fetchedAt : null}

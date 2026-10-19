@@ -8,8 +8,10 @@
  *
  * Test Coverage:
  * - Happy path: all 5 parallel fetches succeed, page sections render
- * - A failed summary or alerts load throws to the error boundary: the view
- *   would render it as "no spend" / "no agents over budget" (#518)
+ * - A failed summary load throws to the error boundary: the view would render
+ *   it as "no spend" (#518)
+ * - A failed alerts load shows a notice in the alerts panel's place, never
+ *   "no agents over budget", and the rest of the page still renders
  * - A failed per-model, models or per-org load shows a "Couldn't load"
  *   notice and the rest of the page still renders; a 403 from /costs/orgs
  *   (the expected refusal) hides the table without one
@@ -235,8 +237,7 @@ describe('CostsPage (server component)', () => {
   it.each([
     ['summary', apiFailure(500)],
     ['summary', apiFailure(200)],
-    ['alerts', apiFailure(500)],
-    ['alerts', new Error('Network failure')],
+    ['summary', new Error('Network failure')],
   ] as const)(
     'throws to the error boundary when the %s load fails (%#)',
     async (source, failure) => {
@@ -246,6 +247,30 @@ describe('CostsPage (server component)', () => {
       const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
 
       await expect(CostsPage()).rejects.toBeInstanceOf(ServerLoadError);
+      expect(logger.error).toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['a 500', apiFailure(500)],
+    ['a rejected fetch', new Error('Network failure')],
+  ] as const)(
+    'shows a notice in the alerts panel’s place on %s, and still renders the rest',
+    async (_label, failure) => {
+      const { logger } = await import('@/lib/logging');
+      await answer({ alerts: failure });
+      const { default: CostsPage } = await import('@/app/admin/orchestration/costs/page');
+
+      render(await CostsPage());
+
+      expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load budget alerts");
+      expect(screen.queryByTestId('budget-alerts-list')).not.toBeInTheDocument();
+      expect(screen.queryByText(/no agents are currently over 80%/i)).not.toBeInTheDocument();
+      expect(screen.getByTestId('cost-summary-cards')).toBeInTheDocument();
+      expect(screen.getByTestId('cost-trend-chart')).toBeInTheDocument();
+      // The per-agent table still renders from the summary.
+      expect(screen.getByText('Alpha Bot')).toBeInTheDocument();
+      expect(screen.queryByText('Beta Bot')).not.toBeInTheDocument();
       expect(logger.error).toHaveBeenCalled();
     }
   );

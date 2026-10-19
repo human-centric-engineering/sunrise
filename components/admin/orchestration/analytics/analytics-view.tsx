@@ -6,12 +6,18 @@
  * Renders engagement cards, trend chart, popular topics, unanswered
  * questions, feedback summary with recent negative, and content gaps.
  * Includes date range and agent filter controls.
+ *
+ * Topics, unanswered questions and content gaps each take `null` to mean
+ * "failed to load": that panel shows `<LoadFailedNotice>` in place of its
+ * list, because its empty state ("No content gaps detected") would read as
+ * an all-clear (#518). The other panels still render.
  */
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback } from 'react';
 
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -46,9 +52,12 @@ export interface AgentOption {
 
 export interface AnalyticsViewProps {
   engagement: EngagementMetrics | null;
+  /** Popular topics. `null` means it failed to load: the panel shows a notice. */
   topics: TopicEntry[] | null;
+  /** Unanswered questions. `null` means it failed to load: the panel shows a notice. */
   unanswered: UnansweredEntry[] | null;
   feedback: FeedbackSummary | null;
+  /** Content gaps. `null` means it failed to load: the panel shows a notice. */
   contentGaps: ContentGap[] | null;
   agents: AgentOption[];
   filters: {
@@ -347,7 +356,9 @@ export function AnalyticsView({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {!topics || topics.length === 0 ? (
+            {!topics ? (
+              <LoadFailedNotice what="popular topics" />
+            ) : topics.length === 0 ? (
               <p className="text-muted-foreground text-sm">No topic data yet.</p>
             ) : (
               <Table>
@@ -383,7 +394,9 @@ export function AnalyticsView({
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {!contentGaps || contentGaps.length === 0 ? (
+            {!contentGaps ? (
+              <LoadFailedNotice what="content gaps" />
+            ) : contentGaps.length === 0 ? (
               <p className="text-muted-foreground text-sm">No content gaps detected.</p>
             ) : (
               <Table>
@@ -425,7 +438,9 @@ export function AnalyticsView({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {!unanswered || unanswered.length === 0 ? (
+          {!unanswered ? (
+            <LoadFailedNotice what="unanswered questions" />
+          ) : unanswered.length === 0 ? (
             <p className="text-muted-foreground text-sm">No unanswered questions found.</p>
           ) : (
             <Table>
