@@ -80,6 +80,11 @@ describe('components/forms/profile-form', () => {
     location: 'New York, USA',
     signupOrgId: null,
     signupOrgRole: null,
+    erasureRequestedAt: null,
+    erasureRequestedBy: null,
+    erasureReason: null,
+    erasureAttempts: 0,
+    erasureNextAttemptAt: null,
     preferences: {
       email: {
         marketing: false,

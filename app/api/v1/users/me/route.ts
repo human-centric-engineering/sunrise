@@ -12,14 +12,14 @@ import { cookies } from 'next/headers';
 import { verifyPassword } from 'better-auth/crypto';
 import { prisma } from '@/lib/db/client';
 import { successResponse, errorResponse } from '@/lib/api/responses';
-import { UnauthorizedError, ErrorCodes } from '@/lib/api/errors';
+import { UnauthorizedError, ConflictError, ErrorCodes } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { updateUserSchema, deleteAccountSchema } from '@/lib/validations/user';
 import { auth } from '@/lib/auth/config';
 import { withAuth } from '@/lib/auth/guards';
 import { humanAdminWhere } from '@/lib/auth/account';
 import { isApiKeySession } from '@/lib/auth/api-keys';
-import { eraseUser } from '@/lib/privacy/erase-user';
+import { requestUserErasure } from '@/lib/privacy/erasure-requests';
 import { getRouteLogger } from '@/lib/api/context';
 import { serverTrack } from '@/lib/analytics/server';
 import { EVENTS } from '@/lib/analytics/events';
@@ -323,8 +323,13 @@ export const DELETE = withAuth(
       // Counting it would let the last human admin self-delete, leaving zero
       // operators and re-opening the first-user-is-admin bootstrap. See
       // lib/auth/account.ts and lib/auth/config.ts.
+      //
+      // An admin whose own deletion is pending is not counted either (t-842):
+      // they can no longer sign in, and the retrier will erase them.
       if (isPlatformAdmin(session.user)) {
-        const adminCount = await prisma.user.count({ where: humanAdminWhere });
+        const adminCount = await prisma.user.count({
+          where: { ...humanAdminWhere, erasureRequestedAt: null },
+        });
         if (adminCount <= 1) {
           return errorResponse(
             'Cannot delete the last admin account. Transfer admin access to another user first.',
@@ -338,16 +343,20 @@ export const DELETE = withAuth(
         email: session.user.email,
       });
 
-      // Erase the user. Schema cascades remove personal data (sessions, accounts,
-      // conversations, executions, user memory, evaluations, API keys, webhook
-      // subscriptions); org config + audit rows are retained with their
-      // creator/userId set null; residual PII is scrubbed; an erasure receipt is
-      // written; and avatar blobs are removed. See lib/privacy/erase-user.ts.
-      await eraseUser({
+      // Record the deletion and disable the account (sessions, API keys,
+      // sign-in), then erase. Schema cascades remove personal data; org config
+      // + audit rows are retained with their creator/userId set null; residual
+      // PII is scrubbed; an erasure receipt is written; and avatar blobs are
+      // removed. If the erasure fails or the request is killed, the
+      // maintenance tick finishes it. See lib/privacy/erasure-requests.ts.
+      const erasure = await requestUserErasure({
         userId: session.user.id,
         actorUserId: session.user.id,
         reason: 'self_service',
       });
+      if (erasure.status === 'in_progress') {
+        throw new ConflictError('This account is already being deleted.');
+      }
 
       // Clear all better-auth cookies (session, cached session data, CSRF, OAuth state)
       const cookieStore = await cookies();
@@ -385,7 +394,7 @@ export const DELETE = withAuth(
     // Ownership: this route is self-scoped by construction — see RouteOwnership in lib/auth/guards.ts.
     ownership: {
       decidedBy: 'self',
-      because: "Erases the caller's own account through `eraseUser(session.user.id)`.",
+      because: "Erases the caller's own account through `requestUserErasure(session.user.id)`.",
     },
   }
 );

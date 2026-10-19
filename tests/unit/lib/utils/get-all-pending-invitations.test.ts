@@ -93,6 +93,11 @@ const createMockUser = (id: string, name: string) => ({
   preferences: {},
   signupOrgId: null,
   signupOrgRole: null,
+  erasureRequestedAt: null,
+  erasureRequestedBy: null,
+  erasureReason: null,
+  erasureAttempts: 0,
+  erasureNextAttemptAt: null,
 });
 
 /**

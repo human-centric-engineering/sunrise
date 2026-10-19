@@ -14,9 +14,9 @@
 
 import { prisma } from '@/lib/db/client';
 import { successResponse, errorResponse } from '@/lib/api/responses';
-import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/api/errors';
 import { withAuth, withAdminAuth } from '@/lib/auth/guards';
-import { eraseUser } from '@/lib/privacy/erase-user';
+import { requestUserErasure } from '@/lib/privacy/erasure-requests';
 import { validateQueryParams, validateRequestBody } from '@/lib/api/validation';
 import { userIdSchema } from '@/lib/validations/user';
 import { adminUserUpdateSchema } from '@/lib/validations/admin';
@@ -296,14 +296,20 @@ export const DELETE = withAdminAuth<{ id: string }>(async (request, session, { p
     });
   }
 
-  // Erase the user: cascades remove personal data, retained config/audit are
-  // de-attributed, residual PII is scrubbed, an erasure receipt is written, and
-  // avatar blobs are removed. See lib/privacy/erase-user.ts.
-  await eraseUser({
+  // Record the deletion and disable the account (sessions, API keys,
+  // sign-in), then erase: cascades remove personal data, retained
+  // config/audit are de-attributed, residual PII is scrubbed, an erasure
+  // receipt is written, and avatar blobs are removed. If the erasure fails or
+  // the request is killed, the maintenance tick finishes it. See
+  // lib/privacy/erasure-requests.ts.
+  const erasure = await requestUserErasure({
     userId: id,
     actorUserId: session.user.id,
     reason: 'admin_action',
   });
+  if (erasure.status === 'in_progress') {
+    throw new ConflictError('This user is already being deleted.');
+  }
 
   log.info('User deleted by admin', { deletedUserId: id, adminId: session.user.id });
 

@@ -919,6 +919,27 @@ export async function signupModeBeforeHook(ctx: { path?: string }): Promise<void
 }
 
 /**
+ * Refuse a new session to an account whose deletion has been requested
+ * (t-842). From the moment `requestUserErasure()` records the intent until the
+ * erasure deletes the row, the account exists but must not be usable. Throws
+ * on a read fault too: the caller relies on this failing closed.
+ *
+ * Exported so unit tests can call the real implementation directly.
+ */
+export async function refuseIfErasurePending(userId: string): Promise<void> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { erasureRequestedAt: true },
+  });
+  if (user?.erasureRequestedAt) {
+    logger.warn('Sign-in refused: the account is being deleted', { userId });
+    throw new APIError('FORBIDDEN', {
+      message: 'This account is being deleted.',
+    });
+  }
+}
+
+/**
  * Choose the org a new session acts in — `Session.activeOrgId` (§106).
  *
  * Runs for every session better-auth mints: sign-in, OAuth callback, the
@@ -939,7 +960,8 @@ export async function signupModeBeforeHook(ctx: { path?: string }): Promise<void
  *    written and the session starts with no org (t-836).
  *
  * Non-blocking, for the same reason the after hook is: a fault reading
- * memberships must not refuse a sign-in. The session is minted with
+ * memberships must not refuse a sign-in. The one refusal is an account being
+ * deleted (`refuseIfErasurePending`), which fails closed. The session is minted with
  * `activeOrgId` null, which the guard resolves to the install org at `single`
  * and refuses at `multi` (t-671) — the same answer a memberless user gets.
  *
@@ -949,6 +971,14 @@ export async function sessionCreateBeforeHook(
   session: SessionCreateData,
   _ctx: DatabaseHookContext
 ): Promise<{ data: { activeOrgId: string | null } }> {
+  // An account whose deletion has been requested gets no new session (t-842).
+  // Outside the try below, which fails open: this must fail closed, so a
+  // fault reading the row refuses the sign-in rather than letting a deleted
+  // account back in. Thrown rather than `return false`, which better-auth
+  // turns into a generic "failed to create session" on some paths and a 500
+  // on others.
+  await refuseIfErasurePending(session.userId);
+
   try {
     const pending = await getPendingSignup();
     if (pending) {

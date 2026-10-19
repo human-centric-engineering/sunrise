@@ -152,6 +152,11 @@ describe('GET /api/v1/users', () => {
           preferences: {},
           signupOrgId: null,
           signupOrgRole: null,
+          erasureRequestedAt: null,
+          erasureRequestedBy: null,
+          erasureReason: null,
+          erasureAttempts: 0,
+          erasureNextAttemptAt: null,
         },
         {
           id: 'user-2',
@@ -170,6 +175,11 @@ describe('GET /api/v1/users', () => {
           preferences: {},
           signupOrgId: null,
           signupOrgRole: null,
+          erasureRequestedAt: null,
+          erasureRequestedBy: null,
+          erasureReason: null,
+          erasureAttempts: 0,
+          erasureNextAttemptAt: null,
         },
       ];
 
@@ -228,6 +238,11 @@ describe('GET /api/v1/users', () => {
           preferences: {},
           signupOrgId: null,
           signupOrgRole: null,
+          erasureRequestedAt: null,
+          erasureRequestedBy: null,
+          erasureReason: null,
+          erasureAttempts: 0,
+          erasureNextAttemptAt: null,
         },
       ];
 

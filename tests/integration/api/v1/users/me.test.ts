@@ -136,6 +136,11 @@ const mockUserData = {
   preferences: { email: { marketing: false, productUpdates: true, securityAlerts: true } },
   signupOrgId: null,
   signupOrgRole: null,
+  erasureRequestedAt: null,
+  erasureRequestedBy: null,
+  erasureReason: null,
+  erasureAttempts: 0,
+  erasureNextAttemptAt: null,
 };
 
 describe('GET /api/v1/users/me', () => {

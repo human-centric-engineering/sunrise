@@ -48,6 +48,20 @@ model User {
   signupOrgId   String?
   signupOrgRole OrgRole?
 
+  // A pending erasure (t-842). Set, with the account disabled, in one
+  // transaction before any erasure work starts (`requestUserErasure()`), so a
+  // request killed part-way leaves a record the maintenance tick's retrier
+  // (`processPendingErasures()`) finishes. Nothing clears them: the row's
+  // delete takes them with it, and `DataErasureReceipt` is the record that the
+  // erasure finished. Set means sign-in is refused (`sessionCreateBeforeHook`).
+  // `erasureRequestedBy` is a plain id, no FK: the actor may be erased first.
+  // `erasureNextAttemptAt` is both the retrier's lease and its backoff.
+  erasureRequestedAt   DateTime?
+  erasureRequestedBy   String?
+  erasureReason        String?
+  erasureAttempts      Int       @default(0)
+  erasureNextAttemptAt DateTime?
+
   // Relations
   sessions Session[]
   accounts Account[]
@@ -94,6 +108,7 @@ model User {
   @@unique([email])
   @@index([role])
   @@index([role, accountType])
+  @@index([erasureNextAttemptAt])
   @@map("user")
 }
 

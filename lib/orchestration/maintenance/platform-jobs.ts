@@ -53,6 +53,7 @@ import {
 import { processPendingEvaluationRuns } from '@/lib/orchestration/evaluations/run-worker';
 import { reconcilePlatformAgentsIfStale } from '@/lib/orchestration/agents/reconcile-platform-agents';
 import { requireOrgId } from '@/lib/tenancy/context';
+import { processPendingErasures } from '@/lib/privacy/erasure-requests';
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
@@ -131,6 +132,7 @@ function job<T>(spec: {
  * | `evaluationRuns`          | every    | per-org | the worker drives one time-slice per tick, so cadence is throughput |
  * | `auditLogRetention`       | 1 hour   | system  | the two audit tables have no org; once, not once per org            |
  * | `platformAgents`          | 15 min   | per-org | catches up an org behind the running code or what it can reach      |
+ * | `pendingErasures`         | 1 min    | system  | the shortest retry backoff; `User` has no org, and erasure is global |
  *
  * `platformAgents` does real work only after a deploy changes the platform
  * agents' definitions, when an org's creation-time reconcile failed, or when
@@ -231,6 +233,18 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
       r.result !== undefined &&
       (r.result.created.length + r.result.updated.length + r.result.deactivated.length > 0 ||
         r.result.knowledge === 'created'),
+  }),
+  job({
+    name: 'pendingErasures',
+    intervalMs: MINUTE,
+    // A person's erasure spans every org they belong to, and `eraseUser()`
+    // enters the system scope itself at `multi`; per org it would erase the
+    // same person once per org.
+    scope: { system: 'pendingErasures: finish account deletions a request left pending (t-842)' },
+    run: () => processPendingErasures(),
+    // Any pending erasure counts, due or not: one waiting out its backoff must
+    // keep the idle gate from skipping past its next attempt.
+    foundWork: (r) => r.claimed > 0 || r.pending > 0,
   }),
 ];
 

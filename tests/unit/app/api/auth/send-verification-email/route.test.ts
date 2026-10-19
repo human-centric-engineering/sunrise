@@ -98,6 +98,11 @@ describe('POST /api/auth/send-verification-email', () => {
     preferences: {},
     signupOrgId: null,
     signupOrgRole: null,
+    erasureRequestedAt: null,
+    erasureRequestedBy: null,
+    erasureReason: null,
+    erasureAttempts: 0,
+    erasureNextAttemptAt: null,
   };
 
   // Helper to create mock request
