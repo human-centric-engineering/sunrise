@@ -20,6 +20,7 @@ import {
 } from '@/components/admin/orchestration/top-capabilities-panel';
 import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { API } from '@/lib/api/endpoints';
+import { logger } from '@/lib/logging';
 import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
 import { loadServerData } from '@/lib/api/server-load';
 import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
@@ -98,9 +99,13 @@ async function getActiveQuarantines(): Promise<ActiveQuarantineRow[] | null> {
     API.ADMIN.ORCHESTRATION.OBSERVABILITY_ACTIVE_QUARANTINES
   );
   if (body === null) return null;
-  // Defensive: ActiveQuarantinesPanel calls `rows.length`, so a response
-  // shape that omits `items` must not bubble through as `undefined`.
-  return Array.isArray(body.items) ? body.items : [];
+  // A reply without `items` counts as a failed load. Returned as `[]` it
+  // would read as "nothing quarantined", the all-clear.
+  if (Array.isArray(body.items)) return body.items;
+  logger.error('Dashboard: active-quarantines reply has no items list', undefined, {
+    path: API.ADMIN.ORCHESTRATION.OBSERVABILITY_ACTIVE_QUARANTINES,
+  });
+  return null;
 }
 
 async function getModels(): Promise<ModelInfo[] | null> {
@@ -110,7 +115,12 @@ async function getModels(): Promise<ModelInfo[] | null> {
   // throw "is not iterable" silently, since `??` only short-circuits
   // null/undefined and the object slipped past the type assertion.
   const body = await loadOrNull<{ models: ModelInfo[] }>(API.ADMIN.ORCHESTRATION.MODELS);
-  return Array.isArray(body?.models) ? body.models : null;
+  if (body === null) return null;
+  if (Array.isArray(body.models)) return body.models;
+  logger.error('Dashboard: models reply has no models list', undefined, {
+    path: API.ADMIN.ORCHESTRATION.MODELS,
+  });
+  return null;
 }
 
 /**

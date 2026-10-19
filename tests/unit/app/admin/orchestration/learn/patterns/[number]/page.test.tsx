@@ -208,9 +208,14 @@ describe('PatternDetailPage', () => {
     expect(serverFetch).not.toHaveBeenCalled();
   });
 
-  it('treats a number below 1 as invalid without fetching', async () => {
-    // The API rejects it with a 400, which would otherwise reach the error boundary.
-    render(await PatternDetailPage({ params: Promise.resolve({ number: '0' }) }));
+  // The API rejects each of these with a 400, which would otherwise reach the
+  // error boundary with a "Try again" that can never succeed.
+  it.each([
+    ['below 1', '0'],
+    ['not an integer', '2.5'],
+    ['past the safe-integer range', '99999999999999999999'],
+  ])('treats a number %s as invalid without fetching', async (_label, number) => {
+    render(await PatternDetailPage({ params: Promise.resolve({ number }) }));
 
     expect(screen.getByText('Invalid pattern number.')).toBeInTheDocument();
     expect(serverFetch).not.toHaveBeenCalled();

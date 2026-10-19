@@ -265,6 +265,54 @@ describe('ExecutionsTable', () => {
 
       expect(mockReplace).toHaveBeenCalledWith('?', expect.objectContaining({ scroll: false }));
     });
+
+    afterEach(async () => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockImplementation(
+        () => new URLSearchParams() as unknown as ReturnType<typeof useSearchParams>
+      );
+    });
+
+    // The page ignores a status the API would reject; the table must not
+    // pick it back up from the URL when another param changes.
+    it('ignores a status in the URL the menu does not offer', async () => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams() as unknown as ReturnType<typeof useSearchParams>
+      );
+      const { rerender } = render(
+        <ExecutionsTable initialExecutions={TWO_EXECUTIONS} initialMeta={MOCK_META} />
+      );
+
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('status=bogus&workflowId=x') as unknown as ReturnType<
+          typeof useSearchParams
+        >
+      );
+      rerender(<ExecutionsTable initialExecutions={TWO_EXECUTIONS} initialMeta={MOCK_META} />);
+
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(screen.getByRole('combobox')).toHaveTextContent('All statuses');
+    });
+
+    it('still follows a valid status pushed into the URL from outside', async () => {
+      const { useSearchParams } = await import('next/navigation');
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams() as unknown as ReturnType<typeof useSearchParams>
+      );
+      const { rerender } = render(
+        <ExecutionsTable initialExecutions={TWO_EXECUTIONS} initialMeta={MOCK_META} />
+      );
+
+      vi.mocked(useSearchParams).mockReturnValue(
+        new URLSearchParams('status=running') as unknown as ReturnType<typeof useSearchParams>
+      );
+      rerender(<ExecutionsTable initialExecutions={TWO_EXECUTIONS} initialMeta={MOCK_META} />);
+
+      await waitFor(() => expect(mockFetch).toHaveBeenCalled());
+      const firstArg = mockFetch.mock.calls[0][0];
+      expect(typeof firstArg === 'string' ? firstArg : '').toContain('status=running');
+    });
   });
 
   describe('duration', () => {

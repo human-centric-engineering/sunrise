@@ -14,6 +14,7 @@ import { PATTERN_ATTRIBUTION_LINE } from '@/lib/orchestration/knowledge/attribut
 import { extractRelatedPatterns } from '@/lib/orchestration/utils/extract-related-patterns';
 import { parseOverviewContent } from '@/lib/orchestration/utils/parse-overview-content';
 import { stripEmbeddingPrefix } from '@/lib/orchestration/utils/strip-embedding-prefix';
+import { getPatternParamSchema } from '@/lib/validations/orchestration';
 import type { AiKnowledgeChunk, PatternSummary } from '@/types/orchestration';
 
 interface PatternDetail {
@@ -44,10 +45,21 @@ async function getPatternNames(): Promise<Map<number, string> | null> {
   return new Map(result.data.map((p) => [p.patternNumber, p.patternName]));
 }
 
+/**
+ * The pattern number, or `null` when the API would reject it. Checked with the
+ * route's own schema: a number it answers 400 (below 1, not an integer, past
+ * the safe-integer range) would otherwise reach the load as a failure, and the
+ * error page's "Try again" could never succeed.
+ */
+function parsePatternNumber(raw: string): number | null {
+  const parsed = getPatternParamSchema.safeParse({ number: raw });
+  return parsed.success ? parsed.data.number : null;
+}
+
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { number: rawNum } = await params;
-  const num = parseInt(rawNum, 10);
-  if (isNaN(num) || num < 1) return { title: 'Pattern Not Found · AI Orchestration' };
+  const num = parsePatternNumber(rawNum);
+  if (num === null) return { title: 'Pattern Not Found · AI Orchestration' };
 
   const result = await getPatternDetail(num);
   const detail = result.ok ? result.data : null;
@@ -60,11 +72,9 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function PatternDetailPage({ params }: PageProps) {
   const { number: rawNum } = await params;
-  const num = parseInt(rawNum, 10);
+  const num = parsePatternNumber(rawNum);
 
-  // The API rejects a number below 1, so it is caught here as invalid rather
-  // than reaching the load as a failure.
-  if (isNaN(num) || num < 1) {
+  if (num === null) {
     return (
       <div className="space-y-6">
         <p className="text-muted-foreground">Invalid pattern number.</p>

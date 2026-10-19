@@ -332,6 +332,26 @@ describe('EditAgentPage (server component)', () => {
       expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
     });
 
+    // The loader saw a success, so the page logs it: the notice says it was.
+    it.each([
+      ['quarantine', { quarantined: ok({}) }, /couldn.t load quarantined capabilities/i],
+      ['trend', { trend: ok({}) }, /couldn.t load the evaluation trend/i],
+    ])('shows and logs a %s reply with no list', async (_label, answers, notice) => {
+      await mockApi(answers);
+      const { logger } = await import('@/lib/logging');
+
+      const { default: EditAgentPage } = await import('@/app/admin/orchestration/agents/[id]/page');
+
+      render(await EditAgentPage({ params: Promise.resolve({ id: 'agent-edit-id' }) }));
+
+      expect(screen.getByRole('alert')).toHaveTextContent(notice);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('no list'),
+        undefined,
+        expect.objectContaining({ path: expect.any(String) })
+      );
+    });
+
     it('shows a notice when the profile list fails to load', async () => {
       await mockApi({ profiles: fail(500) });
 

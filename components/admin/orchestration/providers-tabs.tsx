@@ -27,10 +27,10 @@ import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 
 interface ProvidersTabsProps {
   /**
-   * Rows for the Configuration tab. `null` means they failed to load: that tab
-   * shows a "Couldn't load" notice instead of an empty provider list.
+   * Rows for the Configuration tab. The page loads them with
+   * `requireServerData`, so a failed load never reaches this component.
    */
-  initialProviders: ProviderRow[] | null;
+  initialProviders: ProviderRow[];
   /**
    * Rows for the Model Matrix tab. `null` means they failed to load: that tab
    * shows a "Couldn't load" notice; the Configuration tab is unaffected.
@@ -71,11 +71,7 @@ export function ProvidersTabs({
       </TabsList>
 
       <TabsContent value="configuration">
-        {initialProviders === null ? (
-          <LoadFailedNotice what="providers" />
-        ) : (
-          <ProvidersList initialProviders={initialProviders} hasAnyEnvKey={hasAnyEnvKey} />
-        )}
+        <ProvidersList initialProviders={initialProviders} hasAnyEnvKey={hasAnyEnvKey} />
       </TabsContent>
 
       <TabsContent value="models">

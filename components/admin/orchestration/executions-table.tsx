@@ -216,7 +216,10 @@ export function ExecutionsTable({
       mountedRef.current = true;
       return;
     }
-    const urlStatus = new URLSearchParams(searchParamsKey).get('status') ?? 'all';
+    const rawStatus = new URLSearchParams(searchParamsKey).get('status') ?? 'all';
+    // A value the menu does not offer (a stale or hand-edited link) is no
+    // filter: the API answers it 400, and the page already ignored it.
+    const urlStatus = STATUS_OPTIONS.some((opt) => opt.value === rawStatus) ? rawStatus : 'all';
     if (urlStatus !== statusFilter) {
       setStatusFilter(urlStatus);
       void fetchExecutions(1, { status: urlStatus });

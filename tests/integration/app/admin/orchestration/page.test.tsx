@@ -353,6 +353,25 @@ describe('OrchestrationDashboardPage (server component)', () => {
       expect(failedNotices()).toEqual([expect.stringContaining('recent activity')]);
     });
 
+    it('shows quarantines as failed, not all-clear, when the reply has no items list', async () => {
+      const { serverFetch } = await import('@/lib/api/server-fetch');
+      const { logger } = await import('@/lib/logging');
+      await setupHappyPathMocks(ALL_CONFIGURED);
+      const happy = vi.mocked(serverFetch).getMockImplementation();
+      vi.mocked(serverFetch).mockImplementation(async (url: string, init?: RequestInit) =>
+        url.includes('/active-quarantines') ? apiSuccess({}) : happy!(url, init)
+      );
+
+      await renderPage();
+
+      expect(failedNotices()).toEqual([expect.stringContaining('capability quarantines')]);
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('no items list'),
+        undefined,
+        expect.any(Object)
+      );
+    });
+
     it('starts the activity feed fetches without waiting for the dashboard stats', async () => {
       const { serverFetch } = await import('@/lib/api/server-fetch');
       await setupHappyPathMocks(ALL_CONFIGURED);

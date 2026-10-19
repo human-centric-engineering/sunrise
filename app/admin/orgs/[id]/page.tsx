@@ -9,7 +9,6 @@ import {
 import { OrgUsageSummary } from '@/components/admin/orgs/org-usage-summary';
 import { Badge } from '@/components/ui/badge';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { loadServerData, requireServerData } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import type { OrgUsageReport } from '@/lib/orchestration/llm/cost-reports';
@@ -47,25 +46,16 @@ async function getOrg(id: string): Promise<OrgDetail> {
 /**
  * This org's usage this month, from the per-org usage endpoint narrowed to
  * it. `'refused'` when the endpoint refuses the caller: at `multi` only the
- * install org may see what an org has spent. `null` when it could not be
- * loaded, which is logged. On `serverFetch` rather than `loadServerData`
- * because the 403 is an expected answer, which the loader would log as a
- * failure.
+ * install org may see what an org has spent, so the 403 is an expected answer
+ * and is not logged. `null` when it could not be loaded, which is.
  */
 async function getOrgUsage(id: string): Promise<OrgUsageReport | 'refused' | null> {
-  try {
-    const res = await serverFetch(
-      `${API.ADMIN.ORCHESTRATION.COSTS_ORGS}?orgId=${encodeURIComponent(id)}`
-    );
-    if (res.status === 403) return 'refused';
-    const body = await parseApiResponse<OrgUsageReport>(res);
-    if (res.ok && body.success) return body.data;
-    logger.error('org page: usage fetch failed', undefined, { orgId: id, status: res.status });
-    return null;
-  } catch (err) {
-    logger.error('org page: usage fetch failed', err, { orgId: id });
-    return null;
-  }
+  const result = await loadServerData<OrgUsageReport>(
+    `${API.ADMIN.ORCHESTRATION.COSTS_ORGS}?orgId=${encodeURIComponent(id)}`,
+    { expected: [403] }
+  );
+  if (result.ok) return result.data;
+  return result.failure.kind === 'failed' && result.failure.status === 403 ? 'refused' : null;
 }
 
 /** The most providers the list endpoint returns per page. */

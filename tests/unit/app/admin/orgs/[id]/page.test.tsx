@@ -323,6 +323,7 @@ describe('OrgPage', () => {
       expect(screen.queryByTestId('org-usage-summary')).not.toBeInTheDocument();
       // An expected refusal, not a failure.
       expect(logger.error).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled();
     });
 
     it('says the usage could not be loaded when the fetch fails, and still renders the rest', async () => {
@@ -338,9 +339,10 @@ describe('OrgPage', () => {
       expect(screen.getByText(/usage could not be loaded/)).toBeInTheDocument();
       expect(screen.getByRole('checkbox', { name: /Anthropic/ })).toBeChecked();
       // Before #518 a non-OK usage answer was not logged.
-      expect(logger.error).toHaveBeenCalledWith('org page: usage fetch failed', undefined, {
-        orgId: ID,
+      expect(logger.error).toHaveBeenCalledWith(expect.any(String), undefined, {
+        path: USAGE_PATH,
         status: 500,
+        code: 'INTERNAL_ERROR',
       });
     });
   });

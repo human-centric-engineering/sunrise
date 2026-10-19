@@ -352,21 +352,6 @@ describe('ProvidersTabs', () => {
       expect(screen.getByTestId('providers-list')).toHaveTextContent('1 providers');
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
-
-    it('shows a notice in the Configuration tab when the providers are null', () => {
-      renderOn('', { initialProviders: null, initialModels: MODELS });
-
-      expect(screen.getByRole('alert')).toHaveTextContent(/couldn.t load providers/i);
-      expect(screen.queryByTestId('providers-list')).not.toBeInTheDocument();
-      expect(screen.getAllByRole('tab')).toHaveLength(2);
-    });
-
-    it('leaves the Model Matrix tab working when only the providers are null', () => {
-      renderOn('tab=models', { initialProviders: null, initialModels: MODELS });
-
-      expect(screen.getByTestId('provider-models-matrix')).toHaveTextContent('1 models');
-      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-    });
   });
 
   describe('Renders both tab triggers regardless of active tab', () => {

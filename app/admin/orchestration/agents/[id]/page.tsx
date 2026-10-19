@@ -19,7 +19,8 @@ import {
 import { UnapprovedProvidersBanner } from '@/components/admin/orchestration/agents/unapproved-providers-banner';
 import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { API } from '@/lib/api/endpoints';
-import { loadServerData, requireServerData } from '@/lib/api/server-load';
+import { loadServerData, requireServerData, type LoadResult } from '@/lib/api/server-load';
+import { logger } from '@/lib/logging';
 import {
   getAgentModels,
   getEffectiveAgentDefaults,
@@ -74,6 +75,23 @@ export async function generateMetadata({
  * place: an empty quarantine banner would read as "none quarantined".
  */
 
+/**
+ * A panel's list from a load, or `null` when the load failed or its reply has
+ * no list where one belongs. The second case is logged here, since the loader
+ * saw a success.
+ */
+function listOrNull<D, I>(
+  result: LoadResult<D>,
+  pick: (data: D) => I[] | undefined,
+  path: string
+): I[] | null {
+  if (!result.ok) return null;
+  const list = pick(result.data);
+  if (Array.isArray(list)) return list;
+  logger.error('Agent page: panel reply has no list', undefined, { path });
+  return null;
+}
+
 export default async function EditAgentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const [{ data: agent }, providers, models, trend, profiles, quarantinedCapabilities] =
@@ -93,6 +111,19 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
         API.ADMIN.ORCHESTRATION.agentQuarantinedCapabilities(id)
       ),
     ]);
+
+  // A reply without its list counts as a failed load: the notice says the
+  // error was logged, so it is.
+  const quarantineItems = listOrNull(
+    quarantinedCapabilities,
+    (data) => data.items,
+    API.ADMIN.ORCHESTRATION.agentQuarantinedCapabilities(id)
+  );
+  const trendPoints = listOrNull(
+    trend,
+    (data) => data.points,
+    API.ADMIN.ORCHESTRATION.agentEvaluationTrend(id)
+  );
 
   const effectiveDefaults = await getEffectiveAgentDefaults({
     provider: agent.provider,
@@ -118,14 +149,14 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
         unapproved={agent._unapprovedProviders ?? []}
       />
 
-      {quarantinedCapabilities.ok && Array.isArray(quarantinedCapabilities.data.items) ? (
-        <QuarantinedCapabilitiesBanner items={quarantinedCapabilities.data.items} />
+      {quarantineItems ? (
+        <QuarantinedCapabilitiesBanner items={quarantineItems} />
       ) : (
         <LoadFailedNotice what="quarantined capabilities" />
       )}
 
-      {trend.ok && Array.isArray(trend.data.points) ? (
-        <EvaluationTrendChart points={trend.data.points} />
+      {trendPoints ? (
+        <EvaluationTrendChart points={trendPoints} />
       ) : (
         <LoadFailedNotice what="the evaluation trend" />
       )}
