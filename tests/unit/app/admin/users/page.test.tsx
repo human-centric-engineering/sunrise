@@ -4,10 +4,11 @@
  * Unit Tests: AdminUsersPage (app/admin/users/page.tsx)
  *
  * The page loads the users and the pending invitations in parallel and hands
- * both to `UserManagementTabs`. A failed load of either (5xx, success:false,
- * no response) throws to the admin error boundary instead of rendering
- * "No users found" or an empty "Pending Invitations" tab (#518). Real empty
- * lists still render as empty lists.
+ * both to `UserManagementTabs`. A failed users load (5xx, success:false, no
+ * response) throws to the admin error boundary instead of rendering "No users
+ * found" (#518). A failed invitations load hands the tabs `null`, so the
+ * invitations tab shows a notice — never an empty "Pending Invitations" tab —
+ * and the users tab still renders. Real empty lists still render as empty.
  *
  * Only `serverFetch` is faked: the real parser and `requireServerData` run.
  * No auth-redirect test: the admin guard lives in `app/admin/layout.tsx`.
@@ -157,13 +158,38 @@ describe('AdminUsersPage', () => {
     });
   });
 
-  it('throws when the invitations API answers success:false, rather than showing none pending', async () => {
+  it('renders the users and hands the tabs null invitations when that API answers success:false', async () => {
     serve({
       [USERS_PATH]: () => apiSuccess([USER]),
       [INVITATIONS_PATH]: () => apiFailure(200),
     });
 
-    await expect(AdminUsersPage()).rejects.toBeInstanceOf(ServerLoadError);
-    expect(tabsProps).not.toHaveBeenCalled();
+    render(await AdminUsersPage());
+
+    expect(screen.getByTestId('user-management-tabs')).toBeInTheDocument();
+    expect(tabsProps).toHaveBeenCalledWith({
+      users: [{ ...USER, createdAt: new Date(USER.createdAt) }],
+      usersMeta: { page: 1, limit: 20, total: 1, totalPages: 1 },
+      // null, not [] — an empty tab would read as "none pending".
+      invitations: null,
+      invitationsMeta: null,
+    });
+  });
+
+  it('hands the tabs null invitations, and logs, when the invitations fetch rejects', async () => {
+    const failure = new Error('ECONNREFUSED');
+    serve({
+      [USERS_PATH]: () => apiSuccess([USER]),
+      [INVITATIONS_PATH]: () => Promise.reject(failure),
+    });
+
+    render(await AdminUsersPage());
+
+    expect(tabsProps).toHaveBeenCalledWith(
+      expect.objectContaining({ invitations: null, invitationsMeta: null })
+    );
+    expect(logger.error).toHaveBeenCalledWith(expect.any(String), failure, {
+      path: INVITATIONS_PATH,
+    });
   });
 });

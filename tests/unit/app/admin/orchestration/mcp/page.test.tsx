@@ -29,7 +29,12 @@ vi.mock('@/components/admin/orchestration/mcp/mcp-dashboard', () => ({
     viewerTier,
   }: {
     initialSettings: unknown;
-    stats: { tools: number; resources: number; prompts: number; keys: number };
+    stats: {
+      tools: number | null;
+      resources: number | null;
+      prompts: number | null;
+      keys: number | null;
+    };
     viewerTier?: string;
   }) => (
     <div
@@ -37,10 +42,10 @@ vi.mock('@/components/admin/orchestration/mcp/mcp-dashboard', () => ({
       data-viewer-tier={viewerTier ?? ''}
       data-has-settings={initialSettings === null ? 'false' : 'true'}
       data-settings={initialSettings ? JSON.stringify(initialSettings) : ''}
-      data-tools={stats.tools}
-      data-resources={stats.resources}
-      data-prompts={stats.prompts}
-      data-keys={stats.keys}
+      data-tools={stats.tools === null ? 'failed' : stats.tools}
+      data-resources={stats.resources === null ? 'failed' : stats.resources}
+      data-prompts={stats.prompts === null ? 'failed' : stats.prompts}
+      data-keys={stats.keys === null ? 'failed' : stats.keys}
     />
   ),
 }));
@@ -206,25 +211,44 @@ describe('McpDashboardPage', () => {
     expect(dashboard).toHaveAttribute('data-keys', '4');
   });
 
-  // 8. A failed count throws rather than showing 0 (#518): the cards have no
-  // "unknown" state, and zero tools and keys also shows "Getting Started".
-  it('throws when the tools count fails, rather than showing 0 tools', async () => {
+  // 8. A failed count is null, never 0 (#518): the dashboard shows "—" and a
+  // notice for it, and zero tools and keys would also show "Getting Started".
+  // The page and the other counts still render.
+  it('renders the page and hands a null tools count when that count fails, rather than 0', async () => {
     setupServerFetch({}, { tools: () => apiFailure(500) });
 
-    await expect(McpDashboardPage()).rejects.toBeInstanceOf(ServerLoadError);
+    render(await McpDashboardPage());
+
+    expect(screen.getByRole('heading', { name: /MCP Server/i })).toBeInTheDocument();
+    const dashboard = screen.getByTestId('mcp-dashboard');
+    expect(dashboard).toHaveAttribute('data-tools', 'failed');
+    expect(dashboard).toHaveAttribute('data-resources', '5');
+    expect(dashboard).toHaveAttribute('data-prompts', '4');
+    expect(dashboard).toHaveAttribute('data-keys', '2');
+    expect(dashboard).toHaveAttribute('data-has-settings', 'true');
   });
 
-  it('throws when the keys count fetch rejects', async () => {
+  it('hands a null keys count, and logs, when the keys count fetch rejects', async () => {
+    const fetchErr = new Error('keys network failure');
     setupServerFetch(
       {},
       {
         keys: () => {
-          throw new Error('keys network failure');
+          throw fetchErr;
         },
       }
     );
 
-    await expect(McpDashboardPage()).rejects.toBeInstanceOf(ServerLoadError);
+    render(await McpDashboardPage());
+
+    const dashboard = screen.getByTestId('mcp-dashboard');
+    expect(dashboard).toHaveAttribute('data-keys', 'failed');
+    expect(dashboard).toHaveAttribute('data-tools', '3');
+    expect(vi.mocked(logger.error)).toHaveBeenCalledWith(
+      expect.any(String),
+      fetchErr,
+      expect.objectContaining({ path: expect.stringContaining(API.ADMIN.ORCHESTRATION.MCP_KEYS) })
+    );
   });
 
   // 9. Stats non-number meta.total
@@ -285,10 +309,12 @@ describe('McpDashboardPage — an org admin’s keys (§111 t-812)', () => {
     ).toBeInTheDocument();
   });
 
-  it('throws when their keys count fails, rather than showing 0 keys', async () => {
+  it('hands a null keys count when theirs fails, rather than showing 0 keys', async () => {
     setupServerFetch({}, { keys: () => apiFailure(500) });
 
-    await expect(McpDashboardPage()).rejects.toBeInstanceOf(ServerLoadError);
+    render(await McpDashboardPage());
+
+    expect(screen.getByTestId('mcp-dashboard')).toHaveAttribute('data-keys', 'failed');
   });
 
   it('control: the platform’s view fetches all five', async () => {

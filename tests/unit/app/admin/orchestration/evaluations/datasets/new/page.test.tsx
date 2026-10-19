@@ -5,9 +5,10 @@
  * (app/admin/orchestration/evaluations/datasets/new/page.tsx)
  *
  * The chat-agent list feeds the "generate from description" tab, which reads
- * an empty list as "no chat agents exist — create one". So a failed load
- * throws to the error boundary rather than reaching the form (#518); a real
- * empty list still reaches it.
+ * an empty list as "no chat agents exist — create one". So a failed load is
+ * handed to the tabs as `null` (the generate tab shows a notice), never as
+ * `[]`, and the rest of the page still renders (#518); a real empty list
+ * still reaches the form.
  *
  * @see app/admin/orchestration/evaluations/datasets/new/page.tsx
  */
@@ -30,8 +31,11 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 vi.mock('@/components/admin/orchestration/evaluations-foundations/dataset-new-tabs', () => ({
-  DatasetNewTabs: ({ agents }: { agents: unknown[] }) => (
-    <div data-testid="dataset-new-tabs" data-agent-count={String(agents.length)} />
+  DatasetNewTabs: ({ agents }: { agents: unknown[] | null }) => (
+    <div
+      data-testid="dataset-new-tabs"
+      data-agent-count={agents === null ? 'failed' : String(agents.length)}
+    />
   ),
 }));
 
@@ -49,7 +53,6 @@ vi.mock('next/link', () => ({
 
 import NewDatasetPage from '@/app/admin/orchestration/evaluations/datasets/new/page';
 import { serverFetch } from '@/lib/api/server-fetch';
-import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { API } from '@/lib/api/endpoints';
 
@@ -82,10 +85,14 @@ describe('NewDatasetPage', () => {
     expect(screen.getByTestId('dataset-new-tabs')).toHaveAttribute('data-agent-count', '0');
   });
 
-  it('throws to the error boundary when the agent load fails', async () => {
+  it('renders the page and hands the tabs null when the agent load fails', async () => {
     vi.mocked(serverFetch).mockResolvedValue(apiFailure(500));
 
-    await expect(NewDatasetPage()).rejects.toBeInstanceOf(ServerLoadError);
+    render(await NewDatasetPage());
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('New dataset');
+    expect(screen.getByTestId('dataset-anatomy-card')).toBeInTheDocument();
+    expect(screen.getByTestId('dataset-new-tabs')).toHaveAttribute('data-agent-count', 'failed');
     expect(logger.error).toHaveBeenCalledWith(
       'Server data load failed',
       undefined,
@@ -93,9 +100,11 @@ describe('NewDatasetPage', () => {
     );
   });
 
-  it('throws to the error boundary when serverFetch rejects', async () => {
+  it('hands the tabs null, not an empty list, when serverFetch rejects', async () => {
     vi.mocked(serverFetch).mockRejectedValue(new Error('Network down'));
 
-    await expect(NewDatasetPage()).rejects.toBeInstanceOf(ServerLoadError);
+    render(await NewDatasetPage());
+
+    expect(screen.getByTestId('dataset-new-tabs')).toHaveAttribute('data-agent-count', 'failed');
   });
 });

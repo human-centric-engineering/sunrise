@@ -16,6 +16,7 @@ import * as React from 'react';
 import { FileUp, Sparkles } from 'lucide-react';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { DatasetUploadForm } from '@/components/admin/orchestration/evaluations-foundations/dataset-upload-form';
 import {
   GenerateFromDescriptionForm,
@@ -23,7 +24,13 @@ import {
 } from '@/components/admin/orchestration/evaluations-foundations/generate-from-description-form';
 
 interface DatasetNewTabsProps {
-  agents: AgentOption[];
+  /**
+   * Chat agents the generate tab can draft cases with, or `null` when they
+   * failed to load: that tab then shows a "Couldn't load" notice instead of
+   * the form, whose empty-list state tells the admin to create an agent. The
+   * upload tab is unaffected.
+   */
+  agents: AgentOption[] | null;
 }
 
 export function DatasetNewTabs({ agents }: DatasetNewTabsProps): React.ReactElement {
@@ -43,7 +50,11 @@ export function DatasetNewTabs({ agents }: DatasetNewTabsProps): React.ReactElem
         <DatasetUploadForm />
       </TabsContent>
       <TabsContent value="generate" className="mt-0">
-        <GenerateFromDescriptionForm agents={agents} />
+        {agents ? (
+          <GenerateFromDescriptionForm agents={agents} />
+        ) : (
+          <LoadFailedNotice what="the agents" />
+        )}
       </TabsContent>
     </Tabs>
   );

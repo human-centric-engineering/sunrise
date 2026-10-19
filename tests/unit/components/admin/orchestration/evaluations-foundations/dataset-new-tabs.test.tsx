@@ -8,6 +8,8 @@
  *  - Default tab is "upload" — DatasetUploadForm is visible on initial mount
  *  - Clicking "Generate from description" tab switches to GenerateFromDescriptionForm
  *    and hides the upload form
+ *  - `agents={null}` (failed to load): the generate tab shows a load-failed
+ *    alert in place of the form; the upload tab still works
  *
  * Child forms are mocked to simple markers so we don't pull in their full
  * dependency graphs (react-hook-form, Zod, API clients, etc.).
@@ -71,5 +73,32 @@ describe('DatasetNewTabs', () => {
 
     // The upload form is no longer rendered.
     expect(screen.queryByTestId('upload-form-marker')).not.toBeInTheDocument();
+  });
+
+  // ── A failed agent load shows in the generate tab only (#518) ────────────
+
+  it('shows a load-failed alert in the generate tab when agents is null', async () => {
+    const user = userEvent.setup();
+    render(<DatasetNewTabs agents={null} />);
+
+    // The upload tab is untouched by the agent failure.
+    expect(screen.getByTestId('upload-form-marker')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: /Generate from description/i }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load the agents.");
+    // Never the form, whose empty-list state says "create an agent".
+    expect(screen.queryByTestId('generate-form-marker')).not.toBeInTheDocument();
+  });
+
+  it('shows no alert when the agent list loaded, even empty', async () => {
+    const user = userEvent.setup();
+    render(<DatasetNewTabs agents={[]} />);
+
+    await user.click(screen.getByRole('tab', { name: /Generate from description/i }));
+
+    expect(screen.getByText('GENERATE 0')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });

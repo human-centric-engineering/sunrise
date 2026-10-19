@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { UserPlus } from 'lucide-react';
 import { UserTable } from '@/components/admin/user-table';
 import { InvitationTable } from '@/components/admin/invitation-table';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { useUrlTabs } from '@/lib/hooks/use-url-tabs';
 import type { UserListItem, InvitationListItem } from '@/types';
 import type { PaginationMeta } from '@/types/api';
@@ -24,8 +25,14 @@ import type { PaginationMeta } from '@/types/api';
 interface UserManagementTabsProps {
   users: UserListItem[];
   usersMeta: PaginationMeta;
-  invitations: InvitationListItem[];
-  invitationsMeta: PaginationMeta;
+  /**
+   * Pending invitations, or `null` when they failed to load: the invitations
+   * tab then shows a "Couldn't load" notice instead of an empty table, which
+   * would read as "none pending". The users tab is unaffected.
+   */
+  invitations: InvitationListItem[] | null;
+  /** Pagination for {@link invitations}; `null` when they failed to load. */
+  invitationsMeta: PaginationMeta | null;
 }
 
 const ALLOWED_TABS = ['users', 'invitations'] as const;
@@ -60,7 +67,7 @@ export function UserManagementTabs({
           </TabsTrigger>
           <TabsTrigger value="invitations">
             Pending Invitations
-            {invitationsMeta.total > 0 && (
+            {invitationsMeta && invitationsMeta.total > 0 && (
               <span className="bg-muted-foreground/20 ml-2 rounded-full px-2 py-0.5 text-xs">
                 {invitationsMeta.total}
               </span>
@@ -80,7 +87,11 @@ export function UserManagementTabs({
       </TabsContent>
 
       <TabsContent value="invitations">
-        <InvitationTable initialInvitations={invitations} initialMeta={invitationsMeta} />
+        {invitations && invitationsMeta ? (
+          <InvitationTable initialInvitations={invitations} initialMeta={invitationsMeta} />
+        ) : (
+          <LoadFailedNotice what="pending invitations" />
+        )}
       </TabsContent>
     </Tabs>
   );

@@ -48,8 +48,8 @@ Wrapper component that organizes users and invitations into tabs:
 interface UserManagementTabsProps {
   users: UserListItem[];
   usersMeta: PaginationMeta;
-  invitations: InvitationListItem[];
-  invitationsMeta: PaginationMeta;
+  invitations: InvitationListItem[] | null; // null = failed to load
+  invitationsMeta: PaginationMeta | null; // null = failed to load
 }
 ```
 
@@ -58,6 +58,7 @@ Features:
 - **Tab badges**: Shows count of users and pending invitations
 - **Shared invite button**: Single "Invite User" button in header
 - **Parallel data fetching**: Server component fetches both datasets concurrently
+- **Failed loads (#518)**: A failed users load throws to the admin error boundary. A failed invitations load (`loadServerData`) passes `null`, and the invitations tab shows a "Couldn't load pending invitations" notice instead of an empty table, which would read as "none pending"; the users tab still works
 
 ```mermaid
 graph TD

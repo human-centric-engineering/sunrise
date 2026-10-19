@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { API } from '@/lib/api/endpoints';
-import { requireServerData } from '@/lib/api/server-load';
+import { loadServerData, requireServerData } from '@/lib/api/server-load';
 import { parsePaginationMeta } from '@/lib/validations/common';
 import { UserManagementTabs } from '@/components/admin/user-management-tabs';
 import type { UserListItem, InvitationListItem } from '@/types';
@@ -43,15 +43,18 @@ async function getUsers(): Promise<{
 }
 
 /**
- * Fetch pending invitations from API
+ * Fetch pending invitations from API. `null` when they failed to load: the
+ * failure is logged by `loadServerData`, and the invitations tab shows it.
  */
 async function getInvitations(): Promise<{
   invitations: InvitationListItem[];
   meta: PaginationMeta;
-}> {
-  const { data, meta } = await requireServerData<InvitationListItem[]>(
+} | null> {
+  const result = await loadServerData<InvitationListItem[]>(
     API.ADMIN.INVITATIONS + `?limit=${DEFAULT_PAGE_LIMIT}&sortBy=invitedAt&sortOrder=desc`
   );
+  if (!result.ok) return null;
+  const { data, meta } = result;
 
   // Convert string dates to Date objects
   const invitations: InvitationListItem[] = data.map((inv) => ({
@@ -76,15 +79,14 @@ async function getInvitations(): Promise<{
  *
  * User management with tabs for active users and pending invitations.
  *
- * A failed load of either list throws to the admin error boundary rather
- * than rendering "No users found" or an empty invitations tab (#518). The
- * invitations are the second tab, but `UserManagementTabs` has no way to show
- * a failed tab in its place, and an empty "Pending Invitations" tab would
- * read as "none pending" — so a failure there stops the page too.
+ * A failed load of the users throws to the admin error boundary rather than
+ * rendering "No users found" (#518). The invitations are the second tab: a
+ * failed load there passes `null`, and that tab alone shows a "Couldn't load"
+ * notice — never an empty tab, which would read as "none pending".
  */
 export default async function AdminUsersPage() {
   // Fetch both data sets in parallel for performance
-  const [{ users, meta: usersMeta }, { invitations, meta: invitationsMeta }] = await Promise.all([
+  const [{ users, meta: usersMeta }, invitationsLoad] = await Promise.all([
     getUsers(),
     getInvitations(),
   ]);
@@ -101,8 +103,8 @@ export default async function AdminUsersPage() {
       <UserManagementTabs
         users={users}
         usersMeta={usersMeta}
-        invitations={invitations}
-        invitationsMeta={invitationsMeta}
+        invitations={invitationsLoad?.invitations ?? null}
+        invitationsMeta={invitationsLoad?.meta ?? null}
       />
     </div>
   );

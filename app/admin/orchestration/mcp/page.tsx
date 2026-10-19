@@ -6,7 +6,7 @@ import { McpInfoModal } from '@/components/admin/orchestration/mcp/mcp-info-moda
 import { McpDashboard } from '@/components/admin/orchestration/mcp/mcp-dashboard';
 import { API } from '@/lib/api/endpoints';
 import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
-import { requireServerData, ServerLoadError } from '@/lib/api/server-load';
+import { loadServerData, requireServerData, ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { mcpSettingsResponseSchema, type McpSettingsResponse } from '@/lib/validations/mcp';
 
@@ -41,24 +41,26 @@ function hasNumericTotal(meta: unknown): meta is { total: number } {
  * The count on each card. An org viewer (§111 t-812) gets the keys count only:
  * the other three lists are the platform's, and their routes refuse them.
  *
- * The counts are required too: the cards have no "unknown" state, so a failed
- * count would read as 0 — and zero tools and keys also shows the "Getting
- * Started" card. A failed load throws to the admin error boundary (#518).
+ * A failed count is `null`, never 0 (#518): its card shows "—" with a notice,
+ * and a `null` never triggers the "Getting Started" card that zero tools and
+ * keys would. The failure is logged by `loadServerData`; the page still renders.
  */
 async function getStats(platformRead: Promise<boolean>): Promise<{
-  tools: number;
-  resources: number;
-  prompts: number;
-  keys: number;
+  tools: number | null;
+  resources: number | null;
+  prompts: number | null;
+  keys: number | null;
 }> {
-  // One list's total, or 0 when it is not fetched for this viewer.
-  const total = async (path: string | null): Promise<number> => {
+  // One list's total, 0 when it is not fetched for this viewer, or null when
+  // the load failed.
+  const total = async (path: string | null): Promise<number | null> => {
     if (!path) return 0;
-    const { meta } = await requireServerData<unknown[]>(`${path}?page=1&limit=1`);
-    return hasNumericTotal(meta) ? meta.total : 0;
+    const result = await loadServerData<unknown[]>(`${path}?page=1&limit=1`);
+    if (!result.ok) return null;
+    return hasNumericTotal(result.meta) ? result.meta.total : 0;
   };
   // A platform-only list's total; the keys count does not wait on the tier.
-  const platformTotal = async (path: string): Promise<number> =>
+  const platformTotal = async (path: string): Promise<number | null> =>
     total((await platformRead) ? path : null);
 
   const [tools, resources, prompts, keys] = await Promise.all([

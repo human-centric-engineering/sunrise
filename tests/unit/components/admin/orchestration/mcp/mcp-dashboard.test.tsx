@@ -12,12 +12,14 @@
  * - Shows getting started wizard when no tools/keys
  * - Hides getting started wizard when tools/keys exist
  * - Toggle calls apiClient.patch and updates state
+ * - A count that failed to load (null) shows "—" on its card and a notice,
+ *   and never triggers Getting Started (#518)
  *
  * @see components/admin/orchestration/mcp/mcp-dashboard.tsx
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, act, fireEvent, waitFor, within } from '@testing-library/react';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -233,6 +235,75 @@ describe('McpDashboard', () => {
       // Nor the server status card and its toggle, though the settings say enabled.
       expect(screen.queryByRole('switch')).not.toBeInTheDocument();
       expect(screen.queryByText('Client Configuration')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('a count that failed to load (#518)', () => {
+    /** The badge text on the card linking to `href`. */
+    const badgeOn = (href: string) => {
+      const card = screen.getAllByRole('link').find((a) => a.getAttribute('href') === href);
+      if (!card) throw new Error(`no card links to ${href}`);
+      return within(card);
+    };
+
+    it('shows "—" on the failed card and a load-failed notice; the others keep their counts', () => {
+      render(
+        <McpDashboard
+          initialSettings={ENABLED_SETTINGS}
+          stats={{ tools: null, resources: 2, prompts: 4, keys: 1 }}
+        />
+      );
+
+      expect(screen.getByRole('alert')).toHaveTextContent("Couldn't load some of the card counts.");
+      expect(badgeOn('/admin/orchestration/mcp/tools').getByText('—')).toBeInTheDocument();
+      expect(badgeOn('/admin/orchestration/mcp/resources').getByText('2')).toBeInTheDocument();
+      expect(badgeOn('/admin/orchestration/mcp/keys').getByText('1')).toBeInTheDocument();
+      // The rest of the dashboard still renders.
+      expect(screen.getByText('Server Status')).toBeInTheDocument();
+      expect(screen.getByText('Client Configuration')).toBeInTheDocument();
+    });
+
+    it('never shows Getting Started when the tools count failed and keys are 0', () => {
+      render(
+        <McpDashboard
+          initialSettings={DISABLED_SETTINGS}
+          stats={{ tools: null, resources: 0, prompts: 0, keys: 0 }}
+        />
+      );
+
+      expect(screen.queryByText('Getting Started')).not.toBeInTheDocument();
+    });
+
+    it('never shows Getting Started when the keys count failed and tools are 0', () => {
+      render(
+        <McpDashboard
+          initialSettings={DISABLED_SETTINGS}
+          stats={{ tools: 0, resources: 0, prompts: 0, keys: null }}
+        />
+      );
+
+      expect(screen.queryByText('Getting Started')).not.toBeInTheDocument();
+      expect(badgeOn('/admin/orchestration/mcp/keys').getByText('—')).toBeInTheDocument();
+    });
+
+    it('shows no notice when every count loaded', () => {
+      render(<McpDashboard initialSettings={ENABLED_SETTINGS} stats={STATS_WITH_DATA} />);
+
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.queryByText('—')).not.toBeInTheDocument();
+    });
+
+    it('an org viewer whose keys count failed sees "—" on the keys card and the notice', () => {
+      render(
+        <McpDashboard
+          initialSettings={null}
+          stats={{ tools: 0, resources: 0, prompts: 0, keys: null }}
+          viewerTier="org"
+        />
+      );
+
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      expect(badgeOn('/admin/orchestration/mcp/keys').getByText('—')).toBeInTheDocument();
     });
   });
 });
