@@ -360,6 +360,27 @@ describe('scanRouterMocks: cast rule', () => {
     expect(casts(source)).toHaveLength(1);
   });
 
+  it('flags one returned as a branch of a conditional or a ?? operand', () => {
+    const source = `
+      vi.mocked(useRouter).mockImplementation(() => { return x ? ({ push } as never) : createMockRouter(); });
+      vi.mocked(useRouter).mockImplementation(() => x ? ({ push } as never) : createMockRouter());
+      vi.mocked(useRouter).mockReturnValue(stub ?? ({ push } as never));
+    `;
+    expect(casts(source)).toHaveLength(3);
+  });
+
+  it('does not flag a cast in a conditional that is not the returned value', () => {
+    const source = `vi.mocked(useRouter).mockImplementation(() => { const n = x ? (1 as never) : 2; return createMockRouter(); });`;
+    expect(casts(source)).toEqual([]);
+  });
+
+  it('stops at the nearest function, not the outermost one', () => {
+    // A `return` inside a nested function's block returns from that function,
+    // not from the implementation, so it is not the router handed out.
+    const source = `vi.mocked(useRouter).mockImplementation(() => { const f = () => { if (y) { return 1 as never; } }; return createMockRouter(); });`;
+    expect(casts(source)).toEqual([]);
+  });
+
   it('does not flag a cast returned by a function nested inside the implementation', () => {
     const source = `vi.mocked(useRouter).mockImplementation(() => { const f = () => { return 1 as never; }; return createMockRouter(); });`;
     expect(casts(source)).toEqual([]);
@@ -561,6 +582,18 @@ describe('scanRouterMocks: false positives have a way out', () => {
       const row = { ${SIX} };
     `;
     expect(literals(source)).toHaveLength(1);
+  });
+
+  it('accepts a reason that starts with a slash or an asterisk', () => {
+    const source = `
+      // router-mocks-ignore: /api/route keyed table, not a router
+      const a = { ${SIX} };
+      // router-mocks-ignore: *not* a router
+      const b = { ${SIX} };
+      /* router-mocks-ignore: a reason in a block comment */
+      const c = { ${SIX} };
+    `;
+    expect(literals(source)).toEqual([]);
   });
 
   it('ignores a directive with no reason', () => {

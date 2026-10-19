@@ -93,8 +93,9 @@ export interface ScanOptions {
  * exemption in the suite says why it is one.
  */
 // `[ \t]*`, not `\s*`: the reason must be on the directive's own line, so a
-// block comment's line break and closing `*/` cannot stand in for one.
-const IGNORE_DIRECTIVE = /router-mocks-ignore:[ \t]*[^\s*/]/;
+// block comment's line break cannot carry it onto the closing `*/`, which is
+// stripped before testing so it cannot stand in for one either.
+const IGNORE_DIRECTIVE = /router-mocks-ignore:[ \t]*\S/;
 
 function isIgnored(node: ts.Node, sourceFile: ts.SourceFile): boolean {
   const text = sourceFile.text;
@@ -113,7 +114,8 @@ function isIgnored(node: ts.Node, sourceFile: ts.SourceFile): boolean {
     const ranges = ts.getLeadingCommentRanges(text, current.getFullStart()) ?? [];
     const directive = ranges.some(
       (range) =>
-        lineOf(range.end) === targetLine && IGNORE_DIRECTIVE.test(text.slice(range.pos, range.end))
+        lineOf(range.end) === targetLine &&
+        IGNORE_DIRECTIVE.test(text.slice(range.pos, range.end).replace(/\*\/$/, ''))
     );
     if (directive) return true;
     if (ts.isStatement(current)) break;
@@ -270,6 +272,32 @@ function isMockedUseRouter(expression: ts.Expression, sourceFile: ts.SourceFile)
   );
 }
 
+/**
+ * Climbs from `node` to the outermost expression whose value it can become:
+ * through parentheses, either branch of `c ? X : Y`, and either operand of
+ * `??`, `||` and `&&`. `x ? ({ push } as never) : createMockRouter()` hands
+ * out the cast just as surely as a bare `{ push } as never` does.
+ */
+function asReturnedValue(node: ts.Node): ts.Node {
+  let current = outsideParens(node);
+  for (;;) {
+    const parent = current.parent;
+    if (parent === undefined) return current;
+    const isBranch =
+      ts.isConditionalExpression(parent) &&
+      (parent.whenTrue === current || parent.whenFalse === current);
+    const isOperand =
+      ts.isBinaryExpression(parent) &&
+      [
+        ts.SyntaxKind.QuestionQuestionToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.AmpersandAmpersandToken,
+      ].includes(parent.operatorToken.kind);
+    if (!isBranch && !isOperand) return current;
+    current = outsideParens(parent);
+  }
+}
+
 function outsideParens(node: ts.Node): ts.Node {
   let current = node;
   while (current.parent !== undefined && ts.isParenthesizedExpression(current.parent)) {
@@ -281,10 +309,11 @@ function outsideParens(node: ts.Node): ts.Node {
 /**
  * Whether `node` is the router a mocked `useRouter` hands out: the argument of
  * `.mockReturnValue(...)`, or what an implementation passed to
- * `.mockImplementation(...)` returns (`() => X`, or any `return X` in its body).
+ * `.mockImplementation(...)` returns (`() => X`, or any `return X` in its body),
+ * including as one branch of a conditional or a `??`/`||`/`&&` operand.
  */
 function isReturnedFromMockedUseRouter(node: ts.Expression, sourceFile: ts.SourceFile): boolean {
-  let current = outsideParens(node);
+  let current = asReturnedValue(node);
   let setter = RETURN_SETTER;
 
   const parent = current.parent;
