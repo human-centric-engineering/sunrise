@@ -787,17 +787,15 @@ describe('adminUserUpdateSchema', () => {
       expect(result.success).toBe(false);
     });
 
-    it('should accept whitespace-only name (trimmed to empty after min check)', () => {
-      // Note: Schema has .min(1).trim() which allows whitespace-only strings
-      // They pass min(1) check first, then get trimmed
-      // To reject whitespace-only, schema would need .trim().min(1) instead
+    it('should reject a whitespace-only name (#713)', () => {
+      // The schema trims before its length check, so "   " is measured as ""
+      // and refused rather than stored blank.
       const result = adminUserUpdateSchema.safeParse({
         name: '   ',
       });
-      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.data.name).toBe('');
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0].path).toEqual(['name']);
       }
     });
 

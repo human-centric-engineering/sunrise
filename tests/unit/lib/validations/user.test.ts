@@ -135,14 +135,17 @@ describe('updateUserSchema', () => {
       expect(result.success).toBe(false);
     });
 
-    it('should accept name with only whitespace (optional field)', () => {
+    it('should reject a name made only of whitespace (#713)', () => {
+      // Optional means the field may be left out, not sent blank: "   " used
+      // to pass and was stored as "", wiping the user's name.
       const result = updateUserSchema.safeParse({
         name: '   ',
       });
-      // Name is optional, so whitespace-only is trimmed to empty and that's OK
-      // The field is simply omitted
-      // test-review:accept tobe_true — structural assertion on Zod safeParse success field; valid-input contract check
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0].path).toEqual(['name']);
+        expect(result.error.issues[0].message).toBe('Name cannot be empty');
+      }
     });
 
     it('should reject an empty currentPassword (#489)', () => {
