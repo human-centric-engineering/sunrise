@@ -206,12 +206,19 @@ describe('PLATFORM_JOB_NAMES', () => {
     ]);
   });
 
-  it('exempts only the tasks whose backoff is sub-minute', () => {
+  it('exempts only the tasks that must see every tick', () => {
     // A throttled retry drain would miss the 10s first retry entirely, so this
     // set is behavioural, not stylistic.
     const responsive = PLATFORM_JOBS.filter((job) => job.intervalMs === 0).map((job) => job.name);
 
-    expect(responsive).toEqual(['webhookRetries', 'hookRetries', 'evaluationRuns']);
+    // pendingErasures too: a throttled tick reports no work for it, and the
+    // idle gate could then sleep past a pending erasure's next attempt.
+    expect(responsive).toEqual([
+      'webhookRetries',
+      'hookRetries',
+      'evaluationRuns',
+      'pendingErasures',
+    ]);
   });
 });
 
@@ -564,15 +571,12 @@ describe('runDuePlatformJobs — tenant scope (§108)', () => {
     );
   });
 
-  it('retries pending erasures every minute, not on a sub-minute tick', async () => {
+  it('runs the pending-erasure retrier on every tick, however close together', async () => {
     await runDuePlatformJobs(T0);
-    expect(processPendingErasures).toHaveBeenCalledTimes(1);
+    await runDuePlatformJobs(T0 + 1000);
+    await runDuePlatformJobs(T0 + 2000);
 
-    await runDuePlatformJobs(T0 + 30 * 1000);
-    expect(processPendingErasures).toHaveBeenCalledTimes(1);
-
-    await runDuePlatformJobs(T0 + MINUTE);
-    expect(processPendingErasures).toHaveBeenCalledTimes(2);
+    expect(processPendingErasures).toHaveBeenCalledTimes(3);
   });
 
   it('at multi runs each per-org task once per active org, in that org, and folds the summary', async () => {

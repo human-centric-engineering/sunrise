@@ -72,6 +72,7 @@ function makeApiKey(overrides: Record<string, unknown> = {}) {
       emailVerified: true,
       image: null,
       role: 'USER',
+      erasureRequestedAt: null,
       createdAt: now,
       updatedAt: now,
     },
@@ -209,6 +210,27 @@ describe('resolveApiKey', () => {
     const result = await resolveApiKey(req);
     // Assert
     expect(result).toBeNull();
+  });
+
+  it('returns null, and records no use, for a key whose owner has a deletion pending (t-842)', async () => {
+    const base = makeApiKey();
+    const pending = makeApiKey({
+      user: { ...base.user, erasureRequestedAt: new Date('2026-10-19T10:00:00Z') },
+    });
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue(pending as never);
+
+    const result = await resolveApiKey(makeRequest('Bearer sk_' + 'c'.repeat(64)));
+
+    expect(result).toBeNull();
+    expect(prisma.aiApiKey.update).not.toHaveBeenCalled();
+  });
+
+  it('still resolves a key whose owner has no deletion pending', async () => {
+    vi.mocked(prisma.aiApiKey.findFirst).mockResolvedValue(makeApiKey() as never);
+
+    const result = await resolveApiKey(makeRequest('Bearer sk_' + 'c'.repeat(64)));
+
+    expect(result?.session.user.id).toBe('user-1');
   });
 
   it('returns session, scopes, and rateLimitRpm for a valid non-expired key', async () => {

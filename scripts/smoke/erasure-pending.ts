@@ -14,6 +14,10 @@
  *   • **Two retriers at once.** A request killed part-way (the intent and an
  *     expired lease, written directly) is taken by exactly one of two
  *     concurrent `processPendingErasures()` runs: one claim, one receipt.
+ *   • **The admin who asked is erased first.** The retry still erases the
+ *     person. The audit row it writes cannot name the erased admin (a foreign
+ *     key to `User`), so it names the person instead, and loses that when the
+ *     person's row goes.
  *
  * Refuses to run if the database already holds a pending erasure it did not
  * create, since the retrier would erase that person too. Everything it
@@ -32,6 +36,7 @@ import {
 } from '@/lib/privacy/erasure-requests';
 import { registerErasureCleanupHook } from '@/lib/privacy/erasure-hooks';
 import { refuseIfErasurePending } from '@/lib/auth/config';
+import { eraseUser } from '@/lib/privacy/erase-user';
 import { PLATFORM_ADMIN_ROLE } from '@/lib/auth/roles';
 import { INSTALL_ORG_ID } from '@/lib/tenancy/constants';
 import { runAsOrg } from '@/lib/tenancy/context';
@@ -92,6 +97,7 @@ async function main(): Promise<void> {
     userIds.push(user.id);
     return user;
   };
+  const subscriptionIds: string[] = [];
   const receiptsFor = (userId: string) =>
     prisma.dataErasureReceipt.findMany({ where: { subjectUserId: userId } });
 
@@ -199,8 +205,53 @@ async function main(): Promise<void> {
       'and nothing is left pending'
     );
 
+    // ── 4. The admin who asked is erased first ─────────────────────────────
+    console.log('a retry still erases the person after the admin who asked is erased');
+    const asker = await person('asker', PLATFORM_ADMIN_ROLE);
+    const orphaned = await person('orphaned');
+    // Erasing them clears this subscription and writes an audit row naming
+    // the actor: the write that would fail on an erased admin's id.
+    const subscription = await prisma.aiWebhookSubscription.create({
+      data: {
+        channel: 'email',
+        emailAddress: orphaned.email,
+        events: ['workflow_failed'],
+        createdBy: orphaned.id,
+      },
+    });
+    subscriptionIds.push(subscription.id);
+    failOnce.add(orphaned.id);
+    await requestUserErasure({
+      userId: orphaned.id,
+      actorUserId: asker.id,
+      reason: 'admin_action',
+    }).catch(() => undefined);
+    check(
+      (await prisma.user.findUnique({ where: { id: orphaned.id } }))?.erasureRequestedBy ===
+        asker.id,
+      'the first attempt failed, naming the admin who asked'
+    );
+    await eraseUser({ userId: asker.id, actorUserId: asker.id, reason: 'self_service' });
+
+    const retried = await processPendingErasures(new Date(Date.now() + 5 * MINUTE));
+    check(retried.erased === 1 && retried.failed === 0, 'the retry erases the person');
+    check(
+      (await prisma.user.findUnique({ where: { id: orphaned.id } })) === null,
+      'the account is gone'
+    );
+    const audit = await prisma.aiAdminAuditLog.findFirst({
+      where: { entityId: subscription.id, action: 'webhook_subscription.recipient_erased' },
+    });
+    check(audit !== null && audit.userId === null, 'its audit row stands, with no actor');
+
     console.log('\n✓ smoke:erasure-pending passed');
   } finally {
+    await prisma.aiAdminAuditLog
+      .deleteMany({ where: { entityId: { in: subscriptionIds } } })
+      .catch(() => undefined);
+    await prisma.aiWebhookSubscription
+      .deleteMany({ where: { id: { in: subscriptionIds } } })
+      .catch(() => undefined);
     await prisma.dataErasureReceipt
       .deleteMany({ where: { subjectUserId: { in: userIds } } })
       .catch(() => undefined);

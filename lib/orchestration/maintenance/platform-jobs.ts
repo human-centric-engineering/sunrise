@@ -132,7 +132,7 @@ function job<T>(spec: {
  * | `evaluationRuns`          | every    | per-org | the worker drives one time-slice per tick, so cadence is throughput |
  * | `auditLogRetention`       | 1 hour   | system  | the two audit tables have no org; once, not once per org            |
  * | `platformAgents`          | 15 min   | per-org | catches up an org behind the running code or what it can reach      |
- * | `pendingErasures`         | 1 min    | system  | the shortest retry backoff; `User` has no org, and erasure is global |
+ * | `pendingErasures`         | every    | system  | a throttled tick would report no work and let the idle gate skip it |
  *
  * `platformAgents` does real work only after a deploy changes the platform
  * agents' definitions, when an org's creation-time reconcile failed, or when
@@ -236,7 +236,10 @@ export const PLATFORM_JOBS: readonly PlatformJob[] = [
   }),
   job({
     name: 'pendingErasures',
-    intervalMs: MINUTE,
+    // Every tick: a tick that throttled it would report it as no work, and
+    // the idle gate could then sleep past a pending erasure's next attempt.
+    // Two indexed reads when nothing is pending.
+    intervalMs: 0,
     // A person's erasure spans every org they belong to, and `eraseUser()`
     // enters the system scope itself at `multi`; per org it would erase the
     // same person once per org.

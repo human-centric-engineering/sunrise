@@ -186,7 +186,7 @@ On Vercel, set `CRON_SECRET` to the key and add the cron to `vercel.json` — se
 | `evaluationRuns`           | every tick | per-org | the worker drives one time-slice per tick, so cadence is throughput |
 | `auditLogRetention`        | 1 hour     | system  | the two audit tables have no org column — once, not once per org    |
 | `platformAgents`           | 15 min     | per-org | catches up an org behind the running code or missing a declared row |
-| `pendingErasures`          | 1 min      | system  | the shortest erasure backoff; a person's erasure spans every org    |
+| `pendingErasures`          | every tick | system  | a throttled run reports no work, and the idle gate must not skip it |
 
 **Tick duration grows with the org count, and the overlap guard does not.**
 `forEachOrg` is sequential, so at `multi` a per-org task costs roughly its

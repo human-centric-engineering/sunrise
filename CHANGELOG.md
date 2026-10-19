@@ -26,8 +26,10 @@ release process.
   the request is killed, the new `pendingErasures` maintenance job
   (`processPendingErasures()`) finishes it. `User` gains five columns
   (`erasureRequestedAt`, `erasureRequestedBy`, `erasureReason`,
-  `erasureAttempts`, `erasureNextAttemptAt`; migration
-  `20261019120000_user_pending_erasure`). Also exported: `erasureBackoffMs()`,
+  `erasureAttempts`, `erasureNextAttemptAt`; migrations
+  `20261019120000_user_pending_erasure` and
+  `20261019230000_user_pending_erasure_index`). An API key whose owner is
+  being deleted is refused. Also exported: `erasureBackoffMs()`,
   `ERASURE_LEASE_MS`, `ERASURE_MAX_BACKOFF_MS`, `ERASURES_PER_RUN`, and
   `refuseIfErasurePending()` from `lib/auth/config.ts`. Both `DELETE` user
   routes now answer `409` when another attempt already holds the deletion, and

@@ -29,7 +29,7 @@ const MINUTE = 60 * 1000;
 
 const mocks = vi.hoisted(() => {
   const tx = {
-    user: { findUnique: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
+    user: { findUnique: vi.fn(), updateMany: vi.fn() },
     session: { deleteMany: vi.fn() },
     aiApiKey: { updateMany: vi.fn() },
   };
@@ -86,17 +86,19 @@ const NO_ERASURE_PENDING = {
   erasureRequestedAt: null,
   erasureRequestedBy: null,
   erasureReason: null,
+  erasureAttempts: 0,
   erasureNextAttemptAt: null,
 };
 
-/** What the claim reads back after its own write. */
-function storedIntent(overrides: Record<string, unknown> = {}) {
-  return {
-    erasureRequestedBy: ADMIN_ID,
-    erasureReason: 'admin_action',
-    erasureAttempts: 1,
-    ...overrides,
-  };
+/**
+ * `tx.user.findUnique` is called twice by a claim: for the row's erasure
+ * columns, and (when the actor is not the subject) for the actor's existence.
+ * Answer each by its select.
+ */
+let claimRow: Record<string, unknown> | null = null;
+let existingUsers = new Set<string>();
+function setClaimRow(row: Record<string, unknown> | null): void {
+  claimRow = row === null ? null : { erasureAttempts: 0, ...row };
 }
 
 /** The order `fn` was first called in, for before/after assertions. */
@@ -117,9 +119,17 @@ beforeEach(() => {
   mocks.isMultiTenant.mockReturnValue(false);
   mocks.runAsSystem.mockImplementation(async (_reason: string, fn: () => Promise<unknown>) => fn());
 
-  tx.user.findUnique.mockResolvedValue(NO_ERASURE_PENDING);
+  setClaimRow(NO_ERASURE_PENDING);
+  existingUsers = new Set([ADMIN_ID]);
+  tx.user.findUnique.mockImplementation(
+    async (args: { where: { id: string }; select: Record<string, boolean> }) =>
+      args.select.erasureRequestedAt
+        ? claimRow
+        : existingUsers.has(args.where.id)
+          ? { id: args.where.id }
+          : null
+  );
   tx.user.updateMany.mockResolvedValue({ count: 1 });
-  tx.user.findUniqueOrThrow.mockResolvedValue(storedIntent());
   tx.session.deleteMany.mockResolvedValue({ count: 2 });
   tx.aiApiKey.updateMany.mockResolvedValue({ count: 1 });
 
@@ -171,6 +181,7 @@ describe('requestUserErasure — the claim', () => {
         erasureRequestedAt: true,
         erasureRequestedBy: true,
         erasureReason: true,
+        erasureAttempts: true,
         erasureNextAttemptAt: true,
       },
     });
@@ -207,14 +218,8 @@ describe('requestUserErasure — the claim', () => {
   });
 
   it('erases with the actor and reason the claim stored, in the system scope only at multi', async () => {
-    tx.user.findUniqueOrThrow.mockResolvedValue(storedIntent({ erasureRequestedBy: ADMIN_ID }));
-
     await requestUserErasure({ userId: USER_ID, actorUserId: ADMIN_ID, reason: 'admin_action' });
 
-    expect(tx.user.findUniqueOrThrow).toHaveBeenCalledWith({
-      where: { id: USER_ID },
-      select: { erasureRequestedBy: true, erasureReason: true, erasureAttempts: true },
-    });
     expect(mocks.eraseUser).toHaveBeenCalledTimes(1);
     expect(mocks.eraseUser).toHaveBeenCalledWith({
       userId: USER_ID,
@@ -253,7 +258,7 @@ describe('requestUserErasure — the claim', () => {
 
   it('answers in_progress, disabling nothing and erasing nothing, while another attempt holds the lease', async () => {
     const requestedAt = new Date(NOW.getTime() - 2 * MINUTE);
-    tx.user.findUnique.mockResolvedValue({
+    setClaimRow({
       erasureRequestedAt: requestedAt,
       erasureRequestedBy: ADMIN_ID,
       erasureReason: 'admin_action',
@@ -294,19 +299,13 @@ describe('requestUserErasure — the claim', () => {
   it('keeps the first request when a repeat arrives after the lease ran out, and erases on its behalf', async () => {
     const firstRequestedAt = new Date(NOW.getTime() - 30 * MINUTE);
     const expiredLease = new Date(NOW.getTime() - 10 * MINUTE);
-    tx.user.findUnique.mockResolvedValue({
+    setClaimRow({
       erasureRequestedAt: firstRequestedAt,
       erasureRequestedBy: USER_ID,
       erasureReason: 'self_service',
+      erasureAttempts: 2,
       erasureNextAttemptAt: expiredLease,
     });
-    tx.user.findUniqueOrThrow.mockResolvedValue(
-      storedIntent({
-        erasureRequestedBy: USER_ID,
-        erasureReason: 'self_service',
-        erasureAttempts: 2,
-      })
-    );
 
     await requestUserErasure({ userId: USER_ID, actorUserId: ADMIN_ID, reason: 'admin_action' });
 
@@ -331,7 +330,7 @@ describe('requestUserErasure — the claim', () => {
 
   it('takes a pending erasure that has no lease recorded (a null next attempt)', async () => {
     const requestedAt = new Date(NOW.getTime() - 5 * MINUTE);
-    tx.user.findUnique.mockResolvedValue({
+    setClaimRow({
       erasureRequestedAt: requestedAt,
       erasureRequestedBy: ADMIN_ID,
       erasureReason: 'admin_action',
@@ -354,9 +353,12 @@ describe('requestUserErasure — the claim', () => {
   });
 
   it('names the person as the actor, as a self-service erasure, when a pending row carries no actor', async () => {
-    tx.user.findUniqueOrThrow.mockResolvedValue(
-      storedIntent({ erasureRequestedBy: null, erasureReason: null })
-    );
+    setClaimRow({
+      erasureRequestedAt: new Date(NOW.getTime() - 5 * MINUTE),
+      erasureRequestedBy: null,
+      erasureReason: null,
+      erasureNextAttemptAt: null,
+    });
 
     await requestUserErasure({ userId: USER_ID, actorUserId: ADMIN_ID, reason: 'admin_action' });
 
@@ -368,7 +370,7 @@ describe('requestUserErasure — the claim', () => {
   });
 
   it('returns the receipt when the row is gone because another attempt just finished', async () => {
-    tx.user.findUnique.mockResolvedValue(null);
+    setClaimRow(null);
     prisma.user.findUnique.mockResolvedValue(null);
     prisma.dataErasureReceipt.findFirst.mockResolvedValue({ id: 'receipt-9', erasedAt: NOW });
 
@@ -388,7 +390,7 @@ describe('requestUserErasure — the claim', () => {
   });
 
   it('throws not-found when the row is gone and no receipt names it', async () => {
-    tx.user.findUnique.mockResolvedValue(null);
+    setClaimRow(null);
     prisma.user.findUnique.mockResolvedValue(null);
     prisma.dataErasureReceipt.findFirst.mockResolvedValue(null);
 
@@ -407,7 +409,14 @@ describe('requestUserErasure — when the erasure fails', () => {
   it('sets the backoff for the attempt count, wakes the idle gate, and rethrows the same error', async () => {
     const failure = new Error('erasure transaction timed out');
     mocks.eraseUser.mockRejectedValue(failure);
-    tx.user.findUniqueOrThrow.mockResolvedValue(storedIntent({ erasureAttempts: 3 }));
+    // Two attempts already made; this claim is the third.
+    setClaimRow({
+      erasureRequestedAt: new Date(NOW.getTime() - 30 * MINUTE),
+      erasureRequestedBy: ADMIN_ID,
+      erasureReason: 'admin_action',
+      erasureAttempts: 2,
+      erasureNextAttemptAt: new Date(NOW.getTime() - MINUTE),
+    });
 
     await expect(
       requestUserErasure({ userId: USER_ID, actorUserId: ADMIN_ID, reason: 'admin_action' })
@@ -415,8 +424,11 @@ describe('requestUserErasure — when the erasure fails', () => {
 
     // Third failed attempt: 4 minutes, from now.
     expect(erasureBackoffMs(3)).toBe(4 * MINUTE);
+    // Conditional on the exact lease this attempt's claim wrote, so a lease
+    // another attempt has since taken over is not cut short.
+    expect(tx.user.updateMany.mock.calls[0]?.[0].data.erasureNextAttemptAt).toEqual(LEASE_UNTIL);
     expect(prisma.user.updateMany).toHaveBeenCalledWith({
-      where: { id: USER_ID },
+      where: { id: USER_ID, erasureNextAttemptAt: LEASE_UNTIL },
       data: { erasureNextAttemptAt: new Date(NOW.getTime() + 4 * MINUTE) },
     });
     expect(mocks.noteMaintenanceWork).toHaveBeenCalledWith('pending-erasure');
@@ -448,7 +460,8 @@ describe('requestUserErasure — when the erasure fails', () => {
 
     expect(result).toEqual({ status: 'erased', receiptId: 'receipt-7', erasedAt: NOW });
     expect(prisma.user.updateMany).not.toHaveBeenCalled();
-    expect(mocks.noteMaintenanceWork).not.toHaveBeenCalled();
+    // Only the claim's own wake-up; the failure path added none.
+    expect(mocks.noteMaintenanceWork).toHaveBeenCalledTimes(1);
     expect(mocks.logger.error).not.toHaveBeenCalled();
   });
 
@@ -495,11 +508,108 @@ describe('requestUserErasure — when the erasure fails', () => {
   });
 });
 
+describe('requestUserErasure — the erased actor', () => {
+  const requestedAt = new Date(NOW.getTime() - 30 * MINUTE);
+  const pendingBy = (by: string | null) => ({
+    erasureRequestedAt: requestedAt,
+    erasureRequestedBy: by,
+    erasureReason: 'admin_action',
+    erasureAttempts: 1,
+    erasureNextAttemptAt: new Date(NOW.getTime() - MINUTE),
+  });
+
+  it('names the stored actor when that admin still exists, after looking them up', async () => {
+    setClaimRow(pendingBy(ADMIN_ID));
+
+    await requestUserErasure({ userId: USER_ID, actorUserId: USER_ID, reason: 'self_service' });
+
+    expect(tx.user.findUnique).toHaveBeenCalledWith({
+      where: { id: ADMIN_ID },
+      select: { id: true },
+    });
+    expect(mocks.eraseUser).toHaveBeenCalledWith({
+      userId: USER_ID,
+      actorUserId: ADMIN_ID,
+      reason: 'admin_action',
+    });
+    expect(mocks.logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('names the subject instead, and logs who asked, when the stored admin has been erased', async () => {
+    setClaimRow(pendingBy('cmgoneadmin0000000000000'));
+
+    await requestUserErasure({ userId: USER_ID, actorUserId: USER_ID, reason: 'self_service' });
+
+    expect(tx.user.findUnique).toHaveBeenCalledWith({
+      where: { id: 'cmgoneadmin0000000000000' },
+      select: { id: true },
+    });
+    expect(mocks.eraseUser).toHaveBeenCalledWith({
+      userId: USER_ID,
+      actorUserId: USER_ID,
+      reason: 'admin_action',
+    });
+    expect(mocks.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('admin who asked has been erased'),
+      { userId: USER_ID, requestedBy: 'cmgoneadmin0000000000000' }
+    );
+  });
+
+  it('looks up the first request’s admin (not the stored one) on a first claim, and falls back the same way', async () => {
+    existingUsers = new Set();
+
+    await requestUserErasure({ userId: USER_ID, actorUserId: ADMIN_ID, reason: 'admin_action' });
+
+    expect(tx.user.findUnique).toHaveBeenCalledWith({
+      where: { id: ADMIN_ID },
+      select: { id: true },
+    });
+    expect(mocks.eraseUser).toHaveBeenCalledWith({
+      userId: USER_ID,
+      actorUserId: USER_ID,
+      reason: 'admin_action',
+    });
+  });
+
+  it('does no actor lookup for a self-service erasure', async () => {
+    await requestUserErasure({ userId: USER_ID, actorUserId: USER_ID, reason: 'self_service' });
+
+    // Only the claim's own read of the row.
+    expect(tx.user.findUnique).toHaveBeenCalledTimes(1);
+    expect(mocks.eraseUser).toHaveBeenCalledWith({
+      userId: USER_ID,
+      actorUserId: USER_ID,
+      reason: 'self_service',
+    });
+  });
+});
+
+describe('requestUserErasure — the lease clock and the idle gate', () => {
+  it('wakes the idle gate right after the claim, before eraseUser runs', async () => {
+    await requestUserErasure({ userId: USER_ID, actorUserId: USER_ID, reason: 'self_service' });
+
+    expect(mocks.noteMaintenanceWork).toHaveBeenCalledWith('pending-erasure');
+    expect(firstCallOrder(tx.aiApiKey.updateMany)).toBeLessThan(
+      firstCallOrder(mocks.noteMaintenanceWork)
+    );
+    expect(firstCallOrder(mocks.noteMaintenanceWork)).toBeLessThan(firstCallOrder(mocks.eraseUser));
+  });
+
+  it('does not wake the idle gate when the claim is not won', async () => {
+    tx.user.updateMany.mockResolvedValue({ count: 0 });
+
+    await requestUserErasure({ userId: USER_ID, actorUserId: USER_ID, reason: 'self_service' });
+
+    expect(mocks.noteMaintenanceWork).not.toHaveBeenCalled();
+  });
+});
+
 describe('processPendingErasures', () => {
   interface PendingRow {
     id: string;
     by?: string | null;
     reason?: string | null;
+    attempts?: number;
     /** What the claim's read sees; defaults to a pending erasure whose lease ran out. */
     read?: Record<string, unknown>;
   }
@@ -514,51 +624,66 @@ describe('processPendingErasures', () => {
       async (args: { where: { id: { notIn: string[] } } }) =>
         rows.find((row) => !args.where.id.notIn.includes(row.id)) ?? null
     );
-    const byId = (id: string) => rows.find((row) => row.id === id);
-    tx.user.findUnique.mockImplementation(async (args: { where: { id: string } }) => {
-      const row = byId(args.where.id);
-      return (
-        row?.read ?? {
-          erasureRequestedAt: new Date(NOW.getTime() - 30 * MINUTE),
-          erasureRequestedBy: row?.by ?? null,
-          erasureReason: row?.reason ?? null,
-          erasureNextAttemptAt: new Date(NOW.getTime() - MINUTE),
+    tx.user.findUnique.mockImplementation(
+      async (args: { where: { id: string }; select: Record<string, boolean> }) => {
+        if (!args.select.erasureRequestedAt) {
+          return existingUsers.has(args.where.id) ? { id: args.where.id } : null;
         }
-      );
-    });
-    tx.user.findUniqueOrThrow.mockImplementation(async (args: { where: { id: string } }) => {
-      const row = byId(args.where.id);
-      return {
-        erasureRequestedBy: row?.by ?? null,
-        erasureReason: row?.reason ?? null,
-        erasureAttempts: 1,
-      };
-    });
+        const row = rows.find((r) => r.id === args.where.id);
+        return (
+          row?.read ?? {
+            erasureRequestedAt: new Date(NOW.getTime() - 30 * MINUTE),
+            erasureRequestedBy: row?.by ?? null,
+            erasureReason: row?.reason ?? null,
+            erasureAttempts: row?.attempts ?? 0,
+            erasureNextAttemptAt: new Date(NOW.getTime() - MINUTE),
+          }
+        );
+      }
+    );
   }
 
-  it('claims and erases each due person with the stored actor and reason, and reports the counts', async () => {
-    queue([
-      { id: 'user-a', by: ADMIN_ID, reason: 'admin_action' },
-      { id: 'user-b', by: 'user-b', reason: 'self_service' },
-    ]);
+  const ids = (): string[] => mocks.eraseUser.mock.calls.map(([args]) => args.userId);
+
+  it('claims and erases the due person with the stored actor and reason, and reports the counts', async () => {
+    queue([{ id: 'user-a', by: ADMIN_ID, reason: 'admin_action' }]);
     prisma.user.count.mockResolvedValue(0);
 
     const result = await processPendingErasures();
 
     expect(mocks.eraseUser.mock.calls).toEqual([
       [{ userId: 'user-a', actorUserId: ADMIN_ID, reason: 'admin_action' }],
-      [{ userId: 'user-b', actorUserId: 'user-b', reason: 'self_service' }],
     ]);
-    expect(result).toEqual({ claimed: 2, erased: 2, failed: 0, pending: 0 });
-    // Each was disabled again on its claim, not only on the first request.
-    expect(tx.session.deleteMany.mock.calls).toEqual([
-      [{ where: { userId: 'user-a' } }],
-      [{ where: { userId: 'user-b' } }],
-    ]);
+    expect(result).toEqual({ claimed: 1, erased: 1, failed: 0, pending: 0 });
+    // Disabled again on this claim, not only on the first request.
+    expect(tx.session.deleteMany).toHaveBeenCalledWith({ where: { userId: 'user-a' } });
   });
 
-  it('asks only for pending rows that are due or have no next attempt, oldest first, excluding those already tried', async () => {
-    queue([{ id: 'user-a', by: 'user-a', reason: 'self_service' }]);
+  it('takes on only one person per run, however many are due', async () => {
+    expect(ERASURES_PER_RUN).toBe(1);
+    queue([
+      { id: 'user-a', by: 'user-a', reason: 'self_service' },
+      { id: 'user-b', by: 'user-b', reason: 'self_service' },
+      { id: 'user-c', by: 'user-c', reason: 'self_service' },
+    ]);
+    prisma.user.count.mockResolvedValue(2);
+
+    const result = await processPendingErasures();
+
+    expect(result).toEqual({ claimed: 1, erased: 1, failed: 0, pending: 2 });
+    expect(ids()).toEqual(['user-a']);
+    expect(prisma.user.findFirst).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks only for pending rows that are due or have no next attempt, nulls first, excluding those already tried', async () => {
+    queue([
+      { id: 'user-a', by: 'user-a', reason: 'self_service' },
+      { id: 'user-b', by: 'user-b', reason: 'self_service' },
+    ]);
+    // a was taken by another instance, so the loop goes on to ask again.
+    tx.user.updateMany.mockImplementation(async (args: { where: { id: string } }) => ({
+      count: args.where.id === 'user-a' ? 0 : 1,
+    }));
 
     await processPendingErasures();
 
@@ -593,68 +718,101 @@ describe('processPendingErasures', () => {
     );
   });
 
+  it.each([
+    ['far in the past', new Date('2020-01-01T00:00:00.000Z')],
+    ['far in the future', new Date('2040-01-01T00:00:00.000Z')],
+  ])(
+    'runs the lease from the claim’s own clock, not the due time given (%s)',
+    async (_label, dueBy) => {
+      queue([{ id: 'user-a', by: 'user-a', reason: 'self_service' }]);
+      // Due by a time far in the future, the row's lease (NOW - 1min) is due; far
+      // in the past it would not be, so make the row due under both.
+      tx.user.findUnique.mockImplementation(async (args: { select: Record<string, boolean> }) =>
+        args.select.erasureRequestedAt
+          ? {
+              erasureRequestedAt: new Date('2019-01-01T00:00:00.000Z'),
+              erasureRequestedBy: 'user-a',
+              erasureReason: 'self_service',
+              erasureAttempts: 0,
+              erasureNextAttemptAt: new Date('2019-06-01T00:00:00.000Z'),
+            }
+          : null
+      );
+
+      await processPendingErasures(dueBy);
+
+      expect(tx.user.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ erasureNextAttemptAt: LEASE_UNTIL }),
+        })
+      );
+      expect(tx.aiApiKey.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { revokedAt: NOW } })
+      );
+    }
+  );
+
+  it('judges whether a lease is held against the due time given, not the clock', async () => {
+    // Lease ends 10 minutes from the clock: held now, but due by an hour from now.
+    const lease = new Date(NOW.getTime() + 10 * MINUTE);
+    queue([
+      {
+        id: 'user-a',
+        read: {
+          erasureRequestedAt: new Date(NOW.getTime() - 5 * MINUTE),
+          erasureRequestedBy: 'user-a',
+          erasureReason: 'self_service',
+          erasureAttempts: 1,
+          erasureNextAttemptAt: lease,
+        },
+      },
+    ]);
+
+    const early = await processPendingErasures(NOW);
+    expect(early.claimed).toBe(0);
+
+    const later = await processPendingErasures(new Date(NOW.getTime() + 60 * MINUTE));
+    expect(later.claimed).toBe(1);
+  });
+
   it('does nothing, and opens no claim, when nothing is due', async () => {
     queue([]);
-    prisma.user.count.mockResolvedValue(2);
+    prisma.user.count.mockResolvedValue(0);
 
     const result = await processPendingErasures();
 
-    expect(result).toEqual({ claimed: 0, erased: 0, failed: 0, pending: 2 });
+    expect(result).toEqual({ claimed: 0, erased: 0, failed: 0, pending: 0 });
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(mocks.eraseUser).not.toHaveBeenCalled();
   });
 
-  it('counts a person whose erasure fails, backs them off, and still erases the next one', async () => {
-    queue([
-      { id: 'user-a', by: 'user-a', reason: 'self_service' },
-      { id: 'user-b', by: ADMIN_ID, reason: 'admin_action' },
-    ]);
-    const failure = new Error('a is stuck behind a writer');
-    mocks.eraseUser.mockImplementation(async (args: { userId: string }) => {
-      if (args.userId === 'user-a') throw failure;
-      return RECEIPT;
-    });
+  it('wakes the idle gate at the end of the run only when erasures are still pending', async () => {
+    queue([]);
+    prisma.user.count.mockResolvedValue(0);
+    await processPendingErasures();
+    expect(mocks.noteMaintenanceWork).not.toHaveBeenCalled();
+
+    prisma.user.count.mockResolvedValue(2);
+    await processPendingErasures();
+    expect(mocks.noteMaintenanceWork).toHaveBeenCalledTimes(1);
+    expect(mocks.noteMaintenanceWork).toHaveBeenCalledWith('pending-erasure');
+  });
+
+  it('counts a person whose erasure fails, backs them off conditional on their own lease, and does not throw', async () => {
+    queue([{ id: 'user-a', by: 'user-a', reason: 'self_service', attempts: 1 }]);
+    mocks.eraseUser.mockRejectedValue(new Error('a is stuck behind a writer'));
     prisma.user.findUnique.mockResolvedValue({ id: 'user-a' });
     prisma.user.count.mockResolvedValue(1);
 
     const result = await processPendingErasures();
 
-    expect(result).toEqual({ claimed: 2, erased: 1, failed: 1, pending: 1 });
-    expect(mocks.eraseUser).toHaveBeenCalledTimes(2);
-    expect(mocks.eraseUser).toHaveBeenLastCalledWith({
-      userId: 'user-b',
-      actorUserId: ADMIN_ID,
-      reason: 'admin_action',
-    });
-    // a's failure set a's backoff (first attempt: one minute), and only a's.
+    expect(result).toEqual({ claimed: 1, erased: 0, failed: 1, pending: 1 });
+    // Second attempt (one already made): two minutes, from now.
     expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
     expect(prisma.user.updateMany).toHaveBeenCalledWith({
-      where: { id: 'user-a' },
-      data: { erasureNextAttemptAt: new Date(NOW.getTime() + MINUTE) },
+      where: { id: 'user-a', erasureNextAttemptAt: LEASE_UNTIL },
+      data: { erasureNextAttemptAt: new Date(NOW.getTime() + 2 * MINUTE) },
     });
-    expect(mocks.noteMaintenanceWork).toHaveBeenCalledWith('pending-erasure');
-  });
-
-  it('takes on at most ERASURES_PER_RUN people in one run', async () => {
-    const rows = Array.from({ length: ERASURES_PER_RUN + 2 }, (_, i) => ({
-      id: `user-${i}`,
-      by: `user-${i}`,
-      reason: 'self_service',
-    }));
-    queue(rows);
-    prisma.user.count.mockResolvedValue(2);
-
-    const result = await processPendingErasures();
-
-    expect(result).toEqual({
-      claimed: ERASURES_PER_RUN,
-      erased: ERASURES_PER_RUN,
-      failed: 0,
-      pending: 2,
-    });
-    expect(mocks.eraseUser.mock.calls.map(([args]) => args.userId)).toEqual(
-      rows.slice(0, ERASURES_PER_RUN).map((row) => row.id)
-    );
   });
 
   it('skips a person another instance claimed between the read and the claim, and moves on', async () => {
@@ -669,7 +827,7 @@ describe('processPendingErasures', () => {
     const result = await processPendingErasures();
 
     expect(result).toEqual({ claimed: 1, erased: 1, failed: 0, pending: 0 });
-    expect(mocks.eraseUser.mock.calls.map(([args]) => args.userId)).toEqual(['user-b']);
+    expect(ids()).toEqual(['user-b']);
     // a was not disabled by a claim it did not win.
     expect(tx.session.deleteMany).not.toHaveBeenCalledWith({ where: { userId: 'user-a' } });
   });
@@ -682,6 +840,7 @@ describe('processPendingErasures', () => {
           erasureRequestedAt: new Date(NOW.getTime() - 5 * MINUTE),
           erasureRequestedBy: 'user-held',
           erasureReason: 'self_service',
+          erasureAttempts: 1,
           erasureNextAttemptAt: new Date(NOW.getTime() + 10 * MINUTE),
         },
       },
@@ -692,7 +851,7 @@ describe('processPendingErasures', () => {
     const result = await processPendingErasures();
 
     expect(result.claimed).toBe(1);
-    expect(mocks.eraseUser.mock.calls.map(([args]) => args.userId)).toEqual(['user-due']);
+    expect(ids()).toEqual(['user-due']);
     // The retrier never starts a deletion nobody requested.
     expect(tx.user.updateMany).toHaveBeenCalledTimes(1);
   });

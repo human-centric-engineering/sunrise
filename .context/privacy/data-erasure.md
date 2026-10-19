@@ -64,8 +64,8 @@ recorded before any of that work starts (t-842; design on f-gdpr-erasure,
 2. **Erase.** `eraseUser()`, unchanged. Its delete removes the intent columns
    with the row, and the `DataErasureReceipt` is the record that it finished.
 3. **Finish what did not.** The `pendingErasures` platform job
-   (`processPendingErasures()`, every minute on the maintenance tick, system
-   scope) erases every person whose intent is still there once their next
+   (`processPendingErasures()`, every maintenance tick, system scope, one
+   erasure per run) erases every person whose intent is still there once their next
    attempt is due, with the actor and reason the request stored.
 
 `erasureNextAttemptAt` is both a **lease** and a **backoff**. Each attempt
@@ -96,6 +96,10 @@ finishes the job. t-845 adds a request budget and a `202 pending` answer.
   intent committed can create its session just after the sessions were
   deleted. That session lasts until the next attempt, which deletes sessions
   again, or until the erasure's cascade.
+- **A key minted from a cached session is refused.** The cookie-cache window
+  lets a disabled account's cached session create an `AiApiKey`.
+  `resolveApiKey` refuses any key whose owner has a pending erasure, so the
+  new key never works.
 - **MCP keys are not revoked.** An `McpApiKey` is the org's service key, kept
   through erasure (`createdBy` is `SetNull`), not the person's credential.
 - **The tick must run.** On a host without the tick cron, nothing retries

@@ -108,7 +108,7 @@ model User {
   @@unique([email])
   @@index([role])
   @@index([role, accountType])
-  @@index([erasureNextAttemptAt])
+  @@index([erasureRequestedAt])
   @@map("user")
 }
 

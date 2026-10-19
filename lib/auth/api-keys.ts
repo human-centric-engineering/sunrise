@@ -114,6 +114,10 @@ export async function resolveApiKey(request: NextRequest): Promise<{
     });
     if (!row) return null;
     if (row.expiresAt && row.expiresAt < new Date()) return null;
+    // An account being deleted (t-842). Its keys were revoked when the
+    // deletion was recorded, but a session the cookie cache still honours can
+    // mint a new one before the next attempt revokes it again.
+    if (row.user.erasureRequestedAt) return null;
 
     // Update last used timestamp (fire-and-forget, inside the same scope).
     // `Promise.resolve` adopts the lazy PrismaPromise, and tolerates a test

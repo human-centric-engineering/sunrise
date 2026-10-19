@@ -55,11 +55,12 @@ export const ERASURE_LEASE_MS = 20 * MINUTE;
 export const ERASURE_MAX_BACKOFF_MS = 60 * MINUTE;
 
 /**
- * Erasures one retrier run takes on, one after another. Each can be long, and
- * the tick's other jobs wait for the slowest; a backlog drains over a few
- * ticks instead.
+ * Erasures one retrier run takes on. One: each can be long, the tick's chain
+ * is bounded (5 minutes, and `maxDuration` on serverless), and two in one run
+ * would hand the second a lease partly spent by the first. Erasures are rare,
+ * so a backlog drains one a minute.
  */
-export const ERASURES_PER_RUN = 3;
+export const ERASURES_PER_RUN = 1;
 
 /** The wait before the next attempt, after `attempts` attempts have failed. */
 export function erasureBackoffMs(attempts: number): number {
@@ -82,7 +83,14 @@ export type RequestUserErasureResult =
 
 /** What a claim found. */
 type Claim =
-  | { kind: 'claimed'; actorUserId: string; reason: ErasureReason; attempts: number }
+  | {
+      kind: 'claimed';
+      actorUserId: string;
+      reason: ErasureReason;
+      attempts: number;
+      /** The lease this claim wrote; the backoff write is conditional on it. */
+      leaseUntil: Date;
+    }
   | { kind: 'held'; requestedAt: Date }
   | { kind: 'gone' };
 
@@ -101,8 +109,10 @@ function inErasureScope<T>(userId: string, what: string, fn: () => Promise<T>): 
  *
  * With `request`, a person with no pending erasure gets one recorded. Without
  * it (the retrier), only a pending one is taken. Either way it is taken only
- * when its lease has run out, by a write conditional on the lease value read,
- * so of two callers at once one gets `claimed` and the other `held`.
+ * when its next attempt is due by `dueBy`, by a write conditional on the lease
+ * value read, so of two callers at once one gets `claimed` and the other
+ * `held`. The lease itself runs from the moment of the claim, not from
+ * `dueBy`, so it is never already partly spent.
  *
  * The account is disabled on every claim, not only the first, so a session
  * minted in the moment before the intent committed does not outlive the next
@@ -110,7 +120,7 @@ function inErasureScope<T>(userId: string, what: string, fn: () => Promise<T>): 
  */
 async function claimErasure(
   userId: string,
-  now: Date,
+  dueBy: Date,
   request?: { actorUserId: string; reason: ErasureReason }
 ): Promise<Claim> {
   return inErasureScope(userId, 'claim a pending erasure', () =>
@@ -121,17 +131,19 @@ async function claimErasure(
           erasureRequestedAt: true,
           erasureRequestedBy: true,
           erasureReason: true,
+          erasureAttempts: true,
           erasureNextAttemptAt: true,
         },
       });
       if (!row) return { kind: 'gone' } as const;
+      const now = new Date();
 
       const pending = row.erasureRequestedAt !== null;
       if (!pending && !request) return { kind: 'gone' } as const;
       if (
         pending &&
         row.erasureNextAttemptAt !== null &&
-        row.erasureNextAttemptAt.getTime() > now.getTime()
+        row.erasureNextAttemptAt.getTime() > dueBy.getTime()
       ) {
         return { kind: 'held', requestedAt: row.erasureRequestedAt ?? now } as const;
       }
@@ -172,18 +184,36 @@ async function claimErasure(
         data: { revokedAt: now },
       });
 
-      const updated = await tx.user.findUniqueOrThrow({
-        where: { id: userId },
-        select: { erasureRequestedBy: true, erasureReason: true, erasureAttempts: true },
-      });
+      // The first request's actor and reason, as recorded.
+      const requestedBy = pending ? row.erasureRequestedBy : (request?.actorUserId ?? null);
+      // Always set by the claim that recorded the request. Should a row be
+      // marked pending by hand without it, the person is named, as a
+      // self-service erasure would name them.
+      let actorUserId = requestedBy ?? userId;
+      // The admin who asked may have been erased since. Their id cannot go on
+      // the audit rows the erasure writes (a foreign key to `User`), and an
+      // insert naming them would fail every attempt, for ever. The person is
+      // named instead, so those rows lose their actor when the person's row
+      // goes; the original actor stays in this log line.
+      if (actorUserId !== userId) {
+        const actor = await tx.user.findUnique({
+          where: { id: actorUserId },
+          select: { id: true },
+        });
+        if (!actor) {
+          logger.warn('Pending erasure: the admin who asked has been erased; naming the person', {
+            userId,
+            requestedBy: actorUserId,
+          });
+          actorUserId = userId;
+        }
+      }
       return {
         kind: 'claimed',
-        // Always set by the claim that recorded the request. Should a row be
-        // marked pending by hand without it, the person is named, as a
-        // self-service erasure would name them.
-        actorUserId: updated.erasureRequestedBy ?? userId,
-        reason: asErasureReason(updated.erasureReason),
-        attempts: updated.erasureAttempts,
+        actorUserId,
+        reason: asErasureReason(pending ? row.erasureReason : (request?.reason ?? null)),
+        attempts: row.erasureAttempts + 1,
+        leaseUntil,
       } as const;
     })
   );
@@ -233,8 +263,10 @@ async function attemptErasure(
 
     const nextAttemptAt = new Date(Date.now() + erasureBackoffMs(claim.attempts));
     try {
+      // Only while this attempt's own lease stands: if it ran out and another
+      // attempt has claimed the row since, its lease must not be cut short.
       await prisma.user.updateMany({
-        where: { id: userId },
+        where: { id: userId, erasureNextAttemptAt: claim.leaseUntil },
         data: { erasureNextAttemptAt: nextAttemptAt },
       });
     } catch (backoffError) {
@@ -287,6 +319,9 @@ export async function requestUserErasure(
     return { status: 'in_progress', requestedAt: claim.requestedAt };
   }
 
+  // A pending erasure is maintenance work: the idle gate must not skip past
+  // it, even if this request is killed before it can say anything else.
+  noteMaintenanceWork('pending-erasure');
   logger.info('Erasure requested; account disabled', {
     userId,
     actorUserId,
@@ -349,5 +384,8 @@ export async function processPendingErasures(
   }
 
   result.pending = await prisma.user.count({ where: { erasureRequestedAt: { not: null } } });
+  // Said here as well as through `foundWork`: a tick that finds this job
+  // still running reports nothing for it, and must not arm the gate either.
+  if (result.pending > 0) noteMaintenanceWork('pending-erasure');
   return result;
 }
