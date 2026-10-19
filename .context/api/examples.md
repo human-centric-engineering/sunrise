@@ -146,28 +146,46 @@ export function ProfileForm({ user }) {
 
 ## Server Components
 
-Use `serverFetch` for API calls from server components. It forwards cookies for authentication.
+To **read** data in a server component, use the loaders in `lib/api/server-load.ts`. They call `serverFetch` (which forwards cookies), parse the envelope, and log every failure. Never wrap a read in a try/catch that returns `[]` or `null`: a 500 then renders as "No users found", and a detail page's 500 as a 404 (#518).
 
-### Basic Usage
+### Loading a page's data
+
+Pick by what the page needs if the load fails:
+
+| The data is                                                                                                              | Use                                           | On failure                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| What the page exists to show or edit: a list page's rows, a detail page's record, the options a form cannot work without | `requireServerData(path)`                     | Throws to the route's error boundary, which logs it and offers **Try again** (a real re-fetch) |
+| A detail page's record, by id                                                                                            | `requireServerData(path, { notFound: true })` | A 404 renders the not-found page; any other failure throws as above                            |
+| One panel among several the page can live without: a dashboard tile, a summary strip                                     | `loadServerData(path)`                        | Returns `{ ok: false }`; render `<LoadFailedNotice what="…">` in that panel's place            |
 
 ```typescript
-// app/(protected)/dashboard/page.tsx
-import { serverFetch, parseApiResponse } from '@/lib/api/server-fetch';
-import type { SystemStats } from '@/types/admin';
+// A list page
+const { data: agents, meta } = await requireServerData<AiAgentListItem[]>(
+  `${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=25`
+);
 
-export default async function DashboardPage() {
-  const res = await serverFetch('/api/v1/admin/stats');
-  const { data: stats } = await parseApiResponse<SystemStats>(res);
+// A detail page
+const { data: provider } = await requireServerData<ProviderRow>(
+  API.ADMIN.ORCHESTRATION.providerById(id),
+  { notFound: true }
+);
 
-  return <StatsDisplay stats={stats} />;
-}
+// A panel on a dashboard
+const alerts = await loadServerData<{ alerts: BudgetAlert[] }>(API.ADMIN.ORCHESTRATION.COSTS_ALERTS);
+return alerts.ok ? <BudgetAlertsBanner alerts={alerts.data.alerts} /> : <LoadFailedNotice what="budget alerts" />;
 ```
 
-### With Query Parameters
+A panel whose empty state is a signal — no budget banner, an empty quarantine list — must never be rendered from a failed load: the failure would read as the all-clear. A figure shown as "—" when unknown already reads as unknown and can stay.
+
+`app/admin/orchestration/page.tsx` (panels), `app/admin/orchestration/agents/page.tsx` (list) and `app/admin/orchestration/providers/[id]/page.tsx` (detail) are the reference pages. Their tests fake only `serverFetch`, with real `Response`s from `apiSuccess()` / `apiFailure()` in `tests/helpers/api.ts`, so the real parser and loader run.
+
+### Calling `serverFetch` directly
+
+For a write from the server, or anything the loaders do not fit:
 
 ```typescript
 const res = await serverFetch('/api/v1/users?limit=20&sortBy=createdAt');
-const { data: users } = await parseApiResponse<User[]>(res);
+const body = await parseApiResponse<User[]>(res);
 ```
 
 ### POST from Server

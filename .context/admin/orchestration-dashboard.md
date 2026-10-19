@@ -36,28 +36,39 @@ Landing page for the AI Orchestration admin area. Thin async server component th
 
 ## Data sources
 
-Every fetch is **null-safe**. A failing API renders an empty state, never throws.
+No fetch throws: each is `loadServerData()` from `lib/api/server-load.ts`, and a panel whose load failed renders `<LoadFailedNotice>` in its place.
 
 | Component              | Endpoint                                                        | Notes                                                                                                                                                 |
 | ---------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Agents stat card       | `GET /admin/orchestration/agents?isSystem=false&page=1&limit=1` | `getPaginatedTotal()` extracts `meta.total`; the org's own agents only, as setup state counts them, so a new org does not open on its platform agents |
-| Today's spend card     | `GET /admin/orchestration/costs/summary`                        | `getCostSummary()` → `totals.today`                                                                                                                   |
-| Today's requests card  | `GET /admin/orchestration/observability/dashboard-stats`        | `getDashboardStats()` → `todayRequests`                                                                                                               |
-| Error rate card        | `GET /admin/orchestration/observability/dashboard-stats`        | `getDashboardStats()` → `errorRate`                                                                                                                   |
-| Budget alerts banner   | `GET /admin/orchestration/costs/alerts`                         | `getBudgetAlerts()`                                                                                                                                   |
-| 7-day spend trend      | `GET /admin/orchestration/costs/summary`                        | `getCostSummary()` → `trend.slice(-7)`                                                                                                                |
-| Top capabilities       | `GET /admin/orchestration/observability/dashboard-stats`        | `getDashboardStats()` → `topCapabilities`                                                                                                             |
+| Today's spend card     | `GET /admin/orchestration/costs/summary`                        | `totals.today`                                                                                                                                        |
+| Today's requests card  | `GET /admin/orchestration/observability/dashboard-stats`        | `todayRequests`                                                                                                                                       |
+| Error rate card        | `GET /admin/orchestration/observability/dashboard-stats`        | `errorRate`                                                                                                                                           |
+| Budget alerts banner   | `GET /admin/orchestration/costs/alerts`                         | `alerts`                                                                                                                                              |
+| 7-day spend trend      | `GET /admin/orchestration/costs/summary`                        | `trend.slice(-7)`                                                                                                                                     |
+| Top capabilities       | `GET /admin/orchestration/observability/dashboard-stats`        | `topCapabilities`                                                                                                                                     |
 | Activity feed (convos) | `GET /admin/orchestration/conversations?limit=10`               | `getActivityFeed()`                                                                                                                                   |
-| Activity feed (execs)  | `GET /admin/orchestration/executions?limit=10`                  | `getActivityFeed()` (501 stub → empty list)                                                                                                           |
-| Activity feed (errors) | `GET /admin/orchestration/observability/dashboard-stats`        | `getDashboardStats()` → `recentErrors`                                                                                                                |
+| Activity feed (execs)  | `GET /admin/orchestration/executions?limit=10`                  | `getActivityFeed()`                                                                                                                                   |
+| Activity feed (errors) | `GET /admin/orchestration/observability/dashboard-stats`        | `recentErrors`                                                                                                                                        |
 
-All calls go through `serverFetch()` + `parseApiResponse()` — never raw `fetch`. Cookie forwarding is automatic.
+All calls go through `loadServerData()`, which uses `serverFetch()` — never raw `fetch`. Cookie forwarding is automatic.
 
 ## Error handling
 
-Each helper wraps its fetch in `try/catch` and returns `null` on any failure. Failures are logged with `logger.error(message, err, { ...meta })`. The page renders each component with `null`-safe props (em-dashes for stats, empty-state cards for the activity feed, nothing for budget alerts).
+`loadServerData()` logs every failure; the page has no catch blocks of its own. What a failed load renders:
 
-Do **not** throw from a helper — the entire page would error-boundary and the user would see nothing.
+| Data that failed                   | Renders                                                         |
+| ---------------------------------- | --------------------------------------------------------------- |
+| A stat card's figure               | "—" on that card (already reads as unknown, not zero)           |
+| Budget alerts                      | `<LoadFailedNotice what="budget alerts">` in the banner's place |
+| Active quarantines (platform only) | A notice in the panel's place                                   |
+| Cost summary                       | A notice in the spend chart's place                             |
+| Dashboard stats                    | A notice in the top-capabilities panel's place                  |
+| Conversations, executions or stats | A notice in the activity feed's place                           |
+
+The budget banner and the quarantine panel are why this matters: both are absent when all is well, so rendering them from a failed load would show the all-clear. The activity feed fails as a whole when any of its three sources does, for the same reason — a feed missing executions reads as "no recent runs".
+
+Do **not** use `requireServerData()` here: no one panel is the page's reason to exist, so one failing endpoint must not take the whole dashboard down.
 
 ## Sub-components
 
