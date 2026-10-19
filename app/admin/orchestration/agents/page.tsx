@@ -4,9 +4,8 @@ import Link from 'next/link';
 import { AgentsTable } from '@/components/admin/orchestration/agents-table';
 import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
+import { requireServerData } from '@/lib/api/server-load';
 import { parsePaginationMeta } from '@/lib/validations/common';
-import { logger } from '@/lib/logging';
 import type { AiAgentListItem } from '@/types/orchestration';
 import type { PaginationMeta } from '@/types/api';
 
@@ -25,25 +24,16 @@ const EMPTY_META: PaginationMeta = {
 /**
  * Admin — Agents list page (Phase 4 Session 4.2).
  *
- * Thin server component that pre-renders the first page of agents via
- * `serverFetch` and hands the result to `<AgentsTable>` for client-side
- * search / sort / pagination. Fetch failures never throw — the table
- * renders an empty-state banner so the page is still usable.
+ * Thin server component that pre-renders the first page of agents and hands
+ * the result to `<AgentsTable>` for client-side search / sort / pagination.
+ * A failed load throws to the admin error boundary rather than rendering an
+ * empty table (#518).
  */
 async function getAgents(): Promise<{ agents: AiAgentListItem[]; meta: PaginationMeta }> {
-  try {
-    const res = await serverFetch(`${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=25`);
-    if (!res.ok) return { agents: [], meta: EMPTY_META };
-    const body = await parseApiResponse<AiAgentListItem[]>(res);
-    if (!body.success) return { agents: [], meta: EMPTY_META };
-    return {
-      agents: body.data,
-      meta: parsePaginationMeta(body.meta) ?? EMPTY_META,
-    };
-  } catch (err) {
-    logger.error('agents list page: initial fetch failed', err);
-    return { agents: [], meta: EMPTY_META };
-  }
+  const { data, meta } = await requireServerData<AiAgentListItem[]>(
+    `${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=25`
+  );
+  return { agents: data, meta: parsePaginationMeta(meta) ?? EMPTY_META };
 }
 
 export default async function AgentsListPage() {

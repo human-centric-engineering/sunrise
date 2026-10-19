@@ -89,6 +89,28 @@ export async function parseJsonResponse(response: Response): Promise<unknown> {
 }
 
 /**
+ * A real `Response` carrying a success envelope, for a faked `serverFetch`.
+ *
+ * Page tests fake only `serverFetch` and let the real `parseApiResponse` and
+ * `lib/api/server-load.ts` run, so a test proves what the page does with an
+ * actual API answer rather than with a hand-built `{ ok: false }` object.
+ */
+export function apiSuccess(data: unknown, meta?: unknown): Response {
+  return new Response(JSON.stringify({ success: true, data, ...(meta ? { meta } : {}) }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+/** A real `Response` carrying an error envelope. See {@link apiSuccess}. */
+export function apiFailure(status = 500, code = 'INTERNAL_ERROR'): Response {
+  return new Response(
+    JSON.stringify({ success: false, error: { code, message: `status ${status}` } }),
+    { status, headers: { 'Content-Type': 'application/json' } }
+  );
+}
+
+/**
  * Assert API success response
  *
  * Checks that response matches the standardized success format

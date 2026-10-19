@@ -9,8 +9,9 @@
  * - Renders the page heading and subtitle.
  * - SetupRequiredBanner is rendered when no provider is configured and
  *   hidden when one is.
- * - The dashboard does not throw when every parallel fetch rejects —
- *   it falls back to empty-state cards instead of bubbling.
+ * - The dashboard does not throw when a fetch fails, and never shows a
+ *   failed panel as an empty one: each failed panel renders a "Couldn't
+ *   load" notice in its place (#518).
  *
  * @see app/admin/orchestration/page.tsx
  */
@@ -18,11 +19,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
+import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
-vi.mock('@/lib/api/server-fetch', () => ({
+// Only the network is faked: the real parseApiResponse and server-load run.
+vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/api/server-fetch')>()),
   serverFetch: vi.fn(),
-  parseApiResponse: vi.fn(),
 }));
 
 vi.mock('@/lib/orchestration/setup-state', () => ({
@@ -95,122 +99,99 @@ interface SetupStateMock {
   hasDefaultChatModel: boolean;
 }
 
-async function setupMocks(setupState: SetupStateMock, fetchOk = false) {
-  const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+/** Every fetch fails with a 500; only the setup state (a direct read) loads. */
+async function setupMocks(setupState: SetupStateMock) {
+  const { serverFetch } = await import('@/lib/api/server-fetch');
   const { getSetupState } = await import('@/lib/orchestration/setup-state');
 
-  vi.mocked(serverFetch).mockResolvedValue({ ok: fetchOk } as Response);
-  vi.mocked(parseApiResponse).mockResolvedValue({ success: false } as never);
+  vi.mocked(serverFetch).mockImplementation(async () => apiFailure(500));
   vi.mocked(getSetupState).mockResolvedValue(setupState);
 }
 
+/** Happy-path bodies, routed by URL substring (the page fetches in parallel). */
+const HAPPY_BODIES: Array<{ match: string; data: unknown; meta?: unknown }> = [
+  {
+    match: '/costs/summary',
+    data: {
+      totals: { today: 1.5, week: 7, month: 22 },
+      byAgent: [],
+      byModel: [],
+      trend: [
+        { date: '2026-04-01', totalCostUsd: 1 },
+        { date: '2026-04-02', totalCostUsd: 2 },
+      ],
+      localSavings: null,
+    },
+  },
+  { match: '/costs/alerts', data: { alerts: [] } },
+  {
+    match: '/observability/dashboard-stats',
+    data: {
+      activeConversations: 3,
+      todayRequests: 12,
+      errorRate: 0.05,
+      recentErrors: [
+        {
+          id: 'err-shared-1',
+          errorMessage: 'capability timeout',
+          workflowId: 'wf-1',
+          createdAt: '2026-04-10T12:00:00.000Z',
+        },
+      ],
+      topCapabilities: [],
+    },
+  },
+  { match: '/active-quarantines', data: { items: [] } },
+  // The real endpoint returns `{ models, refreshed, fetchedAt }`, not a flat
+  // array, so the page's unwrap (`body.data.models`) is exercised.
+  { match: '/models', data: { models: [], refreshed: false, fetchedAt: 0 } },
+  // Paginated total — meta.total is the field the helper reads.
+  { match: '/agents', data: [], meta: { page: 1, limit: 1, total: 5, totalPages: 5 } },
+  {
+    match: '/conversations',
+    data: [
+      {
+        id: 'conv-1',
+        title: 'Test conversation',
+        createdAt: '2026-04-10T11:00:00.000Z',
+        updatedAt: '2026-04-10T11:30:00.000Z',
+      },
+    ],
+  },
+  {
+    // Includes one execution that shares an id with the recentError — the
+    // page should dedupe and keep the error variant.
+    match: '/executions',
+    data: [
+      { id: 'err-shared-1', status: 'failed', createdAt: '2026-04-10T11:45:00.000Z' },
+      { id: 'exec-2', status: 'completed', createdAt: '2026-04-10T11:55:00.000Z' },
+    ],
+  },
+];
+
 /**
- * Wire serverFetch + parseApiResponse so each helper on the page sees
- * realistic data on the happy path. The page fires its fetches through
- * `Promise.all`, so order isn't deterministic — instead of relying on
- * mockResolvedValueOnce we tag every fake `Response` with the URL it
- * was created for and route parseApiResponse by URL substring.
+ * Answer each URL with its happy-path body, except the ones `failing` names,
+ * which answer 500.
  */
-async function setupHappyPathMocks(setupState: SetupStateMock): Promise<void> {
-  const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
+async function setupHappyPathMocks(
+  setupState: SetupStateMock,
+  failing: string[] = []
+): Promise<void> {
+  const { serverFetch } = await import('@/lib/api/server-fetch');
   const { getSetupState } = await import('@/lib/orchestration/setup-state');
 
   vi.mocked(serverFetch).mockImplementation(async (url: string) => {
-    return { ok: true, _testUrl: url } as unknown as Response;
+    if (failing.some((f) => url.includes(f))) return apiFailure(500);
+    const body = HAPPY_BODIES.find((b) => url.includes(b.match));
+    return body ? apiSuccess(body.data, body.meta) : apiFailure(404, 'NOT_FOUND');
   });
-
-  vi.mocked(parseApiResponse).mockImplementation(async (res: Response) => {
-    const url = (res as unknown as { _testUrl: string })._testUrl;
-    if (url.includes('/costs/summary')) {
-      return {
-        success: true,
-        data: {
-          totals: { today: 1.5, week: 7, month: 22 },
-          byAgent: [],
-          byModel: [],
-          trend: [
-            { date: '2026-04-01', totalCostUsd: 1 },
-            { date: '2026-04-02', totalCostUsd: 2 },
-          ],
-          localSavings: null,
-        },
-      } as never;
-    }
-    if (url.includes('/costs/alerts')) {
-      return { success: true, data: { alerts: [] } } as never;
-    }
-    if (url.includes('/observability/dashboard-stats')) {
-      return {
-        success: true,
-        data: {
-          activeConversations: 3,
-          todayRequests: 12,
-          errorRate: 0.05,
-          recentErrors: [
-            {
-              id: 'err-shared-1',
-              errorMessage: 'capability timeout',
-              workflowId: 'wf-1',
-              createdAt: '2026-04-10T12:00:00.000Z',
-            },
-          ],
-          topCapabilities: [],
-        },
-      } as never;
-    }
-    if (url.includes('/models')) {
-      // The real endpoint returns `{ models, refreshed, fetchedAt }`,
-      // not a flat array. Test fixtures must mirror that shape so the
-      // page's `getModels` unwrap (`body.data.models`) gets exercised
-      // — earlier the mock returned `data: []`, which silently passed
-      // both the old broken code (treating data as the array) and the
-      // new code (Array.isArray check returning null).
-      return { success: true, data: { models: [], refreshed: false, fetchedAt: 0 } } as never;
-    }
-    if (url.includes('/agents')) {
-      // Paginated total — meta.total is the field the helper reads.
-      return {
-        success: true,
-        data: [],
-        meta: { page: 1, limit: 1, total: 5, totalPages: 5 },
-      } as never;
-    }
-    if (url.includes('/conversations')) {
-      return {
-        success: true,
-        data: [
-          {
-            id: 'conv-1',
-            title: 'Test conversation',
-            createdAt: '2026-04-10T11:00:00.000Z',
-            updatedAt: '2026-04-10T11:30:00.000Z',
-          },
-        ],
-      } as never;
-    }
-    if (url.includes('/executions')) {
-      // Includes one execution that shares an id with the recentError —
-      // the page should dedupe and keep the error variant.
-      return {
-        success: true,
-        data: [
-          {
-            id: 'err-shared-1',
-            status: 'failed',
-            createdAt: '2026-04-10T11:45:00.000Z',
-          },
-          {
-            id: 'exec-2',
-            status: 'completed',
-            createdAt: '2026-04-10T11:55:00.000Z',
-          },
-        ],
-      } as never;
-    }
-    return { success: false, error: { code: 'UNKNOWN', message: '' } } as never;
-  });
-
   vi.mocked(getSetupState).mockResolvedValue(setupState);
+}
+
+const ALL_CONFIGURED = { hasProvider: true, hasAgent: true, hasDefaultChatModel: true };
+
+function failedNotices(): string[] {
+  return screen.queryAllByRole('alert').map((el) => el.textContent ?? '');
 }
 
 async function renderPage(): Promise<void> {
@@ -270,47 +251,48 @@ describe('OrchestrationDashboardPage (server component)', () => {
     expect(screen.getByTestId('setup-wizard-launcher')).toHaveAttribute('data-force-open', 'false');
   });
 
-  it('renders the trends + activity sections under the empty fetch path', async () => {
-    await setupMocks({ hasProvider: true, hasAgent: true, hasDefaultChatModel: true });
+  it('shows a failure notice in place of every panel when every fetch fails', async () => {
+    await setupMocks(ALL_CONFIGURED);
 
     await renderPage();
 
+    // The stat cards show "—" for what they could not load, so they stay.
     expect(screen.getByTestId('dashboard-stats-cards')).toBeInTheDocument();
-    expect(screen.getByTestId('cost-trend-chart')).toBeInTheDocument();
-    expect(screen.getByTestId('top-capabilities-panel')).toBeInTheDocument();
-    expect(screen.getByTestId('dashboard-activity-feed')).toBeInTheDocument();
-    expect(screen.getByTestId('budget-alerts-banner')).toBeInTheDocument();
+    // Every other panel is replaced, not rendered empty: an empty quarantine
+    // panel or no budget banner is the all-clear signal.
+    for (const id of [
+      'cost-trend-chart',
+      'top-capabilities-panel',
+      'dashboard-activity-feed',
+      'budget-alerts-banner',
+    ]) {
+      expect(screen.queryByTestId(id)).not.toBeInTheDocument();
+    }
+    expect(failedNotices()).toEqual([
+      expect.stringContaining('budget alerts'),
+      expect.stringContaining('capability quarantines'),
+      expect.stringContaining('the spend trend'),
+      expect.stringContaining('capability usage'),
+      expect.stringContaining('recent activity'),
+    ]);
   });
 
-  it('does not throw when every serverFetch rejects', async () => {
+  it('does not throw when every serverFetch rejects, and says what failed', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
     const { getSetupState } = await import('@/lib/orchestration/setup-state');
 
     vi.mocked(serverFetch).mockRejectedValue(new Error('Network failure'));
-    vi.mocked(getSetupState).mockResolvedValue({
-      hasProvider: true,
-      hasAgent: true,
-      hasDefaultChatModel: true,
-    });
+    vi.mocked(getSetupState).mockResolvedValue(ALL_CONFIGURED);
 
-    let thrown = false;
-    try {
-      await renderPage();
-    } catch {
-      thrown = true;
-    }
+    await renderPage();
 
-    expect(thrown).toBe(false);
     expect(screen.getByRole('heading', { name: /^ai orchestration$/i })).toBeInTheDocument();
+    expect(failedNotices()).toHaveLength(5);
   });
 
   describe('happy path with all fetches succeeding', () => {
     it('renders the dashboard sections', async () => {
-      await setupHappyPathMocks({
-        hasProvider: true,
-        hasAgent: true,
-        hasDefaultChatModel: true,
-      });
+      await setupHappyPathMocks(ALL_CONFIGURED);
 
       await renderPage();
 
@@ -322,11 +304,7 @@ describe('OrchestrationDashboardPage (server component)', () => {
     });
 
     it("counts only the org's own agents, not its platform agents (§116 t-725)", async () => {
-      await setupHappyPathMocks({
-        hasProvider: true,
-        hasAgent: true,
-        hasDefaultChatModel: true,
-      });
+      await setupHappyPathMocks(ALL_CONFIGURED);
 
       await renderPage();
 
@@ -343,11 +321,7 @@ describe('OrchestrationDashboardPage (server component)', () => {
     it('passes the recent week of trend data into the chart', async () => {
       // The page slices `trend.slice(-7)` to render the 7-day chart —
       // this exercises the success branch of getCostSummary.
-      await setupHappyPathMocks({
-        hasProvider: true,
-        hasAgent: true,
-        hasDefaultChatModel: true,
-      });
+      await setupHappyPathMocks(ALL_CONFIGURED);
 
       await renderPage();
 
@@ -358,68 +332,42 @@ describe('OrchestrationDashboardPage (server component)', () => {
       expect(screen.getByTestId('cost-trend-chart')).toHaveTextContent('7-day spend trend');
     });
 
-    it('does not throw when only one of the parallel fetches resolves with success', async () => {
-      // Partial-failure scenario: getCostSummary returns ok+success,
-      // every other endpoint returns ok=false. The page should still
-      // render without throwing.
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      const { getSetupState } = await import('@/lib/orchestration/setup-state');
-
-      vi.mocked(serverFetch).mockImplementation(async (url: string) => {
-        const ok = url.includes('/costs/summary');
-        return { ok, _testUrl: url } as unknown as Response;
-      });
-      vi.mocked(parseApiResponse).mockResolvedValue({
-        success: true,
-        data: { totals: { today: 0, week: 0, month: 0 }, byAgent: [], byModel: [], trend: [] },
-      } as never);
-      vi.mocked(getSetupState).mockResolvedValue({
-        hasProvider: true,
-        hasAgent: true,
-        hasDefaultChatModel: true,
-      });
-
-      let thrown = false;
-      try {
-        await renderPage();
-      } catch {
-        thrown = true;
-      }
-
-      expect(thrown).toBe(false);
-      expect(screen.getByRole('heading', { name: /^ai orchestration$/i })).toBeInTheDocument();
-    });
-
-    it('falls back to 0 when paginated total meta is missing the total field', async () => {
-      // Exercises the `hasNumericTotal` guard — when the API succeeds
-      // but doesn't include a `meta.total`, the helper returns 0.
-      const { serverFetch, parseApiResponse } = await import('@/lib/api/server-fetch');
-      const { getSetupState } = await import('@/lib/orchestration/setup-state');
-
-      vi.mocked(serverFetch).mockImplementation(async (url: string) => {
-        return { ok: true, _testUrl: url } as unknown as Response;
-      });
-      vi.mocked(parseApiResponse).mockImplementation(async (res: Response) => {
-        const url = (res as unknown as { _testUrl: string })._testUrl;
-        if (url.includes('/agents')) {
-          // No `meta` at all — `hasNumericTotal` should return false
-          // and the helper should fall back to 0.
-          return { success: true, data: [] } as never;
-        }
-        return { success: false, error: { code: 'X', message: '' } } as never;
-      });
-      vi.mocked(getSetupState).mockResolvedValue({
-        hasProvider: true,
-        hasAgent: true,
-        hasDefaultChatModel: true,
-      });
+    it('shows a notice only for the panel whose fetch failed', async () => {
+      await setupHappyPathMocks(ALL_CONFIGURED, ['/costs/alerts']);
 
       await renderPage();
 
-      // The page renders successfully; we don't need to assert on the
-      // 0 directly since DashboardStatsCards is mocked — exercising
-      // the branch is the goal.
+      expect(screen.queryByTestId('budget-alerts-banner')).not.toBeInTheDocument();
+      expect(failedNotices()).toEqual([expect.stringContaining('budget alerts')]);
+      expect(screen.getByTestId('cost-trend-chart')).toBeInTheDocument();
+      expect(screen.getByTestId('dashboard-activity-feed')).toBeInTheDocument();
+    });
+
+    it('shows the activity feed as failed when one of its sources fails', async () => {
+      // A feed missing executions would read as "no recent runs".
+      await setupHappyPathMocks(ALL_CONFIGURED, ['/executions']);
+
+      await renderPage();
+
+      expect(screen.queryByTestId('dashboard-activity-feed')).not.toBeInTheDocument();
+      expect(failedNotices()).toEqual([expect.stringContaining('recent activity')]);
+    });
+
+    it('falls back to 0 when paginated total meta is missing the total field', async () => {
+      // Exercises the `hasNumericTotal` guard — when the API succeeds but
+      // doesn't include a `meta.total`, the helper returns 0.
+      const { serverFetch } = await import('@/lib/api/server-fetch');
+      await setupHappyPathMocks(ALL_CONFIGURED);
+      const happy = vi.mocked(serverFetch).getMockImplementation();
+      vi.mocked(serverFetch).mockImplementation(async (url: string, init?: RequestInit) =>
+        url.includes('/agents') ? apiSuccess([]) : happy!(url, init)
+      );
+
+      await renderPage();
+
+      // DashboardStatsCards is mocked, so exercising the branch is the goal.
       expect(screen.getByTestId('dashboard-stats-cards')).toBeInTheDocument();
+      expect(failedNotices()).toEqual([]);
     });
   });
 });

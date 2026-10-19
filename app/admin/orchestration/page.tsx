@@ -18,10 +18,10 @@ import {
   TopCapabilitiesPanel,
   type CapabilityUsage,
 } from '@/components/admin/orchestration/top-capabilities-panel';
+import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { API } from '@/lib/api/endpoints';
 import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
-import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
-import { logger } from '@/lib/logging';
+import { loadServerData } from '@/lib/api/server-load';
 import type { BudgetAlert, CostSummary } from '@/lib/orchestration/llm/cost-reports';
 import { getSetupState } from '@/lib/orchestration/setup-state';
 import type { ModelInfo } from '@/lib/orchestration/llm/types';
@@ -39,8 +39,13 @@ export const metadata: Metadata = {
  *   2. Trends — spend chart + top capabilities (2-col) with activity feed
  *   3. Budget alerts — conditional banner
  *
- * Every fetch is `null`-safe — a failing API renders an empty state,
- * never throws.
+ * No single panel is the page's reason to exist, so a failed load never
+ * throws: each panel whose data could not be loaded renders
+ * `<LoadFailedNotice>` in its place, and the rest of the dashboard works.
+ * It matters more here than anywhere: an empty quarantine panel and a
+ * missing budget banner are the all-clear signals, so a failure must not
+ * look like either (#518). The stat cards show "—" for a figure they could
+ * not load, which already reads as unknown rather than zero.
  *
  * An org admin (§111 t-812) sees their org's half: the stats, spend, budget
  * alerts and activity, each read in the entered org. The platform-ops half —
@@ -55,41 +60,18 @@ function hasNumericTotal(meta: unknown): meta is { total: number } {
   );
 }
 
-async function getCostSummary(): Promise<CostSummary | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.COSTS_SUMMARY);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<CostSummary>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('orchestration dashboard: failed to load cost summary', err);
-    return null;
-  }
-}
-
-async function getBudgetAlerts(): Promise<BudgetAlert[] | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.COSTS_ALERTS);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<{ alerts: BudgetAlert[] }>(res);
-    return body.success ? body.data.alerts : null;
-  } catch (err) {
-    logger.error('orchestration dashboard: failed to load budget alerts', err);
-    return null;
-  }
+/** The loaded value, or `null` when the load failed (`loadServerData` logs it). */
+async function loadOrNull<T>(path: string): Promise<T | null> {
+  const result = await loadServerData<T>(path);
+  return result.ok ? result.data : null;
 }
 
 async function getPaginatedTotal(path: string): Promise<number | null> {
-  try {
-    const res = await serverFetch(`${path}${path.includes('?') ? '&' : '?'}page=1&limit=1`);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<unknown[]>(res);
-    if (!body.success) return null;
-    return hasNumericTotal(body.meta) ? body.meta.total : 0;
-  } catch (err) {
-    logger.error('orchestration dashboard: failed to load count', err, { path });
-    return null;
-  }
+  const result = await loadServerData<unknown[]>(
+    `${path}${path.includes('?') ? '&' : '?'}page=1&limit=1`
+  );
+  if (!result.ok) return null;
+  return hasNumericTotal(result.meta) ? result.meta.total : 0;
 }
 
 interface RecentError {
@@ -107,37 +89,18 @@ interface DashboardStats {
   topCapabilities: CapabilityUsage[];
 }
 
-async function getDashboardStats(): Promise<DashboardStats | null> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.OBSERVABILITY_DASHBOARD_STATS);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<DashboardStats>(res);
-    return body.success ? body.data : null;
-  } catch (err) {
-    logger.error('orchestration dashboard: failed to load observability stats', err);
-    return null;
-  }
-}
-
 /**
- * Capabilities currently in effective quarantine (auto-expiry handled
- * by the API route). Returns [] on any failure — the panel is
- * informational, never blocks the dashboard.
+ * Capabilities currently in effective quarantine (auto-expiry handled by the
+ * API route). `null` when the load failed.
  */
-async function getActiveQuarantines(): Promise<ActiveQuarantineRow[]> {
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.OBSERVABILITY_ACTIVE_QUARANTINES);
-    if (!res.ok) return [];
-    const body = await parseApiResponse<{ items: ActiveQuarantineRow[] }>(res);
-    // Defensive: ActiveQuarantinesPanel calls `rows.length`, so any
-    // mock or response shape that omits `items` must not bubble through
-    // as `undefined`.
-    if (!body.success || !Array.isArray(body.data?.items)) return [];
-    return body.data.items;
-  } catch (err) {
-    logger.error('orchestration dashboard: failed to load active quarantines', err);
-    return [];
-  }
+async function getActiveQuarantines(): Promise<ActiveQuarantineRow[] | null> {
+  const body = await loadOrNull<{ items: ActiveQuarantineRow[] }>(
+    API.ADMIN.ORCHESTRATION.OBSERVABILITY_ACTIVE_QUARANTINES
+  );
+  if (body === null) return null;
+  // Defensive: ActiveQuarantinesPanel calls `rows.length`, so a response
+  // shape that omits `items` must not bubble through as `undefined`.
+  return Array.isArray(body.items) ? body.items : [];
 }
 
 async function getModels(): Promise<ModelInfo[] | null> {
@@ -146,105 +109,76 @@ async function getModels(): Promise<ModelInfo[] | null> {
   // consumers (e.g. CostTrendChart's `for (const m of models ?? [])`)
   // throw "is not iterable" silently, since `??` only short-circuits
   // null/undefined and the object slipped past the type assertion.
-  try {
-    const res = await serverFetch(API.ADMIN.ORCHESTRATION.MODELS);
-    if (!res.ok) return null;
-    const body = await parseApiResponse<{ models: ModelInfo[] }>(res);
-    if (!body.success) return null;
-    return Array.isArray(body.data?.models) ? body.data.models : null;
-  } catch (err) {
-    logger.error('orchestration dashboard: failed to load models', err);
-    return null;
-  }
-}
-
-async function readPaginatedOrEmpty<T>(res: Response): Promise<T[]> {
-  try {
-    const body = await parseApiResponse<T[]>(res);
-    return body.success ? body.data : [];
-  } catch {
-    return [];
-  }
+  const body = await loadOrNull<{ models: ModelInfo[] }>(API.ADMIN.ORCHESTRATION.MODELS);
+  return Array.isArray(body?.models) ? body.models : null;
 }
 
 /**
  * Build a unified activity feed from conversations, executions, and errors.
- * Items are merged and sorted newest-first.
+ * Items are merged and sorted newest-first. `null` when any of the three
+ * sources failed: a feed missing one of them would read as complete.
  */
 async function getActivityFeed(
   recentErrors: RecentError[] | null
 ): Promise<ActivityFeedItem[] | null> {
-  try {
-    const [conversationsRes, executionsRes] = await Promise.all([
-      serverFetch(`${API.ADMIN.ORCHESTRATION.CONVERSATIONS}?page=1&limit=10`),
-      serverFetch(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?page=1&limit=10`),
-    ]);
+  const [conversations, executions] = await Promise.all([
+    loadOrNull<AiConversation[]>(`${API.ADMIN.ORCHESTRATION.CONVERSATIONS}?page=1&limit=10`),
+    loadOrNull<AiWorkflowExecution[]>(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?page=1&limit=10`),
+  ]);
+  if (conversations === null || executions === null || recentErrors === null) return null;
 
-    const conversations: AiConversation[] = conversationsRes.ok
-      ? await readPaginatedOrEmpty<AiConversation>(conversationsRes)
-      : [];
-    const executions: AiWorkflowExecution[] = executionsRes.ok
-      ? await readPaginatedOrEmpty<AiWorkflowExecution>(executionsRes)
-      : [];
+  const items: ActivityFeedItem[] = [
+    ...conversations.map((c): ActivityFeedItem => ({
+      kind: 'conversation',
+      id: c.id,
+      title: c.title ?? 'Untitled conversation',
+      timestamp: (c.updatedAt ?? c.createdAt).toString(),
+      href: `/admin/orchestration/conversations/${c.id}`,
+    })),
+    ...executions.map((e): ActivityFeedItem => ({
+      kind: 'execution',
+      id: e.id,
+      title: `Execution ${e.id.slice(0, 8)}`,
+      subtitle: e.status,
+      timestamp: ((e as { updatedAt?: Date; createdAt: Date }).updatedAt ?? e.createdAt).toString(),
+      href: `/admin/orchestration/executions/${e.id}`,
+    })),
+    ...recentErrors.map((err): ActivityFeedItem => ({
+      kind: 'error',
+      id: err.id,
+      title: `Error ${err.id.slice(0, 8)}`,
+      subtitle: err.errorMessage ?? 'Unknown error',
+      timestamp: err.createdAt,
+      href: `/admin/orchestration/executions/${err.id}`,
+    })),
+  ];
 
-    const items: ActivityFeedItem[] = [
-      ...conversations.map((c): ActivityFeedItem => ({
-        kind: 'conversation',
-        id: c.id,
-        title: c.title ?? 'Untitled conversation',
-        timestamp: (c.updatedAt ?? c.createdAt).toString(),
-        href: `/admin/orchestration/conversations/${c.id}`,
-      })),
-      ...executions.map((e): ActivityFeedItem => ({
-        kind: 'execution',
-        id: e.id,
-        title: `Execution ${e.id.slice(0, 8)}`,
-        subtitle: e.status,
-        timestamp: (
-          (e as { updatedAt?: Date; createdAt: Date }).updatedAt ?? e.createdAt
-        ).toString(),
-        href: `/admin/orchestration/executions/${e.id}`,
-      })),
-      ...(recentErrors ?? []).map((err): ActivityFeedItem => ({
-        kind: 'error',
-        id: err.id,
-        title: `Error ${err.id.slice(0, 8)}`,
-        subtitle: err.errorMessage ?? 'Unknown error',
-        timestamp: err.createdAt,
-        href: `/admin/orchestration/executions/${err.id}`,
-      })),
-    ];
-
-    // Deduplicate: an execution error may appear in both executions and
-    // recentErrors. Keep the error variant (more informative).
-    const seen = new Set<string>();
-    const deduped: ActivityFeedItem[] = [];
-    // Process errors first so they win over plain execution entries.
-    const sorted = [...items].sort((a, b) => {
-      if (a.kind === 'error' && b.kind !== 'error') return -1;
-      if (a.kind !== 'error' && b.kind === 'error') return 1;
-      return 0;
-    });
-    for (const item of sorted) {
-      const key = item.id;
-      if (!seen.has(key)) {
-        seen.add(key);
-        deduped.push(item);
-      }
+  // Deduplicate: an execution error may appear in both executions and
+  // recentErrors. Keep the error variant (more informative).
+  const seen = new Set<string>();
+  const deduped: ActivityFeedItem[] = [];
+  // Process errors first so they win over plain execution entries.
+  const sorted = [...items].sort((a, b) => {
+    if (a.kind === 'error' && b.kind !== 'error') return -1;
+    if (a.kind !== 'error' && b.kind === 'error') return 1;
+    return 0;
+  });
+  for (const item of sorted) {
+    const key = item.id;
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(item);
     }
-
-    // Sort newest-first. Invalid timestamps sort to the bottom.
-    deduped.sort((a, b) => {
-      const ta = new Date(a.timestamp).getTime();
-      const tb = new Date(b.timestamp).getTime();
-      return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
-    });
-
-    return deduped;
-  } catch (err) {
-    logger.error('orchestration dashboard: failed to load activity feed', err);
-    return null;
   }
+
+  // Sort newest-first. Invalid timestamps sort to the bottom.
+  deduped.sort((a, b) => {
+    const ta = new Date(a.timestamp).getTime();
+    const tb = new Date(b.timestamp).getTime();
+    return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+  });
+
+  return deduped;
 }
 
 export default async function OrchestrationDashboardPage() {
@@ -261,13 +195,15 @@ export default async function OrchestrationDashboardPage() {
     activeQuarantines,
   ] = await Promise.all([
     platformRead,
-    getCostSummary(),
-    getBudgetAlerts(),
+    loadOrNull<CostSummary>(API.ADMIN.ORCHESTRATION.COSTS_SUMMARY),
+    loadOrNull<{ alerts: BudgetAlert[] }>(API.ADMIN.ORCHESTRATION.COSTS_ALERTS).then(
+      (body) => body?.alerts ?? null
+    ),
     // The org's own agents: every org also has its platform agents (§116), so
     // counting them would open a new org on "12 agents" (setup state excludes
     // them the same way).
     getPaginatedTotal(`${API.ADMIN.ORCHESTRATION.AGENTS}?isSystem=false`),
-    getDashboardStats(),
+    loadOrNull<DashboardStats>(API.ADMIN.ORCHESTRATION.OBSERVABILITY_DASHBOARD_STATS),
     getModels(),
     platformRead.then((isPlatform) => (isPlatform ? getSetupState() : null)),
     platformRead.then((isPlatform) => (isPlatform ? getActiveQuarantines() : [])),
@@ -293,9 +229,18 @@ export default async function OrchestrationDashboardPage() {
 
       {setupState && <SetupRequiredBanner hasProvider={setupState.hasProvider} />}
 
-      <BudgetAlertsBanner alerts={budgetAlerts} />
+      {budgetAlerts === null ? (
+        <LoadFailedNotice what="budget alerts" />
+      ) : (
+        <BudgetAlertsBanner alerts={budgetAlerts} />
+      )}
 
-      {platform && <ActiveQuarantinesPanel rows={activeQuarantines} />}
+      {platform &&
+        (activeQuarantines === null ? (
+          <LoadFailedNotice what="capability quarantines" />
+        ) : (
+          <ActiveQuarantinesPanel rows={activeQuarantines} />
+        ))}
 
       <section aria-label="Summary statistics">
         <DashboardStatsCards
@@ -308,15 +253,27 @@ export default async function OrchestrationDashboardPage() {
 
       <section aria-label="Trends and activity" className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-4">
-          <CostTrendChart
-            title="7-day spend trend"
-            trend={weekTrend}
-            perModel={null}
-            models={models}
-          />
-          <TopCapabilitiesPanel capabilities={dashboardStats?.topCapabilities ?? null} />
+          {weekTrend === null ? (
+            <LoadFailedNotice what="the spend trend" />
+          ) : (
+            <CostTrendChart
+              title="7-day spend trend"
+              trend={weekTrend}
+              perModel={null}
+              models={models}
+            />
+          )}
+          {dashboardStats === null ? (
+            <LoadFailedNotice what="capability usage" />
+          ) : (
+            <TopCapabilitiesPanel capabilities={dashboardStats.topCapabilities} />
+          )}
         </div>
-        <DashboardActivityFeed items={activity} />
+        {activity === null ? (
+          <LoadFailedNotice what="recent activity" />
+        ) : (
+          <DashboardActivityFeed items={activity} />
+        )}
       </section>
     </div>
   );
