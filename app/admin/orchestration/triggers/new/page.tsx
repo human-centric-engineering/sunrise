@@ -10,7 +10,7 @@ import {
 import { WhatsAppWorkedExample } from '@/components/admin/orchestration/whatsapp-worked-example';
 import { API } from '@/lib/api/endpoints';
 import { getPublicUrl } from '@/lib/api/server-fetch';
-import { requireServerData } from '@/lib/api/server-load';
+import { requireAllServerData, requireServerData } from '@/lib/api/server-load';
 import { INBOUND_TRIGGER_STARTER_HREF } from '@/lib/orchestration/admin/inbound-trigger-starter';
 import { parseEnabledChannelsFromMeta } from '@/lib/orchestration/admin/trigger-meta';
 
@@ -23,20 +23,16 @@ export const metadata: Metadata = {
  * required and a failed load throws to the admin error boundary (#518). An
  * empty workflow list reads as "You need a workflow first"; an empty channel
  * list flags every adapter as unregistered; an empty agent list offers no
- * conversation agent for the channels that need one.
+ * conversation agent for the channels that need one. The workflows and
+ * agents are read across every page: a list cut short at 100 rows would
+ * leave options out with nothing on screen to say so.
  */
 async function getWorkflows(): Promise<WorkflowOption[]> {
-  const { data } = await requireServerData<WorkflowOption[]>(
-    `${API.ADMIN.ORCHESTRATION.WORKFLOWS}?page=1&limit=100`
-  );
-  return data;
+  return requireAllServerData<WorkflowOption>(API.ADMIN.ORCHESTRATION.WORKFLOWS);
 }
 
 async function getAgents(): Promise<AgentOption[]> {
-  const { data } = await requireServerData<AgentOption[]>(
-    `${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=100`
-  );
-  return data;
+  return requireAllServerData<AgentOption>(API.ADMIN.ORCHESTRATION.AGENTS);
 }
 
 async function getEnabledChannels(): Promise<string[]> {

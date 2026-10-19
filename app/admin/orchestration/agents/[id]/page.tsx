@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { unstable_rethrow } from 'next/navigation';
 import { cache } from 'react';
 
 import {
@@ -40,10 +41,14 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  // A failure is the page's to render: the title falls back here.
+  // A failure is the page's to render: the title falls back here. Next's own
+  // control-flow errors (not-found, dynamic bailout) are still let through.
   const agent = await getAgent(id).then(
     (result) => result.data,
-    () => null
+    (err: unknown) => {
+      unstable_rethrow(err);
+      return null;
+    }
   );
   return {
     title: agent ? `Edit ${agent.name} · AI Orchestration` : 'Edit agent · AI Orchestration',

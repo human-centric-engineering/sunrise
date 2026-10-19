@@ -9,7 +9,7 @@ import {
 } from '@/components/admin/orchestration/trigger-form';
 import { API } from '@/lib/api/endpoints';
 import { getPublicUrl } from '@/lib/api/server-fetch';
-import { requireServerData } from '@/lib/api/server-load';
+import { requireAllServerData, requireServerData } from '@/lib/api/server-load';
 import { parseEnabledChannelsFromMeta } from '@/lib/orchestration/admin/trigger-meta';
 
 export const metadata: Metadata = {
@@ -39,13 +39,12 @@ async function getTrigger(id: string): Promise<ApiTrigger> {
 /**
  * The form's options are required as well: an empty channel list flags the
  * trigger's adapter as unregistered, and an empty agent list hides the
- * conversation agent it is set to. A failed load throws (#518).
+ * conversation agent it is set to. A failed load throws (#518). The agents
+ * are read across every page for the same reason: past 100, a single page
+ * could leave out the trigger's own agent.
  */
 async function getAgents(): Promise<AgentOption[]> {
-  const { data } = await requireServerData<AgentOption[]>(
-    `${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=100`
-  );
-  return data;
+  return requireAllServerData<AgentOption>(API.ADMIN.ORCHESTRATION.AGENTS);
 }
 
 async function getEnabledChannels(): Promise<string[]> {

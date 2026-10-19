@@ -32,7 +32,9 @@ interface PageProps {
  * failure is the page's to throw (#518).
  */
 const getPatternDetail = cache((num: number) =>
-  loadServerData<PatternDetail>(API.ADMIN.ORCHESTRATION.knowledgePatternByNumber(num))
+  loadServerData<PatternDetail>(API.ADMIN.ORCHESTRATION.knowledgePatternByNumber(num), {
+    expected: [404],
+  })
 );
 
 /** Pattern names for the related-patterns strip, or `null` when they could not be loaded. */

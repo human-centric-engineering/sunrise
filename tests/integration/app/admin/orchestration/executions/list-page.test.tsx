@@ -154,6 +154,28 @@ describe('ExecutionsListPage — the platform’s view', () => {
 
     expect(fetched()[0]).toBe(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?page=1&limit=25`);
     expect(screen.getByTestId('executions-list-view')).toHaveAttribute('data-status', '');
+    // The URL still names the filters, so the page says they were ignored.
+    expect(screen.getByRole('status')).toHaveTextContent(
+      "The link's workflow and status filters aren't valid, so they were ignored."
+    );
+  });
+
+  it('names a single ignored filter', async () => {
+    answer();
+
+    render(await page({ status: 'nonsense' }));
+
+    expect(screen.getByRole('status')).toHaveTextContent(
+      "The link's status filter isn't valid, so it was ignored. Showing all executions."
+    );
+  });
+
+  it('says nothing about filters when they are valid or status=all', async () => {
+    answer();
+
+    render(await page({ workflowId: WORKFLOW_ID, status: 'all' }));
+
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
   it('throws to the error boundary, not an empty table, when the list read fails', async () => {

@@ -23,7 +23,12 @@ vi.mock('@/lib/logging', () => ({
 import { notFound, unstable_rethrow } from 'next/navigation';
 import { serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
-import { loadServerData, requireServerData, ServerLoadError } from '@/lib/api/server-load';
+import {
+  loadServerData,
+  requireAllServerData,
+  requireServerData,
+  ServerLoadError,
+} from '@/lib/api/server-load';
 
 const PATH = '/api/v1/admin/things';
 
@@ -142,6 +147,18 @@ describe('loadServerData', () => {
     });
     expect(logger.error).not.toHaveBeenCalled();
     expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('returns an expected 404 as not_found without warning', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(
+      jsonResponse({ success: false, error: { code: 'NOT_FOUND', message: 'gone' } }, 404)
+    );
+
+    const result = await loadServerData(PATH, { expected: [404] });
+
+    expect(result).toEqual({ ok: false, failure: { kind: 'not_found' } });
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
   });
 
   it('still logs a status the caller did not list as expected', async () => {
@@ -308,5 +325,53 @@ describe('requireServerData', () => {
     });
     expect(notFound).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledWith(expect.any(String), undefined, { path: PATH });
+  });
+});
+
+describe('requireAllServerData', () => {
+  const page = (data: unknown[], n: number, totalPages: number) =>
+    jsonResponse({ success: true, data, meta: { page: n, limit: 100, total: 0, totalPages } });
+
+  it('reads every page, de-duplicating a row that shifted onto the next', async () => {
+    vi.mocked(serverFetch)
+      .mockResolvedValueOnce(page([{ id: 'a' }, { id: 'b' }], 1, 2))
+      .mockResolvedValueOnce(page([{ id: 'b' }, { id: 'c' }], 2, 2));
+
+    const rows = await requireAllServerData<{ id: string }>(PATH);
+
+    expect(rows.map((r) => r.id)).toEqual(['a', 'b', 'c']);
+    expect(vi.mocked(serverFetch).mock.calls.map(([url]) => url)).toEqual([
+      `${PATH}?page=1&limit=100`,
+      `${PATH}?page=2&limit=100`,
+    ]);
+  });
+
+  it("appends to a path's own query string", async () => {
+    vi.mocked(serverFetch).mockResolvedValueOnce(page([], 1, 1));
+
+    await requireAllServerData(`${PATH}?kind=chat`);
+
+    expect(serverFetch).toHaveBeenCalledWith(`${PATH}?kind=chat&page=1&limit=100`, undefined);
+  });
+
+  it('throws when a page has no pagination meta, rather than returning a partial list', async () => {
+    vi.mocked(serverFetch).mockResolvedValueOnce(
+      jsonResponse({ success: true, data: [{ id: 'a' }] })
+    );
+
+    await expect(requireAllServerData(PATH)).rejects.toBeInstanceOf(ServerLoadError);
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it('throws when a later page fails', async () => {
+    vi.mocked(serverFetch)
+      .mockResolvedValueOnce(page([{ id: 'a' }], 1, 2))
+      .mockResolvedValueOnce(
+        jsonResponse({ success: false, error: { code: 'INTERNAL_ERROR', message: 'boom' } }, 500)
+      );
+
+    await expect(requireAllServerData(PATH)).rejects.toMatchObject({
+      failure: { kind: 'failed', status: 500 },
+    });
   });
 });

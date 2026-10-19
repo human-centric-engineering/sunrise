@@ -175,9 +175,11 @@ const alerts = await loadServerData<{ alerts: BudgetAlert[] }>(API.ADMIN.ORCHEST
 return alerts.ok ? <BudgetAlertsBanner alerts={alerts.data.alerts} /> : <LoadFailedNotice what="budget alerts" />;
 ```
 
-A panel whose route refuses some viewers by design passes the refusal as expected, so it is returned but not logged: `loadServerData(path, { expected: [403] })` (the costs page's per-org table).
+A panel whose route refuses some viewers by design passes the refusal as expected, so it is returned but not logged: `loadServerData(path, { expected: [403] })` (the costs page's per-org table). A 404 that is a normal answer works the same way: `{ expected: [404] }` (the pattern-detail page).
 
-Anything that goes into the path from the URL (a filter, a page size) must be something the route accepts. A required load answered 400 is an error page, and **Try again** repeats the same request: validate the search params on the page and drop what the route would reject, as `app/admin/orchestration/executions/page.tsx` does. List routes cap `limit` at 100.
+For the options a form must offer in full (every agent, every workflow), use `requireAllServerData<T>(path)`: it reads every page at the routes' 100-row cap, de-duplicates by `id`, and throws if any page fails or carries no pagination meta. One page silently leaves out row 101 onward, including, on an edit form, the very row the record is set to.
+
+Anything that goes into the path from the URL (a filter, a page size) must be something the route accepts. A required load answered 400 is an error page, and **Try again** repeats the same request: validate the search params on the page, drop what the route would reject, and say on the page that it was dropped, as `app/admin/orchestration/executions/page.tsx` does. List routes cap `limit` at 100.
 
 A panel whose empty state is a signal — no budget banner, an empty quarantine list — must never be rendered from a failed load: the failure would read as the all-clear. A figure shown as "—" when unknown already reads as unknown and can stay.
 

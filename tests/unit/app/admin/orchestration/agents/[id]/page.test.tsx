@@ -91,7 +91,7 @@ import EditAgentPage, { generateMetadata } from '@/app/admin/orchestration/agent
 import { serverFetch } from '@/lib/api/server-fetch';
 import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
-import { notFound } from 'next/navigation';
+import { notFound, unstable_rethrow } from 'next/navigation';
 import { getProviders, getAgentModels } from '@/lib/orchestration/prefetch-helpers';
 import { API } from '@/lib/api/endpoints';
 import { apiFailure, apiSuccess } from '@/tests/helpers/api';
@@ -446,6 +446,18 @@ describe('EditAgentPage', () => {
 
       expect(metadata.title).toBe('Edit agent · AI Orchestration');
       expect(metadata.description).toBe('Edit an existing AI agent.');
+    });
+
+    it("lets Next's control-flow errors through rather than falling back", async () => {
+      // The real unstable_rethrow rethrows Next's own errors, notFound()'s among them.
+      vi.mocked(unstable_rethrow).mockImplementationOnce((err: unknown) => {
+        if (err instanceof Error && err.message === 'NEXT_NOT_FOUND') throw err;
+      });
+      mockApi({ agent: fail(404) });
+
+      await expect(
+        generateMetadata({ params: Promise.resolve({ id: 'nonexistent' }) })
+      ).rejects.toThrow('NEXT_NOT_FOUND');
     });
   });
 });

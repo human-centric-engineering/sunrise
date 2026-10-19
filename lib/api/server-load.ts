@@ -22,6 +22,7 @@
 import { notFound, unstable_rethrow } from 'next/navigation';
 import { parseApiResponse, serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
+import { parsePaginationMeta } from '@/lib/validations/common';
 
 /** Why a load produced no data. */
 export type LoadFailure =
@@ -166,7 +167,8 @@ export async function loadServerData<T>(
   options: { init?: RequestInit; expected?: readonly number[] } = {}
 ): Promise<LoadResult<T>> {
   const { result } = await fetchServerData<T>(path, options.init, options.expected);
-  if (!result.ok && result.failure.kind === 'not_found') {
+  const expected = options.expected ?? [];
+  if (!result.ok && result.failure.kind === 'not_found' && !expected.includes(404)) {
     logger.warn('Server data load failed: not found', { path, status: 404 });
   }
   return result;
@@ -199,4 +201,42 @@ export async function requireServerData<T>(
     });
   }
   throw new ServerLoadError(path, failure);
+}
+
+/** The most rows the list routes return per page (`paginationQuerySchema`). */
+const MAX_PAGE_SIZE = 100;
+
+/**
+ * Load every row of a paginated list route, or stop rendering the page.
+ *
+ * For options a form must offer in full: past one page, a list that stops
+ * short drops the very row a record is set to, and nothing on screen says so.
+ * Rows are de-duplicated by `id`, since a row created between two requests
+ * shifts onto the next page as well.
+ *
+ * @param path - The list route, with or without its own query string.
+ * @throws {ServerLoadError} when any page fails, or a page has no pagination
+ *   meta (then there is no telling whether the list is complete).
+ */
+export async function requireAllServerData<T extends { id: string }>(path: string): Promise<T[]> {
+  const separator = path.includes('?') ? '&' : '?';
+  const rows: T[] = [];
+  const seen = new Set<string>();
+  for (let page = 1; ; page++) {
+    const pagePath = `${path}${separator}page=${page}&limit=${MAX_PAGE_SIZE}`;
+    const { data, meta } = await requireServerData<T[]>(pagePath);
+    for (const row of data) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      rows.push(row);
+    }
+    const pagination = parsePaginationMeta(meta);
+    if (!pagination) {
+      logger.error('Server data load failed: list has no pagination meta', undefined, {
+        path: pagePath,
+      });
+      throw new ServerLoadError(pagePath, { kind: 'failed', status: 200, code: null });
+    }
+    if (page >= pagination.totalPages || data.length === 0) return rows;
+  }
 }

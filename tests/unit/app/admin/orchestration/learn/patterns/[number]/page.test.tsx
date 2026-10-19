@@ -232,7 +232,9 @@ describe('PatternDetailPage', () => {
       expect(screen.getByRole('link', { name: 'Back to Learning' })).toHaveAttribute(
         'href',
         '/admin/orchestration/learn'
-      );
+      ); // A pattern with no chunks is a normal answer here, not a failure to log.
+      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.error).not.toHaveBeenCalled();
     });
 
     it('throws ServerLoadError, not "Pattern not found", when the load fails', async () => {

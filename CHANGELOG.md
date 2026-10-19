@@ -28,8 +28,9 @@ release process.
   page can live without; render `<LoadFailedNotice>` from
   `components/admin/load-failed-notice.tsx` in its place. Its
   `{ expected: [403] }` option returns a status the caller handles itself
-  without logging it. Both log every other failure, and let Next's own
-  control-flow errors through. See `.context/api/examples.md` → "Loading a page's data".
+  without logging it. `requireAllServerData()` reads every page of a list route
+  (or throws), for options a form must offer in full. All three log every
+  other failure, and let Next's own control-flow errors through. See `.context/api/examples.md` → "Loading a page's data".
   **Forks:** use these in your own admin pages rather than a try/catch that
   returns `[]`.
 

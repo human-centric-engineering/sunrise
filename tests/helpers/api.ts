@@ -102,6 +102,19 @@ export function apiSuccess(data: unknown, meta?: unknown): Response {
   });
 }
 
+/**
+ * One page of a list route, with the pagination meta the routes send.
+ * `requireAllServerData` reads `totalPages` to know when it has every row.
+ */
+export function apiPage(rows: unknown[], page = 1, totalPages = 1, limit = 100): Response {
+  return apiSuccess(rows, {
+    page,
+    limit,
+    total: Math.max(rows.length, (totalPages - 1) * limit),
+    totalPages,
+  });
+}
+
 /** A real `Response` carrying an error envelope. See {@link apiSuccess}. */
 export function apiFailure(status = 500, code = 'INTERNAL_ERROR'): Response {
   return new Response(

@@ -61,7 +61,7 @@ import { serverFetch } from '@/lib/api/server-fetch';
 import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { API } from '@/lib/api/endpoints';
-import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+import { apiFailure, apiSuccess, apiPage } from '@/tests/helpers/api';
 import { listAgentsQuerySchema, listWorkflowsQuerySchema } from '@/lib/validations/orchestration';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -74,8 +74,8 @@ const AGENTS = [{ id: 'ag-1', name: 'Support' }];
 /** Answer each endpoint with a fresh Response per call; override one to fail it. */
 function routeFetch(overrides: Partial<Record<Endpoint, () => Response>> = {}) {
   const answers: Record<Endpoint, () => Response> = {
-    workflows: () => apiSuccess(WORKFLOWS),
-    agents: () => apiSuccess(AGENTS),
+    workflows: () => apiPage(WORKFLOWS),
+    agents: () => apiPage(AGENTS),
     triggers: () => apiSuccess([], { enabledChannels: ['slack', 'twilio'] }),
     ...overrides,
   };
@@ -107,7 +107,7 @@ describe('NewTriggerPage', () => {
   });
 
   it('shows "You need a workflow first" when there genuinely are no workflows', async () => {
-    routeFetch({ workflows: () => apiSuccess([]) });
+    routeFetch({ workflows: () => apiPage([]) });
 
     render(await NewTriggerPage());
 
@@ -161,5 +161,31 @@ describe('NewTriggerPage', () => {
     expect(listAgentsQuerySchema.safeParse(query(API.ADMIN.ORCHESTRATION.AGENTS)).success).toBe(
       true
     );
+  });
+
+  // A single page stops at 100 rows, which would leave options out unseen.
+  it('offers every workflow and agent, across pages', async () => {
+    routeFetch();
+    const happy = vi.mocked(serverFetch).getMockImplementation();
+    const firstPage = Array.from({ length: 100 }, (_, i) => ({
+      id: `ag-${i}`,
+      name: `Agent ${i}`,
+    }));
+    vi.mocked(serverFetch).mockImplementation(async (url: string, init?: RequestInit) => {
+      if (!url.startsWith(`${API.ADMIN.ORCHESTRATION.AGENTS}?`)) return happy!(url, init);
+      return url.includes('page=1&')
+        ? apiPage(firstPage, 1, 2)
+        : apiPage([{ id: 'ag-100', name: 'Agent 100' }], 2, 2);
+    });
+
+    render(await NewTriggerPage());
+
+    expect(screen.getByTestId('trigger-form')).toHaveAttribute('data-agents', '101');
+  });
+
+  it('throws rather than offering a list it cannot tell is complete', async () => {
+    routeFetch({ agents: () => apiSuccess(AGENTS) });
+
+    await expect(NewTriggerPage()).rejects.toBeInstanceOf(ServerLoadError);
   });
 });

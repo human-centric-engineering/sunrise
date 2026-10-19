@@ -70,22 +70,30 @@ async function getInitialSnapshot(): Promise<LiveEngineSnapshotView | null> {
  * answers a malformed `workflowId` or an unknown `status` with a 400, and the
  * list is required, so passing one through would make a stale bookmark an
  * error page that "Try again" cannot clear. A dropped filter shows every
- * execution instead.
+ * execution instead, and `dropped` names it so the page can say so.
  */
 function parseFilters(params: Record<string, string | string[] | undefined>): {
   workflowId?: string;
   status?: string;
+  dropped: string[];
 } {
   const workflowId = cuidSchema.safeParse(params.workflowId);
   const status = executionStatusSchema.safeParse(params.status);
+  const dropped: string[] = [];
+  if (params.workflowId !== undefined && !workflowId.success) dropped.push('workflow');
+  // `all` is the status menu's own "no filter", not a bad value.
+  if (params.status !== undefined && params.status !== 'all' && !status.success) {
+    dropped.push('status');
+  }
   return {
     workflowId: workflowId.success ? workflowId.data : undefined,
     status: status.success ? status.data : undefined,
+    dropped,
   };
 }
 
 export default async function ExecutionsListPage({ searchParams }: PageProps) {
-  const { workflowId, status: initialStatus } = parseFilters(await searchParams);
+  const { workflowId, status: initialStatus, dropped } = parseFilters(await searchParams);
   // Three parallel reads: executions page, live-engine snapshot, and
   // the settings singleton (for the stuck-step threshold). The
   // snapshot and threshold both feed the dashboard above the table; the
@@ -140,6 +148,15 @@ export default async function ExecutionsListPage({ searchParams }: PageProps) {
           {platform ? 'In-flight engine state plus past execution runs.' : 'Past execution runs.'}
         </p>
       </header>
+
+      {dropped.length > 0 && (
+        <p role="status" className="bg-muted/40 rounded-md border px-4 py-3 text-sm">
+          {dropped.length === 1
+            ? `The link's ${dropped[0]} filter isn't valid, so it was ignored.`
+            : `The link's ${dropped.join(' and ')} filters aren't valid, so they were ignored.`}{' '}
+          Showing all executions.
+        </p>
+      )}
 
       <ExecutionsListView
         initialSnapshot={snapshot}

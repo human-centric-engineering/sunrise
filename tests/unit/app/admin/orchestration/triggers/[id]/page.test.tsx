@@ -66,7 +66,7 @@ import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { notFound } from 'next/navigation';
 import { API } from '@/lib/api/endpoints';
-import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+import { apiFailure, apiSuccess, apiPage } from '@/tests/helpers/api';
 import { listAgentsQuerySchema } from '@/lib/validations/orchestration';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ const TRIGGER = {
 function routeFetch(overrides: Partial<Record<Endpoint, () => Response>> = {}) {
   const answers: Record<Endpoint, () => Response> = {
     trigger: () => apiSuccess(TRIGGER),
-    agents: () => apiSuccess([{ id: 'ag-1', name: 'Support' }]),
+    agents: () => apiPage([{ id: 'ag-1', name: 'Support' }]),
     triggers: () => apiSuccess([], { enabledChannels: ['twilio'] }),
     ...overrides,
   };
@@ -181,5 +181,25 @@ describe('EditTriggerPage', () => {
       .find((u) => u.startsWith(`${API.ADMIN.ORCHESTRATION.AGENTS}?`));
     const query = Object.fromEntries(new URL(url ?? '', 'http://x').searchParams);
     expect(listAgentsQuerySchema.safeParse(query).success).toBe(true);
+  });
+
+  // Past 100 agents, one page could leave out the trigger's own agent.
+  it("offers the trigger's agent even when it is past the first page", async () => {
+    routeFetch();
+    const happy = vi.mocked(serverFetch).getMockImplementation();
+    const firstPage = Array.from({ length: 100 }, (_, i) => ({
+      id: `other-${i}`,
+      name: `Other ${i}`,
+    }));
+    vi.mocked(serverFetch).mockImplementation(async (url: string, init?: RequestInit) => {
+      if (!url.startsWith(`${API.ADMIN.ORCHESTRATION.AGENTS}?`)) return happy!(url, init);
+      return url.includes('page=1&')
+        ? apiPage(firstPage, 1, 2)
+        : apiPage([{ id: 'ag-1', name: 'Support' }], 2, 2);
+    });
+
+    render(await EditTriggerPage(params()));
+
+    expect(screen.getByTestId('trigger-form')).toHaveAttribute('data-agents', '101');
   });
 });
