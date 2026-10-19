@@ -214,13 +214,13 @@ This is sufficient for the common deployment shape (dev or internal use, admins 
 
 ### When OAuth becomes necessary
 
-| Symptom                                                                | OAuth required?                         |
-| ---------------------------------------------------------------------- | --------------------------------------- |
-| Single org, devs paste keys into Claude Desktop / Cursor configs       | No — bearer is fine                     |
-| Audit log needs per-end-user identity, not per-key                     | Yes                                     |
-| Want to revoke a single user without kicking everyone on a shared key  | Yes                                     |
-| SOC 2 / SAML / SSO buyers ask "how are individual users authenticated" | Yes                                     |
-| Future MCP client refuses bearer auth                                  | Yes (no current client does as of 2026) |
+| Symptom                                                                | OAuth required?     |
+| ---------------------------------------------------------------------- | ------------------- |
+| Single org, devs paste keys into a header-capable client's config      | No — bearer is fine |
+| Users need a sign-in-only client (e.g. Claude Desktop's connectors)    | Yes                 |
+| Audit log needs per-end-user identity, not per-key                     | Yes                 |
+| Want to revoke a single user without kicking everyone on a shared key  | Yes                 |
+| SOC 2 / SAML / SSO buyers ask "how are individual users authenticated" | Yes                 |
 
 ### Roadmap — what a full OAuth 2.1 + DCR implementation needs
 
@@ -604,7 +604,20 @@ call to one of the three removed methods answers `-32601 METHOD_NOT_FOUND`.
 
 ## Client Configuration
 
-Claude Desktop example (`claude_desktop_config.json`):
+A client connects only if it can send the `Authorization` header with every
+request. Claude Code and Cursor can; clients whose remote-server setup offers
+only a sign-in flow, with no header field, cannot connect until the server
+supports OAuth (#820) — **Claude Desktop's connectors are one**, so pasting a key
+into Claude Desktop does not work.
+
+Claude Code:
+
+```bash
+claude mcp add --transport http sunrise https://your-app.com/api/v1/mcp \
+  --header "Authorization: Bearer smcp_your_key_here"
+```
+
+Cursor (`.cursor/mcp.json`):
 
 ```json
 {

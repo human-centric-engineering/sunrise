@@ -264,9 +264,9 @@ export function McpDashboard({
           <CardHeader>
             <CardTitle className="text-sm">Client Configuration</CardTitle>
             <CardDescription>
-              Add this to your MCP client&apos;s config file (e.g.{' '}
-              <code className="text-xs">claude_desktop_config.json</code> for Claude Desktop, or{' '}
-              <code className="text-xs">.cursor/mcp.json</code> for Cursor)
+              Add this to the config of an MCP client that can send a request header, such as Cursor
+              (<code className="text-xs">.cursor/mcp.json</code>). Clients that only connect by
+              signing in, such as Claude Desktop, cannot connect to this server yet.
             </CardDescription>
           </CardHeader>
           <CardContent>
