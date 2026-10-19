@@ -178,8 +178,9 @@ async function claimErasure(
       });
       return {
         kind: 'claimed',
-        // A request recorded before this column could name its actor is
-        // attributed to the person, as a self-service erasure would be.
+        // Always set by the claim that recorded the request. Should a row be
+        // marked pending by hand without it, the person is named, as a
+        // self-service erasure would name them.
         actorUserId: updated.erasureRequestedBy ?? userId,
         reason: asErasureReason(updated.erasureReason),
         attempts: updated.erasureAttempts,
@@ -326,7 +327,8 @@ export async function processPendingErasures(
         OR: [{ erasureNextAttemptAt: { lte: now } }, { erasureNextAttemptAt: null }],
         id: { notIn: [...tried] },
       },
-      orderBy: { erasureNextAttemptAt: 'asc' },
+      // A row marked pending without a lease is the most overdue of all.
+      orderBy: { erasureNextAttemptAt: { sort: 'asc', nulls: 'first' } },
       select: { id: true },
     });
     if (!due) break;
