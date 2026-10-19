@@ -61,4 +61,12 @@ describe('HeaderNav', () => {
     expect(pricing).toHaveAttribute('href', '/pricing');
     expect(pricing).not.toHaveAttribute('aria-current');
   });
+
+  it('renders no nav and no menu button when there are no items', () => {
+    const { container } = render(<HeaderNav items={[]} />);
+
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /open navigation menu/i })).not.toBeInTheDocument();
+    expect(container).toBeEmptyDOMElement();
+  });
 });

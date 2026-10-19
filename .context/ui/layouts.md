@@ -106,6 +106,9 @@ here as `{ href, label, icon?, isActive }`.
 - **Labels are never hidden by breakpoint.** Icons are `aria-hidden`, so a hidden
   label leaves a link with no accessible name, and an item with no icon renders
   empty (#862).
+- **No items, no nav.** An empty `items` renders nothing, not a menu button
+  that opens an empty menu (e.g. a fork whose items are all `adminOnly`, seen
+  by a non-admin).
 
 The menu lives inside the nav, not in a second `AppHeader` slot, so any caller
 passing `navigation` keeps its nav on every screen size. A custom `navigation`

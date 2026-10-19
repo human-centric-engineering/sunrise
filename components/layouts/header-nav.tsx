@@ -40,6 +40,10 @@ interface HeaderNavProps {
 }
 
 export function HeaderNav({ items }: HeaderNavProps) {
+  // No links, no nav: a menu button that opens an empty menu is a control with
+  // nothing behind it (e.g. a fork whose items are all admin-only).
+  if (items.length === 0) return null;
+
   return (
     <nav className="flex items-center">
       <div className="hidden items-center gap-1 md:flex">
