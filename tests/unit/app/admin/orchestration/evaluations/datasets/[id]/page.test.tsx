@@ -28,6 +28,7 @@ const { mockNotFound } = vi.hoisted(() => ({
 }));
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   notFound: mockNotFound,
   useRouter: vi.fn(() => ({ refresh: vi.fn() })),
 }));
@@ -159,6 +160,18 @@ describe('DatasetDetailPage', () => {
       );
       expect(screen.queryByTestId('generate-cases-button')).not.toBeInTheDocument();
       // The dataset itself still renders.
+      expect(screen.getByTestId('dataset-cases-table')).toBeInTheDocument();
+    });
+
+    it('shows the notice, not an error page, when the agents reply is not a list', async () => {
+      wireFetches({ agents: () => Promise.resolve(apiSuccess({ agents: AGENTS })) });
+
+      render(await DatasetDetailPage({ params: params() }));
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /couldn.t load chat agents for case generation/i
+      );
+      expect(screen.queryByTestId('generate-cases-button')).not.toBeInTheDocument();
       expect(screen.getByTestId('dataset-cases-table')).toBeInTheDocument();
     });
 

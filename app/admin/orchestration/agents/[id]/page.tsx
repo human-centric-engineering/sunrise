@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { cache } from 'react';
 
 import {
   AgentForm,
@@ -24,14 +25,26 @@ import {
   getProviders,
 } from '@/lib/orchestration/prefetch-helpers';
 
+/**
+ * Shared by `generateMetadata` and the page, so a view fetches the agent once
+ * and a failure is logged once. A 404 is a missing agent; any other failure
+ * throws to the error boundary (#518).
+ */
+const getAgent = cache((id: string) =>
+  requireServerData<AgentWithGrants>(API.ADMIN.ORCHESTRATION.agentById(id), { notFound: true })
+);
+
 export async function generateMetadata({
   params,
 }: {
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const result = await loadServerData<AgentWithGrants>(API.ADMIN.ORCHESTRATION.agentById(id));
-  const agent = result.ok ? result.data : null;
+  // A failure is the page's to render: the title falls back here.
+  const agent = await getAgent(id).then(
+    (result) => result.data,
+    () => null
+  );
   return {
     title: agent ? `Edit ${agent.name} · AI Orchestration` : 'Edit agent · AI Orchestration',
     description: 'Edit an existing AI agent.',
@@ -60,9 +73,7 @@ export default async function EditAgentPage({ params }: { params: Promise<{ id: 
   const { id } = await params;
   const [{ data: agent }, providers, models, trend, profiles, quarantinedCapabilities] =
     await Promise.all([
-      requireServerData<AgentWithGrants>(API.ADMIN.ORCHESTRATION.agentById(id), {
-        notFound: true,
-      }),
+      getAgent(id),
       getProviders(),
       getAgentModels(),
       loadServerData<{ points: EvaluationTrendPoint[] }>(

@@ -33,6 +33,7 @@ vi.mock('@/lib/api/client', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
@@ -49,7 +50,7 @@ import { notFound } from 'next/navigation';
 import { serverFetch } from '@/lib/api/server-fetch';
 import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
-import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+import { apiFailure, apiSuccess, apiIdRejected } from '@/tests/helpers/api';
 
 const ID = 'cmorg00000000000000grant';
 const ORG_PATH = `/api/v1/admin/orgs/${ID}`;
@@ -67,6 +68,7 @@ function serve(bodies: Record<string, unknown>, metas: Record<string, unknown> =
     const data = bodies[path];
     if (data === null || data === undefined) return apiFailure(404, 'NOT_FOUND');
     if (typeof data === 'number') return apiFailure(data);
+    if (data instanceof Response) return data.clone();
     // A list with no meta given is one complete page, as the API reports it.
     const meta =
       metas[path] ??
@@ -145,7 +147,11 @@ describe('OrgPage', () => {
   });
 
   it('is a 404 when the id cannot name an org (the API answers 400)', async () => {
-    serve({ [ORG_PATH]: 400, [POLICY_PATH]: 400, [PROVIDERS_PATH]: PROVIDERS });
+    serve({
+      [ORG_PATH]: apiIdRejected('query'),
+      [POLICY_PATH]: apiIdRejected('query'),
+      [PROVIDERS_PATH]: PROVIDERS,
+    });
 
     await expect(OrgPage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
   });

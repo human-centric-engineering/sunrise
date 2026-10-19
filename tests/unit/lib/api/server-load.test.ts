@@ -20,7 +20,7 @@ vi.mock('@/lib/logging', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-import { notFound } from 'next/navigation';
+import { notFound, unstable_rethrow } from 'next/navigation';
 import { serverFetch } from '@/lib/api/server-fetch';
 import { logger } from '@/lib/logging';
 import { loadServerData, requireServerData, ServerLoadError } from '@/lib/api/server-load';
@@ -116,7 +116,7 @@ describe('loadServerData', () => {
     expect(logger.error).toHaveBeenCalledTimes(1);
   });
 
-  it('reports a 404 as not_found and leaves logging to the caller', async () => {
+  it('reports a 404 as not_found and logs it as a warning', async () => {
     vi.mocked(serverFetch).mockResolvedValue(
       jsonResponse({ success: false, error: { code: 'NOT_FOUND', message: 'gone' } }, 404)
     );
@@ -124,6 +124,45 @@ describe('loadServerData', () => {
     const result = await loadServerData(PATH);
 
     expect(result).toEqual({ ok: false, failure: { kind: 'not_found' } });
+    // The panel's notice says the error was logged, so a 404 must be.
+    expect(logger.warn).toHaveBeenCalledWith(expect.any(String), { path: PATH, status: 404 });
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('returns an expected status as failed without logging it', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(
+      jsonResponse({ success: false, error: { code: 'FORBIDDEN', message: 'no' } }, 403)
+    );
+
+    const result = await loadServerData(PATH, { expected: [403] });
+
+    expect(result).toEqual({
+      ok: false,
+      failure: { kind: 'failed', status: 403, code: 'FORBIDDEN' },
+    });
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('still logs a status the caller did not list as expected', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(
+      jsonResponse({ success: false, error: { code: 'INTERNAL_ERROR', message: 'boom' } }, 500)
+    );
+
+    await loadServerData(PATH, { expected: [403] });
+
+    expect(logger.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets Next's own control-flow errors out of the fetch catch", async () => {
+    const bailout = new Error('Dynamic server usage');
+    vi.mocked(serverFetch).mockRejectedValue(bailout);
+    vi.mocked(unstable_rethrow).mockImplementationOnce((err: unknown) => {
+      throw err;
+    });
+
+    await expect(loadServerData(PATH)).rejects.toBe(bailout);
+    expect(unstable_rethrow).toHaveBeenCalledWith(bailout);
     expect(logger.error).not.toHaveBeenCalled();
   });
 });
@@ -170,7 +209,17 @@ describe('requireServerData', () => {
 
   it('renders not-found on a 400 when asked to: a malformed id identifies nothing', async () => {
     vi.mocked(serverFetch).mockResolvedValue(
-      jsonResponse({ success: false, error: { code: 'VALIDATION_ERROR', message: 'bad id' } }, 400)
+      jsonResponse(
+        {
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid agent id',
+            details: { id: ['Must be a valid CUID'] },
+          },
+        },
+        400
+      )
     );
 
     await expect(requireServerData(PATH, { notFound: true })).rejects.toBeInstanceOf(
@@ -183,6 +232,59 @@ describe('requireServerData', () => {
       status: 400,
       code: 'VALIDATION_ERROR',
     });
+  });
+
+  it('renders not-found for an id rejected through validateQueryParams', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(
+      jsonResponse(
+        {
+          success: false,
+          error: {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid query parameters',
+            details: { errors: [{ path: 'id', message: 'Invalid org id' }] },
+          },
+        },
+        400
+      )
+    );
+
+    await expect(requireServerData(PATH, { notFound: true })).rejects.toBeInstanceOf(
+      NotFoundSignal
+    );
+  });
+
+  it.each([
+    [
+      'names a field other than the id',
+      { code: 'VALIDATION_ERROR', details: { limit: ['Too big'] } },
+    ],
+    [
+      'names the id and another field',
+      { code: 'VALIDATION_ERROR', details: { errors: [{ path: 'id' }, { path: 'status' }] } },
+    ],
+    ['names no fields', { code: 'VALIDATION_ERROR' }],
+    ['is not a validation error', { code: 'BAD_TENANT_HEADER', details: { id: ['x'] } }],
+  ])('throws, not not-found, on a 400 that %s', async (_label, error) => {
+    vi.mocked(serverFetch).mockResolvedValue(
+      jsonResponse({ success: false, error: { message: 'bad request', ...error } }, 400)
+    );
+
+    await expect(requireServerData(PATH, { notFound: true })).rejects.toBeInstanceOf(
+      ServerLoadError
+    );
+    expect(notFound).not.toHaveBeenCalled();
+  });
+
+  it('does not warn about a 404 it turns into the not-found page', async () => {
+    vi.mocked(serverFetch).mockResolvedValue(
+      jsonResponse({ success: false, error: { message: 'gone' } }, 404)
+    );
+
+    await requireServerData(PATH, { notFound: true }).catch(() => undefined);
+
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
   });
 
   it('throws on a 400 when the caller did not ask for not-found', async () => {

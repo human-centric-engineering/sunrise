@@ -17,6 +17,7 @@ import { render, screen } from '@testing-library/react';
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
@@ -66,6 +67,7 @@ import { logger } from '@/lib/logging';
 import { notFound } from 'next/navigation';
 import { API } from '@/lib/api/endpoints';
 import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+import { listAgentsQuerySchema } from '@/lib/validations/orchestration';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -164,5 +166,20 @@ describe('EditTriggerPage', () => {
     routeFetch({ triggers: () => apiFailure(200) });
 
     await expect(EditTriggerPage(params())).rejects.toBeInstanceOf(ServerLoadError);
+  });
+
+  // The agents route caps `limit` at 100 and answers more with a 400, which
+  // requireServerData turns into the error boundary on every visit.
+  it('asks the agents route for no more than its schema accepts', async () => {
+    routeFetch();
+
+    await EditTriggerPage(params());
+
+    const url = vi
+      .mocked(serverFetch)
+      .mock.calls.map(([u]) => u)
+      .find((u) => u.startsWith(`${API.ADMIN.ORCHESTRATION.AGENTS}?`));
+    const query = Object.fromEntries(new URL(url ?? '', 'http://x').searchParams);
+    expect(listAgentsQuerySchema.safeParse(query).success).toBe(true);
   });
 });

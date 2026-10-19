@@ -35,6 +35,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
@@ -413,6 +414,21 @@ describe('ExperimentComparePage', () => {
       );
       // The card still shows any existing verdict; it gets no judges to pick from.
       expect(screen.getByTestId('pairwise-verdict-card')).toHaveAttribute('data-judge-count', '0');
+      expect(screen.getByTestId('variant-compare-table')).toBeInTheDocument();
+    });
+
+    it('shows the notice, not an error page, when the graders reply has no judge list', async () => {
+      wireFetches({
+        compareResult: { success: true, data: makeCompareData() },
+        gradersResult: { success: true, data: {} },
+      });
+      const params = Promise.resolve({ id: 'exp-1' });
+
+      render(await ExperimentComparePage({ params }));
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        /couldn.t load judge agents for the pairwise verdict/i
+      );
       expect(screen.getByTestId('variant-compare-table')).toBeInTheDocument();
     });
 

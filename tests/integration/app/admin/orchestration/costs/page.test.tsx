@@ -49,6 +49,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   useRouter: vi.fn(() => ({
     push: vi.fn(),
     replace: vi.fn(),
@@ -303,6 +304,10 @@ describe('CostsPage (server component)', () => {
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.queryByTestId('per-org-usage-table')).not.toBeInTheDocument();
+    // The refusal is the expected answer for this viewer, so nothing is logged.
+    const { logger } = await import('@/lib/logging');
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it('renders a real month with no spend as empty, with no notice', async () => {

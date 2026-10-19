@@ -112,6 +112,8 @@ beforeEach(() => {
   } as never);
 });
 
+const WORKFLOW_ID = 'cmjbv4i3x00003wsloputgwul';
+
 describe('ExecutionsListPage — the platform’s view', () => {
   it('hands the executions, the live snapshot and the threshold to the view', async () => {
     answer();
@@ -132,15 +134,26 @@ describe('ExecutionsListPage — the platform’s view', () => {
   it('passes the workflow and status filters to the list read, and drops status=all', async () => {
     answer();
 
-    render(await page({ workflowId: 'wf-1', status: 'failed' }));
+    render(await page({ workflowId: WORKFLOW_ID, status: 'failed' }));
     expect(fetched()[0]).toBe(
-      `${API.ADMIN.ORCHESTRATION.EXECUTIONS}?page=1&limit=25&workflowId=wf-1&status=failed`
+      `${API.ADMIN.ORCHESTRATION.EXECUTIONS}?page=1&limit=25&workflowId=${WORKFLOW_ID}&status=failed`
     );
     expect(screen.getByTestId('executions-list-view')).toHaveAttribute('data-status', 'failed');
 
     vi.mocked(serverFetch).mockClear();
     render(await page({ status: 'all' }));
     expect(fetched()[0]).toBe(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?page=1&limit=25`);
+  });
+
+  // The list route answers these with a 400, and the list is required: passed
+  // through, a stale bookmark would be an error page "Try again" cannot clear.
+  it('drops a malformed workflowId or an unknown status rather than sending them', async () => {
+    answer();
+
+    render(await page({ workflowId: 'not-a-cuid', status: 'nonsense' }));
+
+    expect(fetched()[0]).toBe(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?page=1&limit=25`);
+    expect(screen.getByTestId('executions-list-view')).toHaveAttribute('data-status', '');
   });
 
   it('throws to the error boundary, not an empty table, when the list read fails', async () => {

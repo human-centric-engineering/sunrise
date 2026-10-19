@@ -119,11 +119,12 @@ async function getModels(): Promise<ModelInfo[] | null> {
  * sources failed: a feed missing one of them would read as complete.
  */
 async function getActivityFeed(
-  recentErrors: RecentError[] | null
+  recentErrorsRead: Promise<RecentError[] | null>
 ): Promise<ActivityFeedItem[] | null> {
-  const [conversations, executions] = await Promise.all([
+  const [conversations, executions, recentErrors] = await Promise.all([
     loadOrNull<AiConversation[]>(`${API.ADMIN.ORCHESTRATION.CONVERSATIONS}?page=1&limit=10`),
     loadOrNull<AiWorkflowExecution[]>(`${API.ADMIN.ORCHESTRATION.EXECUTIONS}?page=1&limit=10`),
+    recentErrorsRead,
   ]);
   if (conversations === null || executions === null || recentErrors === null) return null;
 
@@ -184,6 +185,11 @@ async function getActivityFeed(
 export default async function OrchestrationDashboardPage() {
   // Started alongside the fetches; only the platform-ops two wait on it.
   const platformRead = adminPageViewerTier().then((tier) => tier === 'platform');
+  // Shared with the activity feed, so its own two fetches start now too
+  // rather than after every other load has finished.
+  const statsRead = loadOrNull<DashboardStats>(
+    API.ADMIN.ORCHESTRATION.OBSERVABILITY_DASHBOARD_STATS
+  );
   const [
     platform,
     costSummary,
@@ -193,6 +199,7 @@ export default async function OrchestrationDashboardPage() {
     models,
     setupState,
     activeQuarantines,
+    activity,
   ] = await Promise.all([
     platformRead,
     loadOrNull<CostSummary>(API.ADMIN.ORCHESTRATION.COSTS_SUMMARY),
@@ -203,17 +210,16 @@ export default async function OrchestrationDashboardPage() {
     // counting them would open a new org on "12 agents" (setup state excludes
     // them the same way).
     getPaginatedTotal(`${API.ADMIN.ORCHESTRATION.AGENTS}?isSystem=false`),
-    loadOrNull<DashboardStats>(API.ADMIN.ORCHESTRATION.OBSERVABILITY_DASHBOARD_STATS),
+    statsRead,
     getModels(),
     platformRead.then((isPlatform) => (isPlatform ? getSetupState() : null)),
     platformRead.then((isPlatform) => (isPlatform ? getActiveQuarantines() : [])),
+    // Activity feed merges conversations, executions, and errors.
+    getActivityFeed(statsRead.then((stats) => stats?.recentErrors ?? null)),
   ]);
 
   const todayCostUsd = costSummary?.totals.today ?? null;
   const weekTrend = costSummary?.trend.slice(-7) ?? null;
-
-  // Activity feed merges conversations, executions, and errors.
-  const activity = await getActivityFeed(dashboardStats?.recentErrors ?? null);
 
   return (
     <div className="space-y-6">

@@ -98,7 +98,12 @@ export default async function CostsPage() {
       loadServerData<AlertsResponse>(API.ADMIN.ORCHESTRATION.COSTS_ALERTS),
       getPerModel30Day(),
       loadServerData<ModelsResponse>(API.ADMIN.ORCHESTRATION.MODELS),
-      platform ? loadServerData<OrgUsageReport>(API.ADMIN.ORCHESTRATION.COSTS_ORGS) : null,
+      platform
+        ? loadServerData<OrgUsageReport>(API.ADMIN.ORCHESTRATION.COSTS_ORGS, {
+            // Refused outside the install org at `multi`: hidden, not logged.
+            expected: [403],
+          })
+        : null,
     ]
   );
 

@@ -43,7 +43,7 @@ async function getTrigger(id: string): Promise<ApiTrigger> {
  */
 async function getAgents(): Promise<AgentOption[]> {
   const { data } = await requireServerData<AgentOption[]>(
-    `${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=200`
+    `${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=100`
   );
   return data;
 }

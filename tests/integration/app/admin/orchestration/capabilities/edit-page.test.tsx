@@ -34,6 +34,7 @@ const mockNotFound = vi.fn(() => {
 });
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   notFound: mockNotFound,
   useRouter: vi.fn(() => ({
     push: vi.fn(),

@@ -27,14 +27,14 @@ export const metadata: Metadata = {
  */
 async function getWorkflows(): Promise<WorkflowOption[]> {
   const { data } = await requireServerData<WorkflowOption[]>(
-    `${API.ADMIN.ORCHESTRATION.WORKFLOWS}?page=1&limit=200`
+    `${API.ADMIN.ORCHESTRATION.WORKFLOWS}?page=1&limit=100`
   );
   return data;
 }
 
 async function getAgents(): Promise<AgentOption[]> {
   const { data } = await requireServerData<AgentOption[]>(
-    `${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=200`
+    `${API.ADMIN.ORCHESTRATION.AGENTS}?page=1&limit=100`
   );
   return data;
 }

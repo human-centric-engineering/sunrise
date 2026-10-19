@@ -18,7 +18,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 
-import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+import { apiFailure, apiSuccess, apiIdRejected } from '@/tests/helpers/api';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +27,7 @@ const mockNotFound = vi.fn(() => {
 });
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   notFound: mockNotFound,
   useRouter: vi.fn(() => ({
     push: vi.fn(),
@@ -164,7 +165,7 @@ describe('EditProviderPage (server component)', () => {
 
   it('calls notFound() for a malformed id, which the API answers 400', async () => {
     const { serverFetch } = await import('@/lib/api/server-fetch');
-    vi.mocked(serverFetch).mockResolvedValue(apiFailure(400, 'VALIDATION_ERROR'));
+    vi.mocked(serverFetch).mockResolvedValue(apiIdRejected());
 
     const { default: EditProviderPage } =
       await import('@/app/admin/orchestration/providers/[id]/page');

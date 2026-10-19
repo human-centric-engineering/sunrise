@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   // Throwing from `notFound()` mirrors Next.js's real control flow:
   // the function never returns normally; it throws a sentinel the
   // framework catches to render the 404 page.

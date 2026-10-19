@@ -31,6 +31,7 @@ vi.mock('@/lib/api/server-fetch', async (importOriginal) => ({
 
 // LoadFailedNotice's "Try again" calls router.refresh().
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   useRouter: () => ({ refresh: vi.fn() }),
 }));
 

@@ -88,6 +88,7 @@ vi.mock('@/components/admin/orchestration/learn/use-pattern-button', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   useRouter: vi.fn(() => ({ refresh: vi.fn() })),
 }));
 

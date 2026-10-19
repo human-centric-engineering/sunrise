@@ -21,6 +21,7 @@ import { render, screen } from '@testing-library/react';
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
@@ -56,7 +57,7 @@ import { serverFetch } from '@/lib/api/server-fetch';
 import { ServerLoadError } from '@/lib/api/server-load';
 import { getServerSession } from '@/lib/auth/utils';
 import { logger } from '@/lib/logging';
-import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+import { apiFailure, apiSuccess, apiIdRejected } from '@/tests/helpers/api';
 import { createMockSession } from '@/tests/types/mocks';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -120,7 +121,7 @@ describe('AdminUserEditPage', () => {
   });
 
   it('is not found when the API rejects the id as malformed (400)', async () => {
-    vi.mocked(serverFetch).mockResolvedValue(apiFailure(400, 'VALIDATION_ERROR'));
+    vi.mocked(serverFetch).mockResolvedValue(apiIdRejected('query'));
 
     await expect(AdminUserEditPage({ params })).rejects.toThrow('NEXT_NOT_FOUND');
   });

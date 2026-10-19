@@ -152,11 +152,11 @@ To **read** data in a server component, use the loaders in `lib/api/server-load.
 
 Pick by what the page needs if the load fails:
 
-| The data is                                                                                                              | Use                                           | On failure                                                                                        |
-| ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| What the page exists to show or edit: a list page's rows, a detail page's record, the options a form cannot work without | `requireServerData(path)`                     | Throws to the route's error boundary, which logs it and offers **Try again** (a real re-fetch)    |
-| A detail page's record, by id                                                                                            | `requireServerData(path, { notFound: true })` | A 404, or a 400 for a malformed id, renders the not-found page; any other failure throws as above |
-| One panel among several the page can live without: a dashboard tile, a summary strip                                     | `loadServerData(path)`                        | Returns `{ ok: false }`; render `<LoadFailedNotice what="…">` in that panel's place               |
+| The data is                                                                                                              | Use                                           | On failure                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| What the page exists to show or edit: a list page's rows, a detail page's record, the options a form cannot work without | `requireServerData(path)`                     | Throws to the route's error boundary, which logs it and offers **Try again** (a real re-fetch)                        |
+| A detail page's record, by id                                                                                            | `requireServerData(path, { notFound: true })` | A 404, or a 400 whose validation error names only `id`, renders the not-found page; any other failure throws as above |
+| One panel among several the page can live without: a dashboard tile, a summary strip                                     | `loadServerData(path)`                        | Returns `{ ok: false }`; render `<LoadFailedNotice what="…">` in that panel's place                                   |
 
 ```typescript
 // A list page
@@ -174,6 +174,10 @@ const { data: provider } = await requireServerData<ProviderRow>(
 const alerts = await loadServerData<{ alerts: BudgetAlert[] }>(API.ADMIN.ORCHESTRATION.COSTS_ALERTS);
 return alerts.ok ? <BudgetAlertsBanner alerts={alerts.data.alerts} /> : <LoadFailedNotice what="budget alerts" />;
 ```
+
+A panel whose route refuses some viewers by design passes the refusal as expected, so it is returned but not logged: `loadServerData(path, { expected: [403] })` (the costs page's per-org table).
+
+Anything that goes into the path from the URL (a filter, a page size) must be something the route accepts. A required load answered 400 is an error page, and **Try again** repeats the same request: validate the search params on the page and drop what the route would reject, as `app/admin/orchestration/executions/page.tsx` does. List routes cap `limit` at 100.
 
 A panel whose empty state is a signal — no budget banner, an empty quarantine list — must never be rendered from a failed load: the failure would read as the all-clear. A figure shown as "—" when unknown already reads as unknown and can stay.
 

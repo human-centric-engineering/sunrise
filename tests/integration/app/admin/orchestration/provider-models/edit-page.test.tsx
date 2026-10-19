@@ -28,6 +28,7 @@ import { apiFailure, apiSuccess } from '@/tests/helpers/api';
 const mockNotFound = vi.fn();
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   notFound: (...args: unknown[]) => {
     mockNotFound(...args);
     throw new Error('NEXT_NOT_FOUND');

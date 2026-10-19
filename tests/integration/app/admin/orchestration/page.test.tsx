@@ -353,6 +353,33 @@ describe('OrchestrationDashboardPage (server component)', () => {
       expect(failedNotices()).toEqual([expect.stringContaining('recent activity')]);
     });
 
+    it('starts the activity feed fetches without waiting for the dashboard stats', async () => {
+      const { serverFetch } = await import('@/lib/api/server-fetch');
+      await setupHappyPathMocks(ALL_CONFIGURED);
+      const happy = vi.mocked(serverFetch).getMockImplementation();
+      let releaseStats!: () => void;
+      const statsHeld = new Promise<void>((resolve) => {
+        releaseStats = resolve;
+      });
+      vi.mocked(serverFetch).mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('/dashboard-stats')) await statsHeld;
+        return happy!(url, init);
+      });
+      const { default: OrchestrationDashboardPage } =
+        await import('@/app/admin/orchestration/page');
+
+      const rendering = OrchestrationDashboardPage();
+      await vi.waitFor(() => {
+        const urls = vi.mocked(serverFetch).mock.calls.map(([url]) => url);
+        expect(urls.some((url) => url.includes('/conversations'))).toBe(true);
+        expect(urls.some((url) => url.includes('/executions'))).toBe(true);
+      });
+      releaseStats();
+      render(await rendering);
+
+      expect(screen.getByTestId('dashboard-activity-feed')).toBeInTheDocument();
+    });
+
     it('falls back to 0 when paginated total meta is missing the total field', async () => {
       // Exercises the `hasNumericTotal` guard — when the API succeeds but
       // doesn't include a `meta.total`, the helper returns 0.

@@ -25,6 +25,7 @@ import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { VariantCompareTable } from '@/components/admin/orchestration/experiments/variant-compare-table';
 import { API } from '@/lib/api/endpoints';
 import { loadServerData, requireServerData } from '@/lib/api/server-load';
+import { logger } from '@/lib/logging';
 import type { PairwiseVerdictSummary } from '@/types/orchestration';
 
 export const metadata: Metadata = {
@@ -57,10 +58,25 @@ interface GradersResponse {
   judgeAgents: Array<{ slug: string; name: string }>;
 }
 
-/** The judge picker's options, or `null` when they could not be loaded. */
+/**
+ * The judge picker's options, or `null` when they could not be loaded. A
+ * reply without a `judgeAgents` list counts as a failed load, so it shows the
+ * notice instead of taking the whole comparison down.
+ */
 async function loadJudges(): Promise<JudgeOption[] | null> {
   const result = await loadServerData<GradersResponse>(API.ADMIN.ORCHESTRATION.EVAL_GRADERS);
   if (!result.ok) return null;
+  const reply: unknown = result.data;
+  if (
+    typeof reply !== 'object' ||
+    reply === null ||
+    !Array.isArray(Reflect.get(reply, 'judgeAgents'))
+  ) {
+    logger.error('Experiment compare: graders reply has no judgeAgents list', undefined, {
+      path: API.ADMIN.ORCHESTRATION.EVAL_GRADERS,
+    });
+    return null;
+  }
   return result.data.judgeAgents.map((j) => ({ slug: j.slug, name: j.name }));
 }
 

@@ -33,6 +33,7 @@ const {
 }));
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   notFound: mockNotFound,
   redirect: mockRedirect,
 }));

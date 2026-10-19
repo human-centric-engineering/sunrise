@@ -46,6 +46,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   useRouter: vi.fn(() => ({
     push: vi.fn(),
     replace: vi.fn(),

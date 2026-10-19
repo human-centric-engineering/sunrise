@@ -62,6 +62,7 @@ import { ServerLoadError } from '@/lib/api/server-load';
 import { logger } from '@/lib/logging';
 import { API } from '@/lib/api/endpoints';
 import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+import { listAgentsQuerySchema, listWorkflowsQuerySchema } from '@/lib/validations/orchestration';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -138,5 +139,27 @@ describe('NewTriggerPage', () => {
 
     await expect(NewTriggerPage()).rejects.toBeInstanceOf(ServerLoadError);
     expect(logger.error).toHaveBeenCalledWith(expect.any(String), fetchErr, expect.any(Object));
+  });
+
+  // The list routes cap `limit` at 100 and answer more with a 400, which
+  // requireServerData turns into the error boundary on every visit.
+  it('asks the list routes for no more than their schemas accept', async () => {
+    routeFetch();
+
+    await NewTriggerPage();
+
+    const query = (prefix: string) => {
+      const url = vi
+        .mocked(serverFetch)
+        .mock.calls.map(([u]) => u)
+        .find((u) => u.startsWith(`${prefix}?`));
+      return Object.fromEntries(new URL(url ?? '', 'http://x').searchParams);
+    };
+    expect(
+      listWorkflowsQuerySchema.safeParse(query(API.ADMIN.ORCHESTRATION.WORKFLOWS)).success
+    ).toBe(true);
+    expect(listAgentsQuerySchema.safeParse(query(API.ADMIN.ORCHESTRATION.AGENTS)).success).toBe(
+      true
+    );
   });
 });

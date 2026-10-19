@@ -111,6 +111,28 @@ export function apiFailure(status = 500, code = 'INTERNAL_ERROR'): Response {
 }
 
 /**
+ * A 400 rejecting the path's `id`, in the shape the detail routes send it.
+ *
+ * `validatePathParam` and the hand-rolled checks send `{ id: [...] }`;
+ * `validateQueryParams` (the user and org routes) sends
+ * `{ errors: [{ path: 'id', ... }] }`. `requireServerData({ notFound: true })`
+ * renders not-found for either, and for no other 400.
+ */
+export function apiIdRejected(shape: 'path' | 'query' = 'path'): Response {
+  const details =
+    shape === 'path'
+      ? { id: ['Must be a valid CUID'] }
+      : { errors: [{ path: 'id', message: 'Invalid id' }] };
+  return new Response(
+    JSON.stringify({
+      success: false,
+      error: { code: 'VALIDATION_ERROR', message: 'Invalid id', details },
+    }),
+    { status: 400, headers: { 'Content-Type': 'application/json' } }
+  );
+}
+
+/**
  * Assert API success response
  *
  * Checks that response matches the standardized success format

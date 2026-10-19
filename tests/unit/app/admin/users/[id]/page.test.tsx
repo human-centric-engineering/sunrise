@@ -28,7 +28,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import AdminUserProfilePage, { generateMetadata } from '@/app/admin/users/[id]/page';
 import { createMockSession } from '@/tests/types/mocks';
-import { apiFailure, apiSuccess } from '@/tests/helpers/api';
+import { apiFailure, apiSuccess, apiIdRejected } from '@/tests/helpers/api';
 import type { AdminUser } from '@/types/admin';
 
 /**
@@ -45,6 +45,7 @@ vi.mock('@/lib/logging', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
+  unstable_rethrow: vi.fn(),
   notFound: vi.fn(() => {
     throw new Error('NEXT_NOT_FOUND');
   }),
@@ -206,7 +207,7 @@ describe('AdminUserProfilePage', () => {
     });
 
     it('should call notFound when the API rejects the id as malformed (400)', async () => {
-      mockUserApiError(400);
+      vi.mocked(serverFetch).mockResolvedValue(apiIdRejected('query'));
       const params = Promise.resolve({ id: 'not-a-cuid' });
 
       await expect(AdminUserProfilePage({ params })).rejects.toThrow('NEXT_NOT_FOUND');

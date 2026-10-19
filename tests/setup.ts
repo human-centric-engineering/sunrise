@@ -236,6 +236,7 @@ vi.mock('next/navigation', async () => {
     useParams: vi.fn(() => ({})),
     redirect: vi.fn(),
     notFound: vi.fn(),
+    unstable_rethrow: vi.fn(),
   };
 });
 

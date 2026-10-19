@@ -6,7 +6,8 @@ import { FieldHelp } from '@/components/ui/field-help';
 import { API } from '@/lib/api/endpoints';
 import { adminPageViewerTier } from '@/lib/auth/admin-page-viewer';
 import { loadServerData, requireServerData } from '@/lib/api/server-load';
-import { parsePaginationMeta } from '@/lib/validations/common';
+import { cuidSchema, parsePaginationMeta } from '@/lib/validations/common';
+import { executionStatusSchema } from '@/lib/validations/orchestration';
 import { getOrchestrationSettings } from '@/lib/orchestration/settings';
 import type { LiveEngineSnapshotView } from '@/components/admin/orchestration/live-engine-dashboard';
 import type { PaginationMeta } from '@/types/api';
@@ -64,12 +65,27 @@ async function getInitialSnapshot(): Promise<LiveEngineSnapshotView | null> {
   return result.ok ? result.data : null;
 }
 
+/**
+ * The URL's filters, with any the API would reject dropped. The list route
+ * answers a malformed `workflowId` or an unknown `status` with a 400, and the
+ * list is required, so passing one through would make a stale bookmark an
+ * error page that "Try again" cannot clear. A dropped filter shows every
+ * execution instead.
+ */
+function parseFilters(params: Record<string, string | string[] | undefined>): {
+  workflowId?: string;
+  status?: string;
+} {
+  const workflowId = cuidSchema.safeParse(params.workflowId);
+  const status = executionStatusSchema.safeParse(params.status);
+  return {
+    workflowId: workflowId.success ? workflowId.data : undefined,
+    status: status.success ? status.data : undefined,
+  };
+}
+
 export default async function ExecutionsListPage({ searchParams }: PageProps) {
-  const resolvedParams = await searchParams;
-  const workflowId =
-    typeof resolvedParams.workflowId === 'string' ? resolvedParams.workflowId : undefined;
-  const initialStatus =
-    typeof resolvedParams.status === 'string' ? resolvedParams.status : undefined;
+  const { workflowId, status: initialStatus } = parseFilters(await searchParams);
   // Three parallel reads: executions page, live-engine snapshot, and
   // the settings singleton (for the stuck-step threshold). The
   // snapshot and threshold both feed the dashboard above the table; the

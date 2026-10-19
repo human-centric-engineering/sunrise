@@ -22,12 +22,14 @@ release process.
   for reading internal API routes from a server component** (t-861, #518).
   `requireServerData()` returns a page's main data or throws a
   `ServerLoadError` to the route's error boundary; with `{ notFound: true }` a
-  404, or a 400 for a malformed id, renders the not-found page, and no other
-  failure does.
+  404, or a 400 whose validation error names only the `id`, renders the
+  not-found page, and no other failure does.
   `loadServerData()` never throws and returns a typed failure, for a panel the
   page can live without; render `<LoadFailedNotice>` from
-  `components/admin/load-failed-notice.tsx` in its place. Both log every
-  failure. See `.context/api/examples.md` → "Loading a page's data".
+  `components/admin/load-failed-notice.tsx` in its place. Its
+  `{ expected: [403] }` option returns a status the caller handles itself
+  without logging it. Both log every other failure, and let Next's own
+  control-flow errors through. See `.context/api/examples.md` → "Loading a page's data".
   **Forks:** use these in your own admin pages rather than a try/catch that
   returns `[]`.
 

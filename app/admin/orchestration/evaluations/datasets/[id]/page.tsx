@@ -19,6 +19,7 @@ import { DatasetCasesTable } from '@/components/admin/orchestration/evaluations-
 import { LoadFailedNotice } from '@/components/admin/load-failed-notice';
 import { API } from '@/lib/api/endpoints';
 import { loadServerData, requireServerData } from '@/lib/api/server-load';
+import { logger } from '@/lib/logging';
 
 export const metadata: Metadata = {
   title: 'Dataset · AI Orchestration',
@@ -70,6 +71,14 @@ export default async function DatasetDetailPage({
   ]);
 
   const { dataset, cases } = detail;
+  // A reply that is not a list counts as a failed load: the notice, rather
+  // than a crash in the button.
+  const agentOptions = chatAgents.ok && Array.isArray(chatAgents.data) ? chatAgents.data : null;
+  if (chatAgents.ok && !agentOptions) {
+    logger.error('Dataset detail: agents reply is not a list', undefined, {
+      path: API.ADMIN.ORCHESTRATION.AGENTS,
+    });
+  }
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2 text-sm">
@@ -89,8 +98,8 @@ export default async function DatasetDetailPage({
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {chatAgents.ok ? (
-            <GenerateCasesButton datasetId={dataset.id} agents={chatAgents.data} />
+          {agentOptions ? (
+            <GenerateCasesButton datasetId={dataset.id} agents={agentOptions} />
           ) : (
             <LoadFailedNotice what="chat agents for case generation" />
           )}
