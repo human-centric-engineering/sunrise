@@ -189,6 +189,21 @@ describe('exportUserData', () => {
 
       expect(bundle.account).toEqual(SUBJECT);
     });
+
+    it('leaves out a pending erasure’s requester and retry state, and keeps when and why (t-842)', async () => {
+      await exportUserData(PARAMS);
+
+      const query = mockUserFindUnique.mock.calls[0][0] as {
+        omit?: Record<string, boolean>;
+      };
+      // The requester is another person's id; the attempt count and next
+      // attempt are the retrier's state, not the subject's data.
+      expect(query.omit).toEqual({
+        erasureRequestedBy: true,
+        erasureAttempts: true,
+        erasureNextAttemptAt: true,
+      });
+    });
   });
 
   describe('credential redaction', () => {

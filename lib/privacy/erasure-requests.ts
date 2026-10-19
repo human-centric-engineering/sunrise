@@ -322,10 +322,13 @@ export async function requestUserErasure(
   // A pending erasure is maintenance work: the idle gate must not skip past
   // it, even if this request is killed before it can say anything else.
   noteMaintenanceWork('pending-erasure');
+  // The actor and reason the erasure will record, which are the first
+  // request's when this one repeats it.
   logger.info('Erasure requested; account disabled', {
     userId,
-    actorUserId,
-    reason,
+    requestedBy: actorUserId,
+    actorUserId: claim.actorUserId,
+    reason: claim.reason,
     attempts: claim.attempts,
   });
 

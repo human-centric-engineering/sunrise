@@ -215,7 +215,13 @@ interface SourceResult {
 export async function exportUserData(params: ExportUserParams): Promise<SubjectExport> {
   const { userId, actorUserId, reason } = params;
 
-  const account = await prisma.user.findUnique({ where: { id: userId } });
+  const account = await prisma.user.findUnique({
+    where: { id: userId },
+    // A pending erasure's retry state (t-842), and the id of the admin who
+    // asked: another person's identifier, not the subject's data. When it was
+    // requested and why stay in.
+    omit: { erasureRequestedBy: true, erasureAttempts: true, erasureNextAttemptAt: true },
+  });
   if (!account) {
     throw new SubjectNotFoundError(userId);
   }

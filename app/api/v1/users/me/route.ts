@@ -12,7 +12,7 @@ import { cookies } from 'next/headers';
 import { verifyPassword } from 'better-auth/crypto';
 import { prisma } from '@/lib/db/client';
 import { successResponse, errorResponse } from '@/lib/api/responses';
-import { UnauthorizedError, ConflictError, ErrorCodes } from '@/lib/api/errors';
+import { UnauthorizedError, ErrorCodes } from '@/lib/api/errors';
 import { validateRequestBody } from '@/lib/api/validation';
 import { updateUserSchema, deleteAccountSchema } from '@/lib/validations/user';
 import { auth } from '@/lib/auth/config';
@@ -325,10 +325,16 @@ export const DELETE = withAuth(
       // lib/auth/account.ts and lib/auth/config.ts.
       //
       // An admin whose own deletion is pending is not counted either (t-842):
-      // they can no longer sign in, and the retrier will erase them.
+      // they can no longer sign in, and the retrier will erase them. The
+      // caller always is, so a caller whose own deletion is already pending
+      // (a cached session repeating the request) is not told they are the
+      // last admin when another remains.
       if (isPlatformAdmin(session.user)) {
         const adminCount = await prisma.user.count({
-          where: { ...humanAdminWhere, erasureRequestedAt: null },
+          where: {
+            ...humanAdminWhere,
+            OR: [{ erasureRequestedAt: null }, { id: session.user.id }],
+          },
         });
         if (adminCount <= 1) {
           return errorResponse(
@@ -354,11 +360,10 @@ export const DELETE = withAuth(
         actorUserId: session.user.id,
         reason: 'self_service',
       });
-      if (erasure.status === 'in_progress') {
-        throw new ConflictError('This account is already being deleted.');
-      }
 
-      // Clear all better-auth cookies (session, cached session data, CSRF, OAuth state)
+      // Clear all better-auth cookies (session, cached session data, CSRF,
+      // OAuth state). Also when another attempt holds the deletion: the
+      // account's sessions are gone either way.
       const cookieStore = await cookies();
       cookieStore.delete('better-auth.session_token');
       cookieStore.delete('better-auth.session_data');
@@ -372,6 +377,15 @@ export const DELETE = withAuth(
       cookieStore.set('__Secure-better-auth.session_data', '', secureCookieOptions);
       cookieStore.set('__Secure-better-auth.csrf_token', '', secureCookieOptions);
       cookieStore.set('__Secure-better-auth.state', '', secureCookieOptions);
+
+      // A repeat while another attempt holds it: an answer, not a failure,
+      // so returned rather than thrown into the error log below.
+      if (erasure.status === 'in_progress') {
+        return errorResponse('This account is already being deleted.', {
+          status: 409,
+          code: ErrorCodes.CONFLICT,
+        });
+      }
 
       // Track account deletion server-side (bypasses ad blockers for critical events)
       await serverTrack({

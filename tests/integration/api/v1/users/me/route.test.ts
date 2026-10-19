@@ -321,7 +321,10 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       // human admins are counted (`humanAdminWhere`); the seeded non-login
       // SERVICE config-owner is excluded (issue #278 / security review).
       expect(prisma.user.count).toHaveBeenCalledWith({
-        where: { ...humanAdminWhere, erasureRequestedAt: null },
+        where: {
+          ...humanAdminWhere,
+          OR: [{ erasureRequestedAt: null }, { id: SESSION_USER_ID }],
+        },
       });
 
       // erase must NOT have run — $transaction not called
@@ -545,9 +548,8 @@ describe('DELETE /api/v1/users/me — eraseUser integration chain', () => {
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       expect(prisma.user.updateMany).not.toHaveBeenCalled();
       expect(prisma.user.delete).not.toHaveBeenCalled();
-      // The account still exists, so its cookies are not torn down.
-      expect(mockCookieStore.delete).not.toHaveBeenCalled();
-      expect(mockCookieStore.set).not.toHaveBeenCalled();
+      // Its sessions are gone either way, so the cookies are torn down.
+      expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.session_token');
     });
 
     it('touches no deliveries when the stored address is unverified', async () => {

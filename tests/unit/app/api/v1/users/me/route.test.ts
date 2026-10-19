@@ -279,7 +279,10 @@ describe('DELETE /api/v1/users/me', () => {
     // a real operator (issue #278 / security review).
     expect(prisma.user.count).toHaveBeenCalledTimes(1);
     expect(prisma.user.count).toHaveBeenCalledWith({
-      where: { ...humanAdminWhere, erasureRequestedAt: null },
+      where: {
+        ...humanAdminWhere,
+        OR: [{ erasureRequestedAt: null }, { id: session.user.id }],
+      },
     });
 
     // requestUserErasure must NOT have been called — confirms the guard short-circuits
@@ -309,7 +312,10 @@ describe('DELETE /api/v1/users/me', () => {
     expect(response.status).toBe(400);
     expect((body as ErrorBody).error.code).toBe('LAST_ADMIN');
     expect(prisma.user.count).toHaveBeenCalledWith({
-      where: { ...humanAdminWhere, erasureRequestedAt: null },
+      where: {
+        ...humanAdminWhere,
+        OR: [{ erasureRequestedAt: null }, { id: session.user.id }],
+      },
     });
     expect(requestUserErasure).not.toHaveBeenCalled();
   });
@@ -401,7 +407,7 @@ describe('DELETE /api/v1/users/me', () => {
 
   // ── Case 4b: Erasure already in progress ─────────────────────────────────
 
-  it('returns 409 CONFLICT, clears no cookies and tracks nothing when another attempt holds the erasure', async () => {
+  it('returns 409 CONFLICT, clears the cookies and tracks nothing when another attempt holds the erasure', async () => {
     const session = buildUserSession('USER');
     vi.mocked(requestUserErasure).mockResolvedValue({
       status: 'in_progress',
@@ -421,9 +427,14 @@ describe('DELETE /api/v1/users/me', () => {
     expect(body.success).toBe(false);
     expect((body as ErrorBody).error.code).toBe('CONFLICT');
     expect(requestUserErasure).toHaveBeenCalledTimes(1);
-    // The account is not yet gone: the route must not report it deleted.
-    expect(mockCookieStore.delete).not.toHaveBeenCalled();
-    expect(mockCookieStore.set).not.toHaveBeenCalled();
+    // Its sessions are gone either way, so the cookies go too; but the account
+    // is not yet erased, so nothing reports it deleted.
+    expect(mockCookieStore.delete).toHaveBeenCalledWith('better-auth.session_token');
+    expect(mockCookieStore.set).toHaveBeenCalledWith(
+      '__Secure-better-auth.session_data',
+      '',
+      expect.objectContaining({ maxAge: 0 })
+    );
     expect(serverTrack).not.toHaveBeenCalled();
   });
 
