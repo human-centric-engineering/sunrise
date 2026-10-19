@@ -56,7 +56,13 @@
  * is the test working: your scaffold is public surface for whoever forks
  * *you*, and the list is where you say so.
  *
- * @see VERSIONING.md · .context/architecture/fork-init-seams.md
+ * The same derivation also checks CUSTOMIZATION.md §4's "Edit this file" table,
+ * the guide a fork reads to find where to make a change. That table missed
+ * `footer.ts` and `tenant-resolver.ts` (#735), so a fork looking there for the
+ * copyright line was steered towards editing a platform footer instead. A fork
+ * adding its own scaffold owes that table a row as well.
+ *
+ * @see VERSIONING.md · CUSTOMIZATION.md §4 · .context/architecture/fork-init-seams.md
  */
 
 import { readdirSync, readFileSync } from 'node:fs';
@@ -64,6 +70,7 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 
 const VERSIONING_MD = path.join(process.cwd(), 'VERSIONING.md');
+const CUSTOMIZATION_MD = path.join(process.cwd(), 'CUSTOMIZATION.md');
 const APP_DIR = path.join(process.cwd(), 'lib/app');
 
 /**
@@ -250,5 +257,82 @@ describe('VERSIONING.md seam coverage', () => {
     ]);
 
     expect(derived).toEqual(['lib/app/brand.ts', 'lib/app/orders/']);
+  });
+});
+
+/**
+ * The `lib/app/` paths in the first cell of CUSTOMIZATION.md's "Edit this file"
+ * table.
+ *
+ * Anchored to the table's header row and read until the first line that is not
+ * a table row, so a path mentioned in the prose around it is not counted as a
+ * row. The name pattern is the same as {@link scaffoldsNamedInVersioning}'s, for
+ * the same reason: it has to accept whatever {@link classifyEntries} emits.
+ */
+function scaffoldsInCustomizationTable(markdown: string): string[] {
+  const lines = markdown.split('\n');
+  const header = lines.findIndex((line) => /^\|\s*Edit this file\s*\|/.test(line));
+  if (header === -1) {
+    throw new Error(
+      'CUSTOMIZATION.md no longer has a table headed "| Edit this file |". This guard ' +
+        'reads that header to find the seam table; if the guide was restructured, teach ' +
+        'it the new shape rather than deleting it.'
+    );
+  }
+  const found = new Set<string>();
+  // header + 1 is the |---| separator row; rows start after it.
+  for (const line of lines.slice(header + 2)) {
+    if (!line.startsWith('|')) break;
+    const m = /^\|\s*`(lib\/app\/[^\s`*]+)`/.exec(line);
+    if (m) found.add(m[1]);
+  }
+  return [...found].sort();
+}
+
+describe('CUSTOMIZATION.md seam table coverage', () => {
+  const markdown = readFileSync(CUSTOMIZATION_MD, 'utf8');
+  const onDisk = scaffoldsOnDisk();
+  const listed = scaffoldsInCustomizationTable(markdown);
+
+  it('reads the table at all', () => {
+    // Guards the two checks below against passing on an empty parse: a
+    // "nothing stale" result from a table it failed to read means nothing.
+    expect(listed.length).toBeGreaterThan(10);
+  });
+
+  it('lists every scaffold in lib/app/', () => {
+    const missing = onDisk.filter((f) => !listed.includes(f));
+
+    expect(
+      missing,
+      'These lib/app/ scaffolds have no row in CUSTOMIZATION.md §4\'s "Edit this file" ' +
+        'table. That table is where a fork looks for the file to change; a scaffold ' +
+        'missing from it gets edited in a platform file instead, and that edit ' +
+        'conflicts on every upgrade (#735).'
+    ).toEqual([]);
+  });
+
+  it('does not list a scaffold that no longer exists', () => {
+    const stale = listed.filter((f) => !onDisk.includes(f));
+
+    expect(
+      stale,
+      "CUSTOMIZATION.md §4's table lists these lib/app/ files, but they are not on disk."
+    ).toEqual([]);
+  });
+
+  it('counts only table rows, not paths in the prose around the table', () => {
+    const doc = [
+      'See `lib/app/prose-only.ts` for an example.',
+      '',
+      '| Edit this file | To register | Auto-wired by |',
+      '| --- | --- | --- |',
+      '| `lib/app/brand.ts` | name | lib/brand.ts |',
+      '| `lib/app/orders/` | orders | the order registry |',
+      '',
+      'Afterwards, `lib/app/after.ts` is mentioned.',
+    ].join('\n');
+
+    expect(scaffoldsInCustomizationTable(doc)).toEqual(['lib/app/brand.ts', 'lib/app/orders/']);
   });
 });
