@@ -189,6 +189,20 @@ describe('scanRouterMocks: complete-literal rule', () => {
       expect(literals(source)).toEqual([]);
     });
 
+    it('does not flag all six spies passed to the factory as overrides', () => {
+      // What the CLI tells a test asserting on all six methods to write.
+      const source = `vi.mocked(useRouter).mockReturnValue(createMockRouter({ push, replace, refresh, back, forward, prefetch }));`;
+      expect(literals(source)).toEqual([]);
+    });
+
+    it('recognises the factory through a namespace import', () => {
+      const source = `
+        const router = { ...mocks.createMockRouter(), push, replace, refresh, back, forward, prefetch };
+        const cast = mocks.createMockRouter() as MockRouter;
+      `;
+      expect(scan(source)).toEqual([]);
+    });
+
     it('still flags a literal that only uses the factory for one member', () => {
       const source = `
         const router = {
@@ -339,6 +353,16 @@ describe('scanRouterMocks: cast rule', () => {
   it('flags one handed to vi.mocked with an explicit type argument', () => {
     const source = `vi.mocked<typeof useRouter>(useRouter).mockReturnValue({ push } as never);`;
     expect(casts(source)).toHaveLength(1);
+  });
+
+  it('flags one returned from inside a block in the implementation', () => {
+    const source = `vi.mocked(useRouter).mockImplementation(() => { if (x) { return { push } as never; } return createMockRouter(); });`;
+    expect(casts(source)).toHaveLength(1);
+  });
+
+  it('does not flag a cast returned by a function nested inside the implementation', () => {
+    const source = `vi.mocked(useRouter).mockImplementation(() => { const f = () => { return 1 as never; }; return createMockRouter(); });`;
+    expect(casts(source)).toEqual([]);
   });
 
   it('does not flag a cast inside an implementation that is not its return value', () => {
@@ -498,6 +522,14 @@ describe('scanRouterMocks: false positives have a way out', () => {
     expect(literals(source)).toHaveLength(1);
   });
 
+  it('still scans a file whose next/navigation mock names the module in a template literal', () => {
+    const source = [
+      "const pagesFixture = 'next/router';",
+      'vi.mock(`next/navigation`, () => ({ useRouter: () => ({ ' + SIX + ' }) }));',
+    ].join('\n');
+    expect(literals(source)).toHaveLength(1);
+  });
+
   it('skips a literal under an ignore directive that gives a reason', () => {
     const source = `
       // router-mocks-ignore: an it.each row keyed by method name, not a router
@@ -520,6 +552,15 @@ describe('scanRouterMocks: false positives have a way out', () => {
       it.each([{ ${SIX} }])('row', () => {});
     `;
     expect(literals(source)).toEqual([]);
+  });
+
+  it('ignores a block-comment directive whose only "reason" is the comment closing', () => {
+    const source = `
+      /* router-mocks-ignore:
+       */
+      const row = { ${SIX} };
+    `;
+    expect(literals(source)).toHaveLength(1);
   });
 
   it('ignores a directive with no reason', () => {
