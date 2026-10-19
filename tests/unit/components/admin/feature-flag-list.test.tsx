@@ -648,15 +648,21 @@ describe('components/admin/feature-flag-list', () => {
       });
     });
 
-    it('should disable delete button during deletion', async () => {
+    it('should keep the flag listed until a pending delete completes', async () => {
       // Arrange
       const user = userEvent.setup();
       const { apiClient } = await import('@/lib/api/client');
       const flag = createMockFlag();
 
-      // Make the API call slow but eventually succeed
+      // Held open by hand rather than on a real timer: a timer resolved after
+      // teardown, and the component's state updates then ran with no window,
+      // failing the run with "window is not defined" (#925).
+      let resolveDelete!: (value: { success: true }) => void;
       vi.mocked(apiClient.delete).mockImplementation(
-        () => new Promise((resolve) => setTimeout(() => resolve({ success: true }), 100))
+        () =>
+          new Promise((resolve) => {
+            resolveDelete = resolve;
+          })
       );
 
       const { container } = render(
@@ -684,13 +690,18 @@ describe('components/admin/feature-flag-list', () => {
         .find((btn) => btn.textContent === 'Delete');
       await user.click(deleteButton!);
 
-      // Assert: API should be called (tested in other tests, we just verify the flow completes)
-      await waitFor(
-        () => {
-          expect(apiClient.delete).toHaveBeenCalled();
-        },
-        { timeout: 2000 }
-      );
+      await waitFor(() => {
+        expect(apiClient.delete).toHaveBeenCalled();
+      });
+      // Still listed while the delete is in flight: the row goes on success,
+      // not on click. Checked first so the absence below is not vacuous.
+      expect(screen.getByText(flag.name)).toBeInTheDocument();
+
+      // Settled inside the test, so no state update outlives teardown.
+      resolveDelete({ success: true });
+      await waitFor(() => {
+        expect(screen.queryByText(flag.name)).not.toBeInTheDocument();
+      });
     });
 
     it('should display error message on delete failure', async () => {
