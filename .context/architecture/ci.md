@@ -658,7 +658,16 @@ Before `npm run build`, the **Bound the Next.js build cache** step measures the
 restored cache on disk. Over the limit, it deletes it and logs a notice with the
 size; the build then starts cold and saves a fresh cache. Under it, it logs the
 size. Defaults to **2048** MB on disk: a fresh Sunrise build writes 674MB (501MB
-compressed), so the cache can roughly triple before it is restarted.
+compressed), so the cache can roughly triple before it is restarted. **The
+limit is on-disk size, and the sizes GitHub shows are compressed** — the
+Actions cache list and the restore log's `Cache Size:` line both report the
+archive, about three quarters of the on-disk figure here (Sunrise's ~2GB cache
+above is ~2.7GB on disk). Size the variable from the step's own log line, not
+from those.
+
+The cache key ends in `github.run_attempt`, so a re-run saves its own entry; on
+an exact key hit `actions/cache` skips the save, and a re-run would otherwise
+leave the discarded cache unreplaced.
 
 ```bash
 gh variable set CI_NEXT_CACHE_MAX_MB --body 4096
@@ -836,10 +845,12 @@ read/write across the board.
 which a hung health-wait or a deadlocked process will happily burn. Four jobs
 carry a cap: `ci.yml`'s `docker` job (30), `test-full` and `test-changed` (30,
 via Knob 5), and `fork-sync-integrity` (5). The rule is "cap anything that can
-wait forever", not "cap everything": a container waits on something else's
-readiness, and a vitest worker can deadlock during module evaluation — an
-import cycle closed through a `vi.mock` async factory hangs it before any test
-starts, where no vitest timeout can fire (#843). Note the interaction with
+wait forever", not "cap everything": `docker` waits on containers it starts
+itself, and a vitest worker can deadlock during module evaluation — an import
+cycle closed through a `vi.mock` async factory hangs it before any test starts,
+where no vitest timeout can fire (#843). `smoke` and `smoke-multi` stay
+uncapped: their Postgres is a service container, which the runner health-checks
+with bounded retries before any step runs. Note the interaction with
 `ci-status`: a job killed by its own timeout reports `cancelled`, which the gate
 treats as a failure precisely so a timeout cannot pass as a skip.
 

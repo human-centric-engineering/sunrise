@@ -429,7 +429,9 @@ jobs:
         uses: actions/cache@v6
         with:
           path: .next/cache
-          key: next-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          # run_attempt so a re-run saves too: an exact primary-key hit skips the
+          # save, which would leave a cache the bound below discarded unreplaced.
+          key: next-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ github.sha }}-${{ github.run_attempt }}
           restore-keys: |
             next-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
             next-${{ runner.os }}-
@@ -1095,7 +1097,8 @@ jobs:
             "${{ needs.lockfile.result }}"; do
             # Allow-list, not a deny-list. Testing for `failure` let
             # `cancelled` through — a job killed by its own `timeout-minutes`
-            # (docker and the test jobs carry one), or a run cancelled while this job's
+            # (docker and the test jobs carry one), or a run cancelled while
+            # this job's
             # `if: always()` still fires, reported "CI passed" for gates that
             # never finished. Same shape as the `skipped` hole this file's
             # change-detection fix closes, so it gets the same treatment.
