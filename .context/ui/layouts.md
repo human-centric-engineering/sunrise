@@ -29,6 +29,7 @@ Sunrise uses a composable layout system built around the `AppHeader` component, 
 | `HeaderActions`   | `components/layouts/header-actions.tsx`   | Theme toggle and user button     |
 | `PublicNav`       | `components/layouts/public-nav.tsx`       | Navigation for public pages      |
 | `ProtectedNav`    | `components/layouts/protected-nav.tsx`    | Navigation for protected pages   |
+| `HeaderNav`       | `components/layouts/header-nav.tsx`       | Renders both navs' links / menu  |
 | `PublicFooter`    | `components/layouts/public-footer.tsx`    | Footer for public pages          |
 | `ProtectedFooter` | `components/layouts/protected-footer.tsx` | Footer for protected pages       |
 
@@ -68,20 +69,47 @@ import { PublicNav } from '@/components/layouts/public-nav';
 
 The header uses a flex layout with:
 
-- **Left section:** Logo link + optional navigation (gap-8 between them)
+- **Left section:** Logo link + optional navigation (`gap-4`, `gap-8` from `md`)
 - **Right section:** HeaderActions (theme toggle + user button)
+
+The left section is `min-w-0` and the logo link `truncate`s, while the actions
+are `shrink-0`: a long brand is cut off with an ellipsis rather than pushing the
+actions off a small screen.
 
 ```tsx
 <header className="border-b">
-  <div className="container mx-auto flex items-center justify-between px-4 py-4">
-    <div className="flex items-center gap-8">
-      <Link href={logoHref}>{logoText}</Link>
+  <div className="container mx-auto flex items-center justify-between gap-4 px-4 py-4">
+    <div className="flex min-w-0 items-center gap-4 md:gap-8">
+      <Link href={logoHref} className="min-w-0 truncate …">
+        {logoText ?? <BrandMark />}
+      </Link>
       {navigation}
     </div>
-    <HeaderActions />
+    <div className="shrink-0">
+      <HeaderActions />
+    </div>
   </div>
 </header>
 ```
+
+## HeaderNav
+
+Shared renderer for `PublicNav` and `ProtectedNav`. Each nav resolves its own
+items (seam override, `exact`, admin filtering, active state) and passes them
+here as `{ href, label, icon?, isActive }`.
+
+**File:** `components/layouts/header-nav.tsx`
+
+- **From `md` up:** inline links, icon (if any) plus label.
+- **Below `md`:** the links fold into a dropdown menu behind a button named
+  "Open navigation menu"; every item shows its label.
+- **Labels are never hidden by breakpoint.** Icons are `aria-hidden`, so a hidden
+  label leaves a link with no accessible name, and an item with no icon renders
+  empty (#862).
+
+The menu lives inside the nav, not in a second `AppHeader` slot, so any caller
+passing `navigation` keeps its nav on every screen size. A custom `navigation`
+that doesn't use `HeaderNav` has to handle small screens itself.
 
 ## HeaderActions
 
@@ -132,7 +160,7 @@ None. Navigation items are hardcoded.
 ### Features
 
 - **Active state highlighting:** Uses `bg-accent text-accent-foreground` for current page
-- **Responsive:** Labels hidden on small screens, icons always visible
+- **Responsive:** Inline links from `md` up, a labelled dropdown menu below it (see [HeaderNav](#headernav))
 - **Accessibility:** Sets `aria-current="page"` on active links
 
 ### Usage
@@ -170,7 +198,7 @@ None. Navigation items are hardcoded.
 - **Role-based visibility:** Admin link only shown to platform admins (`isPlatformAdmin()` from `@/lib/auth/roles`)
 - **Active state highlighting:** Uses `bg-accent text-accent-foreground` for current page
 - **Prefix matching:** Active state for nested routes (e.g., `/settings/security`)
-- **Responsive:** Labels hidden on small screens, icons always visible
+- **Responsive:** Inline links from `md` up, a labelled dropdown menu below it (see [HeaderNav](#headernav))
 - **Accessibility:** Sets `aria-current="page"` on active links
 
 ### Usage
