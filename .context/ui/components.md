@@ -32,15 +32,15 @@ import { RouteErrorBoundary } from '@/components/errors/route-error-boundary';
 
 export default function HubError({
   error,
-  reset,
+  retry,
 }: {
   error: Error & { digest?: string };
-  reset: () => void;
+  retry: () => void;
 }): React.ReactElement {
   return (
     <RouteErrorBoundary
       error={error}
-      reset={reset}
+      retry={retry}
       boundaryName="HubError"
       tag="hub"
       title="Something went wrong"
@@ -54,19 +54,19 @@ export default function HubError({
 
 ### Props
 
-| Prop                 | Type                          | Default     | Description                                                      |
-| -------------------- | ----------------------------- | ----------- | ---------------------------------------------------------------- |
-| `error`              | `Error & { digest?: string }` | (required)  | The error Next.js hands the boundary                             |
-| `reset`              | `() => void`                  | (required)  | The reset callback Next.js hands the boundary                    |
-| `boundaryName`       | `string`                      | (required)  | Identifies the boundary in logs, e.g. `"AdminError"`             |
-| `tag`                | `string`                      | (required)  | Sentry `boundary` tag, e.g. `"admin"`                            |
-| `title`              | `string`                      | (required)  | Card title                                                       |
-| `description`        | `string`                      | (required)  | Card description                                                 |
-| `fallback`           | `RouteErrorFallbackAction`    | (required)  | Secondary action shown next to "Try again"                       |
-| `checkSession`       | `boolean`                     | `false`     | Show a "Session Expired → Sign in" card when the session is gone |
-| `extra`              | `Record<string, string>`      | `undefined` | Extra Sentry context merged alongside the digest                 |
-| `containerClassName` | `string`                      | `undefined` | Forwarded to `ErrorCard`                                         |
-| `footer`             | `ReactNode`                   | `undefined` | Forwarded to `ErrorCard`                                         |
+| Prop                 | Type                          | Default     | Description                                                        |
+| -------------------- | ----------------------------- | ----------- | ------------------------------------------------------------------ |
+| `error`              | `Error & { digest?: string }` | (required)  | The error Next.js hands the boundary                               |
+| `retry`              | `() => void`                  | (required)  | Next's `retry` (not `reset`, which re-renders without re-fetching) |
+| `boundaryName`       | `string`                      | (required)  | Identifies the boundary in logs, e.g. `"AdminError"`               |
+| `tag`                | `string`                      | (required)  | Sentry `boundary` tag, e.g. `"admin"`                              |
+| `title`              | `string`                      | (required)  | Card title                                                         |
+| `description`        | `string`                      | (required)  | Card description                                                   |
+| `fallback`           | `RouteErrorFallbackAction`    | (required)  | Secondary action shown next to "Try again"                         |
+| `checkSession`       | `boolean`                     | `false`     | Show a "Session Expired → Sign in" card when the session is gone   |
+| `extra`              | `Record<string, string>`      | `undefined` | Extra Sentry context merged alongside the digest                   |
+| `containerClassName` | `string`                      | `undefined` | Forwarded to `ErrorCard`                                           |
+| `footer`             | `ReactNode`                   | `undefined` | Forwarded to `ErrorCard`                                           |
 
 ### RouteErrorFallbackAction Type
 

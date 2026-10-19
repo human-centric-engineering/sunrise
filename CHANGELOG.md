@@ -18,6 +18,18 @@ release process.
 
 ### Added
 
+- **`lib/api/server-load.ts`: `requireServerData()` and `loadServerData()`,
+  for reading internal API routes from a server component** (t-861, #518).
+  `requireServerData()` returns a page's main data or throws a
+  `ServerLoadError` to the route's error boundary; with `{ notFound: true }` a
+  genuine 404 renders the not-found page, and no other failure does.
+  `loadServerData()` never throws and returns a typed failure, for a panel the
+  page can live without; render `<LoadFailedNotice>` from
+  `components/admin/load-failed-notice.tsx` in its place. Both log every
+  failure. See `.context/api/examples.md` → "Loading a page's data".
+  **Forks:** use these in your own admin pages rather than a try/catch that
+  returns `[]`.
+
 - **`lib/app/erasure.ts` → `initAppErasureHooks()`, a seam for erasure cleanup
   hooks** (t-854, #691). `getErasureCleanupHooks()` runs it once before its
   first read, through `createAppInitGate`, so a throw rolls its hooks back and
@@ -401,6 +413,14 @@ release process.
 
 ### Changed
 
+- **`RouteErrorBoundary` takes `retry`, not `reset`** (t-861). Next's
+  `reset()` re-renders the segment without re-fetching it, so "Try again"
+  after a failed server-side load failed again the same way. Every Sunrise
+  boundary now passes Next 16.3's `retry()`, which re-fetches first.
+  **Forks:** an `error.tsx` that renders `RouteErrorBoundary` must rename the
+  prop it receives and passes from `reset` to `retry`; the type-check flags
+  each one.
+
 - **`npm run type-check` runs under the same heap cap as `npm run lint`**
   (t-855, #693). It goes through `scripts/run-capped.mjs`, so `NODE_HEAP_MB`
   now applies to it. It was left out on a 1.64-1.75 GiB peak, but that was a
@@ -783,6 +803,18 @@ release process.
   MAJOR.
 
 ### Fixed
+
+- **Admin pages say when their data failed to load, instead of showing an
+  empty list** (t-861, #518). Every admin page that reads through
+  `serverFetch` caught any failure and returned `[]` or `null`, so a 500, a
+  timeout or a wrong base URL showed "No users found" against a full
+  database, and a detail page's 500 showed as a 404. Five pages logged
+  nothing. A page whose main data fails now reaches the admin error boundary,
+  whose "Try again" re-fetches; a detail page 404s only on a real 404; a
+  dashboard or summary panel that fails shows "Couldn't load …" in its place
+  while the rest of the page works. `.env.example` no longer says a local
+  reverse proxy never needs `INTERNAL_API_URL`: a local production build
+  behind one does.
 
 - **Required text fields reject whitespace-only input instead of saving it
   blank** (t-860, #713). Zod runs a string chain's checks in the order written,

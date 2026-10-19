@@ -84,7 +84,7 @@ The admin section includes a dedicated error boundary (`app/admin/error.tsx`) th
 
 - **Logging**: Errors are logged via `logger.error()` with boundary context
 - **Sentry Integration**: Tracks errors with Sentry including digest and boundary tags
-- **Recovery Actions**: Provides "Try again" (calls `reset()`) and "Dashboard" (navigates to `/dashboard`) buttons
+- **Recovery Actions**: Provides "Try again" (calls Next's `retry()`, which re-fetches the page) and "Dashboard" (navigates to `/dashboard`) buttons
 - **User Experience**: Shows a user-friendly error message via the `ErrorCard` component
 
 ## Navigation Structure
