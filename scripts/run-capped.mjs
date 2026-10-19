@@ -203,6 +203,9 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     onSignal = (signal, handler) => process.on(signal, handler),
     clearSignal = (signal) => process.removeAllListeners(signal),
     raise = (signal) => process.kill(process.pid, signal),
+    // Injected so a test can assert what `main` asks for and applies without
+    // depending on the RAM of the machine running it (#700).
+    resolveHeap = resolveHeapMb,
   } = deps;
 
   const [name, ...passthrough] = argv;
@@ -213,7 +216,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
     return undefined;
   }
 
-  const heapMb = resolveHeapMb({ requestedMb: parseRequestedMb(env.NODE_HEAP_MB) });
+  const heapMb = resolveHeap({ requestedMb: parseRequestedMb(env.NODE_HEAP_MB) });
 
   const child = spawnFn(resolveCommand(name), passthrough, {
     cwd: ROOT,

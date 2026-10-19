@@ -44,6 +44,7 @@ import {
   DEFAULT_HEAP_MB,
   LINTABLE,
 } from '@/scripts/ci/chunked-lint.mjs';
+import { resolveHeapMb } from '@/scripts/run-capped.mjs';
 
 const files = (n: number): string[] => Array.from({ length: n }, (_, i) => `f${i}.ts`);
 
@@ -496,7 +497,12 @@ describe('runChunk', () => {
     await runChunk(['a.ts'], [], { spawnFn, command: ['eslint'], env: {} });
 
     const options = spawnFn.mock.calls[0]?.[2];
-    expect(options?.env.NODE_OPTIONS).toContain(`--max-old-space-size=${DEFAULT_HEAP_MB}`);
+    // Against the resolver's answer on this machine, not DEFAULT_HEAP_MB: the
+    // real value is clamped to RAM, so pinning 6144 failed on the ~8GB private
+    // runner ci.md tells forks to size for (#700).
+    expect(options?.env.NODE_OPTIONS).toContain(
+      `--max-old-space-size=${resolveHeapMb({ requestedMb: DEFAULT_HEAP_MB })}`
+    );
   });
 });
 

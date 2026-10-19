@@ -265,6 +265,7 @@ describe('main', () => {
 
   it('reads NODE_HEAP_MB as the requested cap', async () => {
     const spawnFn = vi.fn().mockReturnValue(fakeChild());
+    const resolveHeap = vi.fn().mockReturnValue(7777);
 
     await main(['eslint', '.'], {
       spawnFn,
@@ -272,13 +273,32 @@ describe('main', () => {
       resolveCommand: () => '/bin/eslint',
       exit: vi.fn(),
       onSignal: vi.fn(),
+      resolveHeap,
     });
 
-    // Clamped by this machine's real memory, so assert it moved off the
-    // default rather than pinning a number the test host decides.
-    const opts = spawnFn.mock.calls[0][2].env.NODE_OPTIONS as string;
-    expect(Number(/--max-old-space-size=(\d+)/.exec(opts)![1])).toBeGreaterThanOrEqual(
-      DEFAULT_HEAP_MB
+    // The resolver is injected because the real one clamps to this machine's
+    // RAM: asserting the applied cap against DEFAULT_HEAP_MB failed on the
+    // ~8GB private runner ci.md tells forks to size for (#700). What `main`
+    // owns is passing the ask in and the answer on, so that is what is pinned.
+    expect(resolveHeap).toHaveBeenCalledWith({ requestedMb: 9999 });
+    expect(spawnFn.mock.calls[0][2].env.NODE_OPTIONS).toBe('--max-old-space-size=7777');
+  });
+
+  it('resolves with the real resolver when none is injected', async () => {
+    const spawnFn = vi.fn().mockReturnValue(fakeChild());
+
+    await main(['eslint', '.'], {
+      spawnFn,
+      env: {},
+      resolveCommand: () => '/bin/eslint',
+      exit: vi.fn(),
+      onSignal: vi.fn(),
+    });
+
+    // Compared with the resolver's own answer on this machine, not a fixed
+    // number, so it holds on any runner.
+    expect(spawnFn.mock.calls[0][2].env.NODE_OPTIONS).toBe(
+      `--max-old-space-size=${resolveHeapMb({ requestedMb: undefined })}`
     );
   });
 
